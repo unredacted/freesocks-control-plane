@@ -21,6 +21,7 @@ import {
   verificationStaleReason,
 } from './lib/edges/verification';
 import { verificationListenersOf } from './lib/edges/verificationContext';
+import { assertAdmission } from './lib/edges/maintenance';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -108,6 +109,7 @@ async function reviewShapeOf(
     : (await frontedListenersOf(ctx, intent)).map((l) => ({
         listenerKey: l.listenerKey,
         accountId: l.accountId,
+        locationId: l.locationId ?? null,
         templateHash: l.templateHash,
       }));
   // A direct node's addresses follow the names its transport lists today.
@@ -163,6 +165,7 @@ async function frontedListenersOf(
     out.push({
       listenerKey: l.listenerKey,
       accountId: edge?.accountId ? String(edge.accountId) : null,
+      locationId: edge?.locationId ? String(edge.locationId) : null,
       templateHash: edge?.templateHash ?? null,
       layer: entry?.layer ?? edge?.layer ?? ('l4' as const),
       edge,
@@ -219,11 +222,13 @@ async function standbyDisplayOf(ctx: { db: QueryCtx['db'] }, intent: Intent) {
     const host = e ? (e.addresses.v4 ?? e.addresses.hostname ?? e.addresses.v6 ?? null) : null;
     const port = e?.listeners[0]?.edgePort ?? null;
     const account = e?.accountId ? await ctx.db.get(e.accountId) : null;
+    const location = e?.locationId ? await ctx.db.get(e.locationId) : null;
     out.push({
       listenerKey: l.listenerKey,
       layer: l.layer,
       endpoint: host ? (port ? `${host}:${port}` : host) : null,
       accountName: account?.name ?? null,
+      locationLabel: location?.label ?? null,
       provider: e?.provider ?? null,
     });
   }
@@ -719,6 +724,9 @@ export const approve = internalMutation({
     if (!intent) return refuse('not_found', 'No such node');
     const setup = await setupOf(ctx, intent.backendServerId);
     const direct = isDirect(modeEntry(setup, modeSlug(intent)).shape);
+    // A fronted approval starts edge work (its run publishes): held while the
+    // edges maintenance switch is on, like every other admission of new work.
+    if (!direct) await assertAdmission(ctx.db, 'publish');
     const standbys = direct ? null : await standbysOf(ctx, intent);
     const blockers = await activationBlockers(ctx, intent, setup, direct, standbys);
     // A blocker's `:detail` is for the review card; the refusal is its code.
@@ -1369,6 +1377,7 @@ async function servedListenersOf(
     out.push({
       listenerKey: l.listenerKey,
       accountId: e?.accountId ? String(e.accountId) : null,
+      locationId: e?.locationId ? String(e.locationId) : null,
       templateHash: e?.templateHash ?? null,
     });
   }

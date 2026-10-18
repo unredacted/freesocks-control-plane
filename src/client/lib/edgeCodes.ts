@@ -495,6 +495,25 @@ const COPY = {
     label: 'Account not found',
     explain: 'The named account does not exist.',
   },
+  location_not_found: {
+    label: 'Location not found',
+    explain: 'The named location does not exist on that account.',
+  },
+  location_disabled: {
+    label: 'Location switched off',
+    explain: 'The named location is switched off on its account.',
+    fix: 'Switch it on from the provider page, or pick another location.',
+  },
+  location_capacity_reached: {
+    label: 'Location full',
+    explain: 'The location already runs as many addresses as its limit allows.',
+    fix: 'Raise the limit on the location or pick another one.',
+  },
+  location_unreachable: {
+    label: 'A location is not reachable',
+    explain: 'The new credentials could not read one of the account locations in use.',
+    fix: 'Use credentials that reach every location, or switch that location off first.',
+  },
   account_disabled: {
     label: 'Account disabled',
     explain: 'The named account is switched off.',
@@ -1086,6 +1105,46 @@ const REFUSAL_COPY = {
     explain: 'The node already uses as many addresses as one origin may.',
     fix: 'Remove an address from Origin details first, then protect it again.',
   },
+  // provider locations (where an account creates its addresses)
+  no_location: {
+    label: 'No location yet',
+    explain: 'The account has no location to create addresses in.',
+    fix: 'Add a location on the provider page.',
+  },
+  location_capacity: {
+    label: 'Location full',
+    explain: 'The location already runs as many addresses as its limit allows.',
+    fix: 'Raise the limit on the location or pick another one.',
+  },
+  location_not_offered: {
+    label: 'Not offered to this account',
+    explain: 'The provider does not offer that region or zone to these credentials.',
+    fix: 'Pick one from the list the provider returned.',
+  },
+  location_unchecked: {
+    label: 'Location not checked',
+    explain: 'The provider could not be asked whether it offers that place to this account.',
+    fix: 'Try again in a moment.',
+  },
+  location_in_use: {
+    label: 'Location still in use',
+    explain: 'An address still lives in this location, or a protected node uses it.',
+    fix: 'Remove or replace those addresses first.',
+  },
+  location_not_geographic: {
+    label: 'No regions for this provider',
+    explain: 'This provider is not tied to a region: its account has one location already.',
+  },
+  template_value_required: {
+    label: 'Choose a value for this region',
+    explain: 'The template leaves a value empty that this provider needs per region.',
+    fix: 'Pick it for this location, or set it in the template.',
+  },
+  placement_on_location: {
+    label: 'Region is set per location',
+    explain: 'Where edges are created is part of a location, not of the account.',
+    fix: 'Add a location on the provider page instead.',
+  },
 } as const satisfies Record<string, CodeCopy>;
 
 export const EDGE_REFUSAL_COPY: Record<string, CodeCopy> = REFUSAL_COPY;
@@ -1500,6 +1559,21 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'No DNS zone',
     explain: 'The CDN account names no DNS account for its hostnames.',
     fix: 'Set the DNS account on the provider.',
+  },
+  no_location: {
+    label: 'No location yet',
+    explain: 'The account has no location to create addresses in.',
+    fix: 'Add a location to the account.',
+  },
+  location_disabled: {
+    label: 'Location switched off',
+    explain: 'This location is switched off on the account.',
+    fix: 'Switch it on from the provider page.',
+  },
+  location_capacity_reached: {
+    label: 'Location full',
+    explain: 'This location has fewer free addresses than this node needs.',
+    fix: 'Raise its limit or free an address there.',
   },
 };
 

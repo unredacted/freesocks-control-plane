@@ -33,28 +33,92 @@ export const EdgeProviderId = z.enum(EDGE_PROVIDER_IDS);
 const iso = z.string();
 const isoN = z.string().nullable();
 
-// --- provider accounts ------------------------------------------------------------
+// --- provider accounts and their locations ----------------------------------------
+
+/** How a trust was taken (ids and dates only, never an endpoint). */
+const TrustRecord = z
+  .object({
+    by: z.enum(['admin', 'auto']),
+    at: iso,
+    edgeId: z.string().nullable().default(null),
+    proofCheckedAt: isoN.default(null),
+  })
+  .nullable()
+  .default(null);
+
+/**
+ * One account's place to create edges in (docs/edges.md § "Provider accounts
+ * and locations"): the placement (region / zone / project / network, admin
+ * data), the provider's own id for the region (`placeKey`), and the trust
+ * taken there. A CDN account has one, `anycast`.
+ */
+export const EdgeLocationAdmin = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  provider: EdgeProviderId,
+  placeKey: z.string(),
+  /** `<provider>:<placeKey>`: the account-agnostic identity of the place. */
+  locationKey: z.string(),
+  label: z.string(),
+  placement: z.record(z.string(), z.unknown()),
+  enabled: z.boolean(),
+  isDefault: z.boolean(),
+  qualified: z.boolean(),
+  qualifiedTemplateHash: z.string().nullable(),
+  qualification: TrustRecord,
+  autoQualifyHold: z.boolean().default(false),
+  defaultTemplateId: z.string().nullable(),
+  /** The location's own values of the template's regional fields (a flavor). */
+  regionalParams: z.record(z.string(), z.string()).default({}),
+  maxLiveEdges: z.number().nullable(),
+  liveEdges: z.number(),
+  costNote: z.string().nullable(),
+  inventoryAt: isoN,
+  createdAt: iso,
+  updatedAt: iso,
+});
+export type EdgeLocationAdmin = z.infer<typeof EdgeLocationAdmin>;
+export const EdgeLocationList = z.array(EdgeLocationAdmin);
+
+/** POST …/providers/{id}/locations: add a location (a placement the provider offers this key). */
+export const EdgeLocationCreateRequest = z.object({
+  placement: z.record(z.string(), z.unknown()),
+  regionalParams: z.record(z.string(), z.string()).optional(),
+  maxLiveEdges: z.number().int().min(1).max(200).optional(),
+  costNote: z.string().max(120).optional(),
+});
+export type EdgeLocationCreateRequest = z.infer<typeof EdgeLocationCreateRequest>;
+export const EdgeLocationCreateResponse = z.object({ id: z.string(), created: z.boolean() });
+
+/** PATCH …/providers/{id}/locations/{locationId}. */
+export const EdgeLocationUpdateRequest = z.object({
+  enabled: z.boolean().optional(),
+  label: z.string().max(80).optional(),
+  maxLiveEdges: z.number().int().min(1).max(200).nullable().optional(),
+  costNote: z.string().max(120).nullable().optional(),
+  regionalParams: z.record(z.string(), z.string()).optional(),
+  defaultTemplateId: z.string().nullable().optional(),
+  makeDefault: z.boolean().optional(),
+});
+export type EdgeLocationUpdateRequest = z.infer<typeof EdgeLocationUpdateRequest>;
 
 export const EdgeProviderAccountAdmin = z.object({
   id: z.string(),
   provider: EdgeProviderId,
   name: z.string(),
+  /** The account's own settings (identifiers, the L7 zone or DNS account); never a placement. */
   settings: z.record(z.string(), z.unknown()),
   credentialsSet: z.record(z.string(), z.boolean()),
   defaultTemplateId: z.string().nullable(),
+  /** The location pickers preselect. */
+  defaultLocationId: z.string().nullable().default(null),
+  locations: EdgeLocationList.default([]),
   enabled: z.boolean(),
+  /** Trusted in at least one enabled location (the rest read the default location's). */
   qualified: z.boolean(),
   qualifiedTemplateHash: z.string().nullable(),
-  /** Who trusted the account and, when it came from an endpoint, which edge (ids and dates only). */
-  qualification: z
-    .object({
-      by: z.enum(['admin', 'auto']),
-      at: iso,
-      edgeId: z.string().nullable().default(null),
-      proofCheckedAt: isoN.default(null),
-    })
-    .nullable()
-    .default(null),
+  /** How the default location was trusted and, from an endpoint, which edge (ids and dates only). */
+  qualification: TrustRecord,
   /** A manual untrust holds the automatic trust rules off until an operator trusts again. */
   autoQualifyHold: z.boolean().default(false),
   priority: z.number(),
@@ -109,11 +173,17 @@ export const EdgeRotateCredentialsResponse = z.union([
 export type EdgeRotateCredentialsResponse = z.infer<typeof EdgeRotateCredentialsResponse>;
 
 const DiscoverOption = z.object({ id: z.string(), label: z.string() });
-/** POST …/providers/discover: choice lists for the account form given credentials + partial settings. */
+/**
+ * POST …/providers/discover (the account form, credentials + partial settings)
+ * and POST …/providers/{id}/locations/options (the location form, a stored
+ * account + the placement chosen so far): the choice lists.
+ */
 export const EdgeDiscoverResponse = z.object({
   projects: z.array(DiscoverOption).optional(),
   regions: z.array(DiscoverOption).optional(),
   networks: z.array(DiscoverOption.extend({ subnets: z.array(DiscoverOption) })).optional(),
+  /** Load balancer flavors of the chosen region (a location's regional template value). */
+  flavors: z.array(DiscoverOption).optional(),
   /** L7: DNS zones (Cloudflare) and TLS configurations (Fastly). */
   zones: z.array(DiscoverOption).optional(),
   tlsConfigurations: z.array(DiscoverOption).optional(),
@@ -149,6 +219,8 @@ export const EdgeInventory = z.object({
   flavors: z.array(z.object({ id: z.string(), label: z.string() })),
 });
 export const EdgeInventoryResponse = z.object({
+  /** The location the inventory is of (inventory is per region); null before one exists. */
+  locationId: z.string().nullable().default(null),
   inventory: EdgeInventory.nullable(),
   inventoryAt: isoN,
 });
@@ -163,6 +235,8 @@ export const EdgeTemplateField = z.object({
   help: z.string().optional(),
   options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
   required: z.boolean().optional(),
+  /** The value differs per region: each location can set its own. */
+  regional: z.boolean().optional(),
 });
 export type EdgeTemplateField = z.infer<typeof EdgeTemplateField>;
 
@@ -573,6 +647,9 @@ export const EdgeAdmin = z.object({
   relayId: z.string(),
   listenerId: z.string(),
   accountId: z.string().nullable(),
+  /** The location the edge was created in (frozen; null for an import without an account). */
+  locationId: z.string().nullable().default(null),
+  placeKey: z.string().nullable().default(null),
   templateId: z.string().nullable(),
   templateHash: z.string().nullable(),
   provider: EdgeProviderId.nullable(),
@@ -1354,6 +1431,8 @@ export const PreflightRequest = z.object({
   edgeId: z.string().optional(),
   listenerKey: z.string().optional(),
   accountId: z.string().optional(),
+  /** An explicit location (its account implied); the account's default location otherwise. */
+  locationId: z.string().optional(),
   templateId: z.string().optional(),
   /** `provision` only: false checks an unpublished spare, as `provision {publish: false}` starts it. */
   publish: z.boolean().optional(),
@@ -1376,6 +1455,8 @@ export const PreflightResponse = z.object({
       standbyEdgeId: z.string().nullable(),
       accountId: z.string().nullable(),
       accountName: z.string().nullable(),
+      locationId: z.string().nullable().default(null),
+      locationLabel: z.string().nullable().default(null),
       provider: EdgeProviderId.nullable(),
       layer: EdgeLayer.nullable(),
       templateId: z.string().nullable(),
@@ -1386,7 +1467,9 @@ export type PreflightResponse = z.infer<typeof PreflightResponse>;
 
 /** `POST relays/{id}/test-provision`: the explicit bootstrap provision (a tested but unqualified account is allowed). */
 export const TestProvisionRequest = z.object({
-  accountId: z.string(),
+  /** The account (its default location), or `locationId` (its account implied). */
+  accountId: z.string().optional(),
+  locationId: z.string().optional(),
   listenerKey: z.string(),
   templateId: z.string().optional(),
 });
@@ -1591,6 +1674,20 @@ export const ProvidersUsageResponse = z.object({
       published: z.number(),
       standby: z.number(),
       draining: z.number(),
+      /** Per location: its live edges against its own cap, and its trust. */
+      locations: z
+        .array(
+          z.object({
+            id: z.string(),
+            label: z.string(),
+            placeKey: z.string(),
+            enabled: z.boolean(),
+            qualified: z.boolean(),
+            liveEdges: z.number(),
+            maxLiveEdges: z.number().nullable(),
+          }),
+        )
+        .default([]),
     }),
   ),
   relays: z.array(
@@ -1673,6 +1770,18 @@ export const SetupPlanDirectHost = z.object({
   /** Its inbound is frontable in every format (hidden without consent); else the operator consents by uuid. */
   covered: z.boolean(),
 });
+/** One location of an account the plan offers (an untrusted one is offered: its first tested address trusts it). */
+export const SetupPlanLocation = z.object({
+  id: z.string(),
+  label: z.string(),
+  placeKey: z.string(),
+  isDefault: z.boolean(),
+  qualified: z.boolean(),
+  compatible: z.boolean(),
+  /** `SETUP_ACCOUNT_REASONS` codes. */
+  reasons: z.array(z.string()),
+});
+export type SetupPlanLocation = z.infer<typeof SetupPlanLocation>;
 export const SetupPlanAccount = z.object({
   id: z.string(),
   name: z.string(),
@@ -1681,6 +1790,8 @@ export const SetupPlanAccount = z.object({
   compatible: z.boolean(),
   /** `SETUP_ACCOUNT_REASONS` codes. */
   reasons: z.array(z.string()),
+  /** Where the run would create its addresses. */
+  locations: z.array(SetupPlanLocation).default([]),
 });
 
 /** `POST setup-runs/plan {backendServerId, nodeUuid}`: the read-only snapshot + its hash. */
@@ -1716,7 +1827,9 @@ export type SetupPlanResponse = z.infer<typeof SetupPlanResponse>;
 export const SetupRunCreateRequest = z.object({
   backendServerId: z.string(),
   nodeUuid: z.string(),
-  accountId: z.string(),
+  /** The pick: a location (its account implied), or an account (its default location). */
+  accountId: z.string().optional(),
+  locationId: z.string().optional(),
   planHash: z.string(),
   approvedHideUuids: z.array(z.string()).default([]),
   keepDirect: z.boolean().optional(),
@@ -1752,7 +1865,9 @@ export const SetupRunAdmin = z.object({
   backendServerId: z.string(),
   nodeName: z.string(),
   nodeUuid: z.string(),
+  /** The run's pick: its account and location (null on a run from before locations). */
   accountId: z.string(),
+  locationId: z.string().nullable().default(null),
   stage: SetupRunStage,
   state: SetupRunState,
   /** The interruption (`SETUP_RUN_NEEDS`) when `state === 'needs_you'`. */
@@ -1818,7 +1933,7 @@ export const SetupRunAdmin = z.object({
     renderGlobal: z.object({ willEnable: z.boolean(), affectedRelays: z.array(z.string()) }),
     familiesDisabled: z.array(z.string()),
     emptyNode: z.boolean(),
-    /** The accounts the plan judged; `retry {accountId}` accepts only a compatible one. */
+    /** The accounts the plan judged; `retry {accountId, locationId}` accepts only a compatible one. */
     accounts: z
       .array(
         z.object({
@@ -1826,6 +1941,9 @@ export const SetupRunAdmin = z.object({
           name: z.string(),
           provider: z.string(),
           compatible: z.boolean(),
+          locations: z
+            .array(z.object({ id: z.string(), label: z.string(), compatible: z.boolean() }))
+            .default([]),
         }),
       )
       .default([]),
@@ -1854,6 +1972,8 @@ export const SetupRunRetryRequest = z.object({
   edgeId: z.string().optional(),
   acceptPartial: z.boolean().optional(),
   accountId: z.string().optional(),
+  /** Another location (of `accountId`, or of the run's account). */
+  locationId: z.string().optional(),
 });
 export type SetupRunRetryRequest = z.infer<typeof SetupRunRetryRequest>;
 export const SetupRunRetryResponse = z.object({

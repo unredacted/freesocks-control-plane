@@ -610,6 +610,24 @@ describe('enrolled nodes', () => {
       }),
     ).toBe('main: members get 203.0.113.7:443, an address in Main account.');
     expect(
+      standbyWords({
+        listenerKey: 'main',
+        layer: 'l4',
+        endpoint: '203.0.113.7:443',
+        accountName: 'Main account',
+        locationLabel: 'Region A',
+      }),
+    ).toBe('main: members get 203.0.113.7:443, an address in Main account (Region A).');
+    expect(
+      standbyWords({
+        listenerKey: 'ws',
+        layer: 'l7',
+        endpoint: 'ws.example.org',
+        accountName: 'CDN',
+        locationLabel: 'Anycast',
+      }),
+    ).toBe('ws: members get ws.example.org, a CDN name in CDN.');
+    expect(
       standbyWords({ listenerKey: 'ws', layer: 'l7', endpoint: null, accountName: null }),
     ).toBe('ws: members get a new address.');
     expect(blockerWords('servers.stage')).toMatch(/approved/);

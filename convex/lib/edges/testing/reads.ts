@@ -4,9 +4,10 @@
  * production caller): the same lookups, run in one `t.run` transaction.
  */
 import type { TestConvex } from 'convex-test';
-import type { Id } from '../../../_generated/dataModel';
+import type { Doc, Id } from '../../../_generated/dataModel';
 import type schema from '../../../schema';
 import { evaluateAutoQualificationFor } from '../../../edgeProviderAccounts';
+import { defaultLocationOf } from '../../../edgeLocations';
 import { insertPlannedEdge, mapEdgeAdmin, type PlannedEdgeInput } from '../../../edges';
 import { nodeGateFor } from '../../../nodeIntents';
 import { deliveryBindingFor, relayForBackendNode } from '../../../relays';
@@ -99,4 +100,29 @@ export const expireTestCredential = (t: T, a: { id: Id<'edgeTestCredentials'> })
         updatedAt: Date.now(),
       });
     return null;
+  });
+
+/**
+ * The location an account's trust lives in for the account-level calls: its
+ * default one (`defaultLocationOf`). Trust, its hash, its evidence and the
+ * manual hold are read and patched there.
+ */
+export const defaultLocationRow = (t: T, accountId: Id<'edgeProviderAccounts'>) =>
+  t.run(async (ctx) => {
+    const account = await ctx.db.get(accountId);
+    return account ? defaultLocationOf(ctx.db, account) : null;
+  });
+
+/** Patch an account's default location directly (a fixture shortcut for its trust fields). */
+export const patchDefaultLocation = (
+  t: T,
+  accountId: Id<'edgeProviderAccounts'>,
+  patch: Partial<Doc<'edgeLocations'>>,
+) =>
+  t.run(async (ctx) => {
+    const account = await ctx.db.get(accountId);
+    const loc = account ? await defaultLocationOf(ctx.db, account) : null;
+    if (!loc) throw new Error('the account has no location');
+    await ctx.db.patch(loc._id, patch);
+    return loc._id;
   });

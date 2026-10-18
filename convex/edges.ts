@@ -19,6 +19,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { randomHex } from './lib/crypto';
 import { reserveAllocation } from './edgeProviderAccounts';
+import { defaultLocationOf, liveCountForLocation } from './edgeLocations';
 import { edgeResourceName } from './lib/edges/accountSettings';
 import { dropEdgeFromPool, liveEdgesOfAccount } from './relays';
 import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
@@ -122,6 +123,8 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     relayId: e.relayId as string,
     listenerId: e.listenerId as string,
     accountId: (e.accountId as string | undefined) ?? null,
+    locationId: (e.locationId as string | undefined) ?? null,
+    placeKey: e.placeKey ?? null,
     templateId: (e.templateId as string | undefined) ?? null,
     templateHash: e.templateHash ?? null,
     provider: e.provider ?? null,
@@ -294,6 +297,8 @@ export interface PlannedEdgeInput {
   relayId: Id<'relays'>;
   listenerId: Id<'relayListeners'>;
   accountId: Id<'edgeProviderAccounts'>;
+  /** The location the edge is created in (the account's default when absent). */
+  locationId?: Id<'edgeLocations'> | null;
   templateId?: Id<'edgeTemplates'> | null;
   templateHash: string;
   listeners: Array<{
@@ -326,10 +331,28 @@ export async function insertPlannedEdge(
   const [origin, account] = await Promise.all([ctx.db.get(a.relayId), ctx.db.get(a.accountId)]);
   if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
   if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+  // Where the edge lives, frozen on the row with a copy of its placement: every
+  // later step, describe and destroy acts there, whatever the location becomes.
+  const location = a.locationId
+    ? await ctx.db.get(a.locationId)
+    : await defaultLocationOf(ctx.db, account);
+  if (!location || location.accountId !== account._id)
+    throw new ConvexError({
+      code: 'edge.no_location',
+      message: 'The account has no such location',
+    });
   const live = await liveCountForAccount(ctx, a.accountId);
   if (live >= account.maxLiveEdges) {
     throw new ConvexError({ code: 'edge.capacity', message: 'Account is at its live-edge cap' });
   }
+  if (
+    location.maxLiveEdges !== undefined &&
+    (await liveCountForLocation(ctx.db, location)) >= location.maxLiveEdges
+  )
+    throw new ConvexError({
+      code: 'edge.location_capacity',
+      message: 'The location is at its live-edge cap',
+    });
   if (!(await reserveAllocation(ctx, a.accountId))) {
     throw new ConvexError({
       code: 'edge.budget',
@@ -342,6 +365,9 @@ export async function insertPlannedEdge(
     relayId: a.relayId,
     listenerId: a.listenerId,
     accountId: a.accountId,
+    locationId: location._id,
+    placeKey: location.placeKey,
+    placement: location.placement,
     templateId: a.templateId ?? undefined,
     templateHash: a.templateHash,
     provider: account.provider,

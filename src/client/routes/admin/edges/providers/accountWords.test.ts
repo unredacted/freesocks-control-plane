@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { inventoryOwner, isTested, settingLabel, settingRows, testWords } from './accountWords';
+import {
+  inventoryOwner,
+  isTested,
+  locationTrustWords,
+  settingLabel,
+  settingRows,
+  testWords,
+} from './accountWords';
 
 const NOW = Date.parse('2026-01-01T01:00:00.000Z');
 const okAt = '2026-01-01T00:00:00.000Z';
@@ -35,5 +42,46 @@ describe('settings', () => {
   it('marks unowned resources as foreign', () => {
     expect(inventoryOwner({ unowned: true })).toBe('foreign');
     expect(inventoryOwner({})).toBe('fcp');
+  });
+});
+
+describe('locationTrustWords', () => {
+  const base = { qualified: false, autoQualifyHold: false, qualification: null };
+  it('says how a location was trusted, or how it will be', () => {
+    expect(locationTrustWords(base, NOW)).toMatchObject({
+      label: 'Not trusted yet',
+      detail: 'Its first tested address trusts it.',
+    });
+    expect(
+      locationTrustWords(
+        {
+          qualified: true,
+          autoQualifyHold: false,
+          qualification: { by: 'auto', at: okAt, edgeId: 'e' },
+        },
+        NOW,
+      ).detail,
+    ).toBe('Trusted automatically, checked with a real session 1 h ago.');
+    expect(
+      locationTrustWords(
+        {
+          qualified: true,
+          autoQualifyHold: false,
+          qualification: { by: 'admin', at: okAt, edgeId: 'e' },
+        },
+        NOW,
+      ).detail,
+    ).toBe('Tried with a real session by you 1 h ago.');
+    expect(
+      locationTrustWords(
+        {
+          qualified: true,
+          autoQualifyHold: false,
+          qualification: { by: 'admin', at: okAt, edgeId: null },
+        },
+        NOW,
+      ).detail,
+    ).toBe('Trusted by your override 1 h ago.');
+    expect(locationTrustWords({ ...base, autoQualifyHold: true }, NOW).tone).toBe('warning');
   });
 });

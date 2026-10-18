@@ -271,6 +271,11 @@ describe('attention', () => {
       ),
     ).toBe('1 of 3 published · in IR, CN');
     expect(attentionFactsLine(item({ facts: { ageMs: 120_000 } }))).toBe('for 2 min');
+    // A per-location trust item names its location when the account has several.
+    expect(attentionFactsLine(item({ facts: { name: 'acct-a', location: 'Region B' } }))).toBe(
+      'Account acct-a, Region B',
+    );
+    expect(attentionFactsLine(item({ facts: { name: 'acct-a' } }))).toBe('Account acct-a');
     expect(attentionSubject(item({ listenerKey: 'main' }))).toBe('Origin relay-a, listener main');
     expect(attentionSubject(item({ relaySlug: null }))).toBe('');
   });

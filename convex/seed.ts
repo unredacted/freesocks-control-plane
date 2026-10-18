@@ -20,7 +20,8 @@ import {
 
 /** The built-ins version this deployment's mode catalog was last brought up to. */
 const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
-import { fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
+import { FAKE_ZONES, fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
+import { upsertLocation } from './edgeLocations';
 import { mockBackendEnabled } from './lib/backends/mock';
 
 /** Insert the default-free tier if absent; return its id. */
@@ -545,6 +546,7 @@ export const seedCutover = internalAction({
     clientsInserted: number;
     modeFamiliesInserted: number;
     modesInserted: number;
+    edgeLocations: string;
   }> => {
     const freeTierId = await ctx.runMutation(internal.seed.seedDefaultFreeTier, {});
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
@@ -554,6 +556,24 @@ export const seedCutover = internalAction({
     const clients = await ctx.runMutation(internal.seed.seedClients, {});
     const modes = await ctx.runMutation(internal.seed.seedConnectionModes, {});
     await ctx.runMutation(internal.seed.seedPeerGroups, {});
+    // The one-time move of accounts' fixed locations into locations
+    // (convex/edgeLocationsMigration.ts): a no-op once its marker is written.
+    // It never fails the deploy: `needs_freeze` / `not_quiescent` write
+    // nothing and are reported here; `seed:migrateEdgeLocations` runs it again.
+    let edgeLocations: string;
+    try {
+      const r = await ctx.runAction(internal.edgeLocationsMigration.drive, {});
+      edgeLocations = r.result;
+      if (r.result !== 'already_done' && r.result !== 'nothing_to_migrate')
+        console.log(
+          `[seedCutover] edge locations migration: ${r.result} ${JSON.stringify(r.wrote)}`,
+        );
+    } catch (err) {
+      edgeLocations = 'error';
+      console.log(
+        `[seedCutover] edge locations migration failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     return {
       freeTierId,
       memberTierId,
@@ -562,8 +582,26 @@ export const seedCutover = internalAction({
       clientsInserted: clients.inserted,
       modeFamiliesInserted: modes.familiesInserted,
       modesInserted: modes.modesInserted,
+      edgeLocations,
     };
   },
+});
+
+/**
+ * Run the edge locations migration by hand (through the deployer container,
+ * docs/beta-deploy.md): the same driver `seedCutover` runs, with its result.
+ */
+export const migrateEdgeLocations = internalAction({
+  args: {},
+  handler: async (ctx): Promise<unknown> =>
+    ctx.runAction(internal.edgeLocationsMigration.drive, {}),
+});
+
+/** What the edge locations migration still has to do, per phase (zero everywhere = done). */
+export const edgeLocationsStatus = internalAction({
+  args: {},
+  handler: async (ctx): Promise<unknown> =>
+    ctx.runQuery(internal.edgeLocationsMigration.status, {}),
 });
 
 /**
@@ -605,18 +643,24 @@ export const seedDevEdges = internalMutation({
       name: string;
       credentials: Record<string, unknown>;
       settings: Record<string, unknown>;
+      placement: Record<string, unknown>;
+      label: string;
     }> = [
       {
         provider: 'upcloud',
         name: 'FAKE (dev) L4',
         credentials: { type: 'upcloud', token: 'fake' },
-        settings: { type: 'upcloud', zone: 'zone-1' },
+        settings: { type: 'upcloud' },
+        placement: { type: 'upcloud', zone: FAKE_ZONES[0].id },
+        label: FAKE_ZONES[0].label,
       },
       {
         provider: 'cloudflare',
         name: 'FAKE (dev) L7',
         credentials: { type: 'cloudflare', apiToken: 'fake' },
         settings: { type: 'cloudflare', zoneId: 'zone1234', zoneName: 'edge.example' },
+        placement: { type: 'cloudflare' },
+        label: 'Anycast',
       },
     ];
     let created = 0;
@@ -626,13 +670,12 @@ export const seedDevEdges = internalMutation({
         .withIndex('by_name', (q) => q.eq('name', a.name))
         .unique();
       if (existing) continue;
-      await ctx.db.insert('edgeProviderAccounts', {
+      const id = await ctx.db.insert('edgeProviderAccounts', {
         provider: a.provider,
         name: a.name,
         credentials: a.credentials as never,
         settings: a.settings as never,
         enabled: true,
-        qualified: false,
         priority: 10,
         dailyAllocationBudget: 20,
         allocationsToday: 0,
@@ -644,6 +687,13 @@ export const seedDevEdges = internalMutation({
         observedAt: a.provider === 'cloudflare' ? now : undefined,
         updatedAt: now,
       });
+      await upsertLocation(
+        ctx,
+        (await ctx.db.get(id))!,
+        a.placement,
+        { label: a.label },
+        { quiet: true },
+      );
       created++;
     }
     return { panelSlug: panel.slug, accountsCreated: created };

@@ -460,6 +460,9 @@ export const SETUP_ACCOUNT_REASONS = [
   'account_budget_exhausted',
   'provider_mismatch',
   'dns_zone_missing',
+  'no_location',
+  'location_disabled',
+  'location_capacity_reached',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 

@@ -6,9 +6,11 @@
    *                         what the credentials can see (projects, regions or zones,
    *                         networks); nothing is stored yet, the lists stay in form state.
    *                         A refused connection stays on this step with the reason.
-   *   2. Placement, limits  what the provider answered, where edges are created (picked from
-   *                         those lists, or the DNS account for a provider that needs one)
-   *                         and the spending limits
+   *   2. Placement, limits  what the provider answered, the account's FIRST location (where
+   *                         its edges are created, picked from those lists), the DNS
+   *                         account for a provider that needs one, and the spending
+   *                         limits. More locations are added on the account page or
+   *                         when a node is protected (`LocationPicker`).
    * Creating the account runs the credential test right away, so the caller gets
    * a tested account (or the reason the test failed).
    *
@@ -62,8 +64,10 @@
     applyDiscovery,
     credentialLabel,
     fieldsFor,
+    hasLocations,
     missingRequired,
     optionsFor,
+    regionLabelOf,
     settingsBody,
     type ProviderField,
   } from './providerFields';
@@ -218,10 +222,13 @@
   let createdId = $state<string | null>(null);
   const create = createMutation(() => ({
     mutationFn: async () => {
+      // The settings carry the first location's keys too: the server makes the
+      // account (credentials, its own settings) and that location from them.
       const { id } = await createProvider({
         provider,
         name: name.trim(),
         settings: settingsBody(provider, values),
+        locationLabel: regionLabelOf(provider, values, discovered),
         credentials: cleanCredentials(),
         maxLiveEdges,
         dailyAllocationBudget,
@@ -281,10 +288,20 @@
       },
       {
         id: 'placement',
-        title: compact ? 'Placement' : 'Placement and limits',
-        description: compact
-          ? 'Where addresses are created.'
-          : 'Where edges are created, and how many this account may run.',
+        title: hasLocations(provider)
+          ? compact
+            ? 'First location'
+            : 'First location and limits'
+          : compact
+            ? 'Settings'
+            : 'Settings and limits',
+        description: hasLocations(provider)
+          ? compact
+            ? 'Where its first addresses are created. Add more locations later.'
+            : 'Where its first edges are created (add more locations later), and how many this account may run.'
+          : compact
+            ? 'Where its addresses are created.'
+            : 'Where its edges are created, and how many this account may run.',
         status: status('placement'),
         ...(step !== 'placement' ? { note: 'after connecting' } : {}),
       },

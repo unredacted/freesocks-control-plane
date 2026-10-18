@@ -1195,13 +1195,22 @@ describe('edgeSetupRuns: cancel', () => {
 });
 
 describe('edgeSetupRuns: maintenance', () => {
-  test('a freeze blocks stage 1 and 3 but a run past try_it finishes its publish under setup.complete', async () => {
+  test('a freeze refuses a new run, blocks stage 1 and 3, but a run past try_it finishes its publish under setup.complete', async () => {
     const { t, serverId, accountId } = await seed();
     await t.mutation(internal.edgeMaintenance.freeze, { reason: 'test' });
+    // A new run is new work: refused in the mutation that would persist it.
+    await expect(startRun(t, serverId, accountId)).rejects.toThrow(/maintenance/);
+    await t.mutation(internal.edgeMaintenance.thaw, {});
     const { runId } = await startRun(t, serverId, accountId);
+    // Frozen before its first step: the run waits at stage 1 for the operator.
+    await t.mutation(internal.edgeMaintenance.freeze, { reason: 'test' });
     let r = await pump(t, runId, settled);
     expect(r.stage).toBe('prepare');
     expect(r.need?.code).toBe('maintenance');
+    // A retry that would provision is new work too: refused while frozen.
+    await expect(t.mutation(internal.edgeSetupRuns.retry, { runId })).rejects.toThrow(
+      /maintenance/,
+    );
     await t.mutation(internal.edgeMaintenance.thaw, {});
     await t.mutation(internal.edgeSetupRuns.retry, { runId });
     r = await pump(t, runId, settled);

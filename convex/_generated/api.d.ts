@@ -35,6 +35,8 @@ import type * as edgeCohorts from "../edgeCohorts.js";
 import type * as edgeDetector from "../edgeDetector.js";
 import type * as edgeHostHides from "../edgeHostHides.js";
 import type * as edgeHostHides from "../edgeHostHides.js";
+import type * as edgeLocations from "../edgeLocations.js";
+import type * as edgeLocationsMigration from "../edgeLocationsMigration.js";
 import type * as edgeMaintenance from "../edgeMaintenance.js";
 import type * as edgeOperator from "../edgeOperator.js";
 import type * as edgeOriginProbe from "../edgeOriginProbe.js";
@@ -206,6 +208,8 @@ declare const fullApi: ApiFromModules<{
   edgeDetector: typeof edgeDetector;
   edgeHostHides: typeof edgeHostHides;
   edgeHostHides: typeof edgeHostHides;
+  edgeLocations: typeof edgeLocations;
+  edgeLocationsMigration: typeof edgeLocationsMigration;
   edgeMaintenance: typeof edgeMaintenance;
   edgeOperator: typeof edgeOperator;
   edgeOriginProbe: typeof edgeOriginProbe;

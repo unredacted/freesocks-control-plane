@@ -25,7 +25,7 @@ import {
   verifyL4Edge,
   wsListener,
 } from './lib/edges/testing/fixtures';
-import { evaluateAutoQualification } from './lib/edges/testing/reads';
+import { defaultLocationRow, evaluateAutoQualification } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -376,10 +376,10 @@ describe('account trust', () => {
     // Provisioned with the account's effective template (what a rotation stamps).
     const hash = await effectiveHash(t, accountId);
     await t.run((ctx) => ctx.db.patch(spare, { templateHash: hash }));
-    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
+    expect((await defaultLocationRow(t, accountId))!.qualified).toBe(false);
     const res = await verifyL4Edge(t, spare);
     expect(res).toMatchObject({ accountTrusted: true, accountTrustReason: null });
-    const account = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    const account = (await defaultLocationRow(t, accountId))!;
     expect(account.qualified).toBe(true);
     expect(account.qualification).toMatchObject({
       by: 'admin',
@@ -391,6 +391,7 @@ describe('account trust', () => {
       name: 'acct-a',
       provider: 'gcore',
       qualified: true,
+      placeKey: '22',
       edgeId: spare,
       endpointEvidence: true,
     });
@@ -429,7 +430,7 @@ describe('account trust', () => {
       (await t.query(internal.edges.get, { id: adopted.edgeId as Id<'edges'> }))!.verification
         ?.rung,
     ).toBe('verified');
-    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
+    expect((await defaultLocationRow(t, accountId))!.qualified).toBe(false);
     // A template-matching edge, but the credentials changed AFTER the last test.
     const next = await adoptL4Edge(t, relayId, listenerId, {
       ipv4: '198.51.100.3',
@@ -447,7 +448,7 @@ describe('account trust', () => {
       accountTrusted: false,
       accountTrustReason: 'tested_before_credential_change',
     });
-    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
+    expect((await defaultLocationRow(t, accountId))!.qualified).toBe(false);
     // A passing test after the change, then a retest of the endpoint (the record
     // is re-stamped; the binding is unchanged) trusts the account.
     await t.run(async (ctx) => {
@@ -455,7 +456,7 @@ describe('account trust', () => {
       await ctx.db.patch(accountId, { lastTestOkAt: acct.credentialsChangedAt! + 1 });
     });
     expect(await verifyL4Edge(t, edge)).toMatchObject({ accountTrusted: true });
-    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualification).toMatchObject({
+    expect((await defaultLocationRow(t, accountId))!.qualification).toMatchObject({
       by: 'admin',
       evidence: { edgeId: edge },
     });
@@ -467,7 +468,7 @@ describe('account trust', () => {
       id: accountId,
       qualified: false,
     });
-    let account = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    let account = (await defaultLocationRow(t, accountId))!;
     expect(account).toMatchObject({ qualified: false, autoQualifyHold: true });
     const { edgeId } = await adoptL4Edge(t, relayId, listenerId, {
       ipv4: SPARE,
@@ -475,13 +476,13 @@ describe('account trust', () => {
       verified: false,
     });
     expect((await verifyL4Edge(t, edgeId as Id<'edges'>)).accountTrusted).toBe(false);
-    account = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    account = (await defaultLocationRow(t, accountId))!;
     expect(account.qualified).toBe(false);
     await t.mutation(internal.edgeProviderAccounts.setQualified, {
       id: accountId,
       qualified: true,
     });
-    account = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    account = (await defaultLocationRow(t, accountId))!;
     expect(account.qualified).toBe(true);
     expect(account.autoQualifyHold).toBeUndefined();
     expect(account.qualification).toMatchObject({ by: 'admin' });
@@ -565,7 +566,7 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
       accountId,
     });
     expect(r).toEqual({ qualified: true, code: null });
-    const account = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    const account = (await defaultLocationRow(t, accountId))!;
     expect(account.qualified).toBe(true);
     expect(account.qualifiedTemplateHash).toBe(template.hash);
     expect(account.qualification).toMatchObject({
@@ -633,7 +634,7 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
       evaluated: 1,
       qualified: 1,
     });
-    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualification?.by).toBe('auto');
+    expect((await defaultLocationRow(t, accountId))!.qualification?.by).toBe('auto');
   });
 
   test('L4 accounts are never auto-trusted, whatever their edges carry', async () => {
@@ -651,7 +652,7 @@ describe('L7 auto-trust (cases 7 and 13)', () => {
       evaluated: 0,
       qualified: 0,
     });
-    expect((await t.run((ctx) => ctx.db.get(accountId)))!.qualified).toBe(false);
+    expect((await defaultLocationRow(t, accountId))!.qualified).toBe(false);
   });
 });
 

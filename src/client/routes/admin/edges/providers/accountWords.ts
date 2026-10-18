@@ -87,3 +87,41 @@ export function settingRows(
 
 export const inventoryOwner = (r: { unowned?: boolean | undefined }): 'fcp' | 'foreign' =>
   r.unowned === true ? 'foreign' : 'fcp';
+
+interface LocationTrustLike {
+  qualified: boolean;
+  autoQualifyHold: boolean;
+  qualification: { by: 'admin' | 'auto'; at: string; edgeId: string | null } | null;
+}
+
+/** A location's trust in words: the badge and one line on how it was taken. */
+export function locationTrustWords(
+  l: LocationTrustLike,
+  now: number = Date.now(),
+): { label: string; tone: Tone; detail: string } {
+  if (l.qualified && l.qualification) {
+    const when = relativeTime(l.qualification.at, now);
+    return {
+      label: 'Trusted',
+      tone: 'success',
+      detail:
+        l.qualification.by === 'auto'
+          ? `Trusted automatically, checked with a real session ${when}.`
+          : l.qualification.edgeId
+            ? `Tried with a real session by you ${when}.`
+            : `Trusted by your override ${when}.`,
+    };
+  }
+  if (l.qualified) return { label: 'Trusted', tone: 'success', detail: 'Trusted.' };
+  if (l.autoQualifyHold)
+    return {
+      label: 'Not trusted',
+      tone: 'warning',
+      detail: 'Trust removed by hand: only an override trusts it again.',
+    };
+  return {
+    label: 'Not trusted yet',
+    tone: 'muted',
+    detail: 'Its first tested address trusts it.',
+  };
+}

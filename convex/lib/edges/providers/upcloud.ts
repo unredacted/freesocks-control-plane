@@ -470,15 +470,21 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
       })),
       up(cfg, 'inventory', 'GET', `/load-balancer/plans`, Plans).catch(() => ({ plans: [] })),
     ]);
+    // The listings cover the whole account; an inventory is one location's
+    // (its zone), so a resource of another zone belongs to another location.
+    const inZone = (zone: string | null | undefined) => !cfg.zone || !zone || zone === cfg.zone;
     return {
-      loadBalancers: lbs.map((l) => ({
-        id: l.uuid,
-        name: l.name ?? l.uuid,
-        status: l.operational_state ?? undefined,
-        addresses: { v4: nodePublicV4(l) },
-        createdAt: l.created_at ?? undefined,
-      })),
+      loadBalancers: lbs
+        .filter((l) => inZone(l.zone))
+        .map((l) => ({
+          id: l.uuid,
+          name: l.name ?? l.uuid,
+          status: l.operational_state ?? undefined,
+          addresses: { v4: nodePublicV4(l) },
+          createdAt: l.created_at ?? undefined,
+        })),
       ips: ips.ip_addresses.ip_address
+        .filter((ip) => inZone(ip.zone))
         .filter((ip) => (ip.floating ?? '').toLowerCase() === 'yes')
         .map((ip) => ({ id: ip.address, address: ip.address, attachedTo: ip.server ?? null })),
       flavors: plans.plans.map((p) => ({ id: p.name, label: p.name })),

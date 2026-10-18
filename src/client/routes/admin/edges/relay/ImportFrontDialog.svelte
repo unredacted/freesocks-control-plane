@@ -63,6 +63,7 @@
   let listenerId = $state('');
   let source = $state<'account' | 'address'>('account');
   let accountId = $state('');
+  let locationChoice = $state('');
   let resourceId = $state('');
   let hostname = $state('');
   let ipv4 = $state('');
@@ -80,6 +81,7 @@
       tried = false;
       source = accounts.length > 0 ? 'account' : 'address';
       accountId = '';
+      locationChoice = '';
       resourceId = '';
       hostname = '';
       ipv4 = '';
@@ -91,8 +93,15 @@
 
   const listener = $derived(usable.find((l) => l.id === listenerId) ?? null);
   const account = $derived(accounts.find((a) => a.id === accountId) ?? null);
-  const inventoryQ = providerInventoryQuery(() =>
-    open && source === 'account' && accountId ? accountId : null,
+  // Where the resource lives: an inventory is per location (its region).
+  const locations = $derived(account?.locations ?? []);
+  const locationId = $derived(
+    locationChoice || locations.find((l) => l.isDefault)?.id || locations[0]?.id || '',
+  );
+  const location = $derived(locations.find((l) => l.id === locationId) ?? null);
+  const inventoryQ = providerInventoryQuery(
+    () => (open && source === 'account' && accountId ? accountId : null),
+    () => locationId || null,
   );
   const resources = $derived(
     [...(inventoryQ.data?.inventory?.loadBalancers ?? [])].sort(
@@ -128,7 +137,7 @@
   const valid = $derived(issues.length === 0);
 
   const refresh = createMutation(() => ({
-    mutationFn: () => refreshProviderInventory(accountId),
+    mutationFn: () => refreshProviderInventory(accountId, locationId || null),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: edgeKeys.providerInventory(accountId) });
       toast.success('Inventory refreshed');
@@ -142,6 +151,7 @@
       const body: AdoptEdgeBody = { listenerId, ...(publish ? { publish: true } : {}) };
       if (source === 'account') {
         body.accountId = accountId;
+        if (locationId) body.locationId = locationId;
         body.resourceId = resourceId;
       }
       if (hostname.trim()) body.hostname = hostname.trim().toLowerCase();
@@ -260,6 +270,7 @@
               value={accountId}
               onValueChange={(v) => {
                 accountId = v;
+                locationChoice = '';
                 resourceId = '';
               }}
             >
@@ -275,6 +286,31 @@
               </Select.Content>
             </Select.Root>
           </div>
+          {#if locations.length > 1}
+            <div class="space-y-1.5">
+              <Label>Location</Label>
+              <Select.Root
+                type="single"
+                value={locationId}
+                onValueChange={(v) => {
+                  locationChoice = v;
+                  resourceId = '';
+                }}
+              >
+                <Select.Trigger class="w-full"
+                  >{location?.label ?? 'Choose a location'}</Select.Trigger
+                >
+                <Select.Content>
+                  {#each locations as l (l.id)}
+                    <Select.Item value={l.id}>{l.label}</Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+              <p class="text-xs text-muted-foreground">
+                Where the resource lives: FCP acts on it there, including when it destroys it.
+              </p>
+            </div>
+          {/if}
           <div class="space-y-1.5">
             <div class="flex items-end justify-between gap-2">
               <Label>Resource</Label>

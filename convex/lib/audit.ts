@@ -324,12 +324,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.provider_account.update': ['name', 'provider'],
   'edge.provider_account.delete': ['name', 'provider'],
   'edge.provider_account.upsert': ['name', 'provider', 'created'],
+  // Trust is per location: `placeKey` names it (the provider's region id).
   'edge.provider_account.qualified': [
     'name',
     'provider',
     'qualified',
     'edgeId',
     'endpointEvidence',
+    'placeKey',
   ],
   // The L7 auto-trust rule (lib/edges/autoQualify.ts): ids only, never the endpoint.
   'edge.provider_account.auto_qualified': [
@@ -338,7 +340,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'qualified',
     'edgeId',
     'endpointEvidence',
+    'placeKey',
   ],
+  // An account's locations (docs/edges.md § "Provider accounts and locations").
+  'edge.location.created': ['name', 'provider', 'placeKey'],
+  'edge.location.updated': ['name', 'provider', 'placeKey', 'enabled'],
+  'edge.location.removed': ['name', 'provider', 'placeKey'],
+  // The one-time move of accounts' fixed locations into locations: counts only.
+  'edge.locations.migrated': ['accounts', 'edges', 'runs', 'reviews', 'relays'],
   // An operator confirmed an L4 endpoint (lib/edges/verification.ts): never the address.
   'edge.verified': ['relaySlug', 'edgeId', 'listenerKey', 'method'],
   // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
