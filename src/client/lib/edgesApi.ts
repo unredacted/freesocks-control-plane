@@ -981,6 +981,10 @@ export const edgeDetailQuery = (edgeId: () => string | null) =>
     refetchInterval: (q) => liveInterval(!!q.state.data && edgeInFlight([q.state.data.edge])),
   }));
 
+/**
+ * The live view alone. The edge drawer does not use it: it reads the snapshot
+ * from `edgeDetailQuery` (one cache, one poller; `setEdgeLiveSnapshot`).
+ */
 export const edgeLiveQuery = (edgeId: () => string | null) =>
   createQuery(() => ({
     queryKey: edgeKeys.edgeLive(edgeId() ?? ''),
@@ -1068,3 +1072,15 @@ export const templateValidateQuery = (body: () => ValidateTemplateBody | null) =
       retry: false,
     };
   });
+
+/**
+ * A "Refresh live" result goes into the edge's detail, the one place the
+ * drawer reads its live snapshot from, so a later detail poll supersedes it.
+ */
+export function setEdgeLiveSnapshot(
+  qc: QueryClient,
+  edgeId: string,
+  live: EdgeDetail['live'],
+): void {
+  qc.setQueryData<EdgeDetail>(edgeKeys.edgeDetail(edgeId), (old) => (old ? { ...old, live } : old));
+}

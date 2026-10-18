@@ -1,10 +1,12 @@
-import { QueryClient } from '@tanstack/query-core';
+import { QueryClient, QueryObserver, type QueryKey } from '@tanstack/query-core';
 import { describe, expect, it, vi } from 'vitest';
 import { noteOrigins, originDependent } from './edgesLive';
 
-// edgesApi's wrappers need the Svelte adapter; its key tree does not.
+// edgesApi's wrappers need the Svelte adapter; its key tree and helpers do not.
 vi.mock('@tanstack/svelte-query', () => ({ createQuery: () => ({}) }));
-const { edgeKeys } = await import('./edgesApi');
+const { edgeKeys, setEdgeLiveSnapshot } = await import('./edgesApi');
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
 
 /** A cache holding one of every key an origin's change could touch. */
 function seeded() {
@@ -119,5 +121,97 @@ describe('noteOrigins', () => {
     // b has never seen node-a: a first sighting there.
     expect(noteOrigins(b, 'summary', [['node-a', '2']], 10_000)).toEqual([]);
     expect(noteOrigins(a, 'summary', [['node-a', '2']], 10_000)).toEqual(['node-a']);
+  });
+});
+
+describe('noteOrigins with mounted queries', () => {
+  it('a fleet read that moved several origins fetches each shared query once', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const calls: Record<string, number> = {};
+    // Mounted, holding data, never settling: a second invalidation of such a
+    // query cancels and restarts its fetch, so every extra call would show.
+    const mount = (name: string, queryKey: QueryKey) => {
+      qc.setQueryData(queryKey, { seeded: true });
+      const observer = new QueryObserver(qc, {
+        queryKey,
+        queryFn: () => {
+          calls[name] = (calls[name] ?? 0) + 1;
+          return new Promise<never>(() => {});
+        },
+        staleTime: Infinity,
+      });
+      return observer.subscribe(() => {});
+    };
+    const slugs = ['node-a', 'node-b', 'node-c'];
+    const unmount = [
+      mount('summary', edgeKeys.summary),
+      mount('drawer', edgeKeys.edgeDetail('e1')),
+      mount('config', edgeKeys.config),
+      ...slugs.map((s) => mount(`edges:${s}`, edgeKeys.relayEdges(s))),
+    ];
+    noteOrigins(
+      qc,
+      'attention',
+      slugs.map((s) => [s, '1'] as const),
+      0,
+    );
+    expect(
+      noteOrigins(
+        qc,
+        'attention',
+        slugs.map((s) => [s, '2'] as const),
+        15_000,
+      ),
+    ).toEqual(slugs);
+    await tick();
+    expect(calls).toEqual({
+      summary: 1,
+      drawer: 1,
+      'edges:node-a': 1,
+      'edges:node-b': 1,
+      'edges:node-c': 1,
+    });
+    for (const u of unmount) u();
+    qc.clear();
+  });
+});
+
+describe('the edge drawer live snapshot', () => {
+  const detail = (snapshot: string | null) =>
+    ({
+      edge: { id: 'e1' },
+      live: snapshot === null ? null : { summary: { status: snapshot } },
+      probes: [],
+    }) as never;
+  const statusOf = (data: unknown) =>
+    (data as { live: { summary: { status: string } } | null }).live?.summary.status ?? null;
+
+  it('lives in the detail: a refresh shows at once, a newer detail poll supersedes it', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const key = edgeKeys.edgeDetail('e1');
+    const polls = ['A', 'C'];
+    const observer = new QueryObserver(qc, {
+      queryKey: key,
+      queryFn: async () => detail(polls.shift() ?? null),
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    await tick();
+    expect(statusOf(observer.getCurrentResult().data)).toBe('A');
+    // "Refresh live" returned snapshot B: it replaces A in the same cache.
+    setEdgeLiveSnapshot(qc, 'e1', { summary: { status: 'B' } } as never);
+    expect(statusOf(observer.getCurrentResult().data)).toBe('B');
+    // Another admin refreshed it again; the next detail poll carries C and wins.
+    await qc.invalidateQueries({ queryKey: key });
+    expect(statusOf(observer.getCurrentResult().data)).toBe('C');
+    // No second cache for the drawer to fall back on.
+    expect(qc.getQueryData(edgeKeys.edgeLive('e1'))).toBeUndefined();
+    unsubscribe();
+    qc.clear();
+  });
+
+  it('leaves an edge whose detail was never read alone', () => {
+    const qc = new QueryClient();
+    setEdgeLiveSnapshot(qc, 'e2', null);
+    expect(qc.getQueryData(edgeKeys.edgeDetail('e2'))).toBeUndefined();
   });
 });

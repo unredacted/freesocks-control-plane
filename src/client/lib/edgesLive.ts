@@ -49,6 +49,11 @@ const stampBooks = new WeakMap<QueryClient, OriginStamps>();
 /**
  * Record one source's stamps per origin and invalidate the lists of every
  * origin whose stamp moved (debounced per origin). Returns those origins.
+ *
+ * One invalidation for all of them: the fleet lists and the edge drawers are
+ * shared, and a second invalidation of a query that has data cancels and
+ * restarts its fetch (the request itself is not aborted), so one call per
+ * origin would read the fleet once per changed origin.
  */
 export function noteOrigins(
   qc: QueryClient,
@@ -59,7 +64,9 @@ export function noteOrigins(
   let book = stampBooks.get(qc);
   if (!book) stampBooks.set(qc, (book = new OriginStamps()));
   const changed = book.observe(source, stamps, now);
-  for (const slug of changed)
-    void qc.invalidateQueries({ predicate: (q) => originDependent(q.queryKey, slug, source) });
+  if (changed.length > 0)
+    void qc.invalidateQueries({
+      predicate: (q) => changed.some((slug) => originDependent(q.queryKey, slug, source)),
+    });
   return changed;
 }
