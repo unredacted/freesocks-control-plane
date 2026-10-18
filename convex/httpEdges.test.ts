@@ -52,8 +52,10 @@ import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import type { AdoptionInspection } from './lib/edges/providers/types';
 import { deliveryBindingOf, relayBySlug } from './lib/edges/testing/reads';
 import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
+import { scheduledWork } from './lib/edges/testing/scheduled';
 
 const modules = import.meta.glob('./**/*.*s');
+const scheduled = scheduledWork();
 const ADMIN_SIGN_KEY = 'test-admin-sign';
 
 beforeEach(() => {
@@ -62,7 +64,8 @@ beforeEach(() => {
   vi.stubEnv('IP_HASH_SALT', 'test-salt');
   vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
 });
-afterEach(() => {
+afterEach(async () => {
+  await scheduled.end();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -111,7 +114,7 @@ async function token(
 }
 
 async function seed() {
-  const t = convexTest(schema, modules);
+  const t = scheduled.track(convexTest(schema, modules));
   const serverId = await t.run((ctx) =>
     ctx.db.insert('backendServers', {
       backend: 'remnawave',

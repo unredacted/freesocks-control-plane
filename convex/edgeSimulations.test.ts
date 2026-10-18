@@ -21,8 +21,10 @@ import {
   realityListener,
   registerRelay,
 } from './lib/edges/testing/fixtures';
+import { scheduledWork } from './lib/edges/testing/scheduled';
 
 const modules = import.meta.glob('./**/*.*s');
+const scheduled = scheduledWork();
 const ADMIN_SIGN_KEY = 'test-admin-sign';
 
 beforeEach(() => {
@@ -31,7 +33,8 @@ beforeEach(() => {
   vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', ADMIN_SIGN_KEY);
   vi.stubEnv('EDGE_SIMULATOR_ALLOW', 'simulate-blocks');
 });
-afterEach(() => {
+afterEach(async () => {
+  await scheduled.end();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -43,7 +46,7 @@ const SPARE = '198.51.100.3';
 
 /** Two published L4 edges and (optionally) a tested spare; automation and probes on. */
 async function seed(opts: { spare?: boolean; automation?: boolean } = {}) {
-  const t = convexTest(schema, modules);
+  const t = scheduled.track(convexTest(schema, modules));
   await insertPanelServer(t);
   const { relayId, listenerId } = await registerRelay(t, {
     listeners: [realityListener({ tlsNames: ['a.example'] })],
