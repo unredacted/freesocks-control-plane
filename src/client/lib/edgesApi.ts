@@ -15,9 +15,13 @@
  *   3. `*Query()` wrappers around `createQuery` in the accessor-function style of
  *      `queries.ts` (`(relaySlug: () => string | null)`), with the cadences the
  *      section relies on: summary 30 s (3 s while `counts.rotating > 0`),
- *      attention 15 s, setup-status 30 s (5 s while a step is `ready`), origin
- *      10 s while a rotation runs, rotation detail 2 s until terminal, probe
- *      matrix 30 s.
+ *      attention 15 s, setup-status 30 s (5 s while a step is `ready`), the
+ *      origin and its lists 30 s (4 s while something runs on it; never off,
+ *      lib/livePoll.ts), rotation detail 2 s until terminal, probe matrix 30 s.
+ *      The origin lookup, the summary and attention also note each origin's
+ *      stamp; a stamp that moved invalidates that origin's lists
+ *      (lib/edgesLive.ts `noteOrigins`), so a rotation shorter than one poll
+ *      still shows within one summary read.
  *   Plus `invalidateOverview / invalidateRelay / invalidateEdge /
  *   invalidateProviders / invalidateConfig (qc, …)`.
  *
@@ -27,6 +31,8 @@
 import { createQuery, type QueryClient } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
+import { noteOrigins } from './edgesLive';
+import { edgeInFlight, liveInterval, originBusy, originStamp, originStatusStamp } from './livePoll';
 import {
   AdoptHostRequest,
   AdoptHostResponse,
@@ -731,20 +737,36 @@ export function invalidateProbes(qc: QueryClient): void {
 
 // --- query wrappers ------------------------------------------------------------------------------
 
-/** Fleet summary: 30 s, 3 s while any rotation runs. */
+/** Fleet summary: 30 s, 3 s while any rotation runs. Notes every origin's stamp. */
 export const edgeSummaryQuery = () =>
   createQuery(() => ({
     queryKey: edgeKeys.summary,
-    queryFn: fetchEdgeSummary,
+    queryFn: async ({ client }) => {
+      const summary = await fetchEdgeSummary();
+      noteOrigins(
+        client,
+        'summary',
+        summary.relays.map((r) => [r.relay.slug, originStamp(r.relay)] as const),
+      );
+      return summary;
+    },
     staleTime: 10_000,
     refetchInterval: (q) => ((q.state.data?.counts.rotating ?? 0) > 0 ? 3_000 : 30_000),
   }));
 
-/** Ranked attention items: 15 s. */
+/** Ranked attention items: 15 s. Notes every origin's status stamp. */
 export const attentionQuery = () =>
   createQuery(() => ({
     queryKey: edgeKeys.attention,
-    queryFn: fetchAttention,
+    queryFn: async ({ client }) => {
+      const attention = await fetchAttention();
+      noteOrigins(
+        client,
+        'attention',
+        attention.origins.map((o) => [o.relaySlug, originStatusStamp(o.status)] as const),
+      );
+      return attention;
+    },
     staleTime: 10_000,
     refetchInterval: 15_000,
   }));
@@ -843,14 +865,21 @@ export const templatesQuery = () =>
     staleTime: 60_000,
   }));
 
-/** One origin by slug: 10 s while a rotation runs on it, 30 s otherwise. 404 = unknown slug. */
+/**
+ * One origin by slug: 30 s, 4 s while a rotation, a restore or a delete runs on
+ * it. Notes the origin's stamp. 404 = unknown slug.
+ */
 export const relayLookupQuery = (relaySlug: () => string | null) =>
   createQuery(() => ({
     queryKey: edgeKeys.relayLookup(relaySlug() ?? ''),
-    queryFn: () => lookupRelay(relaySlug()!),
+    queryFn: async ({ client }) => {
+      const origin = await lookupRelay(relaySlug()!);
+      noteOrigins(client, 'lookup', [[origin.slug, originStamp(origin)]]);
+      return origin;
+    },
     enabled: relaySlug() !== null,
     staleTime: 5_000,
-    refetchInterval: (q) => (q.state.data?.activeRotationId ? 10_000 : 30_000),
+    refetchInterval: (q) => liveInterval(!!q.state.data && originBusy(q.state.data)),
   }));
 
 export const nodeCandidatesQuery = (backendServerId: () => string | null) =>
@@ -864,12 +893,19 @@ export const nodeCandidatesQuery = (backendServerId: () => string | null) =>
 /**
  * Per-origin sub-resources. Keyed by SLUG (the page's route param) but fetched
  * by ID (the server's path param): pass both accessors; the query waits until
- * the id is known (from `relayLookupQuery`). `rotating` (optional) speeds the
- * poll to 10 s while a rotation runs.
+ * the id is known (from `relayLookupQuery`). Each polls every 30 s; `rotating`
+ * (optional: a rotation, a setup run or a restore runs on the origin) speeds
+ * that to 4 s. `poll: false` is for a dialog that reads once (a page's change
+ * detection still refreshes it while it is mounted).
  */
-type RelayRef = { slug: () => string | null; id: () => string | null; rotating?: () => boolean };
+type RelayRef = {
+  slug: () => string | null;
+  id: () => string | null;
+  rotating?: () => boolean;
+  poll?: boolean;
+};
 const relayEnabled = (r: RelayRef) => r.slug() !== null && r.id() !== null;
-const relayInterval = (r: RelayRef) => (r.rotating?.() ? 10_000 : false);
+const relayInterval = (r: RelayRef) => (r.poll === false ? false : liveInterval(!!r.rotating?.()));
 
 export const relaySimulationsQuery = (r: RelayRef) =>
   createQuery(() => ({
@@ -877,7 +913,7 @@ export const relaySimulationsQuery = (r: RelayRef) =>
     queryFn: () => fetchRelaySimulations(r.id()!),
     enabled: relayEnabled(r),
     staleTime: 10_000,
-    refetchInterval: 30_000,
+    refetchInterval: relayInterval(r),
   }));
 
 export const relayListenersQuery = (r: RelayRef) =>
@@ -913,6 +949,7 @@ export const relayQuarantineQuery = (r: RelayRef) =>
     queryFn: () => fetchRelayQuarantine(r.id()!),
     enabled: relayEnabled(r),
     staleTime: 5_000,
+    refetchInterval: relayInterval(r),
   }));
 
 export const relayProvidersQuery = (r: RelayRef) =>
@@ -930,7 +967,8 @@ export const relayEdgesQuery = (r: RelayRef) =>
     queryFn: () => fetchRelayEdges(r.id()!),
     enabled: relayEnabled(r),
     staleTime: 5_000,
-    refetchInterval: relayInterval(r),
+    // Faster while an edge is being made, checked or destroyed, too.
+    refetchInterval: (q) => liveInterval(!!r.rotating?.() || edgeInFlight(q.state.data ?? [])),
   }));
 
 export const edgeDetailQuery = (edgeId: () => string | null) =>
@@ -939,6 +977,8 @@ export const edgeDetailQuery = (edgeId: () => string | null) =>
     queryFn: () => fetchEdgeDetail(edgeId()!),
     enabled: edgeId() !== null,
     staleTime: 5_000,
+    // The detail carries the live view too: the drawer's one poller.
+    refetchInterval: (q) => liveInterval(!!q.state.data && edgeInFlight([q.state.data.edge])),
   }));
 
 export const edgeLiveQuery = (edgeId: () => string | null) =>

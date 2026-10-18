@@ -64,10 +64,13 @@
     accountUsageQuery,
     billingOrderQuery,
     configQuery,
+    connectionRegionQuery,
     nodeStatusQuery,
     telemetryContextQuery,
     queryKeys,
   } from '../lib/queries';
+  import { ownCountryOf } from '../lib/countries';
+  import { sealingEnabled } from '../lib/hpke';
   import { router } from '../stores/router.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -178,6 +181,14 @@
   // Consent-block context (which fields + the CDN's editable prefill): fetched
   // only while one of the two dialogs that render it is open.
   const telemetryContext = telemetryContextQuery(() => switchServerOpen || reportIssueOpen);
+  // The member's own answer to "Where are you connecting from?": both consent
+  // blocks prefill it, shown and editable like every value there (never the
+  // guess, never "Somewhere else"; docs/privacy.md §7). The same query as the
+  // ConnectionRegion card, so no second read while that card holds it.
+  const connectionRegion = connectionRegionQuery(
+    () => sealingEnabled() && (switchServerOpen || reportIssueOpen),
+  );
+  const ownCountry = $derived(ownCountryOf(connectionRegion.data));
   // Which backend is the user about to switch TO when they confirm. Computed
   // at button-click time from `switchTargets` so the modal can render the
   // right "from X to Y" copy even after the mutation lands and the account
@@ -1461,6 +1472,7 @@
         deviceCount={data.subscription.devices.length}
         bind:reason={switchServerReason}
         telemetryContext={telemetryContext.data}
+        {ownCountry}
         onCancel={() => {
           switchServerOpen = false;
           switchServerReason = null;
@@ -1474,6 +1486,7 @@
         bind:connection={reportIssueConnection}
         connections={nodeStatus.data?.node?.relay?.connections ?? []}
         telemetryContext={telemetryContext.data}
+        {ownCountry}
         supportEmail={config.data?.site?.supportEmail}
         supportId={data.user.supportId}
         onCancel={() => {

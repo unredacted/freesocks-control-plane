@@ -29,6 +29,15 @@ API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
 How to take one node from the role run to a member connection is the runbook
 "Deploy a fronted node" in `docs/servers.md`.
 
+The pages that show live state keep themselves current while the tab is visible
+(`src/client/lib/livePoll.ts`): an origin and its lists every 30 s, every 4 s while something runs
+on it (a rotation, a setup run, an edge being made or destroyed, a restore). The origin lookup,
+the fleet summary and the attention list each remember a stamp per origin (epoch, running and
+last rotation, published and spare edges, pause, restore; the status and counts for attention)
+and refresh that origin's lists as soon as one moves, so an automatic replacement shorter than a
+poll still shows within one summary read. Forms, catalogs and test links never poll. The node
+page and the Edges home say "Updated N s ago" with a button that reads them again now.
+
 ## Supported matrix
 
 What a member's client can reach through an edge, per protocol, stream transport, security,

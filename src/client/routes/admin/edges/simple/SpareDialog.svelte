@@ -66,7 +66,7 @@
   const setQ = relayProvidersQuery({
     slug: () => relay.slug,
     id: () => relay.id,
-    rotating: () => false,
+    poll: false,
   });
   const picks = $derived((setQ.data?.picks ?? []).filter((p) => p.usable));
   const spareCheck = (listenerKey?: string, locationId?: string) =>

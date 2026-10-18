@@ -26,7 +26,7 @@
   import { router } from '@client/stores/router.svelte';
   import { adminConnectionModesQuery } from '@client/lib/queries';
   import {
-    automationOn,
+    automationState,
     hideButton,
     moreDirectWords,
     needButtons,
@@ -176,7 +176,8 @@
   const modes = adminConnectionModesQuery();
   const config = edgeConfigQuery();
   const family = $derived(need?.detail ?? run?.plan.familiesDisabled[0] ?? null);
-  const automation = $derived(config.data ? automationOn(config.data.config) : null);
+  // Replacement on its own (the master switch and automatic rotation); spares kept by hand do not count against it.
+  const automation = $derived(config.data ? automationState(config.data.config).replaces : null);
 
   function perform(action: NeedAction) {
     switch (action) {

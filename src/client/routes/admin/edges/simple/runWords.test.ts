@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { SETUP_RUN_NEEDS } from '../../../../../shared/contracts/edgeCodes';
 import {
+  automationNote,
   automationOn,
+  automationState,
   hideButton,
   moreDirectWords,
   needButtons,
+  nodeAutomationWords,
   planWords,
   setWords,
   providerPickWords,
@@ -47,6 +50,78 @@ describe('automationOn', () => {
     expect(automationOn(on)).toBe(true);
     expect(automationOn({ ...on, probe: { enabled: false } })).toBe(false);
     expect(automationOn({ ...on, autoRotate: false })).toBe(false);
+  });
+});
+
+describe('automation state and words', () => {
+  const on = {
+    enabled: true,
+    autoRotate: true,
+    autoProvisionToDesired: true,
+    probe: { enabled: true },
+  };
+  // The walk's set-up (docs/beta-deploy.md "Walking automatic rotation"): spares by hand.
+  const walk = { ...on, autoProvisionToDesired: false };
+  const node = { autoRotate: true, setupOwned: false };
+  const noEmDash = (s: string | null) => expect(s ?? '').not.toContain('—');
+
+  it('replacement is the master switch and automatic rotation, not spares or probes', () => {
+    expect(automationState(on)).toEqual({ replaces: true, makesSpares: true, probes: true });
+    expect(automationState(walk)).toEqual({ replaces: true, makesSpares: false, probes: true });
+    expect(automationState({ ...on, enabled: false })).toEqual({
+      replaces: false,
+      makesSpares: false,
+      probes: true,
+    });
+    expect(automationState({ ...on, autoRotate: false }).replaces).toBe(false);
+  });
+
+  it('the Edges home says what is left to the operator under an ON switch', () => {
+    expect(automationNote(automationState(on))).toBeNull();
+    expect(automationNote(automationState({ ...on, enabled: false }))).toBeNull();
+    expect(automationNote(automationState(walk))).toMatch(/does not make new spares/);
+    expect(automationNote(automationState({ ...on, probe: { enabled: false } }))).toMatch(
+      /probes are off/,
+    );
+    const both = automationNote(automationState({ ...walk, probe: { enabled: false } }));
+    expect(both).toMatch(/spares/);
+    expect(both).toMatch(/probes/);
+    for (const c of [walk, { ...on, probe: { enabled: false } }])
+      noEmDash(automationNote(automationState(c)));
+  });
+
+  it('the node card never calls automation off while the master switch is on', () => {
+    // The beta walk: everything on except new spares. Not "off".
+    const w = nodeAutomationWords(walk, node);
+    expect(w.line).toMatch(/switches members to a tested spare on its own/);
+    expect(w.line).not.toMatch(/off/i);
+    expect(w.spares).toMatch(/does not make new spares on its own/);
+    expect(nodeAutomationWords(on, node)).toEqual({
+      line: 'When an address looks blocked, FCP switches members to a tested spare on its own.',
+      spares: null,
+    });
+  });
+
+  it('names the gate that actually holds this node', () => {
+    expect(nodeAutomationWords({ ...on, enabled: false }, node).line).toMatch(
+      /Edge automation is off for every node/,
+    );
+    expect(nodeAutomationWords({ ...on, autoRotate: false }, node).line).toMatch(
+      /Automatic rotation is off for every node/,
+    );
+    expect(nodeAutomationWords(on, { ...node, setupOwned: true }).line).toMatch(/setup run/);
+    expect(nodeAutomationWords(on, { ...node, autoRotate: false }).line).toMatch(
+      /Off for this node/,
+    );
+    // Spares only matter where replacement can act.
+    expect(nodeAutomationWords({ ...walk, enabled: false }, node).spares).toBeNull();
+    expect(nodeAutomationWords(walk, { ...node, autoRotate: false }).spares).toBeNull();
+    for (const c of [on, walk, { ...on, enabled: false }, { ...on, autoRotate: false }])
+      for (const n of [node, { ...node, autoRotate: false }, { ...node, setupOwned: true }]) {
+        const w = nodeAutomationWords(c, n);
+        noEmDash(w.line);
+        noEmDash(w.spares);
+      }
   });
 });
 

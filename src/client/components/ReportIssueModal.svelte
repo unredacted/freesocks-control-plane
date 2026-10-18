@@ -26,6 +26,8 @@
     /** The member's answer; null = not answered (the question is optional). */
     connection?: 'primary' | 'backup' | 'unsure' | null;
     telemetryContext: TelemetryContextResponse | undefined;
+    /** The member's chosen country (ConnectionRegion), prefilled in the consent block. */
+    ownCountry?: string | null;
     /** Operator support address from publicConfig.site; empty/null = no pointer. */
     supportEmail?: string | null;
     /** The member's NON-SECRET support ID, prefilled into the mailto subject. */
@@ -41,6 +43,7 @@
     connections = [],
     connection = $bindable(null),
     telemetryContext,
+    ownCountry = null,
     supportEmail = null,
     supportId = null,
     onCancel,
@@ -142,7 +145,7 @@
       </p>
     {/if}
 
-    <TelemetryConsent bind:this={consent} context={telemetryContext} {busy} />
+    <TelemetryConsent bind:this={consent} context={telemetryContext} {ownCountry} {busy} />
 
     <p class="text-xs text-muted-foreground">{t('report.nothingChanges')}</p>
 

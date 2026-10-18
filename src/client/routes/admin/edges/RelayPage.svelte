@@ -24,6 +24,7 @@
     relayListenersQuery,
     relayLookupQuery,
   } from '@client/lib/edgesApi';
+  import { originBusy } from '@client/lib/livePoll';
   import { searchParam, setSearchParams } from '@client/lib/urlState.svelte';
   import type { EdgeLayer } from '@shared/contracts/edges';
   import AdminListState from '../AdminListState.svelte';
@@ -54,7 +55,7 @@
   const ref = {
     slug: () => slug,
     id: () => relay?.id ?? null,
-    rotating: () => !!relay?.activeRotationId,
+    rotating: () => !!relay && originBusy(relay),
   };
   const listenersQ = relayListenersQuery(ref);
   const edgesQ = relayEdgesQuery(ref);
