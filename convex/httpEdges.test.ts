@@ -53,6 +53,7 @@ import type { AdoptionInspection } from './lib/edges/providers/types';
 import { deliveryBindingOf, relayBySlug } from './lib/edges/testing/reads';
 import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
 import { scheduledWork } from './lib/edges/testing/scheduled';
+import { refuseNetwork } from './lib/edges/testing/mockFetch';
 
 const modules = import.meta.glob('./**/*.*s');
 const scheduled = scheduledWork();
@@ -63,6 +64,10 @@ beforeEach(() => {
   vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', ADMIN_SIGN_KEY);
   vi.stubEnv('IP_HASH_SALT', 'test-salt');
   vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+  // What these routes start in the background (a new account's inventory pull,
+  // probe runs, credential tests) reaches no provider, vantage or DNS API: they
+  // fail soft, and no test here reads what they would have found.
+  refuseNetwork();
 });
 afterEach(async () => {
   await scheduled.end();
