@@ -842,7 +842,7 @@ describe('origin admin routes', () => {
     expect(preview.body).not.toContain('192.0.2.10');
     expect(preview.body).not.toContain('node-one-relay-u');
     const patched = await call('PATCH', 'config', { render: { enabled: true } });
-    expect(await patched.json()).toEqual({ changedKeys: ['render.enabled'] });
+    expect(await patched.json()).toEqual({ changedKeys: ['render.enabled'], warnings: [] });
     const preview2 = EdgeRenderPreviewResponse.parse(
       await (await call('POST', 'render/preview', { relayId, family: 'v2rayng' })).json(),
     );
@@ -1054,7 +1054,7 @@ describe('origin admin routes', () => {
     });
     expect(JSON.stringify(audit)).not.toContain('gp_SECRET');
     const junk = await call('PATCH', 'config', { nonsense: true, render: { nope: 1 } });
-    expect(await junk.json()).toEqual({ changedKeys: [] });
+    expect(await junk.json()).toEqual({ changedKeys: [], warnings: [] });
   });
 
   test('templates: GET is a pure read (no seeding); POST ensure-defaults seeds once under the write scope', async () => {

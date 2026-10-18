@@ -24,6 +24,7 @@ import {
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
 import { bumpEpoch } from './lib/edges/testing/reads';
+import { __setSubscriptionClockForTests } from './lib/subscriptionEtag';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -995,5 +996,227 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
       expect(sub.pinnedNode).toBe(NODE);
       expect(sub.subCache).toBeUndefined();
     }
+  });
+});
+
+/**
+ * Asking whether the configuration changed (docs/edges.md): the weak tag, the
+ * 304, the revalidation path that answers from a cache entry still under the
+ * current edge token, the refresh hint on an edge-rendered body, and the cap a
+ * front's proof puts on every cached copy and on the freshness a cache is told.
+ */
+describe('edgeRender: conditional requests and freshness', () => {
+  const WS_TEMPLATE = `${NODE}-relay-w`;
+  const wsBody = `vless://${UUID}@${EDGE_A}:443?encryption=none&security=tls&sni=ws.example&fp=chrome&type=ws&path=%2Fws&host=ws.example#${WS_TEMPLATE}`;
+  const FRONT_A = 'front-a.example';
+  const FRONT_B = 'front-b.example';
+
+  function stubPanelWith(body: string, headers: Record<string, string>) {
+    fetchCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        fetchCalls += 1;
+        return new Response(body, { status: 200, headers });
+      }),
+    );
+  }
+  const panelDown = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+  const getIf = (t: ReturnType<typeof convexTest>, tag: string) =>
+    t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'v2rayNG/1.9.0', 'if-none-match': tag },
+    });
+  const patchEntries = (
+    t: ReturnType<typeof convexTest>,
+    subId: Id<'subscriptions'>,
+    edit: (e: Record<string, unknown>) => void,
+  ) =>
+    t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      const entries = JSON.parse(sub.subCache!) as Array<Record<string, unknown>>;
+      for (const e of entries) edit(e);
+      await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+    });
+  const setProofExpiry = (t: ReturnType<typeof convexTest>, edgeId: Id<'edges'>, at: number) =>
+    t.run(async (ctx) => {
+      const edge = (await ctx.db.get(edgeId))!;
+      await ctx.db.patch(edgeId, {
+        frontQualification: { ...edge.frontQualification!, expiresAt: at },
+      });
+    });
+  /** The WebSocket listener behind ONE proven front (`FRONT_A`). */
+  async function seedFront() {
+    stubPanelWith(wsBody, { 'content-type': 'text/plain' });
+    const s = await seed({ listeners: [wsListener()] });
+    await s.t.run((ctx) =>
+      ctx.db.patch(s.edgeA, { layer: 'l7', addresses: { hostname: FRONT_A } }),
+    );
+    await proveFront(s.t, s.edgeA, FRONT_A);
+    return s;
+  }
+
+  afterEach(() => {
+    __setSubscriptionClockForTests(null);
+    vi.useRealTimers();
+  });
+
+  test('an edge-rendered body carries FCP’s refresh hint, not the backend’s; the hint is in the tag', async () => {
+    stubPanelWith(panelBody, { 'content-type': 'text/plain', 'profile-update-interval': '12' });
+    const { t } = await seed();
+    const res = await get(t);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('profile-update-interval')).toBe('1');
+    expect(res.headers.get('cache-control')).toBe('public, max-age=30'); // L4 only: no proof bound
+    const tag = res.headers.get('etag')!;
+    expect(tag).toMatch(/^W\/"fs1-/);
+    expect((await getIf(t, tag)).status).toBe(304);
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.updateIntervalHours', '6'));
+    const six = await getIf(t, tag);
+    expect(six.status).toBe(200);
+    expect(six.headers.get('profile-update-interval')).toBe('6');
+    expect(six.headers.get('etag')).not.toBe(tag);
+    expect(fetchCalls).toBe(1); // both answers came from the cached body
+  });
+
+  test('revalidation answers from the cache under the current token; a pool change always takes the full path', async () => {
+    stubPanel();
+    const { t, subId, relayId, listenerId, edgeA } = await seed();
+    const tag = (await get(t)).headers.get('etag')!;
+    await expireCache(t, subId); // past the 30 s cache, inside the revalidation window
+    const kept = await getIf(t, tag);
+    expect(kept.status).toBe(304);
+    expect(fetchCalls).toBe(1);
+    // Rotate: B in, A out. The token moves, so the old tag gets the new body.
+    await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      listenerId,
+      ipv4: EDGE_B,
+      publish: true,
+      verified: true,
+    });
+    await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
+    const moved = await getIf(t, tag);
+    expect(moved.status).toBe(200);
+    expect(fetchCalls).toBe(2);
+    const body = await moved.text();
+    expect(body).toContain(`@${EDGE_B}:443?`);
+    expect(body).not.toContain(`@${EDGE_A}:443?`);
+    expect(moved.headers.get('etag')).not.toBe(tag);
+    // A bare epoch bump with the same pool re-renders the same bytes: still a 304.
+    const tag2 = moved.headers.get('etag')!;
+    await bumpEpoch(t, { relayId });
+    expect((await getIf(t, tag2)).status).toBe(304);
+    expect(fetchCalls).toBe(3);
+  });
+
+  test('an edge-required refusal never carries a tag, whatever the client holds', async () => {
+    stubPanel();
+    const { t, relayId, edgeA } = await seed();
+    const tag = (await get(t)).headers.get('etag')!;
+    await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
+    for (const header of [tag, '*']) {
+      const res = await getIf(t, header);
+      expect(res.status).toBe(503);
+      expect(res.headers.get('x-fcp-delivery')).toBe('empty_pool');
+      expect(res.headers.get('etag')).toBeNull();
+    }
+  });
+
+  test('a body holding a front is never called fresh past its proof, and a 304 does not extend it', async () => {
+    const { t, subId, edgeA } = await seedFront();
+    const first = await get(t);
+    expect(first.status).toBe(200);
+    expect(first.headers.get('cache-control')).toBe('public, max-age=30, must-revalidate');
+    const proof = (await t.run((ctx) => ctx.db.get(edgeA)))!.frontQualification!;
+    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    expect(JSON.parse(sub.subCache!)[0]).toMatchObject({ v: 2, validUntil: proof.expiresAt });
+    // Five seconds of proof left: the next render says so, and so does its 304.
+    await setProofExpiry(t, edgeA, Date.now() + 5_000);
+    await expireCache(t, subId);
+    const near = await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'v2rayNG/1.9.0' },
+    });
+    expect(near.headers.get('cache-control')).toMatch(/^public, max-age=[45], must-revalidate$/);
+    const nearTag = near.headers.get('etag')!;
+    const nm = await getIf(t, nearTag);
+    expect(nm.status).toBe(304);
+    expect(nm.headers.get('cache-control')).toMatch(/^public, max-age=[0-5], must-revalidate$/);
+  });
+
+  test('once the proof lapsed, no cached copy answers: not fresh, not revalidated, not stale', async () => {
+    const { t, subId, edgeA } = await seedFront();
+    const tag = (await get(t)).headers.get('etag')!;
+    expect(fetchCalls).toBe(1);
+    // The proof lapses (no renewal ran); the cached entry knows its own limit.
+    const past = Date.now() - 1;
+    await setProofExpiry(t, edgeA, past);
+    await patchEntries(t, subId, (e) => {
+      e.validUntil = past;
+    });
+    const res = await getIf(t, tag);
+    expect(res.status).toBe(503); // the full path ran: the front is out, the pool is empty
+    expect(res.headers.get('x-fcp-delivery')).toBe('empty_pool');
+    expect(fetchCalls).toBe(2);
+    // With the backend down, the lapsed entry is no fallback either.
+    panelDown();
+    expect((await get(t)).status).toBe(502);
+  });
+
+  test('a front-holding entry cached before the format change is never served', async () => {
+    const { t, subId, edgeA } = await seedFront();
+    const tag = (await get(t)).headers.get('etag')!;
+    await setProofExpiry(t, edgeA, Date.now() - 1);
+    // What the deploy finds: an entry with no format and no validity, same token.
+    await patchEntries(t, subId, (e) => {
+      delete e.v;
+      delete e.validUntil;
+    });
+    panelDown();
+    const res = await getIf(t, tag);
+    expect(res.status).toBe(502); // neither a 200 nor a 304 came from it
+    expect(res.headers.get('etag')).toBeNull();
+  });
+
+  test('a proof that lapses between the render and the response: rendered again without that front', async () => {
+    const T0 = Date.UTC(2026, 9, 17, 12, 0, 0);
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const { t, subId, relayId, listenerId, edgeA } = await seedFront();
+    const b = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      listenerId,
+      ipv4: EDGE_B,
+      publish: true,
+      verified: true,
+    });
+    const edgeB = b.edgeId as Id<'edges'>;
+    await t.run((ctx) => ctx.db.patch(edgeB, { layer: 'l7', addresses: { hostname: FRONT_B } }));
+    await proveFront(t, edgeB, FRONT_B);
+    await setProofExpiry(t, edgeA, T0 + 60_000);
+    await setProofExpiry(t, edgeB, T0 + 2 * 3_600_000);
+    // Before: both fronts are in the body (primary and backup), bounded by A's proof.
+    const before = await (await get(t)).text();
+    expect(before).toContain(`@${FRONT_A}:443?`);
+    expect(before).toContain(`@${FRONT_B}:443?`);
+    await t.run((ctx) => ctx.db.patch(subId, { subCache: undefined }));
+    // The route's first look at the clock (right after the next render) finds
+    // two minutes gone: A's proof has lapsed meanwhile.
+    __setSubscriptionClockForTests(() => {
+      vi.setSystemTime(T0 + 120_000);
+      return Date.now();
+    });
+    const res = await get(t);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain(`@${FRONT_B}:443?`);
+    expect(body).not.toContain(FRONT_A);
+    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    expect(JSON.parse(sub.subCache!)[0]).toMatchObject({ validUntil: T0 + 2 * 3_600_000 });
+    expect(sub.lastRender).toMatchObject({ primaryEdgeId: edgeB });
   });
 });

@@ -21,6 +21,14 @@ import { classifyClient } from './lib/edges/clientFamilies';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import { relabelMemberEntries } from './lib/memberEntryNames';
 import { SUBSCRIPTION_PASSTHROUGH_HEADERS } from './lib/backends/types';
+import {
+  ifNoneMatchHits,
+  publicCacheControl,
+  SUBSCRIPTION_MAX_AGE_SECONDS,
+  subscriptionEtag,
+  subscriptionNow,
+  withinValidity,
+} from './lib/subscriptionEtag';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
@@ -244,14 +252,17 @@ function lastPathSegment(req: Request): string {
 
 // In-front cache TTL for the FCP-fronted subscription route (GET /api/v1/sub/*):
 // short, so a proxy app re-poll sees near-fresh config while bursts/re-loads are
-// absorbed and we don't hit the backend every time.
-const SUBSCRIPTION_CACHE_TTL_MS = 30_000;
+// absorbed and we don't hit the backend every time. The same span is the
+// `max-age` a shared cache gets (lib/subscriptionEtag.ts).
+const SUBSCRIPTION_CACHE_TTL_MS = SUBSCRIPTION_MAX_AGE_SECONDS * 1000;
 
 // One entry in the serialized `subscriptions.subCache` blob (a bounded per-UA
 // list — see subscriptions.writeContentCache). Keyed by UA because Remnawave
 // formats the subscription by User-Agent — we must never serve one client's
 // format to another, on BOTH the fresh-hit and the stale-fallback paths. (Review #11.)
 interface SubCacheEntry {
+  /** Cache format; only SUBSCRIPTION_CACHE_FORMAT entries are ever served. */
+  v?: number;
   content: string;
   contentType: string;
   headers?: Record<string, string>;
@@ -270,7 +281,50 @@ interface SubCacheEntry {
   // body is the backend's. Only this is stamped on the subscription: a
   // passthrough body says nothing about which pool the member received.
   renderedEpoch?: number | null;
+  /**
+   * When this body stops being servable: the earliest proof expiry among the
+   * L7 fronts it hands out, null when it holds none. No cached copy is served
+   * past it, and no cache is told it is fresh past it.
+   */
+  validUntil?: number | null;
 }
+
+// Format 2 carries `validUntil`. An entry written before it has no expiry
+// metadata, and its absence must not read as "no L7 front": such an entry is
+// never served (fresh, revalidated or stale) and is overwritten as members
+// fetch. No bulk migration.
+const SUBSCRIPTION_CACHE_FORMAT = 2;
+// How old a cached body may be and still answer a CONDITIONAL request with a
+// 304, without asking the panel, while its edge token is current. Every
+// rotation, binding or gate change moves the token, so this never hides one;
+// only panel-side changes (and the traffic numbers) wait at most this long.
+const SUBSCRIPTION_REVALIDATE_MS = 10 * 60_000;
+
+/** The entries any serving path may use: the current format only. */
+function servableEntries(entries: SubCacheEntry[]): SubCacheEntry[] {
+  return entries.filter(
+    (e) =>
+      e.v === SUBSCRIPTION_CACHE_FORMAT &&
+      (e.validUntil === null || typeof e.validUntil === 'number'),
+  );
+}
+
+/** What every answer carries, read once per request (subscriptions.responseHints). */
+interface ResponseHints {
+  title: string;
+  updateIntervalHours: number;
+}
+
+// What a 304 repeats from the 200 it stands for: the validator, the freshness
+// it renews and the metadata an app applies (RFC 9110 §15.4.5).
+const NOT_MODIFIED_HEADERS = [
+  'etag',
+  'cache-control',
+  'vary',
+  'subscription-userinfo',
+  'profile-title',
+  'profile-update-interval',
+] as const;
 
 /** The RAW subscription Response a proxy app consumes (not the JSON envelope):
  *  the backend content-type + cache-control + the passed-through metadata headers
@@ -286,19 +340,37 @@ interface SubCacheEntry {
  *  per User-Agent, so the public path MUST send `Vary: User-Agent` or a shared
  *  cache cross-serves the first fetcher's format (Clash vs v2ray) to everyone on
  *  the token. An HWID (device-specific) request is `private, no-store` — each
- *  device must reach the backend to register + get its own body. */
-function subscriptionResponse(
-  entry: { content: string; contentType: string; headers?: Record<string, string> },
-  opts: { hwid?: boolean; title: string },
-): Response {
+ *  device must reach the backend to register + get its own body.
+ *
+ *  Every answer carries a weak `ETag` over exactly what the app applies; an
+ *  `If-None-Match` naming it gets a 304 (docs/edges.md "Asking whether a
+ *  configuration changed"). Callers decide everything else first (pin,
+ *  render, refusals, cache write, delivery stamp): the 304 only saves bytes. */
+async function subscriptionResponse(
+  entry: {
+    content: string;
+    contentType: string;
+    headers?: Record<string, string>;
+    renderedEpoch?: number | null;
+    validUntil?: number | null;
+  },
+  opts: { hwid?: boolean; hints: ResponseHints; ifNoneMatch?: string | null },
+): Promise<{ response: Response; notModified: boolean }> {
+  // An edge-rendered body carries FCP's refresh hint, so a rotation reaches
+  // apps that honour it in time; any other body keeps the backend's own value.
+  const rendered = entry.renderedEpoch !== null && entry.renderedEpoch !== undefined;
+  const passthrough = Object.entries(entry.headers ?? {})
+    .map(([name, value]) => [name.toLowerCase(), value] as const)
+    .filter(
+      ([name]) =>
+        SUBSCRIPTION_PASSTHROUGH_HEADERS.includes(name) &&
+        !(rendered && name === 'profile-update-interval'),
+    );
   const headers: Record<string, string> = {
     'content-type': entry.contentType || 'text/plain',
-    ...Object.fromEntries(
-      Object.entries(entry.headers ?? {}).filter(([name]) =>
-        SUBSCRIPTION_PASSTHROUGH_HEADERS.includes(name.toLowerCase()),
-      ),
-    ),
-    'profile-title': opts.title,
+    ...Object.fromEntries(passthrough),
+    'profile-title': opts.hints.title,
+    ...(rendered ? { 'profile-update-interval': String(opts.hints.updateIntervalHours) } : {}),
     // The backend legitimately returns an HTML landing page for browser UAs, and
     // this route serves it SAME-ORIGIN with the SPA + admin CMS. Sandbox it so
     // backend-injected markup can never execute scripts on the FCP origin
@@ -309,10 +381,24 @@ function subscriptionResponse(
   if (opts.hwid) {
     headers['cache-control'] = 'private, no-store';
   } else {
-    headers['cache-control'] = `public, max-age=${Math.floor(SUBSCRIPTION_CACHE_TTL_MS / 1000)}`;
+    // Read at response time: a body holding L7 fronts is never called fresh
+    // past their proofs (lib/subscriptionEtag.ts).
+    headers['cache-control'] = publicCacheControl(entry.validUntil, subscriptionNow());
     headers['vary'] = 'User-Agent';
   }
-  return new Response(entry.content, { status: 200, headers });
+  headers['etag'] = await subscriptionEtag({
+    content: entry.content,
+    contentType: headers['content-type'],
+    title: headers['profile-title'],
+    updateInterval: headers['profile-update-interval'] ?? null,
+  });
+  if (ifNoneMatchHits(opts.ifNoneMatch, headers['etag'])) {
+    const kept: Record<string, string> = {};
+    for (const name of NOT_MODIFIED_HEADERS)
+      if (headers[name] !== undefined) kept[name] = headers[name];
+    return { response: new Response(null, { status: 304, headers: kept }), notModified: true };
+  }
+  return { response: new Response(entry.content, { status: 200, headers }), notModified: false };
 }
 
 /**
@@ -1085,7 +1171,9 @@ http.route({
     }
 
     const now = Date.now();
-    const title = await ctx.runQuery(internal.subscriptions.profileTitle, {});
+    const hints = await ctx.runQuery(internal.subscriptions.responseHints, {});
+    // The validator the app holds, if any: a matching answer is a 304.
+    const ifNoneMatch = req.headers.get('if-none-match');
     // Member-facing names (docs/privacy.md) under the current settings. A
     // fetched body is relabelled before it is cached; a cached or stale one is
     // relabelled again when served, since it may predate a rename (a relabelled
@@ -1128,7 +1216,7 @@ http.route({
       }
     }
     const hasHwid = 'x-hwid' in hwidHeaders;
-    const cached = hasHwid ? [] : parseSubCache(sub.subCache);
+    const cached = hasHwid ? [] : servableEntries(parseSubCache(sub.subCache));
     // Edge-required delivery (docs/edges.md): the cache token for this key's
     // resolved place (`<bindingVersion>:<epoch>` while an origin covers it, null
     // otherwise), compared against the token stored on the entry. Only bodies
@@ -1152,14 +1240,16 @@ http.route({
       curated: countryPolicy.curated,
     });
     const useCache = cacheIsServable(located.source, countryPolicy.sensitive);
+    // An entry answers THIS request only for this UA's format, under the current
+    // edge token and for the same stored country; and never once a proof inside
+    // it has lapsed.
+    const servesHere = (e: SubCacheEntry): boolean =>
+      e.ua === ua &&
+      (e.relay ?? null) === edgeToken &&
+      (e.region ?? null) === (located.source === 'override' ? located.where.country : null) &&
+      withinValidity(e.validUntil, subscriptionNow());
     const fresh = useCache
-      ? cached.find(
-          (e) =>
-            e.ua === ua &&
-            now - e.at < SUBSCRIPTION_CACHE_TTL_MS &&
-            (e.relay ?? null) === edgeToken &&
-            (e.region ?? null) === (located.source === 'override' ? located.where.country : null),
-        )
+      ? cached.find((e) => servesHere(e) && now - e.at < SUBSCRIPTION_CACHE_TTL_MS)
       : undefined;
     if (fresh) {
       // Cache hit: the served body was generated at the entry's fetch time and
@@ -1169,22 +1259,39 @@ http.route({
         contentAt: fresh.at,
         renderedEpoch: fresh.renderedEpoch ?? null,
       });
-      return subscriptionResponse(await memberNamed(fresh), { title }); // fresh + same format → cache hit
+      // fresh + same format → cache hit
+      return (await subscriptionResponse(await memberNamed(fresh), { hints, ifNoneMatch }))
+        .response;
+    }
+    // Revalidation fast path: a conditional request whose body is still cached
+    // under the CURRENT edge token gets its 304 from that entry, with no panel
+    // fetch and no render, for up to SUBSCRIPTION_REVALIDATE_MS. A moved token
+    // leaves no such entry, so a rotation always takes the full path below.
+    if (ifNoneMatch && useCache) {
+      const held = cached.find((e) => servesHere(e) && now - e.at < SUBSCRIPTION_REVALIDATE_MS);
+      if (held) {
+        const answer = await subscriptionResponse(await memberNamed(held), {
+          hints,
+          ifNoneMatch,
+        });
+        if (answer.notModified) {
+          await ctx.runMutation(internal.subscriptions.markDelivered, {
+            subscriptionId: sub._id,
+            contentAt: held.at,
+            renderedEpoch: held.renderedEpoch ?? null,
+          });
+          return answer.response;
+        }
+      }
     }
     // Last-resort fallback MUST match this UA — never serve another client's
     // format (the same invariant the fresh path enforces). (Review #11.)
     // …and its edge-render token must still be current: a body rendered before
     // a rotation/burn/unpublish carries a removed edge and must never be served
     // as a fallback, however long the backend stays down.
-    const stale =
-      (useCache
-        ? cached.find(
-            (e) =>
-              e.ua === ua &&
-              (e.relay ?? null) === edgeToken &&
-              (e.region ?? null) === (located.source === 'override' ? located.where.country : null),
-          )
-        : null) ?? null;
+    // (`servesHere` is judged again when the fallback is used: a proof can lapse
+    // while the backend is being asked.)
+    const stale = (useCache ? cached.find(servesHere) : null) ?? null;
     try {
       const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
         backend: sub.backend,
@@ -1223,6 +1330,7 @@ http.route({
       let content = fetched.content;
       let relay: string | null = null;
       let renderedEpoch: number | null = null;
+      let validUntil: number | null = null;
       let renderSnapshot: {
         epoch: number;
         family: string;
@@ -1253,6 +1361,7 @@ http.route({
           }
           let body = fetched.content;
           let epoch: number | null = null;
+          let passValidUntil: number | null = null;
           let snapshot: {
             epoch: number;
             family: string;
@@ -1272,6 +1381,7 @@ http.route({
             if (out.delivery.kind !== 'serve') return refuse(out.delivery.reason);
             body = out.body;
             epoch = rctx.epoch;
+            passValidUntil = out.validUntil;
             snapshot = {
               epoch: rctx.epoch,
               family,
@@ -1284,9 +1394,12 @@ http.route({
             backendServerId: sub.backendServerId,
             nodeName: node ?? undefined,
           });
-          if (after !== before) continue;
+          // A front whose proof lapsed while this body was rendered must not go
+          // out: render again (that front is now ineligible), as for a moved token.
+          if (after !== before || !withinValidity(passValidUntil, subscriptionNow())) continue;
           content = body;
           renderedEpoch = epoch;
+          validUntil = passValidUntil;
           renderSnapshot = snapshot;
           renderedUnder = after;
           break;
@@ -1305,7 +1418,12 @@ http.route({
       // its node and server name gets a neutral label. Last, because pinning
       // and the edge render both read those names.
       content = relabelMemberEntries(content, await naming()).content;
+      // Judged once more before the body is kept or stamped: a proof that lapsed
+      // after the render answers like a policy that moved (the client keeps its
+      // configuration; its next request renders without that front).
+      if (!withinValidity(validUntil, subscriptionNow())) return refuse('policy_moved');
       const entry: SubCacheEntry = {
+        v: SUBSCRIPTION_CACHE_FORMAT,
         content,
         contentType: fetched.contentType ?? 'text/plain',
         headers: fetched.headers,
@@ -1313,6 +1431,7 @@ http.route({
         at: now,
         relay,
         renderedEpoch,
+        validUntil,
         // Only ever the member's OWN answer; an inferred country is not cached at all.
         ...(located.source === 'override' ? { region: located.where.country } : {}),
       };
@@ -1336,7 +1455,9 @@ http.route({
       });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       // An inferred country shaped this body: it is this member's, here, now.
-      return subscriptionResponse(entry, { hwid: hasHwid || !cacheable, title });
+      return (
+        await subscriptionResponse(entry, { hwid: hasHwid || !cacheable, hints, ifNoneMatch })
+      ).response;
     } catch (err) {
       // A HWID rejection (backend 404 for a device-limited key fetched without a
       // valid x-hwid) is authoritative — pass 404 through, and never serve a
@@ -1354,13 +1475,14 @@ http.route({
       }
       // Backend blip: serve the last-known content FOR THIS UA rather than break
       // the member's client; only fail hard when nothing is cached for it.
-      if (stale) {
+      if (stale && servesHere(stale)) {
         await ctx.runMutation(internal.subscriptions.markDelivered, {
           subscriptionId: sub._id,
           contentAt: stale.at,
           renderedEpoch: stale.renderedEpoch ?? null,
         });
-        return subscriptionResponse(await memberNamed(stale), { title });
+        return (await subscriptionResponse(await memberNamed(stale), { hints, ifNoneMatch }))
+          .response;
       }
       console.error(
         `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,

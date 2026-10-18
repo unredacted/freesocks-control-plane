@@ -14,9 +14,11 @@
   import { Badge } from '@client/components/ui/badge';
   import { searchParam } from '@client/lib/urlState.svelte';
   import { edgeConfigQuery } from '@client/lib/edgesApi';
+  import { drainWarningCodes } from '@shared/contracts/edgeCodes';
   import AdminListState from '../AdminListState.svelte';
   import SectionHeader from './components/SectionHeader.svelte';
   import CountryPicker from './components/CountryPicker.svelte';
+  import CodeNote from './components/CodeNote.svelte';
   import ConfigField from './settings/ConfigField.svelte';
   import SettingsSectionCard, { type ExtraChanges } from './settings/SettingsSectionCard.svelte';
   import RenderRules from './settings/RenderRules.svelte';
@@ -59,6 +61,17 @@
     void tick().then(() =>
       document.getElementById(`settings-${target}`)?.scrollIntoView({ block: 'start' }),
     );
+  });
+
+  // Drains members' apps cannot outlive at the refresh interval, judged on the
+  // values as typed (the save answers with the same rule as warnings).
+  const drainCodes = $derived.by(() => {
+    const values = {
+      drainMinutes: form.num('drainMinutes'),
+      burnedDrainMinutes: form.num('burnedDrainMinutes'),
+      updateIntervalHours: form.num('updateIntervalHours'),
+    };
+    return Object.values(values).every(Number.isFinite) ? drainWarningCodes(values) : [];
   });
 
   const renderingPaths = $derived([
@@ -121,6 +134,9 @@
           <ConfigField {field} {form} />
         {/each}
       </div>
+      {#if drainCodes.includes('drain_below_refresh')}
+        <CodeNote issue={{ code: 'drain_below_refresh' }} tone="warning" class="mt-4" />
+      {/if}
       <div class="mt-6 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
         <ConfigField field={AUTO_PROVISION} {form} />
       </div>
@@ -141,6 +157,9 @@
           <ConfigField {field} {form} />
         {/each}
       </div>
+      {#each drainCodes as code (code)}
+        <CodeNote issue={{ code }} tone="warning" class="mt-4" />
+      {/each}
     </SettingsSectionCard>
 
     <SettingsSectionCard

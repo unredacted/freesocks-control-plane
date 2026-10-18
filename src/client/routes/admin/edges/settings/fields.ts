@@ -152,7 +152,15 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Drain time of a burned edge',
     unit: 'min',
     helper:
-      'A burned edge is known to be blocked, so it is kept only this long. 0 destroys it at once.',
+      'A burned edge is known to be blocked, so it is kept only this long, for members outside the blocking country who have not refreshed yet. 0 destroys it at once.',
+  },
+  {
+    kind: 'number',
+    path: 'updateIntervalHours',
+    label: 'How often apps check for a new address',
+    unit: 'hours',
+    helper:
+      'Sent with the subscription of a protected node. Apps that honour it fetch their configuration this often, so a replaced address reaches them in time.',
   },
   {
     kind: 'number',

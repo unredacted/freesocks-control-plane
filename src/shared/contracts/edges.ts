@@ -1156,6 +1156,7 @@ export const EdgeConfigView = z.object({
       standbyPerListener: z.number().default(0),
       drainMinutes: z.number(),
       burnedDrainMinutes: z.number(),
+      updateIntervalHours: z.number().default(1),
       sniDrainMinutes: z.number(),
       cooldownMinutes: z.number(),
       maxRotationsPerRelayPerDay: z.number(),
@@ -1208,7 +1209,11 @@ export const EdgeConfigView = z.object({
 });
 export type EdgeConfigView = z.infer<typeof EdgeConfigView>;
 
-export const EdgeConfigPatchResponse = z.object({ changedKeys: z.array(z.string()) });
+export const EdgeConfigPatchResponse = z.object({
+  changedKeys: z.array(z.string()),
+  /** `edge.<code>` notices about what was saved (SETTINGS_WARNING_CODES); never a refusal. */
+  warnings: z.array(z.string()).default([]),
+});
 
 // --- small responses -------------------------------------------------------------------------------
 
@@ -1218,7 +1223,12 @@ export const EdgeConfigPatchResponse = z.object({ changedKeys: z.array(z.string(
  * adds `code`); the CMS must read `ok` and surface `code`, never assume success.
  */
 export const EdgeOkResponse = z
-  .object({ ok: z.boolean(), code: z.string().optional() })
+  .object({
+    ok: z.boolean(),
+    code: z.string().optional(),
+    /** `edge.<code>` notices about what was saved (e.g. an origin's short drain). */
+    warnings: z.array(z.string()).optional(),
+  })
   .passthrough();
 /** Seed the compiled adapter defaults as template rows (`POST templates/ensure-defaults`). */
 export const EdgeTemplatesSeedResponse = z.object({ created: z.number().int() });
