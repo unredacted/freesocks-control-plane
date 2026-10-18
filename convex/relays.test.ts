@@ -603,6 +603,36 @@ describe('origins: operator knobs and epochs', () => {
     expect(await epochOf(t, off)).toBe(beforeOff);
   });
 
+  test('a drain the refresh hint cannot outlive is saved with a warning, never refused', async () => {
+    const { t, relayId } = await seed();
+    // Fleet: a burned drain under one interval plus 30 minutes, then the hint raised.
+    const burned = await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { burnedDrainMinutes: 60 },
+    });
+    expect(burned.warnings).toEqual(['edge.burned_drain_below_refresh']);
+    const hint = await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { burnedDrainMinutes: 120, updateIntervalHours: 24 },
+    });
+    expect(hint.warnings).toEqual(['edge.drain_below_refresh', 'edge.burned_drain_below_refresh']);
+    expect(
+      (await t.mutation(internal.edgeAdmin.patchConfig, { patch: { updateIntervalHours: 1 } }))
+        .warnings,
+    ).toEqual([]);
+    // A save that touches neither drains nor the hint says nothing.
+    expect(
+      (await t.mutation(internal.edgeAdmin.patchConfig, { patch: { cooldownMinutes: 30 } }))
+        .warnings,
+    ).toEqual([]);
+    // An origin's own drain is judged alone; back to the fleet value, nothing to say.
+    const own = await t.mutation(internal.relays.update, { id: relayId, drainMinutes: 60 });
+    expect(own).toEqual({ ok: true, warnings: ['edge.drain_below_refresh'] });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.drainMs).toBe(60 * 60_000);
+    expect(await t.mutation(internal.relays.update, { id: relayId, drainMinutes: null })).toEqual({
+      ok: true,
+      warnings: [],
+    });
+  });
+
   test('originAddress is locked while the origin has live edges', async () => {
     const { t, relayId, listenerId } = await seed();
     const e = await adoptL4Edge(t, relayId, listenerId, { ipv4: '198.51.100.1' });

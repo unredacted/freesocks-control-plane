@@ -17,6 +17,7 @@ import {
   EDGE_KEYS,
   RENDER_CLIENT_FAMILIES,
   flattenEdgeConfig,
+  drainWarnings,
   edgeConfigWrites,
   edgeSecretStatus,
   edgeSecretWrites,
@@ -205,7 +206,13 @@ export const patchConfig = internalMutation({
         payload: { changedKeys: changed },
       });
     }
-    return { changedKeys: changed };
+    // A drain that a member's refresh cannot outlive is worth saying out loud
+    // (a warning; the value is stored as given).
+    const drainKeys = ['drainMinutes', 'burnedDrainMinutes', 'updateIntervalHours'];
+    const warnings = changedKeys.some((k) => drainKeys.includes(k))
+      ? drainWarnings(await resolveEdgeConfig(ctx.db))
+      : [];
+    return { changedKeys: changed, warnings };
   },
 });
 

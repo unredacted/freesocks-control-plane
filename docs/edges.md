@@ -569,6 +569,79 @@ re-renders once on a move, and answers `policy_moved` on a second move. Only bod
 are cached. Creating an origin therefore takes members on that origin dark until an edge is
 published and rendering is on; the setup flow says so.
 
+### Asking whether a configuration changed
+
+A member benefits from a rotation only once their app fetches its subscription again, so the
+route makes that question cheap (`convex/lib/subscriptionEtag.ts`):
+
+- **The validator.** Every answer carries a weak `ETag`, `W/"fs1-<22 characters>"`: SHA-256
+  over the exact bytes served plus what an app applies with them (content type,
+  `profile-title`, `profile-update-interval`), cut to 128 bits. `subscription-userinfo` is
+  left out: its traffic numbers move on nearly every fetch and would make every poll a 200.
+  The tag names the content, not one encoding of it, so a compressing proxy leaves it alone.
+- **The 304.** A request whose `If-None-Match` names the tag (RFC 9110 weak comparison: `W/`
+  ignored, the quoted tags identical; a list or `*` works; a value that does not parse is
+  ignored) gets `304 Not Modified` with no body and the headers the 200 would carry (`ETag`,
+  `Cache-Control`, `Vary`, `subscription-userinfo`, `profile-title`,
+  `profile-update-interval`). The 304 is decided last, after the pin, the render, the
+  refusals, the cache write and the delivery stamp, so it only saves bytes. A refusal (503
+  under edge-required delivery, 404, 429, 502, a rejected device) never carries a tag.
+- **Revalidation without the backend.** A conditional request whose body is still cached for
+  the same User-Agent, the same stored country and the CURRENT cache token, and is at most
+  10 minutes old (`SUBSCRIPTION_REVALIDATE_MS`), is answered from that entry with no backend
+  fetch and no render. Every rotation, binding or gate change moves the token, so this never
+  hides one; only changes outside the token (the backend's own body, the traffic numbers) wait
+  at most that long, and a 304 means "keep what you have", which is also what a client does on
+  a 503. Unconditional requests keep the 30-second cache. A device-specific (HWID) request and
+  a body shaped by an inferred country are never cached, so they always take the full path;
+  their 304 only saves bytes.
+- **A front's proof bounds every copy.** A rendered body records `validUntil`, the earliest
+  proof expiry among the L7 fronts it hands out (null when it holds none). No cached copy is
+  served past it (not as a fresh hit, not on revalidation, not as the stale fallback), and a
+  proof that lapses while a body is being rendered makes the route render again without that
+  front (a lapse after that answers `policy_moved`). The freshness a shared cache is told is
+  capped the same way, computed when the response is built: `public, max-age=<seconds left,
+at most 30>, must-revalidate` for a body holding fronts, `public, max-age=30` otherwise; a 304
+  repeats it, so it never extends a cache's freshness past the proof either.
+- **Cache format.** Entries carry `v: 2` and `validUntil`. An entry written before that has no
+  expiry metadata and is never served; it is overwritten as members fetch (no migration).
+
+What an app does with it: send `If-None-Match` with the tag it holds; on 304 keep what it has;
+on 503 keep what it has and honour `Retry-After`; on 200 apply the new body. The per-token
+throttle (`subscription.fetch.token`, 60 a minute) is the polling ceiling.
+
+**The refresh hint.** An edge-rendered body carries FCP's own `profile-update-interval`,
+`edge.updateIntervalHours` (whole hours, default 1, 1..24), instead of the backend's own value:
+apps that honour it fetch again this often. Bodies FCP does not render
+(a direct node, an Outline key) keep the backend's value. Which apps honour it is recorded in
+`docs/client-compatibility.md` "Refresh behaviour".
+
+### How fast members move
+
+From the moment a rotation finishes, with the defaults (drain of a replaced edge 24 h, of a
+burned edge 2 h, refresh hint 1 h):
+
+| App refreshes                                | Routine rotation                                 | Burn (blocked)                                                                | Members inside the blocking country                                                                                                                                                          |
+| -------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| About every minute (an app that revalidates) | moves within a poll; the drain is not needed     | the same                                                                      | rely on their backup entry until the next poll                                                                                                                                               |
+| Hourly (honours the hint)                    | within an hour, far inside the drain             | within about an hour, inside the 2 h drain                                    | an app with an automatic group can fail over to the backup when its health check notices (each app's interval differs); a link-list app needs a refresh or a manual pick of the backup entry |
+| Never                                        | keeps the old address 24 h, then only the backup | keeps a dead address (it still works elsewhere for 2 h), then only the backup | backup only; a later rotation of the backup leaves them without a working entry until they refresh by hand                                                                                   |
+
+On top of that come detection (the detector runs every 5 minutes over a 30-minute report
+window; probes every 15 minutes, fresh for two intervals) and the rotation itself (an L4 replace
+onto a tested spare takes seconds; an L7 replace adds provisioning and up to 15 minutes waiting
+for affected-country evidence). The safety net for apps that never refresh is the backup entry
+on a different provider (`render.preferDistinctProviders`, `lib/edges/assignment.ts`); it only
+exists while the pool has published edges on two providers. With one provider the backup is
+another address on the same provider.
+
+The burned drain is twice the hint so an hourly app outside the blocking country never races
+the destroy. Saving a drain under two refresh intervals (`edge.drain_below_refresh`), a burned
+drain under one interval plus 30 minutes (`edge.burned_drain_below_refresh`), or an origin's own
+drain under two intervals answers with a warning (never a refusal); the settings page and the
+origin dialog show the same note while typing (`drainWarningCodes`,
+`src/shared/contracts/edgeCodes.ts`).
+
 **Delivery rehearsal** (`convex/edgeRehearsal.ts`, the guided setup's stage before go-live).
 Before the binding is claimed, delivery is proven with the real renderer over **cohorts** derived
 from authoritative membership (`convex/lib/edges/cohorts.ts`: one representative subscription per
@@ -1583,6 +1656,10 @@ time), the reconcile, the detector and the admin view. An origin stores only the
 so a fleet change applies to every origin that did not; the admin view returns the effective
 values plus `overrides` (the ones the origin set), and a PATCH with `null` returns a field to
 the fleet value (the edit dialog sends that when a value is changed to the fleet's).
+`edge.updateIntervalHours` (default 1 h) is the refresh hint of an edge-rendered subscription
+and `edge.burnedDrainMinutes` (default 120) the drain of a burned edge; neither has a per-origin
+override, and a drain shorter than the hint allows is saved with a warning (§ "How fast members
+move").
 `desiredPublishedDefault` seeds an origin's `desiredPublished`, which is pool state (setup and
 re-protect runs widen it), bounded 1..8 (`MAX_DESIRED_PUBLISHED`, the coverage cap).
 

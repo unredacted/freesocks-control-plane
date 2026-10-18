@@ -73,6 +73,11 @@ export interface PublishedEdge {
   /** How one name is chosen from `serverNames`. Absent = the legacy modulus PRF. */
   sniPick?: SniPickVersion;
   /**
+   * L7 only: when the front's proof expires. A body that hands this front out
+   * is only good until then (`validUntil` of the render); absent for L4.
+   */
+  proofExpiresAt?: number;
+  /**
    * False when the edge is published but must not be selected (listener retired,
    * undeployed or disabled, no codec for the body, no template entry). It still occupies its pool index so the
    * modulus does not shift the other subscribers. Absent = eligible.

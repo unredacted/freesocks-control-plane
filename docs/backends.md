@@ -113,7 +113,9 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
   exception — see "Subscription formats" below) and re-emits the allowlisted
   `subscription-userinfo` / `profile-update-interval` headers `fetchContent` returns
   (`SubscriptionContent.headers`, list `SUBSCRIPTION_PASSTHROUGH_HEADERS` in
-  `convex/lib/backends/types.ts`), so the fronted URL is a faithful stand-in. Never the
+  `convex/lib/backends/types.ts`), so the fronted URL is a faithful stand-in (an edge-rendered
+  body carries FCP's own `profile-update-interval` instead, `edge.updateIntervalHours`,
+  `docs/edges.md` "Asking whether a configuration changed"). Never the
   backend's `profile-web-page-url`: that is the key's own backend subscription URL (the
   backend's public address plus the key's capability), publicly fetchable, and its body
   carries the backend's entry names, which FCP renames only on its own routes
