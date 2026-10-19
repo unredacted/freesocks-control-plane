@@ -218,6 +218,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // The keys the list replaced, deleted once it is stored (key names only) and put back for a rollback.
   'censorship.legacy_keys.retire': ['keys', 'count'],
   'censorship.legacy_keys.restore': ['keys', 'count'],
+  'censorship.legacy_keys.changed': ['keys', 'count'],
   // Admin -> Status: the availability matrix's row count and the load-band
   // thresholds (operator configuration of the public status page).
   'status.page.update': ['censorshipRows', 'busyAt', 'crowdedAt'],

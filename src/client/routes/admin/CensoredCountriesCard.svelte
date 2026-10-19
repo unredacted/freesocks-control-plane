@@ -117,6 +117,14 @@
           Read from the settings this list replaced. Saving stores it as it is shown here.
         </p>
       {/if}
+      {#if (list.data?.legacyChanged ?? []).length > 0}
+        <p class="text-destructive">
+          Settings this list replaced were changed while an older version ran ({list.data?.legacyChanged.join(
+            ', ',
+          )}). This version reads only the list below, so those changes do not apply. Check the list
+          and save it: saving retires them.
+        </p>
+      {/if}
       {#if overCap}
         <p class="text-destructive">
           These are {rows.length} countries; the list holds at most {max}. Remove {rows.length -

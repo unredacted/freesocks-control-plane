@@ -6,11 +6,8 @@
  * the admin CMS, since their connection config is operator-specific + secret.
  */
 import { internalAction, internalMutation } from './_generated/server';
-import type { DatabaseReader } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
-import { writeAuditLog } from './lib/audit';
 import { SETTINGS_DEFAULTS, upsertSettingRow } from './appSettings';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
 import {
@@ -26,6 +23,7 @@ const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
 import { FAKE_ZONES, fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
 import { upsertLocation } from './edgeLocations';
 import { mockBackendEnabled } from './lib/backends/mock';
+import { restoreLegacyKeys, retireLegacyKeys } from './censoredCountries';
 import {
   CENSORED_COUNTRIES_KEY,
   MAX_CENSORED_COUNTRIES,
@@ -570,88 +568,19 @@ export const seedCensoredCountries = internalMutation({
 });
 
 /**
- * The four keys the censored-country list replaced (lib/censoredCountries.ts
- * `LEGACY_COUNTRY_KEYS`, all but `status.censorship`, which is the status
- * page's matrix itself). Deleted once the list is STORED: until then they are
- * still the live source, so a deployment whose list was never copied (an
- * over-cap union, or one that jumps from before the list existed and has not
- * run the copy yet) keeps them.
- */
-const RETIRED_COUNTRY_KEYS = [
-  LEGACY_COUNTRY_KEYS.curated,
-  LEGACY_COUNTRY_KEYS.probe,
-  LEGACY_COUNTRY_KEYS.vantage,
-  LEGACY_COUNTRY_KEYS.privacy,
-] as const;
-
-/** Where the retired keys' last values are kept, for a rollback (`restoreLegacyCountryKeys`). */
-export const LEGACY_COUNTRY_BACKUP_KEY = 'censorship:legacyKeys';
-
-async function readLegacyBackup(
-  db: DatabaseReader,
-): Promise<{ row: { _id: Id<'appState'> } | null; values: Record<string, string> }> {
-  const row = await db
-    .query('appState')
-    .withIndex('by_key', (q) => q.eq('key', LEGACY_COUNTRY_BACKUP_KEY))
-    .unique();
-  let values: Record<string, string> = {};
-  try {
-    const parsed = row ? (JSON.parse(row.value) as unknown) : {};
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-      values = Object.fromEntries(
-        Object.entries(parsed as Record<string, unknown>).filter(
-          (e): e is [string, string] => typeof e[1] === 'string',
-        ),
-      );
-  } catch {
-    values = {};
-  }
-  return { row, values };
-}
-
-/**
  * Delete the four old country keys once the list is stored (part of
- * `seedCutover`, so it runs at every deploy and is idempotent). Their last
- * values go to `appState` first (`censorship:legacyKeys`, an earlier backup of
- * a key is never overwritten), so `restoreLegacyCountryKeys` can put them back
- * before a rollback to a build older than the list. Audited by key name.
+ * `seedCutover`, so it runs at every deploy and is idempotent; the rules are
+ * censoredCountries.ts `retireLegacyKeys`). A key written again after it was
+ * retired (during a rollback to an older build) is kept and flagged on the
+ * Censored countries card instead: saving the list retires it.
  */
 export const retireLegacyCountryKeys = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ retired: string[]; skipped?: 'not_stored' }> => {
+  handler: async (ctx): Promise<{ retired: string[]; kept?: string[]; skipped?: 'not_stored' }> => {
     const list = await resolveCensoredCountries(ctx.db);
     if (list.source !== 'stored') return { retired: [], skipped: 'not_stored' };
-    const rows = [];
-    for (const key of RETIRED_COUNTRY_KEYS) {
-      const row = await ctx.db
-        .query('appSettings')
-        .withIndex('by_key', (q) => q.eq('key', key))
-        .unique();
-      if (row) rows.push(row);
-    }
-    if (rows.length === 0) return { retired: [] };
-    const now = Date.now();
-    const backup = await readLegacyBackup(ctx.db);
-    const values = { ...backup.values };
-    for (const row of rows) if (values[row.key] === undefined) values[row.key] = row.value;
-    if (backup.row)
-      await ctx.db.patch(backup.row._id, { value: JSON.stringify(values), updatedAt: now });
-    else
-      await ctx.db.insert('appState', {
-        key: LEGACY_COUNTRY_BACKUP_KEY,
-        value: JSON.stringify(values),
-        updatedAt: now,
-      });
-    for (const row of rows) await ctx.db.delete(row._id);
-    const retired = rows.map((r) => r.key);
-    await writeAuditLog(ctx, {
-      actorType: 'system',
-      action: 'censorship.legacy_keys.retire',
-      targetType: 'app_setting',
-      targetId: CENSORED_COUNTRIES_KEY,
-      payload: { keys: retired.join(','), count: retired.length },
-    });
-    return { retired };
+    const r = await retireLegacyKeys(ctx, { supersede: false });
+    return r.kept.length > 0 ? r : { retired: r.retired };
   },
 });
 
@@ -662,30 +591,7 @@ export const retireLegacyCountryKeys = internalMutation({
  */
 export const restoreLegacyCountryKeys = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ restored: string[] }> => {
-    const { values } = await readLegacyBackup(ctx.db);
-    const restored: string[] = [];
-    for (const key of RETIRED_COUNTRY_KEYS) {
-      const value = values[key];
-      if (value === undefined) continue;
-      const row = await ctx.db
-        .query('appSettings')
-        .withIndex('by_key', (q) => q.eq('key', key))
-        .unique();
-      if (row) continue;
-      await upsertSettingRow(ctx, key, value);
-      restored.push(key);
-    }
-    if (restored.length > 0)
-      await writeAuditLog(ctx, {
-        actorType: 'system',
-        action: 'censorship.legacy_keys.restore',
-        targetType: 'app_setting',
-        targetId: CENSORED_COUNTRIES_KEY,
-        payload: { keys: restored.join(','), count: restored.length },
-      });
-    return { restored };
-  },
+  handler: (ctx): Promise<{ restored: string[] }> => restoreLegacyKeys(ctx),
 });
 
 export const seedCutover = internalAction({

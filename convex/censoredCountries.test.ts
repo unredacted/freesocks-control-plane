@@ -81,6 +81,7 @@ describe('the admin routes', () => {
       stored: false,
       max: 40,
       countries: [entry('IR', false, true), entry('RU', true), entry('TR', true), entry('EG')],
+      legacyChanged: [],
     });
 
     const res = await call('PUT', { countries: [entry('RU', true), entry('ir', false, true)] });
@@ -89,14 +90,15 @@ describe('the admin routes', () => {
       stored: true,
       max: 40,
       countries: [entry('RU', true), entry('IR', false, true)],
+      legacyChanged: [],
     });
-    // The old keys are left alone (a rollback still finds them), and ignored.
-    expect(await raw('edge.probe.countries')).toEqual(['RU', 'TR']);
+    // The saved list supersedes the old keys: they are retired (their values
+    // kept for a rollback), and one written again is ignored and flagged.
+    expect(await raw('edge.probe.countries')).toBeNull();
     await setting('edge.probe.countries', ['CN']);
-    expect((await (await call('GET')).json()).countries).toEqual([
-      entry('RU', true),
-      entry('IR', false, true),
-    ]);
+    const after = await (await call('GET')).json();
+    expect(after.countries).toEqual([entry('RU', true), entry('IR', false, true)]);
+    expect(after.legacyChanged).toEqual(['edge.probe.countries']);
   });
 
   test('refuse a malformed list without storing anything', async () => {
@@ -245,6 +247,38 @@ describe('seed.retireLegacyCountryKeys', () => {
     expect(await raw('delivery.privacyCountries')).toEqual(['TR']);
     // With the list stored, the restored keys change nothing.
     expect(await raw(CENSORED_COUNTRIES_KEY)).toEqual([entry('IR', true)]);
+  });
+
+  test('a key changed under an older build after a restore is kept and flagged, and saving the list retires it', async () => {
+    const { t, call, setting, raw } = await setup();
+    await setting('edge.probe.countries', ['IR']);
+    await setting('delivery.privacyCountries', ['RU']);
+    await setting(CENSORED_COUNTRIES_KEY, [entry('IR', true), entry('RU')]);
+    await t.mutation(internal.seed.retireLegacyCountryKeys, {});
+    // A rollback: the keys come back, the older build runs, the operator changes one.
+    await t.mutation(internal.seed.restoreLegacyCountryKeys, {});
+    await setting('edge.probe.countries', ['IR', 'TR']);
+    // The next deploy keeps the changed key (the list does not have that change)...
+    const r = await t.mutation(internal.seed.retireLegacyCountryKeys, {});
+    expect(r).toEqual({ retired: ['delivery.privacyCountries'], kept: ['edge.probe.countries'] });
+    expect(await raw('edge.probe.countries')).toEqual(['IR', 'TR']);
+    expect(await raw('delivery.privacyCountries')).toBeNull();
+    // ...the backup still holds the value from before, and the card says so.
+    expect(JSON.parse((await backup(t))!['edge.probe.countries']!)).toEqual(['IR']);
+    const view = await (await call('GET')).json();
+    expect(view.legacyChanged).toEqual(['edge.probe.countries']);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.some((a) => a.action === 'censorship.legacy_keys.changed')).toBe(true);
+    // Later deploys keep it too, until the list is saved.
+    expect((await t.mutation(internal.seed.retireLegacyCountryKeys, {})).kept).toEqual([
+      'edge.probe.countries',
+    ]);
+    const saved = await call('PUT', { countries: [entry('IR', true), entry('TR', true)] });
+    expect(saved.status).toBe(200);
+    expect((await saved.json()).legacyChanged).toEqual([]);
+    expect(await raw('edge.probe.countries')).toBeNull();
+    // The newest value is the one a further rollback would get.
+    expect(JSON.parse((await backup(t))!['edge.probe.countries']!)).toEqual(['IR', 'TR']);
   });
 
   test('the deploy seed copies, then retires, in one pass', async () => {
