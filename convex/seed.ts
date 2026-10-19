@@ -23,9 +23,11 @@ const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
 import { FAKE_ZONES, fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
 import { upsertLocation } from './edgeLocations';
 import { mockBackendEnabled } from './lib/backends/mock';
+import { restoreLegacyKeys, retireLegacyKeys } from './censoredCountries';
 import {
   CENSORED_COUNTRIES_KEY,
   MAX_CENSORED_COUNTRIES,
+  LEGACY_COUNTRY_KEYS,
   resolveCensoredCountries,
 } from './lib/censoredCountries';
 
@@ -565,6 +567,33 @@ export const seedCensoredCountries = internalMutation({
   },
 });
 
+/**
+ * Delete the four old country keys once the list is stored (part of
+ * `seedCutover`, so it runs at every deploy and is idempotent; the rules are
+ * censoredCountries.ts `retireLegacyKeys`). A key written again after it was
+ * retired (during a rollback to an older build) is kept and flagged on the
+ * Censored countries card instead: saving the list retires it.
+ */
+export const retireLegacyCountryKeys = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ retired: string[]; kept?: string[]; skipped?: 'not_stored' }> => {
+    const list = await resolveCensoredCountries(ctx.db);
+    if (list.source !== 'stored') return { retired: [], skipped: 'not_stored' };
+    const r = await retireLegacyKeys(ctx, { supersede: false });
+    return r.kept.length > 0 ? r : { retired: r.retired };
+  },
+});
+
+/**
+ * Put the retired keys back from their backup (only those absent now): run it
+ * before deploying a build older than the censored-country list, which reads
+ * only the old keys. A build with the list ignores them while it is stored.
+ */
+export const restoreLegacyCountryKeys = internalMutation({
+  args: {},
+  handler: (ctx): Promise<{ restored: string[] }> => restoreLegacyKeys(ctx),
+});
+
 export const seedCutover = internalAction({
   args: {},
   handler: async (
@@ -583,6 +612,8 @@ export const seedCutover = internalAction({
     const settings = await ctx.runMutation(internal.seed.seedAppSettings, {});
     await ctx.runMutation(internal.seed.renameAppSettingKeys, {});
     await ctx.runMutation(internal.seed.seedCensoredCountries, {});
+    // Once the list is stored the four keys it replaced go (their values are kept for a rollback).
+    await ctx.runMutation(internal.seed.retireLegacyCountryKeys, {});
     // Where members connect from: drop stored countries that may no longer be
     // stored (a choice off the list, a key that is not freedom-family), and
     // rebuild the own-exit set (convex/memberCountry.ts, convex/ownExits.ts).

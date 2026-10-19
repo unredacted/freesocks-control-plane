@@ -674,5 +674,7 @@ export const AdminCensoredCountries = z.object({
   countries: z.array(CensoredCountry),
   stored: z.boolean(),
   max: z.number(),
+  /** Old keys changed after they were retired (an older build ran): saving the list retires them. */
+  legacyChanged: z.array(z.string()).default([]),
 });
 export type AdminCensoredCountries = z.infer<typeof AdminCensoredCountries>;

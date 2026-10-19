@@ -18,9 +18,12 @@
  * While the key has never been written, the list is computed LIVE from the old
  * keys (their union, in the order curated, probe, vantage, privacy, matrix
  * rows, never truncated), so behaviour does not move between `convex deploy`
- * and the seed that copies it (`seed.seedCensoredCountries`). The old keys are
- * left in place until a later cleanup, so a rollback still finds them. A union
- * longer than the cap is not copied: it stays live until an admin trims it.
+ * and the seed that copies it (`seed.seedCensoredCountries`). Once the list is
+ * stored the seed deletes the four old keys (`seed.retireLegacyCountryKeys`,
+ * their values kept for `seed.restoreLegacyCountryKeys` before a rollback), so
+ * the fallback is reached only by a deployment whose list was never copied: one
+ * jumping from before the list existed, before its seed ran, or a union longer
+ * than the cap, which stays live until an admin trims it.
  *
  * Pure apart from the reads; no import from edgeConfig or sniConfig (they read
  * this module).
@@ -54,7 +57,10 @@ export interface CensoredCountries {
   source: 'stored' | 'legacy';
 }
 
-/** The keys the list replaced, read only while `censorship.countries` is absent. */
+/**
+ * The keys the list replaced, read only while `censorship.countries` is absent
+ * (the four country lists are deleted once it is stored; the matrix stays).
+ */
 export const LEGACY_COUNTRY_KEYS = {
   curated: 'edge.sni.curatedCountries',
   probe: 'edge.probe.countries',
