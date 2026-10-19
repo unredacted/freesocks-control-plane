@@ -2024,9 +2024,13 @@ moves between `convex deploy` and the seed. `seed:seedCensoredCountries` (part o
 then writes that list once and never overwrites a stored one. The union is never truncated: when
 the old keys together hold more than 40 countries the seed does not copy it (dropping the tail
 would silently stop checks, suggestions and matrix rows), it stays live, and the Settings card asks
-the operator to remove the extra countries and save. The old keys are left in place for
-a rollback and no longer read once the list is stored; the edges and server-name PATCH routes no
-longer write them. A matrix row of a country that leaves the list stays stored (adding the
+the operator to remove the extra countries and save. The edges and server-name PATCH routes no
+longer write the old keys, and once the list is stored the same seed deletes the four country
+lists among them (`seed:retireLegacyCountryKeys`; `status.censorship` stays, it is the matrix
+itself). Their last values are kept in `appState` `censorship:legacyKeys` (an earlier backup of
+a key is never overwritten), and `seed:restoreLegacyCountryKeys` puts back the ones that are
+missing: run it before deploying a build older than the list, which reads only the old keys.
+Audited `censorship.legacy_keys.retire` / `.restore` (key names only). A matrix row of a country that leaves the list stays stored (adding the
 country back brings it back) but is not shown on the public page. Audit:
 `censorship.countries.update` with the codes added, removed and re-flagged, and the new length.
 

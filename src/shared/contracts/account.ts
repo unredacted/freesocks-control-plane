@@ -128,9 +128,10 @@ export const AccountResponse = z.object({
    */
   geoCountry: z.string().nullable().optional(),
   /**
-   * Server's country-based RECOMMENDATION for the connection mode: the hardened
-   * (rawConfig) mode id only for the admin-listed `delivery.privacyCountries`,
-   * else the catalog default. Just the highlighted default in the picker — the
+   * Server's country-based RECOMMENDATION for the connection mode: in a country
+   * on the censored-country list, the mode its status-page matrix row ranks
+   * best (the censorship-recommended one without a row), else the catalog
+   * default (convex/lib/modeSuggestion.ts). Just the highlighted default in the picker — the
    * member's actual choice is client-side. A plain string (data-driven catalog).
    */
   suggestedModeId: z.string().nullable().optional(),

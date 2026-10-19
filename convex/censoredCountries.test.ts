@@ -5,7 +5,7 @@
  * that now reads it (probe countries, server-name countries, the opt-in for
  * checks from inside, the members' choices, the status page's matrix rows).
  */
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
@@ -17,7 +17,7 @@ import { resolveSniConfig, resolveSniVantageConfig } from './lib/sniConfig';
 import { resolvePublicStatusPage, STATUS_KEYS } from './lib/statusPage';
 
 const modules = import.meta.glob('./**/*.*s');
-type T = ReturnType<typeof convexTest>;
+type T = TestConvex<typeof schema>;
 
 const ADMIN_SIGN_KEY = 'test-admin-sign';
 beforeEach(() => {
@@ -172,6 +172,88 @@ describe('seed.seedCensoredCountries', () => {
     // Saving needs a list within the cap.
     expect((await call('PUT', { countries: view.countries })).status).toBe(400);
     expect((await call('PUT', { countries: view.countries.slice(0, 40) })).status).toBe(200);
+  });
+});
+
+describe('seed.retireLegacyCountryKeys', () => {
+  const OLD = [
+    'edge.sni.curatedCountries',
+    'edge.probe.countries',
+    'edge.sni.vantage.countries',
+    'delivery.privacyCountries',
+  ];
+  const backup = (t: T) =>
+    t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'censorship:legacyKeys'))
+        .unique();
+      return row ? (JSON.parse(row.value) as Record<string, string>) : null;
+    });
+
+  test('deletes the four old lists once the list is stored, keeping their values; the matrix stays', async () => {
+    const { t, setting, raw } = await setup();
+    await setting('edge.sni.curatedCountries', ['IR', 'RU']);
+    await setting('edge.probe.countries', ['IR']);
+    await setting('edge.sni.vantage.countries', ['IR']);
+    await setting('delivery.privacyCountries', ['RU']);
+    await setting('status.censorship', { rows: [] });
+    // The copy first: the list is stored from what was in effect.
+    await t.mutation(internal.seed.seedCensoredCountries, {});
+    const listBefore = await raw(CENSORED_COUNTRIES_KEY);
+    const r = await t.mutation(internal.seed.retireLegacyCountryKeys, {});
+    expect([...r.retired].sort()).toEqual([...OLD].sort());
+    for (const key of OLD) expect(await raw(key)).toBeNull();
+    expect(await raw('status.censorship')).toEqual({ rows: [] });
+    // Nothing anyone reads changed.
+    expect(await raw(CENSORED_COUNTRIES_KEY)).toEqual(listBefore);
+    const b = (await backup(t))!;
+    expect(JSON.parse(b['edge.probe.countries']!)).toEqual(['IR']);
+    expect(JSON.parse(b['delivery.privacyCountries']!)).toEqual(['RU']);
+    // Audited by key name only.
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const row = audit.find((a) => a.action === 'censorship.legacy_keys.retire')!;
+    expect(row.payload).toMatchObject({ count: 4 });
+    expect(JSON.stringify(row.payload)).not.toContain('IR');
+    // Idempotent: a second deploy finds nothing to do and keeps the backup.
+    expect(await t.mutation(internal.seed.retireLegacyCountryKeys, {})).toEqual({ retired: [] });
+    expect(await backup(t)).toEqual(b);
+  });
+
+  test('keeps them while the list is not stored (they are still what is in effect)', async () => {
+    const { t, setting, raw } = await setup();
+    await setting('edge.probe.countries', ['IR']);
+    expect(await t.mutation(internal.seed.retireLegacyCountryKeys, {})).toEqual({
+      retired: [],
+      skipped: 'not_stored',
+    });
+    expect(await raw('edge.probe.countries')).toEqual(['IR']);
+    expect(await backup(t)).toBeNull();
+  });
+
+  test('restore puts back what is missing, never over a key written since', async () => {
+    const { t, setting, raw } = await setup();
+    await setting('edge.probe.countries', ['IR']);
+    await setting('delivery.privacyCountries', ['RU']);
+    await setting(CENSORED_COUNTRIES_KEY, [entry('IR', true)]);
+    await t.mutation(internal.seed.retireLegacyCountryKeys, {});
+    // A key written again after the retirement is left alone.
+    await setting('delivery.privacyCountries', ['TR']);
+    const r = await t.mutation(internal.seed.restoreLegacyCountryKeys, {});
+    expect(r.restored).toEqual(['edge.probe.countries']);
+    expect(await raw('edge.probe.countries')).toEqual(['IR']);
+    expect(await raw('delivery.privacyCountries')).toEqual(['TR']);
+    // With the list stored, the restored keys change nothing.
+    expect(await raw(CENSORED_COUNTRIES_KEY)).toEqual([entry('IR', true)]);
+  });
+
+  test('the deploy seed copies, then retires, in one pass', async () => {
+    const { t, setting, raw } = await setup();
+    await setting('edge.probe.countries', ['IR']);
+    await t.action(internal.seed.seedCutover, {});
+    expect(await raw(CENSORED_COUNTRIES_KEY)).not.toBeNull();
+    expect(await raw('edge.probe.countries')).toBeNull();
+    expect(JSON.parse((await backup(t))!['edge.probe.countries']!)).toEqual(['IR']);
   });
 });
 
