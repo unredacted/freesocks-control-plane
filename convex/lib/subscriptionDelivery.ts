@@ -31,7 +31,7 @@ import { classifyClient } from './edges/clientFamilies';
 import { applyEdgeRender } from './edges/renderPipeline';
 import type { ResolvedWhere } from './edges/sni/country';
 import { resolveClientIp, resolveCountry } from './http';
-import { memberWhere, nextGuess, type CountryFields } from './memberCountry';
+import { memberWhere, nextGuess, steeringCountry, type CountryFields } from './memberCountry';
 import { relabelMemberEntries } from './memberEntryNames';
 import { isOwnExit } from './ownExits';
 import { subscriptionNow, withinValidity } from './subscriptionEtag';
@@ -61,6 +61,11 @@ export interface MemberLocation {
   inferred: string | null;
   /** The member's country fields this request located with (after any guess it wrote). */
   fields: CountryFields;
+  /**
+   * The country the member's EDGES are ordered by (delivery by country):
+   * their STORED country while `delivery.country.steer` is on, else null.
+   */
+  edgeCountry: string | null;
 }
 
 /**
@@ -110,6 +115,7 @@ export async function locateAt(
     located,
     inferred: a.inferred,
     fields: a.fields,
+    edgeCountry: steeringCountry(country.cfg, located),
   };
 }
 
@@ -163,6 +169,14 @@ export interface RenderSnapshot {
   listenerKeys: string[];
   primaryEdgeId?: Id<'edges'>;
   backupEdgeId?: Id<'edges'>;
+  /**
+   * The member's STORED country the body was shaped for (names, and edges when
+   * steered); never a transient reading (docs/privacy.md).
+   */
+  country?: string;
+  /** Delivery by country: the tier each endpoint came from in `country`. */
+  primaryTier?: number;
+  backupTier?: number;
 }
 
 export type DeliveryOutcome =
@@ -274,17 +288,33 @@ export async function deliverBody(
             subscriptionId: sub.subscriptionId,
           }));
         if (!renderKey) return refuse('no_render_key');
-        const out = applyEdgeRender(rctx, body, renderKey, { now, where });
+        const out = applyEdgeRender(rctx, body, renderKey, {
+          now,
+          where,
+          edgeCountry: location.edgeCountry,
+        });
         if (out.delivery.kind !== 'serve') return refuse(out.delivery.reason);
         body = out.body;
         epoch = rctx.epoch;
         passValidUntil = out.validUntil;
+        // The country goes on the snapshot only when it is STORED (the
+        // member's choice or the stored guess): a transient reading is
+        // written nowhere, the snapshot included.
+        const stored =
+          location.located.source === 'override' ? location.located.where.country : null;
         snapshot = {
           epoch: rctx.epoch,
           family,
           listenerKeys: out.snapshot.listenerKeys,
           primaryEdgeId: (out.snapshot.primaryEdgeId as Id<'edges'> | null) ?? undefined,
           backupEdgeId: (out.snapshot.backupEdgeId as Id<'edges'> | null) ?? undefined,
+          ...(stored ? { country: stored } : {}),
+          ...(stored && out.snapshot.primaryTier !== undefined
+            ? { primaryTier: out.snapshot.primaryTier }
+            : {}),
+          ...(stored && out.snapshot.backupTier !== undefined
+            ? { backupTier: out.snapshot.backupTier }
+            : {}),
         };
       }
       const after = await ctx.runQuery(internal.edgeRender.epochFor, {

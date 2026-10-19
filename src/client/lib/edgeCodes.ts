@@ -774,6 +774,16 @@ const COPY = {
     explain:
       'Every edge suffers alike, which points at the protocol being blocked, not the address.',
   },
+  country_scoped: {
+    label: 'Routed around by country',
+    explain:
+      'The address is blocked only where the reports come from, and members there already get another address that works, so it is not replaced for everyone.',
+  },
+  country_wide: {
+    label: 'Everything fails there at once',
+    explain:
+      'Every address fails from the countries the reports come from at the same time, which points at an outage or a probe problem, so nothing is replaced.',
+  },
   no_load_signal: {
     label: 'No load signal',
     explain: 'This origin kind reports no user load, so the detector uses reports and probes only.',

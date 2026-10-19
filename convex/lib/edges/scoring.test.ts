@@ -6,7 +6,9 @@ import {
   loadBaseline,
   type EdgeProbeState,
   type EvaluationInput,
+  type SteeringInput,
 } from './scoring';
+import type { DeliveryPath, PublishedEdge } from './assignment';
 import type { Verdict } from './probes/verdict';
 
 // Probe-only evidence is opted IN here (the shipped default is off) so the probe path is exercised.
@@ -414,6 +416,154 @@ describe('autoRotateDecision', () => {
   ];
   const decide = (over: Partial<Parameters<typeof autoRotateDecision>[0]> = {}) =>
     autoRotateDecision({ evaluation: suspectedEv, cfg: on, origin, published, now, ...over });
+
+  describe('with delivery by country on (steering vetoes)', () => {
+    const REALITY = { protocol: 'vless', streamTransport: 'raw', security: 'reality' } as const;
+    const pub = (
+      edgeId: string,
+      poolIndex: number,
+      over: Partial<PublishedEdge> = {},
+    ): PublishedEdge => ({
+      edgeId,
+      poolIndex,
+      provider: 'p1',
+      listenerId: 'l1',
+      listenerKey: 'a1',
+      matchRule: { kind: 'remark', remark: 'r' },
+      proto: REALITY,
+      edgePort: 443,
+      addresses: { v4: `203.0.113.${poolIndex + 1}` },
+      serverNames: [{ sni: 'a.example', status: 'active' }],
+      ...over,
+    });
+    const paths: DeliveryPath[] = [
+      { format: 'links', canEmitV6: true },
+      { format: 'clash', canEmitV6: false },
+    ];
+    const steer = (edges: PublishedEdge[], over: Partial<SteeringInput> = {}): SteeringInput => ({
+      published: edges,
+      paths,
+      checked: ['IR', 'RU'],
+      curated: ['IR', 'RU'],
+      held: [],
+      freedomListeners: ['a1'],
+      ...over,
+    });
+    const blockedE1 = pub('e1', 0, { blockedIn: ['IR'] });
+
+    test('steering off: rotates as today', () => {
+      expect(decide()).toEqual({ edgeId: 'e1', source: 'probes' });
+    });
+
+    test('blocked in IR only, with a distinct IR-unblocked alternative on every path: country_scoped', () => {
+      expect(decide({ steering: steer([blockedE1, pub('e2', 1)]) })).toEqual({
+        veto: 'country_scoped',
+      });
+    });
+
+    test('only NOT KNOWN in IR, beside another not-known edge: rotates (equal tiers)', () => {
+      expect(decide({ steering: steer([pub('e1', 0), pub('e2', 1)]) })).toEqual({
+        edgeId: 'e1',
+        source: 'probes',
+      });
+    });
+
+    test('self-selection: the only unblocked edge for IR is the chosen one: rotates', () => {
+      expect(decide({ steering: steer([blockedE1, pub('e2', 1, { blockedIn: ['IR'] })]) })).toEqual(
+        { edgeId: 'e1', source: 'probes' },
+      );
+    });
+
+    test('an alternative unsuitable for a path rotates: another listener, or IPv6 only where a path cannot emit it', () => {
+      expect(decide({ steering: steer([blockedE1, pub('e2', 1, { listenerKey: 'b2' })]) })).toEqual(
+        { edgeId: 'e1', source: 'probes' },
+      );
+      expect(
+        decide({
+          steering: steer([blockedE1, pub('e2', 1, { addresses: { v6: '2001:db8::2' } })]),
+        }),
+      ).toEqual({ edgeId: 'e1', source: 'probes' });
+      // Every name blocked in IR on an hrw1 listener.
+      const names = [{ sni: 'a.example', status: 'active' as const, blockedIn: ['IR'] }];
+      expect(
+        decide({
+          steering: steer([
+            { ...blockedE1, sniPick: 'hrw1' },
+            pub('e2', 1, { sniPick: 'hrw1', serverNames: names }),
+          ]),
+        }),
+      ).toEqual({ edgeId: 'e1', source: 'probes' });
+    });
+
+    test('blocked in every checked country: rotates (it would only serve members outside the list)', () => {
+      expect(
+        decide({
+          steering: steer([pub('e1', 0, { blockedIn: ['IR', 'RU'] }), pub('e2', 1)]),
+        }),
+      ).toEqual({ edgeId: 'e1', source: 'probes' });
+    });
+
+    test('the country-wide guard holds every evidence country: country_wide', () => {
+      expect(decide({ steering: steer([pub('e1', 0), pub('e2', 1)], { held: ['IR'] }) })).toEqual({
+        veto: 'country_wide',
+      });
+    });
+
+    test('a held country and a routed-around one together still veto (neither justifies a burn)', () => {
+      const both = { ...blockedE1, blockedIn: ['RU'] };
+      const ev = evaluate(
+        input({
+          window: loud,
+          usersOnline: 0,
+          edges: [
+            edge('e1', { byCountry: [c('IR', 'unreachable'), c('RU', 'unreachable')] }),
+            edge('e2'),
+          ],
+        }),
+      );
+      // RU: routed around (e1 blocked there, e2 not); IR: under the country-wide guard.
+      expect(
+        decide({ evaluation: ev, steering: steer([both, pub('e2', 1)], { held: ['IR'] }) }),
+      ).toEqual({ veto: 'country_scoped' });
+      // Neither covered for IR (not held, not blocked on e1): rotates.
+      expect(decide({ evaluation: ev, steering: steer([both, pub('e2', 1)]) })).toEqual({
+        edgeId: 'e1',
+        source: 'probes',
+      });
+    });
+
+    test('a path that hands out the backup first needs two edges that are not blocked there', () => {
+      const backupFirst: DeliveryPath[] = [{ format: 'links', canEmitV6: true, backupFirst: true }];
+      // One alternative: the blocked edge would be the backup, the first address handed out.
+      expect(
+        decide({ steering: steer([blockedE1, pub('e2', 1)], { paths: backupFirst }) }),
+      ).toEqual({ edgeId: 'e1', source: 'probes' });
+      expect(
+        decide({
+          steering: steer([blockedE1, pub('e2', 1), pub('e3', 2)], { paths: backupFirst }),
+        }),
+      ).toEqual({ veto: 'country_scoped' });
+    });
+
+    test('mirrors without a choice avoid edges blocked anywhere: an alternative blocked elsewhere is not enough', () => {
+      expect(decide({ steering: steer([blockedE1, pub('e2', 1, { blockedIn: ['RU'] })]) })).toEqual(
+        { edgeId: 'e1', source: 'probes' },
+      );
+    });
+
+    test('never on a listener that privacy-family members use (they are not steered)', () => {
+      expect(
+        decide({ steering: steer([blockedE1, pub('e2', 1)], { freedomListeners: [] }) }),
+      ).toEqual({ edgeId: 'e1', source: 'probes' });
+    });
+
+    test('evidence from a country edges are not checked from changes nothing', () => {
+      expect(decide({ steering: steer([blockedE1, pub('e2', 1)], { checked: ['RU'] }) })).toEqual({
+        edgeId: 'e1',
+        source: 'probes',
+      });
+    });
+  });
 
   test('every gate must be open, in the documented order', () => {
     expect(decide({ cfg: { ...on, enabled: false } })).toEqual({ veto: 'edge_disabled' });

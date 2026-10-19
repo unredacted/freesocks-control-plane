@@ -25,6 +25,9 @@ import {
   resolveEdgeSecrets,
   type RenderClientFamily,
 } from './lib/edgeConfig';
+import { resolveCensoredCountries } from './lib/censoredCountries';
+import { resolveSniConfig } from './lib/sniConfig';
+import { resolveMemberCountryConfig } from './memberCountry';
 import { assignEndpoints, edgeHostname, edgeLayer } from './lib/edges/assignment';
 import { hostTargetFor } from './lib/edges/layers';
 import { parseIntent } from './lib/edges/intent';
@@ -513,14 +516,33 @@ export const endpoints = internalQuery({
 // --- render preview ---------------------------------------------------------------------------------
 
 export const renderPreview = internalQuery({
-  args: { relayId: v.id('relays'), family: v.string(), sampleKey: v.optional(v.string()) },
-  handler: async (ctx, { relayId, family, sampleKey }) => {
+  args: {
+    relayId: v.id('relays'),
+    family: v.string(),
+    sampleKey: v.optional(v.string()),
+    /**
+     * "As a member in <country>": render as a freedom-family member whose
+     * stored country this is (a listed country), with their names chosen and,
+     * while `delivery.country.steer` is on, their addresses ordered for it.
+     */
+    country: v.optional(v.string()),
+  },
+  handler: async (ctx, { relayId, family, sampleKey, country }) => {
     if (!(RENDER_CLIENT_FAMILIES as readonly string[]).includes(family)) {
       throw new ConvexError({ code: 'validation', message: 'unknown client family' });
     }
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
-    return renderPreviewFor(ctx, origin, family as RenderClientFamily, sampleKey);
+    const code = country?.trim().toUpperCase();
+    if (code) {
+      const listed = (await resolveCensoredCountries(ctx.db)).codes;
+      if (!listed.includes(code))
+        throw new ConvexError({
+          code: 'validation',
+          message: 'The country is not on the censored-country list',
+        });
+    }
+    return renderPreviewFor(ctx, origin, family as RenderClientFamily, sampleKey, code);
   },
 });
 
@@ -530,9 +552,13 @@ export async function renderPreviewFor(
   origin: Doc<'relays'>,
   fam: RenderClientFamily,
   sampleKey?: string,
+  /** A listed country to render for (the member's stored country); absent = no country at all. */
+  country?: string,
 ) {
   {
     const cfg = await resolveEdgeConfig(ctx.db);
+    const steer = country ? (await resolveMemberCountryConfig(ctx.db)).steer : false;
+    const curated = country ? (await resolveSniConfig(ctx.db)).curatedCountries : [];
     const { published, matchers } = await publishedEdgesOf(
       ctx,
       origin,
@@ -573,10 +599,14 @@ export async function renderPreviewFor(
         deliveryStyle: origin.backendServerId
           ? await deliveryStyleOf(ctx, origin.backendServerId)
           : 'subscription',
+        minProvenForExclusive: cfg.country.minProvenForExclusive,
       },
       input,
       sampleKey && sampleKey.length > 0 ? sampleKey : SAMPLE_RENDER_KEY,
-      { now: Date.now() },
+      {
+        now: Date.now(),
+        ...(country ? { where: { country, curated }, edgeCountry: steer ? country : null } : {}),
+      },
     );
     return {
       family: fam,
@@ -588,6 +618,12 @@ export async function renderPreviewFor(
       emitted: out.emitted,
       delivery: out.delivery,
       listeners: out.listeners ?? [],
+      // "As a member in <country>": the country, whether edges were ordered by
+      // it, and the tier each endpoint came from there.
+      country: country ?? null,
+      steered: !!country && steer,
+      primaryTier: out.snapshot.primaryTier ?? null,
+      backupTier: out.snapshot.backupTier ?? null,
     };
   }
 }

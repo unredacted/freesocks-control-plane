@@ -17,6 +17,8 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import { RENDER_CLIENT_FAMILY_IDS, type RenderClientFamily } from '@shared/contracts/edges';
   import { edgeKeys, previewRender } from '@client/lib/edgesApi';
+  import { adminCensoredCountriesQuery } from '@client/lib/queries';
+  import { countryName } from '@client/lib/countries';
   import { cn } from '@client/lib/utils';
   import AdminListState from '../../AdminListState.svelte';
   import CodeNote from '../components/CodeNote.svelte';
@@ -31,10 +33,16 @@
   let { relayId, family: initialFamily = 'singbox', class: className }: Props = $props();
 
   let family = $state<RenderClientFamily>(untrack(() => initialFamily));
+  // "As a member in <country>": '' renders with no country at all.
+  let country = $state('');
+  const censored = adminCensoredCountriesQuery();
+  const TIER_WORDS = ['works there', 'not known there', 'blocked there'];
+  const tierWords = (t: number | null | undefined) =>
+    t === null || t === undefined ? null : (TIER_WORDS[t] ?? null);
 
   const preview = createQuery(() => ({
-    queryKey: [...edgeKeys.all, 'render-preview', relayId, family] as const,
-    queryFn: () => previewRender({ relayId, family }),
+    queryKey: [...edgeKeys.all, 'render-preview', relayId, family, country] as const,
+    queryFn: () => previewRender({ relayId, family, ...(country ? { country } : {}) }),
     enabled: relayId !== '',
     staleTime: 15_000,
     retry: false,
@@ -54,6 +62,20 @@
       {/each}
     </Tabs.List>
   </Tabs.Root>
+
+  <div class="flex flex-wrap items-center gap-2 text-sm">
+    <label for="preview-country" class="text-muted-foreground">As a member in</label>
+    <select
+      id="preview-country"
+      class="border-input bg-background h-8 rounded-md border px-2 text-sm"
+      bind:value={country}
+    >
+      <option value="">anywhere (no country)</option>
+      {#each censored.data?.countries ?? [] as c (c.code)}
+        <option value={c.code}>{countryName(c.code, 'en')} ({c.code})</option>
+      {/each}
+    </select>
+  </div>
 
   {#if preview.isError}
     <AdminListState error={preview.error} onRetry={() => void preview.refetch()} />
@@ -90,6 +112,21 @@
         {preview.isFetching ? 'Rendering' : 'Render again'}
       </Button>
     </div>
+
+    {#if data.country}
+      <p class="text-muted-foreground text-xs">
+        {#if data.steered}
+          Addresses ordered for a member in {countryName(data.country, 'en')}: the primary {tierWords(
+            data.primaryTier,
+          ) ?? 'is unknown'}{tierWords(data.backupTier)
+            ? `, the backup ${tierWords(data.backupTier)}`
+            : ''}.
+        {:else}
+          Names chosen for a member in {countryName(data.country, 'en')}. Addresses are not ordered
+          by country: that is off under Settings, Where members connect from.
+        {/if}
+      </p>
+    {/if}
 
     {#if !data.applied && data.reason}
       <CodeNote issue={{ code: data.reason }} tone="blocker" />

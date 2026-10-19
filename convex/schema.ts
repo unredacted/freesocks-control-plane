@@ -744,6 +744,13 @@ export default defineSchema({
         listenerKeys: v.array(v.string()),
         primaryEdgeId: v.optional(v.id('edges')),
         backupEdgeId: v.optional(v.id('edges')),
+        // The member's STORED country the body was shaped for (never a
+        // transient reading), and, when their edges were ordered by it, the
+        // tier each endpoint came from there (0 proven, 1 not known, 2 blocked).
+        // Cleared with every other copy of the country (memberCountry.ts).
+        country: v.optional(v.string()),
+        primaryTier: v.optional(v.number()),
+        backupTier: v.optional(v.number()),
       }),
     ),
     // The node this key's subscription content is currently pinned to

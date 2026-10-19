@@ -217,6 +217,11 @@ export interface EdgeConfig {
     standbyRecheckHours: number;
     /** How long a setup run or a replacement waits for its first round. */
     preUseWaitMinutes: number;
+    /**
+     * Delivery by country: proven edges needed before proven ones are handed
+     * out exclusively (fewer: proven and not-known edges share the first tier).
+     */
+    minProvenForExclusive: number;
   };
 }
 
@@ -303,6 +308,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     windowDays: 14,
     standbyRecheckHours: 12,
     preUseWaitMinutes: 15,
+    minProvenForExclusive: 1,
   },
 };
 
@@ -446,6 +452,7 @@ export const EDGE_KEYS = {
   'country.windowDays': 'edge.country.windowDays',
   'country.standbyRecheckHours': 'edge.country.standbyRecheckHours',
   'country.preUseWaitMinutes': 'edge.country.preUseWaitMinutes',
+  'country.minProvenForExclusive': 'edge.country.minProvenForExclusive',
 } as const;
 export type RelayKeyPath = keyof typeof EDGE_KEYS;
 
@@ -644,6 +651,12 @@ export function sanitizeRelayConfig(
         0,
         60,
         D.country.preUseWaitMinutes,
+      ),
+      minProvenForExclusive: sanitizeInt(
+        raw['country.minProvenForExclusive'],
+        1,
+        5,
+        D.country.minProvenForExclusive,
       ),
     },
   };
@@ -1013,6 +1026,7 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'country.windowDays': { min: 1, max: 60 },
   'country.standbyRecheckHours': { min: 1, max: 168 },
   'country.preUseWaitMinutes': { min: 0, max: 60 },
+  'country.minProvenForExclusive': { min: 1, max: 5 },
   'render.clients.maxEntries': { min: 0, max: 20 },
 };
 

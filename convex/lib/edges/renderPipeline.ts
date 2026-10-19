@@ -12,7 +12,12 @@
  * ineligible BEFORE the PRF pick, keeping its pool index so the walk stays
  * stable for everyone else.
  */
-import { assignEndpoints, type CountryContext, type PublishedEdge } from './assignment';
+import {
+  assignEndpoints,
+  type CountryContext,
+  type EdgeTier,
+  type PublishedEdge,
+} from './assignment';
 import { detectBodyFormat } from './clientFamilies';
 import { formatSupported } from './protocols';
 import {
@@ -37,6 +42,8 @@ export interface EdgeRenderContext {
   preferDistinctProviders: boolean;
   originAddress: string;
   deliveryStyle?: DeliveryStyle;
+  /** Delivery by country: proven edges needed before they are handed out alone (default 1). */
+  minProvenForExclusive?: number;
 }
 
 export interface RenderSnapshot {
@@ -44,6 +51,9 @@ export interface RenderSnapshot {
   listenerKeys: string[];
   primaryEdgeId: string | null;
   backupEdgeId: string | null;
+  /** With an `edgeCountry`: the tier each endpoint came from there (0 proven, 1 not known, 2 blocked). */
+  primaryTier?: EdgeTier;
+  backupTier?: EdgeTier;
 }
 
 export interface PipelineResult extends RenderResult {
@@ -79,7 +89,17 @@ export function applyEdgeRender(
   rctx: EdgeRenderContext,
   body: string,
   renderKey: string,
-  opts: { now: number; where?: CountryContext },
+  opts: {
+    now: number;
+    where?: CountryContext;
+    /**
+     * Delivery by country: the member's STORED country when steering applies
+     * (lib/memberCountry.ts `steeringCountry`); absent/null = no tiers at all.
+     */
+    edgeCountry?: string | null;
+    /** Without an `edgeCountry`: edges blocked in any of these go last (a mirror). */
+    avoidBlockedIn?: readonly string[];
+  },
 ): PipelineResult {
   const format = detectBodyFormat(body);
   const renderFormat =
@@ -107,6 +127,9 @@ export function applyEdgeRender(
     namesPerEndpoint: rule.namesPerEndpoint,
     backupNames: rule.backupNames,
     where: opts.where,
+    edgeCountry: opts.edgeCountry ?? null,
+    ...(opts.avoidBlockedIn ? { avoidBlockedIn: opts.avoidBlockedIn } : {}),
+    minProvenForExclusive: rctx.minProvenForExclusive,
   });
   // (5): render + the edge-required verdict.
   const out = renderEdgeEndpoints({
@@ -124,6 +147,8 @@ export function applyEdgeRender(
       listenerKeys: [...resolved].sort(),
       primaryEdgeId: assigned.primary?.edge.edgeId ?? null,
       backupEdgeId: assigned.backup?.edge.edgeId ?? null,
+      ...(assigned.primaryTier !== undefined ? { primaryTier: assigned.primaryTier } : {}),
+      ...(assigned.backupTier !== undefined ? { backupTier: assigned.backupTier } : {}),
     },
     validUntil: renderValidUntil([assigned.primary?.edge, assigned.backup?.edge]),
   };

@@ -1719,8 +1719,8 @@ The runbook that uses it is docs/beta-deploy.md "Walking automatic rotation".
 Every edge is checked from each censored country edges are checked from, and the evidence is
 kept per (edge, country) (`convex/edgeCountry.ts`, pure rules in `lib/edges/country/`).
 Switched by `edge.country.enabled` (default off): with it off the probes behave exactly as
-before (no controls, no spare rounds, no verdicts, no waits). Delivery does not read any of it
-yet (a later change orders members' addresses by it).
+before (no controls, no spare rounds, no verdicts, no waits). Members' addresses follow it only
+with `delivery.country.steer` on (next section).
 
 - **Rounds and controls.** A ROUND is the runs one request makes for one edge
   (`probeRuns.roundId`): every enabled source, every listener port, every family. Each external
@@ -1818,6 +1818,70 @@ yet (a later change orders members' addresses by it).
 | `windowDays`           | 14         | 1..60  | how long a decided result stands                          |
 | `standbyRecheckHours`  | 12         | 1..168 | spare check interval                                      |
 | `preUseWaitMinutes`    | 15         | 0..60  | the setup run's and a replacement's wait for a round      |
+
+### Delivery by country
+
+With `delivery.country.steer` on (Admin -> Settings, "Where members connect from"; default
+off), a freedom-family member's addresses are ordered by their **stored** country: their own
+choice, or the stored guess (lib/memberCountry.ts `steeringCountry`). A transient CDN reading
+(detection off) never orders anything, nor does any other mode family. One `where` serves both
+the names and the edges (`locateMember` / `locateAt`).
+
+- **Tiers** (`lib/edges/assignment.ts`): per edge, from `edges.countryState` (entries past their
+  `until` dropped at read): 0 proven there, 1 not known, 2 blocked there. The primary is the
+  first assignable edge from the member's seeded pool index whose tier is the best any
+  assignable edge has: a member moves only when a tier changes, the modulus spread holds inside
+  a tier, and a blocked edge is used only when nothing else is assignable. With fewer proven
+  edges than `edge.country.minProvenForExclusive` (default 1), proven and not-known edges share
+  the first tier. The backup prefers, in order: not blocked, another provider, the better tier,
+  another location, the walk order. Without a country the assignment is byte for byte what it
+  was (pinned over a fixed corpus).
+- **Caching.** The cache token is unchanged (it also drives the before/after check, the mirror
+  barrier and the stale fallback). Entries are keyed by the stored country as before; a change
+  of an edge's tier reaches a member within the cache's 30 seconds, or, for an app that asks
+  whether its copy changed, within the 10 minutes a held copy may answer it with a 304; a stale
+  fallback during a backend outage may carry an older order of still-published edges.
+- **Turning it on or off** (`appSettings.setMany` -> `edgeRender.steeringChanged`) moves every
+  origin's publication epoch (cached bodies stop matching, members are nudged to refresh) and
+  refreshes the mirrors; turning it on starts the detector vetoes' settle clock
+  (`delivery:steerSince`).
+- **Snapshot.** `subscriptions.lastRender` gains `country` (the stored country the body was
+  shaped for) and `primaryTier` / `backupTier` (when steered); a transient reading is written
+  nowhere, the snapshot included. Every cached body carries the snapshot of what it holds, and a
+  cache hit (fresh, revalidated or stale) records it, so the snapshot always describes the body
+  last served, whichever app fetched it; any change of edges, listeners, family, country or tier
+  rewrites it. The snapshot's country is one more stored copy: `setStoredCountry` strips it when
+  the stored country changes, and `markDelivered` keeps only the plain facts of a snapshot that
+  names anything else. The account labels and report attribution replay the snapshot's own
+  roles (`endpointsFor`), and attribution reads the names under the snapshot's country.
+- **Mirrors** are ordered by the member's own choice only (a public object held by a third
+  party is never shaped by a guess), on a freedom-family key, while steering is on. Without a
+  choice, a mirror puts edges blocked in ANY listed country last (no member data shapes it: a
+  mirror exists for exactly the people who are blocked).
+- **The detector.** With steering on, `autoRotateDecision` gains two vetoes, after
+  `protocol_level_block` and before the fleet brake, over the evidence countries edges are
+  checked from:
+  - `country_wide`: every one of them is under the country-wide guard (nothing is decided
+    there, so a global replacement would act on an outage);
+  - `country_scoped`: every evidence country is either under the guard or routed around: the
+    chosen edge is effectively blocked there, and on every delivery path it serves (its
+    listener x each body format with a codec x each IPv6 allowance and backup order the enabled
+    render rules produce) a DISTINCT edge not blocked there is assignable, and one not blocked
+    in any listed country (mirrors without a choice); a path that hands out the backup first
+    needs two of each (`steeringAvoids`, built from the assignment's own rules and
+    cross-checked against it).
+
+  Only an edge on a listener whose transport only freedom-family modes use (the backend
+  setup's modes) can be vetoed: privacy-family members are never steered. The vetoes wait one
+  refresh interval (plus the 10-minute revalidation) after steering was turned on, so members
+  already hold the steered order. It rotates as today when the evidence names no checked
+  country, when the edge is blocked in every checked country (it would only serve members
+  outside the list), or when the edge is only not known there. A test block (§ Simulating a
+  block) meets the same vetoes.
+
+- **Preview.** `POST render/preview {country}` (and "As a member in" on the preview) renders as
+  a member whose stored country that is (a listed one): names chosen for it and, with steering
+  on, addresses ordered for it, with the tier each endpoint came from.
 
 **Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure): `partial` = provider
 health + outside reachability (at least `probe.agreementVantages` distinct vantages reachable,

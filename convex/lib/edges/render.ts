@@ -10,8 +10,8 @@
  * is returned as `delivery`; the DB half (edgeRender.ts) turns anything but
  * `serve` into an unavailable response.
  */
-import type { ClientRenderRule, EdgeConfig } from '../edgeConfig';
-import { edgeHostname, type AssignedEndpoint } from './assignment';
+import { RENDER_CLIENT_FAMILIES, type ClientRenderRule, type EdgeConfig } from '../edgeConfig';
+import { edgeHostname, type AssignedEndpoint, type DeliveryPath } from './assignment';
 import { detectBodyFormat, type SubscriptionFormat } from './clientFamilies';
 import { sameAddress } from './hosts';
 import { clashAddresses, matchClash, renderClash } from './render/clash';
@@ -84,6 +84,37 @@ export function formatHasAutoGroup(
   format: SubscriptionFormat | 'html' | 'unknown',
 ): boolean {
   return rule.autoGroup && (format === 'singbox-json' || format === 'clash-yaml');
+}
+
+/**
+ * Every delivery path a member body can take on this deployment (the format
+ * of the body x whether its rule may emit IPv6), over the client families
+ * whose rule is on: what the detector's steering veto must cover
+ * (lib/edges/assignment.ts `steeringAvoids`).
+ */
+export function deliveryPathsOf(
+  render: EdgeConfig['render'],
+  style: DeliveryStyle,
+): DeliveryPath[] {
+  const out = new Map<string, DeliveryPath>();
+  for (const family of RENDER_CLIENT_FAMILIES) {
+    const rule = ruleForDelivery(effectiveRule(render, render.clients[family]), style);
+    if (!rule.enabled) continue;
+    for (const [format, body] of [
+      ['links', 'links'],
+      ['singbox', 'singbox-json'],
+      ['clash', 'clash-yaml'],
+    ] as const) {
+      const path: DeliveryPath = {
+        format,
+        canEmitV6: ruleCanEmitV6(rule, formatHasAutoGroup(rule, body)),
+        // The backup leads (and, under a cap, may be all that is handed out).
+        backupFirst: rule.includeBackup && rule.order === 'backup-first',
+      };
+      out.set(`${path.format}|${path.canEmitV6}|${path.backupFirst}`, path);
+    }
+  }
+  return [...out.values()];
 }
 
 /** Whether the rule lets this render emit an IPv6 entry at all (decides if an IPv6-only edge is assignable). */

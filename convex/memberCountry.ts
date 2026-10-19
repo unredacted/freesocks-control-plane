@@ -98,10 +98,28 @@ function keptCache(blob: string | undefined, stored: string | null): string | un
 }
 
 /**
+ * The render snapshot with its country-bearing fields kept only while they
+ * name the stored country (`country`, `primaryTier`, `backupTier`): the
+ * snapshot is one more stored copy of the member's country.
+ */
+export function keptSnapshot(
+  snap: Doc<'subscriptions'>['lastRender'],
+  stored: string | null,
+): Doc<'subscriptions'>['lastRender'] {
+  if (!snap || snap.country === undefined || snap.country === stored) return snap;
+  const { country, primaryTier, backupTier, ...rest } = snap;
+  void country;
+  void primaryTier;
+  void backupTier;
+  return rest;
+}
+
+/**
  * THE way to change a row's stored country. `choice` / `guess`: `undefined`
  * keeps the field, `null` clears it. Bumps `countryRev` whenever what is stored
- * changes (a refresh of the same guess's last-seen time does not), and drops
- * every cached body whose region no longer matches.
+ * changes (a refresh of the same guess's last-seen time does not), drops every
+ * cached body whose region no longer matches, and strips a render snapshot's
+ * country (and tiers) that no longer matches.
  */
 export async function setStoredCountry(
   ctx: MutationCtx,
@@ -132,12 +150,14 @@ export async function setStoredCountry(
     before.sniRegion !== after.sniRegion || before.regionSeenCountry !== after.regionSeenCountry;
   const bump = identityChanged || storedBefore !== storedAfter;
   const subCache = keptCache(sub.subCache, storedAfter);
+  const lastRender = keptSnapshot(sub.lastRender, storedAfter);
   const patch: Partial<Doc<'subscriptions'>> = {
     sniRegion: after.sniRegion ?? undefined,
     regionSeenCountry: after.regionSeenCountry ?? undefined,
     regionSeenFirstAt: after.regionSeenFirstAt ?? undefined,
     regionSeenAt: after.regionSeenAt ?? undefined,
     ...(subCache !== sub.subCache ? { subCache } : {}),
+    ...(lastRender !== sub.lastRender ? { lastRender } : {}),
     ...(bump ? { countryRev: (sub.countryRev ?? 0) + 1 } : {}),
   };
   await ctx.db.patch(sub._id, patch);

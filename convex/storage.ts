@@ -110,6 +110,10 @@ async function renderMirrorEndpoints(
   const out = applyEdgeRender(rctx, content, renderKey, {
     now: Date.now(),
     where: rctx.storedWhere,
+    // Edges by country only on the member's own choice (never a guess);
+    // without one, edges blocked in any listed country go last.
+    edgeCountry: rctx.storedEdgeCountry,
+    avoidBlockedIn: rctx.storedAvoidBlockedIn,
   });
   if (out.delivery.kind !== 'serve') return stub(rctx.epoch);
   return {

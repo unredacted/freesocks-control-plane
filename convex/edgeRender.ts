@@ -15,7 +15,8 @@
 import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { v } from 'convex/values';
-import { internalQuery } from './_generated/server';
+import { internalMutation, internalQuery } from './_generated/server';
+import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -23,6 +24,10 @@ import {
   RENDER_CLIENT_FAMILIES,
   type RenderClientFamily,
 } from './lib/edgeConfig';
+import { liveCountryState } from './lib/edges/country/group';
+import { ELSEWHERE, liveChoice } from './lib/memberCountry';
+import { memberFamilyOf } from './lib/memberFamily';
+import { resolveMemberCountryConfig } from './memberCountry';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import {
   effectiveRule,
@@ -30,7 +35,7 @@ import {
   type DeliveryStyle,
   type RenderMatcher,
 } from './lib/edges/render';
-import { assignEndpoints } from './lib/edges/assignment';
+import { assignEndpoints, endpointsFor } from './lib/edges/assignment';
 import type { CountryContext, PublishedEdge } from './lib/edges/assignment';
 import { protocolUsesSni } from './lib/edges/protocols';
 import { parseIntent } from './lib/edges/intent';
@@ -204,7 +209,7 @@ export async function publishedEdgesOf(
       listener.enabled;
     if (!eligible && !opts.includeIneligible) continue;
     if (!listener) continue; // no listener at all: nothing to render from
-    published.push(toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible));
+    published.push(toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible, now));
   }
   return { published, matchers };
 }
@@ -219,7 +224,13 @@ export function toPublishedEdge(
   listener: Doc<'relayListeners'>,
   poolIndex: number,
   eligible: boolean,
+  now = Date.now(),
 ): PublishedEdge {
+  // The effective per-country state (edgeCountry.ts), entries past their
+  // `until` already dropped: only an assignment given an `edgeCountry` reads it.
+  const country = liveCountryState(edge.countryState?.byCountry, now);
+  const provenIn = country.filter((c) => c.state === 'proven').map((c) => c.country);
+  const blockedIn = country.filter((c) => c.state === 'blocked').map((c) => c.country);
   const proto = {
     protocol: listener.protocol,
     streamTransport: listener.streamTransport,
@@ -255,6 +266,8 @@ export function toPublishedEdge(
         }))
       : [],
     ...(listener.sniPick ? { sniPick: listener.sniPick } : {}),
+    ...(provenIn.length > 0 ? { provenIn } : {}),
+    ...(blockedIn.length > 0 ? { blockedIn } : {}),
     ...((edge.layer ?? 'l4') === 'l7' && edge.frontQualification?.ok
       ? { proofExpiresAt: edge.frontQualification.expiresAt }
       : {}),
@@ -389,6 +402,18 @@ export interface SubscriptionRenderContext extends EdgeRenderContext {
   renderKey: string | null;
   /** The country context of a render that has no request behind it (a mirror). */
   storedWhere: CountryContext;
+  /**
+   * Delivery by country for a render with no request behind it (a mirror):
+   * the member's own CHOICE only (a public object held by a third party is
+   * never shaped by a guess), on a freedom-family key, while steering is on.
+   */
+  storedEdgeCountry: string | null;
+  /**
+   * The same mirror without a choice: edges blocked in ANY listed country go
+   * last (no member data shapes it). Empty when steering is off, the key is
+   * not freedom-family, or the member chose a country.
+   */
+  storedAvoidBlockedIn: string[];
 }
 
 export type SubscriptionRenderDecision =
@@ -455,6 +480,13 @@ export const decideForSubscription = internalQuery({
       { kind: 'member' },
       { includeIneligible: true },
     );
+    const curated = (await resolveSniConfig(ctx.db)).curatedCountries;
+    const countryCfg = await resolveMemberCountryConfig(ctx.db);
+    const choice = liveChoice(sub, curated);
+    const steeredKey =
+      countryCfg.steer &&
+      (await memberFamilyOf(ctx.db, { ...sub, pinnedNode: node ?? sub.pinnedNode })) === 'freedom';
+    const storedEdgeCountry = steeredKey && choice && choice !== ELSEWHERE ? choice : null;
     return {
       kind: 'render',
       context: {
@@ -464,6 +496,7 @@ export const decideForSubscription = internalQuery({
         published,
         rule,
         preferDistinctProviders: cfg.render.preferDistinctProviders,
+        minProvenForExclusive: cfg.country.minProvenForExclusive,
         renderKey: sub.renderKey ?? null,
         // For a render with NO request behind it (a mirror): the member's own
         // stored answer when it is a curated country, else no country at all,
@@ -471,8 +504,10 @@ export const decideForSubscription = internalQuery({
         storedWhere: resolveWhere({
           override: sub.sniRegion,
           inferred: null,
-          curated: (await resolveSniConfig(ctx.db)).curatedCountries,
+          curated,
         }).where,
+        storedEdgeCountry,
+        storedAvoidBlockedIn: steeredKey && !storedEdgeCountry ? curated : [],
         originAddress: relay.originAddress,
         deliveryStyle: await deliveryStyleOf(ctx, sub.backendServerId),
       },
@@ -524,19 +559,72 @@ export const memberView = internalQuery({
     const backup = snap.backupEdgeId ? byId.get(snap.backupEdgeId) : undefined;
     if (!primary) return { refreshSuggested: true, known: false, connections: [] };
     const rule = effectiveRule(cfg.render, cfg.render.clients.other);
-    const assigned = assignEndpoints(sub.renderKey ?? '', [primary, ...(backup ? [backup] : [])], {
-      now: Date.now(),
-      preferDistinctProviders: cfg.render.preferDistinctProviders,
-      includeBackup: rule.includeBackup && !!backup,
-      canEmitV6: rule.ipv6Mode === 'both',
-      namesPerEndpoint: rule.namesPerEndpoint,
-      backupNames: rule.backupNames,
-    });
+    // The snapshot's roles as they were: a seed over just these two edges could
+    // swap them (the member's primary would read as their backup).
+    const assigned = endpointsFor(
+      sub.renderKey ?? '',
+      primary,
+      rule.includeBackup ? (backup ?? null) : null,
+      { namesPerEndpoint: rule.namesPerEndpoint, backupNames: rule.backupNames },
+    );
     const connections = renderEntries(assigned, rule, false, origin.originAddress).map((e) => ({
       label: e.label,
       role: e.role,
       family: e.family,
     }));
     return { refreshSuggested, known: true, connections };
+  },
+});
+
+// --- delivery by country: turning it on or off ------------------------------------------------------
+
+/** When delivery by country was last turned on (appState); absent while it is off. */
+export const STEER_SINCE_KEY = 'delivery:steerSince';
+
+export async function steeringSince(db: QueryCtx['db']): Promise<number | null> {
+  const row = await db
+    .query('appState')
+    .withIndex('by_key', (q) => q.eq('key', STEER_SINCE_KEY))
+    .unique();
+  const at = row ? Number(row.value) : NaN;
+  return Number.isFinite(at) ? at : null;
+}
+
+/**
+ * How long after delivery by country is turned on its detector vetoes wait:
+ * one refresh interval (members' apps fetch again) plus the revalidation
+ * window a held copy may still be answered from.
+ */
+export function steeringSettleMs(cfg: { updateIntervalHours: number }): number {
+  return cfg.updateIntervalHours * 60 * 60_000 + 10 * 60_000;
+}
+
+/**
+ * `delivery.country.steer` changed (appSettings.setMany): what members receive
+ * changes with it, so every origin's publication epoch moves (cached bodies stop
+ * matching, members are nudged to refresh) and the mirrors are refreshed; the
+ * time it was turned on starts the vetoes' settle clock.
+ */
+export const steeringChanged = internalMutation({
+  args: { on: v.boolean() },
+  handler: async (ctx, { on }) => {
+    const now = Date.now();
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', STEER_SINCE_KEY))
+      .unique();
+    if (on && !row)
+      await ctx.db.insert('appState', { key: STEER_SINCE_KEY, value: String(now), updatedAt: now });
+    if (!on && row) await ctx.db.delete(row._id);
+    let bumped = 0;
+    for (const origin of await ctx.db.query('relays').collect()) {
+      await ctx.db.patch(origin._id, {
+        publicationEpoch: origin.publicationEpoch + 1,
+        updatedAt: now,
+      });
+      bumped++;
+    }
+    if (bumped > 0) await scheduleMirrorRefresh(ctx);
+    return { bumped };
   },
 });

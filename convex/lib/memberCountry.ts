@@ -27,6 +27,7 @@ export const MEMBER_COUNTRY_KEYS = {
   stickyDays: 'delivery.country.stickyDays',
   refreshHours: 'delivery.country.refreshHours',
   ownExitRanges: 'delivery.country.ownExitRanges',
+  steer: 'delivery.country.steer',
 } as const;
 
 export interface MemberCountryConfig {
@@ -38,6 +39,11 @@ export interface MemberCountryConfig {
   refreshHours: number;
   /** Operator-entered exit ranges (CIDRs) beside the ones FCP knows. */
   ownExitRanges: string[];
+  /**
+   * Order a member's addresses by their STORED country (docs/edges.md
+   * "Delivery by country"): edges proven there first, blocked ones last.
+   */
+  steer: boolean;
 }
 
 export const MEMBER_COUNTRY_DEFAULTS: MemberCountryConfig = {
@@ -45,6 +51,7 @@ export const MEMBER_COUNTRY_DEFAULTS: MemberCountryConfig = {
   stickyDays: 30,
   refreshHours: 6,
   ownExitRanges: [],
+  steer: false,
 };
 
 export const MEMBER_COUNTRY_BOUNDS = {
@@ -78,6 +85,7 @@ export function memberCountryConfig(settings: Record<string, unknown>): MemberCo
     ownExitRanges: Array.isArray(ranges)
       ? ranges.filter((r): r is string => typeof r === 'string').slice(0, B.ownExitRanges.max)
       : [],
+    steer: settings[MEMBER_COUNTRY_KEYS.steer] === true,
   };
 }
 
@@ -246,4 +254,19 @@ export function memberWhere(args: {
     return g ? { where: { country: g.country, curated: listed }, source: 'override' } : none();
   }
   return resolveWhere({ override: null, inferred: args.reading, curated: listed });
+}
+
+/**
+ * The country a member's EDGES are ordered by (delivery by country), or null:
+ * only with `steer` on, and only a STORED country (the member's choice or the
+ * stored guess, `source: 'override'`): a transient reading never shapes which
+ * address a member gets, and nothing at all applies outside the freedom family
+ * (`memberWhere` gives such a key no country).
+ */
+export function steeringCountry(
+  cfg: Pick<MemberCountryConfig, 'steer'>,
+  located: ResolvedWhere,
+): string | null {
+  if (!cfg.steer || located.source !== 'override') return null;
+  return located.where.country;
 }

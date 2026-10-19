@@ -141,12 +141,14 @@ async function countryWideHold(
   now: number,
 ): Promise<boolean> {
   const P = EDGE_PLUMBING;
+  // The WHOLE window (one row per edge checked there within it: bounded by the
+  // edges, never truncated, so the newest rounds always count).
   const rows = await db
     .query('edgeCountryEvidence')
     .withIndex('by_country_round', (q) =>
       q.eq('country', country).gte('lastRoundAt', now - P.countryWideWindowMs),
     )
-    .take(500);
+    .collect();
   const others = rows.filter((r) => r.edgeId !== edgeId);
   const blocked = others.filter((r) => r.lastRound?.result === 'blocked');
   const edges = others.length + 1;
@@ -592,6 +594,32 @@ export const preUse = internalQuery({
     };
   },
 });
+
+/**
+ * Checked countries where the country-wide guard holds new blocks right now
+ * (a row checked there within the guard's window carries `country_wide`): the
+ * detector's `country_wide` veto reads them.
+ */
+export async function heldCountries(
+  db: DatabaseReader,
+  countries: readonly string[],
+  now: number,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const country of countries) {
+    // The whole window, newest first (one row per edge checked there within
+    // it): a hold on the newest round is never cut off by a read cap.
+    const rows = await db
+      .query('edgeCountryEvidence')
+      .withIndex('by_country_round', (q) =>
+        q.eq('country', country).gte('lastRoundAt', now - EDGE_PLUMBING.countryWideWindowMs),
+      )
+      .order('desc')
+      .collect();
+    if (rows.some((r) => r.address.reason === 'country_wide')) out.push(country);
+  }
+  return out;
+}
 
 /** How many checked countries a spare is effectively blocked in (publishStandby prefers fewer). */
 export function blockedCountries(edge: Doc<'edges'>, now: number): number {

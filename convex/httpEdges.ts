@@ -1458,6 +1458,8 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         relayId: id<'relays'>(String(body.relayId ?? '')),
         family: String(body.family ?? 'other'),
         sampleKey: typeof body.sampleKey === 'string' ? body.sampleKey : undefined,
+        // "As a member in <country>" (a listed country).
+        country: typeof body.country === 'string' ? body.country : undefined,
       }),
     );
   }

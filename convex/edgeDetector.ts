@@ -13,7 +13,21 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { EDGE_PLUMBING, originPolicy, resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
+import {
+  EDGE_PLUMBING,
+  originPolicy,
+  resolveEdgeConfig,
+  edgeMs,
+  type EdgeConfig,
+} from './lib/edgeConfig';
+import { resolveCensoredCountries } from './lib/censoredCountries';
+import { deliveryPathsOf } from './lib/edges/render';
+import { deliveryStyleOf, publishedEdgesOf } from './edgeRender';
+import { heldCountries } from './edgeCountry';
+import { steeringSettleMs, steeringSince } from './edgeRender';
+import { listenersOf } from './relayListeners';
+import { resolveModeCatalog } from './lib/connectionModes';
+import { resolveMemberCountryConfig } from './memberCountry';
 import { todayKey } from './relays';
 import { familyKeyOf } from './probes';
 import {
@@ -28,6 +42,7 @@ import {
   type BaselineSample,
   type EdgeProbeState,
   type Evaluation,
+  type SteeringInput,
   type WindowReports,
 } from './lib/edges/scoring';
 import type { Verdict } from './lib/edges/probes/verdict';
@@ -244,6 +259,7 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
   return {
     origin,
     cfg,
+    steering: await steeringInputFor(ctx, origin, cfg, now),
     since: now - edgeMs.detectWindow(cfg),
     baseline,
     usersOnline,
@@ -253,6 +269,67 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
     published,
     rotationActive,
   };
+}
+
+/**
+ * The steering vetoes' inputs (delivery by country, docs/edges.md), or null
+ * while `delivery.country.steer` is off: the origin's published edges as the
+ * assignment sees them (their per-country state included), every delivery
+ * path its members' bodies can take, and where the country-wide guard holds.
+ */
+async function steeringInputFor(
+  ctx: QueryCtx,
+  origin: Origin,
+  cfg: EdgeConfig,
+  now: number,
+): Promise<SteeringInput | null> {
+  if (!(await resolveMemberCountryConfig(ctx.db)).steer) return null;
+  // A veto assumes members already hold the steered order: one refresh
+  // interval (and the revalidation window) after steering was turned on.
+  const since = await steeringSince(ctx.db);
+  if (since === null || now - since < steeringSettleMs(cfg)) return null;
+  const { published } = await publishedEdgesOf(
+    ctx,
+    origin,
+    { kind: 'member' },
+    { includeIneligible: true },
+  );
+  const style = origin.backendServerId
+    ? await deliveryStyleOf(ctx, origin.backendServerId)
+    : 'subscription';
+  return {
+    published,
+    paths: deliveryPathsOf(cfg.render, style),
+    checked: cfg.probe.countries,
+    curated: (await resolveCensoredCountries(ctx.db)).codes,
+    held: await heldCountries(ctx.db, cfg.probe.countries, now),
+    freedomListeners: await freedomListenersOf(ctx, origin),
+  };
+}
+
+/**
+ * The origin's listeners whose transport only freedom-family modes use (the
+ * backend setup's modes by transport tag, judged against the mode catalog).
+ * Fails closed: a listener without a binding, a tag no mode claims, or one a
+ * privacy-family mode also uses is not on the list.
+ */
+async function freedomListenersOf(ctx: QueryCtx, origin: Origin): Promise<string[]> {
+  if (!origin.backendServerId) return [];
+  const setup = await ctx.db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', origin.backendServerId!))
+    .first();
+  if (!setup) return [];
+  const catalog = await resolveModeCatalog(ctx.db);
+  const familyOfTag = (tag: string) => {
+    const families = setup.modes
+      .filter((m) => m.tag === tag)
+      .map((m) => catalog.modes.find((c) => c.id === m.slug)?.family ?? null);
+    return families.length > 0 && families.every((f) => f === 'freedom');
+  };
+  return (await listenersOf(ctx, origin._id))
+    .filter((l) => l.panelBinding && familyOfTag(l.panelBinding.inboundTag))
+    .map((l) => l.listenerKey);
 }
 
 export const relayContext = internalQuery({
@@ -588,6 +665,7 @@ export const run = internalAction({
               rotationsToday,
               rotationsPerDay: w.cfg.detect.fleetRotationsPerDay,
             },
+            ...(w.steering ? { steering: w.steering } : {}),
           });
           const veto = 'veto' in decision ? decision.veto : null;
           let lastRotateError: string | null | undefined = undefined;

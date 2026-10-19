@@ -10,6 +10,7 @@ import {
   suggestionCountry,
   type CountryFields,
   type MemberFamily,
+  steeringCountry,
 } from './memberCountry';
 
 const NOW = 1_800_000_000_000;
@@ -47,8 +48,31 @@ describe('memberCountryConfig', () => {
         'delivery.country.refreshHours': 2,
         'delivery.country.ownExitRanges': ['192.0.2.0/24', 7],
       }),
-    ).toEqual({ detect: true, stickyDays: 30, refreshHours: 2, ownExitRanges: ['192.0.2.0/24'] });
+    ).toEqual({
+      detect: true,
+      stickyDays: 30,
+      refreshHours: 2,
+      ownExitRanges: ['192.0.2.0/24'],
+      steer: false,
+    });
     expect(memberCountryConfig({ 'delivery.country.detect': 'true' }).detect).toBe(false);
+    expect(memberCountryConfig({ 'delivery.country.steer': true }).steer).toBe(true);
+  });
+});
+
+describe('steeringCountry', () => {
+  const at = (country: string | null, source: 'override' | 'inferred' | 'none') => ({
+    where: { country, curated: ['IR'] },
+    source,
+  });
+  test('only a STORED country orders edges, and only with steering on', () => {
+    expect(steeringCountry({ steer: true }, at('IR', 'override'))).toBe('IR');
+    expect(steeringCountry({ steer: false }, at('IR', 'override'))).toBeNull();
+    // A transient CDN reading never orders anything.
+    expect(steeringCountry({ steer: true }, at('IR', 'inferred'))).toBeNull();
+    // "Somewhere else" (stored, no country) and nothing at all.
+    expect(steeringCountry({ steer: true }, at(null, 'override'))).toBeNull();
+    expect(steeringCountry({ steer: true }, at(null, 'none'))).toBeNull();
   });
 });
 

@@ -68,7 +68,8 @@ accidentally regress it).
   - **On the subscription row only**, and deleted with the key (the choice, the guess, and the
     cached bodies shaped for it, at deletion rather than when the row is swept), on a switch to
     a mode that is not freedom-family, and when the country leaves the list. Every stored copy
-    of the country on a row equals the row's choice or guess (`setStoredCountry`); a request
+    of the country on a row (a cached body's region, the render snapshot's country) equals the
+    row's choice or guess (`setStoredCountry`); a request
     that read an older one cannot write it back. It follows the member to a re-issued key of a
     freedom mode (regenerate carries the answer only).
   - **Never in logs, audit payloads or analytics**: no audit action records a choice or a
@@ -85,7 +86,8 @@ accidentally regress it).
     first and last seen, the last delivery).
   - **With detection off** (the default) the CDN country is used for that one response's server
     names and **kept nowhere**: the body is not written to the content cache, is served
-    `private, no-store`, and is not part of the render snapshot. The mode suggestion uses it the
+    `private, no-store`, is not part of the render snapshot, and never orders the member's
+    addresses. The mode suggestion uses it the
     same way. In a country on the censored-country list the status page's availability matrix
     picks the suggestion; only the suggested mode id leaves the server.
 - **Device identification (HWID) is opt-in and backend-side.** When the admin
@@ -213,7 +215,9 @@ and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
   mirrors are re-rendered or replaced by an unavailable stub. `docs/edges.md` § "Rendering".
 - **No member data in the edges area.** Probes measure FCP's own addresses; report
   attribution uses a peppered per-member dedupe mark and the member's own render snapshot
-  (`subscriptions.lastRender`: epoch + edge ids, no addresses); audit payloads carry origin
+  (`subscriptions.lastRender`: epoch, edge ids and, when the body was shaped for the member's
+  STORED country, that country and the tier each address came from there; no addresses);
+  audit payloads carry origin
   slugs, listener keys and codes, never addresses, hostnames or provider account names. The one
   member fact the delivery uses is where they connect from, which lives on their subscription
   row under the rules in §1 and nowhere in the edges tables.

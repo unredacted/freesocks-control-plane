@@ -256,7 +256,28 @@ export const renderSnapshotValidator = v.object({
   listenerKeys: v.array(v.string()),
   primaryEdgeId: v.optional(v.id('edges')),
   backupEdgeId: v.optional(v.id('edges')),
+  country: v.optional(v.string()),
+  primaryTier: v.optional(v.number()),
+  backupTier: v.optional(v.number()),
 });
+
+/** Every field of a render snapshot that says what the member was handed (not when). */
+function sameSnapshot(
+  a: Omit<NonNullable<Doc<'subscriptions'>['lastRender']>, 'at'> | undefined,
+  b: Omit<NonNullable<Doc<'subscriptions'>['lastRender']>, 'at'>,
+): boolean {
+  return (
+    !!a &&
+    a.epoch === b.epoch &&
+    a.family === b.family &&
+    a.primaryEdgeId === b.primaryEdgeId &&
+    a.backupEdgeId === b.backupEdgeId &&
+    a.country === b.country &&
+    a.primaryTier === b.primaryTier &&
+    a.backupTier === b.backupTier &&
+    a.listenerKeys.join(',') === b.listenerKeys.join(',')
+  );
+}
 
 export const markDelivered = internalMutation({
   args: {
@@ -266,18 +287,35 @@ export const markDelivered = internalMutation({
     /** Present when this delivery was an origin render: persisted as `lastRender`. */
     render: v.optional(v.union(renderSnapshotValidator, v.null())),
   },
-  handler: async (ctx, { subscriptionId, contentAt, renderedEpoch, render }) => {
+  handler: async (ctx, { subscriptionId, contentAt, renderedEpoch, render: given }) => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub) return null;
     const now = Date.now();
+    // The snapshot is a stored copy of the member's country: one that names
+    // anything but the row's stored country NOW (a request that read an older
+    // state, a switch or "Somewhere else" in between) keeps only its plain
+    // delivery facts (convex/memberCountry.ts, the one invariant).
+    let render = given ?? null;
+    if (render?.country !== undefined && sub.state !== 'deleted') {
+      const [countryCfg, censored] = await Promise.all([
+        resolveMemberCountryConfig(ctx.db),
+        resolveCensoredCountries(ctx.db),
+      ]);
+      if (render.country !== storedCountry(sub, countryCfg, censored.codes, now)) {
+        const { country, primaryTier, backupTier, ...plain } = render;
+        void country;
+        void primaryTier;
+        void backupTier;
+        render = plain;
+      }
+    }
+    if (sub.state === 'deleted') render = null;
     const contentAdvanced = (sub.lastDeliveredContentAt ?? 0) < contentAt;
     const epochChanged =
       typeof renderedEpoch === 'number' && renderedEpoch !== sub.lastRenderedEpoch;
-    const snapshotChanged =
-      !!render &&
-      (sub.lastRender?.epoch !== render.epoch ||
-        sub.lastRender?.primaryEdgeId !== render.primaryEdgeId ||
-        sub.lastRender?.backupEdgeId !== render.backupEdgeId);
+    // Any change in what the member was handed (the edges, the listeners, the
+    // client family, the country or a tier) rewrites the snapshot, cache hit or not.
+    const snapshotChanged = !!render && !sameSnapshot(sub.lastRender, render);
     const stale = now - (sub.lastDeliveredAt ?? 0) >= DELIVERY_STAMP_THROTTLE_MS;
     if (!contentAdvanced && !epochChanged && !snapshotChanged && !stale) return null;
     await ctx.db.patch(subscriptionId, {

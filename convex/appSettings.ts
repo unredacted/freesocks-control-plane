@@ -55,6 +55,10 @@ export const SETTINGS_DEFAULTS = {
   'delivery.country.stickyDays': 30,
   'delivery.country.refreshHours': 6,
   'delivery.country.ownExitRanges': [] as string[],
+  // Delivery by country (docs/edges.md): order a freedom-family member's
+  // addresses by their STORED country (choice or guess), edges proven there
+  // first and blocked ones last. Off: the assignment ignores countries.
+  'delivery.country.steer': false,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA
@@ -133,9 +137,23 @@ export const setMany = internalMutation({
   },
   handler: async (ctx, { entries, updatedByAdminId }) => {
     for (const { key, value } of entries) {
+      const before =
+        key === 'delivery.country.steer'
+          ? (
+              await ctx.db
+                .query('appSettings')
+                .withIndex('by_key', (q) => q.eq('key', key))
+                .unique()
+            )?.value
+          : undefined;
       await upsertSettingRow(ctx, key, value, updatedByAdminId);
       if (key === 'delivery.country.ownExitRanges')
         await ctx.scheduler.runAfter(0, internal.ownExits.refresh, {});
+      // Delivery by country turned on or off: what members receive changes.
+      if (key === 'delivery.country.steer' && (before === 'true') !== (value === 'true'))
+        await ctx.scheduler.runAfter(0, internal.edgeRender.steeringChanged, {
+          on: value === 'true',
+        });
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: updatedByAdminId ?? undefined,

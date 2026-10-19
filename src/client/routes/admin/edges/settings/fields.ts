@@ -617,6 +617,14 @@ export const COUNTRY_FIELDS: Field[] = [
     helper:
       'A new address waits this long for its first check before a setup run or a replacement goes on. Not known never holds it.',
   },
+  {
+    kind: 'number',
+    path: 'country.minProvenForExclusive',
+    label: 'Working addresses before they are used alone',
+    unit: 'addresses',
+    helper:
+      'When members are ordered by country: with fewer addresses known to work there, those and the not yet known ones are shared out together.',
+  },
 ];
 
 export const L7_FIELDS: Field[] = [

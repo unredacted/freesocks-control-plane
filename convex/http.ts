@@ -19,7 +19,12 @@ import { isOwnExit } from './lib/ownExits';
 import { registerServerRoutes } from './httpServers';
 import { hmacSha256Hex } from './lib/crypto';
 import { sanitizeConnectionChoice } from './edgeAttribution';
-import { deliverBody, locateMember, type DeliverySubscription } from './lib/subscriptionDelivery';
+import {
+  deliverBody,
+  locateMember,
+  type DeliverySubscription,
+  type RenderSnapshot,
+} from './lib/subscriptionDelivery';
 import { relabelMemberEntries } from './lib/memberEntryNames';
 import { SUBSCRIPTION_PASSTHROUGH_HEADERS } from './lib/backends/types';
 import {
@@ -288,6 +293,12 @@ interface SubCacheEntry {
    * past it, and no cache is told it is fresh past it.
    */
   validUntil?: number | null;
+  /**
+   * What this body hands out (lib/subscriptionDelivery.ts `RenderSnapshot`):
+   * a hit records it, so `lastRender` always describes the body last served,
+   * whichever of the member's apps fetched it.
+   */
+  render?: RenderSnapshot | null;
 }
 
 // Format 2 carries `validUntil`. An entry written before it has no expiry
@@ -1266,6 +1277,7 @@ http.route({
         subscriptionId: sub._id,
         contentAt: fresh.at,
         renderedEpoch: fresh.renderedEpoch ?? null,
+        render: fresh.render ?? null,
       });
       // fresh + same format → cache hit
       return (await subscriptionResponse(await memberNamed(fresh), { hints, ifNoneMatch }))
@@ -1287,6 +1299,7 @@ http.route({
             subscriptionId: sub._id,
             contentAt: held.at,
             renderedEpoch: held.renderedEpoch ?? null,
+            render: held.render ?? null,
           });
           return answer.response;
         }
@@ -1340,6 +1353,7 @@ http.route({
         relay,
         renderedEpoch,
         validUntil,
+        render: renderSnapshot,
         // Only ever the member's OWN answer; an inferred country is not cached at all.
         ...(at.located.source === 'override' ? { region: at.located.where.country } : {}),
       };
@@ -1388,6 +1402,7 @@ http.route({
           subscriptionId: sub._id,
           contentAt: stale.at,
           renderedEpoch: stale.renderedEpoch ?? null,
+          render: stale.render ?? null,
         });
         return (await subscriptionResponse(await memberNamed(stale), { hints, ifNoneMatch }))
           .response;
