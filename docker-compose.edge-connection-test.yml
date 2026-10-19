@@ -37,7 +37,7 @@ services:
     networks: [default, ec-control, ec-edge]
 
   ec-node-reality:
-    image: remnawave/node:3.4.1
+    image: remnawave/node:3.4.2
     container_name: ec-node-reality
     hostname: ec-node-reality
     restart: 'no'
@@ -56,7 +56,7 @@ services:
 
   # The XHTTP-under-REALITY node (freedom-xhttp), fronted at L4 like the REALITY one.
   ec-node-xr:
-    image: remnawave/node:3.4.1
+    image: remnawave/node:3.4.2
     container_name: ec-node-xr
     hostname: ec-node-xr
     restart: 'no'
@@ -73,7 +73,7 @@ services:
         ipv4_address: 11.11.11.15
 
   ec-node-ws:
-    image: remnawave/node:3.4.1
+    image: remnawave/node:3.4.2
     container_name: ec-node-ws
     hostname: ec-node-ws
     restart: 'no'
@@ -94,7 +94,7 @@ services:
   # The operator nodes: managed by the panel at their public address (no node
   # role, no intent), serving whatever profile the test writes as the operator.
   ec-node-l4m:
-    image: remnawave/node:3.4.1
+    image: remnawave/node:3.4.2
     container_name: ec-node-l4m
     hostname: ec-node-l4m
     restart: 'no'
@@ -109,7 +109,7 @@ services:
         ipv4_address: 11.11.11.13
 
   ec-node-l7m:
-    image: remnawave/node:3.4.1
+    image: remnawave/node:3.4.2
     container_name: ec-node-l7m
     hostname: ec-node-l7m
     restart: 'no'
@@ -144,7 +144,7 @@ services:
   # The node role's ingress: shares the WebSocket node's network namespace, so
   # it reaches the loopback inbound and answers on the node's own addresses.
   ec-node-ws-ingress:
-    image: caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    image: caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     container_name: ec-node-ws-ingress
     restart: 'no'
     network_mode: service:ec-node-ws
@@ -160,7 +160,7 @@ services:
 
   # The site the REALITY node borrows its handshake from (the family's target).
   ec-reality-target:
-    image: caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    image: caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     container_name: ec-reality-target
     restart: 'no'
     volumes:
@@ -194,7 +194,7 @@ services:
   # once in the forwarder's network namespace (busybox `ip` from the pinned
   # Caddy image) and exits.
   ec-l4-addresses:
-    image: caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    image: caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     container_name: ec-l4-addresses
     restart: 'no'
     network_mode: service:ec-l4-forwarder
@@ -211,7 +211,7 @@ services:
   # and the fake provider API adds the route of each proxied record through the
   # admin endpoint (edge network only).
   ec-l7-front:
-    image: caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    image: caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     container_name: ec-l7-front
     restart: 'no'
     environment:
