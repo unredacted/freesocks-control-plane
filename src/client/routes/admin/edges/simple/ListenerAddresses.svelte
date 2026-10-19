@@ -7,14 +7,24 @@
    * ("Stop tracking" for an address FCP did not create) and "Keep as a spare"
    * when the caller can act on it.
    *
+   * Under each address in use or spare: what it counts as from each checked
+   * country and its "Countries" menu (EdgeCountryActions), when the caller
+   * passes the checks.
+   *
    * Props: listener; edges (every non-destroyed edge of the origin); onTest(edgeId);
    *        publishable? (the spare the server says can be put in use now, or null)
    *        with onPublish() (the caller confirms and publishes it)
    *        onRetiring?(edge, 'delete' | 'keep') (the caller confirms; absent = no actions)
+   *        countries? (the checks from each country, `edgeCountriesQuery`; absent = not shown)
    */
-  import type { EdgeAdmin, RelayListenerAdmin } from '@shared/contracts/edges';
+  import type {
+    EdgeAdmin,
+    EdgeCountriesResponse,
+    RelayListenerAdmin,
+  } from '@shared/contracts/edges';
   import { Button } from '@client/components/ui/button';
   import { PLAIN_ATTENTION_ACTION_LABELS, healthLabel } from '@client/lib/edgeCodes';
+  import EdgeCountryActions from '../components/EdgeCountryActions.svelte';
   import PoolStrip from '../components/PoolStrip.svelte';
   import type { PoolEntry } from '../lib/types';
   import { endNowWords, retiringWords } from './drainWords';
@@ -26,8 +36,17 @@
     publishable?: string | null;
     onPublish?: () => void;
     onRetiring?: (edge: EdgeAdmin, action: 'delete' | 'keep') => void;
+    countries?: EdgeCountriesResponse | null;
   }
-  let { listener, edges, onTest, publishable = null, onPublish, onRetiring }: Props = $props();
+  let {
+    listener,
+    edges,
+    onTest,
+    publishable = null,
+    onPublish,
+    onRetiring,
+    countries = null,
+  }: Props = $props();
 
   const mine = $derived(edges.filter((e) => e.listenerId === listener.id));
   const inUse = $derived(mine.filter((e) => e.publication === 'published'));
@@ -79,58 +98,63 @@
   {#if mine.length === 0}
     <p class="text-muted-foreground text-sm">No address yet.</p>
   {:else}
-    <ul class="space-y-1 text-sm">
+    <ul class={['text-sm', countries ? 'space-y-3' : 'space-y-1']}>
       {#each [...inUse, ...spares, ...retiring] as e (e.id)}
         {@const t = tested(e)}
         {@const r = retiring.includes(e) ? retiringWords(e) : null}
-        <li class="flex flex-wrap items-center gap-x-2">
-          <span class="font-mono text-xs">{address(e)}</span>
-          {#if r}
-            <span class="text-muted-foreground">{r.word}. {r.line}</span>
-            {#if onRetiring && r.canDelete}
-              <Button
-                variant="link"
-                size="sm"
-                class="text-destructive h-auto min-h-11 p-0 sm:min-h-0"
-                onclick={() => onRetiring(e, 'delete')}
-              >
-                {endNowWords(e, address(e)).label}
-              </Button>
+        <li>
+          <div class="flex flex-wrap items-center gap-x-2">
+            <span class="font-mono text-xs">{address(e)}</span>
+            {#if r}
+              <span class="text-muted-foreground">{r.word}. {r.line}</span>
+              {#if onRetiring && r.canDelete}
+                <Button
+                  variant="link"
+                  size="sm"
+                  class="text-destructive h-auto min-h-11 p-0 sm:min-h-0"
+                  onclick={() => onRetiring(e, 'delete')}
+                >
+                  {endNowWords(e, address(e)).label}
+                </Button>
+              {/if}
+              {#if onRetiring && r.canKeep}
+                <Button
+                  variant="link"
+                  size="sm"
+                  class="h-auto min-h-11 p-0 sm:min-h-0"
+                  onclick={() => onRetiring(e, 'keep')}
+                >
+                  Keep as a spare
+                </Button>
+              {/if}
+            {:else}
+              <span class="text-muted-foreground">
+                {WORD[e.publication]}, {healthLabel(e.health).toLowerCase()}{#if t}, {t}{/if}
+              </span>
             {/if}
-            {#if onRetiring && r.canKeep}
+            {#if t && t !== 'tested'}
               <Button
                 variant="link"
                 size="sm"
                 class="h-auto min-h-11 p-0 sm:min-h-0"
-                onclick={() => onRetiring(e, 'keep')}
+                onclick={() => onTest(e.id)}
               >
-                Keep as a spare
+                Test it
               </Button>
             {/if}
-          {:else}
-            <span class="text-muted-foreground">
-              {WORD[e.publication]}, {healthLabel(e.health).toLowerCase()}{#if t}, {t}{/if}
-            </span>
-          {/if}
-          {#if t && t !== 'tested'}
-            <Button
-              variant="link"
-              size="sm"
-              class="h-auto min-h-11 p-0 sm:min-h-0"
-              onclick={() => onTest(e.id)}
-            >
-              Test it
-            </Button>
-          {/if}
-          {#if onPublish && e.id === publishable}
-            <Button
-              variant="link"
-              size="sm"
-              class="h-auto min-h-11 p-0 sm:min-h-0"
-              onclick={onPublish}
-            >
-              {PLAIN_ATTENTION_ACTION_LABELS.publish}
-            </Button>
+            {#if onPublish && e.id === publishable}
+              <Button
+                variant="link"
+                size="sm"
+                class="h-auto min-h-11 p-0 sm:min-h-0"
+                onclick={onPublish}
+              >
+                {PLAIN_ATTENTION_ACTION_LABELS.publish}
+              </Button>
+            {/if}
+          </div>
+          {#if countries && !r}
+            <EdgeCountryActions edgeId={e.id} name={address(e)} data={countries} />
           {/if}
         </li>
       {/each}

@@ -37,6 +37,12 @@
    * reactivate). Both refuse while a rotation, a restore or a pause holds the
    * origin, so they are offered only when nothing does.
    *
+   * Each address in use or spare says what it counts as from each checked
+   * country (works, blocked since, down, not checked, why, and whether that
+   * comes from its own checks, its location or a mark), with "Mark for a
+   * country" and "Check from every country now" in its Countries menu. The
+   * checks read every 30 s, every 4 s while a check asked for here is out.
+   *
    * Props:
    *   slug: string                          the origin's slug
    *   enrolled?: { stage: string } | null   the enrolled node behind it (Servers knows)
@@ -63,6 +69,7 @@
     deleteEdge,
     deleteRelay,
     edgeConfigQuery,
+    edgeCountriesQuery,
     edgeKeys,
     invalidateRelay,
     relayEdgesQuery,
@@ -85,6 +92,7 @@
   import { ATTENTION_ACTION_PLAN } from '../lib/attention';
   import { runAttentionCall } from '../lib/attentionCalls';
   import { attentionCallDeps } from '../lib/attentionCallDeps';
+  import { anyCountryCheckPending } from '../lib/countryCheckRequests';
   import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
   import { transportName } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
@@ -120,6 +128,7 @@
   const edgesQ = relayEdgesQuery(ref);
   const timelineQ = relayTimelineQuery(ref);
   const config = edgeConfigQuery();
+  const countriesQ = edgeCountriesQuery({ busy: (d) => anyCountryCheckPending(d) });
   const testParam = searchParam('test');
 
   const listeners = $derived((listenersQ.data?.listeners ?? []).filter((l) => !l.retired));
@@ -391,6 +400,7 @@
                 onRetiring={canEndDrains
                   ? (edge, action) => (ending = { edge, action })
                   : undefined}
+                countries={countriesQ.data ?? null}
               />
             </li>
           {/each}

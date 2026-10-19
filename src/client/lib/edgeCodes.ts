@@ -625,6 +625,18 @@ const COPY = {
       'A reachability source has brought back nothing for hours. A failure is never read as a block, so the countries it alone covers read as not known.',
     fix: 'Check its credential and budget in Edges settings, Probes.',
   },
+  country_wide_failure: {
+    label: 'Failing from a whole country',
+    explain:
+      'Most addresses checked from this country failed at once. A censor does not block every provider together, an outage or a probe problem does, so FCP holds these as not known instead of blocked.',
+    fix: 'Look at the probe sources on the Probes page, then check again later.',
+  },
+  new_edge_blocked_in: {
+    label: 'New address blocked in a country',
+    explain:
+      'A spare address that was never in use is blocked from at least one censored country while it works from elsewhere. Members there could not use it.',
+    fix: 'Replace the spare, or mark the country if you know better.',
+  },
   pool_below_desired: {
     label: 'Pool below desired',
     explain: 'Fewer edges are published than the origin wants.',
@@ -1508,6 +1520,7 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   protect_node: 'Protect the node',
   open_node: 'Review go-live',
   open_modes: 'Open Connection modes',
+  open_probes: 'See the checks',
 };
 
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
@@ -1531,6 +1544,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   protect_node: 'Protect node',
   open_node: 'Open node',
   open_modes: 'Connection modes',
+  open_probes: 'Open probes',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {
@@ -1791,6 +1805,9 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'probe.requested': 'Probe requested',
   'probe.run': 'Probe run finished',
   'probe.verdict': 'Reachability verdict changed',
+  'edge.country.state': 'Result from a country changed',
+  'edge.country.mark': 'Marked for a country',
+  'edge.country.check': 'Checked from every country',
   'probe.target.create': 'Probe target created',
   'probe.target.update': 'Probe target changed',
   'probe.target.delete': 'Probe target deleted',
@@ -1903,6 +1920,9 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'admin.edge.rotate': 'Replacement requested',
   'admin.edge.burn': 'Replacement requested (blocked)',
   'probe.verdict': 'Reachability changed',
+  'edge.country.state': 'Result from a country changed',
+  'edge.country.mark': 'Marked for a country',
+  'edge.country.check': 'Checked from every country',
 };
 export function plainAuditActionLabel(action: string): string {
   return PLAIN_AUDIT_LABELS[action] ?? plainWords(auditActionLabel(action));

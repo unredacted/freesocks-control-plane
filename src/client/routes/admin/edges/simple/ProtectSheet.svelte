@@ -12,7 +12,10 @@
    *                      a link to where that is fixed). Each change plans again
    *                      with the picks, and the plan says what they make: the
    *                      addresses per location, a transport no pick carries, the
-   *                      transports with no backup at another provider. "Add a
+   *                      transports with no backup at another provider. Each
+   *                      location says how it fares from each checked country
+   *                      (Works, Blocked, Some addresses blocked, Not checked
+   *                      yet, with age), read live. "Add a
    *                      location" renders LocationPicker and picks the new one;
    *                      "Add account" renders the provider stepper inline
    *                      (compact). With no account at all the stepper opens by
@@ -44,10 +47,13 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import { Skeleton } from '@client/components/ui/skeleton';
+  import { Badge } from '@client/components/ui/badge';
   import Link from '@client/components/Link.svelte';
+  import { countryName } from '@client/lib/countries';
   import { adminBackendServersQuery } from '@client/lib/queries';
   import {
     createSetupRun,
+    edgeCountriesQuery,
     edgeKeys,
     nodeCandidatesQuery,
     planSetupRun,
@@ -64,7 +70,9 @@
   import ProviderAccountStepper from '../forms/ProviderAccountStepper.svelte';
   import LocationPicker from '../forms/LocationPicker.svelte';
   import { hasLocations } from '../forms/providerFields';
+  import { locationGrades, locationGroupKey } from '../lib/countryChecks';
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
+  import { gradeWords } from '../lib/statusWords';
   import { providerLabel, transportName } from '../lib/format';
   import { countryLabel } from '../../servers/lib/words';
   import { edgesPaths } from '../lib/routes';
@@ -238,6 +246,21 @@
   let picks = $state<string[]>([]);
   let autoPicked = false;
   let addingLocationFor = $state<string | null>(null);
+  // How each offered location fares from the checked countries (read live while open).
+  const countriesQ = edgeCountriesQuery({ enabled: () => open && !runId });
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!open) return;
+    const t = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(t);
+  });
+  // With the checks off, a location still shows what is on record for it: a
+  // grade, or a mark (marks never expire).
+  const gradesOf = (provider: string, layer: string, placeKey: string) => {
+    const cells = locationGrades(countriesQ.data, locationGroupKey({ provider, placeKey, layer }));
+    const shown = countriesQ.data?.enabled || cells.some((c) => c.grade || c.mark);
+    return shown ? cells.map((c) => gradeWords(c, now)) : [];
+  };
   const accounts = $derived(
     [...(plan?.accounts ?? [])].sort((a, b) => Number(b.compatible) - Number(a.compatible)),
   );
@@ -707,6 +730,7 @@
                   {:else}
                     <ul class="space-y-1.5 px-3 pb-3">
                       {#each a.locations as l (l.id)}
+                        {@const grades = gradesOf(a.provider, a.layer, l.placeKey)}
                         <li>
                           <label
                             class="has-[:checked]:border-primary has-[:checked]:bg-primary/5 flex cursor-pointer items-start gap-2 rounded-md border px-2 py-1.5 has-[:disabled]:cursor-not-allowed"
@@ -733,6 +757,35 @@
                                   Not trusted yet: the check before going live trusts it.
                                 {/if}
                               </span>
+                              {#if grades.length > 0}
+                                <span
+                                  class="mt-1 flex flex-wrap gap-1"
+                                  aria-label={`${l.label} from each country`}
+                                >
+                                  {#each grades as g (g.country)}
+                                    <!-- A mark wins over the checks: the chip says it. -->
+                                    <Badge
+                                      variant={g.markState === 'proven'
+                                        ? 'success'
+                                        : g.markState === 'blocked'
+                                          ? 'danger'
+                                          : g.tone}
+                                      title={[
+                                        countryName(g.country, 'en'),
+                                        g.age,
+                                        g.mark,
+                                        g.conflict,
+                                      ]
+                                        .filter(Boolean)
+                                        .join('. ')}
+                                    >
+                                      {g.country}: {g.markState
+                                        ? `${g.markState === 'proven' ? 'works' : 'blocked'}, your mark`
+                                        : g.label.toLowerCase()}
+                                    </Badge>
+                                  {/each}
+                                </span>
+                              {/if}
                             </span>
                           </label>
                         </li>

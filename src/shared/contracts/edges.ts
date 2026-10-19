@@ -10,6 +10,10 @@ import {
   ATTENTION_ACTIONS,
   ATTENTION_KINDS,
   ATTENTION_SEVERITIES,
+  COUNTRY_GROUP_GRADES,
+  COUNTRY_ROUND_RESULTS,
+  COUNTRY_STATE_FROM,
+  COUNTRY_TRACK_STATES,
   INBOUND_UNSUPPORTED_CODES,
   PREFLIGHT_KINDS,
   RESTORE_PHASES,
@@ -881,10 +885,21 @@ export const ProbeRunAdmin = z.object({
   trigger: z.enum(['cron', 'manual', 'detector', 'qualification']),
   requestedAt: iso,
   finishedAt: isoN,
+  /** Vantages of the checked countries only (control vantages are counted apart). */
   okVantages: z.number(),
   failVantages: z.number(),
+  /** The round this run belongs to (every run one request made for one target); null before rounds. */
+  roundId: z.string().nullable().default(null),
+  /** Globalping vantage points the run asked for (the hourly tests budget); null for other sources. */
+  tests: z.number().nullable().default(null),
+  /** Control countries asked in the same measurement (uncensored, one vantage each). */
+  controls: z.array(z.string()).default([]),
+  /** Why the run could not measure, as a short class (`PROBE_FAILURE_CLASSES`); null when it did. */
+  error: z.string().nullable().default(null),
   results: z.array(
     z.object({
+      /** A control vantage: it feeds only the round verdict, never the target's reachability. */
+      control: z.boolean().default(false),
       country: z.string(),
       asn: z.string().nullable(),
       network: z.string().nullable(),
@@ -908,11 +923,151 @@ export const ProbeMatrixTarget = z.object({
   reachability: ProbeReachabilitySummary,
 });
 export type ProbeMatrixTarget = z.infer<typeof ProbeMatrixTarget>;
+/**
+ * Whether one enabled probe source is bringing back evidence (lib/edges/country/sourceHealth.ts):
+ * a failing source makes every country it alone covers read "not known".
+ */
+export const ProbeSourceHealth = z.object({
+  source: z.string(),
+  /** Settled runs among its newest ones. */
+  runs: z.number(),
+  withEvidence: z.number(),
+  failed: z.number(),
+  empty: z.number(),
+  /** Settled runs in a row, newest first, that brought nothing. */
+  streak: z.number(),
+  lastOkAt: isoN,
+  lastFailAt: isoN,
+  /** The newest failure's class (`PROBE_FAILURE_CLASSES`). */
+  lastError: z.string().nullable(),
+  failing: z.boolean(),
+});
+export type ProbeSourceHealth = z.infer<typeof ProbeSourceHealth>;
+/** `GET probes/sources`. */
+export const ProbeSourcesResponse = z.object({ sources: z.array(ProbeSourceHealth) });
+export type ProbeSourcesResponse = z.infer<typeof ProbeSourcesResponse>;
+
 export const ProbeReachabilityMatrix = z.object({
   countries: z.array(z.string()),
   targets: z.array(ProbeMatrixTarget),
+  sources: z.array(ProbeSourceHealth).default([]),
 });
 export type ProbeReachabilityMatrix = z.infer<typeof ProbeReachabilityMatrix>;
+
+// --- checks from each country (docs/edges.md "Checks from each country") ------------------------
+
+const CountryTrackState = z.enum(COUNTRY_TRACK_STATES);
+const CountryRoundResult = z.enum(COUNTRY_ROUND_RESULTS);
+
+/** One edge in one checked country: its two tracks, the last round, and what it counts as. */
+export const EdgeCountryRow = z.object({
+  country: z.string(),
+  /** The edge's own tracks combined. */
+  combined: CountryTrackState,
+  /** When its own state turned blocked there (null: not blocked, or not on record). */
+  blockedSince: isoN.default(null),
+  /** What the edge counts as there (a mark, the group's block, its own state); null = not known. */
+  effective: z
+    .object({
+      country: z.string(),
+      state: z.enum(['proven', 'blocked']),
+      from: z.enum(COUNTRY_STATE_FROM),
+      /** Epoch ms the state stands until (absent for a mark). */
+      until: z.number().optional(),
+    })
+    .nullable(),
+  address: z.object({
+    state: CountryTrackState,
+    reason: z.string().nullable(),
+    decidedAt: isoN,
+    until: isoN,
+    blockedRounds: z.number(),
+    repeatAt: isoN,
+  }),
+  handshake: z.object({
+    state: z.enum(['blocked', 'none']),
+    reason: z.string().nullable(),
+    until: isoN,
+    pathBatches: z.number(),
+    lastBatchAt: isoN,
+  }),
+  lastRound: z
+    .object({
+      /** The round (`ProbeRunAdmin.roundId`) this result came from. */
+      roundId: z.string().nullable().default(null),
+      at: isoN,
+      result: CountryRoundResult,
+      reason: z.string().nullable(),
+      ok: z.number(),
+      fail: z.number(),
+      networks: z.number(),
+      controlsOk: z.number(),
+      v6Result: CountryRoundResult.nullable(),
+    })
+    .nullable(),
+});
+export type EdgeCountryRow = z.infer<typeof EdgeCountryRow>;
+
+export const EdgeCountriesEdge = z.object({
+  edgeId: z.string(),
+  relaySlug: z.string().nullable(),
+  /** `<provider>:<placeKey>`, `<provider>:global` (a CDN front), `adopted:<id>` / `edge:<id>` (its own). */
+  groupKey: z.string(),
+  provider: z.string().nullable(),
+  status: z.string(),
+  publication: z.string().nullable(),
+  countries: z.array(EdgeCountryRow),
+});
+export type EdgeCountriesEdge = z.infer<typeof EdgeCountriesEdge>;
+
+/** A provider location's grade in one country, from its edges' own states. */
+export const CountryGroupGradeRow = z.object({
+  groupKey: z.string(),
+  provider: z.string().nullable(),
+  country: z.string(),
+  state: z.enum(COUNTRY_GROUP_GRADES),
+  counts: z.object({ edges: z.number(), proven: z.number(), blocked: z.number() }),
+  until: isoN,
+});
+export type CountryGroupGradeRow = z.infer<typeof CountryGroupGradeRow>;
+
+/** An operator's word about an edge or a location in one country (never expires; wins over checks). */
+export const CountryMarkRow = z.object({
+  scope: z.enum(['edge', 'group']),
+  edgeId: z.string().nullable(),
+  groupKey: z.string().nullable(),
+  country: z.string(),
+  state: z.enum(['proven', 'blocked']),
+  at: isoN,
+});
+export type CountryMarkRow = z.infer<typeof CountryMarkRow>;
+
+/** `GET countries`: everything the checks know. Never an address. */
+export const EdgeCountriesResponse = z.object({
+  /** `edge.country.enabled`. */
+  enabled: z.boolean(),
+  /** The checked countries (the censored-country list's edge-check countries). */
+  countries: z.array(z.string()),
+  /** The control countries asked beside them. */
+  controls: z.array(z.string()),
+  groups: z.array(CountryGroupGradeRow),
+  edges: z.array(EdgeCountriesEdge),
+  marks: z.array(CountryMarkRow),
+  sources: z.array(ProbeSourceHealth).default([]),
+});
+export type EdgeCountriesResponse = z.infer<typeof EdgeCountriesResponse>;
+
+/** `POST countries/marks {scope, ref, country, state | null}`. */
+export const CountryMarkRequest = z.object({
+  scope: z.enum(['edge', 'group']),
+  /** The edge id, or the group key. */
+  ref: z.string(),
+  country: z.string(),
+  /** null removes the mark (the checks decide again). */
+  state: z.enum(['proven', 'blocked']).nullable(),
+});
+export type CountryMarkRequest = z.infer<typeof CountryMarkRequest>;
+export const CountryMarkResponse = z.object({ ok: z.literal(true), edges: z.number() });
 
 export const ProbeRunsResponse = z.object({ runs: z.array(ProbeRunAdmin) });
 

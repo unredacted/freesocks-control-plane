@@ -791,6 +791,34 @@ export const expire = internalMutation({
 
 // --- the admin read ---------------------------------------------------------------------------------
 
+/** Audit rows of one edge read to find when each country's block began (newest first). */
+const SINCE_AUDIT_ROWS = 100;
+
+/**
+ * When the edge's own state turned blocked in each country it is blocked in
+ * now: the newest `edge.country.state` transition per country, when it is a
+ * block (the tracks keep only the last confirmation, which moves forward on
+ * every blocked round). Null where the audit rows read do not reach it.
+ */
+async function blockedSinceOf(
+  db: DatabaseReader,
+  edgeId: Id<'edges'>,
+): Promise<Map<string, number | null>> {
+  const rows = await db
+    .query('auditLog')
+    .withIndex('by_target', (q) => q.eq('targetType', 'edge').eq('targetId', edgeId))
+    .order('desc')
+    .take(SINCE_AUDIT_ROWS);
+  const out = new Map<string, number | null>();
+  for (const r of rows) {
+    if (r.action !== 'edge.country.state') continue;
+    const p = (r.payload ?? {}) as { country?: unknown; state?: unknown };
+    if (typeof p.country !== 'string' || out.has(p.country)) continue;
+    out.set(p.country, p.state === 'blocked' ? r._creationTime : null);
+  }
+  return out;
+}
+
 /**
  * Everything the checks know, for Edges -> Countries (PR 3 draws it): the
  * checked and control countries, every group's grade, every edge's tracks per
@@ -817,6 +845,9 @@ export const overview = internalQuery({
       const edge = await ctx.db.get(edgeId as Id<'edges'>);
       const relay = await ctx.db.get(list[0]!.relayId);
       const effective = liveCountryState(edge?.countryState?.byCountry, now);
+      const since = list.some((r) => r.combined === 'blocked')
+        ? await blockedSinceOf(ctx.db, edgeId as Id<'edges'>)
+        : new Map<string, number | null>();
       edges.push({
         edgeId,
         relaySlug: relay?.slug ?? null,
@@ -829,6 +860,8 @@ export const overview = internalQuery({
           .map((r) => ({
             country: r.country,
             combined: r.combined,
+            /** When the edge's own state turned blocked there (null: not blocked, or not on record). */
+            blockedSince: r.combined === 'blocked' ? iso(since.get(r.country) ?? undefined) : null,
             effective: effective.find((c) => c.country === r.country) ?? null,
             address: {
               state: r.address.state,
@@ -847,6 +880,7 @@ export const overview = internalQuery({
             },
             lastRound: r.lastRound
               ? {
+                  roundId: r.lastRound.roundId,
                   at: iso(r.lastRound.at),
                   result: r.lastRound.result,
                   reason: r.lastRound.reason ?? null,
@@ -884,6 +918,85 @@ export const overview = internalQuery({
     };
   },
 });
+
+// --- reads for attention ---------------------------------------------------------------------------
+
+/**
+ * Rows (one per edge checked there) one country's scan for holds reads at most.
+ * Newest round first, so a recent mass failure is always inside it; past it
+ * the fleet is far beyond operator scale.
+ */
+const COUNTRY_WIDE_SCAN = 2000;
+
+/**
+ * Countries where the country-wide guard holds new blocks (attention
+ * `country_wide_failure`): edges whose round there within `windowMs` came back
+ * blocked but was held as `country_wide`. Most of what is checked there failed
+ * at once: an outage or a probe problem, not a censor, so nothing turned
+ * blocked; the operator should look at the sources.
+ */
+export async function countryWideHolds(
+  db: DatabaseReader,
+  countries: readonly string[],
+  now: number,
+  windowMs: number,
+): Promise<Array<{ country: string; edges: number; groups: number; since: number }>> {
+  const out = [];
+  for (const country of countries) {
+    const held: Evidence[] = [];
+    let scanned = 0;
+    for await (const r of db
+      .query('edgeCountryEvidence')
+      .withIndex('by_country_round', (q) =>
+        q.eq('country', country).gte('lastRoundAt', now - windowMs),
+      )
+      .order('desc')) {
+      if (r.address.reason === 'country_wide') held.push(r);
+      if (++scanned >= COUNTRY_WIDE_SCAN) break;
+    }
+    if (held.length === 0) continue;
+    out.push({
+      country,
+      edges: held.length,
+      groups: new Set(held.map((r) => r.groupKey)).size,
+      since: Math.min(...held.map((r) => r.lastRoundAt ?? r.updatedAt)),
+    });
+  }
+  return out;
+}
+
+/**
+ * The checked countries a NEW edge (active, never in use) is blocked in
+ * (attention `new_edge_blocked_in`): its round there came back blocked and it
+ * was never proven there (a block waiting for its repeat counts), or its
+ * combined state is blocked. A country-wide hold is not the edge's own block,
+ * and a country the operator marked is left to the mark.
+ */
+export async function newEdgeBlockedIn(
+  db: DatabaseReader,
+  edge: Doc<'edges'>,
+  countries: readonly string[],
+): Promise<Array<{ country: string; at: number }>> {
+  if (edge.status !== 'active' || edge.publication !== 'unpublished' || edge.publishedAt) return [];
+  const marked = new Set(
+    (edge.countryState?.byCountry ?? []).filter((c) => c.from === 'mark').map((c) => c.country),
+  );
+  const rows = await db
+    .query('edgeCountryEvidence')
+    .withIndex('by_edge_country', (q) => q.eq('edgeId', edge._id))
+    .take(100);
+  const out = [];
+  for (const r of rows) {
+    if (!countries.includes(r.country) || marked.has(r.country)) continue;
+    const roundBlocked =
+      r.lastRound?.result === 'blocked' &&
+      r.address.state !== 'proven' &&
+      r.address.reason !== 'country_wide';
+    if (r.combined !== 'blocked' && !roundBlocked) continue;
+    out.push({ country: r.country, at: r.address.decidedAt ?? r.lastRound?.at ?? r.updatedAt });
+  }
+  return out.sort((a, b) => a.country.localeCompare(b.country));
+}
 
 // --- rollback ---------------------------------------------------------------------------------------
 

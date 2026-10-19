@@ -1,7 +1,9 @@
 <script lang="ts">
   /**
    * One edge in a side sheet: identity, addresses, publication, readiness,
-   * qualification, provider resources, reachability, recent probes and the live
+   * qualification, provider resources, reachability, the checks from each
+   * country (with "Mark for a country" and "Check from every country now"),
+   * recent probes and the live
    * provider snapshot ("Refresh live" pulls a new one; "Show raw" reveals the
    * recorded provider payload, hidden by default).
    *
@@ -25,6 +27,7 @@
   import { Badge } from '@client/components/ui/badge';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import {
+    edgeCountriesQuery,
     edgeDetailQuery,
     invalidateEdge,
     refreshEdgeLive,
@@ -37,6 +40,9 @@
   import LayerBadge from './LayerBadge.svelte';
   import KeyValue from './KeyValue.svelte';
   import CodeNote from './CodeNote.svelte';
+  import EdgeCountryActions from './EdgeCountryActions.svelte';
+  import { anyCountryCheckPending } from '../lib/countryCheckRequests';
+  import { edgeHasCountryData } from '../lib/countryChecks';
   import { formatBytes, providerLabel } from '../lib/format';
   import { relativeTime, shortId } from '../lib/time';
   import type { KeyValueRow } from '../lib/types';
@@ -52,6 +58,11 @@
   // The detail carries the live snapshot too: one cache, polled by the detail
   // query, so a newer poll always replaces what is shown.
   const detail = edgeDetailQuery(() => edgeId);
+  // Only while the drawer shows an edge: the page keeps it mounted when closed.
+  const countries = edgeCountriesQuery({
+    busy: (d) => anyCountryCheckPending(d),
+    enabled: () => edgeId !== null,
+  });
 
   let showRaw = $state(false);
   $effect(() => {
@@ -318,6 +329,17 @@
             </p>
           {/if}
         </section>
+
+        {#if countries.data && countries.data.countries.length > 0 && (countries.data.enabled || edgeHasCountryData(countries.data, edge.id))}
+          <section class="space-y-2">
+            <h3 class="text-sm font-semibold">From each country</h3>
+            <EdgeCountryActions
+              edgeId={edge.id}
+              name={edge.addresses.hostname ?? edge.addresses.v4 ?? edge.addresses.v6 ?? edge.name}
+              data={countries.data}
+            />
+          </section>
+        {/if}
 
         {#if detail.data && detail.data.probes.length > 0}
           <section class="space-y-2">

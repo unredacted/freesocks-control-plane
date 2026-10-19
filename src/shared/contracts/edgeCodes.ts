@@ -232,6 +232,11 @@ export const ATTENTION_KINDS = [
   'block_simulated',
   // A probe source keeps giving no evidence (every country it alone covers reads "not known").
   'probe_source_failing',
+  // Checks from each country: the country-wide guard holds new blocks there (an
+  // outage or a probe problem, not a censor); a new address is blocked somewhere
+  // before it was ever in use.
+  'country_wide_failure',
+  'new_edge_blocked_in',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -262,6 +267,8 @@ export const ATTENTION_ACTIONS = [
   'open_node',
   // The admin Connection modes page (turn a mode on).
   'open_modes',
+  // The Probes page (its sources and the checks from each country).
+  'open_probes',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 
@@ -541,3 +548,65 @@ export function drainWarningCodes(
     out.push('burned_drain_below_refresh');
   return out;
 }
+
+// --- checks from each country (docs/edges.md "Checks from each country") ---------------------
+
+/** What one round says about an edge from one country (lib/edges/country/verdict.ts). */
+export const COUNTRY_ROUND_RESULTS = ['proven', 'blocked', 'down', 'unknown'] as const;
+export type CountryRoundResult = (typeof COUNTRY_ROUND_RESULTS)[number];
+
+/** An edge's standing state in one country (its tracks combined, or the effective state). */
+export const COUNTRY_TRACK_STATES = ['proven', 'blocked', 'unknown'] as const;
+export type CountryTrackState = (typeof COUNTRY_TRACK_STATES)[number];
+
+/** A provider location's grade in one country (lib/edges/country/group.ts `gradeOf`). */
+export const COUNTRY_GROUP_GRADES = ['proven', 'blocked', 'mixed', 'unknown'] as const;
+export type CountryGroupGrade = (typeof COUNTRY_GROUP_GRADES)[number];
+
+/** Where an edge's effective state in a country comes from. */
+export const COUNTRY_STATE_FROM = ['edge', 'group', 'mark'] as const;
+export type CountryStateFrom = (typeof COUNTRY_STATE_FROM)[number];
+
+/**
+ * Every reason the server records on a round or a track (verdict.ts). The
+ * admin words them in one place (routes/admin/edges/lib/statusWords.ts, pinned
+ * by a test that reads the server's rules for the literals it writes).
+ */
+export const COUNTRY_REASONS = [
+  'too_few',
+  'no_evidence',
+  'mixed',
+  'controls_failed',
+  'tls_unchecked',
+  'tls_failed',
+  'needs_repeat',
+  'group_blocked',
+  'country_wide',
+  'expired',
+  'handshake',
+  'no_tcp_pairing',
+  'recovered',
+  'blocked',
+] as const;
+export type CountryReason = (typeof COUNTRY_REASONS)[number];
+
+/**
+ * Why a probe run could not measure (`probeRuns.error`, lib/edges/country/sourceHealth.ts
+ * `failureCode`), plus `no_results` (it finished with nothing) and the bare run
+ * statuses a run without a class falls back to.
+ */
+export const PROBE_FAILURE_CLASSES = [
+  'auth',
+  'rate_limited',
+  'globalping_limit',
+  'no_key',
+  'no_vantages',
+  'timeout',
+  'service_error',
+  'request_refused',
+  'network',
+  'error',
+  'no_results',
+  'failed',
+] as const;
+export type ProbeFailureClass = (typeof PROBE_FAILURE_CLASSES)[number];

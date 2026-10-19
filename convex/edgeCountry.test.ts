@@ -481,6 +481,143 @@ describe('edgeCountry: groups and marks', () => {
   });
 });
 
+describe('edgeCountry: what the admin reads', () => {
+  test('a new spare blocked from its first round asks for attention; the overview says since when', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, relayId, listenerId, edgeId: live } = await seed();
+    const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      listenerId,
+      ipv4: '198.51.100.20',
+      publish: false,
+      verified: true,
+    });
+    const spare = edgeId as Id<'edges'>;
+    const t0 = Date.now();
+    await syntheticRound(t, spare, 'fail', { at: t0 });
+    // The address in use failing too is the detector's business, not this item's.
+    await syntheticRound(t, live, 'fail', { at: t0 });
+    const blockedItems = async () =>
+      (await t.query(internal.edgeOperator.attention, {})).items.filter(
+        (i) => i.kind === 'new_edge_blocked_in',
+      );
+    // One blocked round (waiting for its repeat) is enough to warn about a NEW address.
+    expect(await blockedItems()).toEqual([
+      expect.objectContaining({
+        id: `new_edge_blocked_in:${spare}`,
+        edgeId: spare,
+        listenerKey: 'u',
+        severity: 'warning',
+        action: 'open_edge',
+        facts: { countries: ['IR'] },
+      }),
+    ]);
+    vi.setSystemTime(t0 + 31 * MIN);
+    await syntheticRound(t, spare, 'fail', { at: t0 + 31 * MIN });
+    const overview = await t.query(internal.edgeCountry.overview, {});
+    const ir = overview.edges
+      .find((e) => e.edgeId === spare)!
+      .countries.find((c) => c.country === 'IR')!;
+    expect(ir.combined).toBe('blocked');
+    expect(ir.lastRound?.roundId).toBe(`edge:${spare}:${t0 + 31 * MIN}:x`);
+    // Since the transition to blocked (the audit row of the second round), not the
+    // last confirmation, which moves with every blocked round.
+    expect(Date.parse(ir.blockedSince!)).toBeGreaterThanOrEqual(t0 + 31 * MIN);
+    expect(Date.parse(ir.blockedSince!)).toBeLessThan(t0 + 32 * MIN);
+    vi.setSystemTime(t0 + 70 * MIN);
+    await syntheticRound(t, spare, 'fail', { at: t0 + 70 * MIN });
+    const again = (await t.query(internal.edgeCountry.overview, {})).edges
+      .find((e) => e.edgeId === spare)!
+      .countries.find((c) => c.country === 'IR')!;
+    expect(again.blockedSince).toBe(ir.blockedSince);
+    expect(
+      overview.edges.find((e) => e.edgeId === live)!.countries.find((c) => c.country === 'IR')!
+        .blockedSince,
+    ).toBeNull();
+    // A mark leaves it to the operator's word.
+    await t.mutation(internal.edgeCountry.setMark, {
+      scope: 'edge',
+      ref: spare,
+      country: 'IR',
+      state: 'proven',
+    });
+    expect(await blockedItems()).toEqual([]);
+  });
+
+  test('a country where most addresses fail at once raises country_wide_failure, not blocks', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, relayId, listenerId, edgeId: a } = await seed();
+    const more: Id<'edges'>[] = [];
+    for (const ip of ['198.51.100.30', '198.51.100.31']) {
+      const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+        relayId,
+        listenerId,
+        ipv4: ip,
+        publish: false,
+        verified: true,
+      });
+      more.push(edgeId as Id<'edges'>);
+    }
+    const [b, c] = more as [Id<'edges'>, Id<'edges'>];
+    await t.run(async (ctx) => {
+      for (const [id, place] of [
+        [a, 'zone-a'],
+        [b, 'zone-a'],
+        [c, 'zone-b'],
+      ] as const)
+        await ctx.db.patch(id, { managed: true, provider: 'upcloud', placeKey: place });
+    });
+    const t0 = Date.now();
+    for (const id of [a, b, c]) await syntheticRound(t, id, 'fail', { at: t0 });
+    // The third edge's block, in a second group, makes every checked edge blocked: held.
+    expect((await evidence(t, c, 'IR'))!.address).toMatchObject({
+      state: 'unknown',
+      reason: 'country_wide',
+    });
+    const { items } = await t.query(internal.edgeOperator.attention, {});
+    expect(items.find((i) => i.kind === 'country_wide_failure')).toMatchObject({
+      id: 'country_wide_failure:IR',
+      relayId: null,
+      severity: 'warning',
+      action: 'open_probes',
+      facts: { countries: ['IR'], edges: 1, groups: 1 },
+    });
+    // A held round is not the new address's own block.
+    expect(items.find((i) => i.id === `new_edge_blocked_in:${c}`)).toBeUndefined();
+    // Many older rounds in the window (one row per edge checked there) never hide
+    // the newest hold: the scan reads newest first.
+    await t.run(async (ctx) => {
+      const row = (await ctx.db
+        .query('edgeCountryEvidence')
+        .withIndex('by_edge_country', (q) => q.eq('edgeId', a).eq('country', 'IR'))
+        .unique())!;
+      for (let i = 0; i < 600; i++)
+        await ctx.db.insert('edgeCountryEvidence', {
+          edgeId: a,
+          relayId: row.relayId,
+          groupKey: 'upcloud:zone-a',
+          country: 'IR',
+          address: { state: 'proven', blockedRounds: 0 },
+          handshake: { state: 'none', pathBatches: [] },
+          combined: 'proven',
+          lastRoundAt: t0 - 60 * MIN - i,
+          updatedAt: t0 - 60 * MIN,
+        });
+    });
+    const crowded = await t.query(internal.edgeOperator.attention, {});
+    expect(crowded.items.find((i) => i.kind === 'country_wide_failure')).toMatchObject({
+      id: 'country_wide_failure:IR',
+      facts: { countries: ['IR'], edges: 1 },
+    });
+    // With the checks off, neither item is raised.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.country.enabled', 'false'));
+    const off = await t.query(internal.edgeOperator.attention, {});
+    expect(
+      off.items.filter((i) => ['country_wide_failure', 'new_edge_blocked_in'].includes(i.kind)),
+    ).toEqual([]);
+  });
+});
+
 describe('edgeCountry: the handshake track', () => {
   const batch = (outcome: 'reset' | 'ok') =>
     ['a.example', 'b.example'].map((name) => ({

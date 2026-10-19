@@ -162,6 +162,7 @@ export async function runAttentionCall(
       case 'protect_node':
       case 'open_node':
       case 'open_modes':
+      case 'open_probes':
         deps.navigate(attentionTarget(item));
         return;
       default: {

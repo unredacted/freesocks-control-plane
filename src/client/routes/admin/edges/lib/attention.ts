@@ -104,6 +104,7 @@ export const ATTENTION_ACTION_PLAN = {
   protect_node: { type: 'navigate' },
   open_node: { type: 'navigate' },
   open_modes: { type: 'navigate' },
+  open_probes: { type: 'navigate' },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
 
 /**
@@ -192,6 +193,8 @@ export function attentionTarget(item: AttentionItem): string {
     }
     case 'open_modes':
       return '/admin/connection-modes';
+    case 'open_probes':
+      return edgesPaths.probes();
   }
 }
 

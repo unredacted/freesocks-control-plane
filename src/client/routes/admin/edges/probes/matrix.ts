@@ -8,7 +8,8 @@
  *   targetDetail(target)                 the server's detail line in words
  *   verdictLabel(v) / verdictTone(v)     a verdict in words + badge tone
  *   matrixCell(target, country)          one cell: words, tone and a tooltip line
- *   countryTally(results)                a run's vantage results folded per country
+ *   countryTally(results)                a run's vantage results folded per country (controls apart, last)
+ *   groupRounds(runs)                    runs (newest first) grouped by round, newest round first
  *   familyLabel(ipVersion)               'IPv4' | 'IPv6' | 'by name'
  *   PROBE_SKIP_COPY / parseSkipped(s)    a `skipped` entry ("<key>: <code>") in words
  *   skipNotes(skipped)                   key -> words, for the rows of the matrix
@@ -122,18 +123,61 @@ export const countryLabel = (country: string): string =>
 
 export interface CountryTally {
   country: string;
+  /** A control vantage: an uncensored country asked in the same measurement. */
+  control: boolean;
   ok: number;
   fail: number;
 }
+/** Per country, the checked countries first and the controls after them (never mixed). */
 export function countryTally(results: ProbeRunAdmin['results']): CountryTally[] {
   const by = new Map<string, CountryTally>();
   for (const r of results) {
-    const cur = by.get(r.country) ?? { country: r.country, ok: 0, fail: 0 };
+    const control = r.control === true;
+    const key = `${control ? 'c' : 'v'}:${r.country}`;
+    const cur = by.get(key) ?? { country: r.country, control, ok: 0, fail: 0 };
     if (r.ok) cur.ok++;
     else cur.fail++;
-    by.set(r.country, cur);
+    by.set(key, cur);
   }
-  return [...by.values()];
+  const all = [...by.values()];
+  return [...all.filter((t) => !t.control), ...all.filter((t) => t.control)];
+}
+
+export interface ProbeRound {
+  /** Null for a run from before rounds (it stands alone). */
+  roundId: string | null;
+  runs: ProbeRunAdmin[];
+  /** The earliest request of the round. */
+  requestedAt: string;
+  /** Some run of it is still requested or running. */
+  open: boolean;
+}
+
+/**
+ * Runs (newest first, as the server lists them) grouped by the round one
+ * request made, newest round first; a run without a round stands alone.
+ */
+export function groupRounds(runs: readonly ProbeRunAdmin[]): ProbeRound[] {
+  const out: ProbeRound[] = [];
+  const byId = new Map<string, ProbeRound>();
+  for (const r of runs) {
+    const existing = r.roundId ? byId.get(r.roundId) : undefined;
+    if (existing) {
+      existing.runs.push(r);
+      if (r.requestedAt < existing.requestedAt) existing.requestedAt = r.requestedAt;
+      existing.open ||= r.status === 'requested' || r.status === 'running';
+      continue;
+    }
+    const round: ProbeRound = {
+      roundId: r.roundId,
+      runs: [r],
+      requestedAt: r.requestedAt,
+      open: r.status === 'requested' || r.status === 'running',
+    };
+    if (r.roundId) byId.set(r.roundId, round);
+    out.push(round);
+  }
+  return out;
 }
 
 /** A run that dialled a hostname has no observed family: the vantage resolved the name. */
@@ -150,6 +194,7 @@ export const PROBE_CHECK_LABELS: Record<string, string> = {
   tcp: 'TCP connect',
   tls: 'TLS handshake',
   https: 'HTTP GET',
+  'tls-sni': 'TLS with the real name',
 };
 export const PROBE_RUN_STATUS_LABELS: Record<string, string> = {
   requested: 'Requested',
