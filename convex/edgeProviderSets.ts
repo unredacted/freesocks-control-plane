@@ -21,7 +21,8 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
+import { MAX_DESIRED_PUBLISHED, dnsProvidersFrontOf } from './lib/edgeConfig';
+import { frontsAllowed } from './lib/edges/providers/capabilities';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRunningSetup, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { coverTargets, MAX_PROVIDER_PICKS, requirementOf } from './lib/edges/providerSet';
@@ -85,8 +86,10 @@ export const view = internalQuery({
       };
     });
     const available = [];
+    const dnsFront = await dnsProvidersFrontOf(ctx.db);
     for (const account of await ctx.db.query('edgeProviderAccounts').collect()) {
       if (!account.enabled || !account.lastTestOkAt || account.lastTestError) continue;
+      if (!frontsAllowed(account.provider, dnsFront)) continue;
       for (const location of await locationsOfAccount(ctx.db, account._id)) {
         if (!location.enabled || picks.some((p) => p.locationId === location._id)) continue;
         const row = { account, location };

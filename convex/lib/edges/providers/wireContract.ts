@@ -400,6 +400,14 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         purpose: 'credential test: the token is active',
       },
       {
+        // An account-owned token is unknown to the user endpoint (1000); it
+        // verifies here. Source: developers.cloudflare.com/api/resources/accounts/
+        // subresources/tokens/methods/verify/ via cloudflare@7.1.0, 2026-10-20.
+        method: 'GET',
+        path: '^/client/v4/accounts/[^/]+/tokens/verify$',
+        purpose: 'credential test: an account-owned token is active',
+      },
+      {
         method: 'GET',
         path: '^/client/v4/zones$',
         purpose: 'account form: the zones the token can see',

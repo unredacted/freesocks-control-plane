@@ -8,6 +8,7 @@
 import { protocolUsesSni, type ListenerProto } from './protocols';
 import {
   edgeLayerOf,
+  frontsAllowed,
   protocolCarriedBy,
   providerHealthSatisfies,
   type EdgeLayer,
@@ -246,12 +247,18 @@ export function accountsForSlot<T extends { provider: string }>(
     originPort?: number;
     /** false = automatic selection with the L7 gate off: L7 accounts are excluded. */
     allowL7: boolean;
+    /**
+     * `edge.l7.dnsProvidersFront`: false = a DNS provider's account (it holds
+     * the records of other fronts) is never a candidate, whoever is choosing.
+     */
+    dnsProvidersFront: boolean;
   },
 ): T[] {
   return accounts.filter((a) => {
     const layer = edgeLayerOf(a.provider);
     if (!opts.layers.includes(layer)) return false;
     if (layer === 'l7' && !opts.allowL7) return false;
+    if (!frontsAllowed(a.provider, opts.dnsProvidersFront)) return false;
     return protocolCarriedBy(a.provider as EdgeProviderId, opts.proto, opts.originPort);
   });
 }

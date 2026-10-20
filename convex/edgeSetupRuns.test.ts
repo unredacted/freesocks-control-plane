@@ -434,6 +434,35 @@ describe('edgeSetupPlan', () => {
     });
   });
 
+  test('a DNS account is not offered as a front until Settings lets DNS accounts front', async () => {
+    const { t, serverId, accountId } = await seed({
+      inbounds: [inboundA, inboundS],
+      hosts: [directHostA(), directHostS()],
+    });
+    const dns = await createAccount(t, { provider: 'cloudflare', name: 'acct-dns' });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, {
+      id: dns,
+      ok: true,
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    const off = await planFor(t, serverId);
+    expect(off.accounts.map((a) => a.id)).toEqual([accountId]);
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        accountId: dns,
+        planHash: off.planHash,
+        approvedHideUuids: [],
+      }),
+    ).rejects.toThrow(/account_incompatible/);
+    await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { l7: { dnsProvidersFront: true } },
+    });
+    const on = await planFor(t, serverId);
+    expect(on.accounts.map((a) => a.id).sort()).toEqual([accountId, dns].sort());
+  });
+
   test('the plan lists frontable transports, classifies the direct Hosts, judges accounts, and hashes what the run must echo', async () => {
     const { t, serverId, accountId } = await seed({
       inbounds: [inboundA, inboundS, inboundV],

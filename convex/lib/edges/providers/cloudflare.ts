@@ -57,6 +57,7 @@ import {
   cloudflareDnsClient,
   isCloudflareNotFound,
   normalizeDnsName,
+  verifyCloudflareToken,
   __setCloudflareApiFactory,
   type FetchLike,
 } from './dns/cloudflareDns';
@@ -387,19 +388,35 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
    * reaches `planProvision` (see `zoneSslModeOf`). A setting the token cannot
    * read leaves `zoneSslMode` out entirely (planning then refuses) and reports
    * `websockets: 'off'`, the conservative answer.
+   *
+   * User tokens and account-owned tokens both pass (`verifyCloudflareToken`);
+   * an account token's account id is the zone's own, else the settings'
+   * `accountId`. The zone is read once either way; a zone the token cannot read
+   * fails the test on that read's own code.
    */
   async testCredentials(cfg): Promise<CredentialTestResult> {
     const detail: string[] = [];
-    try {
-      const token = await cfCall('test', () => cloudflareClient(cfg).user.tokens.verify(), [
+    let zoneRead: ReturnType<typeof readZone> | undefined;
+    const readZone = () =>
+      cfCall('test', () => cloudflareClient(cfg).zones.get({ zone_id: cfg.zoneId }), [
         cfg.apiToken,
       ]);
+    const zoneOnce = () => (zoneRead ??= readZone());
+    try {
+      const token = await verifyCloudflareToken(cfg, async () => {
+        try {
+          return (await zoneOnce()).account?.id || cfg.accountId || undefined;
+        } catch (e) {
+          if (cfg.accountId) return cfg.accountId;
+          // A zone read that may succeed next time is not a rejection: with no
+          // account id to fall back to, the test fails retryable on it.
+          if (e instanceof EdgeProviderError && e.meta.retryable) throw e;
+          return undefined;
+        }
+      });
       if (token.status !== 'active') return { ok: false, code: 'token_not_active' };
-      const zone = await cfCall(
-        'test',
-        () => cloudflareClient(cfg).zones.get({ zone_id: cfg.zoneId }),
-        [cfg.apiToken],
-      );
+      detail.push(`token_${token.kind}`);
+      const zone = await zoneOnce();
       const ssl = await zoneSetting(cfg, 'ssl', 'test');
       const websockets = await zoneSetting(cfg, 'websockets', 'test');
       const observed: Record<string, string> = {

@@ -146,7 +146,9 @@ export const edgesPaths = {
       listener?: string | null;
     },
   ) => withSearch(`/admin/edges/relays/${enc(slug)}`, params),
-  providers: (params?: { edit?: string | null }) => withSearch('/admin/edges/providers', params),
+  /** `edit: 'new'` opens the add-account flow; `provider` preselects one in it. */
+  providers: (params?: { edit?: string | null; provider?: string | null }) =>
+    withSearch('/admin/edges/providers', params),
   provider: (id: string, params?: { tab?: string; edit?: string }) =>
     withSearch(`/admin/edges/providers/${enc(id)}`, params),
   templates: (params?: { template?: string; provider?: string }) =>

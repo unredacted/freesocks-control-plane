@@ -2,7 +2,8 @@
   /**
    * Provider accounts (`/admin/edges/providers`) as cards: state, addresses
    * used, the trust line. A card opens the account page (the table with every
-   * column lives there). `?edit=new` opens the add-account flow.
+   * column lives there). `?edit=new` opens the add-account flow, on the
+   * provider `?provider=` names when there is one (a DNS account first, say).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { Button } from '@client/components/ui/button';
@@ -11,6 +12,7 @@
   import { router } from '../../../stores/router.svelte';
   import { searchParam } from '../../../lib/urlState.svelte';
   import { invalidateProviders, providersQuery, providersUsageQuery } from '../../../lib/edgesApi';
+  import { EDGE_PROVIDER_IDS, type EdgeProviderId } from '@shared/contracts/edges';
   import AdminListState from '../AdminListState.svelte';
   import SectionHeader from './components/SectionHeader.svelte';
   import ProviderAccountStepper from './forms/ProviderAccountStepper.svelte';
@@ -21,6 +23,12 @@
   const providers = providersQuery();
   const usage = providersUsageQuery();
   const edit = searchParam('edit');
+  const presetParam = searchParam('provider');
+  const preset = $derived(
+    (EDGE_PROVIDER_IDS as readonly string[]).includes(presetParam.value ?? '')
+      ? (presetParam.value as EdgeProviderId)
+      : undefined,
+  );
 
   const accounts = $derived(
     [...(providers.data?.accounts ?? [])].sort(
@@ -80,7 +88,10 @@
 <Sheet.Root
   open={edit.value === 'new'}
   onOpenChange={(o) => {
-    if (!o) edit.value = null;
+    if (!o) {
+      edit.value = null;
+      presetParam.value = null;
+    }
   }}
 >
   <Sheet.Content side="right" class="gap-0 sm:max-w-2xl">
@@ -92,7 +103,16 @@
     </Sheet.Header>
     <div class="flex-1 overflow-y-auto p-4">
       {#if edit.value === 'new'}
-        <ProviderAccountStepper {onCreated} onCancel={() => (edit.value = null)} />
+        {#key preset}
+          <ProviderAccountStepper
+            {onCreated}
+            provider={preset}
+            onCancel={() => {
+              edit.value = null;
+              presetParam.value = null;
+            }}
+          />
+        {/key}
       {/if}
     </div>
   </Sheet.Content>

@@ -327,7 +327,10 @@ beforeAll(async () => {
   // seam), and L7 accounts may be picked by the run (automatic L7 selection is
   // an operator switch, off by default).
   __setEdgePlumbingForTests({ pollMs: 5_000 });
-  await t.mutation(internal.edgeAdmin.patchConfig, { patch: { l7: { autoSelect: true } } });
+  // The L7 front here is a Cloudflare account, a DNS provider: it fronts only with the switch on.
+  await t.mutation(internal.edgeAdmin.patchConfig, {
+    patch: { l7: { autoSelect: true, dnsProvidersFront: true } },
+  });
 
   // The REALITY family: the stack's target serves every name it lists.
   await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });

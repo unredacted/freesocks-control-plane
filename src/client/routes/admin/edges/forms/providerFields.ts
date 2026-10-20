@@ -219,7 +219,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       step: 'placement',
       from: 'zones',
       required: true,
-      help: 'Every edge of this account gets one hostname directly under the zone apex.',
+      help: 'The zone FCP writes records into. Every name it writes sits directly under the zone apex.',
     },
     {
       key: 'zoneName',
@@ -249,7 +249,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       step: 'placement',
       from: 'dnsAccounts',
       required: true,
-      help: 'The account whose zone holds the hostname records and the certificate challenges. Add that account first.',
+      help: "A DNS provider account whose zone holds this account's names and their certificate challenges. Add the DNS account first.",
     },
     {
       key: 'certificateAuthority',
@@ -290,7 +290,7 @@ export const CREDENTIAL_LABELS: Record<string, string> = {
 /** What each provider's token must be allowed to do. */
 export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
   cloudflare:
-    'A zone-scoped API token with Zone DNS Edit, Zone Read, Zone Settings Read, SSL and Certificates Read, plus Origin Rules Edit when an edge needs an origin port other than the zone default.',
+    'A user API token or an account API token, scoped to the zone, with Zone Read and Zone DNS Edit. Add Zone Settings Read and SSL and Certificates Read so the test can report the zone settings, and Origin Rules Edit only if this account will also front traffic.',
   fastly:
     'An API token with the global scope, issued on a dedicated automation user. The account also needs the WebSockets product entitlement.',
 };

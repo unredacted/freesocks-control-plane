@@ -24,6 +24,7 @@ import {
   drainWarnings,
   originOverrideNames,
   originPolicy,
+  dnsProvidersFrontOf,
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
@@ -42,6 +43,7 @@ import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeAddressKindOf,
   edgeLayerOf,
+  edgeRoleOf,
   protocolCarriedBy,
   providerHealthSatisfies,
   zoneModeGovernsOrigin,
@@ -1681,7 +1683,10 @@ function udpProviderAvailable(): boolean {
  * ≥1 active name when it presents one behind an L4 edge, the edge's provider
  * matches the listener's scope and can carry the listener at the edge's layer,
  * and, for an L7 front, an authenticated end-to-end session has proven exactly
- * this configuration and has not expired.
+ * this configuration and has not expired. An edge of a DNS account (role `dns`)
+ * goes live only while `edge.l7.dnsProvidersFront` is on: a spare made earlier
+ * must not start carrying members once the switch is off (a published one is
+ * left as it is).
  *
  * `skipVerification` takes ONLY the L4 endpoint-verification rule out (the
  * verification-binding view asks "what else blocks this edge once tested?");
@@ -1695,6 +1700,8 @@ export async function checkPublishable(
 ): Promise<PublishCheck> {
   if (edge.status !== 'active') return { ok: false, code: 'edge_not_active' };
   if (edge.publication === 'published') return { ok: false, code: 'already_published' };
+  if (edgeRoleOf(edge.provider) === 'dns' && !(await dnsProvidersFrontOf(ctx.db)))
+    return { ok: false, code: 'dns_account_not_fronting' };
   if (!hasPublishableAddress(edge)) return { ok: false, code: 'no_address' };
   const listener = await ctx.db.get(edge.listenerId);
   if (!listener || listener.retired) return { ok: false, code: 'listener_retired' };

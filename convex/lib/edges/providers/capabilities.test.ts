@@ -15,6 +15,8 @@ import { jsonRes, mockFetch } from '../testing/mockFetch';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   discoveryMaySettle,
+  edgeRoleOf,
+  frontsAllowed,
   originPortCarriedBy,
   protocolCarriedBy,
   unsupportedTransport,
@@ -238,6 +240,21 @@ describe('origin capability record ⇔ adapters', () => {
       expect(protocolCarriedBy(id, UDP)).toBe(caps.udp);
     },
   );
+
+  test('a DNS provider (role dns) hosts DNS and fronts only while the switch allows', () => {
+    for (const id of EDGE_PROVIDER_IDS) {
+      const caps = EDGE_PROVIDER_CAPABILITIES[id];
+      if (caps.role === 'dns') {
+        expect(caps.providesDns).toBe(true);
+        expect(frontsAllowed(id, false)).toBe(false);
+        expect(frontsAllowed(id, true)).toBe(true);
+      } else expect(frontsAllowed(id, false)).toBe(true);
+      // A provider that needs a DNS account is itself an edge provider.
+      if (caps.needsDnsAccount) expect(caps.role).toBe('edge');
+    }
+    expect(edgeRoleOf('cloudflare')).toBe('dns');
+    expect(edgeRoleOf('unknown-provider')).toBe('edge');
+  });
 
   test('a DNS account reference always points at a providesDns provider', () => {
     const dnsProviders = EDGE_PROVIDER_IDS.filter(

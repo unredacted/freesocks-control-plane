@@ -195,6 +195,7 @@ async function accountFacts(
   ctx: { db: Db },
   accounts: Account[],
   listeners: ListenerLike[],
+  dnsProvidersFront: boolean,
 ): Promise<SetupInput['accounts']> {
   const out: SetupInput['accounts'] = [];
   const udp = udpProviderAvailable();
@@ -209,7 +210,15 @@ async function accountFacts(
       };
       const layers = listenerLayers(like, { udpProviderAvailable: udp }).layers;
       const originPort = l.row?.originPort ?? l.draft?.originPort;
-      if (accountsForSlot([a], { layers, proto: l.proto, originPort, allowL7: true }).length > 0)
+      if (
+        accountsForSlot([a], {
+          layers,
+          proto: l.proto,
+          originPort,
+          allowL7: true,
+          dnsProvidersFront,
+        }).length > 0
+      )
         fronts.push(l.key);
     }
     const settings = a.settings as { dnsAccountId?: string };
@@ -498,7 +507,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: await originFacts(ctx.db, relay.origin),
         listeners: f.listeners.map(listenerFacts),
-        accounts: await accountFacts(ctx, accounts, f.listeners),
+        accounts: await accountFacts(ctx, accounts, f.listeners, cfg.l7.dnsProvidersFront),
         relay: f.relay,
         render: f.render,
         config: configFacts(cfg),
@@ -589,7 +598,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: originF,
         listeners: listeners.map(listenerFacts),
-        accounts: await accountFacts(ctx, accounts, listeners),
+        accounts: await accountFacts(ctx, accounts, listeners, cfg.l7.dnsProvidersFront),
         relay: null,
         render: { enabled: cfg.render.enabled, preview: null },
         config: configFacts(cfg),
@@ -622,7 +631,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: await originFacts(ctx.db, relay.origin),
         listeners: f.listeners.map(listenerFacts),
-        accounts: await accountFacts(ctx, accounts, f.listeners),
+        accounts: await accountFacts(ctx, accounts, f.listeners, cfg.l7.dnsProvidersFront),
         relay: f.relay,
         render: f.render,
         config: configFacts(cfg),
@@ -635,7 +644,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: null,
         listeners: [],
-        accounts: await accountFacts(ctx, accounts, []),
+        accounts: await accountFacts(ctx, accounts, [], cfg.l7.dnsProvidersFront),
         relay: null,
         render: { enabled: cfg.render.enabled, preview: null },
         config: configFacts(cfg),

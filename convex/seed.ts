@@ -729,6 +729,9 @@ export const seedDevEdges = internalMutation({
       );
       created++;
     }
+    // The fake L7 account stands in for a Cloudflare one, which is a DNS
+    // provider: it fronts only with the switch on (off by default elsewhere).
+    await upsertSettingRow(ctx, 'edge.l7.dnsProvidersFront', 'true');
     return { panelSlug: panel.slug, accountsCreated: created };
   },
 });

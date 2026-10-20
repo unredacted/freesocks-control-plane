@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
 import { __setFrontChecker } from './frontQualifyOps';
+import { checkPublishable } from './relays';
 import type { EdgeProvider, EdgeSpec, Ledger, LedgerResource } from './lib/edges/providers/types';
 import {
   FIXTURE_CONFIG_PROFILE,
@@ -181,6 +182,8 @@ async function seed(opts: { autoSelect?: boolean; zoneSslMode?: string } = {}) {
     for (const [key, value] of [
       ['edge.enabled', 'true'],
       ['edge.l7.autoSelect', opts.autoSelect ? 'true' : 'false'],
+      // The front here is a Cloudflare account, a DNS provider: let it front.
+      ['edge.l7.dnsProvidersFront', 'true'],
     ] as const) {
       await ctx.db.insert('appSettings', { key, value, updatedAt: Date.now() });
     }
@@ -492,6 +495,101 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
       trigger: 'manual',
       targetEdgeId: edgeId,
     });
+  });
+
+  test('a DNS account fronts nothing while DNS accounts may not front, even when named', async () => {
+    vi.useFakeTimers();
+    fakeL7();
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    const { t, relayId, listenerId, accountId } = await seed();
+    await t.mutation(internal.edgeProviderAccounts.recordTest, {
+      id: accountId,
+      ok: true,
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    // The default: Cloudflare is a DNS provider, not a front.
+    await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { l7: { dnsProvidersFront: false } },
+    });
+    const named = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      listenerId,
+      requestedAccountId: accountId,
+    });
+    await drain(t, named.rotationId);
+    expect(await t.query(internal.edgeRotations.get, { id: named.rotationId })).toMatchObject({
+      phase: 'failed',
+      outcome: 'dns_account_not_fronting',
+    });
+    // Unnamed, there is simply no account for the layer.
+    const unnamed = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      listenerId,
+    });
+    await drain(t, unnamed.rotationId);
+    expect(await t.query(internal.edgeRotations.get, { id: unnamed.rotationId })).toMatchObject({
+      phase: 'failed',
+      outcome: 'no_account_for_layer',
+    });
+    // Nothing was created at the provider.
+    expect(await t.run((ctx) => ctx.db.query('edges').collect())).toEqual([]);
+  });
+
+  test("a DNS account's spare never goes live while DNS accounts may not front; a published one stays", async () => {
+    vi.useFakeTimers();
+    fakeL7();
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    const { t, relayId, listenerId, accountId } = await seed();
+    const published = await insertPublishedFront(t, relayId, listenerId, {
+      provider: 'cloudflare',
+      accountId,
+    });
+    const spare = await insertPublishedFront(t, relayId, listenerId, {
+      provider: 'cloudflare',
+      accountId,
+      name: 'adopted-spare',
+      addresses: { hostname: 'spare.example.org' },
+      publication: 'unpublished',
+      poolIndex: undefined,
+    });
+    await t.run((ctx) => ctx.db.patch(relayId, { publishedEdgeIds: [published] }));
+    const check = () =>
+      t.run(async (ctx) => checkPublishable(ctx, (await ctx.db.get(spare))!, false));
+    // On (this seed): the spare is judged on its own merits (it has no proof yet).
+    expect((await check()).code).not.toBe('dns_account_not_fronting');
+    await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { l7: { dnsProvidersFront: false } },
+    });
+    expect(await check()).toEqual({ ok: false, code: 'dns_account_not_fronting' });
+    // A direct publish is refused at the start, never at the provider.
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'publish',
+        trigger: 'manual',
+        toEdgeId: spare,
+      }),
+    ).rejects.toThrow(/dns_account_not_fronting/);
+    // A replace does not take the spare either: with no other L7 account it has nothing to use.
+    const r = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: published,
+    });
+    await drain(t, r.rotationId);
+    const done = (await t.query(internal.edgeRotations.get, { id: r.rotationId }))!;
+    expect(done.toEdgeId).not.toBe(spare);
+    expect(done.phase).toBe('failed');
+    expect((await t.query(internal.edges.get, { id: spare }))?.publication).toBe('unpublished');
+    // The published front is left as it is.
+    expect((await t.query(internal.edges.get, { id: published }))?.publication).toBe('published');
   });
 
   test('the daily bound stops repeated same-provider L7 replacements', async () => {

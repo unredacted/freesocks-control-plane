@@ -338,6 +338,16 @@ without a provider set; manual provisioning, a guided setup run's chosen account
 and a pick of the node's provider set (the operator chose it, § "Provider sets") work
 regardless.
 
+`edge.l7.dnsProvidersFront` (default off) decides whether a **DNS provider's** account
+(capability `role: 'dns'`, Cloudflare today) may itself front member traffic. Off, such an
+account only holds the records FCP writes for L7 fronts (a Fastly edge's certificate challenge
+and traffic name, a front node's origin name) and is never a candidate, whoever chooses: the
+setup plan does not offer it, a rotation naming it fails `dns_account_not_fronting`, automatic
+selection skips it, and a provider-set pick of it is not usable (`setPicksOf`). Nor does a
+spare of it go live: `checkPublishable` refuses it (`dns_account_not_fronting`) and standby
+selection passes it over. Published edges are left as they are. It is deliberately separate from `l7.autoSelect`: letting automation
+pick L7 fronts must not turn a DNS account into one (§ "Adding a DNS provider").
+
 ### Publication
 
 Provisioning and publication are separate. An edge is `unpublished` (a standby), `published`
@@ -2400,7 +2410,7 @@ Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts
    `convex/schema.ts`: the credentials, settings and `relayEdgePlacement` union variants. The
    credential test must work without a placement.
 3. `convex/lib/edges/providers/templates.ts`: the template schema, field descriptors and
-   defaults; `providers/capabilities.ts`: the capability row (layer, address kind, transports,
+   defaults; `providers/capabilities.ts`: the capability row (layer, role, address kind, transports,
    DNS roles, origin-port mode, `udp`, async and health flags, settle floor).
 4. `convex/lib/edges/providers/<id>.ts`: the `EdgeProvider` adapter, registered in
    `providers/registry.ts`, with `<id>.test.ts` on the recording transport.
@@ -2408,6 +2418,41 @@ Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts
    below is generated from it. `.github/workflows/edge-providers.yml`: add the id to the matrix.
 6. `scripts/node-floor.mjs` when the adapter imports an npm dependency, and `'use node';` as
    the adapter's first statement; `src/client/lib/edgeProviderMeta.ts` for the account form.
+
+## Adding a DNS provider
+
+A **DNS provider** holds the records FCP writes for L7 fronts and fronts no member traffic
+itself (capability `role: 'dns'`, mirrored in `src/client/lib/edgeProviderMeta.ts`; the admin
+console lists it under "DNS providers" and the Fastly form asks for one first). Cloudflare is
+the only one today. The seam is the `DnsClient` interface in
+`convex/lib/edges/providers/dns/types.ts`, which the Fastly adapter uses (through its
+`dnsClientFor` factory) instead of any vendor SDK, and which the origin names of front nodes
+(`nodeIntentOps.ts`) are written through:
+
+- `createRecord`, `findRecordsByName`, `getRecord`, `deleteRecord` over A, AAAA and CNAME
+  records in ONE zone. Every record carries the ownership `comment` marker (at most 100
+  characters) that discovery proves ownership with; `findRecordsByName` is one request;
+  `deleteRecord` is idempotent (a missing record is a success).
+- `listCaa`, the apex CAA records for the certificate-issuance preflight.
+- `zoneId`, `zoneName` and `accountId` (the FCP account the credentials came from), recorded in
+  every DNS ledger resource so cleanup acts on the zone the records were written into.
+
+A new DNS provider needs: the id with its credentials and settings schemas (§ "Adding an edge
+provider", steps 1 and 2; its settings name the zone), a `DnsClient` beside `cloudflareDns.ts`
+(no transport retries, logging off, errors reduced to an HTTP status and a short code, never a
+response body), a credential test that accepts every token kind the provider issues,
+`role: 'dns'` and `providesDns: true` in its capability row, and `dnsClientFor` / the origin-name
+writer choosing the client by the DNS account's provider instead of assuming Cloudflare. A
+provider that can never front would also need the `EdgeProvider` front lifecycle made optional
+for it; that split has not been needed yet.
+
+**Cloudflare tokens.** FCP accepts both kinds Cloudflare issues. A user API token verifies at
+`/user/tokens/verify`; an account-owned token is unknown there (`1000 Invalid API Token`) and
+verifies at `/accounts/{account_id}/tokens/verify`, with the account id taken from the zone the
+token reads, else from the account settings (`verifyCloudflareToken` in `cloudflareDns.ts`). A
+token both endpoints reject is `token_rejected`; a retryable answer (429, 5xx, a timeout) is
+never taken for a rejection. The zone reads, DNS writes and option discovery accept either kind
+unchanged.
 
 ## Provider wire contracts
 
@@ -2486,6 +2531,7 @@ lifecycle runs in that test and its rows appear here.
 | ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/gateway/[^/]+$`                          | read a gateway back after its delete                                                                              | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
 | ovh        | DELETE | `^/1\.0/cloud/project/[^/]+/region/[^/]+/gateway/[^/]+$`                          | delete the gateway the compound create minted                                                                     | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
 | cloudflare | GET    | `^/client/v4/user/tokens/verify$`                                                 | credential test: the token is active                                                                              | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
+| cloudflare | GET    | `^/client/v4/accounts/[^/]+/tokens/verify$`                                       | credential test: an account-owned token is active                                                                 | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
 | cloudflare | GET    | `^/client/v4/zones$ ?per_page`                                                    | account form: the zones the token can see                                                                         | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
 | cloudflare | GET    | `^/client/v4/zones/[^/]+$`                                                        | credential test: the zone is active and not paused                                                                | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
 | cloudflare | GET    | `^/client/v4/zones/[^/]+/settings/(ssl\|websockets)$`                             | zone encryption mode and WebSockets setting (recorded, not required)                                              | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |

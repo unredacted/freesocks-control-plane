@@ -629,6 +629,13 @@ export const COUNTRY_FIELDS: Field[] = [
 
 export const L7_FIELDS: Field[] = [
   {
+    kind: 'switch',
+    path: 'l7.dnsProvidersFront',
+    label: 'Let DNS accounts front traffic',
+    helper:
+      'Off: a DNS account (Cloudflare) only holds the records FCP writes for L7 fronts and is never chosen to carry member traffic. On: it can also be picked as an L7 front. Edges that already exist are kept either way.',
+  },
+  {
     kind: 'number',
     path: 'l7.maxSameProviderReplacementsPerDay',
     label: 'Same-provider replacements per origin per day',

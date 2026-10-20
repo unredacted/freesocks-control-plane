@@ -43,6 +43,7 @@ import {
   EDGE_KEYS,
   RENDER_CLIENT_FAMILIES,
   EDGE_PLUMBING,
+  dnsProvidersFrontOf,
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
@@ -72,7 +73,11 @@ import {
   verificationStaleReason,
 } from './lib/edges/verification';
 import { partialRungFor } from './lib/edges/verifyRung';
-import { edgeLayerOf, providerHealthSatisfies } from './lib/edges/providers/capabilities';
+import {
+  edgeLayerOf,
+  frontsAllowed,
+  providerHealthSatisfies,
+} from './lib/edges/providers/capabilities';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import { parseIntent } from './lib/edges/intent';
 import { fnv1a64Hex, listenerConfigHash, validateListenerSpec } from './lib/edges/registration';
@@ -3806,6 +3811,7 @@ export async function startReprotect(
       location: Doc<'edgeLocations'>;
       account: Doc<'edgeProviderAccounts'>;
     }> = [];
+    const dnsFront = await dnsProvidersFrontOf(ctx.db);
     for (const id of pickIds) {
       const location = await ctx.db.get(id);
       const account = location ? await ctx.db.get(location.accountId) : null;
@@ -3814,6 +3820,12 @@ export async function startReprotect(
           code: 'edge.account_incompatible',
           message:
             'A location this node is protected from is missing, switched off, or its account is disabled or untested',
+        });
+      if (!frontsAllowed(account.provider, dnsFront))
+        throw new ConvexError({
+          code: 'edge.account_incompatible',
+          message:
+            'A location this node is protected from belongs to a DNS account, which fronts no traffic while DNS accounts may not front',
         });
       pickRows.push({ location, account });
     }

@@ -58,7 +58,11 @@
     <span class="flex flex-wrap items-baseline gap-x-2">
       <span class="font-medium">{a.name}</span>
       <span class="text-muted-foreground text-xs">
-        {providerLabel(a.provider)}, {layer === 'l7' ? 'CDN front' : 'load balancer'}
+        {providerLabel(a.provider)}, {EDGE_PROVIDER_META[a.provider].role === 'dns'
+          ? 'DNS account'
+          : layer === 'l7'
+            ? 'CDN front'
+            : 'load balancer'}
       </span>
       <FakeBadge fake={a.fake} />
     </span>

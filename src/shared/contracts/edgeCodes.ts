@@ -154,6 +154,8 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'account_disabled',
   'account_untested',
   'account_incompatible',
+  // a DNS account named while `edge.l7.dnsProvidersFront` is off
+  'dns_account_not_fronting',
   'account_budget_exhausted',
   'account_capacity_reached',
   'template_not_found',

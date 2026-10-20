@@ -1,0 +1,12 @@
+{
+  "_source": {
+    "api": "GET /user/tokens/verify (or /accounts/{account_id}/tokens/verify) with a token that endpoint does not know (HTTP 401)",
+    "doc": "https://developers.cloudflare.com/fundamentals/api/troubleshooting/",
+    "note": "the user endpoint gives this same answer for an account-owned token and for a wrong one",
+    "taken": "2026-10-20"
+  },
+  "result": null,
+  "success": false,
+  "errors": [{ "code": 1000, "message": "Invalid API Token" }],
+  "messages": []
+}
