@@ -73,10 +73,15 @@
 
   // A backend FCP writes is changed, never set up afresh.
   let changing = $derived(setup?.established ?? false);
-  // Opened: filled in with the current setup (a failed one too), else the defaults.
+  // The backend the form was filled in for: never sent to another one.
+  let filledFor = $state<string | null>(null);
+  // Opened (or opened on another backend): filled in with the current setup (a
+  // failed one too), else the defaults.
   $effect(() => {
     if (!open) return;
+    const forSlug = slug;
     untrack(() => {
+      filledFor = forSlug;
       const current = setupInputOf(setup);
       const setUp = setUpSlugs(setup);
       profileName = current?.profileName ?? 'FreeSocks-Config';
@@ -168,6 +173,10 @@
   }
 
   async function submit(adopt = false) {
+    if (filledFor !== slug) {
+      toast.error('The backend changed. Close this and open it again.');
+      return;
+    }
     const problem = rowsProblem();
     if (problem) {
       toast.error(problem);

@@ -74,7 +74,7 @@ describe('what a change does, said before it runs', () => {
     expect(w.changed).toBe(true);
     expect(w.lines).toEqual(['WebSocket nodes get their origin names under example.org.']);
     expect(w.effect).toBe(
-      'Recorded at once as generation 2. Nothing on the backend or on any node changes, and a WebSocket node waiting for a name gets one under example.org.',
+      'Recorded at once as generation 2. Nothing on the backend changes, and no node that has a name or serves members is touched. A WebSocket node still waiting for a name gets one under example.org: a new machine revision, which the node role applies on its next run.',
     );
   });
 
@@ -89,7 +89,7 @@ describe('what a change does, said before it runs', () => {
     const none = setupChangeWords(current, { modes, originAccountId: '' }, accounts);
     expect(none.lines[0]).toMatch(/^No zone for origin names any more/);
     expect(none.effect).toBe(
-      'Recorded at once as generation 2. Nothing on the backend or on any node changes.',
+      'Recorded at once as generation 2. Nothing on the backend changes, and no node that has a name or serves members is touched.',
     );
   });
 
@@ -113,7 +113,7 @@ describe('what a change does, said before it runs', () => {
     );
     expect(w.lines).toEqual(['Adds the mode Freedom-Extra (REALITY, fronted through an edge).']);
     expect(w.effect).toMatch(/^The setup runs again as generation 4\. /);
-    expect(w.effect).toContain('nothing a node or a member uses is written');
+    expect(w.effect).toContain('their transports, groups and placements are not written');
     expect(w.effect).toContain('members are not affected');
   });
 
@@ -136,7 +136,7 @@ describe('what a change does, said before it runs', () => {
     );
     expect(w.lines).toEqual(['Takes out the mode Freedom-XHTTP, which was never set up.']);
     expect(w.effect).toBe(
-      'The setup runs again as generation 2. The modes already set up are found as they are, so nothing a node or a member uses is written. Until the run is done no node can enroll or be approved; members are not affected.',
+      'The setup runs again as generation 2. The modes already set up are only looked at: their transports, groups and placements are not written, and the run stops if one of them changed on the backend. Until the run is done no node can enroll or be approved; members are not affected.',
     );
   });
 

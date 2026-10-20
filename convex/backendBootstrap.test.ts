@@ -741,6 +741,34 @@ describe("changing a backend's setup", () => {
     expect(panel.writes.length).toBe(writes);
   });
 
+  test('a node reconciled while the setup runs waits pending and goes on once the setup is ready', async () => {
+    const { t, serverId } = await seed();
+    const first = await runSetup(t, serverId);
+    const { intentId } = await enroll(t, serverId, 'node-a', 'privacy-reality');
+    await t.action(internal.nodeIntents.bootstrap, { intentId });
+    // A run of the setup is under way (a change, or one an attempt left pending).
+    await t.run((ctx) => ctx.db.patch(first._id, { state: 'pending' }));
+    // The role reports meanwhile: its reconcile can read nothing, and lets go.
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+    });
+    const waiting = await runIntent(t, intentId);
+    expect(waiting).toMatchObject({ state: 'pending', code: 'servers.setup_running' });
+    expect(waiting.claim).toBeUndefined();
+    expect(waiting.activation.stage).toBe('machine_applied');
+    // The setup runs to ready, and the node is reconciled at once, not by the sweep.
+    const ready = await runSetup(t, serverId);
+    expect(ready.state).toBe('ready');
+    const done = await until(
+      () => t.run((ctx) => ctx.db.get(intentId)),
+      (i) => !i!.claim && i!.state !== 'pending',
+    );
+    expect(done).toMatchObject({ state: 'ready' });
+    expect(done!.activation.stage).toBe('machine_ready');
+  });
+
   test('a WebSocket node enrolled before there was a zone takes its managed name when the zone comes', async () => {
     const { t, serverId } = await seed();
     await runSetup(t, serverId);

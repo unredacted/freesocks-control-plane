@@ -71,12 +71,14 @@
   const providers = providersQuery();
   let setupOpen = $state(false);
   let nodeQuery = $state('');
-  // A query belongs to the backend it was typed on: switching backends clears it.
+  // A query belongs to the backend it was typed on: switching backends clears
+  // it, and closes the setup sheet (it was filled in for the other backend).
   let queriedSlug: string | null = null;
   $effect(() => {
     if (slug !== queriedSlug) {
       queriedSlug = slug;
       nodeQuery = '';
+      setupOpen = false;
     }
   });
   let setupRow = $derived(setup.data ? setupWords(setup.data) : null);

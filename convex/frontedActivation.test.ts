@@ -2941,20 +2941,55 @@ describe("a node's provider set, edited by hand", () => {
 });
 
 describe('changing the setup of a backend with a live node and a published edge', () => {
+  const setupRowOf = (t: T, serverId: Id<'backendServers'>) =>
+    t
+      .run((c) =>
+        c.db
+          .query('panelSetups')
+          .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+          .unique(),
+      )
+      .then((r) => r!);
+  const xhttpMode = {
+    slug: 'freedom-xhttp',
+    name: 'Freedom-XHTTP',
+    shape: { transport: 'xhttp-reality' as const, fronting: 'edge-l4' as const },
+    familySlug: 'fam-fronted',
+    acceptProxyProtocol: false,
+  };
+  /** Add Freedom-XHTTP's transport to the profile, as Add a transport does (no node serves it). */
+  async function addXhttpTransport(t: T, cookie: string, profileUuid: string) {
+    const preview = await servers(t, cookie, 'POST', `profiles/${profileUuid}/preview`, {
+      ops: [
+        {
+          op: 'addInboundFromTemplate',
+          transportTag: 'FREEDOM_XHTTP',
+          template: { kind: 'xhttp-reality', port: 443, familySlug: 'fam-fronted' },
+        },
+      ],
+    });
+    expect(preview.status).toBe(200);
+    const p = (await preview.json()) as {
+      ops: unknown[];
+      baseToken: string;
+      transportUuids: Record<string, string>;
+    };
+    const applied = await servers(t, cookie, 'POST', `profiles/${profileUuid}/apply`, {
+      ops: p.ops,
+      baseToken: p.baseToken,
+      expectedToken: null,
+      transportUuids: p.transportUuids,
+    });
+    expect(applied.status).toBe(200);
+    expect(((await applied.json()) as { state: string }).state).toBe('done');
+  }
+
   test('origin names land in place and an added mode runs the setup again: the live node, its edge, its gate and its member never move', async () => {
     const w = await world();
     const { t, serverId, backend } = w;
     const live = await liveL4(w);
     const address = await edgeAddress(t, live.e1);
-    const setupRow = () =>
-      t
-        .run((c) =>
-          c.db
-            .query('panelSetups')
-            .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
-            .unique(),
-        )
-        .then((r) => r!);
+    const setupRow = () => setupRowOf(t, serverId);
     /** Everything a member, the edge or the live node rely on. */
     const relied = async () => {
       const intent = await intentOf(t, live.intentId);
@@ -3020,40 +3055,12 @@ describe('changing the setup of a backend with a live node and a published edge'
     // 2. A new mode: its transport first (no node serves it), then the setup
     //    runs again at a new generation. Only the new mode's group and
     //    placement are written; every mode already set up is found as it is.
-    const preview = await servers(t, live.cookie, 'POST', `profiles/${first.profileUuid}/preview`, {
-      ops: [
-        {
-          op: 'addInboundFromTemplate',
-          transportTag: 'FREEDOM_XHTTP',
-          template: { kind: 'xhttp-reality', port: 443, familySlug: 'fam-fronted' },
-        },
-      ],
-    });
-    expect(preview.status).toBe(200);
-    const p = (await preview.json()) as {
-      ops: unknown[];
-      baseToken: string;
-      transportUuids: Record<string, string>;
-    };
-    const applied = await servers(t, live.cookie, 'POST', `profiles/${first.profileUuid}/apply`, {
-      ops: p.ops,
-      baseToken: p.baseToken,
-      expectedToken: null,
-      transportUuids: p.transportUuids,
-    });
-    expect(applied.status).toBe(200);
-    expect(((await applied.json()) as { state: string }).state).toBe('done');
+    await addXhttpTransport(t, live.cookie, first.profileUuid!);
     const withTransport = await relied();
     const placed = await placements();
     const audits = (await placementAudits()).length;
     writes = backend.writes.length;
-    const xhttp = {
-      slug: 'freedom-xhttp',
-      name: 'Freedom-XHTTP',
-      shape: { transport: 'xhttp-reality' as const, fronting: 'edge-l4' as const },
-      familySlug: 'fam-fronted',
-      acceptProxyProtocol: false,
-    };
+    const xhttp = xhttpMode;
     const r2 = await t.mutation(internal.backendSetup.start, {
       backendServerId: serverId,
       input: {
@@ -3095,5 +3102,65 @@ describe('changing the setup of a backend with a live node and a published edge'
       .filter((a) => a.action === 'servers.setup.changed')
       .map((a) => (a.payload as { change: string }).change);
     expect(changed).toEqual(['origin', 'modes']);
+  });
+  test('a set-up mode whose group changed on the backend stops a change: refused from the last look, and the run never rewrites it', async () => {
+    const w = await world();
+    const { t, serverId, backend } = w;
+    const live = await liveL4(w);
+    const address = await edgeAddress(t, live.e1);
+    const first = await setupRowOf(t, serverId);
+    await addXhttpTransport(t, live.cookie, first.profileUuid!);
+    const input = { ...setupInput, modes: [...setupInput.modes, xhttpMode] };
+    const group = backend.squads.find((g) => g.name === 'Freedom-Reality')!;
+    const stray = backend.squads.find((g) => g.name === 'Freedom-WebSocket')!.inbounds[0];
+    const start = () =>
+      t.mutation(internal.backendSetup.start, { backendServerId: serverId, input });
+
+    // Seen on the last look: refused before anything starts.
+    group.inbounds.push(stray);
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    let writes = backend.writes.length;
+    await expect(start()).rejects.toThrow(/setup_mode_drifted:freedom-reality/);
+    expect(await setupRowOf(t, serverId)).toMatchObject({
+      state: 'ready',
+      generation: first.generation,
+    });
+    expect(backend.writes.length).toBe(writes);
+
+    // Not seen yet: the change starts, and its run stops at that group
+    // without writing it. Members keep what they have.
+    group.inbounds.pop();
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    group.inbounds.push(stray);
+    writes = backend.writes.length;
+    expect(await start()).toMatchObject({ started: true });
+    const stopped = await drive(
+      t,
+      () => setupRowOf(t, serverId),
+      (s) => !s.claim && s.state !== 'pending',
+      'the stopped change',
+    );
+    expect(stopped).toMatchObject({
+      state: 'failed',
+      code: 'servers.setup_mode_drifted:freedom-reality',
+    });
+    expect(backend.writes.slice(writes)).toEqual([]);
+    expect(group.inbounds).toHaveLength(2);
+    await memberBody(t, address);
+    expect((await gateOf(t, serverId)).state).toBe('open');
+
+    // Put right on the backend, the same request goes through: only the new group is written.
+    group.inbounds.pop();
+    writes = backend.writes.length;
+    await start();
+    const done = await drive(
+      t,
+      () => setupRowOf(t, serverId),
+      (s) => !s.claim && s.state !== 'pending',
+      'the change again',
+    );
+    expect(done.state).toBe('ready');
+    expect(backend.writes.slice(writes).map((x) => x.call)).toEqual(['POST /api/internal-squads']);
+    await memberBody(t, address);
   });
 });

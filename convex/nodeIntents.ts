@@ -764,58 +764,72 @@ export const patchSettings = internalMutation({
 });
 
 /**
- * The backend's setup gained a zone for origin names (docs/servers.md
- * "Changing a backend's setup"): each WebSocket node enrolled while there was
+ * The backend's setup is ready (a run of it finished, or a change of the
+ * zone was recorded in place; docs/servers.md "Changing a backend's setup").
+ * Nothing here runs while it is not: a node reconciled meanwhile could read
+ * nothing, so its attempt let the claim go and left it pending
+ * (`releaseOvertaken`).
+ *
+ * With a zone for origin names, each WebSocket node enrolled while there was
  * none, blocked waiting for a name (`servers.origin_hostname_missing`), takes
  * its managed name `<label>.<zone>` as if the zone had been there when it
  * enrolled. Only those: a node with a hostname of its own keeps it, an adopted
  * one keeps whatever fronts it, a retiring one is left alone, and one that was
- * ever live is never renamed from here. None of them has served a member, so
- * nobody is affected: the node gets a new machine revision for the role to
- * apply, and is reconciled.
+ * ever live is never renamed from here. None of them has served a member: the
+ * node gets a new machine revision for the role to apply.
+ *
+ * Then every pending node no attempt holds is reconciled, so neither waits for
+ * the sweep.
  */
-export const nameWaitingFrontNodes = internalMutation({
+export const afterSetupReady = internalMutation({
   args: { backendServerId: v.id('backendServers') },
   handler: async (ctx, { backendServerId: sid }) => {
-    const setup = await ctx.db
-      .query('panelSetups')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .unique();
-    if (!setup?.originDns) return 0;
+    const setup = await readySetup(ctx, sid);
+    if (!setup) return { named: 0, reconciled: 0 };
     const wsModes = new Set(setup.modes.filter((m) => isWs(m.shape)).map((m) => m.slug));
     const server = await ctx.db.get(sid);
     const now = Date.now();
     let named = 0;
+    let reconciled = 0;
     for (const intent of await ctx.db
       .query('panelNodeIntents')
       .withIndex('by_server_name', (q) => q.eq('backendServerId', sid))
       .collect()) {
       const s = intent.settings;
       if (
-        !wsModes.has(modeSlug(intent)) ||
-        s.originHostnameSource !== 'explicit' ||
-        s.explicitHostname ||
-        intent.adopted ||
-        intent.state === 'retiring' ||
-        intent.state === 'retired' ||
-        intent.delivery.exposure.everLive
-      )
-        continue;
-      await ctx.db.patch(
-        intent._id,
-        await revisedForSettings(ctx, intent, { ...s, originHostnameSource: 'managed' }, now),
-      );
-      await writeAuditLog(ctx, {
-        actorType: 'system',
-        action: 'servers.node.settings',
-        targetType: 'panel_node_intent',
-        targetId: intent._id,
-        payload: { backendSlug: server?.slug ?? '', name: intent.name, change: 'origin_name' },
-      });
-      await scheduleReconcile(ctx, (await ctx.db.get(intent._id))!);
-      named++;
+        setup.originDns &&
+        wsModes.has(modeSlug(intent)) &&
+        s.originHostnameSource === 'explicit' &&
+        !s.explicitHostname &&
+        !intent.adopted &&
+        intent.state !== 'retiring' &&
+        intent.state !== 'retired' &&
+        !intent.delivery.exposure.everLive
+      ) {
+        await ctx.db.patch(intent._id, {
+          ...(await revisedForSettings(
+            ctx,
+            intent,
+            { ...s, originHostnameSource: 'managed' },
+            now,
+          )),
+          // No longer blocked for a name: pending until reconciled.
+          state: 'pending',
+          code: undefined,
+        });
+        await writeAuditLog(ctx, {
+          actorType: 'system',
+          action: 'servers.node.settings',
+          targetType: 'panel_node_intent',
+          targetId: intent._id,
+          payload: { backendSlug: server?.slug ?? '', name: intent.name, change: 'origin_name' },
+        });
+        named++;
+      }
+      const current = (await ctx.db.get(intent._id))!;
+      if (current.state === 'pending' && (await scheduleReconcile(ctx, current))) reconciled++;
     }
-    return named;
+    return { named, reconciled };
   },
 });
 
@@ -1461,13 +1475,29 @@ export const reconcile = internalAction({
   },
 });
 
-/** Release the claim of an attempt a newer generation overtook, and reconcile the current one. */
+/**
+ * Release the claim of an attempt a newer generation overtook, and reconcile
+ * the current one. An attempt of the current generation still holding the
+ * claim here could read nothing: the backend's setup is not ready (a run of
+ * it, a change, is under way). Its claim goes now and the node waits pending,
+ * reconciled once the setup is ready (`afterSetupReady`), never left holding a
+ * lease that only runs out.
+ */
 export const releaseOvertaken = internalMutation({
   args: fence,
   handler: async (ctx, f) => {
     const intent = await ctx.db.get(f.intentId);
-    if (!intent || intent.claim?.attemptId !== f.attemptId || intent.generation === f.generation)
-      return { released: false };
+    if (!intent || intent.claim?.attemptId !== f.attemptId) return { released: false };
+    if (intent.generation === f.generation) {
+      if (intent.state === 'retiring' || intent.state === 'retired') return { released: false };
+      await ctx.db.patch(intent._id, {
+        claim: undefined,
+        state: 'pending',
+        code: 'servers.setup_running',
+        updatedAt: Date.now(),
+      });
+      return { released: true };
+    }
     await ctx.db.patch(intent._id, { claim: undefined, updatedAt: Date.now() });
     await scheduleReconcile(ctx, (await ctx.db.get(intent._id))!);
     return { released: true };

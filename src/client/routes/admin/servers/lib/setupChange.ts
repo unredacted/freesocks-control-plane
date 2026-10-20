@@ -113,8 +113,9 @@ export function setupChangeWords(
       changed: true,
       lines,
       effect:
-        `The setup runs again as generation ${generation}. The modes already set up are found as ` +
-        `they are, so nothing a node or a member uses is written` +
+        `The setup runs again as generation ${generation}. The modes already set up are only ` +
+        `looked at: their transports, groups and placements are not written, and the run stops ` +
+        `if one of them changed on the backend` +
         (added.length === 0
           ? '. '
           : `, and ${
@@ -128,8 +129,12 @@ export function setupChangeWords(
       changed: true,
       lines,
       effect:
-        `Recorded at once as generation ${generation}. Nothing on the backend or on any node ` +
-        `changes${to ? `, and a WebSocket node waiting for a name gets one under ${to}` : ''}.`,
+        `Recorded at once as generation ${generation}. Nothing on the backend changes, and no ` +
+        `node that has a name or serves members is touched.` +
+        (to
+          ? ` A WebSocket node still waiting for a name gets one under ${to}: a new machine ` +
+            `revision, which the node role applies on its next run.`
+          : ''),
       done: 'Origin names changed. Nothing on the backend moved.',
     };
   return { changed: false, lines, effect: 'Nothing is changed yet.', done: '' };

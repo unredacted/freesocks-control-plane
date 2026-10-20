@@ -28,7 +28,7 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
+import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
@@ -272,6 +272,21 @@ async function checkChange(
     );
   const added = input.modes.filter((m) => !setUp.has(m.slug));
   if (modesKey(input.modes) !== modesKey(prev.modes)) {
+    // A run would find every set-up mode as it is, and stops at one whose
+    // group drifted on the backend: said now, from the last look.
+    const groups = await ctx.db
+      .query('panelSquads')
+      .withIndex('by_server', (q) => q.eq('backendServerId', row.backendServerId))
+      .collect();
+    for (const m of row.modes) {
+      if (!setUp.has(m.slug)) continue;
+      const g = groups.find((x) => x.squadUuid === m.groupUuid);
+      if (!g || g.inboundUuids.join() !== m.transport!.uuid)
+        refuse(
+          `servers.setup_mode_drifted:${m.slug}`,
+          `The group of mode ${m.name} changed on the backend. Look at it under Mode groups first`,
+        );
+    }
     const cached = row.profileUuid
       ? await ctx.db
           .query('panelProfiles')
@@ -397,7 +412,9 @@ export const start = internalMutation({
         readyAt: row.readyAt ?? now,
         updatedAt: now,
       });
-      await nameWaitingNodes(ctx, sid, row.originDns ?? null, originDns);
+      await ctx.scheduler.runAfter(0, internal.nodeIntents.afterSetupReady, {
+        backendServerId: sid,
+      });
       return {
         setupId: row._id,
         generation: row.generation + 1,
@@ -438,7 +455,6 @@ export const start = internalMutation({
         readyAt: row.readyAt ?? (row.state === 'ready' ? now : undefined),
         updatedAt: now,
       });
-      await nameWaitingNodes(ctx, sid, row.originDns ?? null, originDns);
       row = (await ctx.db.get(row._id))!;
     } else if (row.state === 'ready' && !setupNeedsRefresh(row)) {
       // The same setup, or a change that changes nothing (the modes in another order).
@@ -473,23 +489,6 @@ export const start = internalMutation({
     };
   },
 });
-
-/**
- * A zone for origin names came (or another zone replaced one no node had a
- * name in): WebSocket nodes enrolled while there was none, waiting for a
- * name, take theirs (`nodeIntents.nameWaitingFrontNodes`).
- */
-async function nameWaitingNodes(
-  ctx: MutationCtx,
-  sid: Id<'backendServers'>,
-  before: OriginDns,
-  after: OriginDns,
-) {
-  if (after && after.zoneId !== before?.zoneId)
-    await ctx.scheduler.runAfter(0, internal.nodeIntents.nameWaitingFrontNodes, {
-      backendServerId: sid,
-    });
-}
 
 /**
  * A ready row that still records a blocker (drifted privacy after a
@@ -634,6 +633,12 @@ export const finish = internalMutation({
       claim: undefined,
       updatedAt: now,
     });
+    // Nodes kept waiting while the setup ran (and, with a zone, WebSocket
+    // nodes waiting for an origin name) go on now, never before.
+    if (state === 'ready')
+      await ctx.scheduler.runAfter(0, internal.nodeIntents.afterSetupReady, {
+        backendServerId: row.backendServerId,
+      });
     const server = await ctx.db.get(row.backendServerId);
     await writeAuditLog(ctx, {
       actorType: 'system',
@@ -737,6 +742,17 @@ export const run = internalAction({
     const input = c.input;
     let modes: SetupMode[] = c.row.modes.map((m) => ({ ...m }));
     const save = () => record({ modes });
+    // On a backend FCP writes, the modes already set up are only looked at:
+    // nodes and members rely on their groups and placements, so this run never
+    // writes them (a group that drifted stops it instead). Everything else
+    // (a first setup, an adoption, a mode added) is made or repaired.
+    const established = new Set(
+      c.row.readyAt !== undefined
+        ? c.row.modes
+            .filter((m) => m.transport && m.groupUuid && m.placement === 'bound')
+            .map((m) => m.slug)
+        : [],
+    );
     try {
       // 1. A fresh look at the backend: everything below reads the cache.
       await record({ step: 'observe' });
@@ -910,6 +926,15 @@ export const run = internalAction({
       await record({ step: 'groups' });
       for (const m of modes) {
         const transportUuid = m.transport!.uuid;
+        if (established.has(m.slug)) {
+          const kept = c.snapshot.groups.find((g) => g.groupUuid === m.groupUuid);
+          if (!kept || kept.transportUuids.join() !== transportUuid) {
+            await save();
+            await finish('failed', `servers.setup_mode_drifted:${m.slug}`, 'groups');
+            return null;
+          }
+          continue;
+        }
         let group =
           c.snapshot.groups.find((g) => g.name === m.name) ??
           (m.groupUuid ? c.snapshot.groups.find((g) => g.groupUuid === m.groupUuid) : undefined) ??
@@ -981,6 +1006,7 @@ export const run = internalAction({
       await record({ step: 'placements' });
       const patch: Record<string, { addSquadUuids: string[] }> = {};
       for (const m of modes) {
+        if (established.has(m.slug)) continue;
         if (c.snapshot.knownModes.includes(m.slug)) {
           patch[m.slug] = { addSquadUuids: [m.groupUuid!] };
           m.placement = 'bound';

@@ -341,6 +341,8 @@ const ERROR_WORDS: Record<string, string> = {
     'A set-up backend keeps its profile: its nodes run it. Keep the profile name as it is.',
   'servers.setup_mode_kept':
     'A mode stays as it was set up, since nodes and members rely on it. Add a new mode instead.',
+  'servers.setup_mode_drifted':
+    "A mode's group changed on the backend since it was set up (it no longer carries exactly its transport). Look at it under Mode groups, then change the setup.",
   'servers.setup_transport_missing':
     "The profile has no usable transport for the new mode yet. Add it with Add a transport on a node's page (its tag is the group name in capitals), then add the mode.",
   'servers.origin_zone_in_use':
