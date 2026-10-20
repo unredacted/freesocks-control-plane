@@ -3021,6 +3021,10 @@ export default defineSchema({
     ),
     // Taken over with existing nodes or addresses (the operator's typed adopt).
     adopted: v.boolean(),
+    // When the setup first reached ready: from then on FCP is the backend's
+    // writer, and a new request is a change of its setup. Absent on a row that
+    // is ready but older than the field (its state says the same).
+    readyAt: v.optional(v.number()),
     // The delivery gate version of this backend: bumped on every disposition
     // or resource-set change of any of its nodes; part of every render's token.
     gateVersion: v.number(),

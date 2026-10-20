@@ -9,8 +9,16 @@
    * has nodes or addresses is adopted after a typed confirmation. Nothing here
    * is a secret: keys are made on the way and kept nowhere.
    *
+   * On a backend FCP already writes (`setup.established`) the same sheet
+   * CHANGES the setup (docs/servers.md "Changing a backend's setup"): it opens
+   * filled in with the current one, the profile and every mode already set up
+   * stay as they are (nodes and members rely on them), a mode can be added and
+   * the zone for origin names picked, and what the change does is said before
+   * it runs (../lib/setupChange.ts).
+   *
    * Props: open (bindable), slug, setup (the current view), accounts
    */
+  import { untrack } from 'svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -31,6 +39,7 @@
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import StatusDot from '../../edges/simple/StatusDot.svelte';
   import { codeOf } from '../lib/run';
+  import { setUpSlugs, setupChangeWords, setupInputOf } from '../lib/setupChange';
   import { serverErrorWords, setupWords, shapeWords } from '../lib/words';
 
   interface Props {
@@ -45,19 +54,65 @@
   const catalog = adminConnectionModesQuery();
   const families = familiesQuery();
 
-  type Row = ModeSetupInput & { key: number };
+  /** A mode row; `kept` = already set up, so sent back exactly as it is and not shown for editing. */
+  type Row = ModeSetupInput & { key: number; kept: boolean };
   let seq = 0;
-  const rowOf = (m: ModeSetupInput): Row => ({
+  const rowOf = (m: ModeSetupInput, kept = false): Row => ({
     ...m,
     ws: m.ws ? { ...m.ws } : undefined,
     key: seq++,
+    kept,
   });
 
   let profileName = $state('FreeSocks-Config');
-  let rows = $state<Row[]>(DEFAULT_MODE_SETUP.map(rowOf));
+  let rows = $state<Row[]>(DEFAULT_MODE_SETUP.map((m) => rowOf(m)));
   let originAccountId = $state('');
   let busy = $state(false);
   let adoptOpen = $state(false);
+  let changeOpen = $state(false);
+
+  // A backend FCP writes is changed, never set up afresh.
+  let changing = $derived(setup?.established ?? false);
+  // The backend the form was filled in for: never sent to another one.
+  let filledFor = $state<string | null>(null);
+  // Opened (or opened on another backend): filled in with the current setup (a
+  // failed one too), else the defaults.
+  $effect(() => {
+    if (!open) return;
+    const forSlug = slug;
+    untrack(() => {
+      filledFor = forSlug;
+      const current = setupInputOf(setup);
+      const setUp = setUpSlugs(setup);
+      profileName = current?.profileName ?? 'FreeSocks-Config';
+      rows = current
+        ? current.modes.map((m) => rowOf(m, changing && setUp.has(m.slug)))
+        : DEFAULT_MODE_SETUP.map((m) => rowOf(m));
+      originAccountId = current?.originDns?.accountId ?? '';
+    });
+  });
+  // The current zone stays pickable even when its account is not listed any more.
+  let originChoices = $derived(
+    setup?.originDns && !accounts.some((a) => a.id === setup.originDns!.accountId)
+      ? [
+          ...accounts,
+          {
+            id: setup.originDns.accountId,
+            name: 'The current account',
+            zoneName: setup.originDns.zoneName,
+          },
+        ]
+      : accounts,
+  );
+  let changeWords = $derived(
+    changing && setup
+      ? setupChangeWords(
+          setup,
+          { modes: rows.map(({ key: _k, kept: _p, ...m }) => m), originAccountId },
+          originChoices,
+        )
+      : null,
+  );
 
   const shapeKey = (s: { transport: string; fronting: string }) => `${s.transport}/${s.fronting}`;
   const isReality = (r: Row) => r.shape.transport !== 'ws';
@@ -89,7 +144,7 @@
   function input(adopt: boolean) {
     return {
       profileName: profileName.trim(),
-      modes: rows.map(({ key: _k, ...m }) => ({
+      modes: rows.map(({ key: _k, kept: _p, ...m }) => ({
         ...m,
         slug: m.slug.trim(),
         name: m.name.trim(),
@@ -101,19 +156,37 @@
     };
   }
 
+  /** What is wrong with the rows before anything is sent, in words, or null. */
+  function rowsProblem(): string | null {
+    if (rows.length === 0) return 'Keep at least one mode.';
+    for (const r of rows)
+      if (isReality(r) && !r.familySlug)
+        return `Pick a server-name family for ${r.name || r.slug || 'each REALITY mode'}.`;
+    return null;
+  }
+
+  /** A change is said in words first (the confirmation), then sent. */
+  function askChange() {
+    const problem = rowsProblem();
+    if (problem) toast.error(problem);
+    else if (changeWords?.changed) changeOpen = true;
+  }
+
   async function submit(adopt = false) {
-    if (rows.length === 0) {
-      toast.error('Keep at least one mode.');
+    if (filledFor !== slug) {
+      toast.error('The backend changed. Close this and open it again.');
       return;
     }
-    for (const r of rows)
-      if (isReality(r) && !r.familySlug) {
-        toast.error(`Pick a server-name family for ${r.name || r.slug || 'each REALITY mode'}.`);
-        return;
-      }
+    const problem = rowsProblem();
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
+    const done = changing ? (changeWords?.done ?? '') : '';
     busy = true;
     try {
       await startSetup(slug, input(adopt));
+      if (done) toast.success(done);
     } catch (e) {
       const code = codeOf(e);
       if (code === 'servers.adopt_required' && !adopt) adoptOpen = true;
@@ -137,11 +210,17 @@
 <Sheet.Root bind:open>
   <Sheet.Content side="right" class="gap-0 overflow-y-auto sm:max-w-2xl">
     <Sheet.Header class="border-b">
-      <Sheet.Title>Set up this backend</Sheet.Title>
+      <Sheet.Title>{changing ? "Change this backend's setup" : 'Set up this backend'}</Sheet.Title>
       <Sheet.Description>
-        The modes this backend serves, each with its transport, its group and (REALITY) the family
-        of server names it borrows. Nothing here is a secret: keys are made on the way and kept
-        nowhere.
+        {#if changing}
+          The profile and the modes it is set up for stay as they are: nodes and members rely on
+          them. Add a mode, or pick the zone WebSocket nodes get their origin names in. What a
+          change does is shown before it runs.
+        {:else}
+          The modes this backend serves, each with its transport, its group and (REALITY) the family
+          of server names it borrows. Nothing here is a secret: keys are made on the way and kept
+          nowhere.
+        {/if}
       </Sheet.Description>
     </Sheet.Header>
 
@@ -158,17 +237,24 @@
         {#if setup.modes.length > 0}
           <ul class="text-muted-foreground space-y-1 text-sm">
             {#each setup.modes as m (m.slug)}
+              <!-- One string, so no line break in the markup puts a space before a comma. -->
+              {@const plain = [
+                shapeWords(m.shape),
+                m.transport ? `port ${m.transport.port}` : null,
+                m.familySlug ? `names from ${m.familySlug}` : null,
+                m.group.renamedFrom ? `renamed from ${m.group.renamedFrom}` : null,
+              ]
+                .filter(Boolean)
+                .join(', ')}
+              {@const warnings = [
+                m.placement !== 'bound' ? 'mode not bound' : null,
+                m.family === 'unbound' || m.family === 'target_mismatch'
+                  ? familyState[m.family]
+                  : null,
+              ].filter(Boolean)}
               <li>
-                <span class="text-foreground font-medium">{m.name}</span>: {shapeWords(m.shape)}
-                {#if m.transport}, port {m.transport.port}{/if}
-                {#if m.familySlug}, names from {m.familySlug}{/if}
-                {#if m.placement !== 'bound'}, <span class="text-amber-700 dark:text-amber-300"
-                    >mode not bound</span
-                  >{/if}
-                {#if m.family === 'unbound' || m.family === 'target_mismatch'}, <span
-                    class="text-amber-700 dark:text-amber-300">{familyState[m.family]}</span
-                  >{/if}
-                {#if m.group.renamedFrom}, renamed from {m.group.renamedFrom}{/if}
+                <span class="text-foreground font-medium">{m.name}</span>: {plain}{#each warnings as w (w)},
+                  <span class="text-amber-700 dark:text-amber-300">{w}</span>{/each}
               </li>
             {/each}
             {#if setup.originDns}<li>Origin names under {setup.originDns.zoneName}.</li>{/if}
@@ -176,28 +262,41 @@
         {/if}
       {/if}
 
-      {#if !setup?.exists || setup.state !== 'ready'}
+      {#if changing || !setup?.exists || setup.state !== 'ready'}
         <form
           class="space-y-4"
           onsubmit={(e) => {
             e.preventDefault();
-            void submit();
+            if (changing) askChange();
+            else void submit();
           }}
         >
-          <div class="space-y-1.5">
-            <Label for={`${uid}-profile`}>Profile name</Label>
-            <Input id={`${uid}-profile`} bind:value={profileName} autocomplete="off" />
-          </div>
+          {#if changing}
+            <p class="text-sm">
+              Profile <span class="font-medium">{profileName}</span>, kept: its nodes run it.
+            </p>
+          {:else}
+            <div class="space-y-1.5">
+              <Label for={`${uid}-profile`}>Profile name</Label>
+              <Input id={`${uid}-profile`} bind:value={profileName} autocomplete="off" />
+            </div>
+          {/if}
 
           <fieldset class="space-y-3">
-            <legend class="text-sm font-medium">Modes</legend>
+            <legend class="text-sm font-medium">{changing ? 'New modes' : 'Modes'}</legend>
             <p class="text-muted-foreground text-xs">
-              One transport per mode. A node serves one mode; members reach a direct node at its own
-              address and a fronted one through an edge. REALITY modes take their site and server
-              names from a family (Edges, Server names).
+              {#if changing}
+                The modes set up above stay as they are. A new mode needs its transport in the
+                profile first (Add a transport, on a node's page); setting it up here then gives it
+                its group and placement.
+              {:else}
+                One transport per mode. A node serves one mode; members reach a direct node at its
+                own address and a fronted one through an edge. REALITY modes take their site and
+                server names from a family (Edges, Server names).
+              {/if}
             </p>
             <div class="space-y-3">
-              {#each rows as r (r.key)}
+              {#each rows.filter((x) => !x.kept) as r (r.key)}
                 <div class="bg-card space-y-2 rounded-md border p-3">
                   <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <div class="space-y-1">
@@ -314,14 +413,30 @@
               bind:value={originAccountId}
             >
               <option value="">No managed zone: set each node's hostname in its settings</option>
-              {#each accounts as a (a.id)}
+              {#each originChoices as a (a.id)}
                 <option value={a.id}>{a.name} ({a.zoneName})</option>
               {/each}
             </select>
+            <p class="text-muted-foreground text-xs">
+              A WebSocket node behind a CDN front gets the origin name &lt;label&gt;.&lt;zone&gt;,
+              made and kept by FCP in this account's zone.
+            </p>
           </div>
+
+          {#if changeWords}
+            <div class="bg-muted/40 space-y-1 rounded-md border p-3 text-sm" aria-live="polite">
+              <p class="font-medium">What this changes</p>
+              {#each changeWords.lines as line (line)}
+                <p>{line}</p>
+              {/each}
+              <p class="text-muted-foreground">{changeWords.effect}</p>
+            </div>
+          {/if}
           <Sheet.Footer>
             <Button type="button" variant="outline" onclick={() => (open = false)}>Close</Button>
-            <Button type="submit" disabled={busy || running}>Set up</Button>
+            <Button type="submit" disabled={busy || running || (changing && !changeWords?.changed)}>
+              {changing ? 'Change setup' : 'Set up'}
+            </Button>
           </Sheet.Footer>
         </form>
       {:else}
@@ -332,6 +447,17 @@
     </div>
   </Sheet.Content>
 </Sheet.Root>
+
+<ConfirmDialog
+  bind:open={changeOpen}
+  title="Change this backend's setup?"
+  body={changeWords ? [...changeWords.lines, changeWords.effect].join(' ') : ''}
+  confirmLabel="Change setup"
+  onConfirm={() => {
+    changeOpen = false;
+    void submit();
+  }}
+/>
 
 <ConfirmDialog
   bind:open={adoptOpen}

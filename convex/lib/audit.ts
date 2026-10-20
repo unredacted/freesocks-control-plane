@@ -283,6 +283,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // or adopting a backend, an enrolled node's ladder, its retirement. Names
   // and stages only.
   'servers.setup.started': ['backendSlug', 'generation', 'adopt'],
+  'servers.setup.changed': ['backendSlug', 'generation', 'change', 'originZone', 'addedModes'],
   'servers.setup.finished': ['backendSlug', 'state', 'code', 'step'],
   'servers.setup.group_renamed': ['backendSlug', 'from', 'to'],
   'servers.setup.templates_installed': ['backendSlug', 'templates', 'written'],

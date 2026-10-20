@@ -154,7 +154,10 @@ function defaultSettings(setup: Setup, slug: string): Intent['settings'] {
 }
 
 /** The origin hostname a front node presents, from its settings and the setup's zone. */
-export function originHostnameOf(intent: Intent, setup: Setup | null): string | undefined {
+export function originHostnameOf(
+  intent: Intent,
+  setup: Pick<Setup, 'originDns'> | null,
+): string | undefined {
   const s = intent.settings;
   if (s.originHostnameSource === 'managed' && setup?.originDns)
     return originHostname(intent.label, setup.originDns.zoneName);
@@ -223,7 +226,12 @@ export async function enrolledOriginOf(
 } | null> {
   const intent = await intentByName(ctx, sid, nodeName);
   if (!intent) return null;
-  const setup = await readySetup(ctx, sid);
+  // Whatever state the setup is in: while a change of it runs, edges keep
+  // dialing the same name (the zone a node has a name in never changes).
+  const setup = await ctx.db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .unique();
   const hostname = originHostnameOf(intent, setup);
   const originAddress = originAddressOf(intent, hostname);
   const ips = [intent.observed.publicIps.v4, intent.observed.publicIps.v6].filter(
@@ -611,6 +619,46 @@ const settingsPatch = v.object({
 });
 
 /**
+ * What a change of a node's machine settings writes besides them: a new
+ * machine revision (evidence kept only where it still holds, the review
+ * dropped), a new desired hash and generation, and no activation run of the
+ * old revisions left to commit.
+ */
+async function revisedForSettings(
+  ctx: MutationCtx,
+  intent: Intent,
+  settings: Intent['settings'],
+  now: number,
+): Promise<Partial<Intent>> {
+  const machineRevision = intent.machineRevision + 1;
+  const evidence = retainEvidence(intent.activation.evidence, {
+    ...revisionsOf(intent),
+    machineRevision,
+  });
+  // A revision moved: no activation run of the old revisions may commit.
+  for (const r of await ctx.db
+    .query('panelActivationRuns')
+    .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+    .collect())
+    if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
+      await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+  return {
+    settings,
+    machineRevision,
+    activation: {
+      ...intent.activation,
+      evidence,
+      stage: stageAfterChange(intent.activation.stage, evidence),
+      reviewHash: undefined,
+      currentRunId: undefined,
+    },
+    desiredHash: await desiredHashOf({ observed: intent.observed, settings }),
+    generation: intent.generation + 1,
+    updatedAt: now,
+  };
+}
+
+/**
  * Change FCP-owned machine settings. A change that rewrites the running path
  * is applied in place and needs an explicit maintenance transition (the node
  * is closed until re-approved); a change that only adds a path is preparable.
@@ -678,23 +726,14 @@ export const patchSettings = internalMutation({
     const kind = classifyChange({ addsPath, rewritesPath });
     if (kind === 'none' && p.countryCode === undefined) refuse('validation', 'Nothing to change');
     const now = Date.now();
-    const patch: Partial<Intent> = { settings: next, updatedAt: now };
+    let patch: Partial<Intent> = { settings: next, updatedAt: now };
     if (kind !== 'none') {
       if (kind === 'in_place' && intent.delivery.disposition === 'live' && !a.maintenance)
         refuse(
           'servers.maintenance_required',
           'This change rewrites the running path. Start it as a maintenance transition',
         );
-      const machineRevision = intent.machineRevision + 1;
-      const revs = { ...revisionsOf(intent), machineRevision };
-      const evidence = retainEvidence(intent.activation.evidence, revs);
-      patch.machineRevision = machineRevision;
-      patch.activation = {
-        ...intent.activation,
-        evidence,
-        stage: stageAfterChange(intent.activation.stage, evidence),
-        reviewHash: undefined,
-      };
+      patch = await revisedForSettings(ctx, intent, next, now);
       if (kind === 'in_place' && intent.delivery.disposition === 'live') {
         patch.delivery = { ...intent.delivery, disposition: 'unavailable' };
         patch.maintenance = {
@@ -707,16 +746,6 @@ export const patchSettings = internalMutation({
         // Mirror objects are static: they follow a closed gate only when rewritten.
         await scheduleMirrorRefresh(ctx);
       }
-      patch.desiredHash = await desiredHashOf({ observed: intent.observed, settings: next });
-      patch.generation = intent.generation + 1;
-      // A revision moved: no activation run of the old revisions may commit.
-      for (const r of await ctx.db
-        .query('panelActivationRuns')
-        .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
-        .collect())
-        if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
-          await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
-      patch.activation = { ...patch.activation!, currentRunId: undefined };
     }
     await ctx.db.patch(intent._id, patch);
     const server = await ctx.db.get(intent.backendServerId);
@@ -731,6 +760,76 @@ export const patchSettings = internalMutation({
     const next2 = (await ctx.db.get(intent._id))!;
     if (kind !== 'none') await scheduleReconcile(ctx, next2);
     return { change: kind, machineRevision: next2.machineRevision };
+  },
+});
+
+/**
+ * The backend's setup is ready (a run of it finished, or a change of the
+ * zone was recorded in place; docs/servers.md "Changing a backend's setup").
+ * Nothing here runs while it is not: a node reconciled meanwhile could read
+ * nothing, so its attempt let the claim go and left it pending
+ * (`releaseOvertaken`).
+ *
+ * With a zone for origin names, each WebSocket node enrolled while there was
+ * none, blocked waiting for a name (`servers.origin_hostname_missing`), takes
+ * its managed name `<label>.<zone>` as if the zone had been there when it
+ * enrolled. Only those: a node with a hostname of its own keeps it, an adopted
+ * one keeps whatever fronts it, a retiring one is left alone, and one that was
+ * ever live is never renamed from here. None of them has served a member: the
+ * node gets a new machine revision for the role to apply.
+ *
+ * Then every pending node no attempt holds is reconciled, so neither waits for
+ * the sweep.
+ */
+export const afterSetupReady = internalMutation({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId: sid }) => {
+    const setup = await readySetup(ctx, sid);
+    if (!setup) return { named: 0, reconciled: 0 };
+    const wsModes = new Set(setup.modes.filter((m) => isWs(m.shape)).map((m) => m.slug));
+    const server = await ctx.db.get(sid);
+    const now = Date.now();
+    let named = 0;
+    let reconciled = 0;
+    for (const intent of await ctx.db
+      .query('panelNodeIntents')
+      .withIndex('by_server_name', (q) => q.eq('backendServerId', sid))
+      .collect()) {
+      const s = intent.settings;
+      if (
+        setup.originDns &&
+        wsModes.has(modeSlug(intent)) &&
+        s.originHostnameSource === 'explicit' &&
+        !s.explicitHostname &&
+        !intent.adopted &&
+        intent.state !== 'retiring' &&
+        intent.state !== 'retired' &&
+        !intent.delivery.exposure.everLive
+      ) {
+        await ctx.db.patch(intent._id, {
+          ...(await revisedForSettings(
+            ctx,
+            intent,
+            { ...s, originHostnameSource: 'managed' },
+            now,
+          )),
+          // No longer blocked for a name: pending until reconciled.
+          state: 'pending',
+          code: undefined,
+        });
+        await writeAuditLog(ctx, {
+          actorType: 'system',
+          action: 'servers.node.settings',
+          targetType: 'panel_node_intent',
+          targetId: intent._id,
+          payload: { backendSlug: server?.slug ?? '', name: intent.name, change: 'origin_name' },
+        });
+        named++;
+      }
+      const current = (await ctx.db.get(intent._id))!;
+      if (current.state === 'pending' && (await scheduleReconcile(ctx, current))) reconciled++;
+    }
+    return { named, reconciled };
   },
 });
 
@@ -1376,13 +1475,29 @@ export const reconcile = internalAction({
   },
 });
 
-/** Release the claim of an attempt a newer generation overtook, and reconcile the current one. */
+/**
+ * Release the claim of an attempt a newer generation overtook, and reconcile
+ * the current one. An attempt of the current generation still holding the
+ * claim here could read nothing: the backend's setup is not ready (a run of
+ * it, a change, is under way). Its claim goes now and the node waits pending,
+ * reconciled once the setup is ready (`afterSetupReady`), never left holding a
+ * lease that only runs out.
+ */
 export const releaseOvertaken = internalMutation({
   args: fence,
   handler: async (ctx, f) => {
     const intent = await ctx.db.get(f.intentId);
-    if (!intent || intent.claim?.attemptId !== f.attemptId || intent.generation === f.generation)
-      return { released: false };
+    if (!intent || intent.claim?.attemptId !== f.attemptId) return { released: false };
+    if (intent.generation === f.generation) {
+      if (intent.state === 'retiring' || intent.state === 'retired') return { released: false };
+      await ctx.db.patch(intent._id, {
+        claim: undefined,
+        state: 'pending',
+        code: 'servers.setup_running',
+        updatedAt: Date.now(),
+      });
+      return { released: true };
+    }
     await ctx.db.patch(intent._id, { claim: undefined, updatedAt: Date.now() });
     await scheduleReconcile(ctx, (await ctx.db.get(intent._id))!);
     return { released: true };
