@@ -918,6 +918,12 @@ describe("a front node's origin name", () => {
         (j) => /nodeIntents(\.js)?:resume$/.test(j.name) && j.state.kind === 'pending',
       ),
     );
+  const windowChecks = (t: T) =>
+    t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (j) => /nodeIntents(\.js)?:afterRoleRunWindow$/.test(j.name) && j.state.kind === 'pending',
+      ),
+    );
   const ingressOk = {
     resolves: true,
     answers: { v4: [V4], v6: [] },
@@ -1086,6 +1092,11 @@ describe("a front node's origin name", () => {
     expect(during).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
     expect(during.code).toBeUndefined();
     expect(roleWaitsPass(await view(t, serverId))).toBe(true);
+    // A ready node is not on the sweep: the end of the run's window comes back for it.
+    const windows = await windowChecks(t);
+    expect(windows).toHaveLength(1);
+    expect(windows[0]!.args[0]).toEqual({ intentId, observedAt: during.observed.at });
+    expect(windows[0]!.scheduledTime - during.observed.at).toBeGreaterThanOrEqual(19 * 60_000);
 
     panel.offline = false;
     await new Promise((r) => setTimeout(r, 2));
@@ -1096,24 +1107,88 @@ describe("a front node's origin name", () => {
       certificateReady: true,
     });
     expect(await runIntent(t, intentId)).toMatchObject({ state: 'ready' });
+    // The run reported: the end of its window has nothing to do.
+    expect(
+      await t.mutation(internal.nodeIntents.afterRoleRunWindow, {
+        intentId,
+        observedAt: during.observed.at,
+      }),
+    ).toBe(false);
 
-    // A run that never reported is over after the quick-retry window: the
-    // machine is looked at again.
+    // A run that never reports is over once its window is: the machine is
+    // looked at again, and found down.
     panel.offline = true;
+    await new Promise((r) => setTimeout(r, 2));
     await put(t, serverId);
-    await runIntent(t, intentId);
+    expect(await runIntent(t, intentId)).toMatchObject({ state: 'ready' });
+    const observedAt = Date.now() - 21 * 60_000;
     await t.run(async (ctx) => {
       const i = (await ctx.db.get(intentId))!;
       await ctx.db.patch(intentId, {
-        observed: { ...i.observed, at: Date.now() - 21 * 60_000 },
+        observed: { ...i.observed, at: observedAt },
         appliedAt: Date.now() - 30 * 60_000,
       });
     });
-    await t.mutation(internal.nodeIntents.reconcileNow, { intentId });
+    expect(
+      await t.mutation(internal.nodeIntents.afterRoleRunWindow, { intentId, observedAt }),
+    ).toBe(true);
     expect(await runIntent(t, intentId)).toMatchObject({
       state: 'pending',
       code: 'servers.node_offline',
     });
+  });
+
+  test("the role's report fences an attempt that looked at the machine before it", async () => {
+    const { t, serverId } = await frontNode();
+    __setFrontIngressCheckForTests(async () => ingressOk);
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    const before = await runIntent(t, intentId);
+    expect(before).toMatchObject({ state: 'ready' });
+
+    // A reconcile is probing the machine (the path is not proxied: Caddy is
+    // broken) when the role's run to repair it reports its observations.
+    let entered = false;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let probes = 0;
+    __setFrontIngressCheckForTests(async () => {
+      probes++;
+      entered = true;
+      await gate;
+      return { ...ingressOk, pathProxied: false };
+    });
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId });
+    for (let i = 0; i < 500 && !entered; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(entered).toBe(true);
+    await new Promise((r) => setTimeout(r, 2));
+    const { generation } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: NAME,
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: V4 },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    // Unchanged observations, yet the attempt holding the lease is fenced.
+    expect(generation).toBe(before.generation + 1);
+    release();
+
+    // Its failure is not recorded: the handover reconciles the run's node.
+    const after = await runIntent(t, intentId);
+    expect(after).toMatchObject({ state: 'ready', generation: before.generation + 1 });
+    expect(after.code).toBeUndefined();
+    expect(roleWaitsPass(await view(t, serverId))).toBe(true);
+    expect(probes).toBe(1);
   });
 });
 

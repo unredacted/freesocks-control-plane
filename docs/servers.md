@@ -873,9 +873,12 @@ backend row reconciled) and, on a front node, for `origin.dns` `resolves` (§ Or
 Neither waits on the machine the run is about to set up: a reconcile during a role run (the
 `PUT` is newer than the last applied report, for at most 20 minutes) does not look at the
 machine, so a run that repairs an unhealthy machine is not held at `servers.node_offline` or a
-failed ingress check before it can start the node. The applied report that ends the run brings
-the machine check (`machine_ready`); a run that never reports gets it back once the 20 minutes
-are over.
+failed ingress check before it can start the node. An attempt that was already looking at the
+machine when the `PUT` arrived is fenced (a new generation; its handover reconciles again), so
+its failure is not recorded either. The applied report that ends the run brings the machine
+check (`machine_ready`); for a run that never reports, the end of its 20 minutes does
+(`nodeIntents.afterRoleRunWindow`, scheduled when the check was skipped, since a ready node is
+not on the sweep).
 
 Refusals. `PUT`: `servers.manage_disabled`, `servers.contract_version`,
 `servers.panel_not_set_up`, `servers.mode_unknown`, `servers.node_retiring`,
