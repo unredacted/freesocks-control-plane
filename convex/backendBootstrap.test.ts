@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { createAccount, insertPanelServer } from './lib/edges/testing/fixtures';
+import { FIXTURE_PANEL_SLUG, createAccount, insertPanelServer } from './lib/edges/testing/fixtures';
 import { addressRemark, addressesOf, enrolledOriginOf, ownsAddress } from './nodeIntents';
 import { gateOfNode } from './lib/edges/testing/reads';
 import {
@@ -25,7 +25,9 @@ import {
   templateHash,
 } from './lib/backend/subscriptionTemplates';
 import { TEMPLATE_RECHECK_MS } from './backendSetup';
-import { BackendSetupView, NodeIntentView } from '../src/shared/contracts/servers';
+import { BackendSetupView, NodeIntentView, NodeRoleView } from '../src/shared/contracts/servers';
+import { __setFrontIngressCheckForTests, __setOriginResolutionForTests } from './nodeIntentOps';
+import { verifyResolution } from './lib/backend/originDns';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -39,6 +41,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  __setOriginResolutionForTests(null);
+  __setFrontIngressCheckForTests(null);
 });
 
 const UUID = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
@@ -65,6 +69,14 @@ interface Panel {
   /** Called on every template read, and before a template write is applied. */
   onTemplateRead?: () => Promise<void>;
   onTemplateWrite?: () => Promise<void>;
+  /** Every node reads as not connected (a machine that is down). */
+  offline?: boolean;
+  /** The origin-names zone (the DNS provider's API, `/client/v4/zones/<id>/dns_records`). */
+  zone: { id: string; type: string; name: string; content: string; comment?: string }[];
+  /** Public resolvers answer what the zone holds (true), or nothing yet (false). */
+  resolving: boolean;
+  /** Every name an origin resolution check asked for. */
+  lookups: string[];
   writes: { call: string; body: any }[];
   seq: number;
 }
@@ -76,23 +88,61 @@ function installPanel(): Panel {
     hosts: [],
     nodes: [],
     templates: [],
+    zone: [],
+    resolving: true,
+    lookups: [],
     writes: [],
     seq: 10,
   };
+  // The suite resolves no real name either.
+  __setOriginResolutionForTests(async ({ hostname, expected }) => {
+    panel.lookups.push(hostname);
+    const at = panel.resolving ? panel.zone.filter((r) => r.name === hostname) : [];
+    const of = (type: string) => at.filter((r) => r.type === type).map((r) => r.content);
+    const answers = { v4: of('A'), v6: of('AAAA') };
+    return { resolves: verifyResolution(answers, expected), answers };
+  });
   const json = (o: unknown, status = 200) =>
     new Response(JSON.stringify({ response: o }), {
       status,
       headers: { 'content-type': 'application/json' },
     });
+  const envelope = (result: unknown, extra: Record<string, unknown> = {}) =>
+    new Response(JSON.stringify({ result, success: true, errors: [], messages: [], ...extra }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: string | URL, init: RequestInit = {}) => {
-      const path = new URL(typeof input === 'string' ? input : input.toString()).pathname;
+      const url = new URL(typeof input === 'string' ? input : input.toString());
+      const path = url.pathname;
       const method = (init.method ?? 'GET').toUpperCase();
       const body = init.body ? JSON.parse(init.body as string) : {};
+      const records = /^\/client\/v4\/zones\/[^/]+\/dns_records(?:\/([^/]+))?$/.exec(path);
+      if (records) {
+        const id = records[1];
+        if (method === 'GET' && !id) {
+          const hits = panel.zone.filter((r) => r.name === url.searchParams.get('name.exact'));
+          return envelope(hits, {
+            result_info: { page: 1, per_page: 5, count: hits.length, total_count: hits.length },
+          });
+        }
+        if (method === 'GET') return envelope(panel.zone.find((r) => r.id === id) ?? null);
+        panel.writes.push({ call: `${method} ${path}`, body });
+        if (method === 'POST') {
+          const made = { id: `rec${++panel.seq}`, ...body };
+          panel.zone.push(made);
+          return envelope(made);
+        }
+        if (method === 'DELETE') {
+          panel.zone = panel.zone.filter((r) => r.id !== id);
+          return envelope({ id });
+        }
+      }
       if (method === 'GET') {
         if (path === '/api/nodes')
-          return json(panel.nodes.map((n) => ({ ...n, isConnected: true })));
+          return json(panel.nodes.map((n) => ({ ...n, isConnected: !panel.offline })));
         if (path === '/api/hosts') return json(panel.hosts);
         if (path === '/api/internal-squads') return json({ internalSquads: panel.squads });
         if (path === '/api/config-profiles') return json({ configProfiles: panel.profiles });
@@ -818,6 +868,327 @@ describe("changing a backend's setup", () => {
     expect((await t.run((ctx) => enrolledOriginOf(ctx, serverId, 'node-w')))!.originAddress).toBe(
       'node-w.example.org',
     );
+  });
+});
+
+/**
+ * A WebSocket node's managed origin name, in the order the role runs: enroll
+ * (`PUT`), wait for `ready`, bootstrap, wait for `origin.dns` to say
+ * `resolves`, set the machine up (Caddy's certificate needs the name), report
+ * applied. FCP has to prove the name resolves BEFORE the applied report: the
+ * role never gets to it otherwise.
+ */
+describe("a front node's origin name", () => {
+  const NAME = 'node-w';
+  const HOST = 'node-w.example.org';
+  const V4 = '203.0.113.10';
+
+  async function frontNode() {
+    const s = await seed();
+    const acct = await createAccount(s.t, { provider: 'cloudflare', name: 'dns' });
+    await runSetup(s.t, s.serverId, { ...setupInput, originDns: { accountId: acct } });
+    return s;
+  }
+  /** The role's `PUT`: enroll, or report this run's observations. */
+  async function put(t: T, serverId: Id<'backendServers'>) {
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: NAME,
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: V4 },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    return intentId;
+  }
+  const view = async (t: T, serverId: Id<'backendServers'>) =>
+    NodeRoleView.parse(
+      await t.query(internal.nodeIntents.roleViewByName, { backendServerId: serverId, name: NAME }),
+    );
+  /** The role's two waits before it sets the machine up (register_node.yml). */
+  const roleWaitsPass = (v: NodeRoleView) =>
+    ['ready', 'blocked'].includes(v.registration.state) &&
+    ['resolves', 'none'].includes(v.origin.dns);
+  const quickRetries = (t: T) =>
+    t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (j) => /nodeIntents(\.js)?:resume$/.test(j.name) && j.state.kind === 'pending',
+      ),
+    );
+  const windowChecks = (t: T) =>
+    t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (j) => /nodeIntents(\.js)?:afterRoleRunWindow$/.test(j.name) && j.state.kind === 'pending',
+      ),
+    );
+  const ingressOk = {
+    resolves: true,
+    answers: { v4: [V4], v6: [] },
+    tlsValid: true,
+    certNames: [HOST],
+    pathProxied: true,
+    foreignHostAnswered: true,
+  };
+
+  test('the name resolves before the applied report: the role is never left waiting on it', async () => {
+    const { t, serverId, panel } = await frontNode();
+    const ingress: string[] = [];
+    __setFrontIngressCheckForTests(async (a) => {
+      ingress.push(a.hostname);
+      return ingressOk;
+    });
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.action(internal.nodeIntents.bootstrap, { intentId });
+
+    // The record is FCP's, and public resolvers answer the node's address.
+    expect(panel.zone).toMatchObject([
+      { type: 'A', name: HOST, content: V4, comment: `fcp-origin:${FIXTURE_PANEL_SLUG}:${NAME}` },
+    ]);
+    const v = await view(t, serverId);
+    expect(v).toMatchObject({
+      registration: { state: 'ready', code: null },
+      stage: 'bootstrap_available',
+      appliedRevision: null,
+      origin: { hostname: HOST, dns: 'resolves' },
+    });
+    // What the deadlock was: `created` here, and `resolves` only after an
+    // applied report the role sends once it has seen `resolves`.
+    expect(roleWaitsPass(v)).toBe(true);
+    expect(panel.lookups).toEqual([HOST]);
+    // Nothing was dialled: TLS, the path and the foreign Host wait for the machine.
+    expect(ingress).toEqual([]);
+  });
+
+  test('a name that does not resolve yet parks the node and is looked at again shortly', async () => {
+    const { t, serverId, panel } = await frontNode();
+    panel.resolving = false;
+    const intentId = await put(t, serverId);
+    const parked = await runIntent(t, intentId);
+    expect(parked).toMatchObject({
+      state: 'pending',
+      code: 'servers.origin_not_resolving',
+      origin: { hostname: HOST, dns: 'created' },
+    });
+    expect(roleWaitsPass(await view(t, serverId))).toBe(false);
+    // The role is in contact: a retry in 30 seconds, not at the next sweep.
+    const retries = await quickRetries(t);
+    expect(retries).toHaveLength(1);
+    expect(retries[0]!.scheduledTime - parked.updatedAt).toBeGreaterThanOrEqual(29_000);
+    expect(retries[0]!.scheduledTime - parked.updatedAt).toBeLessThanOrEqual(31_000);
+
+    // The name propagates; the retry fires.
+    panel.resolving = true;
+    await t.mutation(internal.nodeIntents.resume, { intentId });
+    const ready = await runIntent(t, intentId);
+    expect(ready).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(ready.code).toBeUndefined();
+    expect(roleWaitsPass(await view(t, serverId))).toBe(true);
+    // One record, written once: the retry only looked.
+    expect(panel.zone).toHaveLength(1);
+    expect(panel.writes.filter((w) => w.call.startsWith('POST /client/v4/'))).toHaveLength(1);
+  });
+
+  test('the role runs again: a kept record keeps `resolves`; a moved one asks again', async () => {
+    const { t, serverId, panel } = await frontNode();
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    expect(panel.lookups).toEqual([HOST]);
+
+    // The next deploy runs the role again: the same observations, the same record.
+    await put(t, serverId);
+    const again = await runIntent(t, intentId);
+    expect(again).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(panel.lookups).toEqual([HOST]);
+    expect(panel.writes.filter((w) => w.call.includes('/client/v4/'))).toHaveLength(1);
+
+    // The record moved under it (FCP's own, other content): replaced, proved again.
+    panel.zone[0]!.content = '203.0.113.99';
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId });
+    const replaced = await runIntent(t, intentId);
+    expect(replaced).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(panel.zone).toMatchObject([{ content: V4 }]);
+    expect(panel.lookups).toEqual([HOST, HOST]);
+  });
+
+  test('the applied report still brings the full machine check; the proof is never taken back', async () => {
+    const { t, serverId } = await frontNode();
+    const ingress: { hostname: string; expected: unknown }[] = [];
+    let check = { ...ingressOk, tlsValid: false };
+    __setFrontIngressCheckForTests(async (a) => {
+      ingress.push({ hostname: a.hostname, expected: a.expected });
+      return check;
+    });
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.action(internal.nodeIntents.bootstrap, { intentId });
+    expect(ingress).toEqual([]);
+
+    // Caddy has no certificate yet.
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: false,
+    });
+    const waiting = await runIntent(t, intentId);
+    expect(waiting).toMatchObject({
+      state: 'pending',
+      code: 'servers.origin_certificate',
+      origin: { dns: 'resolves' },
+    });
+    expect(waiting.activation.stage).toBe('machine_applied');
+    expect(ingress).toEqual([{ hostname: HOST, expected: { v4: V4, v6: null } }]);
+
+    check = ingressOk;
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    const ready = await runIntent(t, intentId);
+    expect(ready).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(ready.activation.stage).toBe('machine_ready');
+    expect(ready.activation.evidence.map((e) => e.kind).sort()).toEqual([
+      'dns_resolves',
+      'ingress_verified',
+      'machine_applied',
+      'machine_ready',
+    ]);
+    expect(ingress).toHaveLength(2);
+  });
+
+  test('a role run repairing a machine that is down is not held behind the machine check', async () => {
+    const { t, serverId, panel } = await frontNode();
+    __setFrontIngressCheckForTests(async () => ingressOk);
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    expect(await runIntent(t, intentId)).toMatchObject({ state: 'ready' });
+
+    // The machine goes down; the sweep sees it.
+    panel.offline = true;
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId });
+    expect(await runIntent(t, intentId)).toMatchObject({
+      state: 'pending',
+      code: 'servers.node_offline',
+    });
+
+    // The operator runs the role to bring it back. Its `PUT` is answered
+    // `ready` (the row is in line), so it goes on to start the node: the
+    // machine is looked at when this run reports, not before.
+    await new Promise((r) => setTimeout(r, 2));
+    await put(t, serverId);
+    const during = await runIntent(t, intentId);
+    expect(during).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(during.code).toBeUndefined();
+    expect(roleWaitsPass(await view(t, serverId))).toBe(true);
+    // A ready node is not on the sweep: the end of the run's window comes back for it.
+    const windows = await windowChecks(t);
+    expect(windows).toHaveLength(1);
+    expect(windows[0]!.args[0]).toEqual({ intentId, observedAt: during.observed.at });
+    expect(windows[0]!.scheduledTime - during.observed.at).toBeGreaterThanOrEqual(19 * 60_000);
+
+    panel.offline = false;
+    await new Promise((r) => setTimeout(r, 2));
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    expect(await runIntent(t, intentId)).toMatchObject({ state: 'ready' });
+    // The run reported: the end of its window has nothing to do.
+    expect(
+      await t.mutation(internal.nodeIntents.afterRoleRunWindow, {
+        intentId,
+        observedAt: during.observed.at,
+      }),
+    ).toBe(false);
+
+    // A run that never reports is over once its window is: the machine is
+    // looked at again, and found down.
+    panel.offline = true;
+    await new Promise((r) => setTimeout(r, 2));
+    await put(t, serverId);
+    expect(await runIntent(t, intentId)).toMatchObject({ state: 'ready' });
+    const observedAt = Date.now() - 21 * 60_000;
+    await t.run(async (ctx) => {
+      const i = (await ctx.db.get(intentId))!;
+      await ctx.db.patch(intentId, {
+        observed: { ...i.observed, at: observedAt },
+        appliedAt: Date.now() - 30 * 60_000,
+      });
+    });
+    expect(
+      await t.mutation(internal.nodeIntents.afterRoleRunWindow, { intentId, observedAt }),
+    ).toBe(true);
+    expect(await runIntent(t, intentId)).toMatchObject({
+      state: 'pending',
+      code: 'servers.node_offline',
+    });
+  });
+
+  test("the role's report fences an attempt that looked at the machine before it", async () => {
+    const { t, serverId } = await frontNode();
+    __setFrontIngressCheckForTests(async () => ingressOk);
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    const before = await runIntent(t, intentId);
+    expect(before).toMatchObject({ state: 'ready' });
+
+    // A reconcile is probing the machine (the path is not proxied: Caddy is
+    // broken) when the role's run to repair it reports its observations.
+    let entered = false;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let probes = 0;
+    __setFrontIngressCheckForTests(async () => {
+      probes++;
+      entered = true;
+      await gate;
+      return { ...ingressOk, pathProxied: false };
+    });
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId });
+    for (let i = 0; i < 500 && !entered; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(entered).toBe(true);
+    await new Promise((r) => setTimeout(r, 2));
+    const { generation } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: NAME,
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: V4 },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    // Unchanged observations, yet the attempt holding the lease is fenced.
+    expect(generation).toBe(before.generation + 1);
+    release();
+
+    // Its failure is not recorded: the handover reconciles the run's node.
+    const after = await runIntent(t, intentId);
+    expect(after).toMatchObject({ state: 'ready', generation: before.generation + 1 });
+    expect(after.code).toBeUndefined();
+    expect(roleWaitsPass(await view(t, serverId))).toBe(true);
+    expect(probes).toBe(1);
   });
 });
 

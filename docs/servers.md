@@ -662,7 +662,7 @@ registered → bootstrap_available → machine_applied → machine_ready → can
 | `registered`          | The intent exists; the node row is created or brought in line through the ledger; a direct node's Host is created **disabled**; a front node's origin record is written (obligations, below).                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `bootstrap_available` | `POST …/bootstrap` served the machine configuration and the backend's node secret. The secret is read from the backend on the call and returned to the caller; FCP never persists, audits or logs it (the machine holds it in its compose file).                                                                                                                                                                                                                                                                                                                                                                                  |
 | `machine_applied`     | The role reported `appliedRevision == machineRevision`. Idempotent; a lower revision is `servers.revision_stale` (run the role again), a higher one `servers.revision_unknown`; a report never regresses a stage.                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `machine_ready`       | The node op that applied the current profile and transport is done by its own ledger evidence, the node is online, the profile token has not moved; a front node's origin name resolves to the intended addresses, presents a publicly valid certificate naming it, proxies the WebSocket path and answers a foreign Host header.                                                                                                                                                                                                                                                                                                 |
+| `machine_ready`       | The node op that applied the current profile and transport is done by its own ledger evidence, the node is online, the profile token has not moved; a front node's origin name resolves to the intended addresses, presents a publicly valid certificate naming it, proxies the WebSocket path and answers a foreign Host header. A managed name's resolution is proved earlier, before the applied report (§ Origin names); the rest once the role has reported, never while a role run is under way (§ Node registration).                                                                                                      |
 | `candidates_verified` | Direct: the isolated **direct test link** (the node's own test credential, the transport's live parameters) confirmed against a **binding** recomputed from live rows: endpoint, machine, config and authentication revisions, the parameters tested, the credential. A moved endpoint refuses (`servers.confirmation_stale`). Fronted: every listener of the open Autopilot run (the one waiting at publish for this approval) has a live, verified standby (L7 proof; L4 confirmation); recorded as `standbys_verified` evidence at approval, refused as `servers.standbys_missing` / `servers.standbys_unverified` until then. |
 | `awaiting_approval`   | The review card hashes the delivery **shape** (mode, ingress, profile revision, every listener with its provider account, location + template, subscription templates, the Host tuple), never individual addresses.                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `activating`          | Approval creates one run with an **immutable candidate snapshot** (`panelActivationRuns`); older runs are superseded. A direct run enables the addresses as **candidate resources**, rehearses the backend's real bodies in every client family (`lib/backend/rehearsal.ts`), and commits. The rehearsal reads EVERY address the run would commit, each with the server name it is there to serve (links `sni`, sing-box `tls.server_name`, Clash `servername`) and the expected REALITY key: one entry proves nothing about the others, and the detail records `<family>:<name>:absent                                           | key | sni`. A failed rehearsal disables the Host again and releases nothing. A run that blocks or fails **parks** the node at `awaiting_approval` with no current run (`staged` again unless it was live): the next approval supersedes it and starts a fresh run. |
@@ -867,6 +867,19 @@ node serves (its mode's transport before the backend node exists) plus the ingre
 port; `pending` = a staged change's port, listed until that change ends. The node API port is
 never listed.
 
+**The role waits on FCP only for what FCP can settle without the machine.** Between its `PUT`
+and its applied report the role polls the view twice: for `registration.state` `ready` (the
+backend row reconciled) and, on a front node, for `origin.dns` `resolves` (§ Origin names).
+Neither waits on the machine the run is about to set up: a reconcile during a role run (the
+`PUT` is newer than the last applied report, for at most 20 minutes) does not look at the
+machine, so a run that repairs an unhealthy machine is not held at `servers.node_offline` or a
+failed ingress check before it can start the node. An attempt that was already looking at the
+machine when the `PUT` arrived is fenced (a new generation; its handover reconciles again), so
+its failure is not recorded either. The applied report that ends the run brings the machine
+check (`machine_ready`); for a run that never reports, the end of its 20 minutes does
+(`nodeIntents.afterRoleRunWindow`, scheduled when the check was skipped, since a ready node is
+not on the sweep).
+
 Refusals. `PUT`: `servers.manage_disabled`, `servers.contract_version`,
 `servers.panel_not_set_up`, `servers.mode_unknown`, `servers.node_retiring`,
 `servers.mode_change_needs_admin`, `servers.node_exists_unowned` (a backend node or Host of that
@@ -904,8 +917,19 @@ Records are **obligations** (`backendObligations`, kind `dns.record`) persisted 
 with the account, zone, marker `fcp-origin:<slug>:<name>` and expected content; an uncertain
 answer is discovered by name and marker before anything is sent again; a record FCP did not
 write, or a CNAME at the name, is `servers.origin_name_taken`, never replaced; FCP's own record
-with other content is replaced. Cleanup uses the obligation's own account and zone. `created`
-and `resolves` are distinct.
+with other content is replaced. Cleanup uses the obligation's own account and zone.
+
+`created` and `resolves` are distinct, and the order is fixed: **FCP proves resolution before
+the role applies.** The role waits for the view's `origin.dns` to say `resolves` (or `none`)
+before it sets the machine up, since Caddy's ACME certificate needs the name, and reports
+`applied` only after that. So once its records are written the reconcile asks public resolvers
+for the name, by DNS alone (`nodeIntentOps.checkOriginResolves`), against the node's public v4
+and, when published, its v6. A match records `resolves`; anything else parks the node pending
+with `servers.origin_not_resolving`, tried again every 30 seconds while the role is in contact.
+The proof holds while FCP's records stay as they were: a later reconcile that keeps them keeps
+`resolves`, one that writes or withdraws a record asks again. The certificate, the WebSocket
+path and the foreign Host are checked after the applied report (`machine_ready`). A name the
+admin set explicitly is the admin's to publish: FCP looks at it only in that check.
 
 ### Obligations
 
@@ -968,10 +992,10 @@ From an empty machine to a member connecting through an edge, for an L4 mode
    (`admin:servers:write`).
 5. **Run the role** with the node's name and `node_mode` (§ Node registration). It enrolls,
    fetches the bootstrap, lets every `firewall.ports` port in, waits for a front node's origin
-   name to resolve, starts Caddy (front node) and the node, and reports `applied` with the
-   ports it opened. The node reaches `machine_ready` once its applied revision is current and
-   the evidence in § Node lifecycle holds; its page (Servers → Nodes) words each step and what
-   it waits for.
+   name to resolve (FCP proves it, § Origin names), starts Caddy (front node) and the node, and
+   reports `applied` with the ports it opened. The node reaches `machine_ready` once its applied
+   revision is current and the evidence in § Node lifecycle holds; its page (Servers → Nodes)
+   words each step and what it waits for.
 6. **Protect it**: "Protect this node" on the node's page (also offered on the Edges home and as
    attention `node_ready_to_protect`). The protect sheet preselects the node and a sole
    compatible account; Start. The Autopilot run (`docs/edges.md` "Guided setup runs") creates
