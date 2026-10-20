@@ -343,8 +343,9 @@ regardless.
 account only holds the records FCP writes for L7 fronts (a Fastly edge's certificate challenge
 and traffic name, a front node's origin name) and is never a candidate, whoever chooses: the
 setup plan does not offer it, a rotation naming it fails `dns_account_not_fronting`, automatic
-selection skips it, and a provider-set pick of it is not usable (`setPicksOf`). Edges that
-already exist are kept. It is deliberately separate from `l7.autoSelect`: letting automation
+selection skips it, and a provider-set pick of it is not usable (`setPicksOf`). Nor does a
+spare of it go live: `checkPublishable` refuses it (`dns_account_not_fronting`) and standby
+selection passes it over. Published edges are left as they are. It is deliberately separate from `l7.autoSelect`: letting automation
 pick L7 fronts must not turn a DNS account into one (§ "Adding a DNS provider").
 
 ### Publication

@@ -4,6 +4,7 @@ import {
   DNS_ACCOUNT_BLURB,
   EDGE_PROVIDER_META,
   addressLine,
+  defaultProviderFor,
   dnsProviderNames,
   providerGroupOf,
   providerGroups,
@@ -67,6 +68,16 @@ describe('edge provider meta', () => {
     expect(dnsProviderNames(EDGE_PROVIDER_IDS)).toEqual(['Cloudflare']);
     expect(DNS_ACCOUNT_BLURB).toMatch(/never member traffic/);
     for (const g of providerGroups(EDGE_PROVIDER_IDS)) expect(g.blurb).not.toMatch(/\u2014/);
+  });
+
+  it('an add-account form opens on an edge provider the caller can use, never a DNS provider', () => {
+    expect(defaultProviderFor(EDGE_PROVIDER_IDS)).toBe('gcore');
+    expect(defaultProviderFor(EDGE_PROVIDER_IDS, ['l4'])).toBe('gcore');
+    // An L7-only node opens on the L7 edge provider, not on the DNS provider listed before it.
+    expect(defaultProviderFor(EDGE_PROVIDER_IDS, ['l7'])).toBe('fastly');
+    expect(defaultProviderFor(['cloudflare', 'fastly'], ['l7'])).toBe('fastly');
+    // Nothing fits the layers: still an edge provider, the form says why it cannot be used.
+    expect(defaultProviderFor(['cloudflare', 'gcore'], ['l7'])).toBe('gcore');
   });
 
   it('a DNS provider can host DNS; a provider that needs a DNS account is an edge provider', () => {

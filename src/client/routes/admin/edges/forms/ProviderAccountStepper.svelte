@@ -57,6 +57,7 @@
   import {
     DNS_ACCOUNT_BLURB,
     EDGE_PROVIDER_META,
+    defaultProviderFor,
     dnsProviderNames,
     providerGroupOf,
     providerGroups,
@@ -129,7 +130,7 @@
     return m.needsDnsAccount ? 'CDN front (L7), needs a DNS account' : 'CDN front (L7)';
   }
   const initialProvider = untrack(
-    () => presetProvider ?? EDGE_PROVIDER_IDS.find((p) => !unfit(p)) ?? 'gcore',
+    () => presetProvider ?? defaultProviderFor(EDGE_PROVIDER_IDS, layers),
   );
   let provider = $state<EdgeProviderId>(initialProvider);
   let name = $state('');

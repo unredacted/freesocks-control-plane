@@ -122,6 +122,22 @@ export function providerGroups(ids: readonly EdgeProviderId[]): ProviderGroup[] 
   return groups;
 }
 
+/**
+ * The provider an add-account form opens on: the first EDGE provider whose
+ * layer the caller can use (all layers when `layers` is absent). A DNS
+ * provider is never the default: it is added on purpose, for a front that
+ * needs one ("Add a DNS account first").
+ */
+export function defaultProviderFor(
+  ids: readonly EdgeProviderId[],
+  layers?: readonly EdgeLayer[],
+): EdgeProviderId {
+  const fits = (id: EdgeProviderId) =>
+    EDGE_PROVIDER_META[id].role === 'edge' &&
+    (layers === undefined || layers.includes(EDGE_PROVIDER_META[id].layer));
+  return ids.find(fits) ?? ids.find((id) => EDGE_PROVIDER_META[id].role === 'edge') ?? ids[0]!;
+}
+
 /** The DNS providers FCP supports today, by name ("Cloudflare"). */
 export function dnsProviderNames(ids: readonly EdgeProviderId[]): string[] {
   return ids

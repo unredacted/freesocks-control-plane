@@ -2605,10 +2605,12 @@ export async function selectionContext(
       publication: e.publication,
       health: e.health,
       // An untested L4 spare is not a candidate (lib/edges/verification.ts),
-      // nor one outside the node's approved shape.
+      // nor one outside the node's approved shape, nor a DNS account's spare
+      // while DNS accounts may not front.
       hasAddress:
         hasPublishableAddress(e) &&
         standbyEligible(e, slotOfEdge) &&
+        frontsAllowed(e.provider, cfg.l7.dnsProvidersFront) &&
         (e.listenerId !== slot._id ||
           e.status !== 'active' ||
           e.publication !== 'unpublished' ||

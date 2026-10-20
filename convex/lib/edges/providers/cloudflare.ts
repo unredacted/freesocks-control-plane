@@ -406,8 +406,12 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       const token = await verifyCloudflareToken(cfg, async () => {
         try {
           return (await zoneOnce()).account?.id || cfg.accountId || undefined;
-        } catch {
-          return cfg.accountId || undefined;
+        } catch (e) {
+          if (cfg.accountId) return cfg.accountId;
+          // A zone read that may succeed next time is not a rejection: with no
+          // account id to fall back to, the test fails retryable on it.
+          if (e instanceof EdgeProviderError && e.meta.retryable) throw e;
+          return undefined;
         }
       });
       if (token.status !== 'active') return { ok: false, code: 'token_not_active' };

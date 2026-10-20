@@ -1095,6 +1095,30 @@ describe('cloudflare: credentials + discovery options', () => {
     expect(stub.calls.some((c) => c.path.includes('/accounts/'))).toBe(false);
   });
 
+  test('a retryable zone read is never turned into a rejection of an account token', async () => {
+    const { accountId: _none, ...noAccount } = cfg;
+    for (const status of [429, 500]) {
+      const stub = mockFetch(
+        route({
+          ...userEndpointRejects,
+          [`/zones/${ZONE}`]: () => jsonRes(wire(rateLimited), status),
+        }),
+      );
+      const res = await cloudflareProvider.testCredentials(noAccount);
+      expect(res.ok).toBe(false);
+      expect(res.code).not.toBe('token_rejected');
+      // Nothing to verify with: the account endpoint is not asked.
+      expect(stub.calls.some((c) => c.path.includes('/accounts/'))).toBe(false);
+    }
+    // With an account id configured, the token is still verified; the zone fails on its own.
+    const stub = mockFetch(
+      route({ ...userEndpointRejects, [`/zones/${ZONE}`]: () => jsonRes(wire(rateLimited), 500) }),
+    );
+    const res = await cloudflareProvider.testCredentials(cfg);
+    expect(res.code).not.toBe('token_rejected');
+    expect(stub.calls.map((c) => c.path)).toContain('/client/v4/accounts/acct_1/tokens/verify');
+  });
+
   test('a retryable answer at the user endpoint is never taken for a rejection', async () => {
     for (const status of [429, 500]) {
       const stub = mockFetch(
