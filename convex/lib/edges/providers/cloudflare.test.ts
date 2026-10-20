@@ -21,6 +21,8 @@ import {
   __setCloudflareApiFactory,
 } from './cloudflare';
 import tokenVerify from './fixtures/cloudflare/token_verify.json';
+import tokenVerifyAccount from './fixtures/cloudflare/token_verify_account.json';
+import invalidToken from './fixtures/cloudflare/error_invalid_token.json';
 import zoneGet from './fixtures/cloudflare/zone_get.json';
 import zonesList from './fixtures/cloudflare/zones_list.json';
 import settingSsl from './fixtures/cloudflare/setting_ssl.json';
@@ -129,6 +131,7 @@ function route(over: Partial<Record<string, Handler>> = {}): Handler {
       if (p.includes(fragment) && handler) return handler(call, index);
     }
     if (p.endsWith('/user/tokens/verify')) return jsonRes(wire(tokenVerify));
+    if (/\/accounts\/[^/]+\/tokens\/verify$/.test(p)) return jsonRes(wire(tokenVerifyAccount));
     if (p.endsWith('/settings/ssl')) return jsonRes(wire(settingSsl));
     if (p.endsWith('/settings/websockets')) return jsonRes(wire(settingWebsockets));
     if (p.endsWith('/ssl/certificate_packs')) return jsonRes(wire(certPacks));
@@ -969,8 +972,8 @@ describe('cloudflare: credentials + discovery options', () => {
     });
   });
 
-  test('a rejected token reports the provider answer without the token', async () => {
-    mockFetch(() =>
+  test('a token rejected everywhere is token_rejected, with the provider answer but not the token', async () => {
+    const stub = mockFetch(() =>
       jsonRes(
         {
           result: null,
@@ -981,8 +984,127 @@ describe('cloudflare: credentials + discovery options', () => {
       ),
     );
     const res = await cloudflareProvider.testCredentials(cfg);
-    expect(res).toEqual({ ok: false, code: '1000', detail: '1000 Invalid API Token [redacted]' });
+    expect(res).toEqual({
+      ok: false,
+      code: 'token_rejected',
+      detail: '1000 Invalid API Token [redacted]',
+    });
     expect(JSON.stringify(res)).not.toContain('SECRET_CF');
+    // Asked as a user token, then (the zone unreadable) as an account token of the settings' account.
+    expect(stub.calls.map((c) => c.path)).toEqual([
+      '/client/v4/user/tokens/verify',
+      `/client/v4/zones/${ZONE}`,
+      '/client/v4/accounts/acct_1/tokens/verify',
+    ]);
+  });
+
+  // --- the two token kinds Cloudflare issues -----------------------------------------
+
+  /** The user endpoint's answer to an account-owned token (and to a wrong one). */
+  const userEndpointRejects = { '/user/tokens/verify': () => jsonRes(wire(invalidToken), 401) };
+  const ZONE_ACCOUNT = (wire(zoneGet) as { result: { account: { id: string } } }).result.account.id;
+
+  test('a user token passes at the user endpoint and never asks the account one', async () => {
+    const stub = mockFetch(route());
+    const res = await cloudflareProvider.testCredentials(cfg);
+    expect(res.ok).toBe(true);
+    expect(res.detail).toContain('token_user');
+    expect(stub.calls.some((c) => c.path.includes('/accounts/'))).toBe(false);
+  });
+
+  test('an account-owned token passes at the account endpoint of the zone owner', async () => {
+    const stub = mockFetch(route(userEndpointRejects));
+    const res = await cloudflareProvider.testCredentials(cfg);
+    expect(res).toMatchObject({ ok: true, observed: { zoneSslMode: 'full', websockets: 'on' } });
+    expect(res.detail).toContain('token_account');
+    // The zone is read once: it names the account AND is checked for status.
+    expect(stub.calls.map((c) => c.path)).toEqual([
+      '/client/v4/user/tokens/verify',
+      `/client/v4/zones/${ZONE}`,
+      `/client/v4/accounts/${ZONE_ACCOUNT}/tokens/verify`,
+      `/client/v4/zones/${ZONE}/settings/ssl`,
+      `/client/v4/zones/${ZONE}/settings/websockets`,
+    ]);
+    expect(stub.calls.every((c) => c.headers.authorization === 'Bearer SECRET_CF')).toBe(true);
+  });
+
+  test("an account token falls back to the settings' account id when the zone names none", async () => {
+    const anon = structuredClone(wire(zoneGet)) as { result: Record<string, unknown> };
+    delete anon.result.account;
+    const stub = mockFetch(
+      route({ ...userEndpointRejects, [`/zones/${ZONE}`]: () => jsonRes(anon) }),
+    );
+    expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({ ok: true });
+    expect(stub.calls.map((c) => c.path)).toContain('/client/v4/accounts/acct_1/tokens/verify');
+  });
+
+  test('a zone the account token cannot read fails on its own code, read once', async () => {
+    const stub = mockFetch(
+      route({ ...userEndpointRejects, [`/zones/${ZONE}`]: () => jsonRes(wire(notFound), 403) }),
+    );
+    expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({
+      ok: false,
+      code: '81044',
+    });
+    expect(stub.calls.filter((c) => c.path === `/client/v4/zones/${ZONE}`)).toHaveLength(1);
+  });
+
+  test('an inactive account token is token_not_active, like an inactive user token', async () => {
+    for (const status of ['disabled', 'expired']) {
+      const stale = structuredClone(wire(tokenVerifyAccount)) as { result: { status: string } };
+      stale.result.status = status;
+      mockFetch(
+        route({
+          ...userEndpointRejects,
+          [`/accounts/${ZONE_ACCOUNT}/tokens/verify`]: () => jsonRes(stale),
+        }),
+      );
+      expect(await cloudflareProvider.testCredentials(cfg)).toEqual({
+        ok: false,
+        code: 'token_not_active',
+      });
+    }
+  });
+
+  test('a token both endpoints reject is token_rejected with the account answer', async () => {
+    const stub = mockFetch(
+      route({
+        ...userEndpointRejects,
+        [`/accounts/${ZONE_ACCOUNT}/tokens/verify`]: () => jsonRes(wire(invalidToken), 401),
+      }),
+    );
+    expect(await cloudflareProvider.testCredentials(cfg)).toEqual({
+      ok: false,
+      code: 'token_rejected',
+      detail: '1000 Invalid API Token',
+    });
+    // Nothing past the verification: no settings reads for a token nobody accepts.
+    expect(stub.calls.some((c) => c.path.includes('/settings/'))).toBe(false);
+  });
+
+  test('with no account id anywhere the user answer stands, without an account call', async () => {
+    const { accountId: _none, ...noAccount } = cfg;
+    const stub = mockFetch(
+      route({ ...userEndpointRejects, [`/zones/${ZONE}`]: () => jsonRes(wire(notFound), 403) }),
+    );
+    expect(await cloudflareProvider.testCredentials(noAccount)).toEqual({
+      ok: false,
+      code: 'token_rejected',
+      detail: '1000 Invalid API Token',
+    });
+    expect(stub.calls.some((c) => c.path.includes('/accounts/'))).toBe(false);
+  });
+
+  test('a retryable answer at the user endpoint is never taken for a rejection', async () => {
+    for (const status of [429, 500]) {
+      const stub = mockFetch(
+        route({ '/user/tokens/verify': () => jsonRes(wire(rateLimited), status) }),
+      );
+      const res = await cloudflareProvider.testCredentials(cfg);
+      expect(res.ok).toBe(false);
+      expect(res.code).not.toBe('token_rejected');
+      expect(stub.calls.map((c) => c.path)).toEqual(['/client/v4/user/tokens/verify']);
+    }
   });
 
   test('discoverOptions lists zones; a failure becomes a per-list code, never a throw', async () => {

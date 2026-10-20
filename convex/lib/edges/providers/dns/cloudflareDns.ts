@@ -136,6 +136,84 @@ export function isCloudflareNotFound(err: unknown): boolean {
   return err instanceof EdgeProviderError && err.meta.status === 404;
 }
 
+/**
+ * Cloudflare's answer to a token it does not recognise at the endpoint asked:
+ * `1000 Invalid API Token`, under 401 (or 403 on some edges of the API).
+ */
+const INVALID_TOKEN_CODE = '1000';
+
+function tokenNotRecognised(err: unknown): boolean {
+  if (!(err instanceof EdgeProviderError) || err.meta.retryable) return false;
+  return err.meta.code === INVALID_TOKEN_CODE || err.meta.status === 401 || err.meta.status === 403;
+}
+
+/** Which kind of token passed, and its status (`active`, `disabled`, `expired`). */
+export interface CloudflareTokenCheck {
+  kind: 'user' | 'account';
+  status: string;
+}
+
+/**
+ * Verify an API token of EITHER kind Cloudflare issues:
+ *  - a user token (created under My Profile) verifies at `/user/tokens/verify`;
+ *  - an account-owned token (created under the account, the kind Cloudflare
+ *    recommends for automation) verifies only at
+ *    `/accounts/{account_id}/tokens/verify`. The user endpoint answers it with
+ *    `1000 Invalid API Token`, exactly as it answers a token that is wrong.
+ *
+ * So the user endpoint is asked first and a token it does not recognise is
+ * asked again at the account endpoint. `accountIdOf` is only called then: the
+ * account id comes from the zone the token reads (authoritative: an account
+ * token can only read its own account's zones) or the account settings.
+ * A retryable answer (429, 5xx, a timeout) is never taken for a rejection.
+ *
+ * Rejected at both, or with no account id to ask with, the token is refused
+ * as `token_rejected`: a short code the admin console words, with the
+ * provider's own (redacted) answer kept as `detail`.
+ * Source: https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/verify/
+ * via cloudflare@7.1.0 (`client.accounts.tokens.verify`), 2026-10-20.
+ */
+export async function verifyCloudflareToken(
+  cfg: CloudflareTokenConfig,
+  accountIdOf: () => Promise<string | undefined>,
+  step = 'test',
+): Promise<CloudflareTokenCheck> {
+  const client = cloudflareClient(cfg);
+  let userAnswer: EdgeProviderError;
+  try {
+    const token = await cfCall(step, () => client.user.tokens.verify(), [cfg.apiToken]);
+    return { kind: 'user', status: token.status };
+  } catch (e) {
+    if (!tokenNotRecognised(e)) throw e;
+    userAnswer = e as EdgeProviderError;
+  }
+  const accountId = await accountIdOf();
+  if (!accountId) throw rejected(step, userAnswer);
+  try {
+    const token = await cfCall(
+      step,
+      () => client.accounts.tokens.verify({ account_id: accountId }),
+      [cfg.apiToken],
+    );
+    return { kind: 'account', status: token.status };
+  } catch (e) {
+    if (!tokenNotRecognised(e)) throw e;
+    throw rejected(step, e as EdgeProviderError);
+  }
+}
+
+function rejected(step: string, answer: EdgeProviderError): EdgeProviderError {
+  return new EdgeProviderError(`cloudflare token rejected on ${step}`, {
+    provider: 'cloudflare',
+    step,
+    status: answer.meta.status,
+    code: 'token_rejected',
+    ...(answer.meta.detail ? { detail: answer.meta.detail } : {}),
+    retryable: false,
+    timedOut: false,
+  });
+}
+
 /** The record fields this subsystem reads; the SDK's response is a 20-way union. */
 interface RawRecord {
   id: string;

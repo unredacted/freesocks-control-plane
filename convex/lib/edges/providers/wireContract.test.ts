@@ -900,10 +900,15 @@ describe('wire contract: cloudflare', () => {
     return rest;
   };
 
-  function route(over: { phaseMissing?: boolean } = {}) {
+  function route(over: { phaseMissing?: boolean; accountToken?: boolean } = {}) {
     return (c: Captured): Response => {
       const p = c.path;
-      if (p.endsWith('/user/tokens/verify')) return jsonRes(fx('token_verify.json'));
+      if (p.endsWith('/user/tokens/verify'))
+        return over.accountToken
+          ? jsonRes(fx('error_invalid_token.json'), 401)
+          : jsonRes(fx('token_verify.json'));
+      if (/\/accounts\/[^/]+\/tokens\/verify$/.test(p))
+        return jsonRes(fx('token_verify_account.json'));
       if (p.endsWith('/settings/ssl')) return jsonRes(fx('setting_ssl.json'));
       if (p.endsWith('/settings/websockets')) return jsonRes(fx('setting_websockets.json'));
       if (p.endsWith('/ssl/certificate_packs')) return jsonRes(fx('certificate_packs_list.json'));
@@ -934,9 +939,12 @@ describe('wire contract: cloudflare', () => {
   }
 
   test('the lifecycle stays inside the contract and exercises all of it', async () => {
-    const stub = mockFetch(route());
+    const stub = mockFetch(route({ accountToken: true }));
     useStub();
-    await cloudflareProvider.testCredentials(cfg);
+    // An account-owned token: the user endpoint does not know it, the account one does.
+    expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({ ok: true });
+    stub.route(route());
+    expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({ ok: true });
     await cloudflareProvider.listRegions!(cfg);
     await cloudflareProvider.discoverOptions!({ apiToken: cfg.apiToken });
 

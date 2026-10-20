@@ -223,6 +223,10 @@ describe('code helpers', () => {
     expect(codeExplain('pool_empty')).toMatch(/published/);
     expect(codeFix('pool_empty')).toBe('Publish an edge.');
     expect(codeFix('not_found')).toBeUndefined();
+    // A rejected Cloudflare token says which token kinds FCP accepts, not a bare "1000".
+    expect(codeLabel('token_rejected')).toBe('Token rejected');
+    expect(codeExplain('token_rejected')).toMatch(/^Cloudflare rejected this token/);
+    expect(codeFix('token_rejected')).toMatch(/user API tokens and account API tokens/);
   });
 
   test('unknown codes are humanised, never returned bare', () => {
@@ -230,6 +234,9 @@ describe('code helpers', () => {
     expect(codeLabel('edge.needs_rotation')).toBe('Edge needs rotation');
     expect(codeExplain('some_new_server_code')).toBe('The server reported Some new server code.');
     expect(codeFix('some_new_server_code')).toBeUndefined();
+    // A provider's own number (or an HTTP status) is named as one, never shown bare.
+    expect(codeLabel('1000')).toBe('Provider error 1000');
+    expect(codeExplain('9109')).toMatch(/its own error code 9109/);
     expect(codeLabel(null)).toBe('');
     expect(codeLabel(undefined)).toBe('');
   });

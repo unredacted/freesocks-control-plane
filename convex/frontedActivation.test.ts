@@ -637,8 +637,12 @@ async function seedMember(w: World, node: string, token = 'tok_member') {
 const fetchSub = (t: T, ua = LINKS_UA, token = 'tok_member') =>
   t.fetch(`/api/v1/sub/${token}`, { headers: { 'user-agent': ua } });
 
-/** A tested UpCloud account (L4) and a tested Cloudflare account (L7, the fake adapter). */
+/**
+ * A tested UpCloud account (L4) and a tested Cloudflare account (L7, the fake
+ * adapter). Cloudflare is a DNS provider, so it may front only with the switch on.
+ */
 async function accounts(t: T) {
+  await t.mutation(internal.edgeAdmin.patchConfig, { patch: { l7: { dnsProvidersFront: true } } });
   const l4 = await createAccount(t, { provider: 'upcloud', name: 'acct-l4' });
   await t.mutation(internal.edgeProviderAccounts.recordTest, { id: l4, ok: true });
   const l7 = await createAccount(t, { provider: 'cloudflare', name: 'acct-l7' });

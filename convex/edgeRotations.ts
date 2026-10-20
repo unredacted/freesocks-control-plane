@@ -104,6 +104,7 @@ import {
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import {
   edgeLayerOf,
+  frontsAllowed,
   providerHealthSatisfies,
   zoneModeGovernsOrigin,
 } from './lib/edges/providers/capabilities';
@@ -2682,7 +2683,13 @@ export async function selectionContext(
     l7SelectionAllowed(cfg);
   const eligibleAccounts = accountsForSlot(
     (await ctx.db.query('edgeProviderAccounts').collect()).filter((a) => a.enabled),
-    { layers, proto: protoOf(listener), originPort: listener.originPort, allowL7 },
+    {
+      layers,
+      proto: protoOf(listener),
+      originPort: listener.originPort,
+      allowL7,
+      dnsProvidersFront: cfg.l7.dnsProvidersFront,
+    },
   );
   const accounts = eligibleAccounts;
   const failure = (code: string): SelectionContext => ({
@@ -2707,6 +2714,9 @@ export async function selectionContext(
     if (!a) return failure('account_not_found');
     if (!a.enabled) return failure('account_disabled');
     if (!accountTested(a)) return failure('account_untested');
+    // A DNS account named on purpose still fronts nothing while the switch is off.
+    if (!frontsAllowed(a.provider, cfg.l7.dnsProvidersFront))
+      return failure('dns_account_not_fronting');
     if (!eligibleAccounts.some((e) => e._id === a._id)) return failure('account_incompatible');
     const where = named ?? (await defaultLocationOf(ctx.db, a));
     if (!where) return failure('no_location');

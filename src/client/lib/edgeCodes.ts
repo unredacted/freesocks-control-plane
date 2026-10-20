@@ -109,6 +109,18 @@ const COPY = {
     explain: 'The last credential test against the provider was refused.',
     fix: 'Rotate the credentials on the account and test again.',
   },
+  // credential test answers (an adapter's short codes)
+  token_rejected: {
+    label: 'Token rejected',
+    explain:
+      'Cloudflare rejected this token, both as a user API token and as an account API token.',
+    fix: 'FCP accepts user API tokens and account API tokens. Check that the token is active and has the permissions a Cloudflare account needs.',
+  },
+  token_not_active: {
+    label: 'Token not active',
+    explain: 'The provider knows this token, but it is disabled or expired.',
+    fix: 'Enable the token or roll a new one in the provider dashboard, then test again.',
+  },
   dns_account_missing: {
     label: 'DNS account missing',
     explain: 'This CDN provider needs another account to host DNS records for its hostnames.',
@@ -533,6 +545,12 @@ const COPY = {
   account_incompatible: {
     label: 'Account incompatible',
     explain: 'The named account cannot carry this listener.',
+  },
+  dns_account_not_fronting: {
+    label: 'DNS account, not a front',
+    explain:
+      'The named account is a DNS account: it holds the records FCP writes for L7 fronts and carries no member traffic.',
+    fix: 'Pick an edge provider account, or turn on Let DNS accounts front traffic in Settings.',
   },
   template_not_found: {
     label: 'Template not found',
@@ -1312,13 +1330,19 @@ export function humanizeCode(code: string): string {
   return words.join(' ');
 }
 
+/** A provider's own numeric error code (`1000`, `9109`) or an HTTP status, never shown bare. */
+const PROVIDER_NUMBER = /^\d{3,6}$/;
+
 export function codeLabel(code: string | null | undefined): string {
   if (!code) return '';
+  if (!EDGE_CODE_COPY[code] && PROVIDER_NUMBER.test(code)) return `Provider error ${code}`;
   return EDGE_CODE_COPY[code]?.label ?? humanizeCode(code);
 }
 
 export function codeExplain(code: string | null | undefined): string {
   if (!code) return '';
+  if (!EDGE_CODE_COPY[code] && PROVIDER_NUMBER.test(code))
+    return `The provider refused the call with its own error code ${code}.`;
   return EDGE_CODE_COPY[code]?.explain ?? `The server reported ${humanizeCode(code)}.`;
 }
 

@@ -36,6 +36,7 @@ import { accountsForSlot } from './lib/edges/rotation';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeLayerOf,
+  frontsAllowed,
   originPortCarriedBy,
 } from './lib/edges/providers/capabilities';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
@@ -112,8 +113,11 @@ async function planContextOf(
     const relayListeners = relay
       ? (await listenersOf(ctx, relay._id)).filter((l) => !l.retired)
       : [];
+    const cfg = await resolveEdgeConfig(ctx.db);
+    // A DNS account (it holds the records of other fronts) is not offered as a
+    // place to front this node unless the operator switched that on.
     const accounts = (await ctx.db.query('edgeProviderAccounts').collect()).filter(
-      (a) => a.enabled,
+      (a) => a.enabled && frontsAllowed(a.provider, cfg.l7.dnsProvidersFront),
     );
     const accountLive: Record<string, number> = {};
     const accountLocations: Record<
@@ -148,7 +152,6 @@ async function planContextOf(
         });
       accountLocations[a._id as string] = rows;
     }
-    const cfg = await resolveEdgeConfig(ctx.db);
     const runs = await ctx.db
       .query('edgeSetupRuns')
       .withIndex('by_origin', (q) =>
@@ -226,6 +229,7 @@ async function planContextOf(
         locations: accountLocations[a._id as string] ?? [],
       })),
       renderEnabled: cfg.render.enabled,
+      dnsProvidersFront: cfg.l7.dnsProvidersFront,
       familiesDisabled: RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled),
       otherEnabledRelays,
       activeRunId: activeRun ? (activeRun._id as string) : null,
@@ -262,6 +266,7 @@ function accountCompatibility(
   a: PlanContext['accounts'][number],
   required: SetupPlanInbound[],
   relay: PlanContext['relay'],
+  dnsProvidersFront: boolean,
 ): SetupPlanAccount {
   const reasons: string[] = [];
   const layer = edgeLayerOf(a.provider);
@@ -286,6 +291,7 @@ function accountCompatibility(
       proto,
       originPort: spec.originPort,
       allowL7: true,
+      dnsProvidersFront,
     });
     if (eligible.length > 0) {
       carries.push(inb.listenerKey);
@@ -294,7 +300,8 @@ function accountCompatibility(
     // The layer and the transport fit, the port does not (gRPC behind a CDN
     // is proxied to 443 only): say so, the operator moves the transport.
     if (
-      accountsForSlot([a], { layers: inb.layers, proto, allowL7: true }).length > 0 &&
+      accountsForSlot([a], { layers: inb.layers, proto, allowL7: true, dnsProvidersFront }).length >
+        0 &&
       !originPortCarriedBy(a.provider as EdgeProviderId, proto, spec.originPort)
     )
       portOnly = true;
@@ -619,7 +626,9 @@ export async function buildPlan(
       covered: false,
     })),
   ];
-  const accounts = c.accounts.map((acct) => accountCompatibility(acct, required, c.relay));
+  const accounts = c.accounts.map((acct) =>
+    accountCompatibility(acct, required, c.relay, c.dnsProvidersFront),
+  );
   const set =
     args.picks && args.picks.length > 0
       ? setOfPicks(args.picks, accounts, required, c.accounts)

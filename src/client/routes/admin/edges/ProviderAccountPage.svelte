@@ -22,7 +22,12 @@
   import * as Tabs from '@client/components/ui/tabs';
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '../../../lib/api';
-  import { EDGE_PROVIDER_META } from '../../../lib/edgeProviderMeta';
+  import {
+    DNS_ACCOUNT_BLURB,
+    EDGE_PROVIDER_META,
+    providerGroups,
+  } from '../../../lib/edgeProviderMeta';
+  import { EDGE_PROVIDER_IDS } from '@shared/contracts/edges';
   import { router } from '../../../stores/router.svelte';
   import { searchParam } from '../../../lib/urlState.svelte';
   import {
@@ -121,6 +126,8 @@
   // --- DNS account -----------------------------------------------------------------------------------
   const needsDns = $derived(a ? EDGE_PROVIDER_META[a.provider].needsDnsAccount : false);
   const dnsCandidates = $derived(others.filter((x) => EDGE_PROVIDER_META[x.provider].providesDns));
+  const firstDnsProvider = providerGroups(EDGE_PROVIDER_IDS).find((g) => g.id === 'dns')
+    ?.providers[0];
   const currentDns = $derived(
     a && typeof a.settings.dnsAccountId === 'string' ? a.settings.dnsAccountId : null,
   );
@@ -168,12 +175,18 @@
 {:else}
   <SectionHeader
     title={a.name}
-    description={`${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
+    description={EDGE_PROVIDER_META[a.provider].role === 'dns'
+      ? `${providerLabel(a.provider)} DNS account. ${DNS_ACCOUNT_BLURB}`
+      : `${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
     back={{ href: edgesPaths.providers(), label: 'Providers' }}
   >
     {#snippet badges()}
       <FakeBadge fake={a.fake} />
-      <LayerBadge layer={u?.layer ?? EDGE_PROVIDER_META[a.provider].layer} />
+      <LayerBadge
+        layer={EDGE_PROVIDER_META[a.provider].role === 'dns'
+          ? 'dns'
+          : (u?.layer ?? EDGE_PROVIDER_META[a.provider].layer)}
+      />
       <Badge variant={a.enabled ? 'success' : 'muted'}>{a.enabled ? 'Enabled' : 'Disabled'}</Badge>
     {/snippet}
     {#snippet actions()}
@@ -312,15 +325,19 @@
           <CardHeader>
             <CardTitle class="text-base">DNS account</CardTitle>
             <CardDescription>
-              The hostnames of this provider's edges are written through another account that
-              addresses the DNS zone.
+              The hostnames of this provider's edges, and their certificate challenges, are written
+              into the zone of a DNS account.
             </CardDescription>
           </CardHeader>
           <CardContent class="space-y-3">
             {#if dnsCandidates.length === 0}
-              <AdminListState
-                emptyText="No account that can host DNS records exists yet. Add one on the Providers page first."
-              />
+              <p class="text-sm">
+                This account needs a DNS account first, and none exists yet.
+                <Link
+                  href={edgesPaths.providers({ edit: 'new', provider: firstDnsProvider })}
+                  class="text-primary underline underline-offset-4">Add a DNS account</Link
+                >.
+              </p>
             {:else}
               <div class="max-w-md space-y-1.5">
                 <Label for="acct-dns">Writes DNS through</Label>
