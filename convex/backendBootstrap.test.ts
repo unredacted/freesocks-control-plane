@@ -16,8 +16,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { insertPanelServer } from './lib/edges/testing/fixtures';
-import { addressRemark, addressesOf, ownsAddress } from './nodeIntents';
+import { createAccount, insertPanelServer } from './lib/edges/testing/fixtures';
+import { addressRemark, addressesOf, enrolledOriginOf, ownsAddress } from './nodeIntents';
 import { gateOfNode } from './lib/edges/testing/reads';
 import {
   SUBSCRIPTION_TEMPLATES,
@@ -25,7 +25,7 @@ import {
   templateHash,
 } from './lib/backend/subscriptionTemplates';
 import { TEMPLATE_RECHECK_MS } from './backendSetup';
-import { NodeIntentView } from '../src/shared/contracts/servers';
+import { BackendSetupView, NodeIntentView } from '../src/shared/contracts/servers';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -173,7 +173,25 @@ function installPanel(): Panel {
   return panel;
 }
 
-const setupInput = {
+type ModeArg = {
+  slug: string;
+  name: string;
+  shape: {
+    transport: 'reality' | 'xhttp-reality' | 'ws';
+    fronting: 'direct' | 'edge-l4' | 'edge-l7';
+  };
+  familySlug?: string;
+  acceptProxyProtocol: boolean;
+  ws?: { path: string; port: number };
+};
+type SetupInputArg = {
+  profileName: string;
+  modes: ModeArg[];
+  originDns: { accountId: string } | null;
+  adopt: boolean;
+};
+
+const setupInput: SetupInputArg = {
   profileName: 'FreeSocks-Config',
   modes: [
     {
@@ -254,7 +272,7 @@ async function settled<R extends { claim?: unknown }>(get: () => Promise<R | nul
   throw new Error('workflow did not settle');
 }
 
-async function runSetup(t: T, serverId: Id<'backendServers'>, input = setupInput) {
+async function runSetup(t: T, serverId: Id<'backendServers'>, input: SetupInputArg = setupInput) {
   const started = await t.mutation(internal.backendSetup.start, {
     backendServerId: serverId,
     input,
@@ -460,6 +478,318 @@ describe('setting up a fresh backend', () => {
     expect(again.state).toBe('failed');
     expect(again.code).toBe('servers.family_bound_elsewhere:fam-other');
     expect(again.modes!.find((m) => m.slug === 'privacy-reality')!.family).toBe('bound_elsewhere');
+  });
+});
+
+describe("changing a backend's setup", () => {
+  const change = (t: T, serverId: Id<'backendServers'>, over: Partial<SetupInputArg> = {}) =>
+    t.mutation(internal.backendSetup.start, {
+      backendServerId: serverId,
+      input: { ...setupInput, ...over },
+    });
+  const setupOf = (t: T, serverId: Id<'backendServers'>) =>
+    t.run((ctx) =>
+      ctx.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .unique(),
+    );
+  async function enroll(t: T, serverId: Id<'backendServers'>, name: string, mode: string) {
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name,
+      mode,
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: mode === 'freedom-ws', ipv6: false },
+      },
+    });
+    return { intentId, intent: await runIntent(t, intentId) };
+  }
+  /** Poll (real timers) until `ok` holds for what `get` reads. */
+  async function until<R>(get: () => Promise<R>, ok: (r: R) => boolean): Promise<R> {
+    for (let i = 0; i < 500; i++) {
+      const r = await get();
+      if (ok(r)) return r;
+      await new Promise((res) => setTimeout(res, 5));
+    }
+    throw new Error('condition never held');
+  }
+  const changedAudit = async (t: T) =>
+    (await t.run((ctx) => ctx.db.query('auditLog').collect()))
+      .filter((a) => a.action === 'servers.setup.changed')
+      .map((a) => a.payload);
+
+  test('a backend FCP set up asks no adoption for its own nodes: origin names are added in place, nothing on the backend is touched', async () => {
+    const { t, serverId, panel } = await seed();
+    const first = await runSetup(t, serverId);
+    expect(first.readyAt).toBeDefined();
+    const { intentId, intent: before } = await enroll(t, serverId, 'node-a', 'privacy-reality');
+    // FCP's own node and its addresses are on the backend now.
+    expect(panel.nodes).toHaveLength(1);
+    expect(panel.hosts).toHaveLength(2);
+    const acct = await createAccount(t, { provider: 'cloudflare', name: 'dns' });
+    const writes = panel.writes.length;
+
+    const res = await change(t, serverId, { originDns: { accountId: acct } });
+    expect(res).toMatchObject({ state: 'ready', started: false, generation: 2 });
+    const row = (await setupOf(t, serverId))!;
+    expect(row).toMatchObject({
+      state: 'ready',
+      generation: 2,
+      adopted: false,
+      originDns: { accountId: acct, zoneName: 'example.org' },
+    });
+    expect(row.claim).toBeUndefined();
+    // Nothing was looked for again: every mode keeps what the setup found.
+    expect(row.modes).toEqual(first.modes);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(panel.writes.length).toBe(writes);
+    const after = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect({ g: after.generation, r: after.machineRevision, s: after.settings }).toEqual({
+      g: before.generation,
+      r: before.machineRevision,
+      s: before.settings,
+    });
+    expect(await changedAudit(t)).toEqual([
+      {
+        backendSlug: expect.any(String),
+        generation: 2,
+        change: 'origin',
+        originZone: 'example.org',
+        addedModes: '',
+      },
+    ]);
+    const view = BackendSetupView.parse(
+      await t.query(internal.backendSetup.view, { backendServerId: serverId }),
+    );
+    expect(view).toMatchObject({
+      established: true,
+      generation: 2,
+      originDns: { accountId: acct, zoneName: 'example.org' },
+    });
+    expect(view.modes.find((m) => m.slug === 'freedom-ws')).toMatchObject({
+      acceptProxyProtocol: false,
+      ws: { path: '/ws', port: 8443 },
+    });
+
+    // The same request again, or the modes in another order, changes nothing.
+    expect(await change(t, serverId, { originDns: { accountId: acct } })).toMatchObject({
+      generation: 2,
+      started: false,
+    });
+    expect(
+      await change(t, serverId, {
+        originDns: { accountId: acct },
+        modes: [...setupInput.modes].reverse(),
+      }),
+    ).toMatchObject({ generation: 2, started: false });
+    // Taking it away again is fine while no node has a name in the zone.
+    expect(await change(t, serverId, { originDns: null })).toMatchObject({
+      state: 'ready',
+      generation: 3,
+    });
+    expect((await setupOf(t, serverId))!.originDns).toBeNull();
+    expect(panel.writes.length).toBe(writes);
+  });
+
+  test('a setup that never got to ready proves nothing: what is on the backend still asks for adoption', async () => {
+    const { t, serverId, panel } = await seed();
+    await t.mutation(internal.sniFamilies.create, {
+      slug: 'fam-empty',
+      label: 'fam-empty',
+      targetAddress: 'decoy-c.example',
+      targetPort: 443,
+    });
+    const failed = await runSetup(t, serverId, {
+      ...setupInput,
+      modes: setupInput.modes.map((m) =>
+        m.slug === 'privacy-reality' ? { ...m, familySlug: 'fam-empty' } : m,
+      ),
+    });
+    expect(failed).toMatchObject({ state: 'failed', code: 'servers.family_empty' });
+    expect(failed.readyAt).toBeUndefined();
+    panel.nodes.push({
+      uuid: UUID(99),
+      name: 'stranger',
+      address: '192.0.2.99',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: { activeConfigProfileUuid: UUID(98), activeInbounds: [] },
+    });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    await expect(change(t, serverId)).rejects.toThrow(/adopt_required/);
+    expect(
+      BackendSetupView.parse(
+        await t.query(internal.backendSetup.view, { backendServerId: serverId }),
+      ).established,
+    ).toBe(false);
+    expect(panel.writes).toHaveLength(0);
+    const adopted = await runSetup(t, serverId, { ...setupInput, adopt: true });
+    expect(adopted).toMatchObject({ state: 'ready', adopted: true });
+  });
+
+  test('what nodes and members rely on stays as it is: refused before anything is written', async () => {
+    const { t, serverId, panel } = await seed();
+    await runSetup(t, serverId);
+    await enroll(t, serverId, 'node-a', 'privacy-reality');
+    const writes = panel.writes.length;
+    const [direct, l4, xhttp, ws] = setupInput.modes as [ModeArg, ModeArg, ModeArg, ModeArg];
+    await expect(change(t, serverId, { profileName: 'Other-Config' })).rejects.toThrow(
+      /setup_profile_kept/,
+    );
+    await expect(change(t, serverId, { modes: [direct, l4, ws] })).rejects.toThrow(
+      /setup_mode_kept:freedom-xhttp/,
+    );
+    const moves: [ModeArg, string][] = [
+      [{ ...ws, ws: { path: '/ws', port: 9443 } }, 'freedom-ws'],
+      [{ ...ws, ws: { path: '/feed', port: 8443 } }, 'freedom-ws'],
+      [{ ...direct, familySlug: 'fam-fronted' }, 'privacy-reality'],
+      [{ ...direct, name: 'Private' }, 'privacy-reality'],
+      [{ ...l4, acceptProxyProtocol: true }, 'freedom-reality'],
+      [{ ...l4, shape: { transport: 'reality', fronting: 'direct' } }, 'freedom-reality'],
+    ];
+    for (const [moved, slug] of moves) {
+      const modes = [direct, l4, xhttp, ws].map((m) => (m.slug === slug ? moved : m));
+      await expect(change(t, serverId, { modes })).rejects.toThrow(
+        new RegExp(`setup_mode_kept:${slug}`),
+      );
+    }
+
+    expect(panel.writes.length).toBe(writes);
+
+    // The zone, while a WebSocket node has a name in it.
+    const zoneA = await createAccount(t, { provider: 'cloudflare', name: 'dns-a' });
+    await change(t, serverId, { originDns: { accountId: zoneA } });
+    await enroll(t, serverId, 'node-w', 'freedom-ws');
+    const enrolled = panel.writes.length;
+    const zoneB = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'dns-b',
+      settings: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+    });
+    await expect(change(t, serverId, { originDns: { accountId: zoneB } })).rejects.toThrow(
+      /origin_zone_in_use/,
+    );
+    await expect(change(t, serverId, { originDns: null })).rejects.toThrow(/origin_zone_in_use/);
+    // Another account holding the same zone is fine: every name stays what it is.
+    const zoneA2 = await createAccount(t, { provider: 'cloudflare', name: 'dns-a2' });
+    expect(await change(t, serverId, { originDns: { accountId: zoneA2 } })).toMatchObject({
+      state: 'ready',
+      started: false,
+    });
+    expect((await setupOf(t, serverId))!.originDns).toMatchObject({
+      accountId: zoneA2,
+      zoneName: 'example.org',
+    });
+    // Nothing on the backend or in the zone moved for any of it.
+    expect(panel.writes.length).toBe(enrolled);
+  });
+
+  test('a new mode needs its transport in the profile first', async () => {
+    const { t, serverId, panel } = await seed();
+    const [direct, l4, xhttp, ws] = setupInput.modes;
+    await runSetup(t, serverId, { ...setupInput, modes: [direct!, l4!, ws!] });
+    const writes = panel.writes.length;
+    await expect(change(t, serverId, { modes: [direct!, l4!, ws!, xhttp!] })).rejects.toThrow(
+      /setup_transport_missing:FREEDOM_XHTTP:missing/,
+    );
+    expect((await setupOf(t, serverId))!).toMatchObject({ state: 'ready', generation: 1 });
+    expect(panel.writes.length).toBe(writes);
+  });
+
+  test('a mode a stopped run never set up can be taken out again, with no adoption asked', async () => {
+    const { t, serverId, panel } = await seed();
+    const [direct, l4, xhttp, ws] = setupInput.modes as [ModeArg, ModeArg, ModeArg, ModeArg];
+    const first = await runSetup(t, serverId, { ...setupInput, modes: [direct, l4, ws] });
+    await enroll(t, serverId, 'node-a', 'privacy-reality');
+    // The last look said the profile had the transport; the backend says otherwise.
+    await t.run(async (ctx) => {
+      const p = (await ctx.db
+        .query('panelProfiles')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .first())!;
+      const like = p.inbounds.find((i) => i.tag === 'FREEDOM_REALITY')!;
+      await ctx.db.patch(p._id, {
+        inbounds: [
+          ...p.inbounds,
+          { ...like, tag: 'FREEDOM_XHTTP', inboundUuid: UUID(77), network: 'xhttp', path: '/' },
+        ],
+      });
+    });
+    const stopped = await runSetup(t, serverId, {
+      ...setupInput,
+      modes: [direct, l4, ws, xhttp],
+    });
+    expect(stopped).toMatchObject({ state: 'failed' });
+    expect(stopped.code).toMatch(/^servers\.profile_incompatible:FREEDOM_XHTTP:missing/);
+    // Still FCP's backend: its own node asks for no adoption, and the mode
+    // that never got set up goes again; the rest stays as it was.
+    expect(
+      BackendSetupView.parse(
+        await t.query(internal.backendSetup.view, { backendServerId: serverId }),
+      ).established,
+    ).toBe(true);
+    const writes = panel.writes.length;
+    const back = await runSetup(t, serverId, { ...setupInput, modes: [direct, l4, ws] });
+    expect(back).toMatchObject({ state: 'ready', adopted: false });
+    expect(back.modes).toEqual(first.modes);
+    expect(panel.writes.length).toBe(writes);
+  });
+
+  test('a WebSocket node enrolled before there was a zone takes its managed name when the zone comes', async () => {
+    const { t, serverId } = await seed();
+    await runSetup(t, serverId);
+    const waiting = await enroll(t, serverId, 'node-w', 'freedom-ws');
+    expect(waiting.intent).toMatchObject({
+      state: 'blocked',
+      code: 'servers.origin_hostname_missing',
+      machineRevision: 1,
+      settings: { originHostnameSource: 'explicit' },
+    });
+    // One with a hostname of its own keeps it.
+    const own = await enroll(t, serverId, 'node-own', 'freedom-ws');
+    await t.mutation(internal.nodeIntents.patchSettings, {
+      intentId: own.intentId,
+      patch: { explicitHostname: 'own.example.net' },
+    });
+    const ownBefore = await runIntent(t, own.intentId);
+
+    const acct = await createAccount(t, { provider: 'cloudflare', name: 'dns' });
+    await change(t, serverId, { originDns: { accountId: acct } });
+    const named = await until(
+      () => t.run((ctx) => ctx.db.get(waiting.intentId)),
+      (i) => i!.settings.originHostnameSource === 'managed' && !i!.claim,
+    );
+    expect(named!.machineRevision).toBe(2);
+    expect(named!.code).not.toBe('servers.origin_hostname_missing');
+    const origin = await t.run((ctx) => enrolledOriginOf(ctx, serverId, 'node-w'));
+    expect(origin!.originAddress).toBe('node-w.example.org');
+    const ownAfter = (await t.run((ctx) => ctx.db.get(own.intentId)))!;
+    expect(ownAfter.settings).toEqual(ownBefore.settings);
+    expect(ownAfter.machineRevision).toBe(ownBefore.machineRevision);
+    const audit = (await t.run((ctx) => ctx.db.query('auditLog').collect())).filter(
+      (a) =>
+        a.action === 'servers.node.settings' &&
+        (a.payload as { change?: string }).change === 'origin_name',
+    );
+    expect(audit.map((a) => (a.payload as { name: string }).name)).toEqual(['node-w']);
+
+    // While a change of the setup runs, edges keep dialing the same name.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .unique();
+      await ctx.db.patch(row!._id, { state: 'pending' });
+    });
+    expect((await t.run((ctx) => enrolledOriginOf(ctx, serverId, 'node-w')))!.originAddress).toBe(
+      'node-w.example.org',
+    );
   });
 });
 
