@@ -1210,6 +1210,21 @@ const QUICK_RETRY_MS = 30_000;
 /** Only while the role is likely polling: within this long of its last enrollment or report. */
 const QUICK_RETRY_WINDOW_MS = 20 * 60_000;
 const lastRoleContact = (i: Intent): number => Math.max(i.observed.at, i.appliedAt ?? 0);
+/**
+ * A role run reported its observations and has not reported applied since:
+ * it is between its enrollment and its applied report. A run that never
+ * reports is over once the quick-retry window has passed.
+ */
+const roleRunUnderWay = (i: Intent): boolean =>
+  i.observed.at > (i.appliedAt ?? 0) && Date.now() - i.observed.at < QUICK_RETRY_WINDOW_MS;
+
+/** What a front node's origin name must resolve to: its public v4, and its v6 when published. */
+function originExpected(i: Intent): { v4: string | null; v6: string | null } {
+  return {
+    v4: i.observed.publicIps.v4 ?? null,
+    v6: i.settings.publishV6 ? (i.observed.publicIps.v6 ?? null) : null,
+  };
+}
 
 // --- the run: reconcile the backend row, the direct Host and the origin name ----------------------
 
@@ -1444,11 +1459,35 @@ export const reconcile = internalAction({
           await stop('pending', 'servers.obligation_unresolved');
           return null;
         }
+        // The role waits for `resolves` before it sets the machine up (ACME
+        // needs the name) and reports applied only after that: proved here,
+        // by DNS alone, never left to the machine check that follows the
+        // report. Proof once taken holds while the records stay (above).
+        if (dns.state === 'created' || dns.state === 'kept') {
+          c = await load();
+          if (c.intent.origin.dns !== 'resolves') {
+            const r = await ctx.runAction(internal.nodeIntentOps.checkOriginResolves, {
+              hostname: c.hostname!,
+              expected: originExpected(c.intent),
+            });
+            if (!r.resolves) {
+              await stop('pending', 'servers.origin_not_resolving');
+              return null;
+            }
+            await record({
+              origin: { hostname: c.hostname, address: c.originAddress, dns: 'resolves' },
+            });
+          }
+        }
       }
 
       // 5. Machine readiness, once the role has applied the current revision.
+      //    While a role run is under way (it reported its observations since
+      //    its last applied report), the role is setting the machine up now and
+      //    waits for this run's `ready` before it goes on: the machine is
+      //    looked at when that run reports, never held against it before.
       c = await load();
-      if (c.intent.appliedRevision === c.intent.machineRevision) {
+      if (c.intent.appliedRevision === c.intent.machineRevision && !roleRunUnderWay(c.intent)) {
         const ready = await verifyMachine(ctx, f, c);
         if (!ready.ok) {
           await stop('pending', ready.code);
@@ -1535,10 +1574,7 @@ async function verifyMachine(
       hostname: c.hostname!,
       port: c.ingress!.external.port,
       path: c.ingress!.internal[0]!.path,
-      expected: {
-        v4: c.intent.observed.publicIps.v4 ?? null,
-        v6: c.intent.settings.publishV6 ? (c.intent.observed.publicIps.v6 ?? null) : null,
-      },
+      expected: originExpected(c.intent),
     });
     if (!check.resolves) return { ok: false, code: 'servers.origin_not_resolving' };
     await record({ origin: { hostname: c.hostname, address: c.originAddress, dns: 'resolves' } });
