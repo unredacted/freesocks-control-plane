@@ -2567,7 +2567,9 @@ port the provider holds.
   any node that chose the wildcard, under its Options) and replace its fronts; once none uses the wildcard, the account page offers "Remove shared certificate"
   (for one FCP ordered only), which deletes it and the ACME record FCP wrote (never another
   customer's record). An account is deleted only after that. A wildcard FCP found and reused is
-  removed at the provider by hand, if nothing else uses it.
+  removed at the provider by hand, if nothing else uses it. Removal reads the wildcard with the
+  account's default certificate authority: one a node ordered under another authority reads as
+  `shared_certificate_ambiguous` until the default names that authority again.
 
 ## Provider options
 
