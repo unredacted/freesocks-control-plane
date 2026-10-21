@@ -75,7 +75,7 @@ import {
   rotationListenerKey,
   selectionContext,
 } from './edgeRotations';
-import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
+import { accountTested, API_FAILING_AFTER, sharedCertificateUsers } from './edgeProviderAccounts';
 import {
   defaultLocationOf,
   effectiveTemplateOfLocation,
@@ -1007,6 +1007,21 @@ export const attention = internalQuery({
         });
       }
       for (const e of edges) {
+        // A new front whose certificate waits on something FCP cannot fix.
+        if (e.waiting && e.status === 'provisioning') {
+          items.push({
+            ...base(relay),
+            id: `certificate_waiting:${e._id}`,
+            kind: 'certificate_waiting',
+            severity: 'warning',
+            edgeId: e._id as string,
+            rotationId: (relay.activeRotationId as string | undefined) ?? null,
+            code: e.waiting.code,
+            facts: { provider: e.provider ?? null, step: e.waiting.step },
+            action: 'open_relay',
+            since: iso(e.waiting.since),
+          });
+        }
         if (e.status === 'needs_operator') {
           items.push({
             ...base(relay),
@@ -1504,6 +1519,42 @@ export const attention = internalQuery({
           since: null,
         });
       }
+      // The account's shared certificate waits on something FCP cannot fix
+      // (a CAA record, the validation record) or failed: every new front of
+      // the account waits on it too.
+      const sc = a.sharedCertificate;
+      // Raised for a wildcard the account (or one of its live fronts) still
+      // uses; one it switched away from and nothing uses is only shown.
+      const usesShared =
+        !!sc &&
+        ((a.settings as { certificateScope?: string }).certificateScope === 'wildcard' ||
+          (await sharedCertificateUsers(ctx.db, a._id)) > 0);
+      if (sc && usesShared && (sc.code || sc.state === 'failed')) {
+        // Critical once the fronts are about to lose (or lost) their certificate.
+        const daysLeft = sc.notAfter ? (Date.parse(sc.notAfter) - now) / 86_400_000 : null;
+        items.push({
+          id: `certificate_waiting:account:${a._id}`,
+          kind: 'certificate_waiting',
+          severity:
+            sc.state === 'failed' || (daysLeft !== null && daysLeft < 3) ? 'critical' : 'warning',
+          relaySlug: null,
+          relayId: null,
+          edgeId: null,
+          listenerKey: null,
+          accountId: a._id as string,
+          rotationId: null,
+          code: sc.code ?? 'tls_failed',
+          facts: {
+            name: a.name,
+            provider: a.provider,
+            certificate: sc.name,
+            state: sc.state,
+            notAfter: sc.notAfter ?? null,
+          },
+          action: 'open_account',
+          since: iso(sc.checkedAt),
+        });
+      }
       if (!a.enabled) continue;
       if (!accountTested(a)) {
         items.push({
@@ -1837,7 +1888,10 @@ export const preflight = internalQuery({
           templateId: null,
         };
       } else if (!sel.account || !sel.template) {
-        blockers.push({ code: sel.accountFailure ?? 'no_account', detail: null });
+        // The start guards may have named the same refusal already (a named
+        // account whose certificate cannot be had): once is enough.
+        const code = sel.accountFailure ?? 'no_account';
+        if (!blockers.some((b) => b.code === code)) blockers.push({ code, detail: null });
       } else {
         const acct = await ctx.db.get(sel.account.id);
         const loc = await ctx.db.get(sel.account.locationId);

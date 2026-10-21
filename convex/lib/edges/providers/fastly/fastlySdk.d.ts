@@ -92,6 +92,18 @@ declare module 'fastly' {
     listDomainsWithHttpInfo(options: Options): Promise<FastlyHttpInfo>;
   }
 
+  /**
+   * Domain Management (versionless domains): a domain is its own resource,
+   * linked to a service by `service_id`, outside the service's versions.
+   */
+  export class DmDomainsApi {
+    constructor(apiClient: ApiClient);
+    createDmDomainWithHttpInfo(options?: Options): Promise<FastlyHttpInfo>;
+    deleteDmDomainWithHttpInfo(options: Options): Promise<FastlyHttpInfo>;
+    getDmDomainWithHttpInfo(options: Options): Promise<FastlyHttpInfo>;
+    listDmDomainsWithHttpInfo(options?: Options): Promise<FastlyHttpInfo>;
+  }
+
   export class SnippetApi {
     constructor(apiClient: ApiClient);
     createSnippetWithHttpInfo(options: Options): Promise<FastlyHttpInfo>;

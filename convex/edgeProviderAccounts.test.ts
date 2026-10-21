@@ -1047,6 +1047,47 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     return { t, dnsId, fastlyId };
   }
 
+  test('a new account shares one wildcard certificate; an existing one keeps per-host until switched', async () => {
+    const { t, dnsId, fastlyId } = await pair();
+    const fresh = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
+    expect((fresh.settings as { certificateScope?: string }).certificateScope).toBe('wildcard');
+    // A row from before the setting existed: an edit of another setting does not switch it.
+    await t.run((ctx) =>
+      ctx.db.patch(fastlyId, {
+        settings: { type: 'fastly', dnsAccountId: dnsId, certificateAuthority: 'certainly' },
+      }),
+    );
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      settings: { dnsAccountId: dnsId, certificateAuthority: 'lets-encrypt' },
+    });
+    const kept = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
+    expect(kept.settings).not.toHaveProperty('certificateScope');
+    // Switching is an explicit setting, and any other value is refused.
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      settings: {
+        dnsAccountId: dnsId,
+        certificateAuthority: 'certainly',
+        certificateScope: 'wildcard',
+      },
+    });
+    expect(
+      ((await t.run((ctx) => ctx.db.get(fastlyId)))!.settings as { certificateScope?: string })
+        .certificateScope,
+    ).toBe('wildcard');
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, {
+        id: fastlyId,
+        settings: {
+          dnsAccountId: dnsId,
+          certificateAuthority: 'certainly',
+          certificateScope: 'zone',
+        },
+      }),
+    ).rejects.toThrow(/certificateScope/);
+  });
+
   test('dnsAccountId must name an existing account that can host DNS', async () => {
     const { t, fastlyId } = await pair();
     await expect(

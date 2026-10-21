@@ -1562,3 +1562,50 @@ describe('edgeSetupRuns: replacing a pick of a set', () => {
     expect(after.stage).toBe('provision');
   });
 });
+
+describe('edgeSetupRuns: a certificate wait the run is waiting on', () => {
+  test('the run hears what its rotation waits on, only while it waits on THAT rotation', async () => {
+    const { t, serverId, accountId } = await seed();
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pumpFine(t, runId, (x) => !!x.expect);
+    const rotationId = r.expect!.rotationId;
+    const advance = async (waitCode?: string) => {
+      const rot = (await t.run((ctx) => ctx.db.get(rotationId)))!;
+      return t.mutation(internal.edgeRotations.advance, {
+        rotationId,
+        stepVersion: rot.stepVersion,
+        event: { type: 'progress', delayMs: 60_000, ...(waitCode ? { waitCode } : {}) },
+      });
+    };
+    await advance('tls_caa_conflict');
+    let now = await run(t, runId);
+    expect(now.events.at(-1)).toMatchObject({ level: 'warn', code: 'tls_caa_conflict' });
+    // The rotation's own log has it too.
+    const rot = (await t.run((ctx) => ctx.db.get(rotationId)))!;
+    expect(rot.events.at(-1)).toMatchObject({ level: 'warn', code: 'tls_caa_conflict' });
+    // A run no longer waiting on this rotation hears nothing.
+    await t.run((ctx) => ctx.db.patch(runId, { expect: undefined }));
+    const before = (await run(t, runId)).events.length;
+    await advance('tls_challenge_missing');
+    now = await run(t, runId);
+    expect(now.events).toHaveLength(before);
+  });
+});
+
+describe('edgeSetupRuns: an account whose fronts could get no certificate', () => {
+  test('the plan names it, and a run stops at its first stage instead of provisioning', async () => {
+    const { t, serverId, accountId } = await seed();
+    const { runId } = await startRun(t, serverId, accountId);
+    // The account's next credential test ends on the CAA preflight.
+    await t.run((ctx) => ctx.db.patch(accountId, { lastTestError: 'caa_forbids_ca' }));
+    const plan = await planFor(t, serverId);
+    expect(plan.accounts.find((a) => a.id === accountId)).toMatchObject({
+      compatible: false,
+      reasons: ['caa_forbids_ca'],
+    });
+    const r = await pump(t, runId, settled);
+    expect(r.need).toMatchObject({ code: 'account_incompatible', detail: 'caa_forbids_ca' });
+    const relay = r.relayId ? await t.run((ctx) => ctx.db.get(r.relayId!)) : null;
+    expect(relay?.activeRotationId ?? null).toBeNull();
+  });
+});

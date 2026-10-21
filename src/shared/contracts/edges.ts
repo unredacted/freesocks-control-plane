@@ -137,6 +137,25 @@ export const EdgeProviderAccountAdmin = z.object({
   observedSettings: z.record(z.string(), z.string()).nullable().default(null),
   observedAt: isoN.default(null),
   inventoryAt: isoN,
+  /**
+   * The one certificate the account's fronts share (Fastly's `*.<zone>`
+   * wildcard) as last read at the provider: its state (`pending`, `issued`,
+   * `renewing`, `failed`, or `absent` / `ambiguous`), what it waits on (a code),
+   * when it expires and how many live edges front through it.
+   */
+  sharedCertificate: z
+    .object({
+      name: z.string(),
+      state: z.string(),
+      code: z.string().nullable(),
+      notAfter: isoN,
+      checkedAt: iso,
+      edges: z.number(),
+      /** An edge of this account ordered it: only then can it be removed from the account page. */
+      orderedByFcp: z.boolean().default(false),
+    })
+    .nullable()
+    .default(null),
   /** Dev only: the adapter behind this account is the in-memory fake (never true outside development). */
   fake: z.boolean().default(false),
   createdAt: iso,
@@ -151,6 +170,15 @@ export const EdgeProviderAccountsResponse = z.object({
   credentialFields: EdgeCredentialFields,
 });
 export type EdgeProviderAccountsResponse = z.infer<typeof EdgeProviderAccountsResponse>;
+
+/** POST …/providers/{id}/shared-certificate/remove: whether a certificate was there to delete. */
+export const EdgeSharedCertificateRemoveResponse = z.object({
+  ok: z.literal(true),
+  removed: z.boolean(),
+});
+export type EdgeSharedCertificateRemoveResponse = z.infer<
+  typeof EdgeSharedCertificateRemoveResponse
+>;
 
 export const EdgeTestCredentialsResponse = z.object({
   ok: z.boolean(),

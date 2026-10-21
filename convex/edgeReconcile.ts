@@ -376,6 +376,26 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     console.warn(`[edge-reconcile] test credential sweep: ${errText(err)}`);
   }
 
+  // 4e. Shared certificates (an account's one wildcard, docs/edges.md § "L7
+  // edges"): its state on the account, so a renewal or a failure is visible
+  // (and raised) without a rotation having to wait on it first.
+  try {
+    const accounts = await ctx.runQuery(internal.edgeProviderAccounts.listForSharedCertificates, {
+      now,
+    });
+    for (const accountId of accounts) {
+      try {
+        await ctx.runAction(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+      } catch (err) {
+        report.errors++;
+        console.warn(`[edge-reconcile] shared certificate ${accountId}: ${errText(err)}`);
+      }
+    }
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] shared certificates: ${errText(err)}`);
+  }
+
   // 5. Pool upkeep + 6. origin deletes. While the maintenance switch is on,
   // upkeep (new provisioning / publishing) is not admitted; deletes still finish.
   const maintenance = await ctx.runQuery(internal.edgeMaintenance.state, {});

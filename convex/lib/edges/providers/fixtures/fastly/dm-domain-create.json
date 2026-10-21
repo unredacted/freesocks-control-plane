@@ -1,0 +1,12 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/domain-management/domains/#create-dm-domain via fastly@16.1.0 SuccessfulResponseAsObject (read 2026-10-20)",
+  "id": "DMDOM01kq7v3xzwYb9pRn",
+  "fqdn": "k3m7q9zb.example.org",
+  "service_id": "SU1Z0isxPaozGVKXdv0eY",
+  "routing_configuration_id": null,
+  "description": "fcp-relay-o1-deadbeef",
+  "activated": false,
+  "verified": false,
+  "created_at": "2026-10-20T10:01:00Z",
+  "updated_at": "2026-10-20T10:01:00Z"
+}

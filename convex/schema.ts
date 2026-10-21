@@ -157,6 +157,10 @@ const relayProviderSettings = v.union(
       v.literal('globalsign'),
     ),
     tlsConfigurationId: v.optional(v.string()),
+    // One wildcard certificate per account and zone, or one per front (absent).
+    certificateScope: v.optional(v.union(v.literal('per_host'), v.literal('wildcard'))),
+    // A new front's domain: versionless (Domain Management, absent) or classic.
+    domainModel: v.optional(v.union(v.literal('versionless'), v.literal('classic'))),
   }),
 );
 // Where an edge's resources live (lib/edges/accountSettings.ts
@@ -1237,6 +1241,24 @@ export default defineSchema({
     apiFailures: v.optional(v.number()),
     apiFailingSince: v.optional(v.number()),
     lastApiError: v.optional(v.string()),
+    // The account-wide certificate its edges share (Fastly's `*.<zone>`
+    // wildcard), as last read at the provider (edgeProviderOps
+    // `refreshSharedCertificate`: the credential test and the reconcile cron).
+    // `state` is the provider's, or `absent` / `ambiguous`; `code` a fixed one.
+    // Shared provider objects an edge of this account CREATED (`<kind>:<id>`,
+    // most recent last, capped): proof that FCP ordered the account's wildcard,
+    // so it alone may be removed from the account page.
+    orderedSharedResources: v.optional(v.array(v.string())),
+    sharedCertificate: v.optional(
+      v.object({
+        name: v.string(),
+        subscriptionId: v.optional(v.string()),
+        state: v.string(),
+        code: v.optional(v.string()),
+        notAfter: v.optional(v.string()),
+        checkedAt: v.number(),
+      }),
+    ),
     updatedAt: v.number(),
   })
     .index('by_name', ['name'])
@@ -1782,6 +1804,10 @@ export default defineSchema({
     failure: v.optional(
       v.object({ step: v.string(), code: v.optional(v.string()), status: v.optional(v.number()) }),
     ),
+    // What a requested step is held up by while it waits, when the provider
+    // says (L7: a CAA record, the validation record; `L7_CERTIFICATE_CODES`),
+    // since when. Cleared when the step settles any other way.
+    waiting: v.optional(v.object({ step: v.string(), code: v.string(), since: v.number() })),
     burnedAt: v.optional(v.number()),
     drainUntil: v.optional(v.number()),
     destroyedAt: v.optional(v.number()),
@@ -2061,7 +2087,10 @@ export default defineSchema({
   // until the holder re-observes the outcome (same rule as `currentOp`).
   externalLocks: defineTable({
     key: v.string(), // e.g. "cloudflare-zone:<zoneId>", "fastly-service:<serviceId>"
-    holderEdgeId: v.id('edges'),
+    // An edge's step holds it, or an account-level action (removing an
+    // account's shared certificate) does: exactly one of the two.
+    holderEdgeId: v.optional(v.id('edges')),
+    holderAccountId: v.optional(v.id('edgeProviderAccounts')),
     opId: v.string(),
     claimedAt: v.number(),
     expiresAt: v.number(),

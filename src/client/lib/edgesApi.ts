@@ -65,6 +65,7 @@ import {
   EdgeProviderAccountsResponse,
   EdgeRenderPreviewResponse,
   EdgeRotateCredentialsResponse,
+  EdgeSharedCertificateRemoveResponse,
   EdgeRotationAdmin,
   EdgeRotationDetail,
   EdgeRotationStartedResponse,
@@ -449,6 +450,12 @@ export const rotateProviderCredentials = (id: string, body: RotateCredentialsBod
     `${BASE}/providers/${enc(id)}/rotate-credentials`,
     body,
     EdgeRotateCredentialsResponse,
+  );
+export const removeSharedCertificate = (id: string) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(id)}/shared-certificate/remove`,
+    {},
+    EdgeSharedCertificateRemoveResponse,
   );
 export const updateProvider = (id: string, patch: ProviderPatch) =>
   apiClient.patch(`${BASE}/providers/${enc(id)}`, patch, EdgeOkResponse);

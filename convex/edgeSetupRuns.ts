@@ -62,7 +62,7 @@ import { isCandidateEdge } from './lib/backend/deliveryGate';
 import { assertNoRelayPanelClaim, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { confirmEndpoint, internalRunsOf } from './edgeVerification';
 import { listenersOf } from './relayListeners';
-import { accountTested } from './edgeProviderAccounts';
+import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { isTerminalPhase } from './lib/edges/rotation';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
 import { defaultLocationOf } from './edgeLocations';
@@ -1698,6 +1698,10 @@ async function stagePrepare(ctx: ActionCtx, run: Run): Promise<null> {
   // switched on, and the plan still offering it.
   for (const p of ctxRow.picks) {
     if (!p.account) return needsYou(ctx, run, 'account_incompatible', 'account_not_found');
+    // A front of this account could get no certificate (CAA forbids its CA,
+    // its shared wildcard failed): another account, or a fix in the zone.
+    if (p.certificateRefusal)
+      return needsYou(ctx, run, 'account_incompatible', p.certificateRefusal);
     if (!p.accountTested) return needsYou(ctx, run, 'account_untested');
     if (!p.accountEnabled) return needsYou(ctx, run, 'account_incompatible', 'account_disabled');
     if (!p.location) return needsYou(ctx, run, 'account_incompatible', 'location_not_found');
@@ -1804,6 +1808,7 @@ export const prepareContext = internalQuery({
         account: account ? { provider: account.provider, name: account.name } : null,
         location: location && location.enabled ? { id: location._id, label: location.label } : null,
         accountTested: !!account && accountTested(account),
+        certificateRefusal: account ? certificateRefusalOf(account) : null,
         accountEnabled: !!account && account.enabled,
       });
     }

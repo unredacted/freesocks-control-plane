@@ -481,6 +481,8 @@ export const settleOp = internalMutation({
     resourceDeleteState: v.optional(
       v.array(v.object({ resourceId: v.string(), deleteState: v.string() })),
     ),
+    /** What the step waits on (a code), or null: it no longer waits on anything known. */
+    waiting: v.optional(v.union(v.null(), v.object({ step: v.string(), code: v.string() }))),
   },
   handler: async (ctx, a) => {
     const edge = await ctx.db.get(a.edgeId);
@@ -508,6 +510,24 @@ export const settleOp = internalMutation({
       );
     }
     if (a.addResources && a.addResources.length > 0) {
+      // A shared object this edge CREATED (the account's wildcard and its ACME
+      // record) is remembered on the account: the proof that FCP ordered it,
+      // which its removal requires (another edge's destroy never deletes it).
+      const ordered = a.addResources
+        .filter(
+          (r) =>
+            r.ownership === 'created' &&
+            (r.meta as { shared?: unknown } | undefined)?.shared === true,
+        )
+        .map((r) => `${r.kind}:${r.resourceId}`);
+      if (ordered.length > 0 && edge.accountId) {
+        const acct = await ctx.db.get(edge.accountId);
+        if (acct) {
+          const was = acct.orderedSharedResources ?? [];
+          const next = [...was.filter((x) => !ordered.includes(x)), ...ordered].slice(-50);
+          await ctx.db.patch(acct._id, { orderedSharedResources: next });
+        }
+      }
       const known = new Set(edge.resources.map((r) => `${r.kind}:${r.resourceId}`));
       const stepId = a.stepPatch?.stepId ?? 'describe';
       const added: Resource[] = [];
@@ -542,6 +562,18 @@ export const settleOp = internalMutation({
       patch.lastHealthAt = now;
     }
     if (a.failure) patch.failure = a.failure;
+    // A step that settles any way but `requested` (done by discovery, a
+    // thrown poll) no longer waits on what it was held up by.
+    const settledOtherwise =
+      a.stepPatch !== undefined &&
+      a.stepPatch.state !== 'requested' &&
+      edge.waiting?.step === a.stepPatch.stepId;
+    if (a.waiting === null || (a.waiting === undefined && settledOtherwise))
+      patch.waiting = undefined;
+    else if (a.waiting) {
+      const same = edge.waiting?.step === a.waiting.step && edge.waiting.code === a.waiting.code;
+      patch.waiting = { ...a.waiting, since: same ? edge.waiting!.since : now };
+    }
     if (a.resourceDeleteState) {
       const map = new Map(
         a.resourceDeleteState.map((r) => [r.resourceId, r.deleteState as Resource['deleteState']]),
@@ -790,6 +822,19 @@ export const claimExternalLock = internalMutation({
         return { ok: true as const, opId };
       }
       if (existing.expiresAt > now) return { ok: false as const, code: 'edge.lock_busy' as const };
+      // An account-level holder that never released (its action died): what it
+      // did is re-read by the step that takes over, which finds the object or
+      // orders it again, so an expired one is simply taken.
+      if (!existing.holderEdgeId) {
+        await ctx.db.patch(existing._id, {
+          holderEdgeId: edgeId,
+          holderAccountId: undefined,
+          opId,
+          claimedAt: now,
+          expiresAt: now + ttlMs,
+        });
+        return { ok: true as const, opId };
+      }
       // Expired and never settled: the previous holder's outcome is UNKNOWN.
       // Blocking here is the whole point: its discovery pass settles the lock.
       return { ok: false as const, code: LOCK_UNSETTLED };

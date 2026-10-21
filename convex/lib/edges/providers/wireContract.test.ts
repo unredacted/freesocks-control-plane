@@ -60,7 +60,7 @@ import { scalewayProvider, __setScalewayApiFactory } from './scaleway';
 import { ovhProvider, __resetOvhSkewCache } from './ovh';
 import { cloudflareProvider, __setCloudflareApiFactory } from './cloudflare';
 import { cloudflareApi } from './dns/cloudflareDns';
-import { fastlyProvider, __setFastlyDnsClientFactory } from './fastly';
+import { fastlyProvider, __setFastlyCaaLookup, __setFastlyDnsClientFactory } from './fastly';
 import { __setFastlyBasePath } from './fastly/sdk';
 import { readFileSync } from 'node:fs';
 
@@ -1082,6 +1082,8 @@ describe('wire contract: fastly', () => {
     type: 'fastly',
     apiToken: 'SECRET_FASTLY_TOKEN',
     certificateAuthority: 'certainly',
+    // An edge on a version-scoped (classic) domain; `newEdgeLifecycle` drives a versionless one.
+    domainModel: 'classic',
     dns: {
       apiToken: 'SECRET_CF_TOKEN',
       zoneId: '0123456789abcdef0123456789abcdef',
@@ -1153,9 +1155,27 @@ describe('wire contract: fastly', () => {
     return client;
   }
 
+  const DM = 'DMDOM01kq7v3xzwYb9pRn';
+  const WILD = 'WILDsub0example0org01';
+
   function defaultReply(c: RecordedCall) {
     const p = c.path;
     const m = c.method;
+    if (p === '/domain-management/v1/domains')
+      return m === 'POST'
+        ? ok('dm-domain-create.json')
+        : ok(c.query.service_id ? 'dm-domains-list.json' : 'dm-domains-empty.json');
+    if (p === `/domain-management/v1/domains/${DM}`)
+      return m === 'DELETE' ? { status: 204 } : ok('dm-domain-create.json');
+    // The zone's one wildcard: already ordered and issued.
+    if (
+      m === 'GET' &&
+      p === '/tls/subscriptions' &&
+      c.query['filter[tls_domains.id]'] === '*.example.org'
+    )
+      return api('tls-subscriptions-wildcard-list.json');
+    if (m === 'GET' && p === `/tls/subscriptions/${WILD}`)
+      return api('tls-subscription-wildcard-issued.json');
     if (m === 'POST' && p === '/service') return ok('service-create.json');
     if (m === 'GET' && p === '/service/search') return ok('service-search.json');
     if (m === 'GET' && p === `/service/${SVC}/details`) return ok('service-detail-active.json');
@@ -1187,7 +1207,9 @@ describe('wire contract: fastly', () => {
     if (m === 'GET' && p === '/tls/subscriptions') return api('tls-subscriptions-list.json');
     if (m === 'GET' && p === `/tls/subscriptions/${SUB}`)
       return api(
-        c.query.include ? 'tls-subscription-authorizations.json' : 'tls-subscription-issued.json',
+        c.query.include?.includes('tls_authorizations')
+          ? 'tls-subscription-authorizations.json'
+          : 'tls-subscription-issued.json',
       );
     if (m === 'DELETE' && p === `/tls/subscriptions/${SUB}`) return { status: 204 };
     if (m === 'GET' && p === '/tls/configurations') return api('tls-configurations.json');
@@ -1200,6 +1222,7 @@ describe('wire contract: fastly', () => {
   afterEach(async () => {
     __setFastlyBasePath(null);
     __setFastlyDnsClientFactory(null);
+    __setFastlyCaaLookup(null);
     await rec?.close();
     rec = undefined;
   });
@@ -1207,7 +1230,31 @@ describe('wire contract: fastly', () => {
   async function serve(route = defaultReply): Promise<HttpRecorder> {
     rec = await startHttpRecorder(route);
     __setFastlyBasePath(rec.base);
+    // CAA is DNS, not HTTP: no record anywhere (the suite refuses real lookups).
+    __setFastlyCaaLookup(async () => []);
     return rec;
+  }
+
+  /** A NEW edge: a versionless domain and the account's shared wildcard certificate. */
+  async function newEdgeLifecycle(): Promise<void> {
+    const cfgNew: FastlyConfig = {
+      ...cfg,
+      domainModel: 'versionless',
+      certificateScope: 'wildcard',
+    };
+    let ledger: Ledger = { steps: [], resources: [] };
+    const steps = fastlyProvider.planProvision(cfgNew, spec, tpl);
+    for (const step of steps) {
+      const out = await fastlyProvider.runStep(cfgNew, step, spec, tpl, ledger);
+      ledger = apply(ledger, step, out);
+    }
+    expect(ledger.resources.map((r) => r.kind)).toContain('versionless_domain');
+    for (const step of steps) await fastlyProvider.discover(cfgNew, step, spec, ledger, 1);
+    await fastlyProvider.describe(cfgNew, ledger);
+    await fastlyProvider.sharedCertificate!(cfgNew);
+    expect(await destroyAll(fastlyProvider as never, cfgNew as never, ledger)).toContain(
+      'versionless_domain',
+    );
   }
 
   test('the lifecycle stays inside the contract and exercises all of it', async () => {
@@ -1287,6 +1334,9 @@ describe('wire contract: fastly', () => {
     });
     state = await teardown.step(cfg, state);
     expect(state.phase).toBe('done');
+
+    server.route(defaultReply);
+    await newEdgeLifecycle();
 
     expectContractCovered('fastly', fromRecorded(server.calls));
     expect(server.calls.every((c) => c.headers['fastly-key'] === cfg.apiToken)).toBe(true);

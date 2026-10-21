@@ -32,6 +32,7 @@ import {
   ApiClient,
   BackendApi,
   CustomerApi,
+  DmDomainsApi,
   DomainApi,
   ProductWebsocketsApi,
   ServiceApi,
@@ -51,6 +52,9 @@ export const FASTLY_API_ORIGIN = 'https://api.fastly.com';
 /** Every provider call is a small object or a bounded page; 15 s is generous. */
 export const FASTLY_TIMEOUT_MS = 15_000;
 const USER_AGENT = 'fcp-relay/1';
+/** A service's versionless domains are read in bounded pages (inventory, import, inspect). */
+const VERSIONLESS_PAGE_SIZE = 100;
+const VERSIONLESS_MAX_PAGES = 5;
 
 // --- response schemas (lenient: unknown fields survive, nothing is required that is not read) ---
 
@@ -94,6 +98,8 @@ const Backend = z.looseObject({
   hostname: z.string().nullish(),
   port: z.number().nullish(),
   use_ssl: z.boolean().nullish(),
+  ssl_cert_hostname: z.string().nullish(),
+  ssl_sni_hostname: z.string().nullish(),
   override_host: z.string().nullish(),
   comment: z.string().nullish(),
 });
@@ -106,6 +112,27 @@ const Domain = z.looseObject({
   version: z.number().optional(),
 });
 export type FastlyDomain = z.infer<typeof Domain>;
+
+/**
+ * A versionless (Domain Management) domain. `id` is the domain's own id, the
+ * key every later call addresses it by; `fqdn` is the name. `activated` and
+ * `verified` are Fastly's own read-only flags (not documented further).
+ * Source: https://www.fastly.com/documentation/reference/api/domain-management/domains/
+ * via fastly@16.1.0 `SuccessfulResponseAsObject`, 2026-10-20.
+ */
+const VersionlessDomain = z.looseObject({
+  id: z.string(),
+  fqdn: z.string(),
+  service_id: z.string().nullish(),
+  description: z.string().nullish(),
+  activated: z.boolean().nullish(),
+  verified: z.boolean().nullish(),
+});
+export type FastlyVersionlessDomain = z.infer<typeof VersionlessDomain>;
+const VersionlessDomainList = z.looseObject({
+  data: z.array(VersionlessDomain),
+  meta: z.looseObject({ next_cursor: z.string().nullish() }).nullish(),
+});
 
 const Snippet = z.looseObject({
   name: z.string(),
@@ -398,6 +425,18 @@ export interface FastlyApi {
   deleteDomain(serviceId: string, version: number, name: string): Promise<void>;
   listDomains(serviceId: string, version: number): Promise<FastlyDomain[]>;
   checkDomain(serviceId: string, version: number, name: string): Promise<unknown[]>;
+  // versionless (Domain Management) domains
+  createVersionlessDomain(body: {
+    fqdn: string;
+    service_id: string;
+    description?: string;
+  }): Promise<FastlyVersionlessDomain>;
+  /** The domains named exactly `fqdn` (one page: a name is unique per account). */
+  findVersionlessDomains(fqdn: string): Promise<FastlyVersionlessDomain[]>;
+  /** Every domain linked to one service (bounded pages). */
+  listVersionlessDomainsOfService(serviceId: string): Promise<FastlyVersionlessDomain[]>;
+  getVersionlessDomain(id: string): Promise<FastlyVersionlessDomain>;
+  deleteVersionlessDomain(id: string): Promise<void>;
   // products
   enableWebsockets(serviceId: string): Promise<unknown>;
   getWebsockets(serviceId: string): Promise<unknown>;
@@ -416,7 +455,12 @@ export interface FastlyApi {
 export interface FastlyBackendBody {
   name: string;
   address: string;
+  /** Always sent: the API defaults it to 80, `use_ssl` or not. */
+  port: number;
   use_ssl: boolean;
+  /** The origin's TLS name, for certificate verification and for SNI (https origins). */
+  ssl_cert_hostname?: string;
+  ssl_sni_hostname?: string;
   override_host: string;
   comment: string;
 }
@@ -438,6 +482,7 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
   const version = new VersionApi(client);
   const backend = new BackendApi(client);
   const domain = new DomainApi(client);
+  const dmDomains = new DmDomainsApi(client);
   const snippet = new SnippetApi(client);
   const websockets = new ProductWebsocketsApi(client);
   const tlsSubs = new TlsSubscriptionsApi(client);
@@ -562,6 +607,43 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
           domain_name: name,
         }),
       ),
+
+    createVersionlessDomain: (body) =>
+      call('create-domain', VersionlessDomain, () =>
+        dmDomains.createDmDomainWithHttpInfo({ request_body_for_create: body }),
+      ),
+    findVersionlessDomains: async (fqdn) =>
+      (
+        await call('discover-domain', VersionlessDomainList, () =>
+          dmDomains.listDmDomainsWithHttpInfo({ fqdn, fqdn_match: 'exact', limit: 20 }),
+        )
+      ).data,
+    listVersionlessDomainsOfService: async (serviceId) => {
+      const out: FastlyVersionlessDomain[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < VERSIONLESS_MAX_PAGES; page++) {
+        const res = await call('list-domains', VersionlessDomainList, () =>
+          dmDomains.listDmDomainsWithHttpInfo({
+            service_id: serviceId,
+            limit: VERSIONLESS_PAGE_SIZE,
+            ...(cursor ? { cursor } : {}),
+          }),
+        );
+        out.push(...res.data);
+        cursor = res.meta?.next_cursor ?? undefined;
+        if (!cursor || res.data.length === 0) break;
+      }
+      return out;
+    },
+    getVersionlessDomain: (id) =>
+      call('discover-domain', VersionlessDomain, () =>
+        dmDomains.getDmDomainWithHttpInfo({ domain_id: id }),
+      ),
+    deleteVersionlessDomain: async (id) => {
+      await call('remove-domain', Empty, () =>
+        dmDomains.deleteDmDomainWithHttpInfo({ domain_id: id }),
+      );
+    },
 
     enableWebsockets: (serviceId) =>
       call('enable-websockets', WebsocketsProduct, () =>

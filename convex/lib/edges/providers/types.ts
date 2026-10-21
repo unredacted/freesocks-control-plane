@@ -72,6 +72,17 @@ export interface FastlyConfig {
   apiToken: string;
   certificateAuthority: 'certainly' | 'lets-encrypt' | 'globalsign';
   tlsConfigurationId?: string;
+  /**
+   * One certificate per front hostname (absent, the older default) or the
+   * account's one shared wildcard (`*.<zone>`). Frozen per edge in its intent.
+   */
+  certificateScope?: 'per_host' | 'wildcard';
+  /**
+   * How the edge's hostname is attached to its service: a versionless (Domain
+   * Management) domain for every edge planned now, a version-scoped domain
+   * (absent, `classic`) for one planned before. Frozen per edge; not a setting.
+   */
+  domainModel?: 'classic' | 'versionless';
   /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
   dns?: CloudflareDnsConfig;
 }
@@ -211,8 +222,12 @@ export type StepOutcome =
   | { status: 'done'; resources: ChildResource[]; addresses?: Addresses }
   /** The call failed after creating some children (all listed). */
   | { status: 'partial'; resources: ChildResource[]; code?: string }
-  /** Async provider: an operation/task to poll; children known so far listed. */
-  | { status: 'requested'; opRef: string; resources: ChildResource[] };
+  /**
+   * Async provider: an operation/task to poll; children known so far listed.
+   * `code`: what the wait is held up by, when the provider says (a code from a
+   * fixed list, `L7_CERTIFICATE_CODES`; never the provider's own words).
+   */
+  | { status: 'requested'; opRef: string; resources: ChildResource[]; code?: string };
 
 export type Discovery =
   | { status: 'found'; resources: ChildResource[]; addresses?: Addresses }
@@ -354,6 +369,22 @@ export interface SharedTeardownDriver<Cfg> {
   step(cfg: Cfg, state: SharedTeardownState): Promise<SharedTeardownState>;
 }
 
+/**
+ * An account-wide certificate several edges share (Fastly's wildcard), as the
+ * provider sees it now. `state` is the provider's (`pending`, `processing`,
+ * `issued`, `renewing`, `failed`), or `absent` (none ordered yet) / `ambiguous`
+ * (several, or one ordered differently, which no edge will reuse).
+ */
+export interface SharedCertificateStatus {
+  name: string;
+  subscriptionId?: string;
+  state: string;
+  /** What it waits on or why it failed (`L7_CERTIFICATE_CODES`). */
+  code?: string;
+  /** When the current certificate expires (ISO), when the provider says. */
+  notAfter?: string;
+}
+
 export interface DiscoverOption {
   id: string;
   label: string;
@@ -432,6 +463,20 @@ export interface EdgeProvider<
   inspectForAdoption?(cfg: Cfg, resourceId: string, hostname: string): Promise<AdoptionInspection>;
   /** Adapters whose adopted edges can sit on a shared resource (see SharedTeardownDriver). */
   sharedTeardown?: SharedTeardownDriver<Cfg>;
+  /**
+   * Adapters whose edges can share one account-wide certificate: its state now
+   * (null when the account does not use one). A read; never orders anything.
+   */
+  sharedCertificate?(cfg: Cfg): Promise<SharedCertificateStatus | null>;
+  /**
+   * Delete that shared certificate and the records FCP wrote for it (the
+   * caller refuses while a live edge uses it). `code` names why nothing was
+   * removed (a certificate the account would not have ordered is not its own).
+   */
+  removeSharedCertificate?(
+    cfg: Cfg,
+    opts: { ordered: readonly string[] },
+  ): Promise<{ removed: boolean; code?: string }>;
 
   /**
    * Ledger resources in destroy order, skipping gone ones. Ordered by KIND

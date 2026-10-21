@@ -1,0 +1,29 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/tls/subs/#get-tls-sub (include=tls_authorizations, a wildcard domain, read 2026-10-20)",
+  "data": {
+    "id": "WILDsub0example0org01",
+    "type": "tls_subscription",
+    "attributes": {
+      "state": "processing",
+      "certificate_authority": "certainly"
+    }
+  },
+  "included": [
+    {
+      "id": "AUTHW1",
+      "type": "tls_authorization",
+      "attributes": {
+        "state": "pending",
+        "created_at": "2026-10-20T10:10:00Z",
+        "challenges": [
+          {
+            "type": "managed-dns",
+            "record_type": "CNAME",
+            "record_name": "_acme-challenge.example.org",
+            "values": ["w1ld9mtt5uzzsw2q.fastly-validations.com"]
+          }
+        ]
+      }
+    }
+  ]
+}

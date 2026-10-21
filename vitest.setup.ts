@@ -10,6 +10,7 @@
  * the runner (convex/lib/edges/testing/scheduledWork.runner.ts) ends it with
  * that test, under a refusal of its own.
  */
+import dns from 'node:dns';
 import { afterAll, afterEach } from 'vitest';
 
 const refused: string[] = [];
@@ -35,13 +36,29 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   throw new TypeError(`fetch failed: the offline test suite reaches no network (${call})`);
 };
 
+// CAA lookups (the Fastly credential test's issuance preflight) go to DNS, not
+// fetch: they are refused the same way, and a test answers them through the
+// adapter's seam (`__setFastlyCaaLookup`). Node's `dns/promises` IS
+// `dns.promises`, so the class the adapter instantiates is the one patched.
+const refuseCaa = async (name: string): Promise<never> => {
+  refused.push(`DNS CAA ${name}`);
+  throw Object.assign(
+    new Error(`queryCaa ECONNREFUSED ${name}: the offline suite reaches no DNS`),
+    {
+      code: 'ECONNREFUSED',
+    },
+  );
+};
+dns.promises.Resolver.prototype.resolveCaa = refuseCaa as never;
+dns.promises.resolveCaa = refuseCaa as never;
+
 function report(when: string): void {
   if (refused.length === 0) return;
   const calls = refused.splice(0);
   throw new Error(
-    `${when} called the real fetch ${calls.length} time(s): ${calls.join(', ')}. ` +
+    `${when} called the real fetch (or DNS) ${calls.length} time(s): ${calls.join(', ')}. ` +
       'Stub fetch for the whole test (convex/lib/edges/testing/mockFetch.ts), work it ' +
-      'scheduled included.',
+      'scheduled included; answer CAA through the Fastly adapter seam.',
   );
 }
 
