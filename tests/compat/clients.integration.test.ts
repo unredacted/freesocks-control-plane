@@ -1,15 +1,18 @@
 /// <reference types="vite/client" />
-import { beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { convexTest } from 'convex-test';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import YAML from 'yaml';
 import schema from '../../convex/schema';
+import { defaultRouteFaults } from '../../convex/lib/backend/subscriptionTemplates/defaultRoute';
 import { clients } from './manifest';
 import { assertSubscription } from './assertions';
-import { COMPAT_NODE, COMPAT_REMARK, docker, seedPanel } from './panel';
+import { COMPAT_NODE, COMPAT_REMARK, docker, seedPanel, useTemplates } from './panel';
+import { routing, sandboxed } from './sandbox';
 
 const modules = import.meta.glob('../../convex/**/*.*s');
 const t = convexTest(schema, modules);
@@ -103,6 +106,13 @@ async function subscription(ua: string) {
   return await response.text();
 }
 
+/** Drop every cached body: the next fetch asks the panel again. */
+const clearSubCache = () =>
+  t.run(async (ctx) => {
+    const sub = await ctx.db.query('subscriptions').first();
+    await ctx.db.patch(sub!._id, { subCache: undefined });
+  });
+
 /** Revalidate with the tag the last answer carried: nothing changed, so a 304 with no body. */
 async function revalidated(ua: string): Promise<void> {
   const first = await t.fetch(`/api/v1/sub/${token}`, { headers: { 'user-agent': ua } });
@@ -157,22 +167,17 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
   test('refresh after upstream Host change delivers the new endpoint', async () => {
     const hosts = await panel.api('hosts');
     const host = (hosts.hosts ?? hosts)[0];
-    const clearCache = () =>
-      t.run(async (ctx) => {
-        const sub = await ctx.db.query('subscriptions').first();
-        await ctx.db.patch(sub!._id, { subCache: undefined });
-      });
     // A remark that names no node passes through as it is, so the refresh shows.
     await panel.api('hosts', 'PATCH', { uuid: host.uuid, remark: 'compat-refreshed' });
     try {
-      await clearCache();
+      await clearSubCache();
       const body = await subscription(clients[0]!.userAgents[0]!);
       assertSubscription(body, 'singbox');
       expect(body.includes('compat-refreshed')).toBe(true);
     } finally {
       // The engines below run the member-facing (renamed) body.
       await panel.api('hosts', 'PATCH', { uuid: host.uuid, remark: COMPAT_REMARK });
-      await clearCache();
+      await clearSubCache();
     }
   });
 });
@@ -336,6 +341,51 @@ describe('reference engines: real panel-generated REALITY connections', () => {
       stopEngine();
     }
   });
+});
+
+/**
+ * The checks above run on test-owned templates; these run on the ones FCP
+ * installs on every panel, as a member's client receives them, changed only to
+ * run in the container (./sandbox.ts). The origin answers only through the
+ * proxy, so reaching it proves the body's own default route (Mihomo's mode and
+ * final rule, sing-box's default outbound) takes the proxy: a body that sends
+ * unmatched traffic direct, as `mode: global` did, fails here.
+ */
+describe('the templates FCP ships: a member reaches the origin through the proxy by default', () => {
+  beforeAll(async () => {
+    await useTemplates(panel.api, 'shipped');
+    await clearSubCache();
+  });
+  afterAll(async () => {
+    await useTemplates(panel.api, 'fixture');
+    await clearSubCache();
+  });
+  test('the legacy Clash body routes by rule to the proxy group as the panel serves it', async () => {
+    // Any other `clash…` User-Agent gets the panel's CLASH template. Legacy
+    // Clash has no VLESS, so the panel leaves this stack's one entry out and no
+    // engine can run the body; its routing is still the template's.
+    const body = await subscription('ClashForWindows/0.20.39');
+    expect((YAML.parse(body) as { mode?: unknown }).mode).toBe('rule');
+    expect(defaultRouteFaults(body, 'FreeSocks Select')).toEqual([]);
+  });
+  for (const [engine, ua] of [
+    ['singbox', clients[0]!.userAgents[0]!],
+    ['mihomo', 'mihomo/1.19.30'],
+  ] as const) {
+    test(`${engine} (${ua}): the served routing, unchanged, carries HTTPS to the origin`, async () => {
+      try {
+        const body = await subscription(ua);
+        expectMemberNames(body, engine);
+        expect(defaultRouteFaults(body, 'FreeSocks Select')).toEqual([]);
+        const config = sandboxed(engine, body);
+        expect(routing(engine, config)).toEqual(routing(engine, body));
+        await startEngine(engine, config);
+        await httpsProbe();
+      } finally {
+        stopEngine();
+      }
+    });
+  }
 });
 
 // Budget: the driver alone allows 30s (DevTools endpoint) + 30s (main window) +
