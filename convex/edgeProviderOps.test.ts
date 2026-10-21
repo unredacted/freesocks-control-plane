@@ -11,10 +11,13 @@ import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import { accountOptionDefaultsOf } from './lib/edges/choices';
 import { z } from 'zod';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { __setEdgeProviderForTests, edgeProviderFor } from './lib/edges/providers/registry';
 import type { EdgeProviderOpsFailure } from './edgeProviderOps';
+import { certificateRefusalOf } from './edgeProviderAccounts';
+import type { Id } from './_generated/dataModel';
 import { insertPanelServer, registerRelay, wsListener } from './lib/edges/testing/fixtures';
 
 const WS = { protocol: 'vless', streamTransport: 'ws', security: 'tls' } as const;
@@ -957,5 +960,260 @@ describe('edgeProviderOps: an existing edge acts only where it was placed', () =
     }
     expect(dataOf(err)).toMatchObject({ code: 'placement_missing', retryable: false });
     expect(stub.calls.length).toBe(before);
+  });
+});
+
+describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domains and certificates)', () => {
+  afterEach(() => __setEdgeProviderForTests('fastly', null));
+
+  /** A fastly stand-in that records the config each call was handed, with optional overrides. */
+  function standIn(over: Record<string, unknown> = {}) {
+    const seen: Array<Record<string, unknown>> = [];
+    __setEdgeProviderForTests('fastly', {
+      id: 'fastly',
+      templateSchema: z.object({}).passthrough(),
+      templateFields: [],
+      defaultTemplate: {},
+      testCredentials: async () => ({ ok: true }),
+      planProvision: () => [],
+      runStep: async () => ({ status: 'done', resources: [] }),
+      discover: async () => ({ status: 'unresolved' }),
+      describe: async (cfg: Record<string, unknown>) => {
+        seen.push({ ...cfg });
+        return { state: 'active', addresses: {}, health: 'unknown' };
+      },
+      inspect: async () => ({ summary: { addresses: [], members: [], listeners: [] }, raw: {} }),
+      inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
+      planDestroy: () => [],
+      runDestroy: async () => ({ status: 'confirmed_gone' }),
+      ...over,
+    } as unknown as Parameters<typeof __setEdgeProviderForTests>[1]);
+    return seen;
+  }
+
+  async function fastlyAccount(t: ReturnType<typeof newT>, settings: Record<string, unknown> = {}) {
+    const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: { dnsAccountId: dnsId, certificateAuthority: 'certainly', ...settings },
+      credentials: { apiToken: 'f' },
+    });
+    return { id, dnsId };
+  }
+
+  async function edgeWithIntent(
+    t: ReturnType<typeof newT>,
+    accountId: Id<'edgeProviderAccounts'>,
+    dnsId: string,
+    intent: Record<string, unknown>,
+  ) {
+    await insertPanelServer(t);
+    const { relayId, listenerId } = await registerRelay(t, {
+      slug: 'o1',
+      nodeName: 'o1',
+      originAddress: '198.51.100.7',
+      listeners: [wsListener({ tlsNames: ['ws.example'] })],
+    });
+    return t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId,
+        listenerId,
+        accountId,
+        provider: 'fastly',
+        managed: true,
+        name: 'fcp-relay-o1-1',
+        steps: [],
+        resources: [],
+        listeners: [{ edgePort: 443, originAddress: '198.51.100.7', originPort: 443 }],
+        addresses: { hostname: 'front.example.org' },
+        layer: 'l7',
+        provisionIntent: JSON.stringify({
+          hostname: 'front.example.org',
+          zoneId: 'a'.repeat(32),
+          zoneName: 'example.org',
+          dnsAccountId: dnsId,
+          certificateAuthority: 'certainly',
+          originTransport: {
+            scheme: 'https',
+            certPublic: true,
+            certNames: ['origin.example'],
+            acceptsHostHeader: 'any',
+          },
+          originPort: 443,
+          templateHash: 'h',
+          templateParams: {},
+          ...intent,
+        }),
+        publication: 'unpublished',
+        status: 'active',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+  }
+
+  test('a new account shares one wildcard; an edge from before keeps its classic domain and its own certificate', async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t, { tlsConfigurationId: 'tls-now' });
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(accountOptionDefaultsOf(row).certificateScope).toBe('wildcard');
+    const seen = standIn();
+    // An edge planned before versionless domains, a TLS configuration or a scope existed.
+    const old = await edgeWithIntent(t, accountId, dnsId, {});
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.describe, {
+      accountId,
+      ledger: { steps: [], resources: [] },
+      edgeId: old,
+    });
+    expect(seen[0]).toMatchObject({ domainModel: 'classic' });
+    // What the intent did NOT name: the account's choices now never reach it.
+    // A TLS configuration stays unnamed; a certificate option reads as what its
+    // absence stood for (one certificate per front), never the account's wildcard.
+    expect(seen[0]).not.toHaveProperty('tlsConfigurationId');
+    expect(seen[0]).toMatchObject({ certificateScope: 'per_host' });
+    // Planning a new edge (no edgeId): today's way, and the account's settings.
+    await t.action(internal.edgeProviderOps.describe, {
+      accountId,
+      ledger: { steps: [], resources: [] },
+    });
+    expect(seen[1]).toMatchObject({
+      domainModel: 'versionless',
+      certificateScope: 'wildcard',
+      tlsConfigurationId: 'tls-now',
+    });
+  });
+
+  test('an edge planned now keeps the versionless domain and the wildcard it froze', async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    const seen = standIn();
+    const edgeId = await edgeWithIntent(t, accountId, dnsId, {
+      domainModel: 'versionless',
+      certificateScope: 'wildcard',
+    });
+    // The account switches back to one certificate per front: the edge does not move.
+    await t.run((ctx) =>
+      ctx.db.patch(accountId, {
+        settings: {
+          type: 'fastly',
+          dnsAccountId: dnsId,
+          certificateAuthority: 'certainly',
+          certificateScope: 'per_host',
+        },
+      }),
+    );
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.describe, {
+      accountId,
+      ledger: { steps: [], resources: [] },
+      edgeId,
+    });
+    expect(seen[0]).toMatchObject({ domainModel: 'versionless', certificateScope: 'wildcard' });
+  });
+
+  test('a CAA refusal is recorded as the test result, and does not count as the provider failing', async () => {
+    const t = newT();
+    const { id: accountId } = await fastlyAccount(t);
+    standIn({
+      testCredentials: async () => ({
+        ok: false,
+        code: 'caa_forbids_ca',
+        detail: 'the CAA records at example.org do not allow certainly.com',
+        observed: { caa: 'forbids', caaIssuer: 'certainly.com', caaCertificate: 'wildcard' },
+      }),
+    });
+    mockFetch(() => jsonRes({}));
+    for (let i = 0; i < 4; i++)
+      expect(await t.action(internal.edgeProviderOps.testCredentials, { accountId })).toMatchObject(
+        {
+          ok: false,
+          code: 'caa_forbids_ca',
+        },
+      );
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(row.lastTestError).toBe('caa_forbids_ca');
+    expect(row.apiFailures ?? 0).toBe(0);
+    expect(JSON.parse(row.observedSettings!)).toMatchObject({ caa: 'forbids' });
+  });
+
+  test('the shared certificate is read at the provider and kept on the account, with its users', async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    let status: Record<string, unknown> | null = {
+      name: '*.example.org',
+      subscriptionId: 'WILD1',
+      state: 'processing',
+      code: 'tls_caa_conflict',
+    };
+    standIn({ sharedCertificate: async () => status });
+    await edgeWithIntent(t, accountId, dnsId, {
+      domainModel: 'versionless',
+      certificateScope: 'wildcard',
+    });
+    mockFetch(() => jsonRes({}));
+    // Not issued yet: the reconcile cron reads it every pass.
+    expect(
+      await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
+    ).toEqual([accountId]);
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    let admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
+    expect(admin.sharedCertificate).toMatchObject({
+      name: '*.example.org',
+      state: 'processing',
+      code: 'tls_caa_conflict',
+      edges: 1,
+    });
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.find((i) => i.kind === 'certificate_waiting')).toMatchObject({
+      accountId,
+      code: 'tls_caa_conflict',
+      action: 'open_account',
+    });
+    // Issued: read again only after the recheck interval.
+    status = {
+      name: '*.example.org',
+      subscriptionId: 'WILD1',
+      state: 'issued',
+      notAfter: '2026-11-19T10:12:00.000Z',
+    };
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
+    expect(admin.sharedCertificate).toMatchObject({
+      state: 'issued',
+      code: null,
+      notAfter: '2026-11-19T10:12:00.000Z',
+    });
+    expect(
+      await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
+    ).toEqual([]);
+    expect(
+      await t.query(internal.edgeProviderAccounts.listForSharedCertificates, {
+        now: Date.now() + 31 * 60_000,
+      }),
+    ).toEqual([accountId]);
+    // A failed one refuses new fronts of the account.
+    status = {
+      name: '*.example.org',
+      subscriptionId: 'WILD1',
+      state: 'failed',
+      code: 'tls_failed',
+    };
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(certificateRefusalOf(row)).toBe('shared_certificate_failed');
+    // An account that no longer shares one is cleared.
+    status = null;
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
+    expect(admin.sharedCertificate).toBeNull();
   });
 });

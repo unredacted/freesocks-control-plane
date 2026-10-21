@@ -60,6 +60,12 @@ export interface EdgeProviderCapabilities {
    * gate must not wait for `online` from it.
    */
   memberHealth: boolean;
+  /**
+   * The account's edges can share ONE certificate (Fastly's `*.<zone>`
+   * wildcard, `certificateScope`): the adapter reports it (`sharedCertificate`)
+   * and the reconcile cron keeps its state on the account.
+   */
+  sharedCertificates: boolean;
   /** Typical wall clock from create to active (informational; bounds `discoverySettleMs`). */
   typicalProvisionMs: number;
   /**
@@ -81,6 +87,7 @@ const L4 = {
   needsDnsAccount: false,
   providesDns: false,
   originPortMode: 'any',
+  sharedCertificates: false,
 } as const satisfies Partial<EdgeProviderCapabilities>;
 
 export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapabilities> = {
@@ -152,6 +159,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     needsDnsAccount: false,
     providesDns: true,
     originPortMode: 'default-or-override',
+    sharedCertificates: false,
     asyncOps: false,
     asyncDelete: false,
     needsPrivateNetwork: false,
@@ -174,6 +182,8 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     needsDnsAccount: true,
     providesDns: false,
     originPortMode: 'fixed',
+    // One `*.<zone>` subscription for every front of the account (`certificateScope`).
+    sharedCertificates: true,
     asyncOps: true,
     asyncDelete: true,
     needsPrivateNetwork: false,

@@ -25,6 +25,7 @@ import type {
   AttentionSeverity,
   DeliveryUnavailableCode,
   InboundUnsupportedCode,
+  L7CertificateCode,
   LayerExclusionCode,
   PreflightBlockerCode,
   PoolCode,
@@ -57,7 +58,8 @@ type KnownCode =
   | LayerExclusionCode
   | DeliveryUnavailableCode
   | PoolCode
-  | SettingsWarningCode;
+  | SettingsWarningCode
+  | L7CertificateCode;
 
 const COPY = {
   // --- origin --------------------------------------------------------------------------
@@ -572,6 +574,53 @@ const COPY = {
     explain: 'The listener does not declare how a CDN front should dial the origin.',
     fix: 'Edit the listener and turn on "A CDN front can reach this transport", or protect the node from Edges.',
   },
+  // --- an L7 front's certificate (L7_CERTIFICATE_CODES) ---------------------------------
+  caa_forbids_ca: {
+    label: 'CAA forbids the CA',
+    explain:
+      'The zone’s CAA records do not let the account’s certificate authority issue. Certainly is named certainly.com, Let’s Encrypt letsencrypt.org and GlobalSign globalsign.com, under issue for one name and issuewild for the shared wildcard certificate.',
+    fix: 'Add a CAA record that allows the certificate authority, or pick one the records allow, then test the account again.',
+  },
+  tls_caa_conflict: {
+    label: 'Certificate blocked by CAA',
+    explain:
+      'The provider reports that the zone’s CAA records stop its certificate authority from issuing, so the certificate waits.',
+    fix: 'Allow the account’s certificate authority in the zone’s CAA records (certainly.com, letsencrypt.org or globalsign.com). Issuance carries on by itself.',
+  },
+  tls_challenge_conflict: {
+    label: 'Validation record conflict',
+    explain:
+      'Other records sit at the name the certificate is validated with, so the provider cannot validate it.',
+    fix: 'Remove the other records at that name in the DNS zone. Issuance carries on by itself.',
+  },
+  tls_challenge_missing: {
+    label: 'Validation record missing',
+    explain:
+      'The DNS record the certificate is validated with is missing, or does not hold what the provider expects.',
+    fix: 'Check the validation record in the DNS zone, or replace the front so FCP writes it again.',
+  },
+  tls_authorization_failed: {
+    label: 'Name validation failed',
+    explain: 'The provider could not validate the name the certificate is for.',
+    fix: 'Check the zone’s CAA records and the validation record, then replace the front.',
+  },
+  tls_authorization_warning: {
+    label: 'Certificate warning',
+    explain:
+      'The provider reports a problem with the certificate’s validation that FCP has no words for.',
+    fix: 'Open the certificate at the provider to read the warning.',
+  },
+  tls_failed: {
+    label: 'Certificate failed',
+    explain: 'The provider gave up issuing the certificate.',
+    fix: 'Fix what it waited on, then retry the certificate at the provider or replace the front.',
+  },
+  shared_certificate_failed: {
+    label: 'Shared certificate failed',
+    explain:
+      'The wildcard certificate the account’s fronts share failed to issue, so a new front cannot get one.',
+    fix: 'Fix what the account page says it waited on and retry it at the provider, or switch the account to one certificate per front.',
+  },
   // --- preflight warnings ---------------------------------------------------------------
   edge_disabled: {
     label: 'Edges switched off',
@@ -654,6 +703,12 @@ const COPY = {
     explain:
       'A spare address that was never in use is blocked from at least one censored country while it works from elsewhere. Members there could not use it.',
     fix: 'Replace the spare, or mark the country if you know better.',
+  },
+  certificate_waiting: {
+    label: 'Certificate waiting',
+    explain:
+      'A front’s certificate cannot be issued until something outside FCP changes, such as a CAA record or the validation record in the DNS zone.',
+    fix: 'Open it to see what the certificate waits on.',
   },
   pool_below_desired: {
     label: 'Pool below desired',
@@ -1740,6 +1795,16 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Location full',
     explain: 'This location has fewer free addresses than this node needs.',
     fix: 'Raise its limit or free an address there.',
+  },
+  caa_forbids_ca: {
+    label: 'CAA forbids its CA',
+    explain: 'The zone’s CAA records do not let this account’s certificate authority issue.',
+    fix: 'Allow it in the CAA records, then test the account again.',
+  },
+  shared_certificate_failed: {
+    label: 'Shared certificate failed',
+    explain: 'The wildcard certificate this account’s fronts share failed to issue.',
+    fix: 'Open the account to see why, then retry the certificate.',
   },
 };
 

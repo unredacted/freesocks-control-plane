@@ -487,6 +487,8 @@ export const settleOp = internalMutation({
     resourceDeleteState: v.optional(
       v.array(v.object({ resourceId: v.string(), deleteState: v.string() })),
     ),
+    /** What the step waits on (a code), or null: it no longer waits on anything known. */
+    waiting: v.optional(v.union(v.null(), v.object({ step: v.string(), code: v.string() }))),
   },
   handler: async (ctx, a) => {
     const edge = await ctx.db.get(a.edgeId);
@@ -548,6 +550,18 @@ export const settleOp = internalMutation({
       patch.lastHealthAt = now;
     }
     if (a.failure) patch.failure = a.failure;
+    // A step that settles any way but `requested` (done by discovery, a
+    // thrown poll) no longer waits on what it was held up by.
+    const settledOtherwise =
+      a.stepPatch !== undefined &&
+      a.stepPatch.state !== 'requested' &&
+      edge.waiting?.step === a.stepPatch.stepId;
+    if (a.waiting === null || (a.waiting === undefined && settledOtherwise))
+      patch.waiting = undefined;
+    else if (a.waiting) {
+      const same = edge.waiting?.step === a.waiting.step && edge.waiting.code === a.waiting.code;
+      patch.waiting = { ...a.waiting, since: same ? edge.waiting!.since : now };
+    }
     if (a.resourceDeleteState) {
       const map = new Map(
         a.resourceDeleteState.map((r) => [r.resourceId, r.deleteState as Resource['deleteState']]),

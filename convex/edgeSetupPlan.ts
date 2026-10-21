@@ -42,7 +42,7 @@ import {
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
-import { accountTested } from './edgeProviderAccounts';
+import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
 import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
@@ -222,6 +222,7 @@ async function planContextOf(
         name: a.name,
         provider: a.provider,
         tested: accountTested(a),
+        certificateRefusal: certificateRefusalOf(a),
         maxLiveEdges: a.maxLiveEdges,
         live: accountLive[a._id as string] ?? 0,
         dailyAllocationBudget: a.dailyAllocationBudget,
@@ -271,7 +272,10 @@ function accountCompatibility(
 ): SetupPlanAccount {
   const reasons: string[] = [];
   const layer = edgeLayerOf(a.provider);
-  if (!a.tested) reasons.push('account_untested');
+  // A front of this account could get no certificate: named first, since a
+  // test alone does not fix it.
+  if (a.certificateRefusal) reasons.push(a.certificateRefusal);
+  else if (!a.tested) reasons.push('account_untested');
   const carries: string[] = [];
   let portOnly = false;
   let scoped = false;

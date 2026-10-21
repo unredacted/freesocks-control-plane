@@ -28,6 +28,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
+import { appendRunEvent } from './lib/edges/setupRuns';
 import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
 import {
   EDGE_PLUMBING,
@@ -46,7 +47,7 @@ import {
   todayKey,
 } from './relays';
 import { insertPlannedEdge } from './edges';
-import { accountTested, dayKey } from './edgeProviderAccounts';
+import { accountTested, certificateRefusalOf, dayKey } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
 import {
   matchSlotHosts,
@@ -681,6 +682,22 @@ export async function collectStartBlockers(
   if (a.kind === 'provision' && (a.requestedAccountId || a.requestedLocationId) && !a.listenerId) {
     push('validation', 'listenerId is required for an explicit account');
   }
+  // An explicitly named account whose front could get no certificate (the
+  // zone's CAA records forbid its CA, its shared wildcard failed) is refused
+  // before anything is planned or allocated.
+  if (a.kind === 'provision' && (a.requestedAccountId || a.requestedLocationId)) {
+    const named = a.requestedLocationId ? await ctx.db.get(a.requestedLocationId) : null;
+    const accountId = a.requestedAccountId ?? named?.accountId;
+    const acct = accountId ? await ctx.db.get(accountId) : null;
+    const certificate = acct ? certificateRefusalOf(acct) : null;
+    if (certificate === 'caa_forbids_ca')
+      push(
+        'edge.caa_forbids_ca',
+        'The zone’s CAA records do not let the account’s certificate authority issue',
+      );
+    else if (certificate)
+      push('edge.shared_certificate_failed', 'The account’s shared certificate failed to issue');
+  }
   if (listenerId) {
     const listener = await ctx.db.get(listenerId);
     if (!listener || listener.relayId !== a.relayId || listener.retired) {
@@ -1116,6 +1133,12 @@ const advanceEvent = v.union(
     detail: v.optional(v.string()),
     countPoll: v.optional(v.boolean()),
     countError: v.optional(v.boolean()),
+    /**
+     * What the new edge's step now waits on (a code from `L7_CERTIFICATE_CODES`),
+     * sent only when it CHANGED: the rotation's log, and a guided run's, get
+     * one warning per change instead of one per poll.
+     */
+    waitCode: v.optional(v.string()),
   }),
   v.object({ type: v.literal('provisioned') }),
   v.object({ type: v.literal('verified') }),
@@ -1270,6 +1293,22 @@ async function placeAt(
   };
 }
 
+/**
+ * A guided run waiting on this rotation hears what its new edge waits on (one
+ * event per change), so its progress line says why it is still waiting. Only
+ * the run's own generation, and only while it is waiting on THIS rotation.
+ */
+async function noteRunWaiting(ctx: MutationCtx, r: Rotation, code: string, now: number) {
+  if (!r.setupRun) return;
+  const run = await ctx.db.get(r.setupRun.runId);
+  if (!run || run.generation !== r.setupRun.generation || run.state !== 'waiting') return;
+  if (run.expect?.rotationId !== r._id) return;
+  await ctx.db.patch(run._id, {
+    events: appendRunEvent(run.events, { at: now, level: 'warn', code }),
+    updatedAt: now,
+  });
+}
+
 export const advance = internalMutation({
   args: { rotationId: v.id('edgeRotations'), stepVersion: v.number(), event: advanceEvent },
   handler: async (ctx, { rotationId, stepVersion, event }) => {
@@ -1301,13 +1340,18 @@ export const advance = internalMutation({
         return { ok: true as const };
       }
       case 'progress': {
+        let events = event.detail
+          ? ev(event.countError ? 'warn' : 'info', 'progress', event.detail)
+          : r.events;
+        if (event.waitCode) {
+          events = appendEvent(events, { at: now, level: 'warn', code: event.waitCode });
+          await noteRunWaiting(ctx, r, event.waitCode, now);
+        }
         await ctx.db.patch(rotationId, {
           stepVersion: next,
           pollAttempts: event.countPoll ? r.pollAttempts + 1 : r.pollAttempts,
           stepErrors: event.countError ? (r.stepErrors ?? 0) + 1 : r.stepErrors,
-          events: event.detail
-            ? ev(event.countError ? 'warn' : 'info', 'progress', event.detail)
-            : r.events,
+          events,
           updatedAt: now,
         });
         await scheduleStep(ctx, rotationId, event.delayMs);
@@ -1405,6 +1449,8 @@ export const advance = internalMutation({
               status: 'failed',
               statusChangedAt: now,
               failure: { step: r.phase, code: event.code },
+              // A failed edge waits on nothing any more (the code is the failure now).
+              waiting: undefined,
               updatedAt: now,
             });
           }
@@ -2835,6 +2881,10 @@ export async function selectionContext(
     const a = await ctx.db.get((rotation.requestedAccountId ?? named!.accountId)!);
     if (!a) return failure('account_not_found');
     if (!a.enabled) return failure('account_disabled');
+    // A certificate that cannot be had (CAA forbids the CA, the shared
+    // wildcard failed) is named as such, before the generic untested.
+    const certificate = certificateRefusalOf(a);
+    if (certificate) return failure(certificate);
     if (!accountTested(a)) return failure('account_untested');
     // A DNS account named on purpose still fronts nothing while the switch is off.
     if (!frontsAllowed(a.provider, cfg.l7.dnsProvidersFront))
@@ -2879,9 +2929,16 @@ export async function selectionContext(
   const candidates: AccountCandidate[] = [];
   const keyOfLocation = new Map<string, string>();
   let outsideShape = 0;
+  let certificateRefused: string | null = null;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
+    // An account whose front could not get a certificate is never picked.
+    const certificate = certificateRefusalOf(a);
+    if (certificate) {
+      certificateRefused = certificateRefused ?? certificate;
+      continue;
+    }
     // Same rule as the insert-time capacity check: observe-only edges were not
     // provisioned by FCP and never consume its allocation.
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
@@ -2975,8 +3032,13 @@ export async function selectionContext(
       account: null,
       // Every account that could front the listener is outside what the node
       // was approved for: a new review is the way forward, not another account.
+      // Nothing left but accounts whose fronts could get no certificate: say so.
       accountFailure:
-        candidates.length === 0 && outsideShape > 0 ? 'outside_approved_shape' : picked.code,
+        candidates.length === 0 && outsideShape > 0
+          ? 'outside_approved_shape'
+          : candidates.length === 0 && certificateRefused
+            ? certificateRefused
+            : picked.code,
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
@@ -3087,8 +3149,17 @@ function templateParamsOf(edge: Edge, fallback: Record<string, unknown>): Record
  * every account row pointing at that zone serialises on it.
  */
 export function stepLockKey(edge: Edge, stepKind: string): string | null {
-  if (stepKind !== 'create_origin_rule') return null;
   const intent = parseIntent(edge.provisionIntent);
+  // A wildcard certificate is ONE subscription (and one ACME record) per
+  // account and zone: two edges ordering it at once would each find none and
+  // each order one, so its steps serialise on the account and the zone.
+  if (
+    (stepKind === 'create_tls_subscription' || stepKind === 'create_dns_acme') &&
+    intent?.certificateScope === 'wildcard' &&
+    edge.accountId
+  )
+    return `fastly-certificate:${edge.accountId}:${intent.zoneId}`;
+  if (stepKind !== 'create_origin_rule') return null;
   return intent?.zoneId ? `cloudflare-zone:${intent.zoneId}` : null;
 }
 
@@ -3439,7 +3510,15 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
   }
   const now = Date.now();
   if (edge._creationTime + EDGE_PLUMBING.provisionTimeoutMs < now) {
-    await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'provision_timeout', rollback: false });
+    // A wait that was held up by something known ends with THAT as the reason
+    // (a CAA record forbidding the CA), not as a bare timeout.
+    const held = edge.waiting?.code;
+    await advanceCall(ctx, r._id, sv, {
+      type: 'fail',
+      code: held ?? 'provision_timeout',
+      ...(held ? { detail: 'provision_timeout' } : {}),
+      rollback: false,
+    });
     return;
   }
   // The template must not change under a running provision.
@@ -3527,6 +3606,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         addResources: out.resources,
         addresses: out.addresses,
         status: 'provisioning',
+        waiting: null,
       });
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
@@ -3534,14 +3614,21 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         detail: `step ${pending.stepId} done`,
       });
     } else if (out.status === 'requested') {
+      // What the wait is held up by (a CAA record, the validation record):
+      // kept on the edge while it lasts, logged once per change.
+      const code = out.code ?? null;
+      const changed = code !== null && code !== (edge.waiting?.code ?? null);
       await settle(opId, {
         stepPatch: { stepId: pending.stepId, state: 'requested', opRef: out.opRef, started: true },
         addResources: out.resources,
+        waiting: code ? { step: pending.stepId, code } : null,
       });
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
         delayMs: poll,
-        detail: `step ${pending.stepId} requested`,
+        // One line per state the step reaches, not one per look while it waits.
+        ...(pending.state === 'requested' ? {} : { detail: `step ${pending.stepId} requested` }),
+        ...(changed ? { waitCode: code } : {}),
       });
     } else {
       // `partial` means the call REACHED the provider and created some children
@@ -3552,6 +3639,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         stepPatch: { stepId: pending.stepId, state: 'unresolved', started: true },
         addResources: out.resources,
         failure: { step: pending.stepId, code: out.code },
+        waiting: null,
       });
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
@@ -3846,6 +3934,7 @@ async function settleEdgeOp(
     addresses?: { v4?: string; v6?: string };
     status?: string;
     failure?: { step: string; code?: string; status?: number };
+    waiting?: { step: string; code: string } | null;
   },
 ) {
   await ctx.runMutation(internal.edges.settleOp, { edgeId, opId, ...patch });

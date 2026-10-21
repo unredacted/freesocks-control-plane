@@ -1007,6 +1007,21 @@ export const attention = internalQuery({
         });
       }
       for (const e of edges) {
+        // A new front whose certificate waits on something FCP cannot fix.
+        if (e.waiting && e.status === 'provisioning') {
+          items.push({
+            ...base(relay),
+            id: `certificate_waiting:${e._id}`,
+            kind: 'certificate_waiting',
+            severity: 'warning',
+            edgeId: e._id as string,
+            rotationId: (relay.activeRotationId as string | undefined) ?? null,
+            code: e.waiting.code,
+            facts: { provider: e.provider ?? null, step: e.waiting.step },
+            action: 'open_relay',
+            since: iso(e.waiting.since),
+          });
+        }
         if (e.status === 'needs_operator') {
           items.push({
             ...base(relay),
@@ -1504,6 +1519,27 @@ export const attention = internalQuery({
           since: null,
         });
       }
+      // The account's shared certificate waits on something FCP cannot fix
+      // (a CAA record, the validation record) or failed: every new front of
+      // the account waits on it too.
+      const sc = a.sharedCertificate;
+      if (sc && (sc.code || sc.state === 'failed')) {
+        items.push({
+          id: `certificate_waiting:account:${a._id}`,
+          kind: 'certificate_waiting',
+          severity: sc.state === 'failed' ? 'critical' : 'warning',
+          relaySlug: null,
+          relayId: null,
+          edgeId: null,
+          listenerKey: null,
+          accountId: a._id as string,
+          rotationId: null,
+          code: sc.code ?? 'tls_failed',
+          facts: { name: a.name, provider: a.provider, certificate: sc.name, state: sc.state },
+          action: 'open_account',
+          since: iso(sc.checkedAt),
+        });
+      }
       if (!a.enabled) continue;
       if (!accountTested(a)) {
         items.push({
@@ -1837,7 +1873,10 @@ export const preflight = internalQuery({
           templateId: null,
         };
       } else if (!sel.account || !sel.template) {
-        blockers.push({ code: sel.accountFailure ?? 'no_account', detail: null });
+        // The start guards may have named the same refusal already (a named
+        // account whose certificate cannot be had): once is enough.
+        const code = sel.accountFailure ?? 'no_account';
+        if (!blockers.some((b) => b.code === code)) blockers.push({ code, detail: null });
       } else {
         const acct = await ctx.db.get(sel.account.id);
         const loc = await ctx.db.get(sel.account.locationId);

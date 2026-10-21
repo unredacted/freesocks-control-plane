@@ -15,11 +15,11 @@
  *  - INTENT DEFAULTS (L7: the TLS configuration). They are frozen into each
  *    edge's `provisionIntent` when the edge is planned, so a change only
  *    affects NEW edges and they stay editable at any time.
- * The certificate authority used to be an intent default too; it is a provider
- * OPTION now (`providers/templates.ts`), defaulted in the account's
- * `optionDefaults`. A payload or a stored row that still carries it under
- * `settings` is translated (`legacyOptionDefaults`) and never counts as a
- * settings change.
+ * The certificate authority and the certificate scope used to be intent
+ * defaults too; they are provider OPTIONS now (`providers/templates.ts`),
+ * defaulted in the account's `optionDefaults`. A payload or a stored row that
+ * still carries them under `settings` is translated (`legacyOptionDefaults`)
+ * and never counts as a settings change.
  * `accountSettings.test.ts` pins that the three lists cover every schema key.
  */
 import { z } from 'zod';
@@ -160,6 +160,25 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
 };
 
 /**
+ * Facts every NEW edge freezes into its intent that no operator chooses (how
+ * the provider is driven now); an intent without one predates it and keeps
+ * `legacy`. `edgeProviderOps.loadAdapter` gives the adapter `planned` when it
+ * plans and the edge's own value (or `legacy`) afterwards.
+ */
+export const EDGE_INTENT_FACTS: Record<
+  EdgeProviderId,
+  Readonly<Record<string, { planned: string; legacy: string }>>
+> = {
+  gcore: {},
+  upcloud: {},
+  scaleway: {},
+  ovh: {},
+  cloudflare: {},
+  // A versionless (Domain Management) domain instead of a version's domain.
+  fastly: { domainModel: { planned: 'versionless', legacy: 'classic' } },
+};
+
+/**
  * Settings keys that are provider OPTIONS now (account `optionDefaults`): a
  * stored row may still hold them until `migrateOptionDefaults` has run, and an
  * older client may still send them.
@@ -170,7 +189,7 @@ export const EDGE_LEGACY_OPTION_SETTINGS: Record<EdgeProviderId, readonly string
   scaleway: [],
   ovh: [],
   cloudflare: [],
-  fastly: ['certificateAuthority'],
+  fastly: ['certificateAuthority', 'certificateScope'],
 };
 
 /** The option defaults a settings payload (or a stored row) still carries the old way. */

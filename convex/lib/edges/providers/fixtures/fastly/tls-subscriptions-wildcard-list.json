@@ -1,0 +1,29 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/tls/subs/#list-tls-subs (filter[tls_domains.id]=*.example.org, read 2026-10-20)",
+  "data": [
+    {
+      "id": "WILDsub0example0org01",
+      "type": "tls_subscription",
+      "attributes": {
+        "state": "issued",
+        "certificate_authority": "certainly"
+      },
+      "relationships": {
+        "tls_domains": {
+          "data": [
+            {
+              "id": "*.example.org",
+              "type": "tls_domain"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "meta": {
+    "current_page": 1,
+    "per_page": 20,
+    "record_count": 1,
+    "total_pages": 1
+  }
+}

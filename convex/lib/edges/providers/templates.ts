@@ -1113,6 +1113,7 @@ export const FASTLY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
  */
 export const FastlyCertificateOptions = z.object({
   certificateAuthority: z.enum(['certainly', 'lets-encrypt', 'globalsign']).optional(),
+  certificateScope: z.enum(['per_host', 'wildcard']).optional(),
 });
 
 export const FASTLY_CERTIFICATE_FIELDS: TemplateFieldDescriptor[] = [
@@ -1133,7 +1134,33 @@ export const FASTLY_CERTIFICATE_FIELDS: TemplateFieldDescriptor[] = [
     wire: { resource: 'tls_subscription', field: 'certificate_authority', manual: true },
     live: 'rebuild',
   },
+  {
+    key: 'certificateScope',
+    label: 'Certificate',
+    type: 'select',
+    kind: 'certificate',
+    group: 'Certificate',
+    prominent: true,
+    // What an account from before the choice existed (and its fronts) use.
+    default: 'per_host',
+    help: 'A wildcard is issued once for the zone and shared: a new front never waits for a certificate, and its name never appears in public certificate logs before members use it.',
+    options: [
+      { value: 'wildcard', label: 'One wildcard for every front' },
+      { value: 'per_host', label: 'One per front' },
+    ],
+    wire: { resource: 'tls_subscription', field: 'tls_domains', manual: true },
+    live: 'rebuild',
+  },
 ];
+
+/**
+ * Option defaults a NEW account starts with where they differ from the
+ * declared ones (an existing account keeps the declared, older behaviour until
+ * it is switched): a new Fastly account shares one wildcard certificate.
+ */
+export const EDGE_NEW_ACCOUNT_OPTION_DEFAULTS: Partial<Record<EdgeProviderId, Record<string, unknown>>> = {
+  fastly: { certificateScope: 'wildcard' },
+};
 
 const NO_CERTIFICATE = z.object({});
 

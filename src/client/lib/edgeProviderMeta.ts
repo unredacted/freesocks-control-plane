@@ -34,6 +34,8 @@ export interface EdgeProviderMeta {
   needsDnsAccount: boolean;
   /** The account can host DNS records for other providers' edges. */
   providesDns: boolean;
+  /** The account's fronts can share one wildcard certificate (`certificateScope`). */
+  sharedCertificates: boolean;
 }
 
 const L4 = {
@@ -43,6 +45,7 @@ const L4 = {
   l7Transports: [],
   needsDnsAccount: false,
   providesDns: false,
+  sharedCertificates: false,
 } as const satisfies Omit<EdgeProviderMeta, 'label'>;
 
 export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
@@ -58,6 +61,7 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
     l7Transports: ['ws', 'httpupgrade', 'grpc', 'xhttp'],
     needsDnsAccount: false,
     providesDns: true,
+    sharedCertificates: false,
   },
   fastly: {
     label: 'Fastly',
@@ -67,6 +71,7 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
     l7Transports: ['ws'],
     needsDnsAccount: true,
     providesDns: false,
+    sharedCertificates: true,
   },
 };
 

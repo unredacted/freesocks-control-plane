@@ -137,6 +137,23 @@ export const EdgeProviderAccountAdmin = z.object({
   observedSettings: z.record(z.string(), z.string()).nullable().default(null),
   observedAt: isoN.default(null),
   inventoryAt: isoN,
+  /**
+   * The one certificate the account's fronts share (Fastly's `*.<zone>`
+   * wildcard) as last read at the provider: its state (`pending`, `issued`,
+   * `renewing`, `failed`, or `absent` / `ambiguous`), what it waits on (a code),
+   * when it expires and how many live edges front through it.
+   */
+  sharedCertificate: z
+    .object({
+      name: z.string(),
+      state: z.string(),
+      code: z.string().nullable(),
+      notAfter: isoN,
+      checkedAt: iso,
+      edges: z.number(),
+    })
+    .nullable()
+    .default(null),
   /** Dev only: the adapter behind this account is the in-memory fake (never true outside development). */
   fake: z.boolean().default(false),
   createdAt: iso,
@@ -232,15 +249,56 @@ export type EdgeInventoryResponse = z.infer<typeof EdgeInventoryResponse>;
 
 // --- templates --------------------------------------------------------------------------
 
+/**
+ * One provider OPTION as the forms see it (convex/lib/edges/providers/options.ts
+ * `OptionField`): one settable field of one resource, with its type, bounds,
+ * default and where it may be chosen.
+ */
 export const EdgeTemplateField = z.object({
   key: z.string(),
   label: z.string(),
-  type: z.enum(['string', 'number', 'boolean', 'select', 'string-list']),
+  type: z.enum(['string', 'number', 'boolean', 'select', 'string-list', 'key-value']),
   help: z.string().optional(),
   options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
   required: z.boolean().optional(),
   /** The value differs per region: each location can set its own. */
   regional: z.boolean().optional(),
+  /** The resource it configures, as the form heads its section. */
+  group: z.string().optional(),
+  unit: z.string().optional(),
+  /** Folded away until the operator asks for every option. */
+  advanced: z.boolean().optional(),
+  /** Offered first when choosing for one node. */
+  prominent: z.boolean().optional(),
+  /** Kept only so stored templates parse as before: never shown. */
+  hidden: z.boolean().optional(),
+  /** A key/value field stored as `[{key, value}]`. */
+  pairs: z.boolean().optional(),
+  /** `certificate`: an account default, frozen in a front's intent. Absent = tuning (a template's). */
+  kind: z.enum(['tuning', 'certificate']).optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  pattern: z.string().optional(),
+  maxItems: z.number().optional(),
+  /** What applies when nothing sets a value. */
+  default: z.unknown().optional(),
+  /** Shown only while another option holds one of these values. */
+  when: z
+    .object({ key: z.string(), in: z.array(z.union([z.string(), z.number(), z.boolean()])) })
+    .optional(),
+  /** A select filled from the location's offered sizes. */
+  from: z.literal('flavors').optional(),
+  /** The provider API field it fills (admin information). */
+  wire: z
+    .object({
+      resource: z.string(),
+      field: z.string(),
+      scale: z.number().optional(),
+      manual: z.boolean().optional(),
+    })
+    .optional(),
+  /** What a change would take on a live resource (FCP never applies one). */
+  live: z.enum(['in_place', 'new_version', 'rebuild']).optional(),
 });
 export type EdgeTemplateField = z.infer<typeof EdgeTemplateField>;
 

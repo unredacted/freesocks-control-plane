@@ -3,6 +3,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import { accountOptionDefaultsOf } from './lib/edges/choices';
 import type { Id } from './_generated/dataModel';
 import { EDGE_PROVIDER_IDS } from '../src/shared/contracts/edgeProviderIds';
 import { defaultLocationOf } from './edgeLocations';
@@ -1046,6 +1047,52 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     });
     return { t, dnsId, fastlyId };
   }
+
+  test('a new account shares one wildcard certificate; an existing one keeps per-host until switched', async () => {
+    const { t, dnsId, fastlyId } = await pair();
+    // The scope is a provider option: the account's default for its nodes.
+    const scopeOf = async () =>
+      accountOptionDefaultsOf((await t.run((ctx) => ctx.db.get(fastlyId)))!).certificateScope;
+    expect(await scopeOf()).toBe('wildcard');
+    // A row from before the choice existed: an edit of another setting does not switch it.
+    await t.run((ctx) =>
+      ctx.db.patch(fastlyId, {
+        settings: { type: 'fastly', dnsAccountId: dnsId, certificateAuthority: 'certainly' },
+        optionDefaults: undefined,
+      }),
+    );
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      settings: { dnsAccountId: dnsId, certificateAuthority: 'lets-encrypt' },
+    });
+    expect(await scopeOf()).toBeUndefined();
+    // Switching is an explicit choice (an older client's settings shape still
+    // says it), and any other value is refused.
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      settings: {
+        dnsAccountId: dnsId,
+        certificateAuthority: 'certainly',
+        certificateScope: 'wildcard',
+      },
+    });
+    expect(await scopeOf()).toBe('wildcard');
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      optionDefaults: { certificateAuthority: 'certainly', certificateScope: 'per_host' },
+    });
+    expect(await scopeOf()).toBe('per_host');
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, {
+        id: fastlyId,
+        settings: {
+          dnsAccountId: dnsId,
+          certificateAuthority: 'certainly',
+          certificateScope: 'zone',
+        },
+      }),
+    ).rejects.toThrow(/Certificate/);
+  });
 
   test('dnsAccountId must name an existing account that can host DNS', async () => {
     const { t, fastlyId } = await pair();

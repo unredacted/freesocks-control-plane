@@ -50,6 +50,7 @@ export const ATTENTION_RANK = [
   'node_awaiting_approval',
   'go_live_pending',
   'needs_test',
+  'certificate_waiting',
   'rotation_failed',
   'node_ready_to_protect',
   'node_mode_disabled',

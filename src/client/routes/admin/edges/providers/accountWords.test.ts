@@ -3,8 +3,10 @@ import {
   inventoryOwner,
   isTested,
   locationTrustWords,
+  observedRows,
   settingLabel,
   settingRows,
+  sharedCertificateWords,
   testWords,
 } from './accountWords';
 
@@ -83,5 +85,58 @@ describe('locationTrustWords', () => {
       ).detail,
     ).toBe('Trusted by your override 1 h ago.');
     expect(locationTrustWords({ ...base, autoQualifyHold: true }, NOW).tone).toBe('warning');
+  });
+});
+
+describe('certificates in words', () => {
+  it('names the certificate scope and the CAA verdict instead of their codes', () => {
+    expect(settingRows({ certificateScope: 'wildcard' })).toEqual([
+      { label: 'Certificates', value: 'One wildcard for every front' },
+    ]);
+    const rows = observedRows({ caa: 'forbids', caaIssuer: 'certainly.com', caaAt: 'example.org' });
+    expect(rows[0]).toEqual({
+      label: 'CAA records',
+      value: 'Forbid the certificate authority',
+      tone: 'danger',
+    });
+    expect(rows[1]).toMatchObject({
+      label: 'CA as CAA names it',
+      value: 'certainly.com',
+      mono: true,
+    });
+  });
+  it('says what the shared certificate waits on, when it expires and who uses it', () => {
+    const base = {
+      name: '*.example.org',
+      code: null,
+      notAfter: null,
+      checkedAt: okAt,
+      edges: 2,
+    };
+    expect(
+      sharedCertificateWords({ ...base, state: 'processing', code: 'tls_caa_conflict' }, NOW),
+    ).toMatchObject({
+      label: 'Waiting to issue',
+      tone: 'warning',
+    });
+    expect(
+      sharedCertificateWords({ ...base, state: 'processing', code: 'tls_caa_conflict' }, NOW)
+        .detail,
+    ).toContain('Certificate blocked by CAA');
+    const issued = sharedCertificateWords(
+      { ...base, state: 'issued', notAfter: '2026-11-19T10:12:00.000Z' },
+      NOW,
+    );
+    expect(issued).toMatchObject({ label: 'Issued', tone: 'success' });
+    expect(issued.detail).toContain('Valid until 2026-11-19');
+    expect(issued.detail).toContain('2 live fronts use it.');
+    expect(sharedCertificateWords({ ...base, state: 'failed', code: 'tls_failed' }, NOW).tone).toBe(
+      'danger',
+    );
+    expect(sharedCertificateWords({ ...base, state: 'absent', edges: 0 }, NOW).label).toBe(
+      'Not ordered yet',
+    );
+    for (const state of ['issued', 'renewing', 'failed', 'absent', 'ambiguous', 'pending'])
+      expect(sharedCertificateWords({ ...base, state }, NOW).detail).not.toContain('\u2014');
   });
 });

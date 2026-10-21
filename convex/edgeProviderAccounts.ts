@@ -13,6 +13,7 @@
 import { ConvexError, v } from 'convex/values';
 import { fakeShadowedIds } from './lib/edges/providers/fake';
 import { internalMutation, internalQuery } from './_generated/server';
+import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { edgeProviderIdValidator, type EdgeProviderId } from './lib/edgeProviderIds';
@@ -33,7 +34,11 @@ import {
 import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
 import { optionChanges, sameValues, type Values } from './lib/edges/providers/options';
 import { accountOptionDefaultsOf } from './lib/edges/choices';
-import { optionFieldsOf, validateAccountOptionDefaults } from './lib/edges/providers/templates';
+import {
+  EDGE_NEW_ACCOUNT_OPTION_DEFAULTS,
+  optionFieldsOf,
+  validateAccountOptionDefaults,
+} from './lib/edges/providers/templates';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { liveEdgesOfAccount } from './relays';
 import { assertAdmission } from './lib/edges/maintenance';
@@ -83,7 +88,11 @@ function checkName(name: string): void {
  * DEFAULT location's (`qualified`: any enabled location is trusted), so a
  * single-location account reads as it always did; `locations` has them all.
  */
-export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>, locations: LocationAdmin[]) {
+export function mapAccountAdmin(
+  r: Doc<'edgeProviderAccounts'>,
+  locations: LocationAdmin[],
+  sharedUsers = 0,
+) {
   const { type: _t, ...raw } = r.settings as { type: string } & Record<string, unknown>;
   const settings = withoutPlacementKeys(r.provider, raw);
   const dflt = locations.find((l) => l.isDefault) ?? null;
@@ -116,6 +125,18 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>, locations: Locat
     observedSettings: r.observedSettings ? parseObservedSettings(r.observedSettings) : null,
     observedAt: r.observedAt ? new Date(r.observedAt).toISOString() : null,
     inventoryAt: dflt?.inventoryAt ?? null,
+    // The account-wide certificate its fronts share, as last read at the
+    // provider, and how many live edges front through it (null: none).
+    sharedCertificate: r.sharedCertificate
+      ? {
+          name: r.sharedCertificate.name,
+          state: r.sharedCertificate.state,
+          code: r.sharedCertificate.code ?? null,
+          notAfter: r.sharedCertificate.notAfter ?? null,
+          checkedAt: new Date(r.sharedCertificate.checkedAt).toISOString(),
+          edges: sharedUsers,
+        }
+      : null,
     // Dev only: the adapter behind this account is the in-memory fake, so the
     // CMS can badge it and no screenshot shows a real adapter name for it.
     fake: fakeShadowedIds().includes(r.provider),
@@ -176,7 +197,13 @@ export const listForAdmin = internalQuery({
     const rows = await ctx.db.query('edgeProviderAccounts').collect();
     const out = [];
     for (const r of rows.sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name)))
-      out.push(mapAccountAdmin(r, await locationsAdminOf(ctx.db, r)));
+      out.push(
+        mapAccountAdmin(
+          r,
+          await locationsAdminOf(ctx.db, r),
+          r.sharedCertificate ? await sharedCertificateUsers(ctx.db, r._id) : 0,
+        ),
+      );
     return out;
   },
 });
@@ -185,7 +212,13 @@ export const getForAdmin = internalQuery({
   args: { id: v.id('edgeProviderAccounts') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
-    return r ? mapAccountAdmin(r, await locationsAdminOf(ctx.db, r)) : null;
+    return r
+      ? mapAccountAdmin(
+          r,
+          await locationsAdminOf(ctx.db, r),
+          r.sharedCertificate ? await sharedCertificateUsers(ctx.db, r._id) : 0,
+        )
+      : null;
   },
 });
 
@@ -400,6 +433,27 @@ export function accountTested(
   return !!a.lastTestOkAt && !a.lastTestError;
 }
 
+/**
+ * Why no new front can be planned on the account, though it may be tested:
+ * its last credential test ended on the CAA preflight (`caa_forbids_ca`), or
+ * the wildcard certificate it shares failed (`shared_certificate_failed`).
+ * Null when nothing certificate-shaped stands in the way. One rule for the
+ * selection, the preflight, the start guards, the setup plan and the run.
+ */
+export function certificateRefusalOf(
+  a: Pick<
+    Doc<'edgeProviderAccounts'>,
+    'provider' | 'lastTestError' | 'settings' | 'optionDefaults' | 'sharedCertificate'
+  >,
+): 'caa_forbids_ca' | 'shared_certificate_failed' | null {
+  if (a.lastTestError === 'caa_forbids_ca') return 'caa_forbids_ca';
+  // The account's default scope (a node may choose its own; its front waits on
+  // the certificate step instead).
+  const wildcard = accountOptionDefaultsOf(a).certificateScope === 'wildcard';
+  if (wildcard && a.sharedCertificate?.state === 'failed') return 'shared_certificate_failed';
+  return null;
+}
+
 export const create = internalMutation({
   args: upsertArgs,
   handler: async (ctx, a) => {
@@ -436,8 +490,11 @@ export const create = internalMutation({
       });
     }
     await assertDnsAccountUsable(ctx.db, a.provider, settings.settings as Record<string, unknown>);
-    // An older client still sends the authority under settings: the same default.
+    // What a new account starts with where the payload leaves it out (a new
+    // Fastly account shares one wildcard certificate); an older client's
+    // authority or scope under settings is the same default.
     const optionDefaults = checkedOptionDefaults(a.provider, {
+      ...(EDGE_NEW_ACCOUNT_OPTION_DEFAULTS[a.provider] ?? {}),
       ...legacyOptionDefaults(a.provider, rawSettings),
       ...((a.optionDefaults ?? {}) as Values),
     });
@@ -976,6 +1033,99 @@ export const recordTest = internalMutation({
     return null;
   },
 });
+
+/**
+ * The account's shared certificate as the provider last showed it
+ * (edgeProviderOps.refreshSharedCertificate). `null` clears it: the account no
+ * longer uses one. Writes only when something but the check time moved.
+ */
+export const recordSharedCertificate = internalMutation({
+  args: {
+    id: v.id('edgeProviderAccounts'),
+    status: v.union(
+      v.null(),
+      v.object({
+        name: v.string(),
+        subscriptionId: v.optional(v.string()),
+        state: v.string(),
+        code: v.optional(v.string()),
+        notAfter: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, { id, status }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    if (status === null) {
+      if (row.sharedCertificate) await ctx.db.patch(id, { sharedCertificate: undefined });
+      return null;
+    }
+    const { checkedAt: _at, ...was } = row.sharedCertificate ?? { checkedAt: 0 };
+    const next = {
+      name: status.name.slice(0, 253),
+      ...(status.subscriptionId ? { subscriptionId: status.subscriptionId.slice(0, 64) } : {}),
+      state: status.state.slice(0, 32),
+      ...(status.code ? { code: status.code.slice(0, 64) } : {}),
+      ...(status.notAfter ? { notAfter: status.notAfter.slice(0, 40) } : {}),
+    };
+    // `updatedAt` is left alone: it is the row version a credential rotation compares against.
+    if (settingsEqual(was, next) && row.sharedCertificate) {
+      await ctx.db.patch(id, {
+        sharedCertificate: { ...row.sharedCertificate, checkedAt: Date.now() },
+      });
+      return null;
+    }
+    await ctx.db.patch(id, { sharedCertificate: { ...next, checkedAt: Date.now() } });
+    return null;
+  },
+});
+
+/** An issued shared certificate is read again this often; one still waiting, every pass. */
+export const SHARED_CERTIFICATE_RECHECK_MS = 30 * 60_000;
+
+/**
+ * The accounts whose shared certificate the reconcile cron reads now: an
+ * account that uses one (its settings say so) or still records one (so one
+ * switched back is cleared), when it has not been read yet, is not issued, or
+ * was last read longer ago than the recheck interval.
+ */
+export const listForSharedCertificates = internalQuery({
+  args: { now: v.number() },
+  handler: async (ctx, { now }) => {
+    const rows = await ctx.db.query('edgeProviderAccounts').collect();
+    const usesSharedCertificate = new Set<string>();
+    for (const r of rows)
+      if (
+        EDGE_PROVIDER_CAPABILITIES[r.provider].sharedCertificates &&
+        (await sharedCertificateUsers(ctx.db, r._id)) > 0
+      )
+        usesSharedCertificate.add(r._id as string);
+    return rows
+      .filter((r) => {
+        if (!EDGE_PROVIDER_CAPABILITIES[r.provider].sharedCertificates) return false;
+        // The account's default, or a node that chose the wildcard there.
+        const uses =
+          accountOptionDefaultsOf(r).certificateScope === 'wildcard' ||
+          usesSharedCertificate.has(r._id as string);
+        const sc = r.sharedCertificate;
+        if (!uses && !sc) return false;
+        if (!sc) return true;
+        const settled = sc.state === 'issued' || sc.state === 'renewing';
+        return !settled || !uses || now - sc.checkedAt >= SHARED_CERTIFICATE_RECHECK_MS;
+      })
+      .map((r) => r._id);
+  },
+});
+
+/** The live edges of an account that front through its shared wildcard (their intent says so). */
+export async function sharedCertificateUsers(
+  db: QueryCtx['db'],
+  accountId: Id<'edgeProviderAccounts'>,
+): Promise<number> {
+  const edges = await liveEdgesOfAccount(db, accountId);
+  return edges.filter((e) => parseIntent(e.provisionIntent)?.certificateScope === 'wildcard')
+    .length;
+}
 
 /** A provider failing this many calls in a row is raised as attention `account_api_failing`. */
 export const API_FAILING_AFTER = 3;

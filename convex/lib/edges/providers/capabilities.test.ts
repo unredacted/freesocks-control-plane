@@ -168,6 +168,8 @@ describe('origin capability record ⇔ adapters', () => {
     const p = EDGE_PROVIDERS[id];
     expect(caps.asyncOps).toBe(!!p.pollStep);
     expect(caps.asyncDelete).toBe(!!p.confirmDestroyed);
+    // A provider whose fronts can share one certificate reports it to the account.
+    expect(caps.sharedCertificates).toBe(!!p.sharedCertificate);
   });
 
   test.each([...EDGE_PROVIDER_IDS])(
@@ -373,10 +375,15 @@ describe('origin capability record ⇔ adapters', () => {
     const p = EDGE_PROVIDERS[id];
     const tpl = p.templateSchema.parse(p.defaultTemplate);
     expect(tpl).toEqual(p.defaultTemplate);
-    // Field descriptors point at real template keys.
+    // Field descriptors point at real template keys: present in the parsed
+    // default, or an option added later (optional, its default declared).
+    const shape = (p.templateSchema as unknown as { shape: Record<string, unknown> }).shape;
     for (const f of p.templateFields) {
-      const head = f.key.split('.')[0];
-      expect(Object.keys(tpl as Record<string, unknown>)).toContain(head);
+      const head = f.key.split('.')[0]!;
+      expect(Object.keys(shape)).toContain(head);
+      // A key missing from the parsed default is an option added later: optional,
+      // with the default it stands for declared on the field (or none sent).
+      if (!(head in (tpl as Record<string, unknown>))) expect(f.hidden).not.toBe(true);
     }
     // OVH's default lacks the required flavor; give it one for planning.
     const planTpl = id === 'ovh' ? { ...(tpl as Record<string, unknown>), flavorId: 'small' } : tpl;

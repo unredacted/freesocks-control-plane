@@ -12,7 +12,7 @@
  */
 import { createServer, type Server } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { errorBlob } from '../testing/mockFetch';
 import { acmeChallengeName } from '../hostname';
 import type {
@@ -26,9 +26,12 @@ import type {
 } from './types';
 import type { DnsClient, DnsCreateArgs, DnsRecord, DnsRecordType } from './dns/types';
 import { __setFastlyBasePath } from './fastly/sdk';
+import type { CaaRecord } from '../caa';
 import {
   FASTLY_DESTROY_ORDER,
   FASTLY_WS_UPGRADE_VCL,
+  TLS_WARNING_GRACE_MS,
+  __setFastlyCaaLookup,
   __setFastlyDnsClientFactory,
   fastlyBackendBody,
   fastlyDestroyKey,
@@ -41,7 +44,9 @@ import {
   parseTlsChallenges,
   parseTrafficCname,
   planSharedTeardown,
+  sharedAcmeMarker,
   sharedTeardownStep,
+  tlsAuthorizationCode,
   type SharedTeardownState,
 } from './fastly';
 
@@ -127,6 +132,7 @@ const HOST = 'k3m7q9zb.example.org';
 const ORIGIN = 'node-7.origin.example.net';
 const SVC = 'SU1Z0isxPaozGVKXdv0eY';
 const SUB = 'C0cuTFmLzMCiyMcOZuLEZ1';
+const DM = 'DMDOM01kq7v3xzwYb9pRn';
 const ACME_TARGET = '6a8mtt5uzzsw2qsl.fastly-validations.com';
 const TRAFFIC_TARGET = 'j.sni.global.fastly.net';
 
@@ -233,6 +239,11 @@ function defaultReply(c: Call): Reply {
     return { status: 200, body: { status: 'ok' } };
   if (m === 'GET' && /\/domain$/.test(p))
     return { status: 200, body: [fixture('domain-create.json')] };
+  // Versionless domains: none linked yet, unless a test routes otherwise.
+  if (m === 'GET' && p === '/domain-management/v1/domains') return ok('dm-domains-empty.json');
+  if (m === 'POST' && p === '/domain-management/v1/domains') return ok('dm-domain-create.json');
+  if (p === `/domain-management/v1/domains/${DM}`)
+    return m === 'DELETE' ? { status: 204 } : ok('dm-domain-create.json');
   if (p === `/enabled-products/v1/websockets/services/${SVC}`)
     return m === 'DELETE' ? { status: 204 } : ok('websockets-enabled.json');
   if (m === 'POST' && p === '/tls/subscriptions') return api('tls-subscription-create.json');
@@ -249,9 +260,12 @@ function defaultReply(c: Call): Reply {
 }
 
 let rec: Recorder | undefined;
+// No CAA record anywhere unless a test says otherwise (the suite refuses real DNS).
+beforeEach(() => __setFastlyCaaLookup(async () => []));
 afterEach(async () => {
   __setFastlyBasePath(null);
   __setFastlyDnsClientFactory(null);
+  __setFastlyCaaLookup(null);
   await rec?.close();
   rec = undefined;
 });
@@ -512,12 +526,13 @@ describe('fastly: provisioning', () => {
       'POST /tls/subscriptions',
       `GET /tls/subscriptions/${SUB}`,
       `GET /tls/subscriptions/${SUB}`,
+      `GET /tls/subscriptions/${SUB}`,
       'GET /tls/configurations',
     ]);
-    // The ACME read asks for the authorizations; the poll does not.
-    expect(r.calls[8].query).toEqual({ include: 'tls_authorizations' });
-    expect(r.calls[9].query).toEqual({});
-    expect(r.calls[10].query).toEqual({ include: 'dns_records', 'page[size]': '100' });
+    // The ACME read, the wait's first look and its poll all ask for the
+    // authorizations: a wait reports what holds it up.
+    for (const i of [8, 9, 10]) expect(r.calls[i].query).toEqual({ include: 'tls_authorizations' });
+    expect(r.calls[11].query).toEqual({ include: 'dns_records', 'page[size]': '100' });
   });
 
   test('the two DNS records are the ACME challenge and the traffic CNAME, both marked as ours', async () => {
@@ -574,7 +589,17 @@ describe('fastly: provisioning', () => {
           )
         : defaultReply(c),
     );
-    fakeDns();
+    // The validation record is in place: nothing but time holds the wait up.
+    fakeDns([
+      {
+        id: 'acme1',
+        type: 'CNAME',
+        name: acmeChallengeName(HOST),
+        content: ACME_TARGET,
+        proxied: false,
+        comment: spec.name,
+      },
+    ]);
     const ledger: Ledger = {
       steps: [],
       resources: [
@@ -1064,6 +1089,8 @@ describe('fastly: live views', () => {
     expect(await fastlyProvider.testCredentials(cfg)).toEqual({
       ok: true,
       detail: 'scope=global; pricing_plan=enterprise',
+      // The zone has no CAA record at all: any certificate authority may issue.
+      observed: { caa: 'no_records', caaIssuer: 'certainly.com', caaCertificate: 'per_host' },
     });
   });
 
@@ -1860,5 +1887,659 @@ describe('fastly: nothing provider-shaped reaches an error', () => {
       .runStep(noDns as FastlyConfig, step, spec, tpl, { steps: [], resources: [] })
       .catch((e) => e);
     expect(err.meta.code).toBe('dns_account_missing');
+  });
+});
+
+// --- the CAA preflight of the credential test -----------------------------------------------
+
+describe('fastly: the credential test checks the zone lets the CA issue', () => {
+  const issue = (value: string): CaaRecord => ({ flags: 0, tag: 'issue', value });
+  const issuewild = (value: string): CaaRecord => ({ flags: 0, tag: 'issuewild', value });
+  /** A zone's CAA records by name, and every name the walk asked for. */
+  function caaZone(table: Record<string, CaaRecord[]>): string[] {
+    const asked: string[] = [];
+    __setFastlyCaaLookup(async (name) => {
+      asked.push(name);
+      return table[name] ?? [];
+    });
+    return asked;
+  }
+
+  test('records that name only another CA refuse the test with a code, naming the CA to allow', async () => {
+    await serve();
+    caaZone({ 'example.org': [issue('letsencrypt.org')] });
+    const res = await fastlyProvider.testCredentials(cfg);
+    expect(res).toEqual({
+      ok: false,
+      code: 'caa_forbids_ca',
+      detail: 'the CAA records at example.org do not allow certainly.com',
+      observed: {
+        caa: 'forbids',
+        caaIssuer: 'certainly.com',
+        caaCertificate: 'per_host',
+        caaAt: 'example.org',
+      },
+    });
+    expect(JSON.stringify(res)).not.toContain(cfg.apiToken);
+  });
+
+  test('a record allowing the CA passes, and says where it was decided', async () => {
+    await serve();
+    caaZone({ 'example.org': [issue('certainly.com')] });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({
+      ok: true,
+      observed: { caa: 'allows', caaAt: 'example.org' },
+    });
+  });
+
+  test('records above the zone decide when the zone has none (the CA climbs too)', async () => {
+    await serve();
+    const asked = caaZone({ 'example.org': [issue(';')] });
+    const sub = { ...cfg, dns: { ...cfg.dns!, zoneName: 'fronts.example.org' } };
+    expect(await fastlyProvider.testCredentials(sub)).toMatchObject({
+      ok: false,
+      code: 'caa_forbids_ca',
+    });
+    expect(asked).toEqual(['fronts.example.org', 'example.org']);
+  });
+
+  test('a wildcard account is checked against issuewild', async () => {
+    await serve();
+    caaZone({ 'example.org': [issue('certainly.com'), issuewild('letsencrypt.org')] });
+    const wild = { ...cfg, certificateScope: 'wildcard' as const };
+    expect(await fastlyProvider.testCredentials(wild)).toMatchObject({
+      ok: false,
+      code: 'caa_forbids_ca',
+      detail:
+        'the CAA records at example.org do not allow certainly.com for a wildcard (issuewild)',
+      observed: { caaCertificate: 'wildcard' },
+    });
+    // The same zone lets the CA issue one certificate per front.
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ ok: true });
+  });
+
+  test('a lookup that fails is recorded as unchecked and never refuses', async () => {
+    await serve();
+    __setFastlyCaaLookup(async () => {
+      throw new Error('SERVFAIL');
+    });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({
+      ok: true,
+      observed: { caa: 'unchecked' },
+    });
+  });
+});
+
+// --- what a waiting certificate reports ----------------------------------------------------
+
+describe('fastly: a waiting certificate says what holds it up', () => {
+  const awaitStep = () =>
+    fastlyProvider.planProvision(cfg, spec, tpl).find((s) => s.kind === 'await_tls')!;
+  const subLedger = (startedAt?: number): Ledger => ({
+    steps: [
+      {
+        stepId: 'await-tls',
+        kind: 'await_tls',
+        resourceName: HOST,
+        state: 'requested',
+        attempt: 1,
+        ...(startedAt !== undefined ? { startedAt } : {}),
+      },
+    ],
+    resources: [
+      {
+        stepId: 'tls',
+        kind: 'tls_subscription',
+        resourceId: SUB,
+        ownership: 'created',
+        deleteState: 'present',
+        meta: JSON.stringify({ hostname: HOST }),
+      },
+    ],
+  });
+  const acmeRecord = (content = ACME_TARGET): DnsRecord => ({
+    id: 'acme1',
+    type: 'CNAME',
+    name: acmeChallengeName(HOST),
+    content,
+    proxied: false,
+    comment: spec.name,
+  });
+  /** An authorization document carrying these warnings / this state. */
+  const authDoc = (warnings: unknown[], state = 'pending') => ({
+    data: { id: SUB, type: 'tls_subscription', attributes: { state: 'processing' } },
+    included: [{ id: 'A1', type: 'tls_authorization', attributes: { state, warnings } }],
+  });
+
+  test('warnings map to a fixed code by their type, and their words are never read', () => {
+    const words = 'records at example.org name only another CA';
+    expect(tlsAuthorizationCode(authDoc([{ type: 'CAA', instructions: words }]))).toBe(
+      'tls_caa_conflict',
+    );
+    expect(
+      tlsAuthorizationCode(authDoc([{ type: 'conflicting-records', instructions: words }])),
+    ).toBe('tls_challenge_conflict');
+    expect(tlsAuthorizationCode(authDoc([], 'failed'))).toBe('tls_authorization_failed');
+    // Most specific first.
+    expect(
+      tlsAuthorizationCode(authDoc([{ type: 'other' }, { type: 'caa_record' }], 'failed')),
+    ).toBe('tls_caa_conflict');
+    // An unnamed warning only when the caller asks for one.
+    expect(tlsAuthorizationCode(authDoc([{ type: 'dns' }]))).toBeUndefined();
+    expect(tlsAuthorizationCode(authDoc([{ type: 'dns' }]), { generic: true })).toBe(
+      'tls_authorization_warning',
+    );
+    expect(tlsAuthorizationCode({ data: {} })).toBeUndefined();
+  });
+
+  test('a CAA conflict is reported while the poll waits, as a code only', async () => {
+    await serve((c) =>
+      c.path === `/tls/subscriptions/${SUB}`
+        ? api('tls-subscription-caa-warning.json')
+        : defaultReply(c),
+    );
+    fakeDns([acmeRecord()]);
+    const out = await fastlyProvider.pollStep!(cfg, awaitStep(), SUB, subLedger());
+    expect(out).toEqual({
+      status: 'requested',
+      opRef: SUB,
+      resources: [],
+      code: 'tls_caa_conflict',
+    });
+    expect(JSON.stringify(out)).not.toContain('example.org');
+    expect(rec!.calls[0].query).toEqual({ include: 'tls_authorizations' });
+  });
+
+  test('a validation record that is missing, or holds another value, is reported', async () => {
+    await serve();
+    fakeDns();
+    expect(await fastlyProvider.pollStep!(cfg, awaitStep(), SUB, subLedger())).toMatchObject({
+      status: 'requested',
+      code: 'tls_challenge_missing',
+    });
+    fakeDns([acmeRecord('elsewhere.example.net')]);
+    expect(await fastlyProvider.pollStep!(cfg, awaitStep(), SUB, subLedger())).toMatchObject({
+      code: 'tls_challenge_missing',
+    });
+    fakeDns([acmeRecord(`${ACME_TARGET.toUpperCase()}.`)]);
+    expect(await fastlyProvider.pollStep!(cfg, awaitStep(), SUB, subLedger())).toEqual({
+      status: 'requested',
+      opRef: SUB,
+      resources: [],
+    });
+  });
+
+  test('a DNS API that does not answer says nothing about the record', async () => {
+    await serve();
+    const dns = fakeDns();
+    dns.findRecordsByName = async () => {
+      throw new Error('dns api down');
+    };
+    expect(await fastlyProvider.pollStep!(cfg, awaitStep(), SUB, subLedger())).toEqual({
+      status: 'requested',
+      opRef: SUB,
+      resources: [],
+    });
+  });
+
+  test('an unnamed warning is reported only once the wait is long', async () => {
+    const doc = authDoc([{ type: 'something_new', instructions: 'see example.org' }]);
+    await serve((c) =>
+      c.path === `/tls/subscriptions/${SUB}`
+        ? { status: 200, body: doc, contentType: 'application/vnd.api+json' }
+        : defaultReply(c),
+    );
+    fakeDns([acmeRecord()]);
+    const now = Date.now();
+    expect(
+      await fastlyProvider.pollStep!(cfg, awaitStep(), SUB, subLedger(now - 60_000)),
+    ).not.toHaveProperty('code');
+    expect(
+      await fastlyProvider.pollStep!(cfg, awaitStep(), SUB, subLedger(now - TLS_WARNING_GRACE_MS)),
+    ).toMatchObject({ code: 'tls_authorization_warning' });
+  });
+});
+
+// --- versionless domains ---------------------------------------------------------------------
+
+describe('fastly: a new edge gets a versionless domain', () => {
+  const cfgV: FastlyConfig = { ...cfg, domainModel: 'versionless' };
+
+  async function provisionV(): Promise<Ledger> {
+    let ledger: Ledger = { steps: [], resources: [] };
+    for (const step of fastlyProvider.planProvision(cfgV, spec, tpl)) {
+      const out = await fastlyProvider.runStep(cfgV, step, spec, tpl, ledger);
+      ledger = apply(ledger, step, out);
+      if (out.status === 'requested')
+        ledger = apply(ledger, step, await fastlyProvider.pollStep!(cfgV, step, out.opRef, ledger));
+    }
+    return ledger;
+  }
+
+  test('the domain is created on its own, linked to the service, never on a version', async () => {
+    const r = await serve();
+    fakeDns();
+    const ledger = await provisionV();
+    expect(ledger.resources.map((x) => x.kind)).toEqual([
+      'service',
+      'backend',
+      'snippet',
+      'versionless_domain',
+      'ws_product',
+      'active_version',
+      'tls_subscription',
+      'dns_record',
+      'dns_record',
+    ]);
+    const domain = ledger.resources.find((x) => x.kind === 'versionless_domain')!;
+    expect(domain.resourceId).toBe(DM);
+    expect(JSON.parse(domain.meta!)).toEqual({ fqdn: HOST, serviceId: SVC });
+    const create = r.calls.find((c) => c.path === '/domain-management/v1/domains')!;
+    expect(create.method).toBe('POST');
+    expect(create.body).toEqual({ fqdn: HOST, service_id: SVC, description: spec.name });
+    expect(r.calls.some((c) => /\/version\/\d+\/domain/.test(c.path))).toBe(false);
+  });
+
+  test('discovery finds it by its exact name, linked to THIS service only', async () => {
+    const step = fastlyProvider
+      .planProvision(cfgV, spec, tpl)
+      .find((s) => s.kind === 'create_domain')!;
+    const ledger = apply({ steps: [], resources: [] }, step, {
+      status: 'done',
+      resources: [{ kind: 'service', resourceId: SVC, ownership: 'created', meta: { version: 1 } }],
+    });
+    let listing = 'dm-domains-empty.json';
+    const r = await serve((c) =>
+      c.path === '/domain-management/v1/domains' ? ok(listing) : defaultReply(c),
+    );
+    expect(await fastlyProvider.discover(cfgV, step, spec, ledger, 1)).toEqual({
+      status: 'confirmed_absent',
+    });
+    expect(r.calls[0].query).toMatchObject({ fqdn: HOST, fqdn_match: 'exact' });
+    listing = 'dm-domains-list.json';
+    expect(await fastlyProvider.discover(cfgV, step, spec, ledger, 1)).toMatchObject({
+      status: 'found',
+      resources: [{ kind: 'versionless_domain', resourceId: DM }],
+    });
+    // The same name on another service is somebody else's.
+    const other = apply({ steps: [], resources: [] }, step, {
+      status: 'done',
+      resources: [
+        { kind: 'service', resourceId: 'OTHERSVC', ownership: 'created', meta: { version: 1 } },
+      ],
+    });
+    expect(await fastlyProvider.discover(cfgV, step, spec, other, 1)).toMatchObject({
+      status: 'ambiguous',
+    });
+  });
+
+  test('its DNS readiness is the link and the traffic record, with no version check', async () => {
+    let linkedTo = SVC;
+    const r = await serve((c) =>
+      c.path === `/domain-management/v1/domains/${DM}`
+        ? {
+            status: 200,
+            body: { ...(fixture('dm-domain-create.json') as object), service_id: linkedTo },
+          }
+        : defaultReply(c),
+    );
+    fakeDns();
+    const ledger = await provisionV();
+    r.calls.length = 0;
+    expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
+      state: 'active',
+      readiness: { dns: 'ready', certificate: 'ready' },
+      addresses: { hostname: HOST },
+    });
+    expect(r.calls.some((c) => c.path.endsWith('/check'))).toBe(false);
+    linkedTo = 'OTHERSVC';
+    expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
+      state: 'pending',
+      readiness: { dns: 'pending' },
+    });
+  });
+
+  test('destroy deletes it by id once its certificate is gone, before the service', async () => {
+    let deleted = false;
+    const r = await serve((c) =>
+      deleted && c.path.startsWith('/domain-management/') ? NOT_FOUND : defaultReply(c),
+    );
+    fakeDns();
+    const ledger = await provisionV();
+    const plan = fastlyProvider.planDestroy(cfgV, ledger);
+    expect(plan.map(fastlyDestroyKey)).toEqual([
+      'dns_record:traffic',
+      'tls_subscription',
+      'dns_record:acme',
+      'versionless_domain',
+      'active_version',
+      'service',
+      'backend',
+      'snippet',
+      'ws_product',
+    ]);
+    r.calls.length = 0;
+    const domain = plan.find((x) => x.kind === 'versionless_domain')!;
+    expect(await fastlyProvider.runDestroy(cfgV, domain, ledger)).toEqual({
+      status: 'delete_requested',
+    });
+    expect(r.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      `DELETE /domain-management/v1/domains/${DM}`,
+    ]);
+    expect(await fastlyProvider.confirmDestroyed!(cfgV, domain, ledger)).toEqual({
+      status: 'still_present',
+    });
+    deleted = true;
+    expect(await fastlyProvider.confirmDestroyed!(cfgV, domain, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+  });
+
+  test('an edge built with a classic domain is described and destroyed the classic way', async () => {
+    // The adapter reads the LEDGER: a classic edge stays classic whatever the config says.
+    const r = await serve();
+    fakeDns();
+    const ledger = await provision();
+    r.calls.length = 0;
+    await fastlyProvider.describe(cfgV, ledger);
+    expect(r.calls.some((c) => c.path.endsWith(`/domain/${HOST}/check`))).toBe(true);
+    expect(r.calls.some((c) => c.path.startsWith('/domain-management/'))).toBe(false);
+    r.calls.length = 0;
+    for (const resource of fastlyProvider.planDestroy(cfgV, ledger))
+      await fastlyProvider.runDestroy(cfgV, resource, ledger);
+    expect(r.calls.some((c) => c.path.startsWith('/domain-management/'))).toBe(false);
+  });
+
+  test('on a shared service the versionless domain is one delete, with no version workflow', () => {
+    const ledger: Ledger = {
+      steps: [],
+      resources: [
+        {
+          stepId: 'service',
+          kind: 'service',
+          resourceId: SVC,
+          ownership: 'adopted',
+          deleteState: 'present',
+          meta: JSON.stringify({
+            version: 4,
+            activeVersion: 4,
+            name: 'legacy front',
+            shared: true,
+          }),
+        },
+        {
+          stepId: 'domain',
+          kind: 'versionless_domain',
+          resourceId: DM,
+          ownership: 'adopted',
+          deleteState: 'present',
+          meta: JSON.stringify({ fqdn: HOST, serviceId: SVC }),
+        },
+      ],
+    };
+    expect(planSharedTeardown(ledger, 'op-1')).toBeNull();
+    expect(fastlyProvider.planDestroy(cfgV, ledger).map(fastlyDestroyKey)).toEqual([
+      'versionless_domain',
+    ]);
+  });
+
+  test('an import finds a versionless hostname too, and records it as such', async () => {
+    await serve((c) => {
+      if (c.method === 'GET' && c.path === '/domain-management/v1/domains')
+        return c.query.service_id === SVC
+          ? ok('dm-domains-list.json')
+          : ok('dm-domains-empty.json');
+      if (c.method === 'GET' && /\/version\/\d+\/domain$/.test(c.path))
+        return { status: 200, body: [] };
+      return defaultReply(c);
+    });
+    fakeDns();
+    const adopted = await fastlyProvider.inspectForAdoption!(cfgV, SVC, HOST);
+    expect(adopted).toMatchObject({ hostname: HOST, hostnames: [HOST], shared: false });
+    expect(adopted.resources.find((x) => x.kind === 'versionless_domain')).toMatchObject({
+      resourceId: DM,
+      ownership: 'adopted',
+    });
+  });
+});
+
+// --- one wildcard certificate shared by the account -------------------------------------------
+
+describe('fastly: one wildcard certificate per account and zone', () => {
+  const WILD = 'WILDsub0example0org01';
+  const WILD_ACME = 'w1ld9mtt5uzzsw2q.fastly-validations.com';
+  const cfgW: FastlyConfig = { ...cfg, domainModel: 'versionless', certificateScope: 'wildcard' };
+  const HOST2 = 'p9x2v4kd.example.org';
+  const spec2: EdgeSpec = { ...spec, name: 'fcp-relay-o2-feedface', hostname: HOST2 };
+
+  /** A provider that holds the wildcard once ordered, and issues it when told to. */
+  function wildcardProvider() {
+    const state = { ordered: false, issued: false };
+    const route: Route = (c) => {
+      if (c.method === 'GET' && c.path === '/tls/subscriptions')
+        return c.query['filter[tls_domains.id]'] === '*.example.org' && state.ordered
+          ? api('tls-subscriptions-wildcard-list.json')
+          : api('tls-subscriptions-empty.json');
+      if (c.method === 'POST' && c.path === '/tls/subscriptions') {
+        state.ordered = true;
+        return api('tls-subscription-wildcard-create.json');
+      }
+      if (c.method === 'GET' && c.path === `/tls/subscriptions/${WILD}`)
+        return api(
+          state.issued
+            ? 'tls-subscription-wildcard-issued.json'
+            : 'tls-subscription-wildcard-pending.json',
+        );
+      if (c.method === 'GET' && c.path === '/domain-management/v1/domains')
+        return ok('dm-domains-empty.json');
+      if (c.method === 'POST' && c.path === '/domain-management/v1/domains')
+        return {
+          status: 200,
+          body: {
+            ...(fixture('dm-domain-create.json') as object),
+            fqdn: (c.body as { fqdn: string }).fqdn,
+          },
+        };
+      return defaultReply(c);
+    };
+    return { state, route };
+  }
+
+  async function provisionW(
+    s: EdgeSpec,
+    issueAfterOrder?: () => void,
+  ): Promise<{ ledger: Ledger; polls: number }> {
+    let ledger: Ledger = { steps: [], resources: [] };
+    let polls = 0;
+    for (const step of fastlyProvider.planProvision(cfgW, s, tpl)) {
+      const out = await fastlyProvider.runStep(cfgW, step, s, tpl, ledger);
+      ledger = apply(ledger, step, out);
+      if (out.status === 'requested') {
+        issueAfterOrder?.();
+        polls++;
+        ledger = apply(ledger, step, await fastlyProvider.pollStep!(cfgW, step, out.opRef, ledger));
+      }
+    }
+    return { ledger, polls };
+  }
+
+  test('the certificate steps name the zone wildcard and its challenge', () => {
+    const steps = fastlyProvider.planProvision(cfgW, spec, tpl);
+    expect(
+      steps.filter((x) => ['tls', 'acme', 'await-tls'].includes(x.id)).map((x) => x.resourceName),
+    ).toEqual(['*.example.org', '_acme-challenge.example.org', '*.example.org']);
+  });
+
+  test('two edges share ONE subscription and ONE ACME record; the second never waits', async () => {
+    const p = wildcardProvider();
+    const r = await serve(p.route);
+    const dns = fakeDns();
+
+    // The first edge orders the wildcard and waits for it.
+    const a = await provisionW(spec, () => (p.state.issued = true));
+    expect(a.polls).toBe(1);
+    const order = r.calls.filter((c) => c.method === 'POST' && c.path === '/tls/subscriptions');
+    expect(order).toHaveLength(1);
+    expect(order[0].body).toMatchObject({
+      data: {
+        relationships: { tls_domains: { data: [{ type: 'tls_domain', id: '*.example.org' }] } },
+      },
+    });
+    const sub = a.ledger.resources.find((x) => x.kind === 'tls_subscription')!;
+    expect(sub.resourceId).toBe(WILD);
+    expect(JSON.parse(sub.meta!)).toEqual({
+      hostname: '*.example.org',
+      shared: true,
+      wildcard: true,
+    });
+    expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toEqual([
+      expect.objectContaining({ content: WILD_ACME, comment: sharedAcmeMarker(WILD) }),
+    ]);
+
+    // The second edge finds both and finishes the wait at its first look.
+    r.calls.length = 0;
+    const b = await provisionW(spec2);
+    expect(b.polls).toBe(0);
+    expect(
+      r.calls.filter((c) => c.method === 'POST' && c.path === '/tls/subscriptions'),
+    ).toHaveLength(0);
+    expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toHaveLength(1);
+    const bSub = b.ledger.resources.find((x) => x.kind === 'tls_subscription')!;
+    expect(bSub).toMatchObject({ resourceId: WILD, ownership: 'adopted' });
+    const bAcme = b.ledger.resources.find(
+      (x) => x.kind === 'dns_record' && JSON.parse(x.meta!).role === 'acme',
+    )!;
+    expect(JSON.parse(bAcme.meta!)).toMatchObject({ shared: true });
+    // Each edge still has its own front name.
+    expect(dns.rows.filter((x) => x.name === HOST2)).toHaveLength(1);
+
+    // Destroying the first edge leaves the shared certificate and its record.
+    r.calls.length = 0;
+    for (const resource of fastlyProvider.planDestroy(cfgW, a.ledger)) {
+      const out = await fastlyProvider.runDestroy(cfgW, resource, a.ledger);
+      if (resource.kind === 'tls_subscription' || JSON.parse(resource.meta ?? '{}').role === 'acme')
+        expect(out).toEqual({ status: 'confirmed_gone' });
+    }
+    expect(r.calls.some((c) => c.method === 'DELETE' && c.path.startsWith('/tls/'))).toBe(false);
+    expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toHaveLength(1);
+    expect(dns.rows.some((x) => x.name === HOST)).toBe(false);
+    // ... and the second edge still describes as active through it.
+    expect(await fastlyProvider.describe(cfgW, b.ledger)).toMatchObject({
+      readiness: { certificate: 'ready' },
+    });
+    // Confirmation never waits on a shared resource.
+    expect(await fastlyProvider.confirmDestroyed!(cfgW, bSub, b.ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+  });
+
+  test('a lost order response is recognised by name, and never ordered twice', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    const r = await serve(p.route);
+    fakeDns();
+    const step = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_tls_subscription')!;
+    expect(
+      await fastlyProvider.discover(cfgW, step, spec, { steps: [], resources: [] }, 1),
+    ).toMatchObject({
+      status: 'found',
+      resources: [{ kind: 'tls_subscription', resourceId: WILD }],
+    });
+    expect(r.calls[0].query['filter[tls_domains.id]']).toBe('*.example.org');
+    p.state.ordered = false;
+    expect(
+      await fastlyProvider.discover(cfgW, step, spec, { steps: [], resources: [] }, 1),
+    ).toEqual({
+      status: 'confirmed_absent',
+    });
+  });
+
+  test('a wildcard another CA issued is not ours to reuse', async () => {
+    const other = fixture('tls-subscriptions-wildcard-list.json') as {
+      data: Array<{ attributes: Record<string, unknown> }>;
+    };
+    other.data[0]!.attributes.certificate_authority = 'lets-encrypt';
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? { status: 200, body: other, contentType: 'application/vnd.api+json' }
+        : defaultReply(c),
+    );
+    fakeDns();
+    const step = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_tls_subscription')!;
+    const err = (await fastlyProvider
+      .runStep(cfgW, step, spec, tpl, { steps: [], resources: [] })
+      .catch((e: unknown) => e)) as { meta?: { code?: string } };
+    expect(err.meta?.code).toBe('shared_certificate_ambiguous');
+    expect(
+      await fastlyProvider.discover(cfgW, step, spec, { steps: [], resources: [] }, 1),
+    ).toMatchObject({
+      status: 'ambiguous',
+    });
+  });
+
+  test('a record FCP did not write at the challenge name is never taken over', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    await serve(p.route);
+    fakeDns([
+      {
+        id: 'theirs',
+        type: 'CNAME',
+        name: '_acme-challenge.example.org',
+        content: 'acme.example.net',
+        proxied: false,
+        comment: 'their own client',
+      },
+    ]);
+    const steps = fastlyProvider.planProvision(cfgW, spec, tpl);
+    const tls = steps.find((x) => x.kind === 'create_tls_subscription')!;
+    const acme = steps.find((x) => x.kind === 'create_dns_acme')!;
+    const ledger = apply(
+      { steps: [], resources: [] },
+      tls,
+      await fastlyProvider.runStep(cfgW, tls, spec, tpl, { steps: [], resources: [] }),
+    );
+    const err = (await fastlyProvider
+      .runStep(cfgW, acme, spec, tpl, ledger)
+      .catch((e: unknown) => e)) as {
+      meta?: { code?: string };
+    };
+    expect(err.meta?.code).toBe('acme_name_in_use');
+    expect(await fastlyProvider.discover(cfgW, acme, spec, ledger, 1)).toMatchObject({
+      status: 'ambiguous',
+      candidates: [{ resourceId: 'theirs' }],
+    });
+  });
+
+  test('the account reads its shared certificate: absent, waiting with a code, issued until a date', async () => {
+    const p = wildcardProvider();
+    await serve(p.route);
+    fakeDns();
+    expect(await fastlyProvider.sharedCertificate!(cfgW)).toEqual({
+      name: '*.example.org',
+      state: 'absent',
+    });
+    p.state.ordered = true;
+    // Waiting, and its validation record is not in the zone yet.
+    expect(await fastlyProvider.sharedCertificate!(cfgW)).toEqual({
+      name: '*.example.org',
+      subscriptionId: WILD,
+      state: 'processing',
+      code: 'tls_challenge_missing',
+    });
+    p.state.issued = true;
+    expect(await fastlyProvider.sharedCertificate!(cfgW)).toEqual({
+      name: '*.example.org',
+      subscriptionId: WILD,
+      state: 'issued',
+      notAfter: '2026-11-19T10:12:00.000Z',
+    });
+    expect(rec!.calls.at(-1)!.query).toEqual({ include: 'tls_authorizations,tls_certificates' });
+    // A per-host account has no shared certificate at all.
+    expect(await fastlyProvider.sharedCertificate!(cfg)).toBeNull();
   });
 });
