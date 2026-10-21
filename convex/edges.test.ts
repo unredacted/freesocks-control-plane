@@ -3,6 +3,8 @@ import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
+import { EdgeAdmin } from '../src/shared/contracts/edges';
 import {
   createAccount,
   insertPanelServer,
@@ -609,5 +611,82 @@ describe('edges: capacity counts only what FCP provisioned', () => {
     await expect(insertPlanned(t, { relayId, listenerId, accountId, ...plan })).rejects.toThrow(
       /capacity/,
     );
+  });
+});
+
+describe('edges: the admin projection shows what an L7 edge froze', () => {
+  test('front comes from the intent: null for L4 and for an unreadable intent', async () => {
+    const { t, accountId, relayId, listenerId } = await seed();
+    const intent = {
+      hostname: 'abcdefabcdef.example.org',
+      zoneId: 'z'.repeat(32),
+      zoneName: 'example.org',
+      dnsAccountId: accountId as string,
+      tlsConfigurationId: 'tls-1',
+      certificateAuthority: 'certainly',
+      originTransport: {
+        scheme: 'https',
+        certPublic: true,
+        certNames: ['origin.example.org'],
+        acceptsHostHeader: 'any',
+      },
+      originPort: 443,
+      templateHash: 'h1',
+      templateParams: {},
+    };
+    const insert = (name: string, extra: { layer?: 'l4' | 'l7'; provisionIntent?: string }) =>
+      t.run((ctx) =>
+        ctx.db.insert('edges', {
+          relayId,
+          listenerId,
+          accountId,
+          managed: true,
+          name,
+          steps: [],
+          resources: [],
+          listeners: [],
+          addresses: extra.layer === 'l7' ? { hostname: intent.hostname } : { v4: '198.51.100.9' },
+          publication: 'unpublished',
+          status: 'active',
+          statusChangedAt: Date.now(),
+          health: 'unknown',
+          destroyAttempts: 0,
+          updatedAt: Date.now(),
+          ...extra,
+        }),
+      );
+    const front = async (id: Id<'edges'>) => EdgeAdmin.parse(await edgeAdminView(t, { id })).front;
+
+    const fastlyLike = await insert('l7-full', {
+      layer: 'l7',
+      provisionIntent: JSON.stringify(intent),
+    });
+    expect(await front(fastlyLike)).toEqual({
+      zoneName: 'example.org',
+      dnsAccountId: accountId,
+      tlsConfigurationId: 'tls-1',
+      certificateAuthority: 'certainly',
+    });
+    // A front with no DNS account, TLS configuration or authority of its own.
+    const { dnsAccountId: _d, tlsConfigurationId: _t, certificateAuthority: _c, ...bare } = intent;
+    const zoneOnly = await insert('l7-zone', {
+      layer: 'l7',
+      provisionIntent: JSON.stringify(bare),
+    });
+    expect(await front(zoneOnly)).toEqual({
+      zoneName: 'example.org',
+      dnsAccountId: null,
+      tlsConfigurationId: null,
+      certificateAuthority: null,
+    });
+    // Never a guess: no intent, a malformed one, or an L4 edge show nothing.
+    expect(await front(await insert('l7-none', { layer: 'l7' }))).toBeNull();
+    expect(
+      await front(await insert('l7-broken', { layer: 'l7', provisionIntent: '{not json' })),
+    ).toBeNull();
+    expect(await front(await insert('l4', {}))).toBeNull();
+    // An older payload without the field still parses.
+    const { front: _f, ...older } = (await edgeAdminView(t, { id: fastlyLike }))!;
+    expect(EdgeAdmin.parse(older).front).toBeNull();
   });
 });

@@ -52,9 +52,9 @@ const TrustRecord = z
 
 /**
  * One account's place to create edges in (docs/edges.md § "Provider accounts
- * and locations"): the placement (region / zone / project / network, admin
- * data), the provider's own id for the region (`placeKey`), and the trust
- * taken there. A CDN account has one, `anycast`.
+ * and locations"): the placement (region / zone / project / network, or a
+ * CDN's DNS zone; admin data), the provider's own id for the region
+ * (`placeKey`, `anycast` for every CDN zone), and the trust taken there.
  */
 export const EdgeLocationAdmin = z.object({
   id: z.string(),
@@ -78,6 +78,26 @@ export const EdgeLocationAdmin = z.object({
   liveEdges: z.number(),
   costNote: z.string().nullable(),
   inventoryAt: isoN,
+  /** What the last check of this place observed (a CDN zone: `zoneSslMode`, `websockets`, `zoneStatus`). */
+  observed: z.record(z.string(), z.string()).nullable().default(null),
+  observedAt: isoN.default(null),
+  /** The last check refused the place (no new edge is planned there until one passes). */
+  checkError: z.string().nullable().default(null),
+  checkErrorDetail: z.string().nullable().default(null),
+  /** The wildcard certificate the fronts in this zone share, as last read at the provider. */
+  sharedCertificate: z
+    .object({
+      name: z.string(),
+      state: z.string(),
+      code: z.string().nullable(),
+      notAfter: isoN,
+      checkedAt: iso,
+      edges: z.number(),
+      /** An edge of the account ordered it: only then can it be removed (per zone). */
+      orderedByFcp: z.boolean().default(false),
+    })
+    .nullable()
+    .default(null),
   createdAt: iso,
   updatedAt: iso,
 });
@@ -93,6 +113,15 @@ export const EdgeLocationCreateRequest = z.object({
 });
 export type EdgeLocationCreateRequest = z.infer<typeof EdgeLocationCreateRequest>;
 export const EdgeLocationCreateResponse = z.object({ id: z.string(), created: z.boolean() });
+
+/** POST …/providers/{id}/locations/{locationId}/check: the provider asked about the place again. */
+export const EdgeLocationCheckResponse = z.object({
+  ok: z.boolean(),
+  code: z.string().optional(),
+  detail: z.string().optional(),
+  observed: z.record(z.string(), z.string()).optional(),
+});
+export type EdgeLocationCheckResponse = z.infer<typeof EdgeLocationCheckResponse>;
 
 /** PATCH …/providers/{id}/locations/{locationId}. */
 export const EdgeLocationUpdateRequest = z.object({
@@ -110,7 +139,7 @@ export const EdgeProviderAccountAdmin = z.object({
   id: z.string(),
   provider: EdgeProviderId,
   name: z.string(),
-  /** The account's own settings (identifiers, the L7 zone or DNS account); never a placement. */
+  /** The account's own settings (identifiers, intent defaults); never a place (that is a location's). */
   settings: z.record(z.string(), z.unknown()),
   /** Defaults for the provider's certificate options, copied into a node when it is protected. */
   optionDefaults: z.record(z.string(), z.unknown()).default({}),
@@ -244,7 +273,7 @@ export const EdgeProviderAccountsResponse = z.object({
 });
 export type EdgeProviderAccountsResponse = z.infer<typeof EdgeProviderAccountsResponse>;
 
-/** POST …/providers/{id}/shared-certificate/remove: whether a certificate was there to delete. */
+/** POST …/providers/{id}/locations/{loc}/shared-certificate/remove: whether a certificate was there to delete. */
 export const EdgeSharedCertificateRemoveResponse = z.object({
   ok: z.literal(true),
   removed: z.boolean(),
@@ -277,7 +306,12 @@ export const EdgeRotateCredentialsResponse = z.union([
 ]);
 export type EdgeRotateCredentialsResponse = z.infer<typeof EdgeRotateCredentialsResponse>;
 
-const DiscoverOption = z.object({ id: z.string(), label: z.string() });
+const DiscoverOption = z.object({
+  id: z.string(),
+  label: z.string(),
+  /** Short facts shown next to the choice (a zone's `status`). */
+  facts: z.record(z.string(), z.string()).optional(),
+});
 /**
  * POST …/providers/discover (the account form, credentials + partial settings)
  * and POST …/providers/{id}/locations/options (the location form, a stored
@@ -295,8 +329,39 @@ export const EdgeDiscoverResponse = z.object({
   errors: z.record(z.string(), z.string()).optional(),
   /** Per failed list, the provider's (redacted) answer. */
   errorDetails: z.record(z.string(), z.string()).optional(),
+  /** Lists that stopped at their cap (more exist than are listed). */
+  truncated: z.array(z.string()).optional(),
 });
 export type EdgeDiscoverResponse = z.infer<typeof EdgeDiscoverResponse>;
+
+/** One kind of what an account's credentials reach, as last listed. */
+export const EdgeCatalogEntry = z.object({
+  items: z.array(DiscoverOption),
+  truncated: z.boolean(),
+  refreshedAt: z.number().nullable(),
+  error: z.string().nullable(),
+  errorDetail: z.string().nullable(),
+});
+export type EdgeCatalogEntry = z.infer<typeof EdgeCatalogEntry>;
+
+/**
+ * GET …/providers/{id}/catalog: what the account's credentials reach (its
+ * zones, regions, projects, TLS configurations), the location pickers' menu.
+ * POST …/catalog/refresh lists it again (`{refreshed: false}` when it just was).
+ */
+export const EdgeCatalogView = z.object({
+  accountId: z.string(),
+  kinds: z.object({
+    zones: EdgeCatalogEntry.optional(),
+    regions: EdgeCatalogEntry.optional(),
+    projects: EdgeCatalogEntry.optional(),
+    tlsConfigurations: EdgeCatalogEntry.optional(),
+  }),
+  /** A picker asks for a refresh when the catalog is older than this. */
+  staleAfterMs: z.number(),
+});
+export type EdgeCatalogView = z.infer<typeof EdgeCatalogView>;
+export const EdgeCatalogRefreshResponse = z.object({ refreshed: z.boolean() });
 
 export const EdgeInventory = z.object({
   loadBalancers: z.array(
@@ -783,6 +848,21 @@ export const EdgeAdmin = z.object({
   ),
   addresses: EdgeAddresses,
   layer: EdgeLayer.default('l4'),
+  /**
+   * What an L7 edge froze about its front when it was planned (its intent):
+   * the zone, the DNS account writing its records (an account id), the TLS
+   * configuration (null = the provider's default) and the certificate
+   * authority. Null for an L4 edge or one without a readable intent.
+   */
+  front: z
+    .object({
+      zoneName: z.string(),
+      dnsAccountId: z.string().nullable(),
+      tlsConfigurationId: z.string().nullable(),
+      certificateAuthority: z.string().nullable(),
+    })
+    .nullable()
+    .default(null),
   readiness: z
     .object({
       dns: z.enum(['ready', 'pending', 'failed', 'unknown']),
@@ -2096,6 +2176,12 @@ export const SetupPlanLocation = z.object({
   compatible: z.boolean(),
   /** `SETUP_ACCOUNT_REASONS` codes. */
   reasons: z.array(z.string()),
+  /**
+   * Why a front on the account's default certificate gets none here (a
+   * `SETUP_ACCOUNT_REASONS` code: CAA, the zone's wildcard). The location stays
+   * pickable: a node may choose another certificate under its Options.
+   */
+  certificateRefusal: z.string().nullable().default(null),
 });
 export type SetupPlanLocation = z.infer<typeof SetupPlanLocation>;
 export const SetupPlanAccount = z.object({

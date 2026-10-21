@@ -347,6 +347,14 @@ const ERROR_WORDS: Record<string, string> = {
     "The profile has no usable transport for the new mode yet. Add it with Add a transport on a node's page (its tag is the group name in capitals), then add the mode.",
   'servers.origin_zone_in_use':
     'WebSocket nodes have origin names in this zone. Keep it (another account holding the same zone is fine), or retire those nodes first.',
+  'servers.origin_account_unusable':
+    'Origin names need a DNS account that is switched on. Switch it on under Edges, Providers, or pick another account.',
+  'servers.origin_zone_required':
+    'This account reaches several zones. Pick the one for origin names.',
+  'servers.origin_zone_unknown':
+    'That zone is not one this account reaches. Refresh its zones, then pick it again.',
+  'servers.origin_zone_inactive':
+    'That zone is not active at its provider yet. Finish setting it up there, or pick another zone.',
   'servers.modes_invalid': 'The modes are not usable. Check their names and shapes.',
   'servers.mode_unknown':
     'No such connection mode exists yet, or this backend is not set up for it. Add it under Connection modes first.',

@@ -34,7 +34,9 @@ import {
   type Values,
 } from './lib/edges/providers/options';
 import { canonicalJson } from './lib/edges/providers/template';
-import { parseObservedSettings } from './lib/edges/intent';
+import { l7PlaceOf } from './lib/edges/l7Place';
+import { certificateRefusalFor, type CertificateRefusal } from './lib/edges/certificateRefusal';
+import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { assertAdmission } from './lib/edges/maintenance';
 import { parseRegionalParams, withRegionalOverlay } from './lib/edges/locations';
 
@@ -212,20 +214,28 @@ export async function resolveBuildFor(
 }
 
 /**
- * The plan of the Cloudflare zone an account's DNS records go to (its own
- * zone, or its DNS account's), as the last credential test read it; null when
- * none did.
+ * The plan of the Cloudflare zone a location's DNS records go to (the
+ * location's zone), as its last check read it; null when none did or the
+ * place is not a zone.
  */
 export async function zonePlanOf(
   db: import('./_generated/server').DatabaseReader,
   account: Doc<'edgeProviderAccounts'>,
+  location: Doc<'edgeLocations'>,
 ): Promise<string | null> {
-  const settings = account.settings as { zoneName?: string; dnsAccountId?: string };
-  let host: Doc<'edgeProviderAccounts'> | null = account;
-  if (!settings.zoneName && settings.dnsAccountId)
-    host = await db.get(settings.dnsAccountId as Doc<'edgeProviderAccounts'>['_id']);
-  return parseObservedSettings(host?.observedSettings).zonePlan ?? null;
+  if (edgeLayerOf(account.provider) !== 'l7') return null;
+  return (await l7PlaceOf(db, account, location)).observed?.zonePlan ?? null;
 }
+
+/** A pick's certificate refusal, in words for the protect sheet. */
+const CERTIFICATE_REFUSAL_WORDS: Record<CertificateRefusal, string> = {
+  caa_forbids_ca:
+    "Certificate: the zone's CAA records do not let the account's certificate authority issue; choose another authority for this node, or allow it in the zone",
+  shared_certificate_failed:
+    "Certificate: the zone's shared wildcard failed to issue; choose one certificate per front, or fix it at the provider",
+  shared_certificate_ambiguous:
+    "Certificate: the zone's wildcard is covered by a certificate this account would not order (another authority, or several); remove it or choose one certificate per front",
+};
 
 /** Whether a node serves a REALITY transport (an L4 front's HTTP check would fail on it). */
 export async function relayHasReality(
@@ -256,7 +266,7 @@ export async function checkPickOptions(
   | {
       ok: true;
       options: Values;
-      /** The pick's certificate, when it is not what the account's credential test checked. */
+      /** The pick's certificate, when it is not what the location's check covered (the account's defaults). */
       certificateToCheck: Values | null;
     }
   | { ok: false; code: string; issues: string[] }
@@ -280,7 +290,7 @@ export async function checkPickOptions(
   // What this place cannot do (its transports, its zone's plan).
   const problems = contextProblems(account.provider, built.params, {
     realityL4: context.realityL4,
-    zonePlan: await zonePlanOf(ctx.db, account),
+    zonePlan: await zonePlanOf(ctx.db, account, location),
   });
   if (problems.length > 0) return { ok: false, code: 'edge.option_invalid', issues: problems };
   const tested = certificateValuesFor(account.provider, accountOptionDefaultsOf(account), null);
@@ -297,15 +307,12 @@ export async function checkPickOptions(
           `Certificate authority: the shared wildcard is issued by the account's authority (${String(tested.certificateAuthority)}); to use another, choose one certificate per front`,
         ],
       };
-    if (account.sharedCertificate?.state === 'ambiguous')
-      return {
-        ok: false,
-        code: 'edge.shared_certificate_ambiguous',
-        issues: [
-          "Certificate: the zone's wildcard is covered by a certificate this account would not order (another authority, or several); remove it or choose one certificate per front",
-        ],
-      };
   }
+  // What the zone says about this pick's certificate (the zone's check for the
+  // account's default one, the zone's wildcard for a node that chose it).
+  const refusal = certificateRefusalFor(account, location, options);
+  if (refusal)
+    return { ok: false, code: `edge.${refusal}`, issues: [CERTIFICATE_REFUSAL_WORDS[refusal]] };
   return {
     ok: true,
     options,

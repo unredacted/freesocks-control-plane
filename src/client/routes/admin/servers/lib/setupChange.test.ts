@@ -37,19 +37,18 @@ const view = (over: Partial<BackendSetupView> = {}): BackendSetupView =>
     updatedAt: '2026-10-20T00:00:00.000Z',
     ...over,
   });
-const accounts = [
-  { id: 'acct-1', name: 'DNS one', zoneName: 'example.org' },
-  { id: 'acct-2', name: 'DNS two', zoneName: 'example.org' },
-  { id: 'acct-3', name: 'DNS three', zoneName: 'example.net' },
+/** The zones the sheet lists: acct-1 and acct-2 both reach example.org (the same zone id). */
+const zones = [
+  { id: 'zone-org', name: 'example.org' },
+  { id: 'zone-net', name: 'example.net' },
 ];
+const inOrg = { accountId: 'acct-1', zoneId: 'zone-org', zoneName: 'example.org' };
 
 describe('the change sheet starts from the current setup', () => {
   test('every mode exactly as it was asked for, so an unchanged mode reads unchanged to the server', () => {
-    const input = setupInputOf(
-      view({ originDns: { accountId: 'acct-1', zoneName: 'example.org' } }),
-    )!;
+    const input = setupInputOf(view({ originDns: inOrg }))!;
     expect(input.profileName).toBe('FreeSocks-Config');
-    expect(input.originDns).toEqual({ accountId: 'acct-1' });
+    expect(input.originDns).toEqual({ accountId: 'acct-1', zoneId: 'zone-org' });
     // What the server's own schema makes of it is what was set up.
     const parsed = BackendSetupInput.parse({ ...input, adopt: false });
     expect(parsed.modes.map((m) => [m.slug, m.familySlug ?? null, m.ws ?? null])).toEqual([
@@ -70,7 +69,11 @@ describe('what a change does, said before it runs', () => {
   const modes = setupInputOf(view())!.modes;
 
   test('adding origin names is recorded at once and touches no node', () => {
-    const w = setupChangeWords(view(), { modes, originAccountId: 'acct-1' }, accounts);
+    const w = setupChangeWords(
+      view(),
+      { modes, origin: { accountId: 'acct-1', zoneId: 'zone-org' } },
+      zones,
+    );
     expect(w.changed).toBe(true);
     expect(w.lines).toEqual(['WebSocket nodes get their origin names under example.org.']);
     expect(w.effect).toBe(
@@ -79,18 +82,59 @@ describe('what a change does, said before it runs', () => {
   });
 
   test('another account for the same zone, another zone, or none', () => {
-    const current = view({ originDns: { accountId: 'acct-1', zoneName: 'example.org' } });
-    expect(setupChangeWords(current, { modes, originAccountId: 'acct-2' }, accounts).lines).toEqual(
-      ['Origin names stay under example.org, through another account.'],
-    );
-    expect(setupChangeWords(current, { modes, originAccountId: 'acct-3' }, accounts).lines).toEqual(
-      ['Origin names move from example.org to example.net.'],
-    );
-    const none = setupChangeWords(current, { modes, originAccountId: '' }, accounts);
+    const current = view({ originDns: inOrg });
+    const to = (accountId: string, zoneId: string) =>
+      setupChangeWords(current, { modes, origin: { accountId, zoneId } }, zones);
+    expect(to('acct-2', 'zone-org').lines).toEqual([
+      'Origin names stay under example.org, through another account.',
+    ]);
+    expect(to('acct-3', 'zone-net').lines).toEqual([
+      'Origin names move from example.org to example.net.',
+    ]);
+    const none = setupChangeWords(current, { modes, origin: null }, zones);
     expect(none.lines[0]).toMatch(/^No zone for origin names any more/);
     expect(none.effect).toBe(
       'Recorded at once as generation 2. Nothing on the backend changes, and no node that has a name or serves members is touched.',
     );
+  });
+
+  test('the same account with another of its zones is another zone', () => {
+    const current = view({ originDns: inOrg });
+    const w = setupChangeWords(
+      current,
+      { modes, origin: { accountId: 'acct-1', zoneId: 'zone-net' } },
+      zones,
+    );
+    expect(w.changed).toBe(true);
+    expect(w.lines).toEqual(['Origin names move from example.org to example.net.']);
+    expect(w.effect).toContain('gets one under example.net');
+    // A zone the lists do not show is named from the view, else not named at all.
+    const unlisted = (accountId: string, zoneId: string) =>
+      setupChangeWords(current, { modes, origin: { accountId, zoneId } }, []).lines;
+    expect(unlisted('acct-2', 'zone-org')).toEqual([
+      'Origin names stay under example.org, through another account.',
+    ]);
+    expect(unlisted('acct-1', 'zone-net')).toEqual([
+      'Origin names move from example.org to another zone.',
+    ]);
+  });
+
+  test('the current zone through the current account changes nothing', () => {
+    const current = view({ originDns: inOrg });
+    const w = setupChangeWords(
+      current,
+      { modes, origin: { accountId: 'acct-1', zoneId: 'zone-org' } },
+      zones,
+    );
+    expect(w).toMatchObject({ changed: false, lines: [] });
+  });
+
+  test('an account whose zone is not picked yet changes nothing until it is', () => {
+    const current = view({ originDns: inOrg });
+    for (const accountId of ['acct-1', 'acct-3'])
+      expect(
+        setupChangeWords(current, { modes, origin: { accountId, zoneId: '' } }, zones),
+      ).toMatchObject({ changed: false, lines: [] });
   });
 
   test('an added mode runs the setup again and says what stays', () => {
@@ -107,9 +151,9 @@ describe('what a change does, said before it runs', () => {
             acceptProxyProtocol: false,
           },
         ],
-        originAccountId: '',
+        origin: null,
       },
-      accounts,
+      zones,
     );
     expect(w.lines).toEqual(['Adds the mode Freedom-Extra (REALITY, fronted through an edge).']);
     expect(w.effect).toMatch(/^The setup runs again as generation 4\. /);
@@ -131,8 +175,8 @@ describe('what a change does, said before it runs', () => {
     expect([...setUpSlugs(stopped)]).not.toContain('freedom-xhttp');
     const w = setupChangeWords(
       stopped,
-      { modes: modes.filter((m) => m.slug !== 'freedom-xhttp'), originAccountId: '' },
-      accounts,
+      { modes: modes.filter((m) => m.slug !== 'freedom-xhttp'), origin: null },
+      zones,
     );
     expect(w.lines).toEqual(['Takes out the mode Freedom-XHTTP, which was never set up.']);
     expect(w.effect).toBe(
@@ -141,17 +185,22 @@ describe('what a change does, said before it runs', () => {
   });
 
   test('the same setup changes nothing', () => {
-    const w = setupChangeWords(view(), { modes, originAccountId: '' }, accounts);
+    const w = setupChangeWords(view(), { modes, origin: null }, zones);
     expect(w).toMatchObject({ changed: false, lines: [] });
   });
 
   test('no em-dashes in any of it', () => {
     const all = [
-      setupChangeWords(view(), { modes, originAccountId: 'acct-1' }, accounts),
       setupChangeWords(
-        view({ originDns: { accountId: 'acct-1', zoneName: 'example.org' } }),
-        { modes, originAccountId: '' },
-        accounts,
+        view(),
+        { modes, origin: { accountId: 'acct-1', zoneId: 'zone-org' } },
+        zones,
+      ),
+      setupChangeWords(view({ originDns: inOrg }), { modes, origin: null }, zones),
+      setupChangeWords(
+        view({ originDns: inOrg }),
+        { modes, origin: { accountId: 'acct-2', zoneId: 'zone-org' } },
+        zones,
       ),
     ].flatMap((w) => [...w.lines, w.effect, w.done]);
     for (const s of [...all, setupSummary(view())]) expect(s).not.toMatch(/—/);
@@ -168,7 +217,7 @@ describe('the setup line on the Servers home', () => {
         view({
           generation: 2,
           adopted: true,
-          originDns: { accountId: 'acct-1', zoneName: 'example.org' },
+          originDns: inOrg,
         }),
       ),
     ).toBe('Adopted and set up for 4 modes (generation 2). Origin names under example.org.');

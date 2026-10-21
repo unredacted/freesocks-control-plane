@@ -1733,17 +1733,36 @@ describe('edgeSetupRuns: a certificate wait the run is waiting on', () => {
   });
 });
 
-describe('edgeSetupRuns: an account whose fronts could get no certificate', () => {
-  test('the plan names it, and a run stops at its first stage instead of provisioning', async () => {
+describe('edgeSetupRuns: a zone whose fronts could get no certificate', () => {
+  test('the plan names it on the zone, and a run stops at its first stage instead of provisioning', async () => {
     const { t, serverId, accountId } = await seed();
     const { runId } = await startRun(t, serverId, accountId);
-    // The account's next credential test ends on the CAA preflight.
-    await t.run((ctx) => ctx.db.patch(accountId, { lastTestError: 'caa_forbids_ca' }));
-    const plan = await planFor(t, serverId);
-    expect(plan.accounts.find((a) => a.id === accountId)).toMatchObject({
-      compatible: false,
-      reasons: ['caa_forbids_ca'],
+    // The zone's next check ends on the CAA preflight.
+    await t.run(async (ctx) => {
+      for (const l of await ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', accountId))
+        .collect())
+        await ctx.db.patch(l._id, { checkError: 'caa_forbids_ca' });
     });
+    const plan = await planFor(t, serverId);
+    const offered = plan.accounts.find((a) => a.id === accountId)!;
+    // Named on the zone, which stays pickable: a node may choose another
+    // certificate there under its Options (its pick check judges it).
+    expect(offered).toMatchObject({ compatible: true });
+    expect((offered.locations ?? []).every((l) => l.certificateRefusal === 'caa_forbids_ca')).toBe(
+      true,
+    );
+    // A pick on the account's own certificate is refused by the plan.
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const picked = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id as string],
+    });
+    expect(picked.set?.problems).toEqual([
+      expect.objectContaining({ locationId: loc._id, reason: 'edge.caa_forbids_ca' }),
+    ]);
     const r = await pump(t, runId, settled);
     expect(r.need).toMatchObject({ code: 'account_incompatible', detail: 'caa_forbids_ca' });
     const relay = r.relayId ? await t.run((ctx) => ctx.db.get(r.relayId!)) : null;

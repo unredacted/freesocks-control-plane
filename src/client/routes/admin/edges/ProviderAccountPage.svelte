@@ -22,12 +22,7 @@
   import * as Tabs from '@client/components/ui/tabs';
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '../../../lib/api';
-  import {
-    DNS_ACCOUNT_BLURB,
-    EDGE_PROVIDER_META,
-    providerGroups,
-  } from '../../../lib/edgeProviderMeta';
-  import { EDGE_PROVIDER_IDS } from '@shared/contracts/edges';
+  import { DNS_ACCOUNT_BLURB, EDGE_PROVIDER_META } from '../../../lib/edgeProviderMeta';
   import { router } from '../../../stores/router.svelte';
   import { searchParam } from '../../../lib/urlState.svelte';
   import {
@@ -37,7 +32,6 @@
     providersQuery,
     providersUsageQuery,
     templatesQuery,
-    removeSharedCertificate,
     updateProvider,
   } from '../../../lib/edgesApi';
   import AdminListState from '../AdminListState.svelte';
@@ -58,6 +52,7 @@
   import LimitsCard from './providers/LimitsCard.svelte';
   import LocationsCard from './providers/LocationsCard.svelte';
   import OptionDefaultsCard from './providers/OptionDefaultsCard.svelte';
+  import ReachCard from './providers/ReachCard.svelte';
   import QualifyDialog from './providers/QualifyDialog.svelte';
   import RenameDialog from './providers/RenameDialog.svelte';
   import RotateCredentialsDialog from './providers/RotateCredentialsDialog.svelte';
@@ -65,7 +60,6 @@
     isTested,
     observedRows as observedRowsOf,
     settingRows,
-    sharedCertificateWords,
     testWords,
   } from './providers/accountWords';
   import { useAccountActions } from './providers/useAccountActions.svelte';
@@ -129,30 +123,13 @@
     a ? (providers.data?.credentialFields[a.provider] ?? Object.keys(a.credentialsSet)) : [],
   );
 
-  // --- DNS account -----------------------------------------------------------------------------------
+  // --- DNS accounts (a front writes its records through one) ---------------------------------------
   const needsDns = $derived(a ? EDGE_PROVIDER_META[a.provider].needsDnsAccount : false);
-  const dnsCandidates = $derived(others.filter((x) => EDGE_PROVIDER_META[x.provider].providesDns));
-  const firstDnsProvider = providerGroups(EDGE_PROVIDER_IDS).find((g) => g.id === 'dns')
-    ?.providers[0];
-  const currentDns = $derived(
-    a && typeof a.settings.dnsAccountId === 'string' ? a.settings.dnsAccountId : null,
-  );
-  let dnsChoice = $state<string | null>(null);
-  let dnsOpen = $state(false);
-  async function saveDns() {
-    if (!a || !dnsChoice) return;
-    await updateProvider(a.id, { settings: { ...a.settings, dnsAccountId: dnsChoice } });
-    invalidateProviders(qc);
-    toast.success('DNS account changed');
-    dnsChoice = null;
-  }
+  const dnsAccountsExist = $derived(others.some((x) => EDGE_PROVIDER_META[x.provider].providesDns));
 
   // --- certificates (a provider whose fronts can share one wildcard) ---------------------------------
   const sharesCertificates = $derived(
     a ? EDGE_PROVIDER_META[a.provider].sharedCertificates : false,
-  );
-  const sharedWords = $derived(
-    a?.sharedCertificate ? sharedCertificateWords(a.sharedCertificate) : null,
   );
   // The provider's certificate options (the account's defaults for its nodes).
   const certificateFields = $derived(
@@ -162,25 +139,6 @@
         )
       : [],
   );
-  // A wildcard FCP ordered that no live front uses any more can be removed at
-  // the provider (and must be before the account is deleted): FCP never removes
-  // it by itself, and never removes one it only found there.
-  // `ambiguous` counts when FCP ordered it (another authority than the account's now).
-  const REMOVABLE = ['pending', 'processing', 'issued', 'renewing', 'failed', 'ambiguous'];
-  const sharedRemovable = $derived(
-    !!a?.sharedCertificate &&
-      a.sharedCertificate.orderedByFcp &&
-      a.sharedCertificate.edges === 0 &&
-      REMOVABLE.includes(a.sharedCertificate.state),
-  );
-  let removeSharedOpen = $state(false);
-  async function removeShared() {
-    if (!a) return;
-    await removeSharedCertificate(a.id);
-    invalidateProviders(qc);
-    toast.success('Shared certificate removed');
-  }
-
   // How a new front's name is attached to its service (absent = its own domain).
   const domainsNow = $derived(
     a && a.settings.domainModel === 'classic' ? 'classic' : 'versionless',
@@ -378,78 +336,15 @@
         </Card>
       </div>
 
-      {#if needsDns}
-        <Card>
-          <CardHeader>
-            <CardTitle class="text-base">DNS account</CardTitle>
-            <CardDescription>
-              The hostnames of this provider's edges, and their certificate challenges, are written
-              into the zone of a DNS account.
-            </CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-3">
-            {#if dnsCandidates.length === 0}
-              <p class="text-sm">
-                This account needs a DNS account first, and none exists yet.
-                <Link
-                  href={edgesPaths.providers({ edit: 'new', provider: firstDnsProvider })}
-                  class="text-primary underline underline-offset-4">Add a DNS account</Link
-                >.
-              </p>
-            {:else}
-              <div class="max-w-md space-y-1.5">
-                <Label for="acct-dns">Writes DNS through</Label>
-                <Select.Root
-                  type="single"
-                  value={dnsChoice ?? currentDns ?? ''}
-                  onValueChange={(v) => (dnsChoice = v === currentDns ? null : v)}
-                >
-                  <Select.Trigger id="acct-dns" class="w-full">
-                    {dnsCandidates.find((x) => x.id === (dnsChoice ?? currentDns))?.name ??
-                      (currentDns ? 'An account that was removed' : 'Choose an account')}
-                  </Select.Trigger>
-                  <Select.Content>
-                    {#each dnsCandidates as d (d.id)}
-                      <Select.Item value={d.id}>{d.name} ({providerLabel(d.provider)})</Select.Item>
-                    {/each}
-                  </Select.Content>
-                </Select.Root>
-              </div>
-              <div class="flex justify-end">
-                <Button disabled={dnsChoice === null} onclick={() => (dnsOpen = true)}>
-                  Change DNS account
-                </Button>
-              </div>
-            {/if}
-          </CardContent>
-        </Card>
-      {/if}
+      <ReachCard account={a} dnsAccountsExist={!needsDns || dnsAccountsExist} />
 
       {#if certificateFields.length > 0}
         <OptionDefaultsCard account={a} fields={certificateFields}>
-          {#if a.sharedCertificate && sharedWords}
-            <div class="space-y-1">
-              <div class="text-xs text-muted-foreground">Shared certificate</div>
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="font-mono text-sm">{a.sharedCertificate.name}</span>
-                <Badge variant={sharedWords.tone}>{sharedWords.label}</Badge>
-              </div>
-              <p class="text-xs text-muted-foreground">{sharedWords.detail}</p>
-              {#if sharedRemovable}
-                <Button size="sm" variant="outline" onclick={() => (removeSharedOpen = true)}>
-                  Remove shared certificate
-                </Button>
-              {:else if !a.sharedCertificate.orderedByFcp}
-                <p class="text-xs text-muted-foreground">
-                  FCP found this certificate at the provider and reuses it. It removes only
-                  certificates its own fronts ordered.
-                </p>
-              {/if}
-            </div>
-          {:else if sharesCertificates && a.optionDefaults.certificateScope === 'wildcard'}
+          {#if sharesCertificates}
             <p class="text-xs text-muted-foreground">
-              The shared certificate is read at the provider when the account is tested, and ordered
-              by the first new front.
+              Each zone has its own shared certificate, shown with the zone under Locations. It is
+              read at the provider when the account is tested, and ordered by the first new front
+              there.
             </p>
           {/if}
         </OptionDefaultsCard>
@@ -495,7 +390,7 @@
         </Card>
       {/if}
 
-      <LocationsCard account={a} />
+      <LocationsCard account={a} {accountNames} />
 
       <CountriesCard account={a} />
 
@@ -618,20 +513,6 @@
   />
   <RenameDialog bind:open={renameOpen} account={a} taken={others.map((x) => x.name)} />
   <RotateCredentialsDialog bind:open={rotateOpen} account={a} {credentialFields} />
-  <ConfirmDialog
-    bind:open={dnsOpen}
-    title="Change the DNS account?"
-    body="New edges of this account will get their DNS records through the account you picked. The account loses its qualification and must be tested and qualified again. Existing edges keep the records they have."
-    confirmLabel="Change DNS account"
-    onConfirm={saveDns}
-  />
-  <ConfirmDialog
-    bind:open={removeSharedOpen}
-    title="Remove the shared certificate?"
-    body="The wildcard certificate is deleted at the provider, with the validation record FCP wrote for it. No live front uses it now; a later front of this account on the wildcard orders a new one and waits for it to be issued."
-    confirmLabel="Remove certificate"
-    onConfirm={removeShared}
-  />
   <ConfirmDialog
     bind:open={domainsOpen}
     title="Change how fronts get their names?"

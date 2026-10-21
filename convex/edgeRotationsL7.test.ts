@@ -195,14 +195,18 @@ async function seed(opts: { autoSelect?: boolean; zoneSslMode?: string } = {}) {
     credentials: { apiToken: 'cf' },
   });
   await t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true });
-  // The zone's encryption mode is what the credential test OBSERVED; planning
-  // refuses without it (`zone_mode_unknown`), never guesses one.
-  await t.run((ctx) =>
-    ctx.db.patch(accountId, {
-      observedSettings: JSON.stringify({ zoneSslMode: opts.zoneSslMode ?? 'full' }),
+  // The zone's encryption mode is what the zone location's check OBSERVED;
+  // planning refuses without it (`zone_mode_unknown`), never guesses one.
+  await t.run(async (ctx) => {
+    const [zone] = await ctx.db
+      .query('edgeLocations')
+      .withIndex('by_account', (q) => q.eq('accountId', accountId))
+      .collect();
+    await ctx.db.patch(zone._id, {
+      observed: JSON.stringify({ zoneSslMode: opts.zoneSslMode ?? 'full' }),
       observedAt: Date.now(),
-    }),
-  );
+    });
+  });
   const { relayId, listenerId } = await register(t, [listenerW()]);
   // The credential the qualification session authenticates with.
   await t.run((ctx) => ctx.db.patch(relayId, { qualificationUserId: QUALIFY_UUID }));
@@ -370,7 +374,7 @@ describe('edgeRotations: an L7 edge end to end', () => {
     expect(origin.publishedEdgeIds).toEqual([]);
   });
 
-  test('the intent is FROZEN: the account may move mid-rotation and the edge does not', async () => {
+  test('the intent is FROZEN: the location may move mid-rotation and the edge does not', async () => {
     vi.useFakeTimers();
     const adapter = fakeL7();
     fakePanel();
@@ -390,14 +394,19 @@ describe('edgeRotations: an L7 edge end to end', () => {
       (await t.query(internal.edges.get, { id: planned.toEdgeId! }))!.provisionIntent!,
     ) as { hostname: string; zoneId: string; zoneName: string };
     expect(frozen.zoneName).toBe(ZONE);
-    // The operator repoints the account at another zone while the run is in
-    // flight. Nothing about this edge may follow: its records live in the old one.
-    await t.run((ctx) =>
-      ctx.db.patch(accountId, {
-        settings: { type: 'cloudflare', zoneId: 'b'.repeat(32), zoneName: 'moved.example' },
+    // The account's place moves to another zone while the run is in flight
+    // (written straight to the row: the API never edits a placement). Nothing
+    // about this edge may follow: its records live in the old one.
+    await t.run(async (ctx) => {
+      const [zone] = await ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', accountId))
+        .collect();
+      await ctx.db.patch(zone._id, {
+        placement: { type: 'cloudflare', zoneId: 'b'.repeat(32), zoneName: 'moved.example' },
         updatedAt: Date.now(),
-      }),
-    );
+      });
+    });
     await drain(t, rotationId);
     const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('done');
@@ -442,6 +451,130 @@ describe('edgeRotations: an L7 edge end to end', () => {
     await expect(t.mutation(internal.relays.publishEdge, { relayId, edgeId })).rejects.toThrow(
       /front_qualification_stale/,
     );
+  });
+});
+
+describe('edgeRotations: every zone the account reaches is a place; automatic work stays in the picked one', () => {
+  afterEach(() => {
+    __setEdgeProviderForTests('cloudflare', null);
+    __setFrontChecker(null);
+    vi.useRealTimers();
+  });
+
+  test("an automatic provision mints its name in the zone the node's set picked, never in another trusted zone", async () => {
+    vi.useFakeTimers();
+    fakeL7();
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    const { t, accountId, relayId, listenerId } = await seed();
+    const [first] = await t.query(internal.edgeLocations.listForAccount, { accountId });
+    // A second zone the same token reaches, checked and trusted too.
+    const second = await t.mutation(internal.edgeLocations.create, {
+      accountId,
+      placement: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    await t.mutation(internal.edgeLocations.setQualified, {
+      id: second.id as Id<'edgeLocations'>,
+      qualified: true,
+    });
+    const provisionIn = async (locationId: string) => {
+      await t.run((ctx) =>
+        ctx.db.patch(relayId, {
+          providerSet: [{ locationId: locationId as Id<'edgeLocations'>, addedAt: Date.now() }],
+        }),
+      );
+      const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'provision',
+        trigger: 'reconcile',
+        listenerId,
+        publishOnDone: false,
+      });
+      await drain(t, rotationId);
+      const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+      expect(r.phase).toBe('done');
+      const edge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+      return {
+        locationId: edge.locationId as string,
+        zoneName: JSON.parse(edge.provisionIntent!).zoneName as string,
+        hostname: edge.addresses.hostname!,
+      };
+    };
+    expect(await provisionIn(first.id)).toMatchObject({
+      locationId: first.id,
+      zoneName: ZONE,
+    });
+    const other = await provisionIn(second.id);
+    expect(other).toMatchObject({ locationId: second.id, zoneName: 'example.net' });
+    expect(other.hostname.endsWith('.example.net')).toBe(true);
+  });
+
+  test('automatic selection passes over a zone whose encryption mode was never read', async () => {
+    vi.useFakeTimers();
+    fakeL7();
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    const { t, accountId, relayId, listenerId } = await seed();
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: accountId, ok: true });
+    const [first] = await t.query(internal.edgeLocations.listForAccount, { accountId });
+    // A second zone, trusted, whose check could not read the mode.
+    const unread = await t.mutation(internal.edgeLocations.create, {
+      accountId,
+      placement: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+      observed: { websockets: 'on' },
+    });
+    await t.mutation(internal.edgeLocations.setQualified, {
+      id: unread.id as Id<'edgeLocations'>,
+      qualified: true,
+    });
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        providerSet: [
+          { locationId: unread.id as Id<'edgeLocations'>, addedAt: Date.now() },
+          { locationId: first.id as Id<'edgeLocations'>, addedAt: Date.now() },
+        ],
+      }),
+    );
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'reconcile',
+      listenerId,
+      publishOnDone: false,
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('done');
+    const edge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    expect(edge.locationId).toBe(first.id);
+  });
+
+  test('a zone whose last check refused it gets no new edge, named or not', async () => {
+    vi.useFakeTimers();
+    fakeL7();
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    const { t, accountId, relayId, listenerId } = await seed();
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: accountId, ok: true });
+    const [zone] = await t.query(internal.edgeLocations.listForAccount, { accountId });
+    await t.mutation(internal.edgeLocations.recordCheck, {
+      id: zone.id as Id<'edgeLocations'>,
+      ok: false,
+      code: 'zone_paused',
+    });
+    const named = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      listenerId,
+      requestedLocationId: zone.id as Id<'edgeLocations'>,
+    });
+    await drain(t, named.rotationId);
+    expect(await t.query(internal.edgeRotations.get, { id: named.rotationId })).toMatchObject({
+      phase: 'failed',
+      outcome: 'location_check_failed',
+    });
   });
 });
 

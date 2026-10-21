@@ -12,7 +12,13 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
-import { createAccount, seedEdgeFixture } from './lib/edges/testing/fixtures';
+import {
+  createAccount,
+  insertPanelServer,
+  registerRelay,
+  seedEdgeFixture,
+  wsListener,
+} from './lib/edges/testing/fixtures';
 import { defaultLocationRow, insertPlanned } from './lib/edges/testing/reads';
 import { resolveTemplateFor } from './edgeTemplates';
 
@@ -50,7 +56,7 @@ async function addGcoreLocation(t: T, accountId: Id<'edgeProviderAccounts'>, reg
 }
 
 describe('an account is credentials; a location is where its edges live', () => {
-  test('the old single-location shape becomes the default location; a credentials-only L4 account has none; a CDN account always one', async () => {
+  test('the old single-location shape becomes the default location; a credentials-only account has none', async () => {
     const t = convexTest(schema, modules);
     const legacy = await createAccount(t, { provider: 'upcloud', name: 'legacy' });
     const locs = await locationsOf(t, legacy);
@@ -64,20 +70,121 @@ describe('an account is credentials; a location is where its edges live', () => 
     });
     const bare = await createAccount(t, { provider: 'upcloud', name: 'bare', settings: {} });
     expect(await locationsOf(t, bare)).toEqual([]);
-    const cdn = await createAccount(t, { provider: 'cloudflare', name: 'cdn' });
-    expect(await locationsOf(t, cdn)).toEqual([
-      expect.objectContaining({ placeKey: 'anycast', placement: {}, isDefault: true }),
-    ]);
-    // A CDN has one location per account: no second one.
-    await expect(
-      t.mutation(internal.edgeLocations.create, { accountId: cdn, placement: {} }),
-    ).rejects.toThrow(/location_not_geographic/);
     // The same placement twice is the same location.
     const again = await t.mutation(internal.edgeLocations.create, {
       accountId: legacy,
       placement: { zone: 'de-fra1' },
     });
     expect(again).toEqual({ id: locs[0].id, created: false });
+  });
+
+  test('a CDN account has a location per zone it fronts in, all at the anycast place', async () => {
+    const t = convexTest(schema, modules);
+    // The old single-zone shape: its zone becomes the first location.
+    const cdn = await createAccount(t, { provider: 'cloudflare', name: 'cdn' });
+    const first = await locationsOf(t, cdn);
+    expect(first).toEqual([
+      expect.objectContaining({
+        placeKey: 'anycast',
+        locationKey: 'cloudflare:anycast',
+        placement: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+        label: 'example.org',
+        isDefault: true,
+      }),
+    ]);
+    // A second zone the token reaches is another location, same place key.
+    const second = await t.mutation(internal.edgeLocations.create, {
+      accountId: cdn,
+      placement: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    expect(second.created).toBe(true);
+    const both = await locationsOf(t, cdn);
+    expect(both.map((l) => [l.label, l.placeKey, l.isDefault])).toEqual([
+      ['example.org', 'anycast', true],
+      ['example.net', 'anycast', false],
+    ]);
+    expect(both[1].observed).toEqual({ zoneSslMode: 'full', websockets: 'on' });
+    // A token alone makes an account with no location yet.
+    const tokenOnly = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'token',
+      settings: {},
+    });
+    expect(await locationsOf(t, tokenOnly)).toEqual([]);
+    // So does a stale zone name alone: a CDN place starts at its zone.
+    const nameOnly = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'name-only',
+      settings: { zoneName: 'example.org' },
+    });
+    expect(await locationsOf(t, nameOnly)).toEqual([]);
+    // A CDN location names a zone; nothing else is a place.
+    await expect(
+      t.mutation(internal.edgeLocations.create, { accountId: cdn, placement: {} }),
+    ).rejects.toThrow(/zoneId/);
+    // The second zone can go while nothing uses it; the first stays the default.
+    await t.mutation(internal.edgeLocations.remove, { id: second.id as never });
+    expect((await locationsOf(t, cdn)).map((l) => l.label)).toEqual(['example.org']);
+  });
+
+  test('a front location names a DNS account that hosts DNS and is switched on', async () => {
+    const t = convexTest(schema, modules);
+    const dns = await createAccount(t, { provider: 'cloudflare', name: 'dns' });
+    const l4 = await createAccount(t, { provider: 'upcloud', name: 'l4' });
+    const fastly = await createAccount(t, {
+      provider: 'fastly',
+      name: 'front',
+      settings: { certificateAuthority: 'certainly' },
+    });
+    const place = { zoneId: 'a'.repeat(32), zoneName: 'example.org' };
+    await expect(
+      t.mutation(internal.edgeLocations.create, {
+        accountId: fastly,
+        placement: { ...place, dnsAccountId: l4 },
+      }),
+    ).rejects.toThrow(/dns_account_unusable/);
+    await t.run((ctx) => ctx.db.patch(dns, { enabled: false }));
+    await expect(
+      t.mutation(internal.edgeLocations.create, {
+        accountId: fastly,
+        placement: { ...place, dnsAccountId: dns },
+      }),
+    ).rejects.toThrow(/switched off/);
+    await t.run((ctx) => ctx.db.patch(dns, { enabled: true }));
+    const made = await t.mutation(internal.edgeLocations.create, {
+      accountId: fastly,
+      placement: { ...place, dnsAccountId: dns, tlsConfigurationId: 'tls-1' },
+    });
+    expect(made.created).toBe(true);
+    // Another TLS configuration in the same zone is another place to front from.
+    const other = await t.mutation(internal.edgeLocations.create, {
+      accountId: fastly,
+      placement: { ...place, dnsAccountId: dns },
+    });
+    expect(other.created).toBe(true);
+  });
+
+  test('a location check records what it saw; a refusal holds new edges off until one passes', async () => {
+    const t = convexTest(schema, modules);
+    const cdn = await createAccount(t, { provider: 'cloudflare', name: 'cdn' });
+    const [loc] = await locationsOf(t, cdn);
+    await t.mutation(internal.edgeLocations.recordCheck, {
+      id: loc.id as never,
+      ok: false,
+      code: 'zone_paused',
+      observed: { zoneSslMode: 'full', zoneStatus: 'paused' },
+    });
+    let [after] = await locationsOf(t, cdn);
+    expect(after).toMatchObject({
+      checkError: 'zone_paused',
+      observed: { zoneSslMode: 'full', zoneStatus: 'paused' },
+    });
+    // A pass clears the refusal; a check that observed nothing keeps the facts.
+    await t.mutation(internal.edgeLocations.recordCheck, { id: loc.id as never, ok: true });
+    [after] = await locationsOf(t, cdn);
+    expect(after.checkError).toBeNull();
+    expect(after.observed).toEqual({ zoneSslMode: 'full', zoneStatus: 'paused' });
   });
 
   test('a location that would provision without a required regional value is refused', async () => {
@@ -446,5 +553,57 @@ describe('a location named after its bare region id', () => {
     expect((await defaultLocationRow(t, accountId))!.label).toBe('Region Two');
     // Asked again, nothing is left to name.
     expect(await t.action(internal.edgeProviderOps.relabelLocations, {})).toEqual({ named: 0 });
+  });
+});
+
+describe('edgeLocations: a CDN account is as ready as its best zone', () => {
+  test('a default zone whose DNS account is off does not block an account another zone carries', async () => {
+    const t = convexTest(schema, modules);
+    const dnsOn = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-dns-a',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf-a' },
+    });
+    const dnsOff = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-dns-b',
+      settings: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+      credentials: { apiToken: 'cf-b' },
+    });
+    // Its first (default) zone goes through the DNS account switched off below.
+    const front = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-front',
+      settings: { dnsAccountId: dnsOff.id },
+      credentials: { apiToken: 'f' },
+    });
+    const second = await t.mutation(internal.edgeLocations.create, {
+      accountId: front.id,
+      placement: { dnsAccountId: dnsOn.id, zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+    });
+    await t.run((ctx) => ctx.db.patch(dnsOff.id, { enabled: false }));
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: front.id, ok: true });
+    // An origin with a WebSocket transport the CDN account can front.
+    await insertPanelServer(t);
+    await registerRelay(t, {
+      slug: 'o1',
+      nodeName: 'o1',
+      originAddress: '198.51.100.7',
+      listeners: [wsListener({ tlsNames: ['ws.example'] })],
+    });
+    const dnsBlockers = async () =>
+      (await t.query(internal.edgeOperator.setupStatus, { relaySlug: 'o1' })).steps
+        .flatMap((s) => s.blockers)
+        .filter((b) => b.code === 'dns_account_missing');
+    expect(await dnsBlockers()).toEqual([]);
+    // With the healthy zone switched off, nothing carries the account.
+    await t.mutation(internal.edgeLocations.update, {
+      id: second.id as Id<'edgeLocations'>,
+      enabled: false,
+    });
+    expect(await dnsBlockers()).toEqual([
+      expect.objectContaining({ code: 'dns_account_missing', subject: 'acct-front' }),
+    ]);
   });
 });

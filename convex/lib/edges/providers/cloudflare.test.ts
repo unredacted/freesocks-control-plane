@@ -884,103 +884,37 @@ describe('cloudflare: destroy', () => {
 // --- account plumbing -------------------------------------------------------------------
 
 describe('cloudflare: credentials + discovery options', () => {
-  test('testCredentials verifies the token, the zone and the two soft preconditions', async () => {
+  /** The listing with an owner on its zones (what an account-owned token's verify needs). */
+  const ZONE_ACCOUNT = (wire(zoneGet) as { result: { account: { id: string } } }).result.account.id;
+  const listedWithAccount = (): Record<string, unknown> => {
+    const l = structuredClone(wire(zonesList)) as { result: Array<Record<string, unknown>> };
+    for (const z of l.result) z.account = { id: ZONE_ACCOUNT, name: 'Example Account' };
+    return l;
+  };
+
+  test('testCredentials verifies the token and reads ONE page of zones, never a zone itself', async () => {
     const stub = mockFetch(route());
     const res = await cloudflareProvider.testCredentials(cfg);
-    expect(res.ok).toBe(true);
-    expect(res.detail).toContain('ssl_full');
-    expect(res.detail).toContain('websockets_on');
-    expect(res.detail).toContain('plan_free');
+    expect(res).toEqual({ ok: true, detail: 'token_user zones_2' });
     expect(stub.calls.map((c) => c.path)).toEqual([
       '/client/v4/user/tokens/verify',
-      `/client/v4/zones/${ZONE}`,
-      `/client/v4/zones/${ZONE}/settings/ssl`,
-      `/client/v4/zones/${ZONE}/settings/websockets`,
+      '/client/v4/zones',
     ]);
+    expect(new URLSearchParams(stub.calls[1].query).get('page')).toBe('1');
   });
 
-  test('websockets off is a soft code, not a refusal (the operator may still use grpc)', async () => {
-    const off = structuredClone(wire(settingWebsockets)) as { result: { value: string } };
-    off.result.value = 'off';
-    mockFetch(route({ '/settings/websockets': () => jsonRes(off) }));
-    const res = await cloudflareProvider.testCredentials(cfg);
-    expect(res.ok).toBe(true);
-    expect(res.detail).toContain('websockets_off');
-    expect(res.observed).toEqual({ zoneSslMode: 'full', websockets: 'off', zonePlan: 'free' });
-  });
-
-  test('the two settings travel as `observed`, which is what planning is later given', async () => {
-    for (const mode of ['flexible', 'full', 'strict'] as const) {
-      const ssl = structuredClone(wire(settingSsl)) as { result: { value: string } };
-      ssl.result.value = mode;
-      mockFetch(route({ '/settings/ssl': () => jsonRes(ssl) }));
-      const res = await cloudflareProvider.testCredentials(cfg);
-      // The zone's plan rides along (record tags and flattening depend on it).
-      expect(res.observed).toEqual({ zoneSslMode: mode, websockets: 'on', zonePlan: 'free' });
-      // The observed mode is exactly what `zoneSslModeOf` accepts as a param.
-      expect(zoneSslModeOf(specFor(443), withMode(res.observed!.zoneSslMode))).toBe(mode);
-    }
-    // A refusal still reports what it saw, so the operator sees the mode too.
-    const off = structuredClone(wire(settingSsl)) as { result: { value: string } };
-    off.result.value = 'off';
-    mockFetch(route({ '/settings/ssl': () => jsonRes(off) }));
-    expect((await cloudflareProvider.testCredentials(cfg)).observed).toEqual({
-      zoneSslMode: 'off',
-      websockets: 'on',
-      zonePlan: 'free',
-    });
-  });
-
-  test('a setting the token cannot read leaves the mode OUT rather than guessing one', async () => {
-    mockFetch(
-      route({
-        '/settings/ssl': () => jsonRes(wire(notFound), 403),
-        '/settings/websockets': () => jsonRes(wire(notFound), 403),
-      }),
-    );
-    const res = await cloudflareProvider.testCredentials(cfg);
-    expect(res.ok).toBe(true);
-    // No zoneSslMode at all: an edge planned from this account is refused with
-    // zone_mode_unknown instead of being built against an unread setting.
-    expect(res.observed).toEqual({ websockets: 'off', zonePlan: 'free' });
-    expect(() => zoneSslModeOf(specFor(443), withMode(res.observed!.zoneSslMode ?? ''))).toThrow(
-      /zone_mode_unknown/,
-    );
-  });
-
-  test('every ssl mode but `off` is usable; `off` is refused', async () => {
-    for (const mode of ['flexible', 'full', 'strict']) {
-      const ssl = structuredClone(wire(settingSsl)) as { result: { value: string } };
-      ssl.result.value = mode;
-      mockFetch(route({ '/settings/ssl': () => jsonRes(ssl) }));
-      const res = await cloudflareProvider.testCredentials(cfg);
-      expect(res).toMatchObject({ ok: true });
-      expect(res.detail).toContain(`ssl_${mode}`);
-    }
-    const off = structuredClone(wire(settingSsl)) as { result: { value: string } };
-    off.result.value = 'off';
-    mockFetch(route({ '/settings/ssl': () => jsonRes(off) }));
-    expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({
+  test('a token that reaches no zone is refused: an account is its zones', async () => {
+    const none = structuredClone(wire(zonesList)) as { result: unknown[] };
+    none.result = [];
+    mockFetch(route({ '/zones': () => jsonRes(none) }));
+    expect(await cloudflareProvider.testCredentials(cfg)).toEqual({
       ok: false,
-      code: 'zone_ssl_off',
+      code: 'no_zones',
+      detail: 'token_user zones_none',
     });
   });
 
-  test('a paused or non-active zone, and an inactive token, are refused with a short code', async () => {
-    const paused = structuredClone(wire(zoneGet)) as {
-      result: { paused: boolean; status: string };
-    };
-    paused.result.paused = true;
-    mockFetch(route({ [`/zones/${ZONE}`]: () => jsonRes(paused) }));
-    expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({ code: 'zone_paused' });
-
-    const pending = structuredClone(wire(zoneGet)) as { result: { status: string } };
-    pending.result.status = 'pending';
-    mockFetch(route({ [`/zones/${ZONE}`]: () => jsonRes(pending) }));
-    expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({
-      code: 'zone_not_active',
-    });
-
+  test('an inactive user token is token_not_active', async () => {
     const stale = structuredClone(wire(tokenVerify)) as { result: { status: string } };
     stale.result.status = 'expired';
     mockFetch(route({ '/user/tokens/verify': () => jsonRes(stale) }));
@@ -1008,10 +942,10 @@ describe('cloudflare: credentials + discovery options', () => {
       detail: '1000 Invalid API Token [redacted]',
     });
     expect(JSON.stringify(res)).not.toContain('SECRET_CF');
-    // Asked as a user token, then (the zone unreadable) as an account token of the settings' account.
+    // Asked as a user token, then (the listing unreadable) as an account token of the settings' account.
     expect(stub.calls.map((c) => c.path)).toEqual([
       '/client/v4/user/tokens/verify',
-      `/client/v4/zones/${ZONE}`,
+      '/client/v4/zones',
       '/client/v4/accounts/acct_1/tokens/verify',
     ]);
   });
@@ -1020,7 +954,6 @@ describe('cloudflare: credentials + discovery options', () => {
 
   /** The user endpoint's answer to an account-owned token (and to a wrong one). */
   const userEndpointRejects = { '/user/tokens/verify': () => jsonRes(wire(invalidToken), 401) };
-  const ZONE_ACCOUNT = (wire(zoneGet) as { result: { account: { id: string } } }).result.account.id;
 
   test('a user token passes at the user endpoint and never asks the account one', async () => {
     const stub = mockFetch(route());
@@ -1030,41 +963,36 @@ describe('cloudflare: credentials + discovery options', () => {
     expect(stub.calls.some((c) => c.path.includes('/accounts/'))).toBe(false);
   });
 
-  test('an account-owned token passes at the account endpoint of the zone owner', async () => {
-    const stub = mockFetch(route(userEndpointRejects));
+  test('an account-owned token passes at the account endpoint of the listed zones owner', async () => {
+    const stub = mockFetch(
+      route({ ...userEndpointRejects, '/zones': () => jsonRes(listedWithAccount()) }),
+    );
     const res = await cloudflareProvider.testCredentials(cfg);
-    expect(res).toMatchObject({ ok: true, observed: { zoneSslMode: 'full', websockets: 'on' } });
-    expect(res.detail).toContain('token_account');
-    // The zone is read once: it names the account AND is checked for status.
+    expect(res).toEqual({ ok: true, detail: 'token_account zones_2' });
+    // The listing is read once: it names the account AND counts the zones.
     expect(stub.calls.map((c) => c.path)).toEqual([
       '/client/v4/user/tokens/verify',
-      `/client/v4/zones/${ZONE}`,
+      '/client/v4/zones',
       `/client/v4/accounts/${ZONE_ACCOUNT}/tokens/verify`,
-      `/client/v4/zones/${ZONE}/settings/ssl`,
-      `/client/v4/zones/${ZONE}/settings/websockets`,
     ]);
     expect(stub.calls.every((c) => c.headers.authorization === 'Bearer SECRET_CF')).toBe(true);
   });
 
-  test("an account token falls back to the settings' account id when the zone names none", async () => {
-    const anon = structuredClone(wire(zoneGet)) as { result: Record<string, unknown> };
-    delete anon.result.account;
-    const stub = mockFetch(
-      route({ ...userEndpointRejects, [`/zones/${ZONE}`]: () => jsonRes(anon) }),
-    );
+  test("an account token falls back to the settings' account id when the zones name none", async () => {
+    const stub = mockFetch(route(userEndpointRejects));
     expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({ ok: true });
     expect(stub.calls.map((c) => c.path)).toContain('/client/v4/accounts/acct_1/tokens/verify');
   });
 
-  test('a zone the account token cannot read fails on its own code, read once', async () => {
+  test('a listing the account token cannot read fails on its own code, read once', async () => {
     const stub = mockFetch(
-      route({ ...userEndpointRejects, [`/zones/${ZONE}`]: () => jsonRes(wire(notFound), 403) }),
+      route({ ...userEndpointRejects, '/zones': () => jsonRes(wire(notFound), 403) }),
     );
     expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({
       ok: false,
       code: '81044',
     });
-    expect(stub.calls.filter((c) => c.path === `/client/v4/zones/${ZONE}`)).toHaveLength(1);
+    expect(stub.calls.filter((c) => c.path === '/client/v4/zones')).toHaveLength(1);
   });
 
   test('an inactive account token is token_not_active, like an inactive user token', async () => {
@@ -1074,6 +1002,7 @@ describe('cloudflare: credentials + discovery options', () => {
       mockFetch(
         route({
           ...userEndpointRejects,
+          '/zones': () => jsonRes(listedWithAccount()),
           [`/accounts/${ZONE_ACCOUNT}/tokens/verify`]: () => jsonRes(stale),
         }),
       );
@@ -1085,9 +1014,10 @@ describe('cloudflare: credentials + discovery options', () => {
   });
 
   test('a token both endpoints reject is token_rejected with the account answer', async () => {
-    const stub = mockFetch(
+    mockFetch(
       route({
         ...userEndpointRejects,
+        '/zones': () => jsonRes(listedWithAccount()),
         [`/accounts/${ZONE_ACCOUNT}/tokens/verify`]: () => jsonRes(wire(invalidToken), 401),
       }),
     );
@@ -1096,14 +1026,12 @@ describe('cloudflare: credentials + discovery options', () => {
       code: 'token_rejected',
       detail: '1000 Invalid API Token',
     });
-    // Nothing past the verification: no settings reads for a token nobody accepts.
-    expect(stub.calls.some((c) => c.path.includes('/settings/'))).toBe(false);
   });
 
   test('with no account id anywhere the user answer stands, without an account call', async () => {
     const { accountId: _none, ...noAccount } = cfg;
     const stub = mockFetch(
-      route({ ...userEndpointRejects, [`/zones/${ZONE}`]: () => jsonRes(wire(notFound), 403) }),
+      route({ ...userEndpointRejects, '/zones': () => jsonRes(wire(notFound), 403) }),
     );
     expect(await cloudflareProvider.testCredentials(noAccount)).toEqual({
       ok: false,
@@ -1113,14 +1041,11 @@ describe('cloudflare: credentials + discovery options', () => {
     expect(stub.calls.some((c) => c.path.includes('/accounts/'))).toBe(false);
   });
 
-  test('a retryable zone read is never turned into a rejection of an account token', async () => {
+  test('a retryable listing is never turned into a rejection of an account token', async () => {
     const { accountId: _none, ...noAccount } = cfg;
     for (const status of [429, 500]) {
       const stub = mockFetch(
-        route({
-          ...userEndpointRejects,
-          [`/zones/${ZONE}`]: () => jsonRes(wire(rateLimited), status),
-        }),
+        route({ ...userEndpointRejects, '/zones': () => jsonRes(wire(rateLimited), status) }),
       );
       const res = await cloudflareProvider.testCredentials(noAccount);
       expect(res.ok).toBe(false);
@@ -1128,9 +1053,9 @@ describe('cloudflare: credentials + discovery options', () => {
       // Nothing to verify with: the account endpoint is not asked.
       expect(stub.calls.some((c) => c.path.includes('/accounts/'))).toBe(false);
     }
-    // With an account id configured, the token is still verified; the zone fails on its own.
+    // With an account id configured, the token is still verified; the listing fails on its own.
     const stub = mockFetch(
-      route({ ...userEndpointRejects, [`/zones/${ZONE}`]: () => jsonRes(wire(rateLimited), 500) }),
+      route({ ...userEndpointRejects, '/zones': () => jsonRes(wire(rateLimited), 500) }),
     );
     const res = await cloudflareProvider.testCredentials(cfg);
     expect(res.code).not.toBe('token_rejected');
@@ -1149,12 +1074,16 @@ describe('cloudflare: credentials + discovery options', () => {
     }
   });
 
-  test('discoverOptions lists zones; a failure becomes a per-list code, never a throw', async () => {
+  test('discoverOptions lists every zone with its status; a failure becomes a per-list code, never a throw', async () => {
     const stub = mockFetch(route());
     expect(await cloudflareProvider.discoverOptions?.({ apiToken: 'SECRET_CF' })).toEqual({
       zones: [
-        { id: ZONE, label: 'example.net' },
-        { id: '7c1a1e4f9d2b4f8a9c3d5e6f7a8b9c0d', label: 'example.org' },
+        { id: ZONE, label: 'example.net', facts: { status: 'active' } },
+        {
+          id: '7c1a1e4f9d2b4f8a9c3d5e6f7a8b9c0d',
+          label: 'example.org',
+          facts: { status: 'pending' },
+        },
       ],
     });
     expect((stub.calls[0] as Captured).path).toBe('/client/v4/zones');
@@ -1167,12 +1096,153 @@ describe('cloudflare: credentials + discovery options', () => {
     expect(JSON.stringify(failed)).not.toContain('SECRET_CF');
   });
 
+  test('every zone the token reaches is listed, page by page, and a cut-off listing says so', async () => {
+    const page = (n: number, count: number) => {
+      const l = structuredClone(wire(zonesList)) as { result: Array<Record<string, unknown>> };
+      l.result = Array.from({ length: count }, (_, i) => ({
+        id: (n * 100 + i).toString(16).padStart(32, '0'),
+        name: `z${n}-${i}.example.org`,
+        status: 'active',
+        paused: false,
+      }));
+      return l;
+    };
+    const stub = mockFetch(
+      route({
+        '/zones': (c) =>
+          jsonRes(
+            page(
+              Number(new URLSearchParams(c.query).get('page')),
+              c.query.includes('page=1') ? 50 : 3,
+            ),
+          ),
+      }),
+    );
+    const two = await cloudflareProvider.discoverOptions!({ apiToken: 'SECRET_CF' });
+    expect(two.zones).toHaveLength(53);
+    expect(two.truncated).toBeUndefined();
+    expect(stub.calls).toHaveLength(2);
+    // Full pages forever: the listing stops at its cap and is marked cut off.
+    const capped = mockFetch(
+      route({
+        '/zones': (c) => jsonRes(page(Number(new URLSearchParams(c.query).get('page')), 50)),
+      }),
+    );
+    const many = await cloudflareProvider.discoverOptions!({ apiToken: 'SECRET_CF' });
+    expect(many.zones).toHaveLength(1000);
+    expect(many.truncated).toEqual(['zones']);
+    expect(capped.calls).toHaveLength(20);
+  });
+
   test('listRegions offers the account zones', async () => {
     mockFetch(route());
     expect(await cloudflareProvider.listRegions?.(cfg)).toEqual([
       { id: ZONE, label: 'example.net' },
       { id: '7c1a1e4f9d2b4f8a9c3d5e6f7a8b9c0d', label: 'example.org' },
     ]);
+  });
+});
+
+describe('cloudflare: a zone location is checked on its own', () => {
+  test('the zone, its encryption mode and WebSockets are read; soft facts travel as codes', async () => {
+    const stub = mockFetch(route());
+    const res = await cloudflareProvider.checkLocation!(cfg);
+    expect(res).toMatchObject({ ok: true, label: 'example.net' });
+    expect(res.detail).toContain('ssl_full');
+    expect(res.detail).toContain('websockets_on');
+    expect(res.detail).toContain('plan_free');
+    // The zone's plan rides along (record tags and flattening depend on it).
+    expect(res.observed).toEqual({
+      zoneSslMode: 'full',
+      websockets: 'on',
+      zonePlan: 'free',
+      zoneStatus: 'active',
+    });
+    expect(stub.calls.map((c) => c.path)).toEqual([
+      `/client/v4/zones/${ZONE}`,
+      `/client/v4/zones/${ZONE}/settings/ssl`,
+      `/client/v4/zones/${ZONE}/settings/websockets`,
+    ]);
+  });
+
+  test('websockets off is a soft code, not a refusal (the operator may still use grpc)', async () => {
+    const off = structuredClone(wire(settingWebsockets)) as { result: { value: string } };
+    off.result.value = 'off';
+    mockFetch(route({ '/settings/websockets': () => jsonRes(off) }));
+    const res = await cloudflareProvider.checkLocation!(cfg);
+    expect(res.ok).toBe(true);
+    expect(res.detail).toContain('websockets_off');
+    expect(res.observed).toMatchObject({ zoneSslMode: 'full', websockets: 'off' });
+  });
+
+  test('the mode travels as `observed`, which is what planning is later given', async () => {
+    for (const mode of ['flexible', 'full', 'strict'] as const) {
+      const ssl = structuredClone(wire(settingSsl)) as { result: { value: string } };
+      ssl.result.value = mode;
+      mockFetch(route({ '/settings/ssl': () => jsonRes(ssl) }));
+      const res = await cloudflareProvider.checkLocation!(cfg);
+      expect(res).toMatchObject({ ok: true, observed: { zoneSslMode: mode, websockets: 'on' } });
+      // The observed mode is exactly what `zoneSslModeOf` accepts as a param.
+      expect(zoneSslModeOf(specFor(443), withMode(res.observed!.zoneSslMode))).toBe(mode);
+    }
+    // `off` is refused, and the refusal still reports what it saw.
+    const off = structuredClone(wire(settingSsl)) as { result: { value: string } };
+    off.result.value = 'off';
+    mockFetch(route({ '/settings/ssl': () => jsonRes(off) }));
+    expect(await cloudflareProvider.checkLocation!(cfg)).toMatchObject({
+      ok: false,
+      code: 'zone_ssl_off',
+      observed: { zoneSslMode: 'off', websockets: 'on' },
+    });
+  });
+
+  test('a setting the token cannot read leaves the mode OUT rather than guessing one', async () => {
+    mockFetch(
+      route({
+        '/settings/ssl': () => jsonRes(wire(notFound), 403),
+        '/settings/websockets': () => jsonRes(wire(notFound), 403),
+      }),
+    );
+    const res = await cloudflareProvider.checkLocation!(cfg);
+    expect(res.ok).toBe(true);
+    // No zoneSslMode at all: an edge planned in this zone is refused with
+    // zone_mode_unknown instead of being built against an unread setting.
+    expect(res.observed).toEqual({ websockets: 'off', zonePlan: 'free', zoneStatus: 'active' });
+    expect(() => zoneSslModeOf(specFor(443), withMode(res.observed!.zoneSslMode ?? ''))).toThrow(
+      /zone_mode_unknown/,
+    );
+  });
+
+  test('a paused or non-active zone, or one renamed since, is refused with a short code', async () => {
+    const paused = structuredClone(wire(zoneGet)) as { result: { paused: boolean } };
+    paused.result.paused = true;
+    mockFetch(route({ [`/zones/${ZONE}`]: () => jsonRes(paused) }));
+    expect(await cloudflareProvider.checkLocation!(cfg)).toMatchObject({
+      ok: false,
+      code: 'zone_paused',
+      observed: { zoneStatus: 'paused' },
+    });
+    const pending = structuredClone(wire(zoneGet)) as { result: { status: string } };
+    pending.result.status = 'pending';
+    mockFetch(route({ [`/zones/${ZONE}`]: () => jsonRes(pending) }));
+    expect(await cloudflareProvider.checkLocation!(cfg)).toMatchObject({
+      ok: false,
+      code: 'zone_not_active',
+    });
+    mockFetch(route());
+    expect(
+      await cloudflareProvider.checkLocation!({ ...cfg, zoneName: 'example.org' }),
+    ).toMatchObject({ ok: false, code: 'zone_name_mismatch' });
+  });
+
+  test('a zone the token cannot read is a refusal; an unreachable provider throws', async () => {
+    mockFetch(route({ [`/zones/${ZONE}`]: () => jsonRes(wire(notFound), 403) }));
+    expect(await cloudflareProvider.checkLocation!(cfg)).toMatchObject({
+      ok: false,
+      code: '81044',
+    });
+    mockFetch(route({ [`/zones/${ZONE}`]: () => jsonRes(wire(rateLimited), 500) }));
+    await expect(cloudflareProvider.checkLocation!(cfg)).rejects.toThrow();
   });
 });
 

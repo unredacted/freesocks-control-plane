@@ -902,16 +902,23 @@ for a machine FCP bootstrapped).
 
 ### Origin names
 
-A front node's origin name is `<label>.<zone>` in the Cloudflare zone chosen at setup (or an
+A front node's origin name is `<label>.<zone>` in the DNS zone chosen at setup (or an
 explicit hostname the admin sets). A backend set up without a zone gets one with **Change
-setup** (Admin -> Servers -> Nodes, Backend setup): pick a Cloudflare DNS account whose zone
-holds the names. It is recorded in place, touching no node ("Changing a backend's setup"); every
+setup** (Admin -> Servers -> Nodes, Backend setup): pick a DNS account, then one of the zones it
+reaches (`originDns: {accountId, zoneId}`; the zones are its catalog's and its own locations',
+docs/edges.md § "Provider accounts and locations"). A zone that is not one the account reaches
+is `servers.origin_zone_unknown`, one its provider lists as not active
+`servers.origin_zone_inactive`, an account that is no switched-on DNS account
+`servers.origin_account_unusable`; a request naming the account alone keeps the zone the setup
+already has with it, else takes the account's only zone (`servers.origin_zone_required` when
+it reaches several). It is recorded in place, touching no node ("Changing a backend's setup"); every
 WebSocket node enrolled from then on gets a managed name, and one enrolled before, blocked on
 `servers.origin_hostname_missing`, takes its managed name once the setup is ready
 (`nodeIntents.afterSetupReady`: a new machine revision for the role to apply, then the usual
 reconcile; a node with a hostname of its own, an adopted one, a retiring one and one that
 was ever live are left alone). The zone stays while any node has a name in it: another account
-holding the same zone may replace the account, another zone may not.
+holding the same zone may replace the account, another zone may not. The account cannot be
+removed while a setup's origin names, or an origin-name record still being written, use it.
 
 Records are **obligations** (`backendObligations`, kind `dns.record`) persisted before the call
 with the account, zone, marker `fcp-origin:<slug>:<name>` and expected content; an uncertain

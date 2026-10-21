@@ -4,8 +4,10 @@
    * name, the modes the backend serves (a table, pre-filled with the four
    * defaults: each a connection mode, a group name, a shape and, for REALITY,
    * the server-name family whose target and names its transport carries), and
-   * the account whose zone WebSocket nodes get their origin names in. One
-   * press; the sheet then shows the run as it goes. A backend that already
+   * the DNS account and the one of its zones WebSocket nodes get their origin
+   * names in (the zones its catalog lists, listed again once when stale, plus
+   * its own locations' zones). One press; the sheet then shows the run as it
+   * goes. A backend that already
    * has nodes or addresses is adopted after a typed confirmation. Nothing here
    * is a secret: keys are made on the way and kept nowhere.
    *
@@ -16,17 +18,20 @@
    * the zone for origin names picked, and what the change does is said before
    * it runs (../lib/setupChange.ts).
    *
-   * Props: open (bindable), slug, setup (the current view), accounts
+   * Props: open (bindable), slug, setup (the current view), accounts (the DNS
+   * accounts, switched-on first)
    */
   import { untrack } from 'svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import * as Sheet from '@client/components/ui/sheet';
   import { Switch } from '@client/components/ui/switch';
+  import { edgeKeys, providerCatalogQuery, refreshProviderCatalog } from '@client/lib/edgesApi';
   import { adminConnectionModesQuery } from '@client/lib/queries';
   import { invalidateServers, startSetup } from '@client/lib/serversApi';
   import { familiesQuery } from '@client/lib/sniApi';
@@ -37,16 +42,22 @@
     type BackendSetupView,
   } from '../../../../../shared/contracts/servers';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
+  import { catalogStale, zoneChoices, type ZoneChoice } from '../../edges/forms/zones';
   import StatusDot from '../../edges/simple/StatusDot.svelte';
   import { codeOf } from '../lib/run';
-  import { setUpSlugs, setupChangeWords, setupInputOf } from '../lib/setupChange';
+  import {
+    setUpSlugs,
+    setupChangeWords,
+    setupInputOf,
+    type OriginAccount,
+  } from '../lib/setupChange';
   import { serverErrorWords, setupWords, shapeWords } from '../lib/words';
 
   interface Props {
     open: boolean;
     slug: string;
     setup: BackendSetupView | null;
-    accounts: { id: string; name: string; zoneName: string }[];
+    accounts: OriginAccount[];
   }
   let { open = $bindable(false), slug, setup, accounts }: Props = $props();
   const qc = useQueryClient();
@@ -67,9 +78,14 @@
   let profileName = $state('FreeSocks-Config');
   let rows = $state<Row[]>(DEFAULT_MODE_SETUP.map((m) => rowOf(m)));
   let originAccountId = $state('');
+  let originZoneId = $state('');
   let busy = $state(false);
   let adoptOpen = $state(false);
   let changeOpen = $state(false);
+  // The accounts whose zones were listed again (once each) and whose lone zone
+  // was picked (once each) since the sheet was opened.
+  const refreshedOnce = new Set<string>();
+  let autoPickedFor = '';
 
   // A backend FCP writes is changed, never set up afresh.
   let changing = $derived(setup?.established ?? false);
@@ -89,27 +105,94 @@
         ? current.modes.map((m) => rowOf(m, changing && setUp.has(m.slug)))
         : DEFAULT_MODE_SETUP.map((m) => rowOf(m));
       originAccountId = current?.originDns?.accountId ?? '';
+      originZoneId = current?.originDns?.zoneId ?? '';
+      autoPickedFor = '';
+      refreshedOnce.clear();
     });
   });
-  // The current zone stays pickable even when its account is not listed any more.
-  let originChoices = $derived(
+  // The current account stays pickable even when it is not listed any more.
+  let originChoices = $derived<OriginAccount[]>(
     setup?.originDns && !accounts.some((a) => a.id === setup.originDns!.accountId)
       ? [
           ...accounts,
           {
             id: setup.originDns.accountId,
             name: 'The current account',
-            zoneName: setup.originDns.zoneName,
+            enabled: true,
+            locations: [],
           },
         ]
       : accounts,
   );
+  let originAccount = $derived(originChoices.find((a) => a.id === originAccountId) ?? null);
+  function pickAccount(id: string) {
+    originAccountId = id;
+    // The zone the setup already has with this account, else one to pick.
+    originZoneId = setup?.originDns?.accountId === id ? setup.originDns.zoneId : '';
+  }
+
+  // The zones the picked account reaches: its catalog plus its own locations' zones.
+  const zoneCatalog = providerCatalogQuery(() => (open && originAccountId) || null);
+  let zones = $derived.by((): ZoneChoice[] => {
+    const listed = zoneChoices(zoneCatalog.data, originAccount?.locations ?? []);
+    const kept = setup?.originDns;
+    // The current zone stays pickable even when the lists no longer show it.
+    return kept && kept.accountId === originAccountId && !listed.some((z) => z.id === kept.zoneId)
+      ? [...listed, { id: kept.zoneId, name: kept.zoneName, status: null, located: false }]
+      : listed;
+  });
+  const zoneActive = (z: ZoneChoice) => z.status === null || z.status === 'active';
+  // The zone the setup has with this account is kept whatever its status (the server keeps it too).
+  const isCurrentZone = (z: ZoneChoice) =>
+    setup?.originDns?.accountId === originAccountId && setup.originDns.zoneId === z.id;
+  let zonesError = $derived.by(() => {
+    if (!originAccountId) return null;
+    const code = zoneCatalog.error
+      ? (codeOf(zoneCatalog.error) ?? 'no answer')
+      : (zoneCatalog.data?.kinds.zones?.error ?? null);
+    return code ? `Could not list the zones: ${code}` : null;
+  });
+  let zonesRefreshing = $state(false);
+  async function refreshZones(accountId: string, quiet = false) {
+    zonesRefreshing = true;
+    try {
+      await refreshProviderCatalog(accountId);
+    } catch (e) {
+      if (!quiet) toast.error(`Could not list the zones: ${codeOf(e) ?? 'no answer'}`);
+    } finally {
+      zonesRefreshing = false;
+      void qc.invalidateQueries({ queryKey: edgeKeys.providerCatalog(accountId) });
+    }
+  }
+  // A stale catalog (or one never listed) is listed again once per account
+  // while the sheet is open, in the background; the stored one shows meanwhile.
+  $effect(() => {
+    const id = originAccountId;
+    const data = zoneCatalog.data;
+    if (!open || !id || !data || refreshedOnce.has(id) || !catalogStale(data)) return;
+    refreshedOnce.add(id);
+    void refreshZones(id, true);
+  });
+  // An account that reaches a single active zone has it picked, once (a zone
+  // cleared again stays cleared).
+  $effect(() => {
+    const id = originAccountId;
+    if (!id || originZoneId || autoPickedFor === id) return;
+    const only = zones.length === 1 ? zones[0]! : null;
+    if (!only || !zoneActive(only)) return;
+    autoPickedFor = id;
+    originZoneId = only.id;
+  });
+
   let changeWords = $derived(
     changing && setup
       ? setupChangeWords(
           setup,
-          { modes: rows.map(({ key: _k, kept: _p, ...m }) => m), originAccountId },
-          originChoices,
+          {
+            modes: rows.map(({ key: _k, kept: _p, ...m }) => m),
+            origin: originAccountId ? { accountId: originAccountId, zoneId: originZoneId } : null,
+          },
+          zones,
         )
       : null,
   );
@@ -151,23 +234,25 @@
         familySlug: isReality(m as Row) ? m.familySlug || undefined : undefined,
         ws: m.shape.transport === 'ws' ? m.ws : undefined,
       })),
-      originDns: originAccountId ? { accountId: originAccountId } : null,
+      originDns: originAccountId ? { accountId: originAccountId, zoneId: originZoneId } : null,
       adopt,
     };
   }
 
-  /** What is wrong with the rows before anything is sent, in words, or null. */
-  function rowsProblem(): string | null {
+  /** What is wrong with the form before anything is sent, in words, or null. */
+  function formProblem(): string | null {
     if (rows.length === 0) return 'Keep at least one mode.';
     for (const r of rows)
       if (isReality(r) && !r.familySlug)
         return `Pick a server-name family for ${r.name || r.slug || 'each REALITY mode'}.`;
+    if (originAccountId && !originZoneId)
+      return 'Pick the zone for origin names, or no managed zone.';
     return null;
   }
 
   /** A change is said in words first (the confirmation), then sent. */
   function askChange() {
-    const problem = rowsProblem();
+    const problem = formProblem();
     if (problem) toast.error(problem);
     else if (changeWords?.changed) changeOpen = true;
   }
@@ -177,7 +262,7 @@
       toast.error('The backend changed. Close this and open it again.');
       return;
     }
-    const problem = rowsProblem();
+    const problem = formProblem();
     if (problem) {
       toast.error(problem);
       return;
@@ -199,6 +284,9 @@
 
   let running = $derived(setup?.running ?? false);
   let status = $derived(setup ? setupWords(setup) : null);
+  let currentAccountName = $derived(
+    accounts.find((a) => a.id === setup?.originDns?.accountId)?.name ?? null,
+  );
   const familyState: Record<string, string> = {
     none: '',
     bound: 'family bound',
@@ -257,7 +345,13 @@
                   <span class="text-amber-700 dark:text-amber-300">{w}</span>{/each}
               </li>
             {/each}
-            {#if setup.originDns}<li>Origin names under {setup.originDns.zoneName}.</li>{/if}
+            {#if setup.originDns}
+              <li>
+                Origin names under {setup.originDns.zoneName}{currentAccountName
+                  ? `, through ${currentAccountName}`
+                  : ''}.
+              </li>
+            {/if}
           </ul>
         {/if}
       {/if}
@@ -410,16 +504,70 @@
             <select
               id={`${uid}-dns`}
               class="bg-background w-full rounded-md border px-3 py-2 text-sm"
-              bind:value={originAccountId}
+              value={originAccountId}
+              onchange={(e) => pickAccount((e.currentTarget as HTMLSelectElement).value)}
             >
               <option value="">No managed zone: set each node's hostname in its settings</option>
               {#each originChoices as a (a.id)}
-                <option value={a.id}>{a.name} ({a.zoneName})</option>
+                <option value={a.id}>{a.name}{a.enabled ? '' : ' (off)'}</option>
               {/each}
             </select>
+            {#if originAccount && !originAccount.enabled}
+              <p class="text-xs text-amber-700 dark:text-amber-300">
+                This account is switched off. Switch it on under Edges, Providers, or pick another.
+              </p>
+            {/if}
+            {#if originAccountId}
+              <div class="space-y-1 pt-1">
+                <div class="flex items-center justify-between gap-2">
+                  <Label for={`${uid}-zone`} class="text-xs">Zone</Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    class="h-7 px-2 text-xs"
+                    disabled={zonesRefreshing}
+                    onclick={() => void refreshZones(originAccountId)}
+                  >
+                    <RefreshCw
+                      class={zonesRefreshing ? 'size-3.5 animate-spin' : 'size-3.5'}
+                      aria-hidden="true"
+                    />
+                    Refresh zones
+                  </Button>
+                </div>
+                <select
+                  id={`${uid}-zone`}
+                  class="bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  bind:value={originZoneId}
+                >
+                  <option value="">Pick a zone</option>
+                  {#each zones as z (z.id)}
+                    <option value={z.id} disabled={!zoneActive(z) && !isCurrentZone(z)}
+                      >{z.name}{zoneActive(z) ? '' : ' (not active)'}</option
+                    >
+                  {/each}
+                </select>
+                {#if zonesError}
+                  <p class="text-xs text-amber-700 dark:text-amber-300">{zonesError}</p>
+                {:else if zones.length === 0 && !zoneCatalog.isPending && !zonesRefreshing}
+                  <p class="text-xs text-amber-700 dark:text-amber-300">
+                    No zone is listed for this account. Add the zone to it at the provider, then
+                    refresh its zones.
+                  </p>
+                {:else if !originZoneId}
+                  <p class="text-muted-foreground text-xs">
+                    Pick the zone the origin names go into.
+                  </p>
+                {/if}
+                {#if zoneCatalog.data?.kinds.zones?.truncated}
+                  <p class="text-muted-foreground text-xs">More zones exist than are listed.</p>
+                {/if}
+              </div>
+            {/if}
             <p class="text-muted-foreground text-xs">
               A WebSocket node behind a CDN front gets the origin name &lt;label&gt;.&lt;zone&gt;,
-              made and kept by FCP in this account's zone.
+              made and kept by FCP in the zone picked here.
             </p>
           </div>
 

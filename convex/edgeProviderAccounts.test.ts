@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import { l7PlaceProblemOf } from './lib/edges/l7Place';
 import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
@@ -1246,9 +1247,16 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     });
     expect(refused).toMatchObject({ ok: false, code: 'edge.option_invalid' });
     expect((refused as { issues: string[] }).issues[0]).toMatch(/one certificate per front/);
-    // A zone wildcard the account would not order: no node takes it.
+    // A zone wildcard the account would not order (kept on the zone's
+    // location): no node takes it there; its own certificate still goes.
+    const zoneId = (await t.run((ctx) =>
+      ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', fastlyId))
+        .first(),
+    ))!._id;
     await t.run((ctx) =>
-      ctx.db.patch(fastlyId, {
+      ctx.db.patch(zoneId, {
         sharedCertificate: { name: '*.example.org', state: 'ambiguous', checkedAt: 1 },
       }),
     );
@@ -1256,6 +1264,24 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
       ok: false,
       code: 'edge.shared_certificate_ambiguous',
     });
+    expect(await check({})).toMatchObject({ ok: true });
+    // The zone's CAA records refuse the account's own authority: a node on it
+    // is refused there, one that chose another authority is not (its own
+    // records are read when its plan is made).
+    await t.run((ctx) =>
+      ctx.db.patch(zoneId, { sharedCertificate: undefined, checkError: 'caa_forbids_ca' }),
+    );
+    expect(await check({})).toMatchObject({ ok: false, code: 'edge.caa_forbids_ca' });
+    expect(await check({ certificateAuthority: 'lets-encrypt' })).toMatchObject({
+      ok: true,
+      certificateToCheck: { certificateAuthority: 'lets-encrypt' },
+    });
+    // And the zone itself stays plannable (the refusal is the certificate's).
+    expect(
+      await t.run(async (ctx) =>
+        l7PlaceProblemOf(ctx.db, (await ctx.db.get(fastlyId))!, (await ctx.db.get(zoneId))!),
+      ),
+    ).toBeNull();
   });
 
   test('the rollback purge leaves what a build from before options accepts and reads', async () => {
@@ -1279,6 +1305,12 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
         ],
       }),
     );
+    // A rollback past provider options first goes back past the L7 locations
+    // (the zone and its DNS account onto the account settings an older build
+    // requires), then purges the options.
+    await t.mutation(internal.edgeL7Locations.unmigrate, {
+      confirm: 'restore-single-zone-settings',
+    });
     for (const step of ['accounts', 'relays', 'edges', 'rotations', 'runs'] as const)
       await t.mutation(internal.edgeProviderAccounts.purgeOptionsForRollback, { step });
     const row = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
@@ -1322,14 +1354,28 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     ).rejects.toThrow(/template/);
   });
 
-  test('dnsAccountId must name an existing account that can host DNS', async () => {
+  test("an old-shape Fastly account takes its DNS account's zone as its first location", async () => {
+    const { t, dnsId, fastlyId } = await pair();
+    const fastly = await t.query(internal.edgeProviderAccounts.getForAdmin, { id: fastlyId });
+    // Only the account's own settings stay (a new account's domain kind).
+    expect(fastly!.settings).toEqual({ domainModel: 'versionless' });
+    expect(fastly!.locations).toEqual([
+      expect.objectContaining({
+        placeKey: 'anycast',
+        placement: { dnsAccountId: dnsId, zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      }),
+    ]);
+  });
+
+  test("a front location's DNS account must exist and host DNS", async () => {
     const { t, fastlyId } = await pair();
+    const zone = { zoneId: 'a'.repeat(32), zoneName: 'example.org' };
     await expect(
       t.mutation(internal.edgeProviderAccounts.create, {
         provider: 'fastly',
         name: 'acct-bad',
-        // An L4 account cannot host DNS records.
-        settings: { dnsAccountId: fastlyId, certificateAuthority: 'certainly' },
+        // A front account cannot host DNS records.
+        settings: { dnsAccountId: fastlyId, ...zone, certificateAuthority: 'certainly' },
         credentials: { apiToken: 'f-2' },
       }),
     ).rejects.toThrow(/host DNS records/);
@@ -1339,11 +1385,21 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
         name: 'acct-none',
         settings: {
           dnsAccountId: 'jd7abcdefghijklmnopqrstuvwx',
+          ...zone,
           certificateAuthority: 'certainly',
         },
         credentials: { apiToken: 'f-3' },
       }),
-    ).rejects.toThrow(/host DNS records|DNS account is required/);
+    ).rejects.toThrow(/host DNS records/);
+    // A token alone is a whole account: its fronts are picked later.
+    const { id, locationId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-token',
+      settings: { certificateAuthority: 'certainly' },
+      credentials: { apiToken: 'f-4' },
+    });
+    expect(id).toBeTruthy();
+    expect(locationId).toBeNull();
   });
 
   test('a DNS account cannot be removed while another account writes through it', async () => {
@@ -1353,12 +1409,19 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     );
   });
 
-  test('its LOCATING settings are locked by edges that only name it in their frozen intent', async () => {
+  test('a zone is never an account setting; edges naming the DNS account only in their intent hold it', async () => {
     const { t, dnsId, fastlyId } = await pair();
-    // No edges yet: the zone may still move.
+    // Another zone is another location, never an edit of the account.
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, {
+        id: dnsId,
+        settings: { zoneId: 'b'.repeat(32), zoneName: 'other.example' },
+      }),
+    ).rejects.toThrow(/placement_on_location/);
+    // Re-sending the place it already has is accepted (the old form's round trip).
     await t.mutation(internal.edgeProviderAccounts.update, {
       id: dnsId,
-      settings: { zoneId: 'b'.repeat(32), zoneName: 'other.example' },
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
     });
     // A Fastly edge whose DNS lives in that zone. It references the DNS account
     // only through its intent; the account's own edge list never mentions it.
@@ -1461,16 +1524,62 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
         updatedAt: Date.now(),
       });
     });
-    await expect(
-      t.mutation(internal.edgeProviderAccounts.update, {
-        id: dnsId,
-        settings: { zoneId: 'c'.repeat(32), zoneName: 'third.example' },
-      }),
-    ).rejects.toThrow(/still reference this account/);
-    // And the account cannot be removed either.
+    // The front's own location is gone (only its intent names the DNS account):
+    // the DNS account still cannot be removed under it.
+    await t.run(async (ctx) => {
+      for (const l of await ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', fastlyId))
+        .collect())
+        await ctx.db.delete(l._id);
+    });
     await expect(t.mutation(internal.edgeProviderAccounts.remove, { id: dnsId })).rejects.toThrow(
       /account_referenced|uses this one for DNS/,
     );
+  });
+
+  test("a DNS account cannot be removed while a backend's origin names use it", async () => {
+    const t = convexTest(schema, modules);
+    const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-dns',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf-1' },
+    });
+    const setupId = await t.run(async (ctx) => {
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-a',
+        slug: 'panel-a',
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      return ctx.db.insert('panelSetups', {
+        backendServerId: serverId,
+        state: 'ready',
+        generation: 1,
+        desired: '{}',
+        desiredHash: 'h',
+        profileName: 'FreeSocks-Config',
+        modes: [],
+        templates: [],
+        originDns: { accountId: dnsId, zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+        adopted: false,
+        gateVersion: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      } as never);
+    });
+    await expect(t.mutation(internal.edgeProviderAccounts.remove, { id: dnsId })).rejects.toThrow(
+      /origin names use this account/,
+    );
+    await t.run((ctx) => ctx.db.patch(setupId, { originDns: null } as never));
+    expect(await t.mutation(internal.edgeProviderAccounts.remove, { id: dnsId })).toEqual({
+      ok: true,
+    });
   });
 
   test('editing the DNS account clears the qualification of every account writing through it', async () => {

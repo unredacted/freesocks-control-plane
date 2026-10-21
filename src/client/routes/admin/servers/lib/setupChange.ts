@@ -4,8 +4,10 @@
  * and what a change does, in words, before it runs. On a backend FCP writes,
  * the profile and every mode already set up stay exactly as they are (the
  * server refuses anything else): the zone for origin names changes in place,
- * and an added mode runs the setup again. No em-dashes.
+ * and an added mode runs the setup again. A zone is known by its id: another
+ * account holding the same zone id is the same zone. No em-dashes.
  */
+import type { EdgeLocationAdmin } from '../../../../../shared/contracts/edges';
 import type {
   BackendSetupInput,
   BackendSetupView,
@@ -13,11 +15,27 @@ import type {
 } from '../../../../../shared/contracts/servers';
 import { shapeWords } from './words';
 
-/** A Cloudflare account whose zone can hold origin names. */
+/**
+ * A DNS account whose zones can hold origin names: the sheet lists its zones
+ * from its catalog and its own locations (../../edges/forms/zones.ts).
+ */
 export interface OriginAccount {
   id: string;
   name: string;
-  zoneName: string;
+  enabled: boolean;
+  locations: readonly Pick<EdgeLocationAdmin, 'placement'>[];
+}
+
+/** The account and zone the sheet asks for; an empty `zoneId` is a zone not picked yet. */
+export interface OriginPick {
+  accountId: string;
+  zoneId: string;
+}
+
+/** A zone the sheet knows by id and name. */
+export interface OriginZone {
+  id: string;
+  name: string;
 }
 
 /** One mode as the sheet sends it, exactly as it was asked for. */
@@ -40,7 +58,9 @@ export function setupInputOf(
   return {
     profileName: view.profile.name,
     modes: view.modes.map(modeInputOf),
-    originDns: view.originDns ? { accountId: view.originDns.accountId } : null,
+    originDns: view.originDns
+      ? { accountId: view.originDns.accountId, zoneId: view.originDns.zoneId }
+      : null,
   };
 }
 
@@ -53,16 +73,11 @@ export function setUpSlugs(view: BackendSetupView | null): Set<string> {
   return new Set((view?.modes ?? []).filter((m) => m.transport && m.group.uuid).map((m) => m.slug));
 }
 
-/** The zone an account holds, as far as the sheet knows it. */
-function zoneOf(
-  view: BackendSetupView,
-  accountId: string,
-  accounts: readonly OriginAccount[],
-): string | null {
-  if (!accountId) return null;
-  const known = accounts.find((a) => a.id === accountId)?.zoneName;
+/** The name of a zone, as far as the sheet knows it. */
+function zoneOf(view: BackendSetupView, zoneId: string, zones: readonly OriginZone[]): string {
+  const known = zones.find((z) => z.id === zoneId)?.name;
   if (known) return known;
-  return view.originDns?.accountId === accountId ? view.originDns.zoneName : 'another zone';
+  return view.originDns?.zoneId === zoneId ? view.originDns.zoneName : 'another zone';
 }
 
 export interface ChangeWords {
@@ -79,12 +94,14 @@ export interface ChangeWords {
 /**
  * What changing a set-up backend's setup to `next` does: the origin names
  * (recorded at once, nothing on the backend or a node moves) and the modes
- * added (the setup runs again; what is set up is found as it is).
+ * added (the setup runs again; what is set up is found as it is). `zones` are
+ * the zones the sheet lists, for their names. An account whose zone is not
+ * picked yet changes nothing: the sheet asks for the zone before sending.
  */
 export function setupChangeWords(
   view: BackendSetupView,
-  next: { modes: readonly ModeSetupInput[]; originAccountId: string },
-  accounts: readonly OriginAccount[],
+  next: { modes: readonly ModeSetupInput[]; origin: OriginPick | null },
+  zones: readonly OriginZone[],
 ): ChangeWords {
   const generation = view.generation + 1;
   const setUp = setUpSlugs(view);
@@ -92,18 +109,22 @@ export function setupChangeWords(
   const dropped = view.modes.filter(
     (v) => !setUp.has(v.slug) && !next.modes.some((m) => m.slug === v.slug),
   );
-  const from = view.originDns?.zoneName ?? null;
-  const to = zoneOf(view, next.originAccountId, accounts);
-  const originMoved = (view.originDns?.accountId ?? '') !== next.originAccountId;
+  const from = view.originDns ?? null;
+  const pending = next.origin !== null && !next.origin.zoneId;
+  const to = pending ? null : next.origin;
+  const key = (o: OriginPick | null) => (o ? `${o.accountId}|${o.zoneId}` : '');
+  const originMoved = !pending && key(from) !== key(to);
+  const toName = to ? zoneOf(view, to.zoneId, zones) : null;
   const lines: string[] = [];
   if (originMoved) {
-    if (!from) lines.push(`WebSocket nodes get their origin names under ${to}.`);
+    if (!from) lines.push(`WebSocket nodes get their origin names under ${toName}.`);
     else if (!to)
       lines.push(
         `No zone for origin names any more: each WebSocket node enrolled from now on needs a hostname set by hand.`,
       );
-    else if (from === to) lines.push(`Origin names stay under ${to}, through another account.`);
-    else lines.push(`Origin names move from ${from} to ${to}.`);
+    else if (from.zoneId === to.zoneId)
+      lines.push(`Origin names stay under ${from.zoneName}, through another account.`);
+    else lines.push(`Origin names move from ${from.zoneName} to ${toName}.`);
   }
   for (const m of added)
     lines.push(`Adds the mode ${m.name || m.slug || 'without a name'} (${shapeWords(m.shape)}).`);
@@ -131,8 +152,8 @@ export function setupChangeWords(
       effect:
         `Recorded at once as generation ${generation}. Nothing on the backend changes, and no ` +
         `node that has a name or serves members is touched.` +
-        (to
-          ? ` A WebSocket node still waiting for a name gets one under ${to}: a new machine ` +
+        (toName
+          ? ` A WebSocket node still waiting for a name gets one under ${toName}: a new machine ` +
             `revision, which the node role applies on its next run.`
           : ''),
       done: 'Origin names changed. Nothing on the backend moved.',

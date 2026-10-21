@@ -10,7 +10,7 @@
  * refusal: a bounded excerpt of the provider's error body, with address
  * literals and the credential replaced. It is captured ONLY on the calls an
  * admin makes by hand before anything exists (`DIAGNOSTIC_STEPS`: the
- * credential test and the account form's listings). Those requests carry no
+ * credential test, the account form's listings and a location check). Those requests carry no
  * origin and no fronted hostname, so the answer cannot echo one; every
  * provisioning, describe and destroy error stays body-free. The detail is
  * shown to admins and never goes into a message, a log line or an audit row.
@@ -47,6 +47,7 @@ const DIAGNOSTIC_STEPS = new Set([
   'subnets',
   'flavors',
   'tls-configurations',
+  'location',
 ]);
 export const capturesErrorDetail = (step: string): boolean => DIAGNOSTIC_STEPS.has(step);
 

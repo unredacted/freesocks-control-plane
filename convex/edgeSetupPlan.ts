@@ -34,7 +34,6 @@ import { classifyDirectHosts } from './lib/edges/directHosts';
 import { templateHostRemark } from './lib/edges/hosts';
 import { accountsForSlot } from './lib/edges/rotation';
 import {
-  EDGE_PROVIDER_CAPABILITIES,
   edgeLayerOf,
   frontsAllowed,
   originPortCarriedBy,
@@ -42,6 +41,7 @@ import {
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
+import { l7PlaceProblemOf } from './lib/edges/l7Place';
 import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
@@ -132,6 +132,10 @@ async function planContextOf(
         isDefault: boolean;
         live: number;
         maxLiveEdges: number | null;
+        /** Why an L7 place cannot front yet (no zone, a refused check, its DNS account off). */
+        placeProblem: string | null;
+        /** Why a front on the account's default certificate gets none there (CAA, its wildcard). */
+        certificateRefusal: string | null;
       }>
     > = {};
     for (const a of accounts) {
@@ -150,6 +154,12 @@ async function planContextOf(
           isDefault: !!dflt && dflt._id === loc._id,
           live: await liveCountForLocation(ctx.db, loc),
           maxLiveEdges: loc.maxLiveEdges ?? null,
+          // Why no new front can be planned in this place (the zone itself).
+          placeProblem: await l7PlaceProblemOf(ctx.db, a, loc),
+          // The certificate the account's DEFAULT could not get there (CAA, a
+          // failed or foreign wildcard): a pick with its own certificate may
+          // still go, so it is shown, and its pick check judges it.
+          certificateRefusal: certificateRefusalOf(a, loc),
         });
       accountLocations[a._id as string] = rows;
     }
@@ -321,12 +331,10 @@ function accountCompatibility(
   if (a.maxLiveEdges - a.live < need) reasons.push('account_capacity_reached');
   if (a.dailyAllocationBudget !== 0 && a.dailyAllocationBudget - a.allocationsToday < need)
     reasons.push('account_budget_exhausted');
-  const caps = EDGE_PROVIDER_CAPABILITIES[a.provider];
-  if (layer === 'l7' && caps.needsDnsAccount && !a.settings.dnsAccountId)
-    reasons.push('dns_zone_missing');
   const locations = a.locations.map((loc) => {
     const why: string[] = [];
     if (!loc.enabled) why.push('location_disabled');
+    if (loc.placeProblem) why.push(loc.placeProblem);
     if (loc.maxLiveEdges !== null && loc.maxLiveEdges - loc.live < need)
       why.push('location_capacity_reached');
     return {
@@ -337,6 +345,7 @@ function accountCompatibility(
       qualified: loc.qualified,
       compatible: why.length === 0,
       reasons: why,
+      certificateRefusal: loc.certificateRefusal,
     };
   });
   if (!locations.some((l) => l.compatible)) reasons.push('no_location');
@@ -405,10 +414,11 @@ async function applyPickChecks(
     const pick = set.picks.find((p) => p.locationId === r.locationId);
     if (!pick) continue;
     if (r.ok && r.certificateToCheck) {
-      // A certificate the account's credential test never checked (another
-      // authority, the wildcard): the zone's CAA records are read for it now.
+      // A certificate the location's check never covered (another authority,
+      // the wildcard): the zone's CAA records are read for it now.
       const pre = await ctx.runAction(internal.edgeProviderOps.certificatePreflight, {
         accountId: r.accountId as Id<'edgeProviderAccounts'>,
+        locationId: r.locationId as Id<'edgeLocations'>,
         certificate: r.certificateToCheck,
       });
       if (!pre.ok) {

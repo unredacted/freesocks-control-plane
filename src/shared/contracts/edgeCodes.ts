@@ -506,7 +506,10 @@ export const SETUP_RUN_NEEDS = [
 ] as const;
 export type SetupRunNeed = (typeof SETUP_RUN_NEEDS)[number];
 
-/** Why a provider account cannot be offered by the setup plan (`accounts[].reasons`). */
+/**
+ * Why a provider account, or one of its locations, cannot be offered by the
+ * setup plan (`accounts[].reasons`, `accounts[].locations[].reasons`).
+ */
 export const SETUP_ACCOUNT_REASONS = [
   'account_untested',
   'account_disabled',
@@ -524,6 +527,11 @@ export const SETUP_ACCOUNT_REASONS = [
   'caa_forbids_ca',
   'shared_certificate_failed',
   'shared_certificate_ambiguous',
+  // an L7 location (edgeSetupPlan placeProblemOf): its zone, its DNS account
+  'location_check_failed',
+  'dns_account_missing',
+  'dns_account_disabled',
+  'zone_mode_unknown',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 

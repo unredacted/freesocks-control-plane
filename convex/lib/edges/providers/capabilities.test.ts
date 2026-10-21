@@ -111,7 +111,11 @@ const SETTINGS_WITH_NETWORK: Record<(typeof EDGE_PROVIDER_IDS)[number], Record<s
     subnetId: 's',
   },
   cloudflare: { zoneId: '0123456789abcdef0123456789abcdef', zoneName: 'example.org' },
-  fastly: { dnsAccountId: 'acct', certificateAuthority: 'certainly' },
+  fastly: {
+    dnsAccountId: 'acct',
+    zoneId: '0123456789abcdef0123456789abcdef',
+    zoneName: 'example.org',
+  },
 };
 
 const lbLedger: Ledger = {

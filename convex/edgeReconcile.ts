@@ -376,19 +376,22 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     console.warn(`[edge-reconcile] test credential sweep: ${errText(err)}`);
   }
 
-  // 4e. Shared certificates (an account's one wildcard, docs/edges.md § "L7
-  // edges"): its state on the account, so a renewal or a failure is visible
-  // (and raised) without a rotation having to wait on it first.
+  // 4e. Shared certificates (one wildcard per account and zone, docs/edges.md
+  // § "L7 edges"): its state on the zone's location, so a renewal or a
+  // failure is visible (and raised) without a rotation having to wait on it.
   try {
-    const accounts = await ctx.runQuery(internal.edgeProviderAccounts.listForSharedCertificates, {
+    const zones = await ctx.runQuery(internal.edgeProviderAccounts.listForSharedCertificates, {
       now,
     });
-    for (const accountId of accounts) {
+    for (const { accountId, locationId } of zones) {
       try {
-        await ctx.runAction(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+        await ctx.runAction(internal.edgeProviderOps.refreshSharedCertificate, {
+          accountId,
+          locationId,
+        });
       } catch (err) {
         report.errors++;
-        console.warn(`[edge-reconcile] shared certificate ${accountId}: ${errText(err)}`);
+        console.warn(`[edge-reconcile] shared certificate ${locationId}: ${errText(err)}`);
       }
     }
   } catch (err) {

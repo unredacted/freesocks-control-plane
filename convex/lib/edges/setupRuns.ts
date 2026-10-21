@@ -178,6 +178,11 @@ export interface SetupPlanLocation {
   qualified: boolean;
   compatible: boolean;
   reasons: string[];
+  /**
+   * Why a front on the account's default certificate gets none here (CAA, the
+   * zone's wildcard). It stays pickable: a node may choose another certificate.
+   */
+  certificateRefusal?: string | null;
 }
 
 export interface SetupPlanAccount {

@@ -41,7 +41,7 @@ import {
   protocolIsHttpTransport,
 } from './lib/edges/protocols';
 import { isValidListenerCombo } from '../src/shared/contracts/edgeProtocolIds';
-import { parseIntent, parseObservedSettings } from './lib/edges/intent';
+import { parseIntent } from './lib/edges/intent';
 import { sameAddress } from './lib/edges/hosts';
 import {
   needsEndpointVerification,
@@ -75,14 +75,16 @@ import {
   rotationListenerKey,
   selectionContext,
 } from './edgeRotations';
-import { accountTested, API_FAILING_AFTER, sharedCertificateUsers } from './edgeProviderAccounts';
+import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
 import { accountOptionDefaultsOf } from './lib/edges/choices';
 import {
   defaultLocationOf,
   effectiveTemplateOfLocation,
   liveCountForLocation,
   locationsOfAccount,
+  sharedCertificateUsers as zoneSharedCertificateUsers,
 } from './edgeLocations';
+import { l7PlaceOf } from './lib/edges/l7Place';
 import { readRefusals, REFUSAL_WINDOW_MS, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
 import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { modeRefOf } from './nodeIntents';
@@ -222,18 +224,37 @@ async function accountFacts(
       )
         fronts.push(l.key);
     }
-    const settings = a.settings as { dnsAccountId?: string };
-    let dnsAccountMissing = false;
-    if (settings.dnsAccountId) {
-      const dns = await ctx.db.get(settings.dnsAccountId as Id<'edgeProviderAccounts'>);
-      dnsAccountMissing = !dns || !dns.enabled;
-    }
-    const observed = parseObservedSettings(a.observedSettings);
     const layer = edgeLayerOf(a.provider);
+    const locations = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
+    // A CDN account's zone facts are its places': it is as ready as its best
+    // one, so each fact holds only when every switched-on location has it
+    // (one healthy zone is enough to front). With none switched on, the
+    // default location's facts stand for it.
+    let dnsAccountMissing = false;
+    let zoneModeUnknown = false;
+    let zoneWebsocketsOff = false;
+    if (layer === 'l7') {
+      const dflt = await defaultLocationOf(ctx.db, a);
+      const rows = locations.length > 0 ? locations : dflt ? [dflt] : [null];
+      const facts = [];
+      for (const loc of rows) {
+        const place = await l7PlaceOf(ctx.db, a, loc);
+        const dns = place.dnsAccountId
+          ? await ctx.db.get(place.dnsAccountId as Id<'edgeProviderAccounts'>)
+          : undefined;
+        facts.push({
+          dnsMissing: dns !== undefined && (!dns || !dns.enabled),
+          modeUnknown: zoneModeGovernsOrigin(a.provider) && !place.observed?.zoneSslMode,
+          websocketsOff: place.observed?.websockets === 'off',
+        });
+      }
+      dnsAccountMissing = facts.every((f) => f.dnsMissing);
+      zoneModeUnknown = facts.every((f) => f.modeUnknown);
+      zoneWebsocketsOff = facts.every((f) => f.websocketsOff);
+    }
     // Trust is per location: the account counts as trusted when one of its
     // enabled locations is, and current when that trust was taken with what
     // the location provisions with now.
-    const locations = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
     let qualified = false;
     let qualificationCurrent = false;
     for (const loc of locations) {
@@ -273,8 +294,8 @@ async function accountFacts(
       qualificationCurrent,
       frontsListeners: fronts,
       dnsAccountMissing,
-      zoneModeUnknown: layer === 'l7' && zoneModeGovernsOrigin(a.provider) && !observed.zoneSslMode,
-      zoneWebsocketsOff: observed.zoneWebsockets === 'off',
+      zoneModeUnknown,
+      zoneWebsocketsOff,
       templateOk: !templateInvalid && !!(effective.id || EDGE_TEMPLATES[a.provider]),
       templateInvalid,
       defaultTemplateId: (effective.id as string | null) ?? null,
@@ -1520,21 +1541,43 @@ export const attention = internalQuery({
           since: null,
         });
       }
-      // The account's shared certificate waits on something FCP cannot fix
-      // (a CAA record, the validation record) or failed: every new front of
-      // the account waits on it too.
-      const sc = a.sharedCertificate;
-      // Raised for a wildcard the account (its default for new nodes, or one
-      // of its live fronts) still uses; one nothing uses any more is only shown.
-      const usesShared =
-        !!sc &&
-        (accountOptionDefaultsOf(a).certificateScope === 'wildcard' ||
-          (await sharedCertificateUsers(ctx.db, a._id)) > 0);
-      if (sc && usesShared && (sc.code || sc.state === 'failed')) {
+      // A zone's shared certificate waits on something FCP cannot fix (a CAA
+      // record, the validation record) or failed: every new front of the
+      // account in that zone waits on it too. (An account the L7 locations
+      // migration has not moved yet still holds its own.) Raised for a
+      // wildcard the account (its default for new nodes, or a live front in
+      // the zone) still uses; one nothing uses any more is only shown.
+      const wildcardDefault = accountOptionDefaultsOf(a).certificateScope === 'wildcard';
+      const accountLocations = await locationsOfAccount(ctx.db, a._id);
+      const zoneCertificates: Array<{
+        key: string;
+        sc: NonNullable<typeof a.sharedCertificate>;
+        users: () => Promise<number>;
+      }> = [];
+      for (const loc of accountLocations)
+        if (loc.sharedCertificate)
+          zoneCertificates.push({
+            key: loc._id as string,
+            sc: loc.sharedCertificate,
+            users: () => zoneSharedCertificateUsers(ctx.db, loc),
+          });
+      if (zoneCertificates.length === 0 && a.sharedCertificate)
+        zoneCertificates.push({
+          key: a._id as string,
+          sc: a.sharedCertificate,
+          users: async () => {
+            let n = 0;
+            for (const loc of accountLocations) n += await zoneSharedCertificateUsers(ctx.db, loc);
+            return n;
+          },
+        });
+      for (const { key, sc, users } of zoneCertificates) {
+        if (!sc.code && sc.state !== 'failed') continue;
+        if (!wildcardDefault && (await users()) === 0) continue;
         // Critical once the fronts are about to lose (or lost) their certificate.
         const daysLeft = sc.notAfter ? (Date.parse(sc.notAfter) - now) / 86_400_000 : null;
         items.push({
-          id: `certificate_waiting:account:${a._id}`,
+          id: `certificate_waiting:account:${key}`,
           kind: 'certificate_waiting',
           severity:
             sc.state === 'failed' || (daysLeft !== null && daysLeft < 3) ? 'critical' : 'warning',

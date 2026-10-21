@@ -8,6 +8,7 @@ import {
   EDGE_PLACEMENT_SCHEMAS,
   EDGE_PLACEMENT_SETTINGS,
   EDGE_SETTINGS_SCHEMAS,
+  legacySettingsOf,
   locatingSettingsChanged,
   pickCredentialIdentifiers,
   placementKeysOf,
@@ -63,14 +64,53 @@ describe('account settings: locating vs credential-identifier split', () => {
     });
     expect(withoutPlacementKeys('ovh', old)).toEqual({ applicationKey: 'AK', endpoint: 'ovh-eu' });
     expect(placementKeysOf('ovh', { applicationKey: 'AK', endpoint: 'ovh-eu' })).toBeNull();
-    // A CDN has no place at all.
-    expect(placementKeysOf('cloudflare', { zoneId: 'z', zoneName: 'example.org' })).toBeNull();
     expect(validatePlacement('upcloud', { zone: 'de-fra1' })).toMatchObject({ ok: true });
     expect(validatePlacement('upcloud', { zone: 'nowhere' })).toMatchObject({ ok: false });
-    expect(validatePlacement('cloudflare', {})).toEqual({
-      ok: true,
-      placement: { type: 'cloudflare' },
+  });
+
+  test("a CDN's place is its DNS zone (and a Fastly front's DNS account): never the account's", () => {
+    const zone = { zoneId: 'a'.repeat(32), zoneName: 'example.org' };
+    // The old single-zone account shape splits into a first location.
+    expect(placementKeysOf('cloudflare', { ...zone, accountId: 'b'.repeat(32) })).toEqual(zone);
+    expect(withoutPlacementKeys('cloudflare', { ...zone, accountId: 'b'.repeat(32) })).toEqual({
+      accountId: 'b'.repeat(32),
     });
+    expect(validatePlacement('cloudflare', zone)).toEqual({
+      ok: true,
+      placement: { type: 'cloudflare', ...zone },
+    });
+    // A CDN location without a zone is no place at all.
+    expect(validatePlacement('cloudflare', {})).toMatchObject({ ok: false });
+    expect(validatePlacement('cloudflare', { ...zone, zoneName: 'Not A Zone' })).toMatchObject({
+      ok: false,
+    });
+    const front = { dnsAccountId: 'acct-dns', ...zone, tlsConfigurationId: 'tls-1' };
+    expect(validatePlacement('fastly', front)).toMatchObject({ ok: true });
+    expect(validatePlacement('fastly', { dnsAccountId: 'acct-dns' })).toMatchObject({ ok: false });
+    // What is left of an old Fastly settings payload: nothing (its certificate
+    // authority is a provider option now).
+    expect(
+      withoutPlacementKeys('fastly', { ...front, certificateAuthority: 'lets-encrypt' }),
+    ).toEqual({});
+  });
+
+  test('legacy single-zone keys are found on a stored row (kept by edits until migrated)', () => {
+    expect(
+      legacySettingsOf('cloudflare', {
+        type: 'cloudflare',
+        zoneId: 'z',
+        zoneName: 'example.org',
+        accountId: 'a',
+      }),
+    ).toEqual({ zoneId: 'z', zoneName: 'example.org' });
+    expect(
+      legacySettingsOf('fastly', {
+        type: 'fastly',
+        dnsAccountId: 'd',
+        certificateAuthority: 'certainly',
+      }),
+    ).toEqual({ dnsAccountId: 'd' });
+    expect(legacySettingsOf('ovh', { type: 'ovh', endpoint: 'ovh-eu' })).toEqual({});
   });
 
   test('settingsEqual ignores key order recursively', () => {
@@ -93,7 +133,7 @@ describe('account settings: locating vs credential-identifier split', () => {
     expect(settingsEqual({ a: 1 }, { a: 2 })).toBe(false);
   });
 
-  test('locatingSettingsChanged ignores identifier and order changes but sees another API endpoint or zone', () => {
+  test('locatingSettingsChanged ignores identifier, order and zone changes but sees another API endpoint', () => {
     const prev = { type: 'ovh', applicationKey: 'AK1', endpoint: 'ovh-eu' };
     expect(locatingSettingsChanged('ovh', { ...prev, applicationKey: 'AK2' }, prev)).toBe(false);
     const reordered = Object.fromEntries(Object.entries(prev).reverse());
@@ -102,8 +142,11 @@ describe('account settings: locating vs credential-identifier split', () => {
     expect(locatingSettingsChanged('ovh', { ...prev, endpoint: 'ovh-ca' }, prev)).toBe(true);
     // A region is a location's: never an account's locating setting.
     expect(locatingSettingsChanged('ovh', { ...prev, regionName: 'R2' }, prev)).toBe(false);
+    // A zone is a location's: another zone never moves a CDN account.
     const cf = { type: 'cloudflare', zoneId: 'a'.repeat(32), zoneName: 'example.org' };
-    expect(locatingSettingsChanged('cloudflare', { ...cf, zoneId: 'b'.repeat(32) }, cf)).toBe(true);
+    expect(locatingSettingsChanged('cloudflare', { ...cf, zoneId: 'b'.repeat(32) }, cf)).toBe(
+      false,
+    );
     expect(
       locatingSettingsChanged(
         'scaleway',

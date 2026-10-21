@@ -48,6 +48,12 @@ export interface CodeCopy {
   explain: string;
   /** One sentence: what the operator can do about it (absent when nothing). */
   fix?: string;
+  /**
+   * Refusals only: the server's message names the specific reason (which
+   * state of a zone, which DNS account check), so an error line shows it in
+   * place of `fix` (lib/edgeErrors.ts); `fix` stays the fallback.
+   */
+  reasonFromServer?: boolean;
 }
 
 type KnownCode =
@@ -125,19 +131,61 @@ const COPY = {
   },
   dns_account_missing: {
     label: 'DNS account missing',
-    explain: 'This CDN provider needs another account to host DNS records for its hostnames.',
-    fix: 'Add a DNS-capable account and name it in the CDN account settings.',
+    explain:
+      'This CDN front needs a DNS account to hold its records, and its location names none that still exists.',
+    fix: 'Add a location that names a DNS account, on the provider page.',
+  },
+  no_zones: {
+    label: 'No DNS zone reached',
+    explain: 'The token reaches no DNS zone.',
+    fix: 'Give the token access to at least one zone, then test again.',
   },
   zone_mode_unknown: {
     label: 'Zone mode unknown',
     explain: 'The zone facts (TLS mode, WebSocket setting) have not been observed yet.',
-    fix: 'Test the account credentials so the zone can be read.',
+    fix: 'Check the location again on the provider page so the zone can be read.',
   },
   zone_websockets_off: {
     label: 'Zone has WebSockets off',
     explain:
       'The CDN zone refuses WebSocket upgrades, so a WebSocket listener cannot be fronted there.',
     fix: 'Turn WebSockets on in the zone at the provider, then re-test the account.',
+  },
+  // a CDN location's zone check (what the provider said about the zone)
+  zone_unreadable: {
+    label: 'Zone unreadable',
+    explain: 'The key cannot read that zone.',
+    fix: 'Give the key read access to the zone, then check the location again.',
+  },
+  zone_name_mismatch: {
+    label: 'Zone name changed',
+    explain: "The zone's name changed at the provider.",
+    fix: 'Refresh the list of zones and pick it again.',
+  },
+  zone_ssl_off: {
+    label: 'Zone encryption off',
+    explain: "The zone's encryption mode is off, so a front there cannot serve HTTPS.",
+    fix: 'Set Flexible, Full or Full (strict) on the zone at the provider, then check the location again.',
+  },
+  zone_paused: {
+    label: 'Zone paused',
+    explain: 'The zone is paused at the provider.',
+    fix: 'Resume the zone at the provider, then check the location again.',
+  },
+  zone_not_active: {
+    label: 'Zone not active yet',
+    explain: 'The zone is not active at the provider yet.',
+    fix: 'Finish setting up the zone at the provider, then check the location again.',
+  },
+  tls_configuration_missing: {
+    label: 'TLS configuration not found',
+    explain: 'The Fastly key does not see that TLS configuration.',
+    fix: 'Pick one the key can see, or leave it empty for the default.',
+  },
+  location_check_failed: {
+    label: 'Location check refused',
+    explain: "This location's last check refused it, so no new address is planned there.",
+    fix: 'Check it again from the provider page.',
   },
   // --- template ------------------------------------------------------------------------
   no_default_template: {
@@ -561,13 +609,13 @@ const COPY = {
   // --- preflight: plan phase ------------------------------------------------------------
   dns_account_disabled: {
     label: 'DNS account disabled',
-    explain: 'The DNS account the CDN provider relies on is switched off.',
-    fix: 'Enable the DNS account.',
+    explain: 'The DNS account this front writes its records through is switched off.',
+    fix: 'Switch the DNS account on from its provider page.',
   },
   dns_zone_missing: {
     label: 'DNS zone missing',
-    explain: 'The account settings name no DNS zone for the hostnames.',
-    fix: 'Set the zone in the account settings.',
+    explain: 'This location names no DNS zone.',
+    fix: 'Add a location in one of the zones the account reaches.',
   },
   origin_transport_missing: {
     label: 'Origin transport missing',
@@ -1370,24 +1418,20 @@ const REFUSAL_COPY = {
   },
   shared_certificate_in_use: {
     label: 'Certificate still in use',
-    explain: 'Live fronts of this account still use the shared certificate.',
+    explain: 'Live fronts in this zone still use its shared certificate.',
     fix: 'Replace or remove those fronts first.',
   },
   shared_certificate_present: {
     label: 'Shared certificate still there',
     explain:
       'The account still has a shared certificate at the provider, which nothing could remove once the account is gone.',
-    fix: 'Remove it on the account page first, or delete it at the provider and test the account again.',
+    fix: 'Remove it with its zone under Locations on the account page first, or delete it at the provider and test the account again.',
   },
   shared_certificate_not_ours: {
     label: 'Certificate not ordered by FCP',
     explain:
       'FCP found this wildcard certificate already at the provider and reused it. It removes only certificates its own fronts ordered.',
     fix: 'Remove it at the provider if nothing else uses it, then test the account again.',
-  },
-  location_not_geographic: {
-    label: 'No regions for this provider',
-    explain: 'This provider is not tied to a region: its account has one location already.',
   },
   template_value_required: {
     label: 'Choose a value for this region',
@@ -1398,6 +1442,24 @@ const REFUSAL_COPY = {
     label: 'Region is set per location',
     explain: 'Where edges are created is part of a location, not of the account.',
     fix: 'Add a location on the provider page instead.',
+  },
+  // a CDN location (a DNS zone) and what an import must match there
+  location_unusable: {
+    label: 'Zone cannot be used',
+    explain: 'The provider reached that zone, but it cannot be used now.',
+    fix: 'Fix the zone at the provider, then add the location again.',
+    reasonFromServer: true,
+  },
+  dns_account_unusable: {
+    label: 'DNS account cannot be used',
+    explain: 'That DNS account cannot hold the records of this location.',
+    fix: 'Pick a DNS account that can host DNS records and is switched on.',
+    reasonFromServer: true,
+  },
+  hostname_not_in_zone: {
+    label: 'Hostname outside the zone',
+    explain: 'The hostname is not in the zone of the picked location.',
+    fix: 'Pick the location whose zone holds the hostname.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -1831,8 +1893,8 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   },
   dns_zone_missing: {
     label: 'No DNS zone',
-    explain: 'The CDN account names no DNS account for its hostnames.',
-    fix: 'Set the DNS account on the provider.',
+    explain: 'This location names no DNS zone.',
+    fix: 'Add a location in one of the zones the account reaches.',
   },
   no_location: {
     label: 'No location yet',
@@ -1852,17 +1914,37 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   caa_forbids_ca: {
     label: 'CAA forbids its CA',
     explain: 'The zone’s CAA records do not let this account’s certificate authority issue.',
-    fix: 'Allow it in the CAA records, then test the account again.',
+    fix: 'Allow it in the CAA records and check the zone again, or choose another authority for this node.',
   },
   shared_certificate_failed: {
     label: 'Shared certificate failed',
-    explain: 'The wildcard certificate this account’s fronts share failed to issue.',
+    explain: 'The wildcard certificate this account’s fronts share in this zone failed to issue.',
     fix: 'Open the account to see why, then retry the certificate.',
   },
   shared_certificate_ambiguous: {
     label: 'Wildcard not reusable',
     explain: 'The zone’s wildcard is covered by a certificate this account would not order.',
     fix: 'Open the account to see it, or switch it to one certificate per front.',
+  },
+  location_check_failed: {
+    label: 'Zone check refused',
+    explain: "This zone's last check refused it.",
+    fix: 'Check it again from the provider page.',
+  },
+  dns_account_missing: {
+    label: 'DNS account gone',
+    explain: 'The DNS account this front writes its records through no longer exists.',
+    fix: 'Add a location that names another DNS account.',
+  },
+  dns_account_disabled: {
+    label: 'DNS account switched off',
+    explain: 'The DNS account this front writes its records through is switched off.',
+    fix: 'Switch it on from its provider page.',
+  },
+  zone_mode_unknown: {
+    label: 'Zone mode not read',
+    explain: "The zone's encryption mode was never read.",
+    fix: 'Check the zone again from the provider page.',
   },
 };
 

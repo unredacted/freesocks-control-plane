@@ -237,7 +237,7 @@ type ModeArg = {
 type SetupInputArg = {
   profileName: string;
   modes: ModeArg[];
-  originDns: { accountId: string } | null;
+  originDns: { accountId: string; zoneId?: string } | null;
   adopt: boolean;
 };
 
@@ -643,6 +643,69 @@ describe("changing a backend's setup", () => {
     });
     expect((await setupOf(t, serverId))!.originDns).toBeNull();
     expect(panel.writes.length).toBe(writes);
+  });
+
+  test('origin names go into the zone picked, one of the zones the DNS account reaches', async () => {
+    const { t, serverId } = await seed();
+    await runSetup(t, serverId);
+    const acct = await createAccount(t, { provider: 'cloudflare', name: 'dns' });
+    // A second zone the token reaches, as a listing found it.
+    await t.mutation(internal.edgeProviderCatalog.record, {
+      accountId: acct,
+      lists: [
+        {
+          kind: 'zones',
+          items: [
+            { id: 'a'.repeat(32), label: 'example.org', facts: { status: 'active' } },
+            { id: 'b'.repeat(32), label: 'example.net', facts: { status: 'active' } },
+            { id: 'c'.repeat(32), label: 'pending.example.org', facts: { status: 'pending' } },
+          ],
+        },
+      ],
+      errors: [],
+    });
+    // Two zones: the account alone does not say which.
+    await expect(change(t, serverId, { originDns: { accountId: acct } })).rejects.toThrow(
+      /origin_zone_required/,
+    );
+    await expect(
+      change(t, serverId, { originDns: { accountId: acct, zoneId: 'd'.repeat(32) } }),
+    ).rejects.toThrow(/origin_zone_unknown/);
+    await expect(
+      change(t, serverId, { originDns: { accountId: acct, zoneId: 'c'.repeat(32) } }),
+    ).rejects.toThrow(/origin_zone_inactive/);
+    expect(
+      await change(t, serverId, { originDns: { accountId: acct, zoneId: 'b'.repeat(32) } }),
+    ).toMatchObject({ state: 'ready', started: false });
+    expect((await setupOf(t, serverId))!.originDns).toEqual({
+      accountId: acct,
+      zoneId: 'b'.repeat(32),
+      zoneName: 'example.net',
+    });
+    // The account alone now keeps the zone the setup has with it.
+    expect(await change(t, serverId, { originDns: { accountId: acct } })).toMatchObject({
+      started: false,
+    });
+    expect((await setupOf(t, serverId))!.originDns?.zoneId).toBe('b'.repeat(32));
+    // The zone the setup has stays while its account is switched off (another
+    // change of the setup may still go through); a new pick needs it on.
+    await t.run((ctx) => ctx.db.patch(acct, { enabled: false }));
+    expect(await change(t, serverId, { originDns: { accountId: acct } })).toMatchObject({
+      started: false,
+    });
+    await expect(
+      change(t, serverId, { originDns: { accountId: acct, zoneId: 'a'.repeat(32) } }),
+    ).rejects.toThrow(/origin_account_unusable/);
+    await t.run((ctx) => ctx.db.patch(acct, { enabled: true }));
+    // A front account is no DNS account.
+    const front = await createAccount(t, {
+      provider: 'fastly',
+      name: 'front',
+      settings: { certificateAuthority: 'certainly' },
+    });
+    await expect(change(t, serverId, { originDns: { accountId: front } })).rejects.toThrow(
+      /origin_account_unusable/,
+    );
   });
 
   test('a setup that never got to ready proves nothing: what is on the backend still asks for adoption', async () => {

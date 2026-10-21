@@ -365,6 +365,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.location.removed': ['name', 'provider', 'placeKey'],
   // The one-time move of accounts' fixed locations into locations: counts only.
   'edge.locations.migrated': ['accounts', 'edges', 'runs', 'reviews', 'relays'],
+  // A CDN account's zone moved from its settings onto its location: counts only.
+  'edge.locations.l7_migrated': ['moved', 'created', 'incomplete', 'edgesDiffer'],
   // An operator confirmed an L4 endpoint (lib/edges/verification.ts): never the address.
   'edge.verified': ['relaySlug', 'edgeId', 'listenerKey', 'method'],
   // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
@@ -373,6 +375,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.provider_account.shared_certificate_removed': [
     'name',
     'provider',
+    'locationId',
     'certificate',
     'removed',
   ],

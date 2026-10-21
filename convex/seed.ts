@@ -20,7 +20,7 @@ import {
 
 /** The built-ins version this deployment's mode catalog was last brought up to. */
 const BUILT_IN_MODES_VERSION_KEY = 'connectionModes.builtInsVersion';
-import { FAKE_ZONES, fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
+import { FAKE_ZONES, FAKE_ZONE_ID, fakeEdgeProviderEnabled } from './lib/edges/providers/fake';
 import { upsertLocation } from './edgeLocations';
 import { mockBackendEnabled } from './lib/backends/mock';
 import { restoreLegacyKeys, retireLegacyKeys } from './censoredCountries';
@@ -625,6 +625,9 @@ export const seedCutover = internalAction({
     await ctx.runMutation(internal.seed.seedPeerGroups, {});
     // Option defaults an account still keeps under its settings (provider options).
     await ctx.runMutation(internal.edgeProviderAccounts.migrateOptionDefaults, {});
+    // A CDN account's zone moves from its settings onto its location (once;
+    // a no-op afterwards). docs/edges.md § "Deploy notes".
+    await ctx.runMutation(internal.edgeL7Locations.migrate, {});
     // Locations still named after a bare region id get their provider's name.
     await ctx.scheduler.runAfter(0, internal.edgeProviderOps.relabelLocations, {});
     return {
@@ -693,9 +696,9 @@ export const seedDevEdges = internalMutation({
         provider: 'cloudflare',
         name: 'FAKE (dev) L7',
         credentials: { type: 'cloudflare', apiToken: 'fake' },
-        settings: { type: 'cloudflare', zoneId: 'zone1234', zoneName: 'edge.example' },
-        placement: { type: 'cloudflare' },
-        label: 'Anycast',
+        settings: { type: 'cloudflare' },
+        placement: { type: 'cloudflare', zoneId: FAKE_ZONE_ID, zoneName: 'edge.example' },
+        label: 'edge.example',
       },
     ];
     let created = 0;
@@ -717,16 +720,19 @@ export const seedDevEdges = internalMutation({
         maxLiveEdges: 4,
         // "Tested": the fake always passes; the wizard's bootstrap starts here.
         lastTestOkAt: now,
-        observedSettings:
-          a.provider === 'cloudflare' ? JSON.stringify({ zoneSslMode: 'full' }) : undefined,
-        observedAt: a.provider === 'cloudflare' ? now : undefined,
         updatedAt: now,
       });
       await upsertLocation(
         ctx,
         (await ctx.db.get(id))!,
         a.placement,
-        { label: a.label },
+        {
+          label: a.label,
+          // The fake zone's check, as a real zone check would have observed it.
+          ...(a.provider === 'cloudflare'
+            ? { observed: { zoneSslMode: 'full', websockets: 'on', zoneStatus: 'active' } }
+            : {}),
+        },
         { quiet: true },
       );
       created++;

@@ -29,25 +29,27 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { ActionCtx } from './_generated/server';
 import { edgeProviderFor, edgeProviderConfigFrom } from './lib/edges/providers/registry';
+import { cloudflareDnsClient } from './lib/edges/providers/dns/cloudflareDns';
 import { EdgeProviderError } from './lib/edges/providers/http';
 import {
   EDGE_PROVIDER_CAPABILITIES,
+  edgeLayerOf,
   protocolCarriedBy,
   unsupportedTransport,
   zoneModeGovernsOrigin,
 } from './lib/edges/providers/capabilities';
 import { renderTemplateValue } from './lib/edges/providers/template';
 import { isRelayProviderId, type EdgeProviderId } from './lib/edgeProviderIds';
-import type { ProvisionIntent } from './lib/edges/intent';
+import { frozenSettingsOf, type ProvisionIntent } from './lib/edges/intent';
 import type { ListenerProto } from './lib/edges/protocols';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import {
   buildCredentials,
+  legacySettingsOf,
   pickCredentialIdentifiers,
   validatePlacement,
   validateSettings,
   withoutPlacementKeys,
-  EDGE_INTENT_DEFAULT_SETTINGS,
   EDGE_INTENT_FACTS,
   EDGE_PLACEMENT_SETTINGS,
 } from './lib/edges/accountSettings';
@@ -55,6 +57,7 @@ import { placeKeyOf } from './lib/edges/locations';
 import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choices';
 import { EDGE_CERTIFICATE_OPTIONS, certificateKeysOf } from './lib/edges/providers/templates';
 import { defaultsOf } from './lib/edges/providers/options';
+import { CATALOG_KINDS, CATALOG_REFRESH_FLOOR_MS, type CatalogKind } from './lib/edges/catalog';
 import { l7HostAccepted, l7HostHeaderFor, zoneModeCarriesOrigin } from './lib/edges/layers';
 import type {
   AdoptionInspection,
@@ -66,6 +69,7 @@ import type {
   Inventory,
   InspectResult,
   Ledger,
+  LocationCheckResult,
   EdgeProvider,
   EdgeProviderConfig,
   ResourceStep,
@@ -340,6 +344,8 @@ async function loadAdapter(
   edgeId?: Id<'edges'>,
   seen?: ApiSeen,
   locationId?: Id<'edgeLocations'>,
+  /** A placement no location holds yet (a location being created is checked with it). */
+  rawPlacement?: Record<string, unknown>,
 ): Promise<{
   provider: EdgeProvider;
   cfg: EdgeProviderConfig;
@@ -361,15 +367,24 @@ async function loadAdapter(
     acct.credentials as Record<string, unknown> & { type: typeof acct.provider },
     acct.settings as Record<string, unknown> & { type: typeof acct.provider },
   );
+  // A CDN account's call about no edge and no named place (an account-level
+  // describe, a plan without a location) acts in its default location: its
+  // zone is where such a call's records would live.
+  const where =
+    locationId ??
+    (!edgeId && !rawPlacement && edgeLayerOf(acct.provider) === 'l7'
+      ? ((await ctx.runQuery(internal.edgeLocations.defaultOf, { accountId })) ?? undefined)
+      : undefined);
   const placement = edgeId
     ? await ctx.runQuery(internal.edgeLocations.placementOfEdge, { edgeId })
-    : locationId
-      ? await locationPlacement(ctx, accountId, locationId)
-      : null;
+    : where
+      ? await locationPlacement(ctx, accountId, where)
+      : (rawPlacement ?? null);
   if (placement) {
     const { type: _t, ...where } = placement;
     Object.assign(cfg as unknown as Record<string, unknown>, where);
-  } else if (edgeId && EDGE_PLACEMENT_SETTINGS[acct.provider].length > 0) {
+  } else if (edgeId && edgeLayerOf(acct.provider) === 'l4') {
+    // (An L7 edge needs no placement of its own: its intent holds its zone.)
     throw new ConvexError<EdgeProviderOpsFailure>({
       code: 'placement_missing',
       message: 'the edge has no placement of its own',
@@ -385,24 +400,22 @@ async function loadAdapter(
     certificateValuesFor(acct.provider, accountOptionDefaultsOf(acct), null),
   );
   // Acting on an EXISTING edge: every setting the intent froze wins over the
-  // account row. The zone/DNS account below is one of them; so is the TLS
-  // subscription (the certificate options, `tlsConfigurationId`), which
-  // decides which certificate a describe or a destroy acts on. A settings or
-  // default edit after planning must not move a live edge's certificate.
+  // account row and any location: the zone its records live in, the DNS
+  // account writing them, and the TLS subscription (the TLS configuration and
+  // the certificate options), which decides which certificate a describe or a
+  // destroy acts on. An edit after planning must not move a live edge.
   const intent = edgeId ? await ctx.runQuery(internal.edges.intentOf, { edgeId }) : null;
   const mutable = cfg as unknown as Record<string, unknown>;
   if (intent) {
-    // The intent's ABSENCE of a default is frozen too: an edge planned before
-    // the account named a TLS configuration (or a certificate scope) keeps
-    // the provider's default, not whatever the account says now.
-    const frozen = intent as unknown as Record<string, unknown>;
-    for (const key of EDGE_INTENT_DEFAULT_SETTINGS[acct.provider]) {
-      if (frozen[key] !== undefined) mutable[key] = frozen[key];
-      else delete mutable[key];
-    }
+    Object.assign(mutable, frozenSettingsOf(intent));
+    // The intent's ABSENCE of a TLS configuration is frozen too: an edge
+    // planned on the provider's default keeps it, whatever its location or
+    // the account's old settings say now.
+    if (!intent.tlsConfigurationId) delete mutable.tlsConfigurationId;
     // The certificate options: what the intent froze, else the value from
     // before the option existed (the declared default: one certificate per
     // front, the default authority), never the account's default now.
+    const frozen = intent as unknown as Record<string, unknown>;
     const declared = defaultsOf(EDGE_CERTIFICATE_OPTIONS[acct.provider].fields);
     for (const key of certificateKeysOf(acct.provider)) {
       const v = frozen[key] ?? declared[key];
@@ -425,14 +438,16 @@ async function loadAdapter(
         : fact.planned;
   }
   if (EDGE_PROVIDER_CAPABILITIES[acct.provider].needsDnsAccount) {
-    let dnsAccountId = (acct.settings as { dnsAccountId?: string }).dnsAccountId;
-    let zoneId: string | undefined;
-    let zoneName: string | undefined;
-    if (intent) {
-      dnsAccountId = intent.dnsAccountId ?? dnsAccountId;
-      zoneId = intent.zoneId;
-      zoneName = intent.zoneName;
-    }
+    // The DNS account and zone: the intent's for an existing edge, else the
+    // location's (merged above), else the account's legacy settings (an
+    // account the L7 locations migration has not moved yet). A call about the
+    // account alone with no place at all (a credential test, its catalog)
+    // needs none: the DNS account is a location's.
+    const merged = cfg as unknown as { dnsAccountId?: string; zoneId?: string; zoneName?: string };
+    const dnsAccountId = intent?.dnsAccountId ?? merged.dnsAccountId;
+    const placed = !!edgeId || !!where || !!rawPlacement;
+    if (!dnsAccountId && !placed)
+      return { provider: edgeProviderFor(acct.provider), cfg, providerId: acct.provider, intent };
     if (!dnsAccountId) {
       throw new ConvexError<EdgeProviderOpsFailure>({
         code: 'dns_account_missing',
@@ -442,28 +457,41 @@ async function loadAdapter(
         timedOut: false,
       });
     }
-    const dns = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
-      id: dnsAccountId as Id<'edgeProviderAccounts'>,
+    (cfg as { dns?: unknown }).dns = await dnsConfigFor(ctx, dnsAccountId, {
+      zoneId: intent?.zoneId ?? merged.zoneId,
+      zoneName: intent?.zoneName ?? merged.zoneName,
     });
-    const dnsSettings = dns?.settings as { zoneId?: string; zoneName?: string } | undefined;
-    const apiToken = (dns?.credentials as { apiToken?: string } | undefined)?.apiToken;
-    if (!dns || !apiToken || !(zoneId ?? dnsSettings?.zoneId)) {
-      throw new ConvexError<EdgeProviderOpsFailure>({
-        code: 'dns_account_missing',
-        message: 'the referenced DNS account is unusable',
-        step: 'load',
-        retryable: false,
-        timedOut: false,
-      });
-    }
-    (cfg as { dns?: unknown }).dns = {
-      apiToken,
-      zoneId: zoneId ?? dnsSettings!.zoneId!,
-      zoneName: zoneName ?? dnsSettings?.zoneName ?? '',
-      accountId: dnsAccountId,
-    };
   }
   return { provider: edgeProviderFor(acct.provider), cfg, providerId: acct.provider, intent };
+}
+
+/**
+ * The resolved DNS side of a front: the DNS account's token and the zone its
+ * records go into (the given zone, else the DNS account's legacy settings, for
+ * an account the L7 locations migration has not moved yet).
+ */
+async function dnsConfigFor(
+  ctx: ActionCtx,
+  dnsAccountId: string,
+  zone: { zoneId?: string; zoneName?: string },
+): Promise<{ apiToken: string; zoneId: string; zoneName: string; accountId: string }> {
+  const dns = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
+    id: dnsAccountId as Id<'edgeProviderAccounts'>,
+  });
+  const dnsSettings = dns?.settings as { zoneId?: string; zoneName?: string } | undefined;
+  const apiToken = (dns?.credentials as { apiToken?: string } | undefined)?.apiToken;
+  const zoneId = zone.zoneId ?? dnsSettings?.zoneId;
+  const zoneName = zone.zoneName ?? dnsSettings?.zoneName;
+  if (!dns || !EDGE_PROVIDER_CAPABILITIES[dns.provider].providesDns || !apiToken || !zoneId) {
+    throw new ConvexError<EdgeProviderOpsFailure>({
+      code: 'dns_account_missing',
+      message: 'the referenced DNS account is unusable',
+      step: 'load',
+      retryable: false,
+      timedOut: false,
+    });
+  }
+  return { apiToken, zoneId, zoneName: zoneName ?? '', accountId: dnsAccountId };
 }
 
 /** A location's placement, checked to belong to the account the call acts for. */
@@ -664,7 +692,7 @@ export const testCredentials = internalAction({
       // provider's: the API answered, so it does not count toward its health.
       if (!res.ok && !NOT_API_FAILURES.has(res.code ?? ''))
         await noteTestFailure(ctx, accountId, seen);
-      // A passing test's `detail` is adapter prose about the zone, not a refusal.
+      // A passing test's `detail` is adapter prose about the account, not a refusal.
       const detail = res.ok ? undefined : res.detail;
       await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
         id: accountId,
@@ -673,28 +701,35 @@ export const testCredentials = internalAction({
         detail,
         observed: res.observed,
       });
-      // The account page shows the shared certificate as of this test (best
-      // effort: the reconcile cron reads it again, and the test stands).
-      if (res.ok && provider.sharedCertificate)
-        await recordSharedCertificate(ctx, accountId, provider, cfg).catch(() => null);
+      if (res.ok) {
+        // What the key reaches (the pickers' menu), and every place in use
+        // checked again: a zone's encryption mode, its CAA records and its
+        // shared certificate are the place's own facts.
+        await ctx.scheduler.runAfter(0, internal.edgeProviderOps.refreshCatalog, { accountId });
+        if (provider.checkLocation) await checkLocationsOf(ctx, accountId);
+      }
       return { ok: res.ok, code: res.code, detail };
     }),
 });
 
 /**
  * Whether the certificate options a node chose (other than the ones the
- * account's credential test checked) can be issued: the adapter's preflight
- * with those values laid over the account's (the zone's CAA records). A lookup
- * that cannot be read never refuses: issuance then reports what it meets.
+ * location's check covered) can be issued: the adapter's preflight with those
+ * values laid over the account's, at the pick's zone (its CAA records). A
+ * lookup that cannot be read never refuses: issuance then reports what it meets.
  */
 export const certificatePreflight = internalAction({
-  args: { accountId: v.id('edgeProviderAccounts'), certificate: v.any() },
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    locationId: v.id('edgeLocations'),
+    certificate: v.any(),
+  },
   handler: async (
     ctx,
-    { accountId, certificate },
+    { accountId, locationId, certificate },
   ): Promise<{ ok: true } | { ok: false; code: string; detail?: string }> => {
     try {
-      const { provider, cfg } = await loadAdapter(ctx, accountId);
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, undefined, locationId);
       if (!provider.certificatePreflight) return { ok: true };
       Object.assign(cfg as unknown as Record<string, unknown>, certificate as object);
       return await provider.certificatePreflight(cfg);
@@ -707,19 +742,20 @@ export const certificatePreflight = internalAction({
 /** Test refusals that are not the provider failing (they never raise `account_api_failing`). */
 const NOT_API_FAILURES: ReadonlySet<string> = new Set(['caa_forbids_ca']);
 
-/** Read and record the account's shared certificate; a read that fails leaves the last one. */
+/** Read and record a zone's shared certificate; a read that fails leaves the last one. */
 async function recordSharedCertificate(
   ctx: ActionCtx,
   accountId: Id<'edgeProviderAccounts'>,
+  locationId: Id<'edgeLocations'>,
   provider: EdgeProvider,
   cfg: EdgeProviderConfig,
 ): Promise<SharedCertificateStatus | null> {
   // A node that chose the wildcard where the account defaults to one per front:
-  // the certificate it shares is read as that front froze it.
+  // the certificate this zone's fronts share is read as such a front froze it.
   const mutable = cfg as unknown as Record<string, unknown>;
   if (provider.sharedCertificate && mutable.certificateScope !== 'wildcard') {
-    const shared = await ctx.runQuery(internal.edgeProviderAccounts.sharedCertificateChoice, {
-      accountId,
+    const shared = await ctx.runQuery(internal.edgeLocations.sharedCertificateChoice, {
+      locationId,
     });
     if (shared) Object.assign(mutable, shared);
   }
@@ -731,42 +767,41 @@ async function recordSharedCertificate(
   const status = provider.sharedCertificate
     ? await provider.sharedCertificate(cfg, { ordered })
     : null;
-  await ctx.runMutation(internal.edgeProviderAccounts.recordSharedCertificate, {
-    id: accountId,
-    status,
-  });
+  await ctx.runMutation(internal.edgeLocations.recordSharedCertificate, { id: locationId, status });
   return status;
 }
 
 /**
- * The account-wide certificate its edges share, read at the provider and
- * recorded on the account (the reconcile cron, so a renewal or a failure shows
- * on the account page and in attention). Orders nothing.
- */
-/**
- * Remove the account's shared certificate at the provider, with the ACME
- * record FCP wrote for it: an operator's explicit action for a wildcard no
- * live edge fronts through any more (an account switched back to one
+ * Remove a zone's shared certificate at the provider, with the ACME record
+ * FCP wrote for it: an operator's explicit action for a wildcard no live edge
+ * in that zone fronts through any more (an account switched back to one
  * certificate per front, or about to be deleted, which refuses while one is
  * held). Refused while a live edge still uses it.
  */
 export const removeSharedCertificate = internalAction({
-  args: { accountId: v.id('edgeProviderAccounts'), actorAdminId: v.optional(v.id('adminUsers')) },
-  handler: (ctx, { accountId, actorAdminId }): Promise<{ ok: true; removed: boolean }> =>
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    locationId: v.id('edgeLocations'),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: (
+    ctx,
+    { accountId, locationId, actorAdminId },
+  ): Promise<{ ok: true; removed: boolean }> =>
     tracked(ctx, accountId, async (seen) => {
-      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen, locationId);
       if (!provider.removeSharedCertificate)
         throw new ConvexError({
           code: 'validation',
           message: 'This provider shares no certificate',
         });
-      // Under the account's certificate lock, with the users counted again in
-      // the same transaction: a front cannot order or adopt the wildcard while
-      // it is being deleted, nor be planned on it unseen.
+      // Under the zone's certificate lock, with the users counted again in the
+      // same transaction: a front cannot order or adopt the wildcard while it
+      // is being deleted, nor be planned on it unseen.
       const opId = `remove-${Math.random().toString(36).slice(2)}`;
       const begun = await ctx.runMutation(
         internal.edgeProviderAccounts.beginSharedCertificateRemoval,
-        { id: accountId, opId },
+        { id: accountId, locationId, opId },
       );
       if (!begun.ok)
         throw new ConvexError({
@@ -785,6 +820,7 @@ export const removeSharedCertificate = internalAction({
           });
         await ctx.runMutation(internal.edgeProviderAccounts.noteSharedCertificateRemoved, {
           id: accountId,
+          locationId,
           removed: res.removed,
           actorAdminId,
         });
@@ -795,12 +831,139 @@ export const removeSharedCertificate = internalAction({
     }),
 });
 
+/**
+ * The certificate the fronts in one zone of an account share, read at the
+ * provider and recorded on the zone's location (the reconcile cron, so a
+ * renewal or a failure shows on the account page and in attention). Orders
+ * nothing.
+ */
 export const refreshSharedCertificate = internalAction({
-  args: { accountId: v.id('edgeProviderAccounts') },
-  handler: (ctx, { accountId }): Promise<SharedCertificateStatus | null> =>
+  args: { accountId: v.id('edgeProviderAccounts'), locationId: v.id('edgeLocations') },
+  handler: (ctx, { accountId, locationId }): Promise<SharedCertificateStatus | null> =>
     tracked(ctx, accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen, locationId);
+      return recordSharedCertificate(ctx, accountId, locationId, provider, cfg);
+    }),
+});
+
+/**
+ * Check every location of an L7 account that is switched on or still holds
+ * edges, and record what each check found. Fail-soft per location: a provider
+ * that cannot be reached leaves that location's last result alone.
+ */
+async function checkLocationsOf(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+): Promise<void> {
+  const locations = await ctx.runQuery(internal.edgeLocations.listForAccount, { accountId });
+  for (const loc of locations) {
+    if (!loc.enabled && loc.liveEdges === 0) continue;
+    try {
+      const locationId = loc.id as Id<'edgeLocations'>;
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, undefined, locationId);
+      if (!provider.checkLocation) return;
+      const res = await provider.checkLocation(cfg);
+      await ctx.runMutation(internal.edgeLocations.recordCheck, {
+        id: locationId,
+        ok: res.ok,
+        code: res.code,
+        detail: res.detail,
+        observed: res.observed,
+      });
+      // The zone's shared certificate as of this test (best effort: the
+      // reconcile cron reads it again).
+      if (provider.sharedCertificate)
+        await recordSharedCertificate(ctx, accountId, locationId, provider, cfg).catch(() => null);
+    } catch {
+      // Unreachable now says nothing about the place; its last check stands.
+    }
+  }
+}
+
+/**
+ * Check ONE location now (the admin's "Check again"): an L7 location through
+ * the adapter's `checkLocation`, recorded on the row; an L4 location through
+ * its inventory pull.
+ */
+export const checkLocation = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts'), locationId: v.id('edgeLocations') },
+  handler: (
+    ctx,
+    a,
+  ): Promise<{ ok: boolean; code?: string; detail?: string; observed?: Record<string, string> }> =>
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, a.accountId, undefined, seen, a.locationId);
+      if (!provider.checkLocation) {
+        await provider.inventory(cfg);
+        return { ok: true };
+      }
+      const res = await provider.checkLocation(cfg);
+      await ctx.runMutation(internal.edgeLocations.recordCheck, {
+        id: a.locationId,
+        ok: res.ok,
+        code: res.code,
+        detail: res.detail,
+        observed: res.observed,
+      });
+      return {
+        ok: res.ok,
+        ...(res.code ? { code: res.code } : {}),
+        ...(res.detail ? { detail: res.detail } : {}),
+        ...(res.observed ? { observed: res.observed } : {}),
+      };
+    }),
+});
+
+/**
+ * List what the account's credentials reach (its catalog: zones, regions,
+ * projects, TLS configurations) and store it. A refresh within
+ * `CATALOG_REFRESH_FLOOR_MS` of the last one does nothing (`fresh`), so a
+ * picker opening on several screens costs one listing.
+ */
+export const refreshCatalog = internalAction({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    /** List again even right after a listing (new credentials reach other things). */
+    force: v.optional(v.boolean()),
+  },
+  handler: (ctx, { accountId, force }): Promise<{ refreshed: boolean }> =>
+    tracked(ctx, accountId, async (seen) => {
+      const last = await ctx.runQuery(internal.edgeProviderCatalog.refreshedAt, { accountId });
+      if (!force && last !== null && Date.now() - last < CATALOG_REFRESH_FLOOR_MS)
+        return { refreshed: false };
       const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
-      return recordSharedCertificate(ctx, accountId, provider, cfg);
+      if (!provider.discoverOptions) return { refreshed: false };
+      const found = await provider.discoverOptions(cfg as never);
+      const lists: Array<{
+        kind: CatalogKind;
+        items: Array<{ id: string; label: string; facts?: Record<string, string> }>;
+        truncated?: boolean;
+      }> = [];
+      const errors: Array<{ kind: CatalogKind; code: string; detail?: string }> = [];
+      for (const kind of CATALOG_KINDS) {
+        const err = found.errors?.[kind];
+        if (err) {
+          errors.push({
+            kind,
+            code: err,
+            ...(found.errorDetails?.[kind] ? { detail: found.errorDetails[kind] } : {}),
+          });
+          continue;
+        }
+        const items = found[kind];
+        if (!items) continue;
+        lists.push({
+          kind,
+          items: items.map((i) => ({
+            id: String(i.id),
+            label: i.label,
+            ...(i.facts ? { facts: i.facts } : {}),
+          })),
+          ...(found.truncated?.includes(kind) ? { truncated: true } : {}),
+        });
+      }
+      await ctx.runMutation(internal.edgeProviderCatalog.record, { accountId, lists, errors });
+      return { refreshed: true };
     }),
 });
 
@@ -863,26 +1026,96 @@ export const rotateCredentials = internalAction({
       const res = await edgeProviderFor(acct.provider).testCredentials(cfg);
       // The stored (still valid) credentials are untouched on a failed test.
       if (!res.ok) return { ok: false, code: res.code ?? 'error', detail: res.detail };
-      // The test above needs no location, so a key scoped to fewer projects or
-      // regions can pass it. Every location still in use (switched on, or with
-      // edges that describe and destroy must keep reaching) is read with the new
-      // key first; one it cannot read refuses the rotation, nothing changed.
-      if (EDGE_PLACEMENT_SETTINGS[acct.provider].length > 0) {
-        const locations = await ctx.runQuery(internal.edgeLocations.listForAccount, {
+      // The test above needs no location, so a key scoped to fewer projects,
+      // regions or zones can pass it. Every location still in use (switched
+      // on, or with edges that describe and destroy must keep reaching) is read
+      // with the new key first, and so is every zone other accounts write
+      // through this one (a DNS provider's); one it cannot read refuses the
+      // rotation, nothing changed.
+      const provider = edgeProviderFor(acct.provider);
+      const locations = await ctx.runQuery(internal.edgeLocations.listForAccount, {
+        accountId: a.accountId,
+      });
+      const checked: Array<{ id: Id<'edgeLocations'>; res: LocationCheckResult }> = [];
+      // An account the L7 locations migration has not moved yet still names
+      // its zone (or DNS account) in its settings: the location falls back to it.
+      const legacy = legacySettingsOf(acct.provider, acct.settings as Record<string, unknown>);
+      for (const loc of locations) {
+        // A place in use (switched on, or holding edges) must stay reachable.
+        // One switched off with nothing in it is checked too, when it can be:
+        // what the new key cannot do there is recorded on it (no new edge is
+        // planned there until a check passes), and it never holds the
+        // rotation back.
+        const inUse = loc.enabled || loc.liveEdges > 0;
+        if (!inUse && !provider.checkLocation) continue;
+        const where = { ...cfg, ...legacy, ...loc.placement } as EdgeProviderConfig;
+        const id = loc.id as Id<'edgeLocations'>;
+        try {
+          if (provider.checkLocation) {
+            const p = where as { dnsAccountId?: string; zoneId?: string; zoneName?: string };
+            const needsDns = EDGE_PROVIDER_CAPABILITIES[acct.provider].needsDnsAccount;
+            // A place that names no zone yet has nothing to reach.
+            if (needsDns ? !p.dnsAccountId : !p.zoneId) continue;
+            if (needsDns)
+              (where as { dns?: unknown }).dns = await dnsConfigFor(ctx, p.dnsAccountId!, p);
+            const res = await provider.checkLocation(where);
+            // Only a zone's own state may refuse a place the new key still
+            // reaches in full (paused, encryption off, CAA): that is recorded
+            // like any check, and the leaked key still goes. Anything the key
+            // itself cannot do there (a TLS configuration it does not see) is
+            // the key's, and the edges there need it.
+            if (!res.ok && !ZONE_STATE_REFUSALS.has(res.code ?? '') && inUse)
+              return {
+                ok: false,
+                code: 'location_unreachable',
+                detail: `${loc.label} (${res.code})`,
+              };
+            checked.push({ id, res });
+          } else {
+            await provider.inventory(where);
+          }
+        } catch (err) {
+          const code = toOpsFailure(err).data.code;
+          if (!inUse) {
+            checked.push({ id, res: { ok: false, code: 'location_unreachable', detail: code } });
+            continue;
+          }
+          return {
+            ok: false,
+            code: 'location_unreachable',
+            detail: `${loc.label} (${code})`,
+          };
+        }
+      }
+      if (EDGE_PROVIDER_CAPABILITIES[acct.provider].providesDns) {
+        const zones = await ctx.runQuery(internal.edgeLocations.zonesWrittenThrough, {
           accountId: a.accountId,
         });
-        for (const loc of locations) {
-          if (!loc.enabled && loc.liveEdges === 0) continue;
+        const apiToken = (creds.credentials as { apiToken?: string }).apiToken ?? '';
+        for (const z of zones) {
           try {
-            await edgeProviderFor(acct.provider).inventory({
-              ...cfg,
-              ...loc.placement,
-            } as EdgeProviderConfig);
+            await cloudflareDnsClient({
+              apiToken,
+              zoneId: z.zoneId,
+              zoneName: z.zoneName,
+              accountId: a.accountId,
+            }).readZone();
           } catch (err) {
+            const code = toOpsFailure(err).data.code;
+            // A zone only switched-off fronts with nothing in them name: they
+            // record it, and the rotation goes on.
+            if (!z.inUse) {
+              for (const locationId of z.locationIds)
+                checked.push({
+                  id: locationId as Id<'edgeLocations'>,
+                  res: { ok: false, code: 'location_unreachable', detail: code },
+                });
+              continue;
+            }
             return {
               ok: false,
               code: 'location_unreachable',
-              detail: `${loc.label} (${toOpsFailure(err).data.code})`,
+              detail: `${z.zoneName} (${code})`,
             };
           }
         }
@@ -892,12 +1125,25 @@ export const rotateCredentials = internalAction({
         id: a.accountId,
         credentials: creds.credentials,
         settings: settings.settings,
-        // The test just observed the zone's live facts (encryption mode, WebSockets);
-        // a rotation must refresh them like a credential test does, or planning
-        // keeps freezing a mode the zone no longer has.
         observed: res.observed,
         expectedUpdatedAt: acct.updatedAt,
         actorAdminId: a.actorAdminId,
+      });
+      // The zone checks just read each place's live facts (encryption mode,
+      // WebSockets): recorded like a credential test's, or planning keeps
+      // freezing a mode the zone no longer has.
+      for (const c of checked)
+        await ctx.runMutation(internal.edgeLocations.recordCheck, {
+          id: c.id,
+          ok: c.res.ok,
+          code: c.res.code,
+          detail: c.res.detail,
+          observed: c.res.observed,
+        });
+      // What the new key reaches may differ from the old one's.
+      await ctx.scheduler.runAfter(0, internal.edgeProviderOps.refreshCatalog, {
+        accountId: a.accountId,
+        force: true,
       });
       return {
         ok: true,
@@ -976,6 +1222,30 @@ export const locationOptions = internalAction({
 });
 
 /**
+ * A CDN place's own state, which a check reports while the key still reaches
+ * it in full: a credential rotation records these and goes on.
+ */
+const ZONE_STATE_REFUSALS: ReadonlySet<string> = new Set([
+  'zone_ssl_off',
+  'zone_paused',
+  'zone_not_active',
+  'zone_name_mismatch',
+  'caa_forbids_ca',
+]);
+
+/** A CDN place the provider reached but refused, in words for the admin (`edge.location_unusable`). */
+const LOCATION_REFUSALS: Record<string, string> = {
+  zone_ssl_off: "That zone's encryption mode is off: set Flexible, Full or Full (strict) first",
+  zone_paused: 'That zone is paused at the provider',
+  zone_not_active: 'That zone is not active at the provider yet',
+  zone_name_mismatch:
+    "That zone's name changed at the provider: refresh the list and pick it again",
+  tls_configuration_missing: 'This Fastly key does not see that TLS configuration',
+  caa_forbids_ca:
+    "That zone's CAA records do not let the account's certificate authority issue: allow it, or pick another authority",
+};
+
+/**
  * Add a location to an account: the provider's own listing must offer the
  * region to this key (`edge.location_not_offered`; a listing that failed is
  * `edge.location_unchecked`, never a guess), and its name becomes the label.
@@ -997,13 +1267,68 @@ export const createLocation = internalAction({
     });
     if (!acct) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
     const raw = { ...((a.placement as Record<string, unknown> | undefined) ?? {}) };
+    const provider = edgeProviderFor(acct.provider);
+    /** A CDN place checked with the credentials that will use it (its zone, a front's DNS account, TLS configuration). */
+    const checkPlace = async (placement: Record<string, unknown>): Promise<LocationCheckResult> => {
+      try {
+        const { cfg } = await loadAdapter(
+          ctx,
+          a.accountId,
+          undefined,
+          undefined,
+          undefined,
+          placement,
+        );
+        return await provider.checkLocation!(cfg);
+      } catch (err) {
+        if (toOpsFailure(err).data.code === 'dns_account_missing')
+          throw new ConvexError({
+            code: 'edge.dns_account_unusable',
+            message: 'That DNS account cannot be used: it is missing or has no token',
+          });
+        throw new ConvexError({
+          code: 'edge.location_unchecked',
+          message: 'The provider could not be asked about that zone; try again',
+        });
+      }
+    };
+    let check: LocationCheckResult | undefined;
+    // A zone picked by id alone takes its name from the catalog's listing, or
+    // (an id typed by hand) from the provider's own answer.
+    if (typeof raw.zoneId === 'string' && typeof raw.zoneName !== 'string') {
+      const lister =
+        typeof raw.dnsAccountId === 'string'
+          ? (raw.dnsAccountId as Id<'edgeProviderAccounts'>)
+          : a.accountId;
+      const listed = await ctx.runQuery(internal.edgeProviderCatalog.zoneOf, {
+        accountId: lister,
+        zoneId: raw.zoneId,
+      });
+      if (listed) raw.zoneName = listed.label;
+      else if (provider.checkLocation) {
+        check = await checkPlace({ ...raw, type: acct.provider });
+        if (check.zoneName) raw.zoneName = check.zoneName;
+      }
+    }
     const parsed = validatePlacement(acct.provider, raw);
     if (!parsed.ok)
       throw new ConvexError({ code: 'validation', message: parsed.issues.join('; ') });
     const placeKey = placeKeyOf(parsed.placement);
     let label: string | undefined;
-    const provider = edgeProviderFor(acct.provider);
-    if (provider.discoverOptions) {
+    let observed: Record<string, string> | undefined;
+    if (provider.checkLocation) {
+      check ??= await checkPlace(parsed.placement as Record<string, unknown>);
+      if (!check.ok) {
+        const why = LOCATION_REFUSALS[check.code ?? ''];
+        throw new ConvexError({
+          code: why ? 'edge.location_unusable' : 'edge.location_not_offered',
+          message: why ?? 'This key cannot reach that zone',
+          reason: check.code ?? 'error',
+        });
+      }
+      label = check.label;
+      observed = check.observed;
+    } else if (provider.discoverOptions) {
       const { cfg } = await loadAdapter(ctx, a.accountId);
       const { type: _t, ...where } = parsed.placement as Record<string, unknown>;
       let found: DiscoverResult;
@@ -1034,10 +1359,11 @@ export const createLocation = internalAction({
         regionalParams: a.regionalParams,
         maxLiveEdges: a.maxLiveEdges,
         costNote: a.costNote,
+        ...(observed ? { observed } : {}),
         actorAdminId: a.actorAdminId,
       },
     );
-    if (res.created)
+    if (res.created && !provider.checkLocation)
       await ctx.scheduler.runAfter(0, internal.edgeProviderOps.inventory, {
         accountId: a.accountId,
         locationId: res.id as Id<'edgeLocations'>,
@@ -1110,23 +1436,23 @@ export const inventory = internalAction({
         locationId,
         inventory: JSON.stringify(inv),
       });
-      // The observed facts (a zone's encryption mode) go stale exactly like the
-      // inventory does, and planning refuses without them. Refresh them on the
-      // same operator action; a failing test never fails the inventory pull,
-      // which is the thing that was asked for.
-      try {
-        const res = await provider.testCredentials(cfg);
-        if (!res.ok && !NOT_API_FAILURES.has(res.code ?? ''))
-          await noteTestFailure(ctx, accountId, seen);
-        await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
-          id: accountId,
-          ok: res.ok,
-          code: res.code,
-          detail: res.ok ? undefined : res.detail,
-          observed: res.observed,
-        });
-      } catch {
-        // Deliberately silent: the inventory the operator asked for is already in.
+      // The place's observed facts (a zone's encryption mode) go stale exactly
+      // like the inventory does, and planning refuses without them. Check the
+      // location again on the same operator action; a failing check never fails
+      // the inventory pull, which is the thing that was asked for.
+      if (provider.checkLocation) {
+        try {
+          const res = await provider.checkLocation(cfg);
+          await ctx.runMutation(internal.edgeLocations.recordCheck, {
+            id: locationId,
+            ok: res.ok,
+            code: res.code,
+            detail: res.detail,
+            observed: res.observed,
+          });
+        } catch {
+          // Deliberately silent: the inventory the operator asked for is already in.
+        }
       }
       return inv;
     }),

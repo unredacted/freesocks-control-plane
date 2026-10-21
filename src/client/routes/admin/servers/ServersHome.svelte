@@ -20,6 +20,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Switch } from '@client/components/ui/switch';
   import Link from '@client/components/Link.svelte';
+  import { EDGE_PROVIDER_META } from '@client/lib/edgeProviderMeta';
   import { providersQuery } from '@client/lib/edgesApi';
   import {
     acknowledgeForeignEdit,
@@ -111,10 +112,13 @@
       invalidateServers(qc);
     }
   }
+  // Every DNS account can hold origin names in one of its zones (the setup
+  // sheet lists them); switched-on accounts first.
   let originAccounts = $derived(
     (providers.data?.accounts ?? [])
-      .filter((a) => a.provider === 'cloudflare' && typeof a.settings.zoneName === 'string')
-      .map((a) => ({ id: a.id, name: a.name, zoneName: String(a.settings.zoneName) })),
+      .filter((a) => EDGE_PROVIDER_META[a.provider].providesDns)
+      .sort((a, b) => Number(b.enabled) - Number(a.enabled))
+      .map((a) => ({ id: a.id, name: a.name, enabled: a.enabled, locations: a.locations })),
   );
   const intentOf = (node: { nodeUuid: string; name: string }) =>
     intents.data?.intents.find((i) => i.nodeUuid === node.nodeUuid || i.name === node.name) ?? null;
