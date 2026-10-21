@@ -36,7 +36,7 @@ x-logging: &log
 services:
   backend:
     # Convex ships one image per commit, and EVERY image tag is a GitHub release
-    # (`precompiled-<date>-<sha7>` in get-convex/convex-backend). So the tag here
+    # (`precompiled-<date>-<sha7>` in convex/convex-backend). So the tag here
     # is the git sha of a release: 6422278 = precompiled-2026-09-17-6422278 (the npm 1.46.0 anchor).
     #
     # The tag is what makes an upgrade auditable. Convex stopped maintaining
@@ -62,7 +62,16 @@ services:
     # Upgrading runs in-place DB migrations. Take an export first, then wait for
     # `Migration complete` in the backend log (self-hosted/advanced/upgrading.md).
     # Full procedure: docs/beta-deploy.md § Upgrading the Convex backend.
-    image: ghcr.io/get-convex/convex-backend:6422278e11c9ea384f54a455c248010559bd6807@sha256:bcbe82c68a06ae2b8445cce837123198329deb89249a9a5199bc73b8261e107b
+    #
+    # Built, not pulled: docker/convex-node.Dockerfile swaps a patched Node into
+    # the image (upstream's lags Node security releases), so a deploy needs
+    # `--build`. Convex moved its images from ghcr.io/get-convex to ghcr.io/convex
+    # in Oct 2026 (same tags, same digests); the old path refuses anonymous pulls.
+    build:
+      context: .
+      dockerfile: docker/convex-node.Dockerfile
+      args:
+        CONVEX_IMAGE: ghcr.io/convex/convex-backend:6422278e11c9ea384f54a455c248010559bd6807@sha256:bcbe82c68a06ae2b8445cce837123198329deb89249a9a5199bc73b8261e107b
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -194,8 +203,13 @@ services:
   # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
   dashboard:
-    # Same release git sha as `backend` above — required, not cosmetic.
-    image: ghcr.io/get-convex/convex-dashboard:6422278e11c9ea384f54a455c248010559bd6807@sha256:8d5167990b1d7f69cf362ba028a5055a99aee2b5396cab26247febdcf4caa485
+    # Same release git sha as `backend` above — required, not cosmetic. Same
+    # Node overlay too: the dashboard is a Node server.
+    build:
+      context: .
+      dockerfile: docker/convex-node.Dockerfile
+      args:
+        CONVEX_IMAGE: ghcr.io/convex/convex-dashboard:6422278e11c9ea384f54a455c248010559bd6807@sha256:8d5167990b1d7f69cf362ba028a5055a99aee2b5396cab26247febdcf4caa485
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -342,8 +356,9 @@ services:
   # standalone derivation via the backend image's generate_admin_key.sh, no
   # running server needed) and write it to the shared `convexkey` volume for the
   # deployer. The key is accepted by the backend because it shares INSTANCE_SECRET.
+  # The plain upstream image: generate_key runs no Node, so it needs no overlay.
   keygen:
-    image: ghcr.io/get-convex/convex-backend:6422278e11c9ea384f54a455c248010559bd6807@sha256:bcbe82c68a06ae2b8445cce837123198329deb89249a9a5199bc73b8261e107b
+    image: ghcr.io/convex/convex-backend:6422278e11c9ea384f54a455c248010559bd6807@sha256:bcbe82c68a06ae2b8445cce837123198329deb89249a9a5199bc73b8261e107b
     pids_limit: 128
     restart: 'no'
     logging: *log

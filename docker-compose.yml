@@ -1,6 +1,6 @@
 # Self-hosted Convex backend for FreeSocks Control Plane.
 #
-# Vendored from the official get-convex/convex-backend self-hosted template.
+# Vendored from the official convex/convex-backend (formerly get-convex) self-hosted template.
 # Defaults to single-box SQLite under the `data` volume; set POSTGRES_URL (in
 # .env.docker) to move to Postgres later. See docs/convex-self-hosting.md.
 #
@@ -18,7 +18,7 @@ name: fcp
 
 services:
   backend:
-    image: ghcr.io/get-convex/convex-backend:latest
+    image: ghcr.io/convex/convex-backend:latest
     # Survive a Docker Desktop / daemon restart (the backend is separate from
     # `bun run dev`, so it must stay up on its own). `down` still removes it.
     restart: unless-stopped
@@ -77,7 +77,7 @@ services:
       start_period: 10s
 
   dashboard:
-    image: ghcr.io/get-convex/convex-dashboard:latest
+    image: ghcr.io/convex/convex-dashboard:latest
     restart: unless-stopped
     stop_grace_period: 10s
     stop_signal: SIGINT

@@ -29,7 +29,7 @@ updates:
   # /(docker-)?compose(-[\w]+)?(\.[\w-]+)?\.ya?ml/i, so the `.stack` /
   # `.remnawave-test` infixes are covered.
   #
-  # NOT here: `ghcr.io/get-convex/convex-*`. Those are pinned to a release git
+  # NOT here: `ghcr.io/convex/convex-*`. Those are pinned to a release git
   # sha, which Dependabot cannot version-compare (a 40-hex tag fails its
   # NAME_WITH_VERSION regex), so it will never open a PR for them.
   # `.github/workflows/convex-release-watch.yml` is their watcher instead, and
@@ -84,15 +84,22 @@ updates:
         patterns: ['*']
 
   # --- Dockerfile base images ----------------------------------------------
-  # docker/{web,deploy,backup}.Dockerfile. Two of these are half of a cross-file
-  # pin (see CROSS-UPDATER HAZARD above): `postgres` must equal the compose
-  # server pin, and `oven/bun` must equal `packageManager` in package.json —
-  # which Dependabot does NOT touch, since the bun ecosystem is not enrolled.
-  # Both are enforced by convex/deployPins.test.ts.
+  # docker/{web,deploy,backup,convex-node}.Dockerfile. Two of these are half of
+  # a cross-file pin (see CROSS-UPDATER HAZARD above): `postgres` must equal the
+  # compose server pin, and `oven/bun` must equal `packageManager` in
+  # package.json — which Dependabot does NOT touch, since the bun ecosystem is
+  # not enrolled. Both are enforced by convex/deployPins.test.ts.
+  #
+  # `node` is the Node the Convex backend and dashboard run (convex-node). A
+  # weekly run is too slow for a Node SECURITY release, and GitHub's advisory
+  # database never covers the runtime, so .github/workflows/node-security-watch.yml
+  # re-pins those within hours; this updater still brings the ordinary releases.
   - package-ecosystem: docker
-    # Not recursive: docker/compat/ (the client-compatibility images) must be
-    # listed explicitly or its base images never get update PRs.
-    directories: [/docker, /docker/compat]
+    # Not recursive: docker/compat/ (the client-compatibility images) and
+    # docker/edge-connection-test/ must be listed explicitly or their base
+    # images never get update PRs (the edge-connection runner's node pin sat
+    # unwatched until Oct 2026).
+    directories: [/docker, /docker/compat, /docker/edge-connection-test]
     schedule:
       interval: weekly
       day: monday
@@ -106,6 +113,11 @@ updates:
       base-images:
         # Unfiltered for the same reason as the compose group above.
         patterns: ['*']
+    ignore:
+      # A new Node major is a person's call: the overlay must stay on the major
+      # in Convex's .nvmrc, and the test images on the one the clients use.
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
 
   # --- CI action pins -------------------------------------------------------
   - package-ecosystem: github-actions
@@ -125,7 +137,7 @@ updates:
   # --- the convex CLI/client (npm) ------------------------------------------
   # The THIRD Convex version in the stack, and the only one with real semver —
   # this is what ship.convex.dev publishes (v1.44.0 and friends). It is not the
-  # backend: `ghcr.io/get-convex/convex-*` has never carried a semver tag, only
+  # backend: `ghcr.io/convex/convex-*` has never carried a semver tag, only
   # per-commit git shas (the curated `self-hosted-release-<date>-<sha>` git tags
   # stopped in 2025-09).
   #

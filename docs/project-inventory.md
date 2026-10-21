@@ -539,8 +539,10 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   16.1.0 (official JavaScript SDK behind a typed wrapper), `globalping` 0.4.0. Every adapter's
   wire contract (each endpoint FCP calls) is pinned by `wireContract.test.ts` and the
   `.github/workflows/edge-providers.yml` matrix, credential-free. **Action runtime floor:** the
-  `"use node"` actions run on the Node baked into the self-hosted backend image (22.22.2 at the
-  pinned release); `scripts/node-floor.mjs` derives the highest `engines.node` among those deps
+  `"use node"` actions run on the Node that `docker/convex-node.Dockerfile` swaps into the
+  self-hosted backend image (upstream's own lags Node security releases; the overlay pin is
+  re-pinned within hours of one by `.github/workflows/node-security-watch.yml`);
+  `scripts/node-floor.mjs` derives the highest `engines.node` among those deps
   and `docker/deploy-entrypoint.sh` fails the deploy below it (`DEPLOY_SKIP_NODE_FLOOR=true` to
   bypass); the dashboard shows the observed version; the adapters, registry, front-check socket
   layer and internal probe carry `'use node';` themselves (every file under `convex/` is a

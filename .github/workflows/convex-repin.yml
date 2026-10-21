@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      UPSTREAM: get-convex/convex-backend
+      UPSTREAM: convex/convex-backend
       MIN_AGE_DAYS: ${{ inputs.min_age_days || '7' }}
       INPUT_VERSION: ${{ inputs.version || '' }}
       INPUT_RELEASE_TAG: ${{ inputs.release_tag || '' }}
@@ -137,9 +137,9 @@ jobs:
             # (scope=repository:<image>:pull), then HEAD /v2/<image>/manifests/<tag>
             # with BOTH index media types in Accept, and read docker-content-digest
             # — a single Accept value silently returns a per-platform digest.
-            b="$(docker buildx imagetools inspect "ghcr.io/get-convex/convex-backend:$full" --format '{{.Manifest.Digest}}' 2>/dev/null)" \
+            b="$(docker buildx imagetools inspect "ghcr.io/convex/convex-backend:$full" --format '{{.Manifest.Digest}}' 2>/dev/null)" \
               || { echo "  $cand: backend image missing on GHCR"; return 1; }
-            d="$(docker buildx imagetools inspect "ghcr.io/get-convex/convex-dashboard:$full" --format '{{.Manifest.Digest}}' 2>/dev/null)" \
+            d="$(docker buildx imagetools inspect "ghcr.io/convex/convex-dashboard:$full" --format '{{.Manifest.Digest}}' 2>/dev/null)" \
               || { echo "  $cand: dashboard image missing on GHCR"; return 1; }
             tag="$cand"
             new="$full"
@@ -250,6 +250,16 @@ jobs:
         run: bun install --frozen-lockfile
       - if: steps.prepare.outputs.proceed == 'true'
         run: bun run test
+      # The backend and dashboard run docker/convex-node.Dockerfile's patched
+      # Node, not the image's own: prove it still loads on the new release.
+      - name: Build the Convex images with the patched Node
+        if: steps.prepare.outputs.proceed == 'true'
+        run: |
+          set -euo pipefail
+          for img in convex-backend convex-dashboard; do
+            ref="$(grep -oE "ghcr\.io/convex/$img:[0-9a-f]{40}@sha256:[0-9a-f]{64}" docker-compose.stack.yml | head -1)"
+            docker build -f docker/convex-node.Dockerfile --build-arg CONVEX_IMAGE="$ref" .
+          done
       - if: steps.prepare.outputs.proceed == 'true'
         run: bunx prettier --check docker-compose.stack.yml
 
@@ -302,6 +312,15 @@ jobs:
 
           prod_date="$(date -u -d '+3 days' +%Y-%m-%d)"
 
+          # The images' own Node is replaced by docker/convex-node.Dockerfile's;
+          # its major must stay the one upstream builds and tests against.
+          upstream_node="$(gh api "/repos/$UPSTREAM/contents/.nvmrc?ref=$NEW" --jq .content | base64 -d | tr -d 'v \n' || true)"
+          overlay_node="$(grep -oE '^FROM node:[0-9]+\.[0-9]+\.[0-9]+' docker/convex-node.Dockerfile | cut -d: -f2)"
+          node_note="Node: upstream \`.nvmrc\` at the new pin is \`${upstream_node:-unknown}\`; the images run \`$overlay_node\` from \`docker/convex-node.Dockerfile\`."
+          if [ "${upstream_node%%.*}" != "${overlay_node%%.*}" ]; then
+            node_note="⚠️ $node_note **Different majors**: move the overlay to Node ${upstream_node%%.*} in this PR before merging."
+          fi
+
           cat > body.md <<EOF
           Re-pins \`convex-backend\` / \`convex-dashboard\` (and the \`keygen\` one-shot) to $what.
 
@@ -311,6 +330,8 @@ jobs:
           | new | \`$TAG\` | \`$NEW\` |
 
           $notes
+
+          $node_note
 
           **Backend changelog**: $compare — release-to-release, deliberately not
           \`...HEAD\`. The npm release notes cover the CLI/client surface; this
@@ -331,7 +352,7 @@ jobs:
           - [ ] \`backup\` service healthy (fresh heartbeat) on beta
           - [ ] Pre-upgrade \`convex export\` + env capture taken on beta
           - [ ] Merge
-          - [ ] Deploy beta (\`pull\` + \`up -d --force-recreate backend dashboard keygen deployer\`), wait for \`Migration complete\` in the backend log — do NOT restart mid-migration
+          - [ ] Deploy beta (\`up -d --build --force-recreate backend dashboard keygen deployer\`; the backend and dashboard are built on the pin), wait for \`Migration complete\` in the backend log — do NOT restart mid-migration
           - [ ] Beta verified: \`/readyz\` 200, deployer \`[deploy] OK\`, dashboard loads, next backup cycle green
           - [ ] Soaked ≥3 days on beta, counted from the beta deploy — no earlier than **$prod_date**
           - [ ] Prod: fresh pre-flight (its OWN export), deploy, verify

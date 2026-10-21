@@ -166,10 +166,16 @@ the code is transient and never stored. See `docs/threat-model-cdn-blinding.md`.
 ### Node runtime for `"use node"` actions
 
 Actions that use npm SDKs (`convex/relayProviderOps.ts`, `convex/relayProbeOps.ts`,
-`convex/storage.ts`, …) run on the `node` binary baked into the self-hosted backend image
-(`ghcr.io/get-convex/convex-backend`, pinned by that repo's `.nvmrc`; the backend accepts
-v20/v22/v24 only). There is no per-deployment override on self-hosted; a newer Node arrives
-with the monthly image re-pin. The deploy entrypoint runs
+`convex/storage.ts`, …) run on the backend image's `/usr/bin/node`. Upstream
+(`ghcr.io/convex/convex-backend`) installs the exact version in that repo's `.nvmrc` and does
+not follow Node security releases (22.22.2 from March 2026 was still current upstream when
+22.23.4 shipped in October), so the stack builds `docker/convex-node.Dockerfile`: the pinned
+Convex image with the official binary from a pinned `node:<x.y.z>-bookworm-slim` image copied
+over it. The dashboard, a Node server, gets the same overlay; `keygen` runs no Node and stays
+on the plain image. The overlay pin stays on the major in upstream's `.nvmrc` (the re-pin PR
+says when that major moves). `.github/workflows/node-security-watch.yml` re-pins it within
+hours of a Node security release, and Dependabot brings ordinary releases weekly. The deploy
+entrypoint runs
 `bunx convex run relayProviderOps:runtimeInfo` before `convex deploy` (when the running
 deployment already has it) and again after, and fails when the runtime is below the highest
 `engines.node` floor among the node-action dependencies (`scripts/node-floor.mjs`;

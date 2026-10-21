@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      UPSTREAM: get-convex/convex-backend
+      UPSTREAM: convex/convex-backend
       ISSUE_TITLE: 'Convex self-hosted: pinned release is stale (monthly re-pin has stalled)'
       # The pre-2026-08 title; searched as a fallback and retitled in place so
       # the original issue's history survives the rename. Drop once no issue
@@ -46,11 +46,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Convex moved its images from ghcr.io/get-convex to ghcr.io/convex in Oct
+      # 2026, and the old path began refusing anonymous pulls. Nothing noticed:
+      # the hosts had the images cached, and convex-repin.yml reads a refused
+      # inspect as "no image yet", so a fresh host could not have deployed and
+      # the next re-pin would have found nothing. Fail loudly instead.
+      - name: The pinned Convex images can still be pulled
+        run: |
+          set -euo pipefail
+          refs="$(grep -oE 'ghcr\.io/convex/convex-[a-z]+:[0-9a-f]{40}@sha256:[0-9a-f]{64}' \
+            docker-compose.stack.yml | sort -u)"
+          if [ -z "$refs" ]; then
+            echo "::error::no ghcr.io/convex/* pins found in docker-compose.stack.yml"
+            exit 1
+          fi
+          for ref in $refs; do
+            if ! docker buildx imagetools inspect "$ref" > /dev/null; then
+              echo "::error::$ref cannot be resolved anonymously, so a fresh host cannot pull it. Has Convex moved its registry path again?"
+              exit 1
+            fi
+            echo "pullable: $ref"
+          done
+
       - name: Check the pinned Convex release's age against the policy window
         run: |
           set -euo pipefail
 
-          pinned="$(grep -oE 'ghcr\.io/get-convex/convex-backend:[0-9a-f]{40}' \
+          pinned="$(grep -oE 'ghcr\.io/convex/convex-backend:[0-9a-f]{40}' \
             docker-compose.stack.yml | head -1 | cut -d: -f2)"
           if [ -z "$pinned" ]; then
             echo "::error::no git-sha-tagged convex-backend pin found in docker-compose.stack.yml"
