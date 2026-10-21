@@ -1296,7 +1296,7 @@ export const FASTLY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     type: 'boolean',
     group: 'Request',
     default: false,
-    help: "Off (the default): the front removes every header that can carry the member's address (Fastly-Client-IP, X-Forwarded-For and the like) before the node sees the request. On passes Fastly's own two through.",
+    help: "Off (the default): the front removes every header that can carry the member's address (Fastly-Client-IP, Fastly-WAF-Client-IP, X-Forwarded-For and the like) before the node sees the request. On passes them through.",
     wire: { resource: 'snippet', field: 'content', manual: true },
     live: 'new_version',
   },
