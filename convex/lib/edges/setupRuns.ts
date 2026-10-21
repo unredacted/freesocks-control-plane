@@ -159,6 +159,8 @@ export interface SetupPlanInbound {
   /** Why it is not frontable (an `INBOUND_UNSUPPORTED_CODES` reason or a layer exclusion). */
   reason?: string;
   detail?: string;
+  /** The origin probe got no answer for this HTTP transport (its short reason): L4-only for now. */
+  probeFailed?: string;
 }
 
 export interface SetupPlanDirectHost {

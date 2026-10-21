@@ -525,6 +525,7 @@ export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
       detail: e.detail ?? null,
     })),
     startedAt: new Date(r.startedAt).toISOString(),
+    attemptStartedAt: new Date(r.attemptStartedAt ?? r.startedAt).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
     finishedAt: r.finishedAt ? new Date(r.finishedAt).toISOString() : null,
   };
@@ -952,8 +953,11 @@ export const insert = internalMutation({
           recorded && (SETUP_RUN_STAGES as readonly string[]).includes(recorded)
             ? recorded
             : 'credential';
-        // A recorded terminal stage resumes at go_live (the origin is still owned).
-        if (stage === 'done') stage = 'go_live';
+        // The new run's listeners hold no edge yet, and only publish (through
+        // provision, which takes the origin's own edges back) can give them
+        // one: a stage past it (hiding, the rehearsal, go-live, or a finished
+        // run) would wait on addresses it never attached. It resumes at publish.
+        if (STAGE_INDEX[stage] > STAGE_INDEX.publish) stage = 'publish';
       }
     }
     const layerOf = (locationId: Id<'edgeLocations'>) =>
@@ -3059,6 +3063,7 @@ export const retry = internalMutation({
       listeners,
       ...(picks !== r.picks ? { picks } : {}),
       ...(stage !== r.stage ? { stageEnteredAt: now } : {}),
+      attemptStartedAt: now,
       finishedAt: undefined,
       events: appendRunEvent(r.events, {
         at: now,
@@ -3303,7 +3308,10 @@ export const resume = internalMutation({
  * the reconcile destroy and lets the origin delete remove the credential);
  * stages 5-7 (and a go-live waiting for a fresh approval) keep the published
  * edges and run the restore workflow (`edgeRestore.start`, purpose
- * `cancel_setup`); after go-live there is no cancel. A re-protect run
+ * `cancel_setup`), unless the origin never reached members (nothing
+ * published, no Host hidden, not bound: a run parked at publish, say), which
+ * is deleted like an earlier cancel, so the node can be protected afresh
+ * instead of being left half set up; after go-live there is no cancel. A re-protect run
  * (`kind: 'reprotect'`) drops only its own candidates instead, in one
  * mutation (`cancelReprotect`): the live node keeps what members have.
  */
@@ -3328,13 +3336,22 @@ export const cancel = internalAction({
       });
       disposition = 'deleted';
     } else if (r.relayId && (cancelRestores(r.stage) || parkedAtGoLive)) {
-      await ops.restoreStart(ctx, {
-        relayId: r.relayId,
-        purpose: 'cancel_setup',
-        actorAdminId,
-        darkCohortKeys: r.rehearsal?.darkCohortKeys ?? [],
-      });
-      disposition = 'restore';
+      if (!(await ctx.runQuery(internal.edgeSetupRuns.originEverServed, { relayId: r.relayId }))) {
+        await ctx.runMutation(internal.relays.requestDelete, {
+          id: r.relayId,
+          disposition: 'restore-direct',
+          actorAdminId,
+        });
+        disposition = 'deleted';
+      } else {
+        await ops.restoreStart(ctx, {
+          relayId: r.relayId,
+          purpose: 'cancel_setup',
+          actorAdminId,
+          darkCohortKeys: r.rehearsal?.darkCohortKeys ?? [],
+        });
+        disposition = 'restore';
+      }
     }
     // A temporary test credential minted for this run expires now rather than
     // at its 24 h TTL (the sweep removes it; an origin delete releases too).
@@ -3350,6 +3367,34 @@ export const cancel = internalAction({
 });
 
 export type CancelDisposition = 'deleted' | 'restore' | 'candidates' | 'none';
+
+/**
+ * Whether an origin ever reached members: an edge of it was published (now or
+ * before), it hid a direct Host, or a delivery binding names it. One that
+ * never did has nothing to restore and nothing worth keeping.
+ */
+export const originEverServed = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }): Promise<boolean> => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay) return false;
+    if (relay.publishedEdgeIds.some(Boolean)) return true;
+    const hide = await ctx.db
+      .query('edgeHostHides')
+      .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+      .first();
+    if (hide) return true;
+    const edges = await ctx.db
+      .query('edges')
+      .withIndex('by_relay_status', (q) => q.eq('relayId', relayId))
+      .collect();
+    if (edges.some((e) => e.publishedAt !== undefined || e.publication !== 'unpublished'))
+      return true;
+    if (!relay.backendServerId) return false;
+    const binding = await deliveryBindingFor(ctx.db, relay.backendServerId, relay.nodeName);
+    return !!binding && binding.relaySlug === relay.slug;
+  },
+});
 
 /**
  * Cancel is refused once the run is finished or binding: after go-live there

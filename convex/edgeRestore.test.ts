@@ -316,6 +316,34 @@ describe('acceptance 14: restore-direct deletion of a guided origin, a download 
     expect(await w.t.run((ctx) => ctx.db.get(w.relayId))).toBeNull();
   });
 
+  test('one reconcile pass chains every phase with nothing to wait for, and stops at the one that must wait', async () => {
+    const w = await world({ bound: true });
+    await w.t.mutation(internal.relays.requestDelete, {
+      id: w.relayId,
+      disposition: 'restore-direct',
+    });
+    // Someone re-enabled D1: the raw check must hold the release.
+    w.panel.find(D1).isDisabled = false;
+    let rep = await w.t.action(internal.edgeRestore.reconcilePass, {});
+    // freeze -> settle -> verify_fcp_raw, which waits.
+    expect(rep).toEqual({ stepped: 3, finished: 0, errors: 0 });
+    expect((await w.relay()).restore).toMatchObject({
+      phase: 'verify_fcp_raw',
+      lastError: 'direct_entry_present:squad-1',
+    });
+    expect((await w.binding())?.state).toBe('active');
+    w.panel.find(D1).isDisabled = true;
+    // Nothing else waits: the rest of the workflow runs in this one pass.
+    rep = await w.t.action(internal.edgeRestore.reconcilePass, {});
+    expect(rep).toEqual({ stepped: 5, finished: 1, errors: 0 });
+    const relay = await w.relay();
+    expect(relay.restore).toBeUndefined();
+    expect(relay).toMatchObject({ deleting: true, enabled: false });
+    expect((await w.binding())?.state).toBe('released');
+    expect(w.panel.find(D1).isDisabled).toBe(false);
+    expect(w.panel.find(D2).isDisabled).toBe(false);
+  });
+
   test('keep-dark keeps the binding, restores nothing and tears down at once (unchanged)', async () => {
     const w = await world({ bound: true });
     const res = await w.t.mutation(internal.relays.requestDelete, {
@@ -410,6 +438,35 @@ describe('acceptance 5 + 25: cancel_setup after publication', () => {
     // The direct body is back for members.
     const after = await w.download();
     expect(after.body).toContain(FIXTURE_ORIGIN);
+  });
+});
+
+describe('nothing to restore', () => {
+  test('an origin never bound that never hid a Host goes from freeze straight to finish', async () => {
+    const panel = fakeHostPanel(panelHosts());
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t, { listeners: [realityListener()] });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fx.relayId, {
+        setupStage: 'publish',
+        setupOwned: true,
+        bindingDeferred: true,
+      });
+      for (const b of await ctx.db.query('edgeDeliveryBindings').collect())
+        await ctx.db.delete(b._id);
+    });
+    await t.mutation(internal.edgeRestore.start, {
+      relayId: fx.relayId,
+      purpose: 'cancel_setup',
+    });
+    const step = () => t.action(internal.edgeRestore.step, { relayId: fx.relayId });
+    expect(await step()).toMatchObject({ phase: 'finish', advanced: true });
+    expect(await step()).toMatchObject({ done: true, advanced: true });
+    const relay = (await t.run((ctx) => ctx.db.get(fx.relayId)))!;
+    expect(relay.restore).toBeUndefined();
+    expect(relay).toMatchObject({ setupOwned: true, bindingDeferred: true });
+    // Nothing was read or written on the panel.
+    expect(panel.patches).toEqual([]);
   });
 });
 

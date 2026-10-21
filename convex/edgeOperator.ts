@@ -30,6 +30,7 @@ import { isTerminalPhase } from './lib/edges/rotation';
 import { accountsForSlot } from './lib/edges/rotation';
 import {
   edgeLayerOf,
+  frontsAllowed,
   zoneModeGovernsOrigin,
   EDGE_PROVIDER_CAPABILITIES,
 } from './lib/edges/providers/capabilities';
@@ -761,7 +762,8 @@ interface AttentionItem {
     | 'protect_node'
     | 'open_node'
     | 'open_modes'
-    | 'open_probes';
+    | 'open_probes'
+    | 'open_run';
   since: string | null;
 }
 
@@ -900,29 +902,52 @@ async function bindingStateOf(
 }
 
 /**
- * The live (non-terminal) guided setup run of an origin, through the run's
- * node (`by_origin`): a node has at most one live run, always its newest. A
- * manual origin, or a backend server without a node name, has none.
+ * The guided setup runs of an origin that its status names, through the run's
+ * node (`by_origin`): the live (non-terminal) one (a node has at most one,
+ * always its newest), else the newest run when it FAILED (its sheet has Try
+ * again; a later run of any outcome supersedes it). A manual origin, or a
+ * backend server without a node name, has neither.
  */
-async function liveSetupRunOf(db: Db, relay: Relay): Promise<Doc<'edgeSetupRuns'> | null> {
+async function setupRunsOf(
+  db: Db,
+  relay: Relay,
+): Promise<{ live: Doc<'edgeSetupRuns'> | null; failed: Doc<'edgeSetupRuns'> | null }> {
   const serverId = relay.origin.kind === 'manual' ? undefined : relay.origin.backendServerId;
   const nodeName = relay.origin.kind === 'panel-node' ? relay.origin.nodeName : relay.nodeName;
-  if (!serverId || !nodeName) return null;
-  const rows = await db
-    .query('edgeSetupRuns')
-    .withIndex('by_origin', (q) => q.eq('backendServerId', serverId).eq('nodeName', nodeName))
-    .order('desc')
-    .take(5);
-  return (
-    rows.find(
-      (r) => !isTerminalRunState(r.state) && (r.relayId === undefined || r.relayId === relay._id),
-    ) ?? null
-  );
+  if (!serverId || !nodeName) return { live: null, failed: null };
+  const rows = (
+    await db
+      .query('edgeSetupRuns')
+      .withIndex('by_origin', (q) => q.eq('backendServerId', serverId).eq('nodeName', nodeName))
+      .order('desc')
+      .take(5)
+  ).filter((r) => r.relayId === undefined || r.relayId === relay._id);
+  const live = rows.find((r) => !isTerminalRunState(r.state)) ?? null;
+  const newest = rows[0];
+  return { live, failed: !live && newest?.state === 'failed' ? newest : null };
+}
+
+/**
+ * Whether the origin's enrolled node is fronted (its connection mode has no
+ * direct address for members). A node FCP does not enroll, or whose mode is
+ * unknown, reads as direct.
+ */
+async function frontedNodeOf(ctx: QueryCtx, relay: Relay): Promise<boolean> {
+  if (relay.origin.kind !== 'panel-node' || !relay.backendServerId) return false;
+  const nodeName = relay.origin.nodeName;
+  const intent = await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server_name', (q) =>
+      q.eq('backendServerId', relay.backendServerId!).eq('name', nodeName),
+    )
+    .first();
+  if (!intent) return false;
+  return (await modeRefOf(ctx, intent)).shape.fronting !== 'direct';
 }
 
 /** The facts one origin's status is judged on (lib/edges/originStatus.ts), but its attention items. */
 async function statusFactsOf(
-  db: Db,
+  ctx: QueryCtx,
   relay: Relay,
   edges: Edge[],
   bindingState: { bound: boolean; foreign: boolean },
@@ -933,7 +958,7 @@ async function statusFactsOf(
     const e = id ? edges.find((x) => x._id === id) : undefined;
     if (e) pool.push({ health: e.health, layer: e.layer ?? 'l4' });
   }
-  const run = await liveSetupRunOf(db, relay);
+  const { live: run, failed } = await setupRunsOf(ctx.db, relay);
   const runFacts: StatusRunFacts | null = run
     ? {
         id: run._id as string,
@@ -958,6 +983,15 @@ async function statusFactsOf(
     foreignBinding: bindingState.foreign,
     renderEnabled,
     run: runFacts,
+    failedRun: failed
+      ? {
+          id: failed._id as string,
+          kind: failed.kind ?? null,
+          stage: failed.stage,
+          code: failed.need?.code ?? null,
+        }
+      : null,
+    fronted: await frontedNodeOf(ctx, relay),
   };
 }
 
@@ -997,7 +1031,7 @@ export const attention = internalQuery({
         const edges = await liveEdgesOfRelay(ctx.db, relay._id);
         statusFacts.set(
           relay._id as string,
-          await statusFactsOf(ctx.db, relay, edges, state, cfg.render.enabled),
+          await statusFactsOf(ctx, relay, edges, state, cfg.render.enabled),
         );
         continue;
       }
@@ -1102,10 +1136,26 @@ export const attention = internalQuery({
           since: isoN(binding?.updatedAt),
         });
       }
-      statusFacts.set(
-        relay._id as string,
-        await statusFactsOf(ctx.db, relay, edges, bindingState, cfg.render.enabled),
-      );
+      const facts = await statusFactsOf(ctx, relay, edges, bindingState, cfg.render.enabled);
+      statusFacts.set(relay._id as string, facts);
+      // The newest guided setup run of the node failed and nothing replaced it:
+      // its sheet (with Try again) is where the operator picks it up. A failed
+      // re-protect leaves members on what they had, so it only informs.
+      if (facts.failedRun)
+        items.push({
+          ...base(relay),
+          id: `setup_run_failed:${facts.failedRun.id}`,
+          kind: 'setup_run_failed',
+          severity: facts.failedRun.kind === 'reprotect' ? 'info' : 'warning',
+          code: facts.failedRun.code,
+          facts: {
+            runId: facts.failedRun.id,
+            stage: facts.failedRun.stage,
+            ...(facts.failedRun.kind === 'reprotect' ? { reprotect: true } : {}),
+          },
+          action: 'open_run',
+          since: null,
+        });
       // A direct Host reappeared on a bound guided node and could not be
       // re-hidden: delivery is fail-closed (`leak_detected`) until it is hidden.
       if (relay.directHostAlert && relay.directHostAlert.hosts.length > 0) {
@@ -1616,9 +1666,11 @@ export const attention = internalQuery({
           action: 'test_credentials',
           since: null,
         });
-      } else {
+      } else if (frontsAllowed(a.provider, cfg.l7.dnsProvidersFront)) {
         // Trust is per location: one item per enabled location not trusted yet,
-        // naming the location when the account has more than one.
+        // naming the location when the account has more than one. A DNS-only
+        // account (its provider may not front here) carries no traffic, so it
+        // has nothing to be trusted for.
         const locs = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
         for (const loc of locs) {
           if (loc.qualified) continue;

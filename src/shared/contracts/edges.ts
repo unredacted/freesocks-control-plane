@@ -1450,6 +1450,8 @@ export const RelayNodeCandidate = z.object({
   online: z.boolean(),
   usersOnline: z.number(),
   relaySlug: z.string().nullable(),
+  /** The origin is one an earlier guided setup left half set up: a new protect picks it up. */
+  leftover: z.boolean(),
 });
 export type RelayNodeCandidate = z.infer<typeof RelayNodeCandidate>;
 export const RelayNodeCandidatesResponse = z.object({
@@ -1962,6 +1964,10 @@ export const OriginStatus = z.object({
   /** At least one attention item names this origin. */
   attention: z.boolean(),
   delivery: OriginDelivery,
+  /** The origin's newest guided setup run when it failed (no run is live): its sheet has Try again. */
+  failedRunId: z.string().nullable(),
+  /** The enrolled node is fronted: its connection mode gives members no direct address. */
+  fronted: z.boolean(),
 });
 export type OriginStatus = z.infer<typeof OriginStatus>;
 
@@ -2158,6 +2164,8 @@ export const SetupPlanInbound = z.object({
   /** An `INBOUND_UNSUPPORTED_CODES` reason, `needs_names`, or a layer exclusion. */
   reason: z.string().optional(),
   detail: z.string().optional(),
+  /** The origin probe got no answer for this HTTP transport (a short reason): L4-only until asked again. */
+  probeFailed: z.string().optional(),
 });
 export const SetupPlanDirectHost = z.object({
   uuid: z.string(),
@@ -2468,6 +2476,8 @@ export const SetupRunAdmin = z.object({
     }),
   ),
   startedAt: iso,
+  /** When the current attempt began (a retry starts one); `startedAt` for the first. */
+  attemptStartedAt: iso,
   updatedAt: iso,
   finishedAt: isoN,
 });

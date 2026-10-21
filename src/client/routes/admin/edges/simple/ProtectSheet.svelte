@@ -156,7 +156,7 @@
     const found = candidates.data.nodes.find((n) => n.nodeUuid === preset.node);
     if (found) {
       presetPending = false;
-      if (found.relaySlug === null) untrack(() => pickNode(found.nodeUuid));
+      if (found.relaySlug === null || found.leftover) untrack(() => pickNode(found.nodeUuid));
       else presetTaken = { name: found.name, relaySlug: found.relaySlug };
     } else if (!presetRefreshed) {
       presetRefreshed = true;
@@ -572,7 +572,7 @@
               <fieldset class="space-y-2">
                 <legend class="sr-only">Node</legend>
                 {#each nodes as n (n.nodeUuid)}
-                  {@const taken = n.relaySlug !== null}
+                  {@const taken = n.relaySlug !== null && !n.leftover}
                   <label class={[CARD, taken && 'opacity-60']}>
                     <input
                       type="radio"
@@ -592,6 +592,8 @@
                         {countryLabel(n.countryCode) ?? 'No country set'}
                         {#if taken}
                           <span class="mx-1" aria-hidden="true">·</span>Already protected
+                        {:else if n.leftover}
+                          <span class="mx-1" aria-hidden="true">·</span>Half set up
                         {:else if !n.online}
                           <span class="mx-1" aria-hidden="true">·</span>Offline
                         {/if}
@@ -766,6 +768,14 @@
                               class={`${LINK} inline-flex min-h-11 items-center sm:min-h-0`}
                               onclick={() => (addingLocationFor = a.id)}
                               >{a.layer === 'l7' ? 'Add a zone' : 'Add a location'}</button
+                            >
+                          {:else if r === 'origin_unreachable'}
+                            <!-- The origin did not answer its probe: planning again asks again. -->
+                            <button
+                              type="button"
+                              class={`${LINK} inline-flex min-h-11 items-center sm:min-h-0`}
+                              disabled={planM.isPending}
+                              onclick={replan}>{reasonLabel(r)}</button
                             >
                           {:else if href}
                             <Link

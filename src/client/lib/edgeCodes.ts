@@ -794,6 +794,11 @@ const COPY = {
       'A front’s certificate cannot be issued until something outside FCP changes, such as a CAA record or the validation record in the DNS zone.',
     fix: 'Open it to see what the certificate waits on.',
   },
+  setup_run_failed: {
+    label: 'Setup stopped',
+    explain: 'The guided setup for this node stopped before it finished. Its run says why.',
+    fix: 'Open the run and try again, or remove protection to start over.',
+  },
   pool_below_desired: {
     label: 'Pool below desired',
     explain: 'Fewer edges are published than the origin wants.',
@@ -966,7 +971,7 @@ const COPY = {
   // --- published pool (reserved allocation, capacity, rebalance) -------------------------
   pool_full: {
     label: 'Pool full',
-    explain: 'Every published slot of this origin is taken.',
+    explain: 'Every pool slot of this origin is taken.',
     fix: 'Raise the published edges wanted on the origin, or unpublish an edge first.',
   },
   pool_reserved: {
@@ -983,7 +988,7 @@ const COPY = {
   listener_cap: {
     label: 'Listener cap reached',
     explain:
-      'An origin can carry at most eight deployed, enabled listeners, one published slot each; this one would be the ninth.',
+      'An origin can carry at most eight deployed, enabled listeners, each with its own slot in the pool; this one would be the ninth.',
     fix: 'Retire or disable a listener you do not need, or register the listener on another origin.',
   },
   pool_below_coverage: {
@@ -1002,6 +1007,12 @@ const COPY = {
     label: 'Owned by a setup run',
     explain: 'A guided setup owns this origin, so automatic replacement leaves it alone.',
     fix: 'Finish or cancel the setup run.',
+  },
+  not_live: {
+    label: 'Not live yet',
+    explain:
+      'No setup run is working on this origin, but it never went live, so automatic replacement leaves it alone.',
+    fix: 'Go live from the node page, or protect it again.',
   },
   // A guided run's event: it parked at publish until the enrolled node is approved.
   publish_held: {
@@ -1721,6 +1732,7 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_node: 'Review go-live',
   open_modes: 'Open Connection modes',
   open_probes: 'See the checks',
+  open_run: 'Open the run',
 };
 
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
@@ -1745,6 +1757,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_node: 'Open node',
   open_modes: 'Connection modes',
   open_probes: 'Open probes',
+  open_run: 'Open run',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {
@@ -1877,6 +1890,18 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   layer_mismatch: {
     label: 'Cannot carry every transport',
     explain: 'The account fronts at a layer one of the transports cannot use.',
+  },
+  origin_unreachable: {
+    label: "Couldn't reach the origin. Try again",
+    explain:
+      'The node did not answer the check of its WebSocket or HTTP transport, so no CDN account can carry it yet. This is usually a passing network fault.',
+    fix: 'Check again in a moment.',
+  },
+  origin_not_public: {
+    label: 'Origin address is not public',
+    explain:
+      'The node’s address or name leads to no public address, so no CDN can reach its WebSocket or HTTP transport. Checking again gives the same answer.',
+    fix: 'Give the node a public address or point its name at one, then plan again.',
   },
   origin_port_not_carried: {
     label: 'Wrong port for gRPC',
@@ -2102,8 +2127,44 @@ export const PLAIN_WORDS: Record<string, string> = {
   'provision or publish an edge': 'create an address or put one in use',
   'provision a new edge': 'create a new address',
   'raise the published edges wanted': 'raise the number of addresses in use',
+  'published edges wanted': 'addresses wanted in use',
+  'the transport of this listener': 'this transport',
   'edge work': 'new work',
 };
+
+// A verb swapped for "<verb> address" keeps its own object ("Rotate the
+// credentials" is "Replace the credentials", never "Replace address the ...").
+const VERB_OBJECT = /\b(replace|create) address (the|this|that|an?|its|one)\b/gi;
+
+// "In use" and "paused for safety" follow their noun in English ("an address in
+// use", never "a in use address"): a plain phrase spliced in front of one of
+// these nouns is moved behind it.
+const AFTER_NOUN =
+  /\b(in use|paused for safety) (CDN fronts?|fronts?|address(?:es)?|protected nodes?|spares?|transports?)\b/gi;
+// The article before a plain word whose first sound differs from the word it
+// replaced ("a published edge", "an origin").
+const AN_WORDS = new Set(['address', 'addresses', 'update']);
+const A_WORDS = new Set([
+  'protected',
+  'spare',
+  'spares',
+  'retiring',
+  'replace',
+  'replaced',
+  'create',
+  'created',
+  'creating',
+  'trusted',
+  'trust',
+  'paused',
+  'transport',
+  'transports',
+  'resume',
+  'check',
+  'put',
+  'raise',
+  'new',
+]);
 
 /** Rewrite a technical sentence in plain words (whole-word, longest match first). */
 export function plainWords(text: string): string {
@@ -2116,7 +2177,18 @@ export function plainWords(text: string): string {
       return m[0] === m[0]!.toUpperCase() ? plain[0]!.toUpperCase() + plain.slice(1) : plain;
     });
   }
-  return out;
+  out = out.replace(VERB_OBJECT, '$1 $2');
+  out = out.replace(AFTER_NOUN, (m, phrase: string, noun: string) => {
+    const head = m[0] === m[0]!.toUpperCase() ? noun[0]!.toUpperCase() + noun.slice(1) : noun;
+    return `${head} ${phrase.toLowerCase()}`;
+  });
+  return out.replace(/\b(a|an)(\s+)([a-z]+)/gi, (m, article: string, gap: string, word: string) => {
+    const w = word.toLowerCase();
+    const want = AN_WORDS.has(w) ? 'an' : A_WORDS.has(w) ? 'a' : null;
+    if (!want || want === article.toLowerCase()) return m;
+    const cased = article[0] === 'A' ? want[0]!.toUpperCase() + want.slice(1) : want;
+    return `${cased}${gap}${word}`;
+  });
 }
 
 /** The node page's timeline: the audit action in plain words. */

@@ -279,7 +279,12 @@ XHTTP; `http/1.1` otherwise), `certPublic` = the chain verifies against the syst
 foreign Host header still answers 2xx (`any`; never sent to a gRPC origin). Like the internal
 reachability probe it dials public literals only (a name is resolved first, every answer must be
 public, the literal is dialled). Without a successful probe the candidate stays L4-only and
-carries the probe's reason. For an **enrolled** node the plan reads the node from its intent
+carries the probe's reason. The setup plan asks a target that got no answer again
+(`ORIGIN_PROBE_ATTEMPTS`, 3, half a second apart; an address the probe refuses outright is not
+asked again), and when it never answers the plan says so: the inbound carries `probeFailed` and
+an L7 account that would carry it reads `origin_unreachable` ("Couldn't reach the origin. Try
+again", which plans again) instead of `layer_mismatch`, or `origin_not_public` when the probe
+refused the address outright (private or none: checking again gives the same answer). For an **enrolled** node the plan reads the node from its intent
 (`nodeIntents.enrolledOriginOf`: the origin name plus the ingress), and the Host-header answer
 comes from the node's verified ingress, not the probe: the `ingress_verified` evidence recorded at
 `machine_ready` with `settings.ingress.hostHeader: 'any'` gives `acceptsHostHeader: any`
@@ -475,7 +480,8 @@ and traffic name, a front node's origin name) and is never a candidate, whoever 
 setup plan does not offer it, a rotation naming it fails `dns_account_not_fronting`, automatic
 selection skips it, and a provider-set pick of it is not usable (`setPicksOf`). Nor does a
 spare of it go live: `checkPublishable` refuses it (`dns_account_not_fronting`) and standby
-selection passes it over. Published edges are left as they are. It is deliberately separate from `l7.autoSelect`: letting automation
+selection passes it over. Nor does attention ask to trust it (no `account_unqualified`: it
+carries no traffic). Published edges are left as they are. It is deliberately separate from `l7.autoSelect`: letting automation
 pick L7 fronts must not turn a DNS account into one (§ "Adding a DNS provider").
 
 ### Publication
@@ -922,7 +928,20 @@ landed. `relays.setupOwned` is set at stage 1 and cleared ONLY by stage 8 (or re
 failed, cancelled or unbound run leaves the origin owned. Cancel before stage 5 deletes the origin
 `restore-direct` (nothing was published; the delete cancels the live rotation, drains the
 standbys for the reconcile destroy and removes the credential); at stages 5-7 the published edges
-stay and `edgeRestore.start` runs with purpose `cancel_setup`; after go-live there is no cancel.
+stay and `edgeRestore.start` runs with purpose `cancel_setup`, unless the origin never reached
+members (`edgeSetupRuns.originEverServed`: no edge ever published, no hide row, no binding
+naming it), which is deleted like an earlier cancel so the node is free to protect again;
+after go-live there is no cancel. An origin a failed or cancelled run left owned (no run live
+on it) is a **leftover**: the protect sheet offers its node again (`nodeCandidates.leftover`,
+"Half set up") and the new run resumes it (`plan.existingRelay`) at its recorded stage, at
+publish at the latest: the new run's listeners hold no edge until publish (through provision)
+takes the origin's own back, so a later stage would wait on addresses it never attached; the
+node page offers
+**Continue setup** when nothing of it is in use. The node's newest run, when it failed, is
+named by the origin status (`failedRunId`, "Open the run" on the node page; the Edges home row
+opens its sheet) and by attention `setup_run_failed` (warning; info for a re-protect, whose
+members keep what they had; action `open_run`). The sheet's clock counts from the current
+attempt (`attemptStartedAt`, set by a retry).
 A **re-protect** run (`kind: 'reprotect'`, `POST relays/{id}/reprotect`, "Protect again" on the
 node page) is its own kind for a LIVE node: an enrolled node whose members are already served
 through this origin (refused otherwise: `edge.reprotect_not_bound` for an origin not bound yet,
@@ -1163,12 +1182,15 @@ of every bound origin with hide rows: a covered or previously approved one is **
 none). Both are suppressed while a restore workflow runs.
 
 **The restore workflow** (`relays.restore {purpose, phase, ...}`, `convex/edgeRestore.ts`;
-one phase per `edge-reconcile` tick, `edgeRestore.step`) is the only way a guided origin stops
+`edgeRestore.step` advances one phase, and each `edge-reconcile` tick chains steps until a phase
+must wait: a running rotation, hides still settling, a raw body not there yet, the panel
+unreachable) is the only way a guided origin stops
 depending on its edges, with an explicit purpose: `cancel_setup` (a run cancelled after
 publication), `release_requirement` (edge-required delivery switched off, everything kept:
 "Serve this node directly again", `POST relays/{id}/serve-direct`) or
 `delete_relay` (a `restore-direct` deletion). Phases: (1) `freeze`: no new disable writes; waits
-for a running rotation; (2) `settle`: every outstanding hide row confirmed or released by
+for a running rotation; an origin never bound that never hid a Host has nothing to restore and
+goes straight to (7); (2) `settle`: every outstanding hide row confirmed or released by
 observation; (3) `verify_fcp_raw` (bound origins only): the RAW backend body of each non-dark
 cohort (one representative key per placement pinned to the node, `convex/lib/edges/cohorts.ts`:
 the first key of each distinct placement over `subscriptions.by_backend_server_pinned`, a page
@@ -1184,7 +1206,8 @@ re-enabled through a `restore` row, read-back confirmed; changed or removed by a
 the origin entry again; (7) finish by purpose: `cancel_setup` retains the origin (`setupOwned` +
 `bindingDeferred`, edges published, attention `go_live_pending`); `release_requirement` retains
 everything and sets `bindingDeferred` so `require-edges` can re-apply the activation policy;
-`delete_relay` runs the deletion body only now (drain, destroy, remove). An origin with a restore
+`delete_relay` runs the deletion body only now (drain, destroy, remove; an edge that was never
+published served no member and is not drained). An origin with a restore
 in progress refuses a second workflow, a new hide and every pool / listener write
 (`edge.restore_in_progress`); attention lists it as `restore_in_progress` (info) with its phase
 and last error. Audited `edge.relay.restore_started` / `edge.relay.restore_finished`.
@@ -1271,10 +1294,12 @@ changed listener no probe has settled on since); settles edges with unknown outc
 discovery; refreshes provider health; renews L7 proofs; re-observes unresolved Host operations
 and deletes the FCP-owned Hosts of retired listeners and deleting origins (read-back confirmed);
 settles the direct-Host hide ledger and re-observes the direct Hosts of bound guided origins;
-drives one phase of each restore workflow; removes expired or released temporary test keys
-(`edgeTestCredentials.sweep`, bounded retries, then attention `test_key_cleanup`); turns
-drained / failed /
-cancelled edges into destroy runs; pool upkeep while `edge.enabled` is on and the maintenance
+advances each restore workflow until a phase must wait; removes expired or released temporary
+test keys (`edgeTestCredentials.sweep`, bounded retries, then attention `test_key_cleanup`);
+turns drained / failed / cancelled edges into destroy runs and starts their walk in the same
+pass: in the provider's kind order, the next resource as soon as the last is confirmed gone (an
+async-delete provider's delete is read back at once), stopping at the first still going away,
+at most `maxDestroyStepsPerPass` (12) per pass, each pass one destroy attempt; pool upkeep while `edge.enabled` is on and the maintenance
 switch is off (a `setupOwned` origin and an origin in a restore workflow are skipped): first `ensureCapacity` (raise / expand
 `desiredPublished` for the deployed listeners), then **listener-aware** upkeep, one listener per
 tick: every deployed, enabled listener without a template edge gets its OWN standby published
@@ -2090,7 +2115,7 @@ every control a key (pinned by `settings.test.ts`).
 and claim intervals and per-pass caps are `EDGE_PLUMBING` in `convex/lib/edgeConfig.ts`, not
 settings: provision timeout 20 min, discovery timeout 30 min, a rotation's wall clock 2 h, poll
 20 s, operation claim 60 s, 8 verification attempts, 6 publish and 6 rollback attempts, 48
-destroy attempts, one automatic reconcile start per pass, 2,000 report rows per detector
+destroy passes of at most 12 resources each, one automatic reconcile start per pass, 2,000 report rows per detector
 evaluation, the L7 proof's step timeout 10 s, lifetime 60 min and six re-proofs per pass, the
 L7 evidence wait 15 min, and 1.5 s between probe runs on one source. Tests and the
 edge-connection gate shorten them through `__setEdgePlumbingForTests`.
@@ -2603,6 +2628,13 @@ WebSockets guide lists only name, address, TLS and Host override as supported, y
 dials the backend's `port`, which the API defaults to 80 whatever `use_ssl` says: a backend
 without it spoke TLS to port 80 and every front failed its qualification. Inspect reports the
 port the provider holds.
+
+**Teardown.** In `FASTLY_DESTROY_ORDER`: traffic record, certificate, ACME record, versionless
+domain, version deactivation, service, then the version-scoped children (backend, snippets, a
+classic domain) and the WebSockets product. The children are never deleted on their own: with
+the edge's own service gone (`ownServiceOf`, never a candidate discovery could not prove) they
+are confirmed gone without a call, and otherwise read back on the service's version (a 404 is
+gone), so a service deleted under a ledger that never recorded it cannot leave them waiting.
 
 - **Switching domains.** On the account page, Domains, "A new front's name is": its own
   domain linked to the service (versionless, the default) or a domain on the service version
