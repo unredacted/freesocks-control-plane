@@ -136,6 +136,19 @@ describe('certificates in words', () => {
     expect(sharedCertificateWords({ ...base, state: 'absent', edges: 0 }, NOW).label).toBe(
       'Not ordered yet',
     );
+    expect(
+      sharedCertificateWords({ ...base, state: 'renewing', code: 'tls_challenge_missing' }, NOW),
+    ).toMatchObject({ label: 'Renewal waiting', tone: 'warning' });
+    expect(
+      sharedCertificateWords(
+        { ...base, state: 'issued', code: 'certificate_expiring', notAfter: okAt },
+        NOW,
+      ),
+    ).toMatchObject({ label: 'Renewal late', tone: 'danger' });
+    expect(settingRows({ domainModel: 'classic' })[0]).toEqual({
+      label: 'Domains',
+      value: 'A domain on the service version (classic)',
+    });
     for (const state of ['issued', 'renewing', 'failed', 'absent', 'ambiguous', 'pending'])
       expect(sharedCertificateWords({ ...base, state }, NOW).detail).not.toContain('\u2014');
   });

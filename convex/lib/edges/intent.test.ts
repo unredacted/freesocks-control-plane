@@ -84,6 +84,13 @@ describe('buildProvisionIntent', () => {
       dnsAccount: cloudflare,
     })!;
     expect(wild.certificateScope).toBe('wildcard');
+    // The account may choose classic domains for its new fronts.
+    const classic = buildProvisionIntent({
+      ...args,
+      account: { ...fastly, settings: { ...fastly.settings, domainModel: 'classic' } },
+      dnsAccount: cloudflare,
+    })!;
+    expect(classic.domainModel).toBe('classic');
     // Cloudflare is driven the same way it always was: no facts of its own.
     expect(buildProvisionIntent({ ...args, account: cloudflare })).not.toHaveProperty(
       'domainModel',

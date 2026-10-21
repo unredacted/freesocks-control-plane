@@ -1003,8 +1003,13 @@ export const recordSharedCertificate = internalMutation({
   },
 });
 
-/** An issued shared certificate is read again this often; one still waiting, every pass. */
+/**
+ * An issued shared certificate is read again this often; one still waiting, renewing
+ * or close to expiry (`SHARED_CERTIFICATE_EXPIRY_WARN_MS`), every pass.
+ */
 export const SHARED_CERTIFICATE_RECHECK_MS = 30 * 60_000;
+/** The adapters' "renewal is late" threshold (Fastly `CERTIFICATE_EXPIRY_WARN_MS`), mirrored for the isolate. */
+export const SHARED_CERTIFICATE_EXPIRY_WARN_MS = 7 * 24 * 60 * 60_000;
 
 /**
  * The accounts whose shared certificate the reconcile cron reads now: an
@@ -1023,7 +1028,11 @@ export const listForSharedCertificates = internalQuery({
         const sc = r.sharedCertificate;
         if (!uses && !sc) return false;
         if (!sc) return true;
-        const settled = sc.state === 'issued' || sc.state === 'renewing';
+        // A renewal is watched as closely as a first issuance: it is the
+        // one wait that can let every front of the account lapse at once.
+        const expiring =
+          !!sc.notAfter && Date.parse(sc.notAfter) - now < SHARED_CERTIFICATE_EXPIRY_WARN_MS;
+        const settled = sc.state === 'issued' && !sc.code && !expiring;
         return !settled || !uses || now - sc.checkedAt >= SHARED_CERTIFICATE_RECHECK_MS;
       })
       .map((r) => r._id);

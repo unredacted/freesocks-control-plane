@@ -168,6 +168,23 @@
     toast.success('Certificates changed');
     scopeChoice = null;
   }
+  // How a new front's name is attached to its service (absent = its own domain).
+  const domainsNow = $derived(
+    a && a.settings.domainModel === 'classic' ? 'classic' : 'versionless',
+  );
+  const DOMAIN_WORDS: Record<string, string> = {
+    versionless: 'Its own domain, linked to the service',
+    classic: 'A domain on the service version (classic)',
+  };
+  let domainsChoice = $state<string | null>(null);
+  let domainsOpen = $state(false);
+  async function saveDomains() {
+    if (!a || !domainsChoice) return;
+    await updateProvider(a.id, { settings: { ...a.settings, domainModel: domainsChoice } });
+    invalidateProviders(qc);
+    toast.success('Domains changed');
+    domainsChoice = null;
+  }
 
   // --- dialogs ---------------------------------------------------------------------------------------
   let qualifyOpen = $state(false);
@@ -398,11 +415,11 @@
       {#if sharesCertificates}
         <Card>
           <CardHeader>
-            <CardTitle class="text-base">Certificates</CardTitle>
+            <CardTitle class="text-base">Certificates and domains</CardTitle>
             <CardDescription>
-              How this account's fronts get their certificate. One wildcard is issued once and
-              shared: a new front does not wait for a certificate, and its name never appears in
-              public certificate logs before members use it.
+              How this account's fronts get their certificate and their name. One wildcard is issued
+              once and shared: a new front does not wait for a certificate, and its name never
+              appears in public certificate logs before members use it.
             </CardDescription>
           </CardHeader>
           <CardContent class="space-y-4">
@@ -442,6 +459,33 @@
                 ordered by the first new front.
               </p>
             {/if}
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="max-w-md flex-1 space-y-1.5">
+                <Label for="acct-domains">A new front's name is</Label>
+                <Select.Root
+                  type="single"
+                  value={domainsChoice ?? domainsNow}
+                  onValueChange={(v) => (domainsChoice = v === domainsNow ? null : v)}
+                >
+                  <Select.Trigger id="acct-domains" class="w-full">
+                    {DOMAIN_WORDS[domainsChoice ?? domainsNow]}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Item value="versionless"
+                      >{DOMAIN_WORDS.versionless} (recommended)</Select.Item
+                    >
+                    <Select.Item value="classic">{DOMAIN_WORDS.classic}</Select.Item>
+                  </Select.Content>
+                </Select.Root>
+              </div>
+              <Button disabled={domainsChoice === null} onclick={() => (domainsOpen = true)}>
+                Change domains
+              </Button>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              Classic domains exist only on accounts created before September 2025. Pick them if the
+              provider refuses to link a front's own domain to its service.
+            </p>
           </CardContent>
         </Card>
       {/if}
@@ -582,6 +626,13 @@
     body="New fronts of this account get their certificate the new way; fronts that exist keep theirs. Like any settings change, the account loses its trust: test it again, and its next proven front trusts it."
     confirmLabel="Change certificates"
     onConfirm={saveScope}
+  />
+  <ConfirmDialog
+    bind:open={domainsOpen}
+    title="Change how fronts get their names?"
+    body="New fronts of this account get their name the new way; fronts that exist keep theirs. Like any settings change, the account loses its trust: test it again, and its next proven front trusts it."
+    confirmLabel="Change domains"
+    onConfirm={saveDomains}
   />
   <DeleteDialog
     bind:open={deleteOpen}

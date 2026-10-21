@@ -30,6 +30,7 @@ import type { CaaRecord } from '../caa';
 import {
   FASTLY_DESTROY_ORDER,
   FASTLY_WS_UPGRADE_VCL,
+  CERTIFICATE_EXPIRY_WARN_MS,
   TLS_WARNING_GRACE_MS,
   __setFastlyCaaLookup,
   __setFastlyDnsClientFactory,
@@ -134,6 +135,8 @@ const ORIGIN = 'node-7.origin.example.net';
 const SVC = 'SU1Z0isxPaozGVKXdv0eY';
 const SUB = 'C0cuTFmLzMCiyMcOZuLEZ1';
 const DM = 'DMDOM01kq7v3xzwYb9pRn';
+/** The Fastly customer `current-customer.json` names (the shared ACME marker's owner). */
+const CUSTOMER = 'x4xCwxxJxGCx123Rgqjx8k';
 const ACME_TARGET = '6a8mtt5uzzsw2qsl.fastly-validations.com';
 const TRAFFIC_TARGET = 'j.sni.global.fastly.net';
 
@@ -954,6 +957,12 @@ describe('fastly: discovery answers the four outcomes', () => {
       'sub-other',
       SUB,
     ]);
+    // Not proven ours: a destroy never deletes a certificate it recorded this way.
+    const ledger = apply({ steps: [], resources: [] }, tlsStep(), {
+      status: 'done',
+      resources: res.status === 'ambiguous' ? res.candidates : [],
+    });
+    expect(fastlyProvider.planDestroy(cfg, ledger)).toEqual([]);
   });
 
   test('a subscription whose CA or TLS configuration is not the frozen one is ambiguous', async () => {
@@ -998,9 +1007,9 @@ describe('fastly: discovery answers the four outcomes', () => {
     });
   });
 
-  test('a DNS record with a foreign comment is ambiguous, never adopted', async () => {
+  test('a DNS record with a foreign comment is ambiguous, never adopted, never deleted', async () => {
     await serve();
-    fakeDns([
+    const dns = fakeDns([
       {
         id: 'foreign1',
         type: 'CNAME',
@@ -1015,6 +1024,20 @@ describe('fastly: discovery answers the four outcomes', () => {
       .find((s) => s.kind === 'create_dns_record')!;
     const res = await fastlyProvider.discover(cfg, step, spec, serviceLedger, 1);
     expect(res).toMatchObject({ status: 'ambiguous' });
+    // Recorded for the operator as a candidate: a destroy of the parked edge
+    // (the operator's "destroy, the ledger is trusted") leaves it alone.
+    const candidates = (res as { candidates: ChildResource[] }).candidates;
+    expect(candidates[0]!.meta).toMatchObject({ candidate: true, role: 'traffic' });
+    const ledger = apply(serviceLedger, step, { status: 'done', resources: candidates });
+    expect(fastlyProvider.planDestroy(cfg, ledger).map((r) => r.kind)).not.toContain('dns_record');
+    const record = ledger.resources.find((r) => r.kind === 'dns_record')!;
+    expect(await fastlyProvider.runDestroy(cfg, record, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    expect(await fastlyProvider.confirmDestroyed!(cfg, record, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    expect(dns.deleted).toEqual([]);
   });
 
   test('our own DNS record is adopted by its comment marker', async () => {
@@ -1983,7 +2006,36 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
       ok: false,
       code: 'caa_forbids_ca',
     });
-    expect(asked).toEqual(['fronts.example.org', 'example.org']);
+    expect(asked).toEqual([
+      '_fcp-caa-check.fronts.example.org',
+      'fronts.example.org',
+      'example.org',
+    ]);
+  });
+
+  test('a zone wildcard that answers for a new front decides, as the CA would see it', async () => {
+    await serve();
+    // `*.example.org CNAME elsewhere`: the resolver follows it for any new
+    // name, so the probe label gets the CNAME target's CAA records.
+    const asked = caaZone({ '_fcp-caa-check.example.org': [issue('letsencrypt.org')] });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({
+      ok: false,
+      code: 'caa_forbids_ca',
+      observed: { caaAt: '_fcp-caa-check.example.org' },
+    });
+    expect(asked).toEqual(['_fcp-caa-check.example.org']);
+  });
+
+  test('a record naming the CA but binding an account, or another validation method, refuses', async () => {
+    await serve();
+    caaZone({
+      'example.org': [issue('certainly.com; accounturi=https://acme.example.net/acct/1')],
+    });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ code: 'caa_forbids_ca' });
+    caaZone({ 'example.org': [issue('certainly.com; validationmethods=http-01')] });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ code: 'caa_forbids_ca' });
+    caaZone({ 'example.org': [issue('certainly.com; validationmethods=http-01,dns-01')] });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ ok: true });
   });
 
   test('a wildcard account is checked against issuewild', async () => {
@@ -2436,7 +2488,7 @@ describe('fastly: one wildcard certificate per account and zone', () => {
       wildcard: true,
     });
     expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toEqual([
-      expect.objectContaining({ content: WILD_ACME, comment: sharedAcmeMarker(WILD) }),
+      expect.objectContaining({ content: WILD_ACME, comment: sharedAcmeMarker(CUSTOMER, WILD) }),
     ]);
 
     // The second edge finds both and finishes the wait at its first look.
@@ -2556,6 +2608,172 @@ describe('fastly: one wildcard certificate per account and zone', () => {
       status: 'ambiguous',
       candidates: [{ resourceId: 'theirs' }],
     });
+  });
+
+  test('a wildcard on another TLS configuration than the effective one is not reused', async () => {
+    const other = fixture('tls-subscriptions-wildcard-list.json') as {
+      data: Array<{ relationships: Record<string, unknown> }>;
+    };
+    // The account names no configuration, so its fronts use the DEFAULT one
+    // (TLSCONFIG01, whose CNAME the traffic record points at); this
+    // subscription is on the other one.
+    other.data[0]!.relationships.tls_configuration = {
+      data: { type: 'tls_configuration', id: 'TLSCONFIG02' },
+    };
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? { status: 200, body: other, contentType: 'application/vnd.api+json' }
+        : defaultReply(c),
+    );
+    fakeDns();
+    const step = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_tls_subscription')!;
+    expect(
+      await fastlyProvider.discover(cfgW, step, spec, { steps: [], resources: [] }, 1),
+    ).toMatchObject({ status: 'ambiguous' });
+    // Named explicitly, the same configuration is ours.
+    const named: FastlyConfig = { ...cfgW, tlsConfigurationId: 'TLSCONFIG02' };
+    expect(
+      await fastlyProvider.discover(named, step, spec, { steps: [], resources: [] }, 1),
+    ).toMatchObject({ status: 'found' });
+  });
+
+  /** The ledger right after the wildcard step found or ordered `subId`. */
+  function afterTls(subId: string): Ledger {
+    return {
+      steps: [],
+      resources: [
+        {
+          stepId: 'tls',
+          kind: 'tls_subscription',
+          resourceId: subId,
+          ownership: 'created',
+          deleteState: 'present',
+          meta: JSON.stringify({ hostname: '*.example.org', shared: true, wildcard: true }),
+        },
+      ],
+    };
+  }
+  const challengeRecord = (comment: string, id = 'old1'): DnsRecord => ({
+    id,
+    type: 'CNAME',
+    name: '_acme-challenge.example.org',
+    content: 'stale.fastly-validations.com',
+    proxied: false,
+    comment,
+  });
+
+  test('another customer’s record at the challenge name is a candidate that is never deleted', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    await serve(p.route);
+    const dns = fakeDns([challengeRecord('fcp-cert:SOMEONEELSE:THEIRSUB')]);
+    const acme = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_dns_acme')!;
+    const found = await fastlyProvider.discover(cfgW, acme, spec, afterTls(WILD), 1);
+    expect(found).toMatchObject({ status: 'ambiguous' });
+    const candidates = (found as { candidates: ChildResource[] }).candidates;
+    expect(candidates[0]!.meta).toMatchObject({ candidate: true, shared: true });
+    // The orchestrator records the candidate; an operator's destroy then
+    // never plans it, and a direct destroy leaves it in place.
+    const ledger = apply(afterTls(WILD), acme, { status: 'done', resources: candidates });
+    const record = ledger.resources.find((x) => x.kind === 'dns_record')!;
+    expect(fastlyProvider.planDestroy(cfgW, ledger)).not.toContainEqual(record);
+    expect(await fastlyProvider.runDestroy(cfgW, record, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    expect(dns.deleted).toEqual([]);
+  });
+
+  test('our own record for a subscription that is gone is replaced; one for a live subscription is not', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    let oldExists = false;
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions/OLDSUB'
+        ? oldExists
+          ? api('tls-subscription-failed.json')
+          : NOT_FOUND
+        : p.route(c, 0),
+    );
+    const dns = fakeDns([challengeRecord(sharedAcmeMarker(CUSTOMER, 'OLDSUB'))]);
+    const acme = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_dns_acme')!;
+    // The old subscription was deleted at the provider: discovery says absent,
+    // and the step swaps the record for one naming the new subscription.
+    expect(await fastlyProvider.discover(cfgW, acme, spec, afterTls(WILD), 1)).toEqual({
+      status: 'confirmed_absent',
+    });
+    const out = await fastlyProvider.runStep(cfgW, acme, spec, tpl, afterTls(WILD));
+    expect(out.status).toBe('done');
+    expect(dns.deleted).toEqual(['old1']);
+    expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toEqual([
+      expect.objectContaining({ content: WILD_ACME, comment: sharedAcmeMarker(CUSTOMER, WILD) }),
+    ]);
+    // While our older subscription still exists, its record is left alone.
+    oldExists = true;
+    const dns2 = fakeDns([challengeRecord(sharedAcmeMarker(CUSTOMER, 'OLDSUB'))]);
+    expect(await fastlyProvider.discover(cfgW, acme, spec, afterTls(WILD), 1)).toMatchObject({
+      status: 'ambiguous',
+    });
+    const err = (await fastlyProvider
+      .runStep(cfgW, acme, spec, tpl, afterTls(WILD))
+      .catch((e: unknown) => e)) as { meta?: { code?: string } };
+    expect(err.meta?.code).toBe('acme_name_in_use');
+    expect(dns2.deleted).toEqual([]);
+  });
+
+  test('a renewal reports what holds it up, and one that is late is raised by itself', async () => {
+    const renewing = (extra: Record<string, unknown>) => {
+      const doc = fixture('tls-subscription-wildcard-issued.json') as {
+        data: { attributes: Record<string, unknown> };
+        included: Array<{ type: string; attributes: Record<string, unknown> }>;
+      };
+      doc.data.attributes.state = extra.state ?? 'renewing';
+      const auth = doc.included.find((x) => x.type === 'tls_authorization')!;
+      if (extra.warnings) auth.attributes.warnings = extra.warnings;
+      const cert = doc.included.find((x) => x.type === 'tls_certificate')!;
+      if (extra.notAfter) cert.attributes.not_after = extra.notAfter;
+      return doc;
+    };
+    let doc = renewing({ warnings: [{ type: 'caa', instructions: 'see example.org' }] });
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    await serve((c) =>
+      c.method === 'GET' && c.path === `/tls/subscriptions/${WILD}`
+        ? { status: 200, body: doc, contentType: 'application/vnd.api+json' }
+        : p.route(c, 0),
+    );
+    fakeDns([
+      {
+        id: 'acme1',
+        type: 'CNAME',
+        name: '_acme-challenge.example.org',
+        content: WILD_ACME,
+        proxied: false,
+        comment: sharedAcmeMarker(CUSTOMER, WILD),
+      },
+    ]);
+    const far = new Date(Date.now() + 20 * 86_400_000).toISOString();
+    const near = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    doc = renewing({ warnings: [{ type: 'caa' }], notAfter: far });
+    expect(await fastlyProvider.sharedCertificate!(cfgW)).toMatchObject({
+      state: 'renewing',
+      code: 'tls_caa_conflict',
+    });
+    // An ordinary renewal, far from expiry: nothing to raise.
+    doc = renewing({ notAfter: far });
+    expect(await fastlyProvider.sharedCertificate!(cfgW)).not.toHaveProperty('code');
+    // Issued but within a week of expiry: the renewal is late.
+    doc = renewing({ state: 'issued', notAfter: near });
+    expect(await fastlyProvider.sharedCertificate!(cfgW)).toMatchObject({
+      state: 'issued',
+      code: 'certificate_expiring',
+    });
+    expect(CERTIFICATE_EXPIRY_WARN_MS).toBe(7 * 86_400_000);
   });
 
   test('the account reads its shared certificate: absent, waiting with a code, issued until a date', async () => {

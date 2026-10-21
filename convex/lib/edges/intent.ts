@@ -194,11 +194,11 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
     ...(str(a.account.settings.certificateScope)
       ? { certificateScope: str(a.account.settings.certificateScope) }
       : {}),
-    // How the provider is driven now (no operator choice); an older intent
-    // without these keeps the way it was built (`EDGE_INTENT_FACTS`).
+    // How the provider is driven: the account's choice, else today's way; an
+    // older intent without these keeps the way it was built (`EDGE_INTENT_FACTS`).
     ...Object.fromEntries(
       Object.entries(EDGE_INTENT_FACTS[a.account.provider as EdgeProviderId] ?? {}).map(
-        ([k, f]) => [k, f.planned],
+        ([k, f]) => [k, str(a.account.settings[k]) ?? f.planned],
       ),
     ),
     originTransport: {

@@ -1120,6 +1120,45 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     expect(seen[0]).toMatchObject({ domainModel: 'versionless', certificateScope: 'wildcard' });
   });
 
+  test('the account chooses the domain kind of NEW fronts; an edge keeps the one it froze', async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect((row.settings as { domainModel?: string }).domainModel).toBe('versionless');
+    const seen = standIn();
+    const edgeId = await edgeWithIntent(t, accountId, dnsId, { domainModel: 'versionless' });
+    // The operator switches the account to classic domains.
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: accountId,
+      settings: { ...row.settings, domainModel: 'classic' },
+    });
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.describe, {
+      accountId,
+      ledger: { steps: [], resources: [] },
+    });
+    expect(seen[0]).toMatchObject({ domainModel: 'classic' });
+    await t.action(internal.edgeProviderOps.describe, {
+      accountId,
+      ledger: { steps: [], resources: [] },
+      edgeId,
+    });
+    expect(seen[1]).toMatchObject({ domainModel: 'versionless' });
+  });
+
+  test('an inventory refresh that ends on the CAA refusal does not count as the provider failing', async () => {
+    const t = newT();
+    const { id: accountId } = await fastlyAccount(t);
+    standIn({
+      testCredentials: async () => ({ ok: false, code: 'caa_forbids_ca' }),
+    });
+    mockFetch(() => jsonRes({}));
+    for (let i = 0; i < 4; i++) await t.action(internal.edgeProviderOps.inventory, { accountId });
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(row.lastTestError).toBe('caa_forbids_ca');
+    expect(row.apiFailures ?? 0).toBe(0);
+  });
+
   test('a CAA refusal is recorded as the test result, and does not count as the provider failing', async () => {
     const t = newT();
     const { id: accountId } = await fastlyAccount(t);
@@ -1199,6 +1238,30 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       await t.query(internal.edgeProviderAccounts.listForSharedCertificates, {
         now: Date.now() + 31 * 60_000,
       }),
+    ).toEqual([accountId]);
+    // A renewal, or one close to expiry, is read every pass again; close to
+    // expiry is critical in attention.
+    status = {
+      name: '*.example.org',
+      subscriptionId: 'WILD1',
+      state: 'issued',
+      code: 'certificate_expiring',
+      notAfter: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+    };
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    expect(
+      await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
+    ).toEqual([accountId]);
+    const late = await t.query(internal.edgeOperator.attention, {});
+    expect(late.items.find((i) => i.kind === 'certificate_waiting')).toMatchObject({
+      accountId,
+      code: 'certificate_expiring',
+      severity: 'critical',
+    });
+    status = { name: '*.example.org', subscriptionId: 'WILD1', state: 'renewing' };
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    expect(
+      await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
     ).toEqual([accountId]);
     // A failed one refuses new fronts of the account.
     status = {

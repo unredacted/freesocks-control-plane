@@ -193,6 +193,8 @@ export const L7_CERTIFICATE_CODES = [
   'tls_authorization_warning',
   'tls_failed',
   'shared_certificate_failed',
+  // a shared certificate whose renewal is late: it expires within a week, or has
+  'certificate_expiring',
 ] as const;
 export type L7CertificateCode = (typeof L7_CERTIFICATE_CODES)[number];
 

@@ -159,6 +159,8 @@ const relayProviderSettings = v.union(
     tlsConfigurationId: v.optional(v.string()),
     // One wildcard certificate per account and zone, or one per front (absent).
     certificateScope: v.optional(v.union(v.literal('per_host'), v.literal('wildcard'))),
+    // A new front's domain: versionless (Domain Management, absent) or classic.
+    domainModel: v.optional(v.union(v.literal('versionless'), v.literal('classic'))),
   }),
 );
 // Where an edge's resources live (lib/edges/accountSettings.ts

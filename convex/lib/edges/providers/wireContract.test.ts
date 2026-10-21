@@ -1082,6 +1082,8 @@ describe('wire contract: fastly', () => {
     type: 'fastly',
     apiToken: 'SECRET_FASTLY_TOKEN',
     certificateAuthority: 'certainly',
+    // An edge on a version-scoped (classic) domain; `newEdgeLifecycle` drives a versionless one.
+    domainModel: 'classic',
     dns: {
       apiToken: 'SECRET_CF_TOKEN',
       zoneId: '0123456789abcdef0123456789abcdef',

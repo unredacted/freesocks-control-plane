@@ -392,11 +392,19 @@ async function loadAdapter(
       else delete mutable[key];
     }
   }
-  // How the provider is driven: planning gets today's way, an existing edge
-  // the way it was built (an intent from before a fact existed: `legacy`).
+  // How the provider is driven: planning gets the account's choice, else
+  // today's way; an existing edge the way it was built (an intent from before
+  // a fact existed: `legacy`).
   for (const [key, fact] of Object.entries(EDGE_INTENT_FACTS[acct.provider])) {
     const frozen = (intent as unknown as Record<string, unknown> | null)?.[key];
-    mutable[key] = edgeId ? (typeof frozen === 'string' ? frozen : fact.legacy) : fact.planned;
+    const chosen = mutable[key];
+    mutable[key] = edgeId
+      ? typeof frozen === 'string'
+        ? frozen
+        : fact.legacy
+      : typeof chosen === 'string'
+        ? chosen
+        : fact.planned;
   }
   if (EDGE_PROVIDER_CAPABILITIES[acct.provider].needsDnsAccount) {
     let dnsAccountId = (acct.settings as { dnsAccountId?: string }).dnsAccountId;
@@ -999,7 +1007,8 @@ export const inventory = internalAction({
       // which is the thing that was asked for.
       try {
         const res = await provider.testCredentials(cfg);
-        if (!res.ok) await noteTestFailure(ctx, accountId, seen);
+        if (!res.ok && !NOT_API_FAILURES.has(res.code ?? ''))
+          await noteTestFailure(ctx, accountId, seen);
         await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
           id: accountId,
           ok: res.ok,

@@ -1524,10 +1524,13 @@ export const attention = internalQuery({
       // the account waits on it too.
       const sc = a.sharedCertificate;
       if (sc && (sc.code || sc.state === 'failed')) {
+        // Critical once the fronts are about to lose (or lost) their certificate.
+        const daysLeft = sc.notAfter ? (Date.parse(sc.notAfter) - now) / 86_400_000 : null;
         items.push({
           id: `certificate_waiting:account:${a._id}`,
           kind: 'certificate_waiting',
-          severity: sc.state === 'failed' ? 'critical' : 'warning',
+          severity:
+            sc.state === 'failed' || (daysLeft !== null && daysLeft < 3) ? 'critical' : 'warning',
           relaySlug: null,
           relayId: null,
           edgeId: null,
@@ -1535,7 +1538,13 @@ export const attention = internalQuery({
           accountId: a._id as string,
           rotationId: null,
           code: sc.code ?? 'tls_failed',
-          facts: { name: a.name, provider: a.provider, certificate: sc.name, state: sc.state },
+          facts: {
+            name: a.name,
+            provider: a.provider,
+            certificate: sc.name,
+            state: sc.state,
+            notAfter: sc.notAfter ?? null,
+          },
           action: 'open_account',
           since: iso(sc.checkedAt),
         });

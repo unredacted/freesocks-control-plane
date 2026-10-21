@@ -68,6 +68,11 @@ export const EDGE_SETTINGS_SCHEMAS = {
     // front. No default HERE (an existing account keeps per-host until it is
     // switched): `create` sets `wildcard` for a new account (FASTLY_NEW_ACCOUNT_SETTINGS).
     certificateScope: z.enum(['per_host', 'wildcard']).optional(),
+    // How a new front's hostname is attached to its service: its own
+    // (versionless, Domain Management) domain, or a domain on the service
+    // version (classic; Fastly offers it only to accounts from before
+    // 2025-09-16). Absent = versionless for a new edge (EDGE_INTENT_FACTS).
+    domainModel: z.enum(['versionless', 'classic']).optional(),
   }),
 } as const;
 
@@ -157,7 +162,7 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
   scaleway: [],
   ovh: [],
   cloudflare: [],
-  fastly: ['certificateAuthority', 'tlsConfigurationId', 'certificateScope'],
+  fastly: ['certificateAuthority', 'tlsConfigurationId', 'certificateScope', 'domainModel'],
 };
 
 /**
@@ -166,14 +171,16 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
  * keeps its older behaviour until it is switched).
  */
 export const EDGE_NEW_ACCOUNT_SETTINGS: Partial<Record<EdgeProviderId, Record<string, unknown>>> = {
-  fastly: { certificateScope: 'wildcard' },
+  fastly: { certificateScope: 'wildcard', domainModel: 'versionless' },
 };
 
 /**
- * Facts every NEW edge freezes into its intent that no operator chooses (how
- * the provider is driven now); an intent without one predates it and keeps
- * `legacy`. `edgeProviderOps.loadAdapter` gives the adapter `planned` when it
- * plans and the edge's own value (or `legacy`) afterwards.
+ * How the provider is driven, frozen into every NEW edge's intent: `planned`
+ * unless the account's setting of the same name says otherwise (an intent
+ * default the operator may set, `domainModel`), while an intent without the
+ * key predates it and keeps `legacy`. `edgeProviderOps.loadAdapter` gives the
+ * adapter the account's choice (else `planned`) when it plans, and the edge's
+ * own value (else `legacy`) afterwards.
  */
 export const EDGE_INTENT_FACTS: Record<
   EdgeProviderId,

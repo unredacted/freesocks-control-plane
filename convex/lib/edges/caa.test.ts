@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 import {
   CA_CAA_DOMAINS,
   caaIssuerOf,
+  caaParamsAllow,
+  caaProbeName,
   caaSetAllows,
   caaWalkNames,
   checkCaa,
@@ -120,6 +122,21 @@ describe('caa: one record set', () => {
   test('an empty issuer allows no CA at all', () => {
     expect(caaSetAllows([issue(';')], 'certainly.com', false)).toBe(false);
     expect(caaIssuerOf(' Certainly.com. ; account=1')).toBe('certainly.com');
+  });
+
+  test('parameters FCP cannot meet do not allow it: an account binding, a method without dns-01', () => {
+    expect(caaParamsAllow('certainly.com')).toBe(true);
+    expect(caaParamsAllow('certainly.com; accounturi=https://acme.example.net/acct/1')).toBe(false);
+    expect(caaParamsAllow('certainly.com; validationmethods=http-01')).toBe(false);
+    expect(caaParamsAllow('certainly.com; validationmethods = http-01, DNS-01')).toBe(true);
+    expect(caaParamsAllow('certainly.com; somethingelse=1')).toBe(true);
+    expect(
+      caaSetAllows([issue('certainly.com; validationmethods=tls-alpn-01')], 'certainly.com', false),
+    ).toBe(false);
+  });
+
+  test('a front is checked from a label nothing serves, so a zone wildcard answers for it', () => {
+    expect(caaProbeName('Example.org.')).toBe('_fcp-caa-check.example.org');
   });
 
   test('a set with only iodef restricts nothing', () => {

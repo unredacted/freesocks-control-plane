@@ -615,6 +615,12 @@ const COPY = {
     explain: 'The provider gave up issuing the certificate.',
     fix: 'Fix what it waited on, then retry the certificate at the provider or replace the front.',
   },
+  certificate_expiring: {
+    label: 'Certificate renewal late',
+    explain:
+      'The wildcard certificate the account’s fronts share expires within a week, or already has, and the provider has not renewed it.',
+    fix: 'Check what the account page says it waits on, such as the CAA records or the validation record. The provider renews it once that is fixed.',
+  },
   shared_certificate_failed: {
     label: 'Shared certificate failed',
     explain:
