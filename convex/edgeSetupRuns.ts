@@ -112,7 +112,7 @@ import { isDirect, modeEntry, modeSlug, nodeGateFor } from './nodeIntents';
 import { setupReady } from './backendSetup';
 import { runningRenameOf } from './lib/backend/nodeAliases';
 import { MAX_PROVIDER_PICKS, coverTargets, requirementOf } from './lib/edges/providerSet';
-import { checkPickOptions } from './edgeTemplates';
+import { checkPickOptions, relayHasReality } from './edgeTemplates';
 import { parseOptionValues } from './lib/edges/providers/options';
 import { carries, setStateOf } from './lib/edges/setState';
 import { locationKeyOf } from './lib/edges/locations';
@@ -3899,11 +3899,12 @@ export async function startReprotect(
     // Each pick's provider options: the ones the operator gives now (checked
     // where they build), else what the node's set already holds for it.
     const optionsOfPick = new Map<string, string>();
+    const realityL4 = await relayHasReality(ctx.db, relay._id);
     for (const p of pickRows) {
       const key = p.location._id as string;
       const given = pickOptions?.[key];
       if (given !== undefined) {
-        const r = await checkPickOptions(ctx, p.location, p.account, given);
+        const r = await checkPickOptions(ctx, p.location, p.account, given, { realityL4 });
         if (!r.ok) throw new ConvexError({ code: r.code, message: r.issues.join('; ') || r.code });
         optionsOfPick.set(key, JSON.stringify(r.options));
         continue;

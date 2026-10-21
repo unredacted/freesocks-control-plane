@@ -7,8 +7,9 @@ import { accountOptionDefaultsOf } from './lib/edges/choices';
 import type { Id } from './_generated/dataModel';
 import { EDGE_PROVIDER_IDS } from '../src/shared/contracts/edgeProviderIds';
 import { defaultLocationOf } from './edgeLocations';
-import { resolveTemplateFor } from './edgeTemplates';
+import { checkPickOptions, resolveTemplateFor } from './edgeTemplates';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
+import { insertPanelServer, registerRelay } from './lib/edges/testing/fixtures';
 import {
   defaultLocationRow,
   evaluateAutoQualification,
@@ -1065,7 +1066,13 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
       id: fastlyId,
       settings: { dnsAccountId: dnsId, certificateAuthority: 'lets-encrypt' },
     });
-    expect(await scopeOf()).toBeUndefined();
+    // One per front still (the declared default, now written out where an older
+    // build reads it too).
+    expect(await scopeOf()).toBe('per_host');
+    expect((await t.run((ctx) => ctx.db.get(fastlyId)))!.settings).toMatchObject({
+      certificateAuthority: 'lets-encrypt',
+      certificateScope: 'per_host',
+    });
     // Switching is an explicit choice (an older client's settings shape still
     // says it), and any other value is refused.
     await t.mutation(internal.edgeProviderAccounts.update, {
@@ -1094,7 +1101,7 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     ).rejects.toThrow(/Certificate/);
   });
 
-  test('the deploy moves certificate defaults out of settings without touching trust; once', async () => {
+  test('the deploy copies certificate defaults into options, keeping the settings copy and trust; once', async () => {
     const { t, dnsId, fastlyId } = await pair();
     // A row from before options: its authority and scope still under settings.
     await t.run(async (ctx) => {
@@ -1116,9 +1123,16 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     });
     expect(await t.mutation(internal.edgeProviderAccounts.migrateOptionDefaults, {})).toEqual({
       moved: 1,
+      picks: 0,
     });
     const row = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
-    expect(row.settings).toEqual({ type: 'fastly', dnsAccountId: dnsId });
+    // The copy an older build reads stays (a rollback deploy validates).
+    expect(row.settings).toEqual({
+      type: 'fastly',
+      dnsAccountId: dnsId,
+      certificateAuthority: 'lets-encrypt',
+      certificateScope: 'wildcard',
+    });
     expect(JSON.parse(row.optionDefaults!)).toEqual({
       certificateAuthority: 'lets-encrypt',
       certificateScope: 'wildcard',
@@ -1133,6 +1147,7 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     expect(locs.every((l) => l.qualified)).toBe(true);
     expect(await t.mutation(internal.edgeProviderAccounts.migrateOptionDefaults, {})).toEqual({
       moved: 0,
+      picks: 0,
     });
     // An older client re-sending the old settings shape is not a settings change.
     await t.mutation(internal.edgeProviderAccounts.update, {
@@ -1144,6 +1159,122 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
       },
     });
     expect((await t.run((ctx) => ctx.db.get(fastlyId)))!.credentialsChangedAt).toBe(123);
+  });
+
+  test("the deploy copies the account's certificate into a node's pick from before options", async () => {
+    const { t, fastlyId } = await pair();
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      optionDefaults: { certificateAuthority: 'lets-encrypt', certificateScope: 'wildcard' },
+    });
+    await insertPanelServer(t);
+    const { relayId } = await registerRelay(t);
+    const loc = (await t.run(async (ctx) =>
+      ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', fastlyId))
+        .first(),
+    ))!;
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, { providerSet: [{ locationId: loc._id, addedAt: 1 }] }),
+    );
+    expect(await t.mutation(internal.edgeProviderAccounts.migrateOptionDefaults, {})).toEqual({
+      moved: 0,
+      picks: 1,
+    });
+    const set = (await t.run((ctx) => ctx.db.get(relayId)))!.providerSet!;
+    expect(JSON.parse(set[0]!.options!)).toEqual({
+      certificateAuthority: 'lets-encrypt',
+      certificateScope: 'wildcard',
+    });
+    // A later change of the account's defaults no longer reaches that node.
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      optionDefaults: { certificateAuthority: 'certainly', certificateScope: 'per_host' },
+    });
+    expect(
+      JSON.parse((await t.run((ctx) => ctx.db.get(relayId)))!.providerSet![0]!.options!),
+    ).toEqual({ certificateAuthority: 'lets-encrypt', certificateScope: 'wildcard' });
+    expect(await t.mutation(internal.edgeProviderAccounts.migrateOptionDefaults, {})).toEqual({
+      moved: 0,
+      picks: 0,
+    });
+  });
+
+  test("a node takes the zone's one wildcard under the account's authority, or its own certificate", async () => {
+    const { t, fastlyId } = await pair();
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      optionDefaults: { certificateAuthority: 'certainly', certificateScope: 'per_host' },
+    });
+    const check = (options: Record<string, unknown>) =>
+      t.run(async (ctx) => {
+        const account = (await ctx.db.get(fastlyId))!;
+        const loc = (await ctx.db
+          .query('edgeLocations')
+          .withIndex('by_account', (q) => q.eq('accountId', fastlyId))
+          .first())!;
+        return checkPickOptions(ctx, loc, account, options);
+      });
+    // The wildcard, from the account's authority: fine.
+    expect(await check({ certificateScope: 'wildcard' })).toMatchObject({ ok: true });
+    // Another authority for its own certificate: fine.
+    expect(await check({ certificateAuthority: 'lets-encrypt' })).toMatchObject({ ok: true });
+    // The wildcard from another authority: refused, in words.
+    const refused = await check({
+      certificateScope: 'wildcard',
+      certificateAuthority: 'lets-encrypt',
+    });
+    expect(refused).toMatchObject({ ok: false, code: 'edge.option_invalid' });
+    expect((refused as { issues: string[] }).issues[0]).toMatch(/one certificate per front/);
+    // A zone wildcard the account would not order: no node takes it.
+    await t.run((ctx) =>
+      ctx.db.patch(fastlyId, {
+        sharedCertificate: { name: '*.example.org', state: 'ambiguous', checkedAt: 1 },
+      }),
+    );
+    expect(await check({ certificateScope: 'wildcard' })).toMatchObject({
+      ok: false,
+      code: 'edge.shared_certificate_ambiguous',
+    });
+  });
+
+  test('the rollback purge leaves what a build from before options accepts and reads', async () => {
+    const { t, dnsId, fastlyId } = await pair();
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      optionDefaults: { certificateAuthority: 'globalsign', certificateScope: 'wildcard' },
+    });
+    await insertPanelServer(t);
+    const { relayId } = await registerRelay(t);
+    const loc = (await t.run(async (ctx) =>
+      ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', fastlyId))
+        .first(),
+    ))!;
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        providerSet: [
+          { locationId: loc._id, addedAt: 1, options: '{"certificateScope":"wildcard"}' },
+        ],
+      }),
+    );
+    for (const step of ['accounts', 'relays', 'edges', 'rotations', 'runs'] as const)
+      await t.mutation(internal.edgeProviderAccounts.purgeOptionsForRollback, { step });
+    const row = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
+    expect(row.optionDefaults).toBeUndefined();
+    // The authority an older schema requires, and the account's current choice.
+    expect(row.settings).toEqual({
+      type: 'fastly',
+      dnsAccountId: dnsId,
+      certificateAuthority: 'globalsign',
+      certificateScope: 'wildcard',
+      domainModel: 'versionless',
+    });
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.providerSet).toEqual([
+      { locationId: loc._id, addedAt: 1 },
+    ]);
   });
 
   test('a change of the certificate defaults is audited by key and untrusts like a settings change', async () => {

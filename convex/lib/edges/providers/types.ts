@@ -466,7 +466,11 @@ export interface EdgeProvider<
    * Adapters whose edges can share one account-wide certificate: its state now
    * (null when the account does not use one). A read; never orders anything.
    */
-  sharedCertificate?(cfg: Cfg): Promise<SharedCertificateStatus | null>;
+  sharedCertificate?(
+    cfg: Cfg,
+    /** What edges of the account ordered (`orderedSharedResources`): theirs to name, whatever its authority. */
+    opts?: { ordered?: readonly string[] },
+  ): Promise<SharedCertificateStatus | null>;
   /**
    * Delete that shared certificate and the records FCP wrote for it (the
    * caller refuses while a live edge uses it). `code` names why nothing was

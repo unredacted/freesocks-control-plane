@@ -165,7 +165,8 @@
   // A wildcard FCP ordered that no live front uses any more can be removed at
   // the provider (and must be before the account is deleted): FCP never removes
   // it by itself, and never removes one it only found there.
-  const REMOVABLE = ['pending', 'processing', 'issued', 'renewing', 'failed'];
+  // `ambiguous` counts when FCP ordered it (another authority than the account's now).
+  const REMOVABLE = ['pending', 'processing', 'issued', 'renewing', 'failed', 'ambiguous'];
   const sharedRemovable = $derived(
     !!a?.sharedCertificate &&
       a.sharedCertificate.orderedByFcp &&

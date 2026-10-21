@@ -723,7 +723,14 @@ async function recordSharedCertificate(
     });
     if (shared) Object.assign(mutable, shared);
   }
-  const status = provider.sharedCertificate ? await provider.sharedCertificate(cfg) : null;
+  // What edges of the account ordered: an FCP-ordered wildcard is named (and
+  // so removable) even under an authority the account no longer defaults to.
+  const ordered = provider.sharedCertificate
+    ? await ctx.runQuery(internal.edgeProviderAccounts.orderedSharedResourcesOf, { accountId })
+    : [];
+  const status = provider.sharedCertificate
+    ? await provider.sharedCertificate(cfg, { ordered })
+    : null;
   await ctx.runMutation(internal.edgeProviderAccounts.recordSharedCertificate, {
     id: accountId,
     status,

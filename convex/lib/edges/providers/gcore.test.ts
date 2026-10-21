@@ -80,13 +80,13 @@ describe('gcore: options', () => {
     expect(pool.members[0]).toEqual({ address: '198.51.100.7', protocol_port: 443, weight: 1 });
   });
 
-  test('the node timeouts reach the pool, where the API documents them', () => {
+  test('the node timeouts stay on the listener, where FCP always sent them', () => {
     const l = gcoreLbBody(cfg, spec, GcoreTemplate.parse({ timeoutMemberDataMs: 120_000 }))
       .listeners[0]!;
-    expect(l.pools[0]).toMatchObject({
-      timeout_member_connect: 5000,
-      timeout_member_data: 120_000,
-    });
+    expect(l).toMatchObject({ timeout_member_connect: 5000, timeout_member_data: 120_000 });
+    // Nothing nobody chose is added to the pool: a replacement sends what it did.
+    expect(l.pools[0]).not.toHaveProperty('timeout_member_connect');
+    expect(l.pools[0]).not.toHaveProperty('timeout_member_data');
   });
 
   test('an HTTP check carries its fields and a check port reaches the member', () => {

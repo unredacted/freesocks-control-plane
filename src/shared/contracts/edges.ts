@@ -669,6 +669,12 @@ export const EdgeVerificationView = z.object({
       listenerRevision: z.number(),
     })
     .nullable(),
+  /**
+   * An address the provider reported after the endpoint was confirmed: not
+   * served until it is tested on its own (the served addresses keep their
+   * confirmation meanwhile). Absent from an older server.
+   */
+  learnedAddress: z.string().nullable().optional(),
 });
 export type EdgeVerificationView = z.infer<typeof EdgeVerificationView>;
 

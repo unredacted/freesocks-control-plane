@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { accountOptionDefaultsOf, builtForChoices, certificateValuesFor } from './choices';
+import { describe, expect, it, test } from 'vitest';
+import {
+  accountOptionDefaultsOf,
+  builtForChoices,
+  certificateDigest,
+  certificateValuesFor,
+} from './choices';
 import { parseOptionValues } from './providers/options';
 
 const parse = (json: string | undefined) => parseOptionValues(json);
@@ -77,5 +82,28 @@ describe('builtForChoices', () => {
     };
     expect(builtForChoices(wild, { certificateScope: 'wildcard' }, {}, parse)).toBe(true);
     expect(builtForChoices(wild, { certificateScope: 'per_host' }, {}, parse)).toBe(false);
+  });
+});
+
+describe('certificateDigest', () => {
+  test('a Fastly certificate digest fills the declared defaults; other providers have none', () => {
+    expect(certificateDigest('fastly', { certificateAuthority: 'certainly' })).toBe(
+      certificateDigest('fastly', {
+        certificateAuthority: 'certainly',
+        certificateScope: 'per_host',
+      }),
+    );
+    expect(certificateDigest('fastly', { certificateAuthority: 'certainly' })).not.toBe(
+      certificateDigest('fastly', { certificateAuthority: 'lets-encrypt' }),
+    );
+    expect(certificateDigest('fastly', { certificateScope: 'wildcard' })).not.toBe(
+      certificateDigest('fastly', {}),
+    );
+    // Everything else in an intent is not the certificate.
+    expect(
+      certificateDigest('fastly', { certificateAuthority: 'certainly', hostname: 'a.example.org' }),
+    ).toBe(certificateDigest('fastly', { certificateAuthority: 'certainly' }));
+    expect(certificateDigest('gcore', { certificateAuthority: 'certainly' })).toBeUndefined();
+    expect(certificateDigest('fastly', null)).toBeUndefined();
   });
 });

@@ -429,9 +429,12 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       const zone = await zoneOnce();
       const ssl = await zoneSetting(cfg, 'ssl', 'test');
       const websockets = await zoneSetting(cfg, 'websockets', 'test');
+      const plan = (zone.plan as { legacy_id?: string } | undefined)?.legacy_id;
       const observed: Record<string, string> = {
         ...(ssl ? { zoneSslMode: ssl } : {}),
         websockets: websockets === 'on' ? 'on' : 'off',
+        // What the zone's plan offers decides record tags and per-record flattening.
+        ...(plan ? { zonePlan: plan } : {}),
       };
       if (ssl) detail.push(`ssl_${ssl}`);
       else detail.push('ssl_unknown');
@@ -439,8 +442,7 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       else if (websockets === null) detail.push('websockets_unknown');
       else detail.push('websockets_off');
       // Free zones cap DNS comments and Origin Rules; useful for the operator.
-      if ((zone.plan as { legacy_id?: string } | undefined)?.legacy_id === 'free')
-        detail.push('plan_free');
+      if (plan === 'free') detail.push('plan_free');
       if (ssl === 'off')
         return { ok: false, code: 'zone_ssl_off', detail: detail.join(' '), observed };
       if (zone.paused === true) {

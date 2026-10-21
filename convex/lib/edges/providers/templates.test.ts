@@ -7,6 +7,7 @@ import {
   EDGE_TEMPLATES,
   certificateKeysOf,
   checkBuiltParams,
+  contextProblems,
   optionFieldsOf,
   validateAccountOptionDefaults,
   validatePickOptions,
@@ -141,6 +142,18 @@ describe('provider rules on writes', () => {
     return r.ok ? [] : r.issues;
   };
 
+  it('Fastly refuses a lowest TLS version above the highest, and keepalive timings without keepalive', () => {
+    expect(issues('fastly', { minTlsVersion: '1.3', maxTlsVersion: '1.2' })).toEqual([
+      'Lowest TLS version to the node: must not be above Highest TLS version to the node (1.2)',
+    ]);
+    expect(issues('fastly', { minTlsVersion: '1.2', maxTlsVersion: '1.3' })).toEqual([]);
+    expect(issues('fastly', { tcpKeepaliveTime: 60 })).toHaveLength(1);
+    expect(issues('fastly', { tcpKeepalive: false, tcpKeepaliveProbes: 3 })[0]).toMatch(
+      /only with .* on$/,
+    );
+    expect(issues('fastly', { tcpKeepalive: true, tcpKeepaliveTime: 60 })).toEqual([]);
+  });
+
   it('a check timeout must stay below its interval (Gcore, OVH)', () => {
     expect(
       issues('gcore', {
@@ -180,5 +193,41 @@ describe('provider rules on writes', () => {
         },
       }),
     ).toEqual([]);
+  });
+});
+
+describe('what a place cannot do (contextProblems)', () => {
+  it('an HTTP check in front of a REALITY port is refused; TCP and other transports are not', () => {
+    const http = { healthMonitor: { type: 'HTTP', delay: 5, timeout: 3, maxRetries: 3 } };
+    expect(contextProblems('gcore', http, { realityL4: true })[0]).toMatch(/REALITY/);
+    expect(
+      contextProblems('ovh', { healthMonitor: { type: 'https' } }, { realityL4: true }),
+    ).toHaveLength(1);
+    expect(
+      contextProblems('gcore', { healthMonitor: { type: 'TCP' } }, { realityL4: true }),
+    ).toEqual([]);
+    expect(contextProblems('gcore', http, { realityL4: false })).toEqual([]);
+  });
+
+  it('record tags and per-record flattening are refused on a Free zone only', () => {
+    expect(
+      contextProblems('cloudflare', { recordTags: { team: 'edge' } }, { zonePlan: 'free' })[0],
+    ).toMatch(/Free plan/);
+    expect(
+      contextProblems(
+        'fastly',
+        { dnsTags: { team: 'edge' }, dnsFlatten: true },
+        { zonePlan: 'free' },
+      ),
+    ).toHaveLength(2);
+    expect(
+      contextProblems(
+        'fastly',
+        { dnsTags: { team: 'edge' }, dnsFlatten: true },
+        { zonePlan: 'pro' },
+      ),
+    ).toEqual([]);
+    // Unknown (never tested): not refused here; the provider answers for itself.
+    expect(contextProblems('fastly', { dnsFlatten: true }, {})).toEqual([]);
   });
 });

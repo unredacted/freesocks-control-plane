@@ -1692,6 +1692,12 @@ export default defineSchema({
     // compares), and the node's choices themselves (JSON), frozen.
     baseTemplateHash: v.optional(v.string()),
     choices: v.optional(v.string()),
+    // An address family a describe reported after the endpoint was confirmed:
+    // held here, not served and not in the confirmation's hash, until a test
+    // of that address promotes it into `addresses` (edgeVerification.confirm).
+    learnedAddresses: v.optional(
+      v.object({ v4: v.optional(v.string()), v6: v.optional(v.string()) }),
+    ),
     provider: v.optional(relayProviderId),
     managed: v.boolean(), // false = adopted, observe-only, never destroyed
     name: v.string(), // provider-side resource name; the discovery key

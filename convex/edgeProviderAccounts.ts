@@ -15,6 +15,7 @@ import { fakeShadowedIds } from './lib/edges/providers/fake';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
 import { edgeProviderIdValidator, type EdgeProviderId } from './lib/edgeProviderIds';
 export { accountOptionDefaultsOf } from './lib/edges/choices';
@@ -34,8 +35,17 @@ import {
   type EdgeSettings,
 } from './lib/edges/accountSettings';
 import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
-import { optionChanges, sameValues, type Values } from './lib/edges/providers/options';
-import { accountOptionDefaultsOf } from './lib/edges/choices';
+import {
+  optionChanges,
+  parseOptionValues,
+  sameValues,
+  type Values,
+} from './lib/edges/providers/options';
+import {
+  accountOptionDefaultsOf,
+  certificateValuesFor,
+  settingsWithOptionCopy,
+} from './lib/edges/choices';
 import {
   EDGE_NEW_ACCOUNT_OPTION_DEFAULTS,
   certificateKeysOf,
@@ -471,7 +481,16 @@ function pick(obj: Record<string, unknown>, keys: readonly string[]): Record<str
 }
 
 /** Shared-certificate states that are FCP's to remove (a record of another account's is not). */
-const REMOVABLE_SHARED_STATES = new Set(['pending', 'processing', 'issued', 'renewing', 'failed']);
+// `ambiguous` with a subscription named: one this account ordered under an
+// authority it no longer defaults to (still FCP's to remove).
+const REMOVABLE_SHARED_STATES = new Set([
+  'pending',
+  'processing',
+  'issued',
+  'renewing',
+  'failed',
+  'ambiguous',
+]);
 
 /**
  * Whether the account still holds a shared certificate FCP can remove: the
@@ -645,7 +664,12 @@ export const create = internalMutation({
       provider: a.provider,
       name: a.name,
       credentials: creds.credentials as never,
-      settings: settings.settings as never,
+      // With the pre-options copy of the certificate defaults (rollback-safe).
+      settings: settingsWithOptionCopy(
+        a.provider,
+        settings.settings as Record<string, unknown>,
+        optionDefaults,
+      ) as never,
       optionDefaults: storedOptions(optionDefaults),
       defaultTemplateId: a.defaultTemplateId ?? undefined,
       enabled: a.enabled ?? true,
@@ -804,6 +828,16 @@ export const update = internalMutation({
       Object.keys(before).length > 0
     )
       patch.optionDefaults = storedOptions(before);
+    // Any write of either keeps the pre-options copy under `settings` in step
+    // with the defaults (what an older build reads after a rollback deploy).
+    if (patch.settings !== undefined || patch.optionDefaults !== undefined)
+      patch.settings = settingsWithOptionCopy(
+        row.provider,
+        (patch.settings ?? row.settings) as Record<string, unknown>,
+        patch.optionDefaults !== undefined
+          ? parseOptionValues(patch.optionDefaults)
+          : accountOptionDefaultsOf(row),
+      ) as never;
     if (a.credentials !== undefined) {
       const creds = buildCredentials(
         row.provider,
@@ -1027,7 +1061,11 @@ export const applyCredentialRotation = internalMutation({
     const now = Date.now();
     await ctx.db.patch(a.id, {
       credentials: creds.credentials as never,
-      settings: settings.settings as never,
+      settings: settingsWithOptionCopy(
+        row.provider,
+        settings.settings as Record<string, unknown>,
+        accountOptionDefaultsOf(row),
+      ) as never,
       lastTestOkAt: now,
       lastTestError: undefined,
       // The passing test observed the provider's live facts; a test that observed
@@ -1310,6 +1348,13 @@ export async function sharedCertificateUsers(
     .length;
 }
 
+/** The shared resources edges of the account ordered (`tls_subscription:<id>`, ...). */
+export const orderedSharedResourcesOf = internalQuery({
+  args: { accountId: v.id('edgeProviderAccounts') },
+  handler: async (ctx, { accountId }): Promise<string[]> =>
+    (await ctx.db.get(accountId))?.orderedSharedResources ?? [],
+});
+
 /**
  * The certificate a live front of the account froze when it shares the
  * account's wildcard (its intent's authority and scope), or null. A node may
@@ -1418,36 +1463,170 @@ export async function reserveAllocation(
 }
 
 /**
- * Deploy step (seedCutover): option defaults an account still keeps under
- * `settings` (the Fastly authority from before provider options) move into
- * `optionDefaults`. The account's effective configuration is unchanged, so its
- * trust, `credentialsChangedAt` and every location stay as they are. Idempotent:
- * a row without such a key is left alone.
+ * Before deploying a build from before provider options: removes every field
+ * this feature wrote, page by page (Convex refuses an older schema while they
+ * exist), keeping what the older build reads. An account keeps the copy of its
+ * certificate defaults under `settings` (written on every settings write);
+ * picks, edges, rotations and runs lose their option fields, and an address an
+ * edge learned after its tick is dropped (the next describe reports it again).
+ * Run `edgeProviderAccounts:purgeOptionsForRollback` with no arguments; it
+ * schedules itself through every step.
+ */
+export const purgeOptionsForRollback = internalMutation({
+  args: {
+    step: v.optional(
+      v.union(
+        v.literal('accounts'),
+        v.literal('relays'),
+        v.literal('edges'),
+        v.literal('rotations'),
+        v.literal('runs'),
+      ),
+    ),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, a) => {
+    const step = a.step ?? 'accounts';
+    const next = {
+      accounts: 'relays',
+      relays: 'edges',
+      edges: 'rotations',
+      rotations: 'runs',
+      runs: null,
+    } as const;
+    const PAGE = 200;
+    let done = true;
+    let cursor: string | null = null;
+    if (step === 'accounts') {
+      for (const r of await ctx.db.query('edgeProviderAccounts').collect()) {
+        if (r.optionDefaults === undefined) continue;
+        await ctx.db.patch(r._id, {
+          settings: settingsWithOptionCopy(
+            r.provider,
+            r.settings as Record<string, unknown>,
+            accountOptionDefaultsOf(r),
+          ) as never,
+          optionDefaults: undefined,
+        });
+      }
+    } else if (step === 'relays') {
+      for (const r of await ctx.db.query('relays').collect())
+        if (r.providerSet?.some((p) => p.options !== undefined))
+          await ctx.db.patch(r._id, {
+            providerSet: r.providerSet.map(({ options: _o, ...p }) => p),
+          });
+    } else {
+      const page =
+        step === 'edges'
+          ? await ctx.db.query('edges').paginate({ cursor: a.cursor ?? null, numItems: PAGE })
+          : step === 'rotations'
+            ? await ctx.db
+                .query('edgeRotations')
+                .paginate({ cursor: a.cursor ?? null, numItems: PAGE })
+            : await ctx.db
+                .query('edgeSetupRuns')
+                .paginate({ cursor: a.cursor ?? null, numItems: PAGE });
+      for (const row of page.page) {
+        if (step === 'edges') {
+          const e = row as Doc<'edges'>;
+          if (
+            e.choices !== undefined ||
+            e.baseTemplateHash !== undefined ||
+            e.learnedAddresses !== undefined
+          )
+            await ctx.db.patch(e._id, {
+              choices: undefined,
+              baseTemplateHash: undefined,
+              learnedAddresses: undefined,
+            });
+        } else if (step === 'rotations') {
+          const r = row as Doc<'edgeRotations'>;
+          if (r.requestedOptions !== undefined)
+            await ctx.db.patch(r._id, { requestedOptions: undefined });
+        } else {
+          const r = row as Doc<'edgeSetupRuns'>;
+          if (r.picks?.some((p) => p.options !== undefined))
+            await ctx.db.patch(r._id, { picks: r.picks.map(({ options: _o, ...p }) => p) });
+        }
+      }
+      done = page.isDone;
+      cursor = page.continueCursor;
+    }
+    const following = done ? next[step] : step;
+    if (following)
+      await ctx.scheduler.runAfter(0, internal.edgeProviderAccounts.purgeOptionsForRollback, {
+        step: following,
+        cursor: done ? null : cursor,
+      });
+    return { step, done };
+  },
+});
+
+/**
+ * Deploy step (seedCutover), idempotent:
+ *  - an account whose certificate defaults are still only under `settings`
+ *    (the Fastly authority and scope from before options) gets them in
+ *    `optionDefaults` too. The copy under `settings` STAYS
+ *    (`settingsWithOptionCopy`): a build from before options, deployed again,
+ *    finds rows its schema accepts and the certificate the account uses. The
+ *    effective configuration is unchanged, so trust, `credentialsChangedAt`
+ *    and every location stay as they are;
+ *  - a node's pick from before options on such an account gets the account's
+ *    certificate defaults copied in, as a pick made now does: a later change of
+ *    the account's defaults reaches nodes protected after it, never one that
+ *    exists (the account page says so).
  */
 export const migrateOptionDefaults = internalMutation({
   args: {},
   handler: async (ctx) => {
     let moved = 0;
     for (const row of await ctx.db.query('edgeProviderAccounts').collect()) {
-      const legacy = legacyOptionDefaults(row.provider, row.settings as Record<string, unknown>);
-      const keys = Object.keys(legacy);
-      if (keys.length === 0) continue;
-      const settings = Object.fromEntries(
-        Object.entries(row.settings as Record<string, unknown>).filter(([k]) => !keys.includes(k)),
+      if (certificateKeysOf(row.provider).length === 0) continue;
+      const defaults = accountOptionDefaultsOf(row);
+      const optionDefaults = row.optionDefaults ?? storedOptions(defaults);
+      const settings = settingsWithOptionCopy(
+        row.provider,
+        row.settings as Record<string, unknown>,
+        defaults,
       );
-      await ctx.db.patch(row._id, {
-        settings: settings as never,
-        optionDefaults: storedOptions(accountOptionDefaultsOf(row)),
-      });
+      if (optionDefaults === row.optionDefaults && settingsEqual(settings, row.settings)) continue;
+      await ctx.db.patch(row._id, { settings: settings as never, optionDefaults });
       await writeAuditLog(ctx, {
         actorType: 'system',
         action: 'edge.provider_account.options_migrated',
         targetType: 'edge_provider_account',
         targetId: row._id,
-        payload: { name: row.name, provider: row.provider, keys },
+        payload: { name: row.name, provider: row.provider, keys: certificateKeysOf(row.provider) },
       });
       moved++;
     }
-    return { moved };
+    let picks = 0;
+    for (const relay of await ctx.db.query('relays').collect()) {
+      if (!relay.providerSet?.some((p) => p.options === undefined)) continue;
+      let changed = false;
+      const next = [];
+      for (const p of relay.providerSet) {
+        if (p.options !== undefined) {
+          next.push(p);
+          continue;
+        }
+        const location = await ctx.db.get(p.locationId);
+        const account = location ? await ctx.db.get(location.accountId) : null;
+        if (!account || certificateKeysOf(account.provider).length === 0) {
+          next.push(p);
+          continue;
+        }
+        const values = certificateValuesFor(
+          account.provider,
+          accountOptionDefaultsOf(account),
+          null,
+        );
+        next.push({ ...p, options: JSON.stringify(values) });
+        changed = true;
+        picks++;
+      }
+      if (changed) await ctx.db.patch(relay._id, { providerSet: next });
+    }
+    return { moved, picks };
   },
 });

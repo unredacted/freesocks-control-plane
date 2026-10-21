@@ -21,6 +21,9 @@ import {
   verificationStaleReason,
 } from './lib/edges/verification';
 import { verificationListenersOf } from './lib/edges/verificationContext';
+import { certificateDigest } from './lib/edges/choices';
+import { parseIntent } from './lib/edges/intent';
+import type { Values } from './lib/edges/providers/options';
 import { assertAdmission } from './lib/edges/maintenance';
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -117,6 +120,7 @@ async function reviewShapeOf(
             accountId: l.accountId,
             locationId: l.locationId ?? null,
             templateHash: l.templateHash,
+            ...(l.certificate !== undefined ? { certificate: l.certificate } : {}),
           })),
         ),
       );
@@ -215,11 +219,17 @@ async function frontedListenersOf(
         !e && line.locationId
           ? (run?.picks ?? []).find((p) => (p.locationId as string) === line.locationId)?.accountId
           : undefined;
+      // The certificate an L7 front is built with (its frozen intent), for a
+      // provider whose certificate is a node's option.
+      const certificate = e
+        ? certificateDigest(e.provider, parseIntent(e.provisionIntent) as Values | null)
+        : undefined;
       out.push({
         listenerKey: l.listenerKey,
         accountId: e?.accountId ? String(e.accountId) : pickAccount ? String(pickAccount) : null,
         locationId: line.locationId,
         templateHash: e?.templateHash ?? null,
+        ...(certificate !== undefined ? { certificate } : {}),
         layer: line.layer ?? e?.layer ?? ('l4' as const),
         edge: e,
         templateEdgeId: l.templateEdgeId ?? null,
@@ -1468,6 +1478,7 @@ async function servedListenersOf(
       accountId: l.accountId,
       locationId: l.locationId,
       templateHash: l.templateHash,
+      ...(l.certificate !== undefined ? { certificate: l.certificate } : {}),
     });
   }
   return dedupeReviewListeners(out);

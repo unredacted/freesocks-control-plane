@@ -150,6 +150,25 @@ describe('publicationFits', () => {
     ).toBe(true);
     expect(publicationFits(both, pub({ accountId: 'a1', locationId: 'l2' }))).toBe(false);
   });
+  test('another certificate is a new review; an entry approved before options takes any', () => {
+    const withCert = {
+      listeners: [
+        {
+          listenerKey: 'k1',
+          accountId: 'acc',
+          locationId: 'loc',
+          templateHash: 't1',
+          certificate: 'c1',
+        },
+      ],
+    };
+    expect(publicationFits(withCert, pub({ certificate: 'c1' }))).toBe(true);
+    // A replacement that changes only the authority or the scope: same template, new review.
+    expect(publicationFits(withCert, pub({ certificate: 'c2' }))).toBe(false);
+    expect(publicationFits(withCert, pub({}))).toBe(false);
+    // Approved before the certificate was a node's option: nothing to compare.
+    expect(publicationFits(approved, pub({ certificate: 'c2' }))).toBe(true);
+  });
   test('an entry stored before locations (an account, no location) fails closed', () => {
     const legacy = { listeners: [{ listenerKey: 'k1', accountId: 'acc', templateHash: 't1' }] };
     expect(publicationFits(legacy, pub({}))).toBe(false);

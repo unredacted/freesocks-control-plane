@@ -241,9 +241,6 @@ export function gcoreLbBody(cfg: GcoreConfig, spec: EdgeSpec, tpl: GcoreTemplate
           name: `${spec.name}-p${l.edgePort}`,
           protocol: 'TCP',
           lb_algorithm: tpl.lbAlgorithm,
-          // Where the API documents the node timeouts now (the listener's copy is deprecated).
-          timeout_member_connect: tpl.timeoutMemberConnectMs,
-          timeout_member_data: tpl.timeoutMemberDataMs,
           members: l.members.map((m) => ({
             address: m.address,
             protocol_port: m.port,

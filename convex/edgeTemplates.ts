@@ -20,6 +20,7 @@ import {
 import {
   EDGE_TEMPLATES,
   checkBuiltParams,
+  contextProblems,
   optionFieldsOf,
   validatePickOptions,
   validateTemplateParams,
@@ -33,6 +34,7 @@ import {
   type Values,
 } from './lib/edges/providers/options';
 import { canonicalJson } from './lib/edges/providers/template';
+import { parseObservedSettings } from './lib/edges/intent';
 import { assertAdmission } from './lib/edges/maintenance';
 import { parseRegionalParams, withRegionalOverlay } from './lib/edges/locations';
 
@@ -159,11 +161,11 @@ export async function resolveTemplateFor(
 /**
  * What a node's pick BUILDS with at one location: the template the location
  * resolves, with the pick's tuning choices laid over it (lib/edges/providers
- * /options.ts). `hash` is the template's own hash when the pick chose nothing,
- * so a pick without choices builds exactly what it did before options existed;
- * otherwise it covers EVERY choice, its certificate too, so the node's approval
- * shape changes with them. `baseHash` is always the location's own (what trust
- * evidence compares). `choices` is the pick's whole choice set as stored (null
+ * /options.ts). `hash` is the template's own hash when the pick chose no
+ * tuning value, so a pick without tuning builds exactly what it did before
+ * options existed; otherwise it covers the tuning choices (the certificate is
+ * the approval shape's own part, `certificateDigest`). `baseHash` is always
+ * the location's own (what trust evidence compares). `choices` is the pick's whole choice set as stored (null
  * = a pick from before options). `invalid` lists what breaks a provider rule
  * once laid over the template.
  */
@@ -191,8 +193,11 @@ export async function resolveBuildFor(
     accountId,
     location,
   );
-  const { tuning, certificate } = splitChoices(optionFieldsOf(provider), choices ?? {});
-  const hash = builtTemplateHash(base.params, base.hash, deepMerge(tuning, certificate));
+  // Tuning only: the certificate is the approval shape's own part
+  // (`certificateDigest`), so a pick that copied the account's defaults builds
+  // under the template's own hash.
+  const { tuning } = splitChoices(optionFieldsOf(provider), choices ?? {});
+  const hash = builtTemplateHash(base.params, base.hash, tuning);
   if (Object.keys(tuning).length === 0)
     return { ...base, hash, baseHash: base.hash, choices, invalid: null };
   const built = checkBuiltParams(provider, deepMerge(base.params, tuning));
@@ -207,6 +212,34 @@ export async function resolveBuildFor(
 }
 
 /**
+ * The plan of the Cloudflare zone an account's DNS records go to (its own
+ * zone, or its DNS account's), as the last credential test read it; null when
+ * none did.
+ */
+export async function zonePlanOf(
+  db: import('./_generated/server').DatabaseReader,
+  account: Doc<'edgeProviderAccounts'>,
+): Promise<string | null> {
+  const settings = account.settings as { zoneName?: string; dnsAccountId?: string };
+  let host: Doc<'edgeProviderAccounts'> | null = account;
+  if (!settings.zoneName && settings.dnsAccountId)
+    host = await db.get(settings.dnsAccountId as Doc<'edgeProviderAccounts'>['_id']);
+  return parseObservedSettings(host?.observedSettings).zonePlan ?? null;
+}
+
+/** Whether a node serves a REALITY transport (an L4 front's HTTP check would fail on it). */
+export async function relayHasReality(
+  db: import('./_generated/server').DatabaseReader,
+  relayId: Doc<'relays'>['_id'],
+): Promise<boolean> {
+  const rows = await db
+    .query('relayListeners')
+    .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+    .collect();
+  return rows.some((l) => !l.retired && l.security === 'reality');
+}
+
+/**
  * One pick's provider options, checked where they will build: validated for
  * the pick's provider, the account's certificate defaults copied in (an
  * account default only ever PREFILLS a node), laid over the template the
@@ -217,6 +250,8 @@ export async function checkPickOptions(
   location: Doc<'edgeLocations'>,
   account: Doc<'edgeProviderAccounts'>,
   raw: unknown,
+  /** The node being protected: a REALITY transport refuses an HTTP health check. */
+  context: { realityL4?: boolean } = {},
 ): Promise<
   | {
       ok: true;
@@ -242,8 +277,35 @@ export async function checkPickOptions(
     options,
   );
   if (built.invalid) return { ok: false, code: 'edge.option_invalid', issues: built.invalid };
+  // What this place cannot do (its transports, its zone's plan).
+  const problems = contextProblems(account.provider, built.params, {
+    realityL4: context.realityL4,
+    zonePlan: await zonePlanOf(ctx.db, account),
+  });
+  if (problems.length > 0) return { ok: false, code: 'edge.option_invalid', issues: problems };
   const tested = certificateValuesFor(account.provider, accountOptionDefaultsOf(account), null);
   const mine = certificateValuesFor(account.provider, accountOptionDefaultsOf(account), options);
+  // The zone holds ONE shared wildcard, issued by the account's default
+  // authority (the account reads, renews and removes it under that one): a
+  // node takes it, or one certificate per front from any authority.
+  if (mine.certificateScope === 'wildcard') {
+    if (mine.certificateAuthority !== tested.certificateAuthority)
+      return {
+        ok: false,
+        code: 'edge.option_invalid',
+        issues: [
+          `Certificate authority: the shared wildcard is issued by the account's authority (${String(tested.certificateAuthority)}); to use another, choose one certificate per front`,
+        ],
+      };
+    if (account.sharedCertificate?.state === 'ambiguous')
+      return {
+        ok: false,
+        code: 'edge.shared_certificate_ambiguous',
+        issues: [
+          "Certificate: the zone's wildcard is covered by a certificate this account would not order (another authority, or several); remove it or choose one certificate per front",
+        ],
+      };
+  }
   return {
     ok: true,
     options,

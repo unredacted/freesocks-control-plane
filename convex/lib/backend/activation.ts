@@ -116,6 +116,12 @@ export interface ReviewListener {
   /** The location the account fronts it from (null with no account: an adopted front). */
   locationId?: string | null;
   templateHash: string | null;
+  /**
+   * The certificate it is built with (lib/edges/choices.ts `certificateDigest`),
+   * for a provider whose certificate is a node's option. Absent otherwise, and
+   * on an approval taken before options (which then takes any certificate).
+   */
+  certificate?: string;
 }
 
 /** What one edge publication is, in the review's terms (the admission compares it to an approval). */
@@ -124,6 +130,7 @@ export interface PublicationShape {
   accountId: string | null;
   locationId: string | null;
   templateHash: string | null;
+  certificate?: string;
 }
 
 /**
@@ -145,7 +152,10 @@ export function publicationFits(
     if (l.accountId && l.locationId === undefined) return false;
     return (
       (l.locationId ?? null) === (pub.locationId ?? null) &&
-      (l.templateHash ?? null) === (pub.templateHash ?? null)
+      (l.templateHash ?? null) === (pub.templateHash ?? null) &&
+      // Another authority or scope is a new review; an entry approved before
+      // options names none and takes what the node is built with.
+      (l.certificate === undefined || l.certificate === pub.certificate)
     );
   });
 }
@@ -156,7 +166,7 @@ export function dedupeReviewListeners(rows: readonly ReviewListener[]): ReviewLi
   const seen = new Set<string>();
   const out: ReviewListener[] = [];
   for (const r of rows) {
-    const k = `${r.listenerKey}\u0000${r.locationId ?? ''}\u0000${r.accountId ?? ''}\u0000${r.templateHash ?? ''}`;
+    const k = `${r.listenerKey}\u0000${r.locationId ?? ''}\u0000${r.accountId ?? ''}\u0000${r.templateHash ?? ''}\u0000${r.certificate ?? ''}`;
     if (seen.has(k)) continue;
     seen.add(k);
     out.push(r);
@@ -166,7 +176,7 @@ export function dedupeReviewListeners(rows: readonly ReviewListener[]): ReviewLi
 
 export function sortReviewListeners(rows: ReviewListener[]): ReviewListener[] {
   const k = (r: ReviewListener) =>
-    `${r.listenerKey}\u0000${r.locationId ?? ''}\u0000${r.accountId ?? ''}\u0000${r.templateHash ?? ''}`;
+    `${r.listenerKey}\u0000${r.locationId ?? ''}\u0000${r.accountId ?? ''}\u0000${r.templateHash ?? ''}\u0000${r.certificate ?? ''}`;
   return [...rows].sort((a, b) => (k(a) < k(b) ? -1 : k(a) > k(b) ? 1 : 0));
 }
 

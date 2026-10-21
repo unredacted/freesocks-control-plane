@@ -42,13 +42,21 @@ describe('ovh: options', () => {
     });
   });
 
-  test('the node idle timeout reaches the listener (it was shown but never sent)', () => {
-    const l = ovhLbBody(
+  test('the node idle timeout is sent only when chosen; the old field still never is', () => {
+    // A stored template's value of the old field (shown, never sent) stays unsent.
+    const old = ovhLbBody(
       cfg,
       spec,
       OvhTemplate.parse({ flavorId: 'small', timeoutMemberDataMs: 120_000 }),
     ).listeners[0]!;
-    expect(l).toMatchObject({ timeoutClientData: 300_000, timeoutMemberData: 120_000 });
+    expect(old).toMatchObject({ timeoutClientData: 300_000 });
+    expect(old).not.toHaveProperty('timeoutMemberData');
+    const chosen = ovhLbBody(
+      cfg,
+      spec,
+      OvhTemplate.parse({ flavorId: 'small', nodeIdleTimeoutMs: 120_000 }),
+    ).listeners[0]!;
+    expect(chosen).toMatchObject({ timeoutMemberData: 120_000 });
   });
 
   test('source IP balancing is sent in the API spelling', () => {

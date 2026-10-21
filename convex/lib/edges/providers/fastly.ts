@@ -407,11 +407,43 @@ export function fastlyBackendBody(spec: EdgeSpec, tpl: FastlyTemplateParams): Fa
 }
 
 /**
- * The upgrade snippet without the two headers Fastly fills with the member's
- * address, for a front whose node must never see it.
+ * The request headers that can carry the member's address to the node.
+ * Fastly itself sets `Fastly-Client-IP` and adds the address to
+ * `X-Forwarded-For` on the incoming request, before any VCL runs (its header
+ * reference, re-read 2026-10-20); the others are only ever what a client sent,
+ * removed so no client can pass an address on either.
  */
-export const FASTLY_WS_UPGRADE_VCL_NO_CLIENT_ADDRESS =
-  'if (req.http.Upgrade) { unset req.http.Fastly-Client-IP; unset req.http.X-Forwarded-For; return(upgrade); }';
+export const FASTLY_CLIENT_ADDRESS_HEADERS = [
+  'Fastly-Client-IP',
+  'X-Forwarded-For',
+  'True-Client-IP',
+  'X-Real-IP',
+  'Forwarded',
+] as const;
+
+const unsetAll = (obj: 'req' | 'bereq') =>
+  FASTLY_CLIENT_ADDRESS_HEADERS.map((h) => `unset ${obj}.http.${h};`).join(' ');
+
+/**
+ * The upgrade snippet of a front whose node must not see the member's
+ * address (the default): every such header goes in `vcl_recv`, on EVERY
+ * request, before the WebSocket handoff. `return(upgrade)` ends VCL there and
+ * hands the request as it then is to the node, so nothing later can put one
+ * back on the upgrade path.
+ */
+export const FASTLY_WS_UPGRADE_VCL_NO_CLIENT_ADDRESS = `${unsetAll('req')} if (req.http.Upgrade) { return(upgrade); }`;
+
+/**
+ * What a request that is NOT handed off (a plain HTTP request through the same
+ * backend) sends the node: removed again from the backend request, in
+ * `vcl_miss` and `vcl_pass`, the two places it is built.
+ */
+export const FASTLY_NO_CLIENT_ADDRESS_BEREQ_VCL = unsetAll('bereq');
+
+const STRIP_SNIPPET_NAMES = {
+  miss: 'client-address-miss',
+  pass: 'client-address-pass',
+} as const;
 
 export function fastlySnippetBody(
   tpl?: Pick<FastlyTemplateParams, 'forwardClientAddress'>,
@@ -419,14 +451,37 @@ export function fastlySnippetBody(
   return {
     name: SNIPPET_NAME,
     type: 'recv',
+    // Off unless the node's options pass it on (`forwardClientAddress`).
     content:
-      tpl?.forwardClientAddress === false
-        ? FASTLY_WS_UPGRADE_VCL_NO_CLIENT_ADDRESS
-        : FASTLY_WS_UPGRADE_VCL,
+      tpl?.forwardClientAddress === true
+        ? FASTLY_WS_UPGRADE_VCL
+        : FASTLY_WS_UPGRADE_VCL_NO_CLIENT_ADDRESS,
     // Late enough to run after the generated boilerplate, string-typed as the API wants.
     priority: '100',
     dynamic: '0',
   };
+}
+
+/**
+ * Every snippet a front's service version gets, the upgrade snippet LAST: a
+ * front that keeps the member's address from its node also strips it from the
+ * backend request (`vcl_miss`, `vcl_pass`). Discovery keys on the upgrade
+ * snippet, so finding it means the ones before it were made too.
+ */
+export function fastlySnippetBodies(
+  tpl?: Pick<FastlyTemplateParams, 'forwardClientAddress'>,
+): FastlySnippetBody[] {
+  const strip: FastlySnippetBody[] =
+    tpl?.forwardClientAddress === true
+      ? []
+      : (['miss', 'pass'] as const).map((type) => ({
+          name: STRIP_SNIPPET_NAMES[type],
+          type,
+          content: FASTLY_NO_CLIENT_ADDRESS_BEREQ_VCL,
+          priority: '100',
+          dynamic: '0',
+        }));
+  return [...strip, fastlySnippetBody(tpl)];
 }
 
 export function fastlyTlsSubscriptionBody(
@@ -653,6 +708,16 @@ async function sharedSubscriptionOf(
   if (!subscriptionMatchesIntent(covering[0]!, intentOfCfg(cfg), defaultId))
     return { status: 'ambiguous', candidates: covering };
   return { status: 'found', resource: covering[0]! };
+}
+
+/** The sole covering subscription when an edge of this account ordered it, else null. */
+function orderedCandidate(
+  candidates: FastlyJsonApiResource[],
+  ordered: readonly string[] | undefined,
+): FastlyJsonApiResource | null {
+  if (candidates.length !== 1 || !ordered) return null;
+  const only = candidates[0]!;
+  return ordered.includes(`tls_subscription:${only.id}`) ? only : null;
 }
 
 function sharedSubscriptionResource(
@@ -1395,7 +1460,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
    * account page and the renewal watch (null for a per-host account or one
    * without a DNS zone). Never orders anything.
    */
-  async sharedCertificate(cfg): Promise<SharedCertificateStatus | null> {
+  async sharedCertificate(cfg, opts): Promise<SharedCertificateStatus | null> {
     const zone = fastlyZoneOf(cfg);
     if (!zone) return null;
     const name = `*.${zone}`;
@@ -1405,7 +1470,14 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     // wildcard it left behind, so it can be removed; it never shows "absent".
     const wildcard = certificateScopeOf(cfg) === 'wildcard';
     if (found.status === 'absent') return wildcard ? { name, state: 'absent' } : null;
-    if (found.status === 'ambiguous') return wildcard ? { name, state: 'ambiguous' } : null;
+    if (found.status === 'ambiguous') {
+      // One wildcard an edge of this account ORDERED, under another authority
+      // than the account's now: not reusable, but the account's to remove,
+      // whatever its scope (named, so the removal can find it).
+      const own = orderedCandidate(found.candidates, opts?.ordered);
+      if (own) return { name, subscriptionId: own.id, state: 'ambiguous' };
+      return wildcard ? { name, state: 'ambiguous' } : null;
+    }
     const doc = await api.getTlsSubscription(
       found.resource.id,
       'tls_authorizations,tls_certificates',
@@ -1445,7 +1517,14 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     const zone = fastlyZoneOf(cfg);
     if (!zone) return { removed: false, code: 'dns_zone_missing' };
     const api = fastlyApiFor(cfg);
-    const found = await sharedSubscriptionOf(api, `*.${zone}`, cfg);
+    const shared = await sharedSubscriptionOf(api, `*.${zone}`, cfg);
+    // The one wildcard an edge of this account ordered is its to remove,
+    // whatever authority it was ordered under (a node's choice, or the
+    // account's default before it changed). Several, or one it did not order,
+    // never are.
+    const own =
+      shared.status === 'ambiguous' ? orderedCandidate(shared.candidates, opts.ordered) : null;
+    const found: typeof shared = own ? { status: 'found', resource: own } : shared;
     if (found.status === 'ambiguous')
       return { removed: false, code: 'shared_certificate_ambiguous' };
     // Only a wildcard an edge of this account ORDERED is ever deleted: one it
@@ -1541,7 +1620,18 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       }
       case 'create_snippet': {
         const svc = serviceOf(ledger);
-        const snippet = await api.createSnippet(svc.id, svc.version, fastlySnippetBody(tpl));
+        // In order, the upgrade snippet last. A retry after a partial run finds
+        // the ones it already made (the version is this edge's own draft).
+        let snippet: { name: string; id?: string } = { name: SNIPPET_NAME };
+        for (const body of fastlySnippetBodies(tpl)) {
+          try {
+            snippet = await api.createSnippet(svc.id, svc.version, body);
+          } catch (e) {
+            const made = await api.getSnippet(svc.id, svc.version, body.name).catch(() => null);
+            if (!made) throw e;
+            snippet = made;
+          }
+        }
         return {
           status: 'done',
           resources: [

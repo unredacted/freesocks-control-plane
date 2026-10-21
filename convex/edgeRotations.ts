@@ -60,17 +60,24 @@ import {
 } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
 import { allocatePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
-import { checkPickOptions, resolveBuildFor, resolveTemplateFor } from './edgeTemplates';
+import {
+  checkPickOptions,
+  relayHasReality,
+  resolveBuildFor,
+  resolveTemplateFor,
+} from './edgeTemplates';
 import {
   deepMerge,
   parseOptionValues,
   splitChoices,
   type Values,
 } from './lib/edges/providers/options';
-import { optionFieldsOf } from './lib/edges/providers/templates';
+import { contextProblems, optionFieldsOf } from './lib/edges/providers/templates';
+import type { EdgeProviderId } from './lib/edgeProviderIds';
 import {
   accountOptionDefaultsOf,
   builtForChoices,
+  certificateDigest,
   certificateValuesFor,
 } from './lib/edges/choices';
 import {
@@ -525,11 +532,16 @@ export async function publicationApproval(
 ): Promise<PublicationAdmission> {
   if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return { kind: 'unmanaged' };
   const listener = await ctx.db.get(to.listenerId);
+  const certificate = certificateDigest(
+    to.provider,
+    parseIntent(to.provisionIntent) as unknown as Values | null,
+  );
   return publicationAdmission(ctx, origin.backendServerId, origin.origin.nodeName, {
     listenerKey: listener?.listenerKey ?? '',
     accountId: to.accountId ? String(to.accountId) : null,
     locationId: to.locationId ? String(to.locationId) : null,
     templateHash: to.templateHash ?? null,
+    ...(certificate !== undefined ? { certificate } : {}),
   });
 }
 
@@ -924,7 +936,9 @@ export async function startRotation(
         code: 'validation',
         message: 'Options for one address need the location it is built in',
       });
-    const checked = await checkPickOptions(ctx, where, owner, a.requestedOptions);
+    const checked = await checkPickOptions(ctx, where, owner, a.requestedOptions, {
+      realityL4: await relayHasReality(ctx.db, a.relayId),
+    });
     if (!checked.ok)
       throw new ConvexError({
         code: checked.code,
@@ -2620,6 +2634,8 @@ export interface SelectionContext {
     zoneName: string | null;
     /** L7: the zone's OBSERVED encryption mode (null = the account was never tested). */
     zoneSslMode: string | null;
+    /** The plan of the zone its DNS records go to, as its test read it (null = unknown). */
+    zonePlan?: string | null;
   } | null;
   accountFailure: string | null;
   template: {
@@ -2740,14 +2756,34 @@ export async function selectionContext(
     accountId: string | null,
     locationId: string | null,
     templateHash: string | null,
+    certificate: string | undefined,
   ) =>
     !underApproval ||
     (await shapeAdmitted(
       ctx,
       origin,
-      { listenerKey: listener.listenerKey, accountId, locationId, templateHash },
+      {
+        listenerKey: listener.listenerKey,
+        accountId,
+        locationId,
+        templateHash,
+        ...(certificate !== undefined ? { certificate } : {}),
+      },
       { replace: rotation.kind === 'replace' },
     ));
+  // The certificate a new edge at a location will freeze (the pick's, else the account's defaults).
+  const certificateAt = async (
+    account: Doc<'edgeProviderAccounts'>,
+    locationId: Id<'edgeLocations'>,
+  ) =>
+    certificateDigest(
+      account.provider,
+      certificateValuesFor(
+        account.provider,
+        accountOptionDefaultsOf(account),
+        await choicesFor(ctx, rotation, origin, locationId),
+      ),
+    );
   // Automatic work (the detector, upkeep) stays inside the node's provider set
   // and out of a pick that cools (D6); an operator's own request is not held.
   const automatic = rotation.trigger === 'detector' || rotation.trigger === 'reconcile';
@@ -2790,6 +2826,10 @@ export async function selectionContext(
             e.accountId ? String(e.accountId) : null,
             e.locationId ? String(e.locationId) : null,
             e.templateHash ?? null,
+            certificateDigest(
+              e.provider,
+              parseIntent(e.provisionIntent) as unknown as Values | null,
+            ),
           ))),
     });
   }
@@ -2923,7 +2963,14 @@ export async function selectionContext(
     );
     if (rotation.requestedTemplateId && template.id !== rotation.requestedTemplateId)
       return failure('template_not_found');
-    if (!(await fitsApproval(a._id as string, where._id as string, template.hash)))
+    if (
+      !(await fitsApproval(
+        a._id as string,
+        where._id as string,
+        template.hash,
+        await certificateAt(a, where._id),
+      ))
+    )
       return failure('outside_approved_shape');
     return { listener, standbyId: null, ...(await describeAccount(ctx, a, where)), template };
   }
@@ -2961,7 +3008,14 @@ export async function selectionContext(
           loc,
           await choicesFor(ctx, rotation, origin, loc._id),
         );
-        if (!(await fitsApproval(a._id as string, loc._id as string, tpl.hash))) {
+        if (
+          !(await fitsApproval(
+            a._id as string,
+            loc._id as string,
+            tpl.hash,
+            await certificateAt(a, loc._id),
+          ))
+        ) {
           outsideShape++;
           continue;
         }
@@ -3092,6 +3146,7 @@ async function describeAccount(
       defaultTemplateId: account.defaultTemplateId ?? null,
       zoneName,
       zoneSslMode: parseObservedSettings(zoneHost.observedSettings).zoneSslMode ?? null,
+      zonePlan: parseObservedSettings(zoneHost.observedSettings).zonePlan ?? null,
     },
     accountFailure: null,
   };
@@ -3380,12 +3435,23 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     });
     return;
   }
-  // The node's options, laid over the location's template, break a provider rule.
-  if (selection.template.invalid) {
+  // The node's options, laid over the location's template, break a provider
+  // rule, or ask what this place cannot do (an HTTP check on a REALITY port,
+  // record tags on a Free zone): refused before anything is allocated.
+  const placeProblems = contextProblems(
+    selection.account.provider as EdgeProviderId,
+    selection.template.params,
+    {
+      realityL4: selection.listener.security === 'reality',
+      zonePlan: selection.account.zonePlan ?? null,
+    },
+  );
+  const invalid = [...(selection.template.invalid ?? []), ...placeProblems];
+  if (invalid.length > 0) {
     await advanceCall(ctx, r._id, sv, {
       type: 'fail',
       code: 'option_invalid',
-      detail: selection.template.invalid.join('; ').slice(0, 300),
+      detail: invalid.join('; ').slice(0, 300),
       rollback: false,
     });
     return;

@@ -32,6 +32,12 @@ export interface VerificationEdgeLike {
   layer?: 'l4' | 'l7' | null;
   templateHash?: string | null;
   addresses: { v4?: string | null; v6?: string | null; hostname?: string | null };
+  /**
+   * An address family a describe reported after the edge's endpoint was
+   * confirmed (`edges.learnedAddresses`): held apart, so the confirmation
+   * stands and the address is not served until it is tested itself.
+   */
+  learnedAddresses?: { v4?: string | null; v6?: string | null } | null;
   listeners: ReadonlyArray<{
     edgePort: number;
     originAddress: string;
@@ -251,6 +257,87 @@ export function verificationStaleReason(
     if (recordMatchesBinding(rec, underRecordedKey)) return 'reality_key_changed';
   }
   return 'verification_stale';
+}
+
+/**
+ * The edge as it would be once its learned address is served too: what a test
+ * of that address binds to, and what the confirmation makes it.
+ */
+export function withLearnedAddresses<E extends VerificationEdgeLike>(edge: E): E {
+  const l = edge.learnedAddresses;
+  if (!l || (!l.v4 && !l.v6)) return edge;
+  return {
+    ...edge,
+    addresses: {
+      ...edge.addresses,
+      ...(l.v4 ? { v4: l.v4 } : {}),
+      ...(l.v6 ? { v6: l.v6 } : {}),
+    },
+  };
+}
+
+/** The learned address's endpoint (the one to test), or null when nothing is held. */
+export function learnedEndpoint(edge: VerificationEdgeLike): string | null {
+  const l = edge.learnedAddresses;
+  const port = edge.listeners[0]?.edgePort ?? 443;
+  if (l?.v6) return `[${l.v6}]:${port}`;
+  if (l?.v4) return `${l.v4}:${port}`;
+  return null;
+}
+
+/**
+ * The binding a test of the learned address shows and echoes: that address as
+ * the endpoint, the configuration with it served. Null when nothing is held.
+ */
+export function learnedBinding(
+  edge: VerificationEdgeLike,
+  listener: VerificationListenerLike,
+): VerificationBinding | null {
+  const endpoint = learnedEndpoint(edge);
+  if (!endpoint) return null;
+  const all = withLearnedAddresses(edge);
+  return {
+    endpoint,
+    listenerKey: listener.listenerKey,
+    listenerRevision: listener.revision,
+    configHash: verificationConfigHash({
+      listenerConfigHash: listener.configHash,
+      templateHash: all.templateHash,
+      addresses: all.addresses,
+      listeners: all.listeners,
+      authRevision: listener.authRevision,
+    }),
+  };
+}
+
+/**
+ * What an ACTIVE describe's addresses do to an L4 edge whose endpoint a human
+ * confirmed: a family the edge did not have is held apart (`learned`), never
+ * served or hashed until its own test, so the confirmation of what IS served
+ * stands (a provider reporting a second VIP must not stop the first one
+ * rendering). Anything else (a changed or lost address) applies as before.
+ * Pure; `next` is what the describe would apply without the hold.
+ */
+export function holdLearnedAddresses(
+  edge: Pick<VerificationEdgeLike, 'layer' | 'addresses' | 'verification' | 'learnedAddresses'>,
+  next: { v4?: string; v6?: string; hostname?: string },
+): {
+  addresses: { v4?: string; v6?: string; hostname?: string };
+  learned: { v4?: string; v6?: string } | undefined;
+} {
+  const confirmed = needsEndpointVerification(edge) && edge.verification?.rung === 'verified';
+  if (!confirmed) return { addresses: next, learned: undefined };
+  const held4 = !edge.addresses.v4 && next.v4 ? next.v4 : undefined;
+  const held6 = !edge.addresses.v6 && next.v6 ? next.v6 : undefined;
+  if (!held4 && !held6) return { addresses: next, learned: undefined };
+  return {
+    addresses: {
+      ...next,
+      ...(held4 ? { v4: undefined } : {}),
+      ...(held6 ? { v6: undefined } : {}),
+    },
+    learned: { ...(held4 ? { v4: held4 } : {}), ...(held6 ? { v6: held6 } : {}) },
+  };
 }
 
 /** L4 edges need the human tick; L7 edges are verified by their authenticated proof. */

@@ -5,16 +5,40 @@
  * and docs/edges.md § "Provider options".
  */
 import type { EdgeProviderId } from '../edgeProviderIds';
-import { legacyOptionDefaults } from './accountSettings';
+import { EDGE_LEGACY_OPTION_SETTINGS, legacyOptionDefaults } from './accountSettings';
 import {
   defaultsOf,
   parseOptionValues,
   pickKeys,
   sameValues,
   splitChoices,
+  valuesDigest,
   type Values,
 } from './providers/options';
 import { EDGE_CERTIFICATE_OPTIONS, certificateKeysOf, optionFieldsOf } from './providers/templates';
+
+/**
+ * An account's settings with the copy of its certificate defaults a build from
+ * before options reads (`EDGE_LEGACY_OPTION_SETTINGS`: the Fastly authority and
+ * scope), set to what `optionDefaults` holds. Every settings write keeps it, so
+ * deploying an older build again finds rows its schema accepts and the
+ * certificate the account uses now. A later cleanup drops it.
+ */
+export function settingsWithOptionCopy(
+  provider: EdgeProviderId,
+  settings: Record<string, unknown>,
+  optionDefaults: Values,
+): Record<string, unknown> {
+  const keys = EDGE_LEGACY_OPTION_SETTINGS[provider];
+  if (keys.length === 0) return settings;
+  const effective = {
+    ...defaultsOf(EDGE_CERTIFICATE_OPTIONS[provider].fields),
+    ...optionDefaults,
+  };
+  const out = { ...settings };
+  for (const k of keys) if (effective[k] !== undefined) out[k] = effective[k];
+  return out;
+}
 
 /**
  * An account's defaults for its provider's certificate options: the stored
@@ -50,6 +74,25 @@ export function certificateValuesFor(
       ...certificate,
     },
     keys,
+  );
+}
+
+/**
+ * The certificate part of a node's approval shape: a digest of the authority
+ * and scope (declared defaults filled in) an edge is built with, from its
+ * frozen intent or from what a pick will freeze. Undefined for a provider
+ * without certificate options or an edge with no intent: the approval entry
+ * then carries no certificate, exactly as before options.
+ */
+export function certificateDigest(
+  provider: EdgeProviderId | undefined | null,
+  values: Values | null | undefined,
+): string | undefined {
+  if (!provider || !values) return undefined;
+  const keys = certificateKeysOf(provider);
+  if (keys.length === 0) return undefined;
+  return valuesDigest(
+    pickKeys({ ...defaultsOf(EDGE_CERTIFICATE_OPTIONS[provider].fields), ...values }, keys),
   );
 }
 

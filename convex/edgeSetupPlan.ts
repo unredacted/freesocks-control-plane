@@ -383,16 +383,23 @@ export function refuseSet(set: SetupPlanSet): void {
 }
 
 /** Check each pick's options (`checkPicks`) into the set: its options, or a problem. */
+/** Whether the node's transports to protect include a REALITY one. */
+function servesReality(required: ReadonlyArray<{ listenerSpec: unknown }>): boolean {
+  return required.some((i) => (i.listenerSpec as ListenerSpecInput).security === 'reality');
+}
+
 async function applyPickChecks(
   ctx: ActionCtx,
   set: SetupPlanSet,
   pickOptions: Record<string, unknown> | undefined,
+  realityL4: boolean,
 ): Promise<void> {
   const checked = await ctx.runQuery(internal.edgeSetupPlan.checkPicks, {
     picks: set.picks.map((p) => ({
       locationId: p.locationId as Id<'edgeLocations'>,
       options: pickOptions?.[p.locationId] ?? {},
     })),
+    realityL4,
   });
   for (const r of checked) {
     const pick = set.picks.find((p) => p.locationId === r.locationId);
@@ -432,6 +439,8 @@ async function applyPickChecks(
 export const checkPicks = internalQuery({
   args: {
     picks: v.array(v.object({ locationId: v.id('edgeLocations'), options: v.any() })),
+    /** The node serves a REALITY transport (an HTTP health check would fail on it). */
+    realityL4: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const out: Array<
@@ -451,7 +460,9 @@ export const checkPicks = internalQuery({
         out.push({ locationId: p.locationId, ok: false, code: 'edge.no_location', issues: [] });
         continue;
       }
-      const r = await checkPickOptions(ctx, location, account, p.options);
+      const r = await checkPickOptions(ctx, location, account, p.options, {
+        realityL4: a.realityL4,
+      });
       out.push(
         r.ok
           ? {
@@ -730,7 +741,7 @@ export async function buildPlan(
     args.picks && args.picks.length > 0
       ? setOfPicks(args.picks, accounts, required, c.accounts)
       : undefined;
-  if (set) await applyPickChecks(ctx, set, args.pickOptions);
+  if (set) await applyPickChecks(ctx, set, args.pickOptions, servesReality(required));
   const plan: SetupPlanSnapshot = {
     backendServerId: a.backendServerId as string,
     backend: c.backend,
@@ -872,7 +883,7 @@ export const create = internalAction({
         nodeUuid: a.nodeUuid,
       });
       set = setOfPicks([location.id], plan.accounts, required, context.accounts);
-      await applyPickChecks(ctx, set, undefined);
+      await applyPickChecks(ctx, set, undefined, servesReality(required));
       plan.set = set;
     }
     refuseSet(set);

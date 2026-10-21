@@ -173,9 +173,11 @@ export const GCORE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     label: 'Node connect timeout',
     type: 'number',
     unit: 'ms',
-    group: 'Pool',
+    group: 'Listener',
     help: 'Gives up reaching the node after this long.',
-    wire: { resource: 'pool', field: 'timeout_member_connect', manual: true },
+    // On the listener, where FCP has always sent it (an existing node's next
+    // replacement sends exactly what it did before).
+    wire: { resource: 'listener', field: 'timeout_member_connect', manual: true },
     live: 'in_place',
   },
   {
@@ -183,9 +185,9 @@ export const GCORE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     label: 'Node idle timeout',
     type: 'number',
     unit: 'ms',
-    group: 'Pool',
+    group: 'Listener',
     help: 'Closes the connection to the node after this long with no data.',
-    wire: { resource: 'pool', field: 'timeout_member_data', manual: true },
+    wire: { resource: 'listener', field: 'timeout_member_data', manual: true },
     live: 'in_place',
   },
   {
@@ -777,7 +779,9 @@ export const OvhTemplate = z.object({
     })
     .default({ delay: 5, timeout: 3, maxRetries: 3 }),
   timeoutClientDataMs: z.number().int().min(1000).max(3_600_000).default(300_000),
+  // Never sent (see its descriptor); `nodeIdleTimeoutMs` is the one that is.
   timeoutMemberDataMs: z.number().int().min(1000).max(3_600_000).default(300_000),
+  nodeIdleTimeoutMs: z.number().int().min(1000).max(3_600_000).optional(),
   allowedCidrs: z.array(z.string().min(1)).max(50).default([]),
 });
 export type OvhTemplateParams = z.infer<typeof OvhTemplate>;
@@ -827,12 +831,24 @@ export const OVH_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     live: 'rebuild',
   },
   {
+    // Shown before options existed but never sent: kept (stored templates hold
+    // it and their hashes include it), hidden, and still never sent, so an
+    // existing node's next replacement sends what it always did.
     key: 'timeoutMemberDataMs',
+    label: 'Node idle timeout (unused)',
+    type: 'number',
+    unit: 'ms',
+    group: 'Listener',
+    hidden: true,
+  },
+  {
+    key: 'nodeIdleTimeoutMs',
     label: 'Node idle timeout',
     type: 'number',
     unit: 'ms',
     group: 'Listener',
-    help: 'Closes the connection to the node after this long with no data.',
+    advanced: true,
+    help: "Closes the connection to the node after this long with no data. Unset: the provider's own default.",
     wire: { resource: 'listener', field: 'timeoutMemberData', manual: true },
     live: 'rebuild',
   },
@@ -1279,8 +1295,8 @@ export const FASTLY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     label: "Pass the member's address to the node",
     type: 'boolean',
     group: 'Request',
-    default: true,
-    help: "Fastly adds the member's address to the upgrade request (Fastly-Client-IP, X-Forwarded-For). Off removes both, so the node never sees it.",
+    default: false,
+    help: "Off (the default): the front removes every header that can carry the member's address (Fastly-Client-IP, X-Forwarded-For and the like) before the node sees the request. On passes Fastly's own two through.",
     wire: { resource: 'snippet', field: 'content', manual: true },
     live: 'new_version',
   },
@@ -1514,6 +1530,19 @@ const WRITE_CHECKS: Partial<
           out.push(`${label('allowedCidrs')}: "${c}" is IPv6 on an IPv4-only edge`);
     return out;
   },
+  fastly: (p, label) => {
+    const out: string[] = [];
+    // Fastly refuses a backend whose lowest TLS version is above its highest.
+    const min = p.minTlsVersion as string | undefined;
+    const max = p.maxTlsVersion as string | undefined;
+    if (min && max && Number(min) > Number(max))
+      out.push(`${label('minTlsVersion')}: must not be above ${label('maxTlsVersion')} (${max})`);
+    // Keepalive timings only mean something with keepalive on.
+    if (p.tcpKeepalive !== true)
+      for (const k of ['tcpKeepaliveTime', 'tcpKeepaliveInterval', 'tcpKeepaliveProbes'])
+        if (p[k] !== undefined) out.push(`${label(k)}: only with ${label('tcpKeepalive')} on`);
+    return out;
+  },
   upcloud: (p, label) => {
     const out: string[] = [];
     // UpCloud label keys: 2 to 32 printable characters, not starting with an underscore.
@@ -1523,6 +1552,52 @@ const WRITE_CHECKS: Partial<
     return out;
   },
 };
+
+/**
+ * Where an edge is about to be built: facts its template cannot know. A
+ * REALITY transport on the L4 load balancer (`realityL4`); the plan of the
+ * Cloudflare zone its DNS records go to (`zonePlan`, from the credential
+ * test; unknown until a test reads it).
+ */
+export interface BuildContext {
+  realityL4?: boolean;
+  zonePlan?: string | null;
+}
+
+/**
+ * What the built params ask that this place cannot do, in words (empty when
+ * nothing): an HTTP health check against a REALITY port (it answers no plain
+ * HTTP request, so every member would be marked down), or record tags and
+ * per-record flattening on a Free zone (Cloudflare offers them on paid plans
+ * only). Checked when a pick is planned and again when an edge is built.
+ */
+export function contextProblems(
+  provider: EdgeProviderId,
+  params: Record<string, unknown>,
+  c: BuildContext,
+): string[] {
+  const label = labelOf(provider);
+  const out: string[] = [];
+  if (c.realityL4 && (provider === 'gcore' || provider === 'ovh')) {
+    const type = String((params.healthMonitor as { type?: string } | undefined)?.type ?? '');
+    if (/^https?$/i.test(type))
+      out.push(
+        `${label('healthMonitor.type')}: a REALITY transport answers no HTTP check; choose a TCP check`,
+      );
+  }
+  if (c.zonePlan === 'free') {
+    const tagKey =
+      provider === 'cloudflare' ? 'recordTags' : provider === 'fastly' ? 'dnsTags' : null;
+    const tags = tagKey ? (params[tagKey] as Record<string, string> | undefined) : undefined;
+    if (tagKey && tags && Object.keys(tags).length > 0)
+      out.push(
+        `${label(tagKey)}: the zone is on Cloudflare's Free plan, which takes no record tags`,
+      );
+    if (provider === 'fastly' && params.dnsFlatten === true)
+      out.push(`${label('dnsFlatten')}: only a paid Cloudflare zone flattens one record`);
+  }
+  return out;
+}
 
 function labelOf(provider: EdgeProviderId): (key: string) => string {
   const fields = optionFieldsOf(provider);

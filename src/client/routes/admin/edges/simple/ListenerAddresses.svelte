@@ -81,6 +81,9 @@
   const WORD = { published: 'In use', unpublished: 'Spare', draining: 'Retiring' } as const;
   const tested = (e: EdgeAdmin): string | null => {
     if (!e.verification.required || retiring.includes(e)) return null;
+    // A second address the provider reported later: served only once tested.
+    if (e.verification.current && e.verification.learnedAddress)
+      return `tested; new address ${e.verification.learnedAddress} not served until tested`;
     if (e.verification.current) return 'tested';
     if (e.verification.stale) return 'retest needed';
     return 'not tested yet';

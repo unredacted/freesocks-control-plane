@@ -306,7 +306,9 @@ export function ovhLbBody(cfg: OvhConfig, spec: EdgeSpec, tpl: OvhTemplateParams
       protocol: 'tcp',
       ...(tpl.allowedCidrs.length > 0 ? { allowedCidrs: tpl.allowedCidrs } : {}),
       timeoutClientData: tpl.timeoutClientDataMs,
-      timeoutMemberData: tpl.timeoutMemberDataMs,
+      // Only when chosen: unset, the provider's own default applies, as it
+      // always did (`timeoutMemberDataMs` was shown but never sent).
+      ...(tpl.nodeIdleTimeoutMs !== undefined ? { timeoutMemberData: tpl.nodeIdleTimeoutMs } : {}),
       pool: {
         name: `${spec.name}-p${l.edgePort}`,
         // The API spells it `sourceIP`.

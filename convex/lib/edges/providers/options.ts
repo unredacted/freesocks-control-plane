@@ -236,6 +236,11 @@ export function wireBody(fields: readonly OptionField[], resource: string, value
 // --- hashing -------------------------------------------------------------------------------------
 
 /** FNV-1a 64-bit as 16 hex chars (the same function the template hash uses). */
+/** An equality token for a set of option values (key-order-insensitive). */
+export function valuesDigest(values: Values): string {
+  return fnv1a64Hex(canonicalJson(values));
+}
+
 function fnv1a64Hex(input: string): string {
   let h = 0xcbf29ce484222325n;
   const prime = 0x100000001b3n;
