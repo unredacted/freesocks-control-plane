@@ -864,7 +864,9 @@ describe('edgeSetupRuns: the provider options a node gets at a pick', () => {
     );
     expect(edge.baseTemplateHash).toBe(located.hash);
     expect(edge.templateHash).not.toBe(located.hash);
-    await tickAll(t, runId);
+    // Its tick trusts the location: the choices are the node's, the template the place's.
+    const ticked = await tickAll(t, runId);
+    expect(ticked.accountTrusted).toBe(true);
     r = await pump(t, runId, settled);
     expect(r.state).toBe('done');
     // Go-live records the options on the node's set, where later automatic work reads them.

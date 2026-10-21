@@ -1191,6 +1191,13 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
   templateFields: FASTLY_TEMPLATE_FIELDS,
   defaultTemplate: FastlyTemplate.parse({}),
 
+  async certificatePreflight(cfg) {
+    const caa = await caaPreflight(cfg);
+    return caa?.refusal
+      ? { ok: false as const, code: caa.refusal.code, detail: caa.refusal.detail }
+      : { ok: true as const };
+  },
+
   async testCredentials(cfg): Promise<CredentialTestResult> {
     const api = fastlyApiFor(cfg);
     try {

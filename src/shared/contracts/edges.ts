@@ -330,6 +330,8 @@ export const EdgeTemplateAdmin = z.object({
   params: z.unknown(),
   paramsHash: z.string(),
   isDefault: z.boolean(),
+  /** When it was created: the provisioning fallback takes the earliest unscoped one. */
+  createdAt: iso.optional(),
   updatedAt: iso,
 });
 export type EdgeTemplateAdmin = z.infer<typeof EdgeTemplateAdmin>;

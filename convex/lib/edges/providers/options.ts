@@ -13,8 +13,9 @@
  *    frozen in the L7 intent, outside the template hash, as the authority
  *    always was.
  * Any option may be chosen for one node's pick (`relays.providerSet[i]
- * .options`): tuning choices are laid over the template and enter the edge's
- * template hash; certificate choices replace the account's.
+ * .options`): tuning choices are laid over the template, certificate choices
+ * replace the account's, and every choice enters the hash of what the edge is
+ * built with (its `templateHash`, which the node's approval binds to).
  *
  * The HASH RULE: an option added after a provider's first schema is
  * `.optional()` and its default is applied where it is sent, never by the
@@ -247,9 +248,9 @@ function fnv1a64Hex(input: string): string {
 
 /**
  * The template hash of what a node's pick builds: the template's own hash when
- * the pick chose no tuning value (so an edge built for a pick without choices
- * is exactly what it was before options existed), else the hash of the
- * template with the choices laid over it.
+ * the pick chose nothing (so an edge built for a pick without choices is
+ * exactly what it was before options existed), else the hash of the template
+ * with the choices laid over it.
  */
 export function builtTemplateHash(
   baseParams: Values,

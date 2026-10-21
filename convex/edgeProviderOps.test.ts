@@ -1216,4 +1216,35 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
     expect(admin.sharedCertificate).toBeNull();
   });
+
+  test("a node's wildcard where the account defaults to one per front is still read as a wildcard", async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: accountId,
+      optionDefaults: { certificateScope: 'per_host' },
+    });
+    const asked: Array<Record<string, unknown>> = [];
+    standIn({
+      sharedCertificate: async (cfg: Record<string, unknown>) => {
+        asked.push({ ...cfg });
+        return cfg.certificateScope === 'wildcard'
+          ? { name: '*.example.org', subscriptionId: 'WILD1', state: 'issued' }
+          : null;
+      },
+    });
+    await edgeWithIntent(t, accountId, dnsId, {
+      domainModel: 'versionless',
+      certificateScope: 'wildcard',
+      certificateAuthority: 'lets-encrypt',
+    });
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    expect(asked.at(-1)).toMatchObject({
+      certificateScope: 'wildcard',
+      certificateAuthority: 'lets-encrypt',
+    });
+    const admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
+    expect(admin.sharedCertificate).toMatchObject({ name: '*.example.org', state: 'issued' });
+  });
 });

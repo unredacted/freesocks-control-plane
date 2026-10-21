@@ -142,6 +142,7 @@ interface TemplateLike {
   accountId: string | null;
   isDefault: boolean;
   params: unknown;
+  createdAt?: string;
 }
 
 /**
@@ -164,11 +165,18 @@ export function pickBase(
   location: { defaultTemplateId: string | null; regionalParams: Record<string, string> } | null,
 ): Params {
   const own = templates.filter((t) => t.provider === account.provider);
+  // The server's order (`resolveBaseTemplate`): the location's, the account's,
+  // the account's own default, the provider's default, else the earliest
+  // unscoped template.
+  const unscoped = own
+    .filter((t) => t.accountId === null)
+    .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
   const tpl =
     own.find((t) => t.id === location?.defaultTemplateId) ??
     own.find((t) => t.id === account.defaultTemplateId) ??
     own.find((t) => t.isDefault && t.accountId === account.id) ??
-    own.find((t) => t.isDefault && t.accountId === null) ??
+    unscoped.find((t) => t.isDefault) ??
+    unscoped[0] ??
     null;
   let out = deepMerge(schema.defaults, templateDefaults);
   if (tpl && isObject(tpl.params)) out = deepMerge(out, tpl.params);

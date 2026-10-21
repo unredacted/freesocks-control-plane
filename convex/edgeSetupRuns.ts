@@ -3891,8 +3891,16 @@ export async function startReprotect(
         optionsOfPick.set(key, JSON.stringify(r.options));
         continue;
       }
-      const kept = relay.providerSet?.find((x) => x.locationId === p.location._id)?.options;
-      if (kept !== undefined) optionsOfPick.set(key, kept);
+      const entry = relay.providerSet?.find((x) => x.locationId === p.location._id);
+      if (entry) {
+        // A pick the node already had keeps what it has (a pick from before
+        // options keeps none: the template and the account's defaults, live).
+        if (entry.options !== undefined) optionsOfPick.set(key, entry.options);
+        continue;
+      }
+      // A pick joining now starts from the account's defaults, copied in.
+      const r = await checkPickOptions(ctx, p.location, p.account, {});
+      if (r.ok) optionsOfPick.set(key, JSON.stringify(r.options));
     }
     // The requirement over the served transports, and its cover: fresh targets
     // over the whole of it (`replace_all`: the new addresses take the old

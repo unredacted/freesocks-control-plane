@@ -2529,18 +2529,27 @@ automatic work never takes such an address.
 choices over the template the location resolves (and checks the result against the
 provider's rules). The edge records `choices` (the pick's whole set, JSON) and
 `baseTemplateHash` (the location's own hash); its `templateHash` is the base hash when the
-pick chose no tuning value, else the hash of the template with the choices laid over it. So
-the node's approval shape covers its choices, a tick on such an edge proves only that edge
-(trust evidence compares the location's own hash), and a template edit is still detected
-mid-provision against the base hash. Certificate values go into the L7 intent like the
-authority always did; `loadAdapter` lays the account's defaults under them for a new edge
-and the intent's values over them for an existing one (an intent without a value reads as
-what its absence meant: one certificate per front, the default authority).
+pick chose nothing, else the hash of the template with every choice laid over it (its
+certificate too). So the node's approval shape covers its choices, a tick on such an edge
+is still trust evidence for its location (trust compares the location's own hash), and a
+template edit is still detected mid-provision against the base hash. Certificate values go
+into the L7 intent like the authority always did; `loadAdapter` lays the account's defaults
+under them for a new edge and the intent's values over them for an existing one (an intent
+without a value reads as what its absence meant: one certificate per front, the default
+authority).
 
 **Spares follow their pick.** Selection's standby candidates and `verifiedSpareFor` skip an
 edge whose frozen choices (tuning) or frozen certificate differ from what its pick asks for
 now (`builtForChoices`, `lib/edges/choices.ts`). A template edit is not a choice: it keeps
 the existing rule (it untrusts the locations that fall back to the template).
+
+**Certificates a node chooses.** A pick whose certificate differs from what the account's
+credential test checked (another authority, the wildcard) is checked against the zone's CAA
+records when its plan is made (`edgeProviderOps.certificatePreflight`, the adapter's
+`certificatePreflight`): a refusal is a problem of that pick, before anything is ordered.
+An account whose own default the zone's CAA refuses stays refused as a whole until its
+default or the zone's records change. The account's shared wildcard is read as a front
+that chose it froze it, even where the account defaults to one certificate per front.
 
 **The hash rule.** An option added after a provider's first schema is `.optional()`, with
 its default declared on the descriptor and applied where it is sent. A stored template then

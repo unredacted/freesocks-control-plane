@@ -409,6 +409,14 @@ export interface EdgeProvider<
   defaultTemplate: Tpl;
 
   testCredentials(cfg: Cfg): Promise<CredentialTestResult>;
+  /**
+   * Whether the certificate options on `cfg` can be issued at all (a CDN
+   * front's CAA preflight), for a node that chose other certificate options
+   * than the ones the credential test checked. Absent = nothing to check.
+   */
+  certificatePreflight?(
+    cfg: Cfg,
+  ): Promise<{ ok: true } | { ok: false; code: string; detail?: string }>;
   listRegions?(cfg: Cfg): Promise<Array<{ id: string; label: string }>>;
   /**
    * What the account form can offer as choices, given the credentials and any

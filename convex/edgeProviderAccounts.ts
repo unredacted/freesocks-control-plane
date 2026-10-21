@@ -1135,6 +1135,29 @@ export async function sharedCertificateUsers(
     .length;
 }
 
+/**
+ * The certificate a live front of the account froze when it shares the
+ * account's wildcard (its intent's authority and scope), or null. A node may
+ * choose the wildcard where the account's default is one per front: reading
+ * the shared certificate must then follow that front, not the default.
+ */
+export const sharedCertificateChoice = internalQuery({
+  args: { accountId: v.id('edgeProviderAccounts') },
+  handler: async (ctx, { accountId }) => {
+    for (const e of await liveEdgesOfAccount(ctx.db, accountId)) {
+      const intent = parseIntent(e.provisionIntent);
+      if (intent?.certificateScope !== 'wildcard') continue;
+      return {
+        certificateScope: 'wildcard',
+        ...(intent.certificateAuthority
+          ? { certificateAuthority: intent.certificateAuthority }
+          : {}),
+      };
+    }
+    return null;
+  },
+});
+
 /** A provider failing this many calls in a row is raised as attention `account_api_failing`. */
 export const API_FAILING_AFTER = 3;
 

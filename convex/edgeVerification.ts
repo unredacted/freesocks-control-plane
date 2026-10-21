@@ -257,8 +257,10 @@ async function accountTrustEvidence(
   if (testedAt <= (account.credentialsChangedAt ?? 0))
     return { ok: false, code: 'tested_before_credential_change' };
   const effective = await effectiveTemplateOfLocation(ctx, account, location);
-  if (!edge.templateHash || edge.templateHash !== effective.hash)
-    return { ok: false, code: 'template_mismatch' };
+  // An edge built with a node's tuning choices is evidence for the location's
+  // own template (`baseTemplateHash`): the choices are the node's, not the place's.
+  const built = edge.baseTemplateHash ?? edge.templateHash;
+  if (!built || built !== effective.hash) return { ok: false, code: 'template_mismatch' };
   return { ok: true, testedAt, templateHash: effective.hash };
 }
 

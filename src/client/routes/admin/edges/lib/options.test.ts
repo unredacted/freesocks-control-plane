@@ -111,3 +111,34 @@ describe('pickBase', () => {
     expect(base).toEqual({ size: 'xl', cap: 5, authority: 'other' });
   });
 });
+
+describe('pickBase fallback', () => {
+  it('without any default, the earliest unscoped template, as the server picks it', () => {
+    const base = pickBase(
+      { fields, defaults: { size: 's' } },
+      {},
+      [
+        {
+          id: 'b',
+          provider: 'p',
+          accountId: null,
+          isDefault: false,
+          params: { size: 'late' },
+          createdAt: '2026-10-02T00:00:00.000Z',
+        },
+        {
+          id: 'a',
+          provider: 'p',
+          accountId: null,
+          isDefault: false,
+          params: { size: 'early' },
+          createdAt: '2026-10-01T00:00:00.000Z',
+        },
+        { id: 'x', provider: 'p', accountId: 'other', isDefault: true, params: { size: 'theirs' } },
+      ],
+      { id: 'mine', provider: 'p', defaultTemplateId: null },
+      null,
+    );
+    expect(base.size).toBe('early');
+  });
+});

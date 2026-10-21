@@ -66,6 +66,8 @@ export function mapTemplateAdmin(r: Doc<'edgeTemplates'>) {
     params,
     paramsHash: r.paramsHash,
     isDefault: r.isDefault,
+    // Creation order is what the provisioning fallback walks (`resolveBaseTemplate`).
+    createdAt: new Date(r._creationTime).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
   };
 }
@@ -157,11 +159,13 @@ export async function resolveTemplateFor(
 /**
  * What a node's pick BUILDS with at one location: the template the location
  * resolves, with the pick's tuning choices laid over it (lib/edges/providers
- * /options.ts). `hash` is the template's own hash when the pick chose no
- * tuning value, so a pick without choices builds exactly what it did before
- * options existed; `baseHash` is always the location's own. `choices` is the
- * pick's whole choice set as stored (null = a pick from before options).
- * `invalid` lists what breaks a provider rule once laid over the template.
+ * /options.ts). `hash` is the template's own hash when the pick chose nothing,
+ * so a pick without choices builds exactly what it did before options existed;
+ * otherwise it covers EVERY choice, its certificate too, so the node's approval
+ * shape changes with them. `baseHash` is always the location's own (what trust
+ * evidence compares). `choices` is the pick's whole choice set as stored (null
+ * = a pick from before options). `invalid` lists what breaks a provider rule
+ * once laid over the template.
  */
 export async function resolveBuildFor(
   ctx: { db: import('./_generated/server').DatabaseReader },
@@ -187,14 +191,15 @@ export async function resolveBuildFor(
     accountId,
     location,
   );
-  const { tuning } = splitChoices(optionFieldsOf(provider), choices ?? {});
+  const { tuning, certificate } = splitChoices(optionFieldsOf(provider), choices ?? {});
+  const hash = builtTemplateHash(base.params, base.hash, deepMerge(tuning, certificate));
   if (Object.keys(tuning).length === 0)
-    return { ...base, baseHash: base.hash, choices, invalid: null };
+    return { ...base, hash, baseHash: base.hash, choices, invalid: null };
   const built = checkBuiltParams(provider, deepMerge(base.params, tuning));
   return {
     id: base.id,
     params: built.ok ? built.params : deepMerge(base.params, tuning),
-    hash: builtTemplateHash(base.params, base.hash, tuning),
+    hash,
     baseHash: base.hash,
     choices,
     invalid: built.ok ? null : built.issues,
@@ -212,7 +217,15 @@ export async function checkPickOptions(
   location: Doc<'edgeLocations'>,
   account: Doc<'edgeProviderAccounts'>,
   raw: unknown,
-): Promise<{ ok: true; options: Values } | { ok: false; code: string; issues: string[] }> {
+): Promise<
+  | {
+      ok: true;
+      options: Values;
+      /** The pick's certificate, when it is not what the account's credential test checked. */
+      certificateToCheck: Values | null;
+    }
+  | { ok: false; code: string; issues: string[] }
+> {
   const res = validatePickOptions(account.provider, raw);
   if (!res.ok) return { ok: false, code: res.code, issues: res.issues };
   const options = {
@@ -229,7 +242,13 @@ export async function checkPickOptions(
     options,
   );
   if (built.invalid) return { ok: false, code: 'edge.option_invalid', issues: built.invalid };
-  return { ok: true, options };
+  const tested = certificateValuesFor(account.provider, accountOptionDefaultsOf(account), null);
+  const mine = certificateValuesFor(account.provider, accountOptionDefaultsOf(account), options);
+  return {
+    ok: true,
+    options,
+    certificateToCheck: canonicalJson(mine) === canonicalJson(tested) ? null : mine,
+  };
 }
 
 async function resolveBaseTemplate(

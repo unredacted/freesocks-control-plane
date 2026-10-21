@@ -45,8 +45,19 @@
     for (const f of fields) if (f.default !== undefined) out = setPath(out, f.key, f.default);
     return out;
   });
-  const seed = untrack(() => asParams(account.optionDefaults));
-  let values = $state<Params>(seed);
+  // What the server holds: the baseline the form is dirty against. It follows
+  // the account whenever the server's copy changes (after a save, or another
+  // admin's edit); an unsaved edit is replaced only by a change it did not make.
+  let seed = $state<Params>(untrack(() => asParams(account.optionDefaults)));
+  let values = $state<Params>(untrack(() => asParams(account.optionDefaults)));
+  $effect(() => {
+    const now = asParams(account.optionDefaults);
+    untrack(() => {
+      if (deepEqual(now, seed)) return;
+      seed = now;
+      values = now;
+    });
+  });
   const dirty = $derived(!deepEqual(values, seed));
   let confirmOpen = $state(false);
   let saving = $state(false);
@@ -55,7 +66,9 @@
   async function save() {
     saving = true;
     try {
-      await updateProvider(account.id, { optionDefaults: $state.snapshot(values) });
+      const saved = $state.snapshot(values);
+      await updateProvider(account.id, { optionDefaults: saved });
+      seed = saved;
       invalidateProviders(qc);
       toast.success('Defaults saved');
     } catch (err) {

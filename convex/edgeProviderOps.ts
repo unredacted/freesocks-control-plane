@@ -673,6 +673,29 @@ export const testCredentials = internalAction({
     }),
 });
 
+/**
+ * Whether the certificate options a node chose (other than the ones the
+ * account's credential test checked) can be issued: the adapter's preflight
+ * with those values laid over the account's (the zone's CAA records). A lookup
+ * that cannot be read never refuses: issuance then reports what it meets.
+ */
+export const certificatePreflight = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts'), certificate: v.any() },
+  handler: async (
+    ctx,
+    { accountId, certificate },
+  ): Promise<{ ok: true } | { ok: false; code: string; detail?: string }> => {
+    try {
+      const { provider, cfg } = await loadAdapter(ctx, accountId);
+      if (!provider.certificatePreflight) return { ok: true };
+      Object.assign(cfg as unknown as Record<string, unknown>, certificate as object);
+      return await provider.certificatePreflight(cfg);
+    } catch {
+      return { ok: true };
+    }
+  },
+});
+
 /** Test refusals that are not the provider failing (they never raise `account_api_failing`). */
 const NOT_API_FAILURES: ReadonlySet<string> = new Set(['caa_forbids_ca']);
 
@@ -683,6 +706,15 @@ async function recordSharedCertificate(
   provider: EdgeProvider,
   cfg: EdgeProviderConfig,
 ): Promise<SharedCertificateStatus | null> {
+  // A node that chose the wildcard where the account defaults to one per front:
+  // the certificate it shares is read as that front froze it.
+  const mutable = cfg as unknown as Record<string, unknown>;
+  if (provider.sharedCertificate && mutable.certificateScope !== 'wildcard') {
+    const shared = await ctx.runQuery(internal.edgeProviderAccounts.sharedCertificateChoice, {
+      accountId,
+    });
+    if (shared) Object.assign(mutable, shared);
+  }
   const status = provider.sharedCertificate ? await provider.sharedCertificate(cfg) : null;
   await ctx.runMutation(internal.edgeProviderAccounts.recordSharedCertificate, {
     id: accountId,

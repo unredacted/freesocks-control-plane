@@ -397,6 +397,22 @@ async function applyPickChecks(
   for (const r of checked) {
     const pick = set.picks.find((p) => p.locationId === r.locationId);
     if (!pick) continue;
+    if (r.ok && r.certificateToCheck) {
+      // A certificate the account's credential test never checked (another
+      // authority, the wildcard): the zone's CAA records are read for it now.
+      const pre = await ctx.runAction(internal.edgeProviderOps.certificatePreflight, {
+        accountId: r.accountId as Id<'edgeProviderAccounts'>,
+        certificate: r.certificateToCheck,
+      });
+      if (!pre.ok) {
+        set.problems.push({
+          locationId: r.locationId,
+          reason: pre.code,
+          ...(pre.detail ? { detail: pre.detail } : {}),
+        });
+        continue;
+      }
+    }
     if (r.ok) pick.options = r.options;
     else
       set.problems.push({
@@ -419,7 +435,13 @@ export const checkPicks = internalQuery({
   },
   handler: async (ctx, a) => {
     const out: Array<
-      | { locationId: string; ok: true; options: Record<string, unknown> }
+      | {
+          locationId: string;
+          accountId: string;
+          ok: true;
+          options: Record<string, unknown>;
+          certificateToCheck: Record<string, unknown> | null;
+        }
       | { locationId: string; ok: false; code: string; issues: string[] }
     > = [];
     for (const p of a.picks) {
@@ -432,7 +454,13 @@ export const checkPicks = internalQuery({
       const r = await checkPickOptions(ctx, location, account, p.options);
       out.push(
         r.ok
-          ? { locationId: p.locationId, ok: true, options: r.options }
+          ? {
+              locationId: p.locationId,
+              accountId: account._id as string,
+              ok: true,
+              options: r.options,
+              certificateToCheck: r.certificateToCheck,
+            }
           : { locationId: p.locationId, ok: false, code: r.code, issues: r.issues },
       );
     }

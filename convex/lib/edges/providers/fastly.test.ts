@@ -1975,6 +1975,18 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
     expect(JSON.stringify(res)).not.toContain(cfg.apiToken);
   });
 
+  test("a node's own authority is checked the same way, without the rest of the test", async () => {
+    caaZone({ 'example.org': [issue('certainly.com')] });
+    expect(await fastlyProvider.certificatePreflight!(cfg)).toEqual({ ok: true });
+    expect(
+      await fastlyProvider.certificatePreflight!({ ...cfg, certificateAuthority: 'lets-encrypt' }),
+    ).toEqual({
+      ok: false,
+      code: 'caa_forbids_ca',
+      detail: 'the CAA records at example.org do not allow letsencrypt.org',
+    });
+  });
+
   test('a record allowing the CA passes, and says where it was decided', async () => {
     await serve();
     caaZone({ 'example.org': [issue('certainly.com')] });
