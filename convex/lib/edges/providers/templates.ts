@@ -1703,8 +1703,10 @@ function checkOptions(provider: EdgeProviderId, raw: unknown, level: OptionLevel
         code: 'edge.option_invalid',
         issues: issuesInWords(provider, tplRes.error.issues),
       };
-    const rules = WRITE_CHECKS[provider]?.(tplRes.data, labelOf(provider)) ?? [];
-    if (rules.length > 0) return { ok: false, code: 'edge.option_invalid', issues: rules };
+    // Values only: rules across fields are checked once the pick is laid over
+    // the template its location builds with (`checkBuiltParams`), never
+    // against the compiled defaults (a pick may lean on its template's interval
+    // or its keepalive switch).
     tuningValues = pickKeys(tplRes.data, tuningKeys);
   }
   return { ok: true, values: deepMerge(tuningValues, certRes.data as Values) };

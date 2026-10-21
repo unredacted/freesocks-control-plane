@@ -812,6 +812,9 @@ export const update = internalMutation({
         : {};
     let optionsChanged = false;
     let optionChangeList: ReturnType<typeof optionChanges> = [];
+    // The defaults this write sets (an empty set too: it stores no blob, so the
+    // settings copy below must say the declared defaults, not the old values).
+    let nextDefaults: Values | undefined;
     if (a.optionDefaults !== undefined || Object.keys(legacyIncoming).length > 0) {
       const next = checkedOptionDefaults(
         row.provider,
@@ -822,21 +825,22 @@ export const update = internalMutation({
       optionsChanged = !sameValues(next, before);
       optionChangeList = optionChanges(optionFieldsOf(row.provider), before, next);
       patch.optionDefaults = storedOptions(next);
+      nextDefaults = next;
     } else if (
       patch.settings !== undefined &&
       !row.optionDefaults &&
       Object.keys(before).length > 0
-    )
+    ) {
       patch.optionDefaults = storedOptions(before);
+      nextDefaults = before;
+    }
     // Any write of either keeps the pre-options copy under `settings` in step
     // with the defaults (what an older build reads after a rollback deploy).
-    if (patch.settings !== undefined || patch.optionDefaults !== undefined)
+    if (patch.settings !== undefined || nextDefaults !== undefined)
       patch.settings = settingsWithOptionCopy(
         row.provider,
         (patch.settings ?? row.settings) as Record<string, unknown>,
-        patch.optionDefaults !== undefined
-          ? parseOptionValues(patch.optionDefaults)
-          : accountOptionDefaultsOf(row),
+        nextDefaults ?? accountOptionDefaultsOf(row),
       ) as never;
     if (a.credentials !== undefined) {
       const creds = buildCredentials(

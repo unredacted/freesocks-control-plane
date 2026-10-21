@@ -866,6 +866,14 @@ export const create = internalAction({
     // The set: the picks the plan was shown with, or the one pick named the old way.
     let set = plan.set;
     if (!set) {
+      // The old single-location selector makes a plan with no set, so no
+      // options were shown or hashed with it: options with it are refused
+      // rather than dropped (name the picks instead).
+      if (a.pickOptions && Object.keys(a.pickOptions as Record<string, unknown>).length > 0)
+        throw new ConvexError({
+          code: 'validation',
+          message: 'Options for a location need the plan made with `picks`, not a single location',
+        });
       const account = a.accountId
         ? plan.accounts.find((x) => x.id === (a.accountId as string))
         : plan.accounts.find((x) => x.locations?.some((l) => l.id === (a.locationId as string)));

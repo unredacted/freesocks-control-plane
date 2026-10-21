@@ -1201,6 +1201,25 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     });
   });
 
+  test('an empty set of defaults resets them, the settings copy included', async () => {
+    const { t, fastlyId } = await pair();
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      optionDefaults: { certificateAuthority: 'lets-encrypt', certificateScope: 'wildcard' },
+    });
+    await t.mutation(internal.edgeProviderAccounts.update, { id: fastlyId, optionDefaults: {} });
+    const row = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
+    // The declared defaults, not the old values read back from the copy.
+    expect(accountOptionDefaultsOf(row)).toMatchObject({
+      certificateAuthority: 'certainly',
+      certificateScope: 'per_host',
+    });
+    expect(row.settings).toMatchObject({
+      certificateAuthority: 'certainly',
+      certificateScope: 'per_host',
+    });
+  });
+
   test("a node takes the zone's one wildcard under the account's authority, or its own certificate", async () => {
     const { t, fastlyId } = await pair();
     await t.mutation(internal.edgeProviderAccounts.update, {

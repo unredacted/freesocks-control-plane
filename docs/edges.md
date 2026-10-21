@@ -2710,9 +2710,13 @@ v8.42.0): attaching a floating IP posts `{address, network_name}`
 parses to exactly the object it did before, so no template hash, location trust or
 in-flight provision moves on deploy. `templates.test.ts` pins every provider's empty
 template hash. Rules across fields (a check timeout below its interval, IPv4 ranges only)
-apply to WRITES only (`validateTemplateWrite`, `validatePickOptions`): on the read schema a
-stored template that broke one would stop parsing and `resolveTemplateFor` would silently
-fall back to another template.
+apply to WRITES only (`validateTemplateWrite`; for a pick, `checkBuiltParams` on the pick
+laid over the template its location builds with, never against the compiled defaults, since a
+pick may lean on its template's interval or keepalive switch): on the read schema a stored
+template that broke one would stop parsing and `resolveTemplateFor` would silently fall back
+to another template. A location joining a node by re-protect is refused at once when what it
+inherits cannot be built there; options sent with the old single-location selector (no
+`picks`) are refused, never dropped.
 
 **Refusals and audit.** `edge.option_unknown` (not an option of the provider),
 `edge.option_invalid` (a value or a rule, in words), `edge.option_not_here` (a tuning option

@@ -879,6 +879,22 @@ describe('edgeSetupRuns: the provider options a node gets at a pick', () => {
     ]);
   });
 
+  test('options with the single-location selector are refused, never dropped', async () => {
+    const { t, serverId, accountId } = await seed();
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const plan = await planFor(t, serverId);
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        accountId,
+        planHash: plan.planHash,
+        approvedHideUuids: [],
+        pickOptions: { [loc._id]: { maxSessions: 5000 } },
+      }),
+    ).rejects.toThrow(/single location/);
+  });
+
   test('a run never reuses a standby built for other choices than its pick asks for', async () => {
     const { t, world, serverId, accountId } = await seed({
       inbounds: [inboundA, inboundS],

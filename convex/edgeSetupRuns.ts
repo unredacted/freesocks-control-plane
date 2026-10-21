@@ -3911,14 +3911,17 @@ export async function startReprotect(
       }
       const entry = relay.providerSet?.find((x) => x.locationId === p.location._id);
       if (entry) {
-        // A pick the node already had keeps what it has (a pick from before
-        // options keeps none: the template and the account's defaults, live).
+        // A pick the node already had keeps what it has (the deploy copied the
+        // account's certificate into one from before options).
         if (entry.options !== undefined) optionsOfPick.set(key, entry.options);
         continue;
       }
-      // A pick joining now starts from the account's defaults, copied in.
-      const r = await checkPickOptions(ctx, p.location, p.account, {});
-      if (r.ok) optionsOfPick.set(key, JSON.stringify(r.options));
+      // A pick joining now starts from the account's defaults, copied in, and
+      // is refused now (as given options are) when what it inherits cannot be
+      // built there, rather than failing later in the rotation.
+      const r = await checkPickOptions(ctx, p.location, p.account, {}, { realityL4 });
+      if (!r.ok) throw new ConvexError({ code: r.code, message: r.issues.join('; ') || r.code });
+      optionsOfPick.set(key, JSON.stringify(r.options));
     }
     // The requirement over the served transports, and its cover: fresh targets
     // over the whole of it (`replace_all`: the new addresses take the old

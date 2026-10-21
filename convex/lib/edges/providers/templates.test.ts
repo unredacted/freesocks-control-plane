@@ -231,3 +231,24 @@ describe('what a place cannot do (contextProblems)', () => {
     expect(contextProblems('fastly', { dnsFlatten: true }, {})).toEqual([]);
   });
 });
+
+describe('a pick is checked against the template it builds with', () => {
+  it('a value that leans on its template passes the pick check; the built params decide', () => {
+    // A timeout above the COMPILED interval, valid with a template whose interval is longer.
+    expect(validatePickOptions('ovh', { healthMonitor: { timeout: 8 } }).ok).toBe(true);
+    const tpl = { flavorId: 'small', healthMonitor: { delay: 10, timeout: 3, maxRetries: 3 } };
+    expect(
+      checkBuiltParams('ovh', { ...tpl, healthMonitor: { ...tpl.healthMonitor, timeout: 8 } }).ok,
+    ).toBe(true);
+    expect(
+      checkBuiltParams('ovh', {
+        ...tpl,
+        healthMonitor: { delay: 5, timeout: 8, maxRetries: 3 },
+      }).ok,
+    ).toBe(false);
+    // A keepalive timing with keepalive switched on by the template only.
+    expect(validatePickOptions('fastly', { tcpKeepaliveTime: 60 }).ok).toBe(true);
+    expect(checkBuiltParams('fastly', { tcpKeepalive: true, tcpKeepaliveTime: 60 }).ok).toBe(true);
+    expect(checkBuiltParams('fastly', { tcpKeepaliveTime: 60 }).ok).toBe(false);
+  });
+});
