@@ -27,6 +27,12 @@ export interface DnsCreateArgs {
   proxied: boolean;
   /** Ownership marker (≤100 chars on every plan). */
   comment: string;
+  /** Seconds; absent or 1 = automatic (the only value a proxied record takes). */
+  ttl?: number;
+  /** Extra `name:value` labels (paid zones only). */
+  tags?: string[];
+  /** Per-record settings: CNAME flattening, one address family for a proxied name. */
+  settings?: { flatten_cname?: boolean; ipv4_only?: boolean; ipv6_only?: boolean };
 }
 
 export interface DnsClient {

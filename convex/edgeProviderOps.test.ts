@@ -625,15 +625,12 @@ describe('edgeProviderOps: an existing edge is driven by its FROZEN intent', () 
         updatedAt: Date.now(),
       }),
     );
-    // The operator repoints the ACCOUNT at another subscription and CA.
+    // The operator repoints the ACCOUNT at another subscription and CA (the
+    // authority is a provider option now: the account's default).
     await t.run((ctx) =>
       ctx.db.patch(fastlyId, {
-        settings: {
-          type: 'fastly',
-          dnsAccountId: dnsId,
-          certificateAuthority: 'lets-encrypt',
-          tlsConfigurationId: 'tls-new',
-        },
+        settings: { type: 'fastly', dnsAccountId: dnsId, tlsConfigurationId: 'tls-new' },
+        optionDefaults: JSON.stringify({ certificateAuthority: 'lets-encrypt' }),
         updatedAt: Date.now(),
       }),
     );

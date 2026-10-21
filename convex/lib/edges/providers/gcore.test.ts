@@ -67,6 +67,49 @@ describe('gcore: request shapes', () => {
   });
 });
 
+describe('gcore: options', () => {
+  test('options left unset send a TCP check and no check port', () => {
+    const pool = gcoreLbBody(cfg, spec, tpl).listeners[0]!.pools[0]!;
+    expect(pool.healthmonitor).toEqual({
+      type: 'TCP',
+      delay: 10,
+      timeout: 5,
+      max_retries: 3,
+      max_retries_down: 3,
+    });
+    expect(pool.members[0]).toEqual({ address: '198.51.100.7', protocol_port: 443, weight: 1 });
+  });
+
+  test('the node timeouts reach the pool, where the API documents them', () => {
+    const l = gcoreLbBody(cfg, spec, GcoreTemplate.parse({ timeoutMemberDataMs: 120_000 })).listeners[0]!;
+    expect(l.pools[0]).toMatchObject({ timeout_member_connect: 5000, timeout_member_data: 120_000 });
+  });
+
+  test('an HTTP check carries its fields and a check port reaches the member', () => {
+    const pool = gcoreLbBody(
+      cfg,
+      spec,
+      GcoreTemplate.parse({
+        healthMonitor: { delay: 10, timeout: 5, maxRetries: 3, maxRetriesDown: 3, type: 'HTTP', port: 8080, httpVersion: '1.1' },
+      }),
+    ).listeners[0]!.pools[0]!;
+    expect(pool.healthmonitor).toMatchObject({
+      type: 'HTTP',
+      http_method: 'GET',
+      url_path: '/',
+      expected_codes: '200',
+      http_version: '1.1',
+    });
+    expect(pool.members[0]).toMatchObject({ monitor_port: 8080 });
+  });
+
+  test('a second VIP reported under additional_vips is the IPv6 address', () => {
+    expect(
+      gcoreLbAddresses({ vip_address: '203.0.113.5', additional_vips: [{ ip_address: '2001:db8::5' }] }),
+    ).toEqual({ v4: '203.0.113.5', v6: '2001:db8::5' });
+  });
+});
+
 describe('gcore: provisioning steps', () => {
   test('runStep POSTs with the APIKey header and returns the task as opRef', async () => {
     const stub = mockFetch(() => jsonRes({ tasks: ['task-1'] }));

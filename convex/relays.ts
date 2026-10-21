@@ -74,6 +74,7 @@ import { ensurePoolCapacity } from './lib/edges/poolCapacity';
 import { admissionOf, publishedRefOf, setStateOf } from './lib/edges/setState';
 import { removableUnder } from './lib/edges/providerSet';
 import { resolveTemplateFor } from './edgeTemplates';
+import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choices';
 import { defaultLocationOf } from './edgeLocations';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRestore, hasHideRows, startRestoreWorkflow } from './lib/edges/restore';
@@ -1401,6 +1402,13 @@ async function insertAdoptedEdge(
             settings: accountRow!.settings as Record<string, unknown>,
             observedSettings: parseObservedSettings(accountRow!.observedSettings),
           },
+          // An imported front serves the certificate it has; the account's
+          // defaults are what a discovery or a destroy looks for.
+          certificate: certificateValuesFor(
+            accountRow!.provider,
+            accountOptionDefaultsOf(accountRow!),
+            null,
+          ),
           dnsAccount: dnsAccount
             ? {
                 id: dnsAccount._id as string,

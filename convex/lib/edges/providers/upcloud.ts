@@ -40,7 +40,13 @@ import {
   credentialTestFailure,
   noteDiscoverError,
 } from './http';
-import { UpcloudTemplate, UPCLOUD_TEMPLATE_FIELDS, type UpcloudTemplateParams } from './templates';
+import {
+  EDGE_TEMPLATES,
+  UpcloudTemplate,
+  UPCLOUD_TEMPLATE_FIELDS,
+  type UpcloudTemplateParams,
+} from './templates';
+import { wireBody } from './options';
 
 const BASE = 'https://api.upcloud.com/1.3';
 
@@ -167,6 +173,7 @@ export function upcloudLbBody(cfg: UpcloudConfig, spec: EdgeSpec, tpl: UpcloudTe
     plan: tpl.plan,
     zone: cfg.zone,
     configured_status: 'started',
+    ...wireBody(EDGE_TEMPLATES.upcloud.fields, 'loadbalancer', tpl),
     networks: [{ name: 'public', type: 'public', family: 'IPv4' }],
     frontends: spec.listeners.map((l, i) => ({
       name: `tcp-${l.edgePort}${i > 0 ? `-${i}` : ''}`,
@@ -184,7 +191,7 @@ export function upcloudLbBody(cfg: UpcloudConfig, spec: EdgeSpec, tpl: UpcloudTe
         ip: m.address,
         port: m.port,
         weight: 100,
-        max_sessions: 1000,
+        max_sessions: tpl.maxSessions ?? 1000,
         enabled: true,
       })),
       properties: {
@@ -192,9 +199,9 @@ export function upcloudLbBody(cfg: UpcloudConfig, spec: EdgeSpec, tpl: UpcloudTe
         timeout_tunnel: tpl.timeoutTunnel,
         health_check_type: 'tcp',
         health_check_interval: tpl.healthCheck.interval,
-        health_check_timeout: tpl.healthCheck.timeout,
         health_check_fall: tpl.healthCheck.fall,
         health_check_rise: tpl.healthCheck.rise,
+        ...(tpl.closeOnFailure ? { health_check_on_down: 'shutdown-sessions' } : {}),
       },
     })),
     ...(tpl.labels.length > 0 ? { labels: tpl.labels } : {}),
@@ -326,9 +333,9 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
           'POST',
           `/load-balancer/${encodeURIComponent(lb.resourceId)}/ip-addresses`,
           z.unknown(),
-          {
-            ip_addresses: [{ address: ip.resourceId, listen: true }],
-          },
+          // The address and the service network it listens on (the public one
+          // the create body names).
+          { address: ip.resourceId, network_name: 'public' },
         );
         return { status: 'done', resources: [], addresses: { v4: ip.resourceId } };
       }

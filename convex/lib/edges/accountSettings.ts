@@ -12,9 +12,14 @@
  *  - credential IDENTIFIERS (the public half of a key pair: Scaleway access
  *    key, OVH application key). They rotate with the secret and locate nothing,
  *    so they stay editable while edges exist.
- *  - INTENT DEFAULTS (L7: certificate authority, TLS configuration). They are
- *    frozen into each edge's `provisionIntent` when the edge is planned, so a
- *    change only affects NEW edges and they stay editable at any time.
+ *  - INTENT DEFAULTS (L7: the TLS configuration). They are frozen into each
+ *    edge's `provisionIntent` when the edge is planned, so a change only
+ *    affects NEW edges and they stay editable at any time.
+ * The certificate authority used to be an intent default too; it is a provider
+ * OPTION now (`providers/templates.ts`), defaulted in the account's
+ * `optionDefaults`. A payload or a stored row that still carries it under
+ * `settings` is translated (`legacyOptionDefaults`) and never counts as a
+ * settings change.
  * `accountSettings.test.ts` pins that the three lists cover every schema key.
  */
 import { z } from 'zod';
@@ -61,7 +66,6 @@ export const EDGE_SETTINGS_SCHEMAS = {
   fastly: z.object({
     type: z.literal('fastly'),
     dnsAccountId: z.string().min(1).max(64),
-    certificateAuthority: z.enum(['certainly', 'lets-encrypt', 'globalsign']).default('certainly'),
     tlsConfigurationId: z.string().min(1).max(64).optional(),
   }),
 } as const;
@@ -140,8 +144,8 @@ export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> =
   ovh: ['endpoint'],
   cloudflare: ['zoneId', 'zoneName', 'accountId'],
   // The DNS account locates every record a Fastly edge depends on; the TLS
-  // configuration and CA are frozen per edge in its provisionIntent, so they
-  // may change for NEW edges without touching existing ones.
+  // configuration is frozen per edge in its provisionIntent, so it may change
+  // for NEW edges without touching existing ones.
   fastly: ['dnsAccountId'],
 };
 
@@ -152,8 +156,30 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
   scaleway: [],
   ovh: [],
   cloudflare: [],
-  fastly: ['certificateAuthority', 'tlsConfigurationId'],
+  fastly: ['tlsConfigurationId'],
 };
+
+/**
+ * Settings keys that are provider OPTIONS now (account `optionDefaults`): a
+ * stored row may still hold them until `migrateOptionDefaults` has run, and an
+ * older client may still send them.
+ */
+export const EDGE_LEGACY_OPTION_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
+  gcore: [],
+  upcloud: [],
+  scaleway: [],
+  ovh: [],
+  cloudflare: [],
+  fastly: ['certificateAuthority'],
+};
+
+/** The option defaults a settings payload (or a stored row) still carries the old way. */
+export function legacyOptionDefaults(
+  provider: EdgeProviderId,
+  raw: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return raw ? pick(raw, EDGE_LEGACY_OPTION_SETTINGS[provider]) : {};
+}
 
 /** Non-secret credential identifiers kept in `settings`: rotate with the secret, locate nothing. */
 export const EDGE_CREDENTIAL_IDENTIFIER_FIELDS: Record<EdgeProviderId, readonly string[]> = {
@@ -216,12 +242,16 @@ export function placementKeysOf(
   return Object.keys(out).length > 0 ? out : null;
 }
 
-/** The settings with every placement key removed (what the account itself keeps). */
+/**
+ * The settings with every placement key (a location's) and every key that is
+ * an option now (`EDGE_LEGACY_OPTION_SETTINGS`) removed: what the account's
+ * settings themselves keep.
+ */
 export function withoutPlacementKeys(
   provider: EdgeProviderId,
   raw: Record<string, unknown>,
 ): Record<string, unknown> {
-  const drop = new Set(EDGE_PLACEMENT_SETTINGS[provider]);
+  const drop = new Set([...EDGE_PLACEMENT_SETTINGS[provider], ...EDGE_LEGACY_OPTION_SETTINGS[provider]]);
   return Object.fromEntries(Object.entries(raw).filter(([k]) => !drop.has(k)));
 }
 

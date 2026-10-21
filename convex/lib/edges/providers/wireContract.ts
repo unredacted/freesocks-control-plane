@@ -158,7 +158,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         method: 'POST',
         path: '^/1\\.3/load-balancer/[^/]+/ip-addresses$',
         purpose: 'delegate the floating IP to the service',
-        body: ['ip_addresses'],
+        body: ['address', 'network_name'],
       },
       {
         method: 'POST',

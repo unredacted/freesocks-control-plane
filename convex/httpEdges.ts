@@ -662,10 +662,20 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     const listenerKeys = Array.isArray(body.listenerKeys)
       ? { listenerKeys: body.listenerKeys.filter((x): x is string => typeof x === 'string') }
       : {};
-    // The provider set: the locations to protect the node from, in set order.
+    // The provider set: the locations to protect the node from, in set order;
+    // a pick may be `{locationId, options}` (or the options a `pickOptions` map).
     const picks = Array.isArray(body.picks)
-      ? body.picks.filter((x): x is string => typeof x === 'string' && x.length > 0)
+      ? body.picks
+          .map((x) =>
+            typeof x === 'string'
+              ? x
+              : x && typeof x === 'object' && typeof (x as { locationId?: unknown }).locationId === 'string'
+                ? (x as { locationId: string }).locationId
+                : '',
+          )
+          .filter((x) => x.length > 0)
       : null;
+    const setOptions = pickOptionsOf(body);
     if (b === 'plan' && !c) {
       return json(
         await ctx.runAction(internal.edgeSetupPlan.plan, {
@@ -673,6 +683,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           nodeUuid: String(body.nodeUuid ?? ''),
           ...listenerKeys,
           ...(picks && picks.length > 0 ? { picks } : {}),
+          ...setOptions,
         }),
       );
     }
@@ -686,6 +697,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           nodeUuid: String(body.nodeUuid ?? ''),
           ...listenerKeys,
           ...(picks && picks.length > 0 ? { picks: picks.map((p) => id<'edgeLocations'>(p)) } : {}),
+          ...setOptions,
           ...(typeof body.accountId === 'string' && body.accountId
             ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
             : {}),
@@ -1080,6 +1092,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
                     .map((x) => id<'edgeLocations'>(x)),
                 }
               : {}),
+            ...pickOptionsOf(body),
             ...act,
           }),
         );
@@ -1171,6 +1184,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
                 : undefined,
             ...(locationId ? { requestedLocationId: locationId } : {}),
             ...(locationId && body.publish === false ? { allowUnqualified: true } : {}),
+            ...optionsOf(body),
             ...act,
           }),
         );
@@ -1195,6 +1209,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...(typeof body.locationId === 'string'
               ? { requestedLocationId: id<'edgeLocations'>(body.locationId) }
               : {}),
+            ...optionsOf(body),
             ...act,
           }),
         );
@@ -1468,6 +1483,30 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
 
 function triggerOf(v: unknown): 'manual' | 'detector' | 'api' | 'reconcile' | undefined {
   return v === 'manual' || v === 'detector' || v === 'api' || v === 'reconcile' ? v : undefined;
+}
+
+/** Provider options for one address (`options`, an object), as a start's `requestedOptions`. */
+function optionsOf(body: Record<string, unknown>): { requestedOptions?: unknown } {
+  const o = body.options;
+  return o && typeof o === 'object' && !Array.isArray(o) ? { requestedOptions: o } : {};
+}
+
+/**
+ * Provider options per pick: a `pickOptions` map (location id -> values) and
+ * any `{locationId, options}` entry of `picks`, the entry winning.
+ */
+function pickOptionsOf(body: Record<string, unknown>): { pickOptions?: Record<string, unknown> } {
+  const out: Record<string, unknown> = {};
+  const map = body.pickOptions;
+  if (map && typeof map === 'object' && !Array.isArray(map))
+    for (const [k, v] of Object.entries(map as Record<string, unknown>)) out[k] = v;
+  if (Array.isArray(body.picks))
+    for (const p of body.picks) {
+      if (!p || typeof p !== 'object') continue;
+      const { locationId, options } = p as { locationId?: unknown; options?: unknown };
+      if (typeof locationId === 'string' && options !== undefined) out[locationId] = options;
+    }
+  return Object.keys(out).length > 0 ? { pickOptions: out } : {};
 }
 
 function snis(body: Record<string, unknown>): string[] {

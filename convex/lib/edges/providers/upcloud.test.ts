@@ -39,6 +39,42 @@ describe('upcloud: request shapes + plan', () => {
     });
   });
 
+  test('options left unset send exactly what FCP sent before options existed', () => {
+    const body = upcloudLbBody(cfg, spec, tpl);
+    expect(body.backends[0].members[0]!.max_sessions).toBe(1000);
+    expect(body.backends[0].properties).toEqual({
+      timeout_server: 300,
+      timeout_tunnel: 3600,
+      health_check_type: 'tcp',
+      health_check_interval: 10,
+      health_check_fall: 3,
+      health_check_rise: 3,
+    });
+    expect(body).not.toHaveProperty('maintenance_dow');
+    expect(body).not.toHaveProperty('labels');
+  });
+
+  test('each option reaches its API field', () => {
+    const body = upcloudLbBody(
+      cfg,
+      spec,
+      UpcloudTemplate.parse({
+        maxSessions: 25_000,
+        closeOnFailure: true,
+        maintenanceDow: 'sunday',
+        maintenanceTime: '03:00:00Z',
+        labels: [{ key: 'team', value: 'edge' }],
+      }),
+    );
+    expect(body.backends[0].members[0]!.max_sessions).toBe(25_000);
+    expect(body.backends[0].properties).toMatchObject({ health_check_on_down: 'shutdown-sessions' });
+    expect(body).toMatchObject({
+      maintenance_dow: 'sunday',
+      maintenance_time: '03:00:00Z',
+      labels: [{ key: 'team', value: 'edge' }],
+    });
+  });
+
   test('plan: lb, then a floating ip (undiscoverable) and its attach when delegation is on', () => {
     const steps = upcloudProvider.planProvision(cfg, spec, tpl);
     expect(steps.map((s) => [s.kind, s.discoverability])).toEqual([
@@ -110,7 +146,7 @@ describe('upcloud: steps', () => {
     expect(stub.calls[0]).toMatchObject({
       path: '/1.3/load-balancer/lb-uuid/ip-addresses',
       method: 'POST',
-      body: { ip_addresses: [{ address: '203.0.113.20', listen: true }] },
+      body: { address: '203.0.113.20', network_name: 'public' },
     });
   });
 });

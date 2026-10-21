@@ -51,6 +51,8 @@ import {
   EDGE_PLACEMENT_SETTINGS,
 } from './lib/edges/accountSettings';
 import { placeKeyOf } from './lib/edges/locations';
+import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choices';
+import { certificateKeysOf } from './lib/edges/providers/templates';
 import { l7HostAccepted, l7HostHeaderFor, zoneModeCarriesOrigin } from './lib/edges/layers';
 import type {
   AdoptionInspection,
@@ -373,15 +375,24 @@ async function loadAdapter(
       timedOut: false,
     });
   }
+  // The account's certificate option defaults (planning a NEW edge reads
+  // them; a node's own choices reach a new edge through its intent).
+  Object.assign(
+    cfg as unknown as Record<string, unknown>,
+    certificateValuesFor(acct.provider, accountOptionDefaultsOf(acct), null),
+  );
   // Acting on an EXISTING edge: every setting the intent froze wins over the
   // account row. The zone/DNS account below is one of them; so is the TLS
-  // subscription (`certificateAuthority`, `tlsConfigurationId`), which decides
-  // which certificate a describe or a destroy acts on. A settings edit after
-  // planning must not move a live edge's certificate to another subscription.
+  // subscription (the certificate options, `tlsConfigurationId`), which
+  // decides which certificate a describe or a destroy acts on. A settings or
+  // default edit after planning must not move a live edge's certificate.
   const intent = edgeId ? await ctx.runQuery(internal.edges.intentOf, { edgeId }) : null;
   if (intent) {
     const frozen = intent as unknown as Record<string, unknown>;
-    for (const key of EDGE_INTENT_DEFAULT_SETTINGS[acct.provider]) {
+    for (const key of [
+      ...EDGE_INTENT_DEFAULT_SETTINGS[acct.provider],
+      ...certificateKeysOf(acct.provider),
+    ]) {
       if (frozen[key] !== undefined) (cfg as unknown as Record<string, unknown>)[key] = frozen[key];
     }
   }

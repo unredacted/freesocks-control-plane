@@ -301,6 +301,9 @@ export interface PlannedEdgeInput {
   locationId?: Id<'edgeLocations'> | null;
   templateId?: Id<'edgeTemplates'> | null;
   templateHash: string;
+  /** With a node's choices: the location's own template hash and the choices (JSON), frozen. */
+  baseTemplateHash?: string;
+  choices?: string;
   listeners: Array<{
     edgePort: number;
     originAddress: string;
@@ -370,6 +373,9 @@ export async function insertPlannedEdge(
     placement: location.placement,
     templateId: a.templateId ?? undefined,
     templateHash: a.templateHash,
+    ...(a.choices !== undefined
+      ? { choices: a.choices, baseTemplateHash: a.baseTemplateHash ?? a.templateHash }
+      : {}),
     provider: account.provider,
     managed: true,
     name,

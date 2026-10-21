@@ -84,6 +84,8 @@ const Lb = z
     operating_status: z.string().nullish(),
     vip_address: z.string().nullish(),
     vip_ipv6_address: z.string().nullish(),
+    // Where the current API reports a second (IPv6) VIP.
+    additional_vips: z.array(z.object({ ip_address: z.string().nullish() }).passthrough()).nullish(),
     floating_ips: z.array(FloatingIp).nullish(),
     flavor: z
       .union([z.string(), z.object({ flavor_name: z.string().nullish() }).passthrough()])
@@ -179,6 +181,28 @@ async function gcore<T>(
   });
 }
 
+/** One pool's health monitor: TCP unless the template chose another check. */
+function gcoreHealthMonitor(hm: GcoreTemplateParams['healthMonitor']) {
+  const type = hm.type ?? 'TCP';
+  const http = type === 'HTTP' || type === 'HTTPS';
+  return {
+    type,
+    delay: hm.delay,
+    timeout: hm.timeout,
+    max_retries: hm.maxRetries,
+    max_retries_down: hm.maxRetriesDown,
+    ...(http
+      ? {
+          http_method: hm.httpMethod ?? 'GET',
+          url_path: hm.urlPath ?? '/',
+          expected_codes: hm.expectedCodes ?? '200',
+          ...(hm.httpVersion ? { http_version: hm.httpVersion } : {}),
+          ...(hm.domainName ? { domain_name: hm.domainName } : {}),
+        }
+      : {}),
+  };
+}
+
 /** The create-LB request body (exported for tests). */
 export function gcoreLbBody(cfg: GcoreConfig, spec: EdgeSpec, tpl: GcoreTemplateParams) {
   if (tpl.vipMode === 'private' && !(cfg.networkId && cfg.subnetId)) {
@@ -215,14 +239,16 @@ export function gcoreLbBody(cfg: GcoreConfig, spec: EdgeSpec, tpl: GcoreTemplate
           name: `${spec.name}-p${l.edgePort}`,
           protocol: 'TCP',
           lb_algorithm: tpl.lbAlgorithm,
-          members: l.members.map((m) => ({ address: m.address, protocol_port: m.port, weight: 1 })),
-          healthmonitor: {
-            type: 'TCP',
-            delay: tpl.healthMonitor.delay,
-            timeout: tpl.healthMonitor.timeout,
-            max_retries: tpl.healthMonitor.maxRetries,
-            max_retries_down: tpl.healthMonitor.maxRetriesDown,
-          },
+          // Where the API documents the node timeouts now (the listener's copy is deprecated).
+          timeout_member_connect: tpl.timeoutMemberConnectMs,
+          timeout_member_data: tpl.timeoutMemberDataMs,
+          members: l.members.map((m) => ({
+            address: m.address,
+            protocol_port: m.port,
+            weight: 1,
+            ...(tpl.healthMonitor.port !== undefined ? { monitor_port: tpl.healthMonitor.port } : {}),
+          })),
+          healthmonitor: gcoreHealthMonitor(tpl.healthMonitor),
         },
       ],
     })),
@@ -247,11 +273,13 @@ function taskResources(t: z.infer<typeof Task>): ChildResource[] {
 export function gcoreLbAddresses(lb: {
   vip_address?: string | null;
   vip_ipv6_address?: string | null;
+  additional_vips?: Array<{ ip_address?: string | null }> | null;
   floating_ips?: Array<{ floating_ip_address?: string | null }> | null;
 }): Addresses {
   const out: Addresses = {};
   const fip = lb.floating_ips?.find((f) => f.floating_ip_address)?.floating_ip_address ?? undefined;
-  const candidates = [fip, lb.vip_address ?? undefined, lb.vip_ipv6_address ?? undefined].filter(
+  const extra = (lb.additional_vips ?? []).map((v) => v.ip_address ?? undefined);
+  const candidates = [fip, lb.vip_address ?? undefined, lb.vip_ipv6_address ?? undefined, ...extra].filter(
     (x): x is string => !!x && isPublicIpLiteral(x),
   );
   for (const c of candidates) {

@@ -186,6 +186,8 @@ export interface CloudflareRecordBody {
   proxied: true;
   ttl: 1;
   comment: string;
+  tags?: string[];
+  settings?: { ipv4_only?: boolean; ipv6_only?: boolean };
 }
 
 /**
@@ -212,6 +214,14 @@ export function cloudflareRecordBody(
     proxied: true,
     ttl: 1,
     comment: recordComment(tpl.commentPrefix, spec.name),
+    ...(tpl.recordTags && Object.keys(tpl.recordTags).length > 0
+      ? { tags: Object.entries(tpl.recordTags).map(([k, v]) => `${k}:${v}`) }
+      : {}),
+    ...(tpl.answerFamily === 'ipv4'
+      ? { settings: { ipv4_only: true } }
+      : tpl.answerFamily === 'ipv6'
+        ? { settings: { ipv6_only: true } }
+        : {}),
   };
 }
 

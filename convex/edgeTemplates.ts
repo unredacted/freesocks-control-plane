@@ -17,7 +17,21 @@ import {
   EDGE_PROVIDER_IDS,
   type EdgeProviderId,
 } from './lib/edgeProviderIds';
-import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
+import {
+  EDGE_TEMPLATES,
+  checkBuiltParams,
+  optionFieldsOf,
+  validatePickOptions,
+  validateTemplateParams,
+  validateTemplateWrite,
+} from './lib/edges/providers/templates';
+import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choices';
+import {
+  builtTemplateHash,
+  deepMerge,
+  splitChoices,
+  type Values,
+} from './lib/edges/providers/options';
 import { canonicalJson } from './lib/edges/providers/template';
 import { assertAdmission } from './lib/edges/maintenance';
 import { parseRegionalParams, withRegionalOverlay } from './lib/edges/locations';
@@ -134,6 +148,79 @@ export async function resolveTemplateFor(
   if (Object.keys(overlay).length === 0) return base;
   const params = withRegionalOverlay(provider, base.params, overlay);
   return { id: base.id, params, hash: templateHashOf(params) };
+}
+
+/**
+ * What a node's pick BUILDS with at one location: the template the location
+ * resolves, with the pick's tuning choices laid over it (lib/edges/providers
+ * /options.ts). `hash` is the template's own hash when the pick chose no
+ * tuning value, so a pick without choices builds exactly what it did before
+ * options existed; `baseHash` is always the location's own. `choices` is the
+ * pick's whole choice set as stored (null = a pick from before options).
+ * `invalid` lists what breaks a provider rule once laid over the template.
+ */
+export async function resolveBuildFor(
+  ctx: { db: import('./_generated/server').DatabaseReader },
+  provider: EdgeProviderId,
+  explicitId: Doc<'edgeTemplates'>['_id'] | null | undefined,
+  accountDefaultId: Doc<'edgeTemplates'>['_id'] | null | undefined,
+  accountId: Doc<'edgeProviderAccounts'>['_id'] | null | undefined,
+  location: TemplateLocation | null | undefined,
+  choices: Values | null,
+): Promise<{
+  id: Doc<'edgeTemplates'>['_id'] | null;
+  params: Record<string, unknown>;
+  hash: string;
+  baseHash: string;
+  choices: Values | null;
+  invalid: string[] | null;
+}> {
+  const base = await resolveTemplateFor(ctx, provider, explicitId, accountDefaultId, accountId, location);
+  const { tuning } = splitChoices(optionFieldsOf(provider), choices ?? {});
+  if (Object.keys(tuning).length === 0)
+    return { ...base, baseHash: base.hash, choices, invalid: null };
+  const built = checkBuiltParams(provider, deepMerge(base.params, tuning));
+  return {
+    id: base.id,
+    params: built.ok ? built.params : deepMerge(base.params, tuning),
+    hash: builtTemplateHash(base.params, base.hash, tuning),
+    baseHash: base.hash,
+    choices,
+    invalid: built.ok ? null : built.issues,
+  };
+}
+
+/**
+ * One pick's provider options, checked where they will build: validated for
+ * the pick's provider, the account's certificate defaults copied in (an
+ * account default only ever PREFILLS a node), laid over the template the
+ * location resolves and checked as a whole. Returns what the pick stores.
+ */
+export async function checkPickOptions(
+  ctx: { db: import('./_generated/server').DatabaseReader },
+  location: Doc<'edgeLocations'>,
+  account: Doc<'edgeProviderAccounts'>,
+  raw: unknown,
+): Promise<
+  { ok: true; options: Values } | { ok: false; code: string; issues: string[] }
+> {
+  const res = validatePickOptions(account.provider, raw);
+  if (!res.ok) return { ok: false, code: res.code, issues: res.issues };
+  const options = {
+    ...certificateValuesFor(account.provider, accountOptionDefaultsOf(account), res.values),
+    ...res.values,
+  };
+  const built = await resolveBuildFor(
+    ctx,
+    account.provider,
+    null,
+    account.defaultTemplateId ?? null,
+    account._id,
+    location,
+    options,
+  );
+  if (built.invalid) return { ok: false, code: 'edge.option_invalid', issues: built.invalid };
+  return { ok: true, options };
 }
 
 async function resolveBaseTemplate(
@@ -323,7 +410,7 @@ export const create = internalMutation({
     await assertAdmission(ctx.db, 'template.write');
     if (!NAME_RE.test(a.name))
       throw new ConvexError({ code: 'validation', message: 'invalid template name' });
-    const parsed = validateTemplateParams(a.provider, a.params);
+    const parsed = validateTemplateWrite(a.provider, a.params);
     if (!parsed.ok)
       throw new ConvexError({ code: 'validation', message: parsed.issues.join('; ') });
     if (a.accountId) {
@@ -398,7 +485,7 @@ export const update = internalMutation({
     let requalify: Doc<'edgeLocations'>[] = [];
     const before = await effectiveDefaultHashes(ctx, row.provider);
     if (a.params !== undefined) {
-      const parsed = validateTemplateParams(row.provider, a.params);
+      const parsed = validateTemplateWrite(row.provider, a.params);
       if (!parsed.ok)
         throw new ConvexError({ code: 'validation', message: parsed.issues.join('; ') });
       patch.params = JSON.stringify(parsed.params);
@@ -514,7 +601,7 @@ export const remove = internalMutation({
 export const validate = internalQuery({
   args: { provider: edgeProviderIdValidator, params: v.any() },
   handler: async (_ctx, { provider, params }) => {
-    const parsed = validateTemplateParams(provider, params);
+    const parsed = validateTemplateWrite(provider, params);
     return parsed.ok
       ? { ok: true as const, params: parsed.params, paramsHash: templateHashOf(parsed.params) }
       : { ok: false as const, issues: parsed.issues };

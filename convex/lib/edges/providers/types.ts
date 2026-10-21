@@ -292,19 +292,10 @@ export interface Inventory {
 
 // --- templates ---------------------------------------------------------------------------
 
-export type TemplateFieldType = 'string' | 'number' | 'boolean' | 'select' | 'string-list';
-
-/** A form-descriptor for one template field (the CMS renders a form from these). */
-export interface TemplateFieldDescriptor {
-  key: string; // dotted path into the template params
-  label: string;
-  type: TemplateFieldType;
-  help?: string;
-  options?: Array<{ value: string; label: string }>;
-  required?: boolean;
-  /** The value differs per region (a flavor id): each location can set its own (`regionalParams`). */
-  regional?: boolean;
-}
+export type { OptionField, OptionType } from './options';
+/** The template fields are provider options (`./options`); the old names stay for the adapters. */
+export type TemplateFieldType = import('./options').OptionType;
+export type TemplateFieldDescriptor = import('./options').OptionField;
 
 export interface CredentialTestResult {
   ok: boolean;

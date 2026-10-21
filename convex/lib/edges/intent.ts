@@ -109,6 +109,12 @@ export interface BuildIntentArgs {
   /** The effective, already rendered template params. */
   templateParams: Record<string, unknown>;
   templateHash: string;
+  /**
+   * The certificate options the edge gets (lib/edges/choices.ts
+   * `certificateValuesFor`): frozen like the zone. Absent = the account's
+   * stored settings, the way intents were built before options.
+   */
+  certificate?: Record<string, unknown>;
   listener: IntentListenerLike;
   /**
    * Overrides the observed zone mode (tests, an operator-forced re-plan).
@@ -182,8 +188,8 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
     ...(str(a.account.settings.tlsConfigurationId)
       ? { tlsConfigurationId: str(a.account.settings.tlsConfigurationId) }
       : {}),
-    ...(str(a.account.settings.certificateAuthority)
-      ? { certificateAuthority: str(a.account.settings.certificateAuthority) }
+    ...(str((a.certificate ?? a.account.settings).certificateAuthority)
+      ? { certificateAuthority: str((a.certificate ?? a.account.settings).certificateAuthority) }
       : {}),
     originTransport: {
       scheme: originTransport.scheme,

@@ -58,7 +58,19 @@ import {
 } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
 import { allocatePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
-import { resolveTemplateFor } from './edgeTemplates';
+import { checkPickOptions, resolveBuildFor, resolveTemplateFor } from './edgeTemplates';
+import {
+  deepMerge,
+  parseOptionValues,
+  splitChoices,
+  type Values,
+} from './lib/edges/providers/options';
+import { optionFieldsOf } from './lib/edges/providers/templates';
+import {
+  accountOptionDefaultsOf,
+  builtForChoices,
+  certificateValuesFor,
+} from './lib/edges/choices';
 import {
   appendEvent,
   isTerminalPhase,
@@ -438,6 +450,12 @@ const startArgs = {
   requestedLocationId: v.optional(v.id('edgeLocations')),
   /** A replace's explicit spare (L4): that tested spare of the same listener, or nothing. */
   requestedSpareEdgeId: v.optional(v.id('edges')),
+  /**
+   * Provider options for the one edge this start builds, instead of its pick's
+   * (needs `requestedLocationId`, where they are checked). Such an edge is never
+   * taken by automatic work afterwards: it was not built for its pick.
+   */
+  requestedOptions: v.optional(v.any()),
   reason: v.optional(v.string()),
   actorAdminId: v.optional(v.id('adminUsers')),
   /** The guided setup run starting this rotation (+ its generation, reported by the terminal hook). */
@@ -466,6 +484,7 @@ export interface StartRotationArgs {
   allowUnqualified?: boolean;
   requestedLocationId?: Id<'edgeLocations'>;
   requestedSpareEdgeId?: Id<'edges'>;
+  requestedOptions?: unknown;
   reason?: string;
   actorAdminId?: Id<'adminUsers'>;
   setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
@@ -725,7 +744,14 @@ export async function collectStartBlockers(
     publishesUnderApproval(a) &&
     origin.origin.kind === 'panel-node'
   ) {
-    const sel = await selectionContext(ctx, { ...a, listenerId }, origin, targetEdge, cfg);
+    // Automatic starts carry no options of their own: the picks' apply.
+    const sel = await selectionContext(
+      ctx,
+      { ...a, listenerId, requestedOptions: undefined },
+      origin,
+      targetEdge,
+      cfg,
+    );
     if (sel.accountFailure === 'outside_approved_shape')
       push(
         'edge.outside_approved_shape',
@@ -779,6 +805,7 @@ async function verifiedSpareFor(
     // The same health rule `pickStandby` applies (an observe-only import with
     // no provider is not a candidate the selection would take).
     if (!providerHealthSatisfies(e.provider, e.health, cfg.requireProviderHealth)) continue;
+    if (!(await edgeFitsPick(ctx, {}, origin, e))) continue;
     if ((await checkPublishable(ctx, e, cfg.requireProviderHealth)).ok) return true;
   }
   return false;
@@ -867,6 +894,21 @@ export async function startRotation(
       code: 'validation',
       message: 'Only a detector start carries affected countries or a test block',
     });
+  // Options for this one edge: checked where the edge will build.
+  let requestedOptions: string | undefined;
+  if (a.requestedOptions !== undefined && a.kind !== 'publish') {
+    const where = a.requestedLocationId ? await ctx.db.get(a.requestedLocationId) : null;
+    const owner = where ? await ctx.db.get(where.accountId) : null;
+    if (!where || !owner)
+      throw new ConvexError({
+        code: 'validation',
+        message: 'Options for one address need the location it is built in',
+      });
+    const checked = await checkPickOptions(ctx, where, owner, a.requestedOptions);
+    if (!checked.ok)
+      throw new ConvexError({ code: checked.code, message: checked.issues.join('; ') || checked.code });
+    requestedOptions = JSON.stringify(checked.options);
+  }
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,
     kind: a.kind,
@@ -884,6 +926,7 @@ export async function startRotation(
     requestedLocationId:
       a.kind === 'provision' || a.kind === 'replace' ? a.requestedLocationId : undefined,
     requestedSpareEdgeId: a.kind === 'replace' ? a.requestedSpareEdgeId : undefined,
+    requestedOptions,
     affectedCountries: a.affectedCountries?.slice(0, 20),
     simulationId: a.simulationId,
     setupRun: a.setupRun,
@@ -962,6 +1005,10 @@ export async function startRotation(
         forceGeoEvidence: a.forceGeoEvidence === true,
         rotationId: id,
         edgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
+        // The options keys an operator set for this one address (values stay on the rotation).
+        optionKeys: requestedOptions
+          ? Object.keys(parseOptionValues(requestedOptions)).sort()
+          : undefined,
       },
     });
   }
@@ -1469,6 +1516,9 @@ export const commitSelection = internalMutation({
     locationId: v.optional(v.id('edgeLocations')),
     templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     templateHash: v.string(),
+    /** The location's own template hash, and the pick's choices (JSON), when the pick has options. */
+    baseTemplateHash: v.optional(v.string()),
+    choices: v.optional(v.string()),
     nameNonce: v.string(),
     listeners: v.array(
       v.object({
@@ -1521,6 +1571,12 @@ export const commitSelection = internalMutation({
             settings: account.settings as Record<string, unknown>,
             observedSettings: parseObservedSettings(account.observedSettings),
           },
+          // The certificate the node's pick asks for (the account's defaults otherwise).
+          certificate: certificateValuesFor(
+            account.provider,
+            accountOptionDefaultsOf(account),
+            a.choices !== undefined ? parseOptionValues(a.choices) : null,
+          ),
           dnsAccount: dnsAccount
             ? {
                 id: dnsAccount._id as string,
@@ -1550,6 +1606,9 @@ export const commitSelection = internalMutation({
         locationId: a.locationId ?? null,
         templateId: a.templateId,
         templateHash: a.templateHash,
+        ...(a.choices !== undefined
+          ? { choices: a.choices, baseTemplateHash: a.baseTemplateHash }
+          : {}),
         listeners: a.listeners,
         steps: a.steps,
         nameNonce: a.nameNonce,
@@ -2443,6 +2502,57 @@ export interface SelectionRequest {
   requestedSpareEdgeId?: Id<'edges'>;
   /** Started by a guided setup run (the operator chose its account). */
   setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
+  /** Options for this one edge instead of its pick's (JSON, `parseOptionValues`). */
+  requestedOptions?: string;
+}
+
+/**
+ * What a node's pick at `locationId` asks its edges to be built with
+ * (lib/edges/providers/options.ts): a run's own pick while it runs, else the
+ * node's provider set. `null` = a pick from before options (or no pick): the
+ * template and the account's defaults. An operator's options for one edge win.
+ */
+export async function choicesFor(
+  ctx: { db: QueryCtx['db'] },
+  rotation: Pick<SelectionRequest, 'setupRun' | 'requestedOptions'>,
+  origin: Pick<Origin, 'providerSet'>,
+  locationId: Id<'edgeLocations'> | string,
+): Promise<Values | null> {
+  if (rotation.requestedOptions !== undefined) return parseOptionValues(rotation.requestedOptions);
+  if (rotation.setupRun) {
+    const run = await ctx.db.get(rotation.setupRun.runId);
+    const p = run?.picks?.find((x) => (x.locationId as string) === (locationId as string));
+    if (p) return p.options !== undefined ? parseOptionValues(p.options) : null;
+  }
+  const p = origin.providerSet?.find((x) => (x.locationId as string) === (locationId as string));
+  return p?.options !== undefined ? parseOptionValues(p.options) : null;
+}
+
+/**
+ * Whether an edge was built with what its node's pick asks for NOW
+ * (lib/edges/choices.ts). Automatic work never takes a spare built for other
+ * choices; a template edit is not a choice and keeps today's rule.
+ */
+export async function edgeFitsPick(
+  ctx: { db: QueryCtx['db'] },
+  rotation: Pick<SelectionRequest, 'setupRun' | 'requestedOptions'>,
+  origin: Pick<Origin, 'providerSet'>,
+  edge: Edge,
+): Promise<boolean> {
+  if (!edge.locationId) return true;
+  const wanted = await choicesFor(ctx, rotation, origin, edge.locationId);
+  if (wanted === null && edge.choices === undefined) return true;
+  const account = edge.accountId ? await ctx.db.get(edge.accountId) : null;
+  return builtForChoices(
+    {
+      provider: edge.provider,
+      choices: edge.choices,
+      intent: parseIntent(edge.provisionIntent) as unknown as Values | null,
+    },
+    wanted,
+    account ? accountOptionDefaultsOf(account) : {},
+    (json) => parseOptionValues(json),
+  );
 }
 
 export interface SelectionContext {
@@ -2462,8 +2572,15 @@ export interface SelectionContext {
   accountFailure: string | null;
   template: {
     id: Id<'edgeTemplates'> | null;
+    /** What the edge builds with: the template, with the pick's tuning choices laid over it. */
     params: Record<string, unknown>;
     hash: string;
+    /** The location's own effective template hash. */
+    baseHash: string;
+    /** The pick's choices as stored (null = a pick from before options). */
+    choices: Values | null;
+    /** Provider rules the choices break once laid over the template. */
+    invalid: string[] | null;
   } | null;
 }
 
@@ -2611,6 +2728,9 @@ export async function selectionContext(
         hasPublishableAddress(e) &&
         standbyEligible(e, slotOfEdge) &&
         frontsAllowed(e.provider, cfg.l7.dnsProvidersFront) &&
+        // Built with what its pick asks for now (the operator's named spare excepted).
+        (e._id === rotation.requestedSpareEdgeId ||
+          (await edgeFitsPick(ctx, rotation, origin, e))) &&
         (e.listenerId !== slot._id ||
           e.status !== 'active' ||
           e.publication !== 'unpublished' ||
@@ -2736,13 +2856,14 @@ export async function selectionContext(
     const today = a.allocationsDayKey === todayKey() ? a.allocationsToday : 0;
     if (a.dailyAllocationBudget !== 0 && today >= a.dailyAllocationBudget)
       return failure('account_budget_exhausted');
-    const template = await resolveTemplateFor(
+    const template = await resolveBuildFor(
       ctx,
       a.provider,
       rotation.requestedTemplateId ?? null,
       a.defaultTemplateId ?? null,
       a._id,
       where,
+      await choicesFor(ctx, rotation, origin, where._id),
     );
     if (rotation.requestedTemplateId && template.id !== rotation.requestedTemplateId)
       return failure('template_not_found');
@@ -2768,13 +2889,14 @@ export async function selectionContext(
       if (!loc.enabled) continue;
       keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
       if (underApproval) {
-        const tpl = await resolveTemplateFor(
+        const tpl = await resolveBuildFor(
           ctx,
           a.provider,
           null,
           a.defaultTemplateId ?? null,
           a._id,
           loc,
+          await choicesFor(ctx, rotation, origin, loc._id),
         );
         if (!(await fitsApproval(a._id as string, loc._id as string, tpl.hash))) {
           outsideShape++;
@@ -2859,13 +2981,14 @@ export async function selectionContext(
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
   const location = (await ctx.db.get(picked.account.locationId as Id<'edgeLocations'>))!;
-  const template = await resolveTemplateFor(
+  const template = await resolveBuildFor(
     ctx,
     account.provider,
     null,
     account.defaultTemplateId ?? null,
     account._id,
     location,
+    await choicesFor(ctx, rotation, origin, location._id),
   );
   return {
     listener,
@@ -2942,7 +3065,13 @@ function specOf(edge: Edge) {
  */
 function templateParamsOf(edge: Edge, fallback: Record<string, unknown>): Record<string, unknown> {
   const intent = parseIntent(edge.provisionIntent);
-  if (!intent) return fallback;
+  if (!intent) {
+    // L4: the template the location resolves, with the node's frozen tuning
+    // choices laid over it again (the guard above holds the template still).
+    if (edge.choices === undefined || !edge.provider) return fallback;
+    const { tuning } = splitChoices(optionFieldsOf(edge.provider), parseOptionValues(edge.choices));
+    return Object.keys(tuning).length > 0 ? deepMerge(fallback, tuning) : fallback;
+  }
   return {
     ...intent.templateParams,
     ...(intent.zoneSslMode ? { zoneSslMode: intent.zoneSslMode } : {}),
@@ -3174,6 +3303,16 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     });
     return;
   }
+  // The node's options, laid over the location's template, break a provider rule.
+  if (selection.template.invalid) {
+    await advanceCall(ctx, r._id, sv, {
+      type: 'fail',
+      code: 'option_invalid',
+      detail: selection.template.invalid.join('; ').slice(0, 300),
+      rollback: false,
+    });
+    return;
+  }
   const nonce = randomHex(4);
   const name = edgeResourceName(origin.slug, nonce);
   const listeners = [
@@ -3270,6 +3409,12 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     locationId: selection.account.locationId,
     templateId: selection.template.id,
     templateHash: selection.template.hash,
+    ...(selection.template.choices !== null
+      ? {
+          choices: JSON.stringify(selection.template.choices),
+          baseTemplateHash: selection.template.baseHash,
+        }
+      : {}),
     nameNonce: nonce,
     listeners,
     templateParams: effectiveParams,
@@ -3307,7 +3452,8 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
     accountId: edge.accountId,
     locationId: edge.locationId ?? null,
   });
-  if (tpl.hash !== edge.templateHash) {
+  // An edge built with a node's choices froze the location's own hash beside them.
+  if (tpl.hash !== (edge.baseTemplateHash ?? edge.templateHash)) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'template_changed', rollback: false });
     return;
   }

@@ -293,6 +293,21 @@ describe('cloudflare: request bodies', () => {
     expect(cloudflareRecordBody(cfg, byName, tpl).type).toBe('CNAME');
   });
 
+  test('record options: tags as name:value, one answer family for the proxied name', () => {
+    const body = cloudflareRecordBody(
+      cfg,
+      specFor(),
+      CloudflareTemplate.parse({ recordTags: { team: 'edge' }, answerFamily: 'ipv4' }),
+    );
+    expect(body).toMatchObject({ tags: ['team:edge'], settings: { ipv4_only: true }, ttl: 1 });
+    expect(
+      cloudflareRecordBody(cfg, specFor(), CloudflareTemplate.parse({ answerFamily: 'ipv6' })).settings,
+    ).toEqual({ ipv6_only: true });
+    expect(
+      cloudflareRecordBody(cfg, specFor(), CloudflareTemplate.parse({ answerFamily: 'both' })),
+    ).not.toHaveProperty('settings');
+  });
+
   test('a spec without a hostname is refused, and so is a hostname outside the zone', () => {
     const noHost = specFor();
     delete noHost.hostname;

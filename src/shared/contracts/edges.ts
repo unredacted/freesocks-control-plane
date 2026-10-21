@@ -2073,6 +2073,8 @@ export const SetupPlanSet = z.object({
       provider: z.string(),
       locationKey: z.string(),
       label: z.string(),
+      /** The provider options this node gets here (chosen, with the account's certificate defaults). */
+      options: z.record(z.string(), z.unknown()).optional(),
     }),
   ),
   /** The (transport, pick) addresses the run creates: the fewest that meet the requirement. */
@@ -2083,7 +2085,9 @@ export const SetupPlanSet = z.object({
   uncovered: z.array(z.string()),
   /** More addresses than one origin publishes (`edge.set_too_large`). */
   tooLarge: z.boolean(),
-  problems: z.array(z.object({ locationId: z.string(), reason: z.string() })),
+  problems: z.array(
+    z.object({ locationId: z.string(), reason: z.string(), detail: z.string().optional() }),
+  ),
 });
 export type SetupPlanSet = z.infer<typeof SetupPlanSet>;
 

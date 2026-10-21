@@ -267,8 +267,10 @@ export function cloudflareDnsClient(cfg: CloudflareDnsConfig, fetchImpl?: FetchL
         name: normalizeDnsName(args.name),
         content: args.content,
         proxied: args.proxied,
-        ttl: 1,
+        ttl: args.proxied ? 1 : (args.ttl ?? 1),
         comment: args.comment,
+        ...(args.tags && args.tags.length > 0 ? { tags: args.tags } : {}),
+        ...(args.settings && Object.keys(args.settings).length > 0 ? { settings: args.settings } : {}),
       };
       const rec = await cfCall('dns-create', () =>
         // The SDK's params type is a discriminated union over `type`; the body
