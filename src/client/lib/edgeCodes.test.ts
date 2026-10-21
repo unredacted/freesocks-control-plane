@@ -125,13 +125,15 @@ describe('EDGE_REFUSAL_COPY', () => {
     'location_not_offered',
     'location_unchecked',
     'location_in_use',
-    'location_not_geographic',
     'placement_on_location',
     'template_value_required',
     'pick_switch_late',
     'set_uncovered_listener',
     'set_too_large',
     'set_would_uncover',
+    'location_unusable',
+    'dns_account_unusable',
+    'hostname_not_in_zone',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {
@@ -142,6 +144,12 @@ describe('EDGE_REFUSAL_COPY', () => {
     }
     expect(codeLabel('needs_rotation')).toBe('Needs a rotation');
     expect(codeFix('host_adopt_required')).toContain('Adopt a Host');
+    // Only a refusal whose server message names the reason lets it replace the fix.
+    const fromServer = Object.entries(EDGE_REFUSAL_COPY)
+      .filter(([, e]) => e.reasonFromServer)
+      .map(([code]) => code);
+    expect(fromServer.sort()).toEqual(['dns_account_unusable', 'location_unusable']);
+    for (const code of fromServer) expect(codeFix(code)).toBeTruthy();
   });
 
   test('no refusal copy contains an em-dash or an API path, and every part is a sentence', () => {
@@ -201,6 +209,14 @@ describe('guided setup run vocabularies', () => {
     for (const code of SETUP_RUN_NEEDS) check(code, SETUP_RUN_NEED_COPY[code]);
     for (const code of SETUP_ACCOUNT_REASONS) check(code, SETUP_ACCOUNT_REASON_COPY[code]);
     expect(offenders).toEqual([]);
+    // A CDN location is a DNS zone: the words name the location, never account settings.
+    for (const e of [
+      SETUP_ACCOUNT_REASON_COPY.dns_zone_missing,
+      EDGE_CODE_COPY.dns_zone_missing!,
+    ]) {
+      expect(e.explain).toBe('This location names no DNS zone.');
+      expect(e.fix).toBe('Add a location in one of the zones the account reaches.');
+    }
   });
 
   test('every need has exactly one button and an unknown need is humanised', () => {
@@ -220,6 +236,20 @@ describe('guided setup run vocabularies', () => {
 });
 
 describe('code helpers', () => {
+  test('the CDN zone and DNS account answers are worded', () => {
+    for (const code of [
+      'location_check_failed',
+      'dns_account_disabled',
+      'no_zones',
+      'zone_name_mismatch',
+      'tls_configuration_missing',
+      'zone_unreadable',
+    ]) {
+      expect(EDGE_CODE_COPY[code]?.label.trim()).toBeTruthy();
+      expect(codeExplain(code)).not.toMatch(/^The server reported/);
+    }
+  });
+
   test('known codes resolve through the table', () => {
     expect(codeLabel('pool_empty')).toBe('Pool empty');
     expect(codeExplain('pool_empty')).toMatch(/published/);

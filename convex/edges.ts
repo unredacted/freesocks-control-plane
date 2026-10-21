@@ -97,6 +97,24 @@ export function edgeProgress(edge: Edge): { done: number; total: number; percent
 }
 
 /**
+ * What an L7 edge froze about its front when it was planned: the zone, the DNS
+ * account writing its records, the TLS configuration and the certificate
+ * authority (lib/edges/intent.ts). Null for an L4 edge, or an intent that
+ * cannot be read: never the location's or the account's CURRENT values.
+ */
+export function frozenFrontOf(e: Pick<Edge, 'layer' | 'provisionIntent'>) {
+  if ((e.layer ?? 'l4') !== 'l7') return null;
+  const intent = parseIntent(e.provisionIntent);
+  if (!intent || typeof intent.zoneName !== 'string') return null;
+  return {
+    zoneName: intent.zoneName,
+    dnsAccountId: intent.dnsAccountId ?? null,
+    tlsConfigurationId: intent.tlsConfigurationId ?? null,
+    certificateAuthority: intent.certificateAuthority ?? null,
+  };
+}
+
+/**
  * The admin projection of an edge. `listener` (the edge's own listener row)
  * lets the L4 verification view say whether the confirmation is CURRENT; a
  * caller without it gets `current: null` (unknown), never a guess.
@@ -167,6 +185,7 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
       hostname: e.addresses.hostname ?? null,
     },
     layer: e.layer ?? 'l4',
+    front: frozenFrontOf(e),
     readiness: e.readiness
       ? {
           dns: e.readiness.dns,

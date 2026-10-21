@@ -947,6 +947,8 @@ describe('wire contract: cloudflare', () => {
     expect(await cloudflareProvider.testCredentials(cfg)).toMatchObject({ ok: true });
     await cloudflareProvider.listRegions!(cfg);
     await cloudflareProvider.discoverOptions!({ apiToken: cfg.apiToken });
+    // A zone location is checked on its own: the zone, its mode and WebSockets.
+    expect(await cloudflareProvider.checkLocation!(cfg)).toMatchObject({ ok: true });
 
     const steps = cloudflareProvider.planProvision(cfg, spec, tpl);
     expect(steps.map((s) => s.kind)).toEqual(['create_dns_record', 'create_origin_rule']);
@@ -1149,6 +1151,9 @@ describe('wire contract: fastly', () => {
       },
       async listCaa() {
         return [];
+      },
+      async readZone() {
+        return { id: cfg.dns!.zoneId, name: cfg.dns!.zoneName, status: 'active', paused: false };
       },
     };
     __setFastlyDnsClientFactory(() => client);

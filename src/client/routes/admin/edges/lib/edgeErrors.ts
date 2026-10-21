@@ -11,7 +11,8 @@
  *   edgeErrorCode(err)                    the bare code ('cooldown') or null
  *   edgeErrorIssue(err)                   { code, detail } for <CodeNote>, or null
  *   edgeErrorMessage(err)                 one line for a toast / inline error (refusal codes
- *                                         and a throttled call read as explain + fix)
+ *                                         and a throttled call read as explain + fix, or
+ *                                         explain + the server's reason when it names one)
  */
 import { ApiCallError } from '../../../../lib/api';
 import { apiErrorMessage } from '../../../../lib/errors';
@@ -47,11 +48,28 @@ export function edgeErrorIssue(err: unknown): { code: string; detail: string | n
   return code ? { code, detail: null } : null;
 }
 
-/** A refusal-group entry as one error line: what happened, then what to do. */
-function refusalWords(code: string): string | null {
+/** The server's message as a sentence of its own (capitalised, closed with a full stop). */
+function asSentence(text: string): string {
+  const t = text.trim();
+  if (!t) return '';
+  const s = t[0]!.toUpperCase() + t.slice(1);
+  return /[.!?]$/.test(s) ? s : `${s}.`;
+}
+
+/**
+ * A refusal-group entry as one error line: what happened, then what to do. A
+ * refusal whose server message names the specific reason shows that message
+ * in place of the generic fix.
+ */
+function refusalWords(code: string, err?: unknown): string | null {
   const copy = EDGE_REFUSAL_COPY[code];
   if (!copy) return null;
-  return copy.fix ? `${copy.explain} ${copy.fix}` : copy.explain;
+  const reason =
+    copy.reasonFromServer && err instanceof ApiCallError
+      ? asSentence(err.payload.error.message)
+      : '';
+  const then = reason || copy.fix;
+  return then ? `${copy.explain} ${then}` : copy.explain;
 }
 
 export function edgeErrorMessage(err: unknown): string {
@@ -63,7 +81,7 @@ export function edgeErrorMessage(err: unknown): string {
   if (code === null) return apiErrorMessage(err);
   // An offline answer is better explained by the shared copy.
   if (err instanceof ApiCallError && err.status === 0) return apiErrorMessage(err);
-  const refusal = refusalWords(code);
+  const refusal = refusalWords(code, err);
   if (refusal) return refusal;
   if (EDGE_CODE_COPY[code] === undefined && !(err instanceof EdgeRefusalError)) {
     return apiErrorMessage(err);

@@ -407,8 +407,11 @@ beforeAll(async () => {
     dailyAllocationBudget: 30,
     settings: { zoneId: 'ec'.padEnd(32, '0'), zoneName: env.l7Zone },
   });
-  await t.mutation(internal.edgeProviderAccounts.recordTest, {
-    id: l7,
+  await t.mutation(internal.edgeProviderAccounts.recordTest, { id: l7, ok: true });
+  // The zone's facts, as the zone location's check observed them.
+  const [zone] = await t.query(internal.edgeLocations.listForAccount, { accountId: l7 });
+  await t.mutation(internal.edgeLocations.recordCheck, {
+    id: zone.id as Id<'edgeLocations'>,
     ok: true,
     observed: { zoneSslMode: 'full', websockets: 'on' },
   });

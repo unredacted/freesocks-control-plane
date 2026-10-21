@@ -49,4 +49,13 @@ export interface DnsClient {
   deleteRecord(id: string): Promise<void>;
   /** CAA records at the zone apex (issuance preflight); empty = unrestricted. */
   listCaa(): Promise<Array<{ flags: number; tag: string; value: string }>>;
+  /** The zone itself as these credentials read it (a location check, a rotation's reach check). */
+  readZone(): Promise<{
+    id: string;
+    name: string;
+    status: string;
+    paused: boolean;
+    /** The zone's plan (Cloudflare `legacy_id`, e.g. `free`): what its records may carry. */
+    plan?: string;
+  }>;
 }

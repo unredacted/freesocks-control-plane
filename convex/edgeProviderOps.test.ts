@@ -495,6 +495,40 @@ describe('edgeProviderOps: contract + layer refusals', () => {
     ).rejects.toThrow(/dns_account_missing/);
   });
 
+  test('a front account with only its token is tested and listed without any DNS account', async () => {
+    const t = newT();
+    const { id: fastlyId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: { certificateAuthority: 'certainly' },
+      credentials: { apiToken: 'f' },
+    });
+    const seen: Array<Record<string, unknown>> = [];
+    __setEdgeProviderForTests('fastly', {
+      ...edgeProviderFor('fastly'),
+      testCredentials: async (cfg: Record<string, unknown>) => {
+        seen.push(cfg);
+        return { ok: true };
+      },
+      discoverOptions: async () => ({ tlsConfigurations: [{ id: 'tls-1', label: 'default' }] }),
+    } as never);
+    try {
+      expect(
+        await t.action(internal.edgeProviderOps.testCredentials, { accountId: fastlyId }),
+      ).toMatchObject({ ok: true });
+      expect(seen[0]?.dns).toBeUndefined();
+      expect(
+        await t.action(internal.edgeProviderOps.refreshCatalog, { accountId: fastlyId }),
+      ).toEqual({ refreshed: true });
+      expect(
+        (await t.query(internal.edgeProviderCatalog.view, { accountId: fastlyId })).kinds
+          .tlsConfigurations?.items,
+      ).toEqual([{ id: 'tls-1', label: 'default' }]);
+    } finally {
+      __setEdgeProviderForTests('fastly', null);
+    }
+  });
+
   test('a DISABLED DNS account still serves existing edges (reconcile and destroy keep working)', async () => {
     const t = newT();
     const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
@@ -552,7 +586,7 @@ describe('edgeProviderOps: an existing edge is driven by its FROZEN intent', () 
     return seen;
   }
 
-  test('a settings edit after planning cannot move a live edge to another TLS subscription', async () => {
+  test('an edit after planning cannot move a live edge to another TLS subscription', async () => {
     const t = newT();
     const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'cloudflare',
@@ -628,11 +662,23 @@ describe('edgeProviderOps: an existing edge is driven by its FROZEN intent', () 
         updatedAt: Date.now(),
       }),
     );
-    // The operator repoints the ACCOUNT at another subscription and CA (the
-    // authority is a provider option now: the account's default).
+    // The operator moves the account's default front to another TLS
+    // configuration (a new location) and its CA.
+    const moved = await t.mutation(internal.edgeLocations.create, {
+      accountId: fastlyId,
+      placement: {
+        dnsAccountId: dnsId,
+        zoneId: 'a'.repeat(32),
+        zoneName: 'example.org',
+        tlsConfigurationId: 'tls-new',
+      },
+    });
+    await t.mutation(internal.edgeLocations.update, {
+      id: moved.id as never,
+      makeDefault: true,
+    });
     await t.run((ctx) =>
       ctx.db.patch(fastlyId, {
-        settings: { type: 'fastly', dnsAccountId: dnsId, tlsConfigurationId: 'tls-new' },
         optionDefaults: JSON.stringify({ certificateAuthority: 'lets-encrypt' }),
         updatedAt: Date.now(),
       }),
@@ -647,7 +693,7 @@ describe('edgeProviderOps: an existing edge is driven by its FROZEN intent', () 
       certificateAuthority: 'certainly',
       tlsConfigurationId: 'tls-old',
     });
-    // Planning a NEW edge (no edgeId) follows the account's current settings.
+    // Planning a NEW edge (no edgeId) follows the account's default location and CA now.
     await t.action(internal.edgeProviderOps.describe, {
       accountId: fastlyId,
       ledger: { steps: [], resources: [] },
@@ -842,7 +888,7 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
 describe('edgeProviderOps: the inventory pull refreshes what was observed', () => {
   afterEach(() => __setEdgeProviderForTests('cloudflare', null));
 
-  test('an inventory refresh re-reads the zone facts; a failing test never fails the pull', async () => {
+  test("an inventory refresh re-checks the zone's facts; a failing check never fails the pull", async () => {
     const t = newT();
     const { id: cfId } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'cloudflare',
@@ -851,33 +897,31 @@ describe('edgeProviderOps: the inventory pull refreshes what was observed', () =
       credentials: { apiToken: 'cf' },
     });
     let mode = 'flexible';
-    let testThrows = false;
+    let checkThrows = false;
     __setEdgeProviderForTests('cloudflare', {
       ...edgeProviderFor('cloudflare'),
       inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
-      testCredentials: async () => {
-        if (testThrows) throw new Error('zone read failed');
+      checkLocation: async () => {
+        if (checkThrows) throw new Error('zone read failed');
         return { ok: true, observed: { zoneSslMode: mode } };
       },
     } as never);
+    const observed = async () =>
+      (await t.query(internal.edgeLocations.listForAccount, { accountId: cfId }))[0].observed;
     await t.action(internal.edgeProviderOps.inventory, { accountId: cfId });
-    expect(
-      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: cfId }))!.observedSettings,
-    ).toEqual({ zoneSslMode: 'flexible' });
+    expect(await observed()).toEqual({ zoneSslMode: 'flexible' });
     // The operator changes the zone's mode at the provider: the next pull sees it.
     mode = 'full';
     await t.action(internal.edgeProviderOps.inventory, { accountId: cfId });
-    expect(
-      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: cfId }))!.observedSettings,
-    ).toEqual({ zoneSslMode: 'full' });
-    // The inventory is what was asked for: a failing test does not lose it.
-    testThrows = true;
+    expect(await observed()).toEqual({ zoneSslMode: 'full' });
+    // The inventory is what was asked for: a failing check does not lose it.
+    checkThrows = true;
     expect(await t.action(internal.edgeProviderOps.inventory, { accountId: cfId })).toMatchObject({
       loadBalancers: [],
     });
   });
 
-  test('a credential rotation refreshes the observed zone facts like a test does', async () => {
+  test('a credential test and rotation re-check every zone in use with the key they test', async () => {
     const t = newT();
     const { id: cfId } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'cloudflare',
@@ -886,15 +930,26 @@ describe('edgeProviderOps: the inventory pull refreshes what was observed', () =
       credentials: { apiToken: 'cf' },
     });
     let mode = 'flexible';
+    let reachable = true;
+    let paused = false;
+    const tokens: string[] = [];
     __setEdgeProviderForTests('cloudflare', {
       ...edgeProviderFor('cloudflare'),
-      testCredentials: async () => ({ ok: true, observed: { zoneSslMode: mode } }),
+      testCredentials: async () => ({ ok: true }),
+      discoverOptions: async () => ({ zones: [] }),
+      checkLocation: async (cfg: { apiToken: string }) => {
+        tokens.push(cfg.apiToken);
+        if (paused) return { ok: false, code: 'zone_paused', observed: { zoneSslMode: mode } };
+        return reachable
+          ? { ok: true, observed: { zoneSslMode: mode } }
+          : { ok: false, code: '81044' };
+      },
     } as never);
+    const observed = async () =>
+      (await t.query(internal.edgeLocations.listForAccount, { accountId: cfId }))[0].observed;
     await t.action(internal.edgeProviderOps.testCredentials, { accountId: cfId });
-    expect(
-      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: cfId }))!.observedSettings,
-    ).toEqual({ zoneSslMode: 'flexible' });
-    // The zone mode moved at the provider; the rotation's passing test sees it,
+    expect(await observed()).toEqual({ zoneSslMode: 'flexible' });
+    // The zone mode moved at the provider; the rotation's zone check sees it,
     // so planning must not keep freezing the stale mode.
     mode = 'strict';
     const res = await t.action(internal.edgeProviderOps.rotateCredentials, {
@@ -902,9 +957,29 @@ describe('edgeProviderOps: the inventory pull refreshes what was observed', () =
       credentials: { apiToken: 'cf2' },
     });
     expect(res).toMatchObject({ ok: true, credentialsChanged: true });
+    expect(await observed()).toEqual({ zoneSslMode: 'strict' });
+    // A zone the new key reaches in a state that refuses new edges does not
+    // hold a rotation up: the state is recorded, the key is replaced.
+    paused = true;
     expect(
-      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: cfId }))!.observedSettings,
-    ).toEqual({ zoneSslMode: 'strict' });
+      await t.action(internal.edgeProviderOps.rotateCredentials, {
+        accountId: cfId,
+        credentials: { apiToken: 'cf3' },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      (await t.query(internal.edgeLocations.listForAccount, { accountId: cfId }))[0].checkError,
+    ).toBe('zone_paused');
+    paused = false;
+    // A new key that cannot read a zone in use refuses the rotation, nothing stored.
+    reachable = false;
+    expect(
+      await t.action(internal.edgeProviderOps.rotateCredentials, {
+        accountId: cfId,
+        credentials: { apiToken: 'cf4' },
+      }),
+    ).toMatchObject({ ok: false, code: 'location_unreachable', detail: 'example.org (81044)' });
+    expect(tokens).toEqual(['cf', 'cf2', 'cf3', 'cf4']);
   });
 });
 
@@ -1007,6 +1082,15 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     return { id, dnsId };
   }
 
+  /** The account's default location (its first zone). */
+  async function defaultZoneOf(
+    t: ReturnType<typeof newT>,
+    accountId: Id<'edgeProviderAccounts'>,
+  ): Promise<Id<'edgeLocations'>> {
+    return (await t.query(internal.edgeLocations.listForAccount, { accountId }))[0]
+      .id as Id<'edgeLocations'>;
+  }
+
   async function edgeWithIntent(
     t: ReturnType<typeof newT>,
     accountId: Id<'edgeProviderAccounts'>,
@@ -1020,11 +1104,15 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       originAddress: '198.51.100.7',
       listeners: [wsListener({ tlsNames: ['ws.example'] })],
     });
-    return t.run((ctx) =>
+    return t.run(async (ctx) =>
       ctx.db.insert('edges', {
         relayId,
         listenerId,
         accountId,
+        locationId: (await ctx.db
+          .query('edgeLocations')
+          .withIndex('by_account', (q) => q.eq('accountId', accountId))
+          .first())!._id,
         provider: 'fastly',
         managed: true,
         name: 'fcp-relay-o1-1',
@@ -1146,17 +1234,18 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     expect(seen[1]).toMatchObject({ domainModel: 'versionless' });
   });
 
-  test('an inventory refresh that ends on the CAA refusal does not count as the provider failing', async () => {
+  test('an inventory refresh whose zone check ends on the CAA refusal does not count as the provider failing', async () => {
     const t = newT();
     const { id: accountId } = await fastlyAccount(t);
     standIn({
-      testCredentials: async () => ({ ok: false, code: 'caa_forbids_ca' }),
+      checkLocation: async () => ({ ok: false, code: 'caa_forbids_ca' }),
     });
     mockFetch(() => jsonRes({}));
     for (let i = 0; i < 4; i++) await t.action(internal.edgeProviderOps.inventory, { accountId });
-    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
-    expect(row.lastTestError).toBe('caa_forbids_ca');
-    expect(row.apiFailures ?? 0).toBe(0);
+    // The refusal is the zone's (its location's check), never the provider failing.
+    const locationId = await defaultZoneOf(t, accountId);
+    expect((await t.run((ctx) => ctx.db.get(locationId)))!.checkError).toBe('caa_forbids_ca');
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.apiFailures ?? 0).toBe(0);
   });
 
   test('a CAA refusal is recorded as the test result, and does not count as the provider failing', async () => {
@@ -1187,6 +1276,7 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
   test('an unused wildcard FCP ordered is removed under the certificate lock; one it found is not', async () => {
     const t = newT();
     const { id: accountId, dnsId } = await fastlyAccount(t);
+    const zone = { accountId, locationId: await defaultZoneOf(t, accountId) };
     const removed: Array<readonly string[]> = [];
     let lockHeldDuringRemoval: unknown = null;
     standIn({
@@ -1209,12 +1299,12 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       },
     });
     mockFetch(() => jsonRes({}));
-    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, zone);
     // Found and reused, never ordered by an edge of this account: not FCP's to delete,
     // and so it does not hold up the account's deletion either.
-    await expect(
-      t.action(internal.edgeProviderOps.removeSharedCertificate, { accountId }),
-    ).rejects.toThrow(/shared_certificate_not_ours/);
+    await expect(t.action(internal.edgeProviderOps.removeSharedCertificate, zone)).rejects.toThrow(
+      /shared_certificate_not_ours/,
+    );
     let admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
     expect(admin.sharedCertificate).toMatchObject({ orderedByFcp: false });
 
@@ -1251,25 +1341,26 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
     expect(admin.sharedCertificate).toMatchObject({ orderedByFcp: true, edges: 1 });
     // While a live front uses it, it stays.
-    await expect(
-      t.action(internal.edgeProviderOps.removeSharedCertificate, { accountId }),
-    ).rejects.toThrow(/shared_certificate_in_use/);
+    await expect(t.action(internal.edgeProviderOps.removeSharedCertificate, zone)).rejects.toThrow(
+      /shared_certificate_in_use/,
+    );
     expect(removed).toEqual([]);
     await t.run((ctx) => ctx.db.patch(edgeId, { status: 'destroyed', currentOp: undefined }));
     // Deleting the account now would strand it at the provider.
     await expect(
       t.mutation(internal.edgeProviderAccounts.remove, { id: accountId }),
     ).rejects.toThrow(/shared_certificate_present/);
-    expect(await t.action(internal.edgeProviderOps.removeSharedCertificate, { accountId })).toEqual(
-      { ok: true, removed: true },
-    );
+    expect(await t.action(internal.edgeProviderOps.removeSharedCertificate, zone)).toEqual({
+      ok: true,
+      removed: true,
+    });
     expect(removed).toEqual([['tls_subscription:WILD1']]);
     // The provisioning steps' lock was held while the provider call ran, and released after.
     expect(lockHeldDuringRemoval).toMatchObject({ holderAccountId: accountId });
     expect(await t.run((ctx) => ctx.db.query('externalLocks').collect())).toEqual([]);
-    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
-    expect(row.sharedCertificate).toBeUndefined();
-    expect(row.orderedSharedResources).toEqual([]);
+    // The zone's record goes; the account forgets it ordered it.
+    expect((await t.run((ctx) => ctx.db.get(zone.locationId)))!.sharedCertificate).toBeUndefined();
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.orderedSharedResources).toEqual([]);
     const audit = await t.run((ctx) =>
       ctx.db
         .query('auditLog')
@@ -1277,7 +1368,11 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
         .collect(),
     );
     expect(audit).toHaveLength(1);
-    expect(audit[0]!.payload).toMatchObject({ certificate: '*.example.org', removed: true });
+    expect(audit[0]!.payload).toMatchObject({
+      locationId: zone.locationId,
+      certificate: '*.example.org',
+      removed: true,
+    });
   });
 
   test('an edge step waits for a removal holding the lock, and takes it over once it lapsed', async () => {
@@ -1316,35 +1411,36 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     ).toMatchObject({ ok: true });
   });
 
-  test('changing a certificate setting makes the account untested until a new test', async () => {
+  test('changing a certificate default makes the account untested until a new test', async () => {
     const t = newT();
-    const { id: accountId, dnsId } = await fastlyAccount(t, { certificateScope: 'per_host' });
+    const { id: accountId } = await fastlyAccount(t);
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: accountId,
+      optionDefaults: { certificateScope: 'per_host' },
+    });
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: accountId, ok: true });
     expect(accountTested((await t.run((ctx) => ctx.db.get(accountId)))!)).toBe(true);
+    const locationId = await defaultZoneOf(t, accountId);
+    await t.mutation(internal.edgeLocations.recordSharedCertificate, {
+      id: locationId,
+      status: { name: '*.example.org', subscriptionId: 'WILD1', state: 'issued' },
+    });
     // The domain kind is not a certificate setting: the test still stands.
     await t.mutation(internal.edgeProviderAccounts.update, {
       id: accountId,
-      settings: {
-        dnsAccountId: dnsId,
-        certificateAuthority: 'certainly',
-        certificateScope: 'per_host',
-        domainModel: 'classic',
-      },
+      settings: { domainModel: 'classic' },
     });
     expect(accountTested((await t.run((ctx) => ctx.db.get(accountId)))!)).toBe(true);
     // The per-host CAA verdict says nothing about the wildcard (issuewild).
     await t.mutation(internal.edgeProviderAccounts.update, {
       id: accountId,
-      settings: {
-        dnsAccountId: dnsId,
-        certificateAuthority: 'certainly',
-        certificateScope: 'wildcard',
-        domainModel: 'classic',
-      },
+      optionDefaults: { certificateScope: 'wildcard' },
     });
     const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
     expect(row.lastTestError).toBe('retest_required');
     expect(accountTested(row)).toBe(false);
+    // Each zone's shared certificate is read again by that test.
+    expect((await t.run((ctx) => ctx.db.get(locationId)))!.sharedCertificate).toBeUndefined();
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: accountId, ok: true });
     expect(accountTested((await t.run((ctx) => ctx.db.get(accountId)))!)).toBe(true);
   });
@@ -1352,20 +1448,25 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
   test('a wildcard the account would not order refuses new fronts before anything is built', async () => {
     const t = newT();
     const { id: accountId } = await fastlyAccount(t);
+    const zone = { accountId, locationId: await defaultZoneOf(t, accountId) };
     standIn({ sharedCertificate: async () => ({ name: '*.example.org', state: 'ambiguous' }) });
     mockFetch(() => jsonRes({}));
-    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, zone);
     const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
-    expect(certificateRefusalOf(row)).toBe('shared_certificate_ambiguous');
+    const location = (await t.run((ctx) => ctx.db.get(zone.locationId)))!;
+    expect(certificateRefusalOf(row, location)).toBe('shared_certificate_ambiguous');
     // Not ours to remove, so it does not hold up the account's deletion either.
     expect((await t.mutation(internal.edgeProviderAccounts.remove, { id: accountId })).ok).toBe(
       true,
     );
   });
 
-  test('the shared certificate is read at the provider and kept on the account, with its users', async () => {
+  test("each zone's shared certificate is read at the provider and kept on its location, with its users", async () => {
     const t = newT();
     const { id: accountId, dnsId } = await fastlyAccount(t);
+    const locationId = (await t.query(internal.edgeLocations.listForAccount, { accountId }))[0]
+      .id as Id<'edgeLocations'>;
+    const zone = { accountId, locationId };
     let status: Record<string, unknown> | null = {
       name: '*.example.org',
       subscriptionId: 'WILD1',
@@ -1381,15 +1482,17 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     // Not issued yet: the reconcile cron reads it every pass.
     expect(
       await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
-    ).toEqual([accountId]);
-    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    ).toEqual([zone]);
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, zone);
     let admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
-    expect(admin.sharedCertificate).toMatchObject({
+    // The zone's own record, and the account view (its default zone's).
+    expect(admin.locations[0]?.sharedCertificate).toMatchObject({
       name: '*.example.org',
       state: 'processing',
       code: 'tls_caa_conflict',
       edges: 1,
     });
+    expect(admin.sharedCertificate).toMatchObject({ name: '*.example.org', edges: 1 });
     const attention = await t.query(internal.edgeOperator.attention, {});
     expect(attention.items.find((i) => i.kind === 'certificate_waiting')).toMatchObject({
       accountId,
@@ -1403,7 +1506,7 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       state: 'issued',
       notAfter: '2026-11-19T10:12:00.000Z',
     };
-    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, zone);
     admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
     expect(admin.sharedCertificate).toMatchObject({
       state: 'issued',
@@ -1417,7 +1520,7 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       await t.query(internal.edgeProviderAccounts.listForSharedCertificates, {
         now: Date.now() + 31 * 60_000,
       }),
-    ).toEqual([accountId]);
+    ).toEqual([zone]);
     // A renewal, or one close to expiry, is read every pass again; close to
     // expiry is critical in attention.
     status = {
@@ -1427,10 +1530,10 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       code: 'certificate_expiring',
       notAfter: new Date(Date.now() + 2 * 86_400_000).toISOString(),
     };
-    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, zone);
     expect(
       await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
-    ).toEqual([accountId]);
+    ).toEqual([zone]);
     const late = await t.query(internal.edgeOperator.attention, {});
     expect(late.items.find((i) => i.kind === 'certificate_waiting')).toMatchObject({
       accountId,
@@ -1438,25 +1541,53 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       severity: 'critical',
     });
     status = { name: '*.example.org', subscriptionId: 'WILD1', state: 'renewing' };
-    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, zone);
     expect(
       await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
-    ).toEqual([accountId]);
-    // A failed one refuses new fronts of the account.
+    ).toEqual([zone]);
+    // A failed one refuses new fronts in that zone (not the account's others).
     status = {
       name: '*.example.org',
       subscriptionId: 'WILD1',
       state: 'failed',
       code: 'tls_failed',
     };
-    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, zone);
     const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
-    expect(certificateRefusalOf(row)).toBe('shared_certificate_failed');
-    // An account that no longer shares one is cleared.
+    const loc = (await t.run((ctx) => ctx.db.get(locationId)))!;
+    expect(certificateRefusalOf(row, loc)).toBe('shared_certificate_failed');
+    expect(certificateRefusalOf(row, { ...loc, sharedCertificate: undefined })).toBeNull();
+    // A zone that no longer shares one is cleared.
     status = null;
-    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, zone);
     admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
     expect(admin.sharedCertificate).toBeNull();
+  });
+
+  test("a node's own certificate is checked at its pick's zone, not the account's default one", async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    const other = await t.mutation(internal.edgeLocations.create, {
+      accountId,
+      placement: { dnsAccountId: dnsId, zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+    });
+    const asked: Array<Record<string, unknown>> = [];
+    standIn({
+      certificatePreflight: async (cfg: Record<string, unknown>) => {
+        asked.push({ ...cfg });
+        return { ok: false, code: 'caa_forbids_ca', detail: 'no issuewild for the authority' };
+      },
+    });
+    mockFetch(() => jsonRes({}));
+    const r = await t.action(internal.edgeProviderOps.certificatePreflight, {
+      accountId,
+      locationId: other.id as Id<'edgeLocations'>,
+      certificate: { certificateScope: 'wildcard' },
+    });
+    expect(r).toMatchObject({ ok: false, code: 'caa_forbids_ca' });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ certificateScope: 'wildcard', zoneName: 'example.net' });
+    expect((asked[0]!.dns as { zoneName: string }).zoneName).toBe('example.net');
   });
 
   test("a node's wildcard where the account defaults to one per front is still read as a wildcard", async () => {
@@ -1481,10 +1612,16 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       certificateAuthority: 'lets-encrypt',
     });
     mockFetch(() => jsonRes({}));
-    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    const locationId = (await t.query(internal.edgeLocations.listForAccount, { accountId }))[0]
+      .id as Id<'edgeLocations'>;
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId, locationId });
     expect(asked.at(-1)).toMatchObject({
       certificateScope: 'wildcard',
       certificateAuthority: 'lets-encrypt',
+    });
+    expect((await t.run((ctx) => ctx.db.get(locationId)))!.sharedCertificate).toMatchObject({
+      name: '*.example.org',
+      state: 'issued',
     });
     const admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
     expect(admin.sharedCertificate).toMatchObject({ name: '*.example.org', state: 'issued' });

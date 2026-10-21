@@ -65,6 +65,7 @@ import type {
   InventoryLb,
   Ledger,
   LedgerResource,
+  LocationCheckResult,
   ReadinessState,
   ResourceStep,
   SharedCertificateStatus,
@@ -889,7 +890,7 @@ function latestNotAfter(doc: unknown): string | undefined {
 }
 
 /**
- * The CAA preflight of the credential test: whether the DNS account's zone
+ * The CAA preflight of a front location's check: whether the DNS account's zone
  * lets the account's CA issue what this account orders (the zone's wildcard,
  * or one name under it: the walk then starts at the zone, since a front's own
  * label holds no records before FCP writes it). Recorded as observed facts
@@ -1447,9 +1448,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         // The customer read is informational; a token without it still works.
         detail += '; pricing_plan=unknown';
       }
-      const caa = await caaPreflight(cfg);
-      if (caa?.refusal) return { ...caa.refusal, observed: caa.observed };
-      return { ok: true, detail, ...(caa ? { observed: caa.observed } : {}) };
+      return { ok: true, detail };
     } catch (e) {
       return credentialTestFailure(e);
     }
@@ -1577,6 +1576,69 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       const out: DiscoverResult = {};
       noteDiscoverError(out, 'tlsConfigurations', e);
       return out;
+    }
+  },
+
+  /**
+   * One front location is usable: its DNS account's credentials read its zone
+   * (active, the name the location recorded; paused is only noted), and the TLS
+   * configuration it names, if any, is one this token sees. The label is the
+   * zone's name, with the TLS configuration's when one is named.
+   */
+  async checkLocation(cfg): Promise<LocationCheckResult> {
+    const detail: string[] = [];
+    try {
+      const dns = await dnsClientFor(cfg);
+      const zone = await dns.readZone();
+      let label = zone.name;
+      const observed: Record<string, string> = {
+        zoneStatus: zone.paused ? 'paused' : zone.status,
+        // What the zone's plan offers decides record tags and per-record flattening.
+        ...(zone.plan ? { zonePlan: zone.plan } : {}),
+      };
+      const out = (code?: string): LocationCheckResult => ({
+        ok: !code,
+        ...(code ? { code } : {}),
+        detail: detail.join(' '),
+        observed,
+        label,
+        zoneName: zone.name,
+      });
+      if (cfg.dns?.zoneName && zone.name !== cfg.dns.zoneName.toLowerCase())
+        return out('zone_name_mismatch');
+      // A paused zone still answers DNS, and a front needs only unproxied
+      // records there: a fact for the admin, never a refusal.
+      if (zone.paused) detail.push('zone_paused');
+      if (zone.status !== 'active') {
+        detail.push('zone_not_active');
+        return out('zone_not_active');
+      }
+      // The issuance preflight: the zone's CAA records must let the
+      // certificate authority this zone's fronts get (the account's default)
+      // issue, for the wildcard when its fronts share one.
+      const caa = await caaPreflight(cfg);
+      if (caa) Object.assign(observed, caa.observed);
+      if (caa?.refusal) {
+        detail.push(caa.refusal.detail);
+        return out('caa_forbids_ca');
+      }
+      if (cfg.tlsConfigurationId) {
+        const doc = await fastlyApiFor(cfg).listTlsConfigurations();
+        const chosen = doc.data.find(
+          (c) => c.type === 'tls_configuration' && c.id === cfg.tlsConfigurationId,
+        );
+        if (!chosen) {
+          detail.push('tls_configuration_missing');
+          return out('tls_configuration_missing');
+        }
+        const attrs = chosen.attributes as { name?: unknown } | undefined;
+        if (typeof attrs?.name === 'string') label = `${zone.name} (${attrs.name})`;
+      }
+      return out();
+    } catch (e) {
+      const failed = credentialTestFailure(e);
+      if (failed.code === 'error' || !(e instanceof EdgeProviderError) || e.meta.retryable) throw e;
+      return { ok: false, code: failed.code, detail: failed.detail };
     }
   },
 

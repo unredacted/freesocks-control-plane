@@ -52,6 +52,9 @@ import {
   EdgeIdResponse,
   EdgeInventoryResponse,
   EdgeLiveResponse,
+  EdgeCatalogRefreshResponse,
+  EdgeCatalogView,
+  EdgeLocationCheckResponse,
   EdgeLocationCreateResponse,
   EdgeLocationList,
   EdgeMaintenanceView,
@@ -451,6 +454,23 @@ export const deleteProviderLocation = (accountId: string, locationId: string) =>
     `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}`,
     EdgeOkResponse,
   );
+/** Ask the provider about one place again (a CDN zone's encryption mode, a refused check). */
+export const checkProviderLocation = (accountId: string, locationId: string) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/check`,
+    {},
+    EdgeLocationCheckResponse,
+  );
+/** What the account's credentials reach (zones, regions, projects, TLS configurations), as last listed. */
+export const fetchProviderCatalog = (accountId: string) =>
+  apiClient.get(`${BASE}/providers/${enc(accountId)}/catalog`, EdgeCatalogView);
+/** List what the account reaches again (a no-op answer `{refreshed: false}` right after another). */
+export const refreshProviderCatalog = (accountId: string) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/catalog/refresh`,
+    {},
+    EdgeCatalogRefreshResponse,
+  );
 /** The trust override for one location (an untrust holds the automatic rules off). */
 export const qualifyProviderLocation = (
   accountId: string,
@@ -468,9 +488,9 @@ export const rotateProviderCredentials = (id: string, body: RotateCredentialsBod
     body,
     EdgeRotateCredentialsResponse,
   );
-export const removeSharedCertificate = (id: string) =>
+export const removeSharedCertificate = (id: string, locationId: string) =>
   apiClient.post(
-    `${BASE}/providers/${enc(id)}/shared-certificate/remove`,
+    `${BASE}/providers/${enc(id)}/locations/${enc(locationId)}/shared-certificate/remove`,
     {},
     EdgeSharedCertificateRemoveResponse,
   );
@@ -716,6 +736,7 @@ export const edgeKeys = {
   providersUsage: [...ROOT, 'providers', 'usage'] as const,
   provider: (id: string) => [...ROOT, 'providers', 'account', id] as const,
   providerInventory: (id: string) => [...ROOT, 'providers', 'account', id, 'inventory'] as const,
+  providerCatalog: (id: string) => [...ROOT, 'providers', 'account', id, 'catalog'] as const,
   templates: [...ROOT, 'templates'] as const,
   relays: [...ROOT, 'relays'] as const,
   relayLookup: (slug: string) => [...ROOT, 'relay', slug, 'lookup'] as const,
@@ -897,6 +918,19 @@ export const providerQuery = (accountId: () => string | null) =>
   createQuery(() => ({
     queryKey: edgeKeys.provider(accountId() ?? ''),
     queryFn: () => fetchProvider(accountId()!),
+    enabled: accountId() !== null,
+    staleTime: 15_000,
+  }));
+
+/**
+ * What an account reaches, for the location pickers. A catalog older than its
+ * `staleAfterMs` (or never listed) is listed again once, in the background;
+ * the stored one shows meanwhile.
+ */
+export const providerCatalogQuery = (accountId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.providerCatalog(accountId() ?? ''),
+    queryFn: () => fetchProviderCatalog(accountId()!),
     enabled: accountId() !== null,
     staleTime: 15_000,
   }));

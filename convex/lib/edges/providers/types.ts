@@ -317,11 +317,29 @@ export interface CredentialTestResult {
   code?: string;
   detail?: string;
   /**
-   * Facts the test observed at the provider that planning needs but the
-   * operator does not enter (e.g. a zone's encryption mode). Stored on the
-   * account as `observedSettings` and frozen into each new edge's intent.
+   * Facts the test observed at the provider that the account keeps (stored as
+   * `observedSettings`). A place's own facts (a zone's encryption mode) come
+   * from `checkLocation`, never from the credential test.
    */
   observed?: Record<string, string>;
+}
+
+/** What checking one location found (`EdgeProvider.checkLocation`). */
+export interface LocationCheckResult {
+  ok: boolean;
+  /** A short code when the location cannot be used (`zone_ssl_off`, `zone_unreadable`...). */
+  code?: string;
+  detail?: string;
+  /**
+   * Facts planning needs that the operator never enters (a zone's encryption
+   * mode, WebSockets): stored on the location as `observed` and frozen into
+   * each new edge's intent.
+   */
+  observed?: Record<string, string>;
+  /** The place's readable name as the provider lists it (a zone name). */
+  label?: string;
+  /** A CDN place's zone name as the provider reads it (a location picked by zone id alone takes it). */
+  zoneName?: string;
 }
 
 /**
@@ -379,6 +397,8 @@ export interface SharedCertificateStatus {
 export interface DiscoverOption {
   id: string;
   label: string;
+  /** Short facts the pickers show next to the choice (a zone's status). */
+  facts?: Record<string, string>;
 }
 /** Choice lists for the account form; a missing key = not applicable or not yet discoverable. */
 export interface DiscoverResult {
@@ -390,6 +410,8 @@ export interface DiscoverResult {
   /** L7: DNS zones (Cloudflare) / TLS configurations (Fastly). */
   zones?: DiscoverOption[];
   tlsConfigurations?: DiscoverOption[];
+  /** Lists that stopped at their cap (more exist than are listed). */
+  truncated?: string[];
   /** Per-list failure codes: the form shows the field as free text instead. */
   errors?: Record<string, string>;
   /** Per failed list, the provider's redacted answer (`EdgeProviderError.meta.detail`). */
@@ -411,8 +433,9 @@ export interface EdgeProvider<
   testCredentials(cfg: Cfg): Promise<CredentialTestResult>;
   /**
    * Whether the certificate options on `cfg` can be issued at all (a CDN
-   * front's CAA preflight), for a node that chose other certificate options
-   * than the ones the credential test checked. Absent = nothing to check.
+   * front's CAA preflight at the zone on `cfg`), for a node that chose other
+   * certificate options than the ones the location's check covered. Absent =
+   * nothing to check.
    */
   certificatePreflight?(
     cfg: Cfg,
@@ -425,6 +448,15 @@ export interface EdgeProvider<
    * for a missing dependency; a failing call surfaces as `errors`.
    */
   discoverOptions?(partial: Partial<Cfg> & Record<string, unknown>): Promise<DiscoverResult>;
+  /**
+   * L7 adapters: check ONE location with the account's credentials (`cfg`
+   * carries the location's placement, and a Fastly front's resolved DNS
+   * account): whether new edges can be created there, the facts planning
+   * freezes from it and its readable name. Never throws for a refusal the
+   * provider answered; an unreachable provider throws. A location of an L4
+   * provider is read through `inventory` instead.
+   */
+  checkLocation?(cfg: Cfg): Promise<LocationCheckResult>;
 
   /** The ordered steps for one edge; each is a single provider call. */
   planProvision(cfg: Cfg, spec: EdgeSpec, tpl: Tpl): ResourceStep[];

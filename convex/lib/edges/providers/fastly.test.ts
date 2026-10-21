@@ -203,6 +203,9 @@ function fakeDns(seed: DnsRecord[] = []): FakeDns {
     async listCaa() {
       return [];
     },
+    async readZone() {
+      return { id: cfg.dns!.zoneId, name: cfg.dns!.zoneName, status: 'active', paused: false };
+    },
   };
   __setFastlyDnsClientFactory(() => client);
   return client;
@@ -1353,11 +1356,10 @@ describe('fastly: live views', () => {
 
   test('credentials need the global scope, and the pricing plan is recorded', async () => {
     await serve();
+    // The token alone: the zone (and its CAA records) is a location's check.
     expect(await fastlyProvider.testCredentials(cfg)).toEqual({
       ok: true,
       detail: 'scope=global; pricing_plan=enterprise',
-      // The zone has no CAA record at all: any certificate authority may issue.
-      observed: { caa: 'no_records', caaIssuer: 'certainly.com', caaCertificate: 'per_host' },
     });
   });
 
@@ -2159,7 +2161,7 @@ describe('fastly: nothing provider-shaped reaches an error', () => {
 
 // --- the CAA preflight of the credential test -----------------------------------------------
 
-describe('fastly: the credential test checks the zone lets the CA issue', () => {
+describe("fastly: a front location's check asks whether the zone lets the CA issue", () => {
   const issue = (value: string): CaaRecord => ({ flags: 0, tag: 'issue', value });
   const issuewild = (value: string): CaaRecord => ({ flags: 0, tag: 'issuewild', value });
   /** A zone's CAA records by name, and every name the walk asked for. */
@@ -2174,13 +2176,15 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
 
   test('records that name only another CA refuse the test with a code, naming the CA to allow', async () => {
     await serve();
+    fakeDns();
     caaZone({ 'example.org': [issue('letsencrypt.org')] });
-    const res = await fastlyProvider.testCredentials(cfg);
-    expect(res).toEqual({
+    const res = await fastlyProvider.checkLocation!(cfg);
+    expect(res).toMatchObject({
       ok: false,
       code: 'caa_forbids_ca',
       detail: 'the CAA records at example.org do not allow certainly.com',
       observed: {
+        zoneStatus: 'active',
         caa: 'forbids',
         caaIssuer: 'certainly.com',
         caaCertificate: 'per_host',
@@ -2204,8 +2208,9 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
 
   test('a record allowing the CA passes, and says where it was decided', async () => {
     await serve();
+    fakeDns();
     caaZone({ 'example.org': [issue('certainly.com')] });
-    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({
       ok: true,
       observed: { caa: 'allows', caaAt: 'example.org' },
     });
@@ -2215,7 +2220,14 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
     await serve();
     const asked = caaZone({ 'example.org': [issue(';')] });
     const sub = { ...cfg, dns: { ...cfg.dns!, zoneName: 'fronts.example.org' } };
-    expect(await fastlyProvider.testCredentials(sub)).toMatchObject({
+    const dns = fakeDns();
+    dns.readZone = async () => ({
+      id: cfg.dns!.zoneId,
+      name: 'fronts.example.org',
+      status: 'active',
+      paused: false,
+    });
+    expect(await fastlyProvider.checkLocation!(sub)).toMatchObject({
       ok: false,
       code: 'caa_forbids_ca',
     });
@@ -2228,10 +2240,11 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
 
   test('a zone wildcard that answers for a new front decides, as the CA would see it', async () => {
     await serve();
+    fakeDns();
     // `*.example.org CNAME elsewhere`: the resolver follows it for any new
     // name, so the probe label gets the CNAME target's CAA records.
     const asked = caaZone({ '_fcp-caa-check.example.org': [issue('letsencrypt.org')] });
-    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({
       ok: false,
       code: 'caa_forbids_ca',
       observed: { caaAt: '_fcp-caa-check.example.org' },
@@ -2241,21 +2254,23 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
 
   test('a record naming the CA but binding an account, or another validation method, refuses', async () => {
     await serve();
+    fakeDns();
     caaZone({
       'example.org': [issue('certainly.com; accounturi=https://acme.example.net/acct/1')],
     });
-    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ code: 'caa_forbids_ca' });
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({ code: 'caa_forbids_ca' });
     caaZone({ 'example.org': [issue('certainly.com; validationmethods=http-01')] });
-    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ code: 'caa_forbids_ca' });
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({ code: 'caa_forbids_ca' });
     caaZone({ 'example.org': [issue('certainly.com; validationmethods=http-01,dns-01')] });
-    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ ok: true });
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({ ok: true });
   });
 
   test('a wildcard account is checked against issuewild', async () => {
     await serve();
+    fakeDns();
     caaZone({ 'example.org': [issue('certainly.com'), issuewild('letsencrypt.org')] });
     const wild = { ...cfg, certificateScope: 'wildcard' as const };
-    expect(await fastlyProvider.testCredentials(wild)).toMatchObject({
+    expect(await fastlyProvider.checkLocation!(wild)).toMatchObject({
       ok: false,
       code: 'caa_forbids_ca',
       detail:
@@ -2263,15 +2278,16 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
       observed: { caaCertificate: 'wildcard' },
     });
     // The same zone lets the CA issue one certificate per front.
-    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ ok: true });
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({ ok: true });
   });
 
   test('a lookup that fails is recorded as unchecked and never refuses', async () => {
     await serve();
+    fakeDns();
     __setFastlyCaaLookup(async () => {
       throw new Error('SERVFAIL');
     });
-    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({
       ok: true,
       observed: { caa: 'unchecked' },
     });
@@ -3206,5 +3222,50 @@ describe('fastly: the front dials the origin on its own port', () => {
     const seen = await fastlyProvider.inspect(cfg, ledger);
     expect(seen.summary.members).toEqual([{ address: ORIGIN, port: 80 }]);
     expect(r.calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe('fastly: a front location is checked on its own', () => {
+  test('its DNS account reads the zone; the TLS configuration it names must be one this key sees', async () => {
+    await serve();
+    fakeDns();
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({
+      ok: true,
+      label: cfg.dns!.zoneName,
+      zoneName: cfg.dns!.zoneName,
+      observed: { zoneStatus: 'active' },
+    });
+    expect(
+      await fastlyProvider.checkLocation!({ ...cfg, tlsConfigurationId: 'TLSCONFIG02' }),
+    ).toMatchObject({ ok: true, label: `${cfg.dns!.zoneName} (Customer TLS configuration)` });
+    expect(
+      await fastlyProvider.checkLocation!({ ...cfg, tlsConfigurationId: 'TLSCONFIG99' }),
+    ).toMatchObject({ ok: false, code: 'tls_configuration_missing' });
+  });
+
+  test('a paused DNS zone is only noted (it still answers DNS); a zone not active is refused', async () => {
+    await serve();
+    const dns = fakeDns();
+    dns.readZone = async () => ({
+      id: cfg.dns!.zoneId,
+      name: cfg.dns!.zoneName,
+      status: 'active',
+      paused: true,
+    });
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({
+      ok: true,
+      detail: 'zone_paused',
+      observed: { zoneStatus: 'paused' },
+    });
+    dns.readZone = async () => ({
+      id: cfg.dns!.zoneId,
+      name: cfg.dns!.zoneName,
+      status: 'pending',
+      paused: false,
+    });
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({
+      ok: false,
+      code: 'zone_not_active',
+    });
   });
 });

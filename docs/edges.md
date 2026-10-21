@@ -321,43 +321,44 @@ account's `certificateScope` (an intent default, § "Fastly fronts"):
   waits for issuance: the wait step looks once and finishes when the certificate is issued.
   The subscription and its ACME record (`_acme-challenge.<zone>`, commented
   `fcp-cert:<customer>:<subscription>`) are recorded on each edge as `shared`, so no edge's
-  destroy deletes them. Only an operator removes them, from the account page, and only a
-  subscription an edge of this account ORDERED: the settle that records a shared resource the
-  step created also keeps `<kind>:<id>` on the account (`orderedSharedResources`), and one
-  discovery found and reused is FCP's to use, never to delete (`shared_certificate_not_ours`).
-  The certificate and ACME steps hold the external lock `fastly-certificate:<account>:<zone>`,
-  so two rotations never both order it, and the removal (`POST
-providers/{id}/shared-certificate/remove`, audited) takes the same lock as the account
-  (`externalLocks.holderAccountId`) and recounts the live fronts under it
+  destroy deletes them. Only an operator removes them, with the zone on the account page, and
+  only a subscription an edge of this account ORDERED: the settle that records a shared
+  resource the step created also keeps `<kind>:<id>` on the account
+  (`orderedSharedResources`), and one discovery found and reused is FCP's to use, never to
+  delete (`shared_certificate_not_ours`). The certificate and ACME steps hold the external lock
+  `fastly-certificate:<account>:<zone>`, so two rotations never both order it, and the removal
+  (`POST providers/{id}/locations/{loc}/shared-certificate/remove`, audited) takes the same lock
+  as the account (`externalLocks.holderAccountId`) and recounts the zone's live fronts under it
   (`edge.shared_certificate_in_use` while one uses it, `edge.lock_busy` while a step holds the
   lock), so no rotation starts reusing the certificate between the count and the delete. The
   lock is released when the call ends; one a dead removal left is taken over by the next step
-  once it lapses. An account still holding a wildcard it ordered cannot be deleted
-  (`edge.shared_certificate_present`), so nothing is left at the provider with no credentials to
-  remove it.
+  once it lapses. An account still holding a wildcard it ordered, in any zone, cannot be
+  deleted (`edge.shared_certificate_present`), so nothing is left at the provider with no
+  credentials to remove it.
   A subscription is reused only when it matches the account's certificate authority and its
-  EFFECTIVE TLS configuration (the default one when the account names none, the same one the
-  traffic CNAME points at); one ordered another way, or several, is never reused
+  EFFECTIVE TLS configuration (the location's, else the default one, the same one the traffic
+  CNAME points at); one ordered another way, or several, is never reused
   (`shared_certificate_ambiguous`). At the challenge name, a record with another customer's
   marker or none is never reused, replaced or deleted (`acme_name_in_use`); our own customer's
   marker for a subscription that no longer exists (a failed one deleted at the provider) is
   stale, and the step replaces it with the new subscription's; so is our own record that no
   longer holds the challenge's current value (edited by hand, or a target the provider moved).
-  The subscription's state is kept
-  on the account (`sharedCertificate`, read by the credential test and by the reconcile cron,
-  every pass while it is not issued, while it renews and within a week of expiry, every 30
-  minutes otherwise) and shown on the account page with its expiry and how many fronts use it.
-  A renewal reports what holds it up like a first issuance does, and one that is late (the
-  certificate expires within a week, or has: `certificate_expiring`) is raised by itself;
-  Certainly's 30-day certificates renew with about ten days left, so a week means days overdue.
-  A subscription serves only while it is issued or renewing AND its newest certificate's
-  `not_after` is still ahead: one renewing past expiry is pending (`certificate_expiring`) to
-  the wait step, discovery and describe alike, so no front is ready on an expired certificate.
-  Attention `certificate_waiting` on the account is critical once under three days remain. A
-  failed one refuses new fronts of the account (`shared_certificate_failed`), and so does one
-  the account would not order (`shared_certificate_ambiguous`), before anything is built for
-  the front. An account switched back to one certificate per front still shows the wildcard it
-  left behind, without raising it, until it is removed.
+  The subscription's state is kept on the zone's front location
+  (`edgeLocations.sharedCertificate`, read by the location checks a credential test runs and by
+  the reconcile cron, every pass while it is not issued, while it renews and within a week of
+  expiry, every 30 minutes otherwise) and shown with that zone on the account page with its
+  expiry and how many fronts use it. A renewal reports what holds it up like a first issuance
+  does, and one that is late (the certificate expires within a week, or has:
+  `certificate_expiring`) is raised by itself; Certainly's 30-day certificates renew with about
+  ten days left, so a week means days overdue. A subscription serves only while it is issued or
+  renewing AND its newest certificate's `not_after` is still ahead: one renewing past expiry is
+  pending (`certificate_expiring`) to the wait step, discovery and describe alike, so no front
+  is ready on an expired certificate. Attention `certificate_waiting` (one per zone) is critical
+  once under three days remain. A failed one refuses new fronts in that zone
+  (`shared_certificate_failed`), and so does one the account would not order
+  (`shared_certificate_ambiguous`), before anything is built for the front; the account's other
+  zones are not held back. An account switched back to one certificate per front still shows
+  each wildcard it left behind, without raising it, until it is removed.
 - `per_host` (an account created before, until it is switched): one subscription per front
   hostname, deleted with the edge.
 
@@ -374,30 +375,32 @@ one finds the first one's ACME record and stops at `acme_name_in_use`), and the 
 sits at the zone apex: a zone whose own certificate is validated there by another ACME client
 should keep one certificate per front.
 
-**CAA preflight.** The credential test of a Fastly account resolves the CAA records of the DNS
-account's zone over public DNS, walking up the tree the way the certificate authority does
+**CAA preflight.** The check of a Fastly front location (run by the credential test for every
+location, by "Check again" and when a zone is added) resolves the CAA records of that location's
+zone over public DNS, walking up the tree the way the certificate authority does
 (RFC 8659: the first name with any CAA record decides; for the wildcard, `issuewild` when the
 set has one, else `issue`; a critical property with an unknown tag forbids). One certificate per
 front is checked from `_fcp-caa-check.<zone>`, a label nothing serves: a zone wildcard answers
 for it as it will for a new front's name, and the resolver follows that answer's CNAME as the
 CA does (a name with nothing of its own then climbs from its parent). Records that exist and do
 not name the account's CA (`certainly.com` for Certainly, `letsencrypt.org` for Let's Encrypt,
-`globalsign.com` for GlobalSign) fail the test with `caa_forbids_ca`, and so does a record that
+`globalsign.com` for GlobalSign) fail the check with `caa_forbids_ca`, and so does a record that
 names it with parameters the issuance cannot meet (RFC 8657): an `accounturi` (the provider's
 ACME account is not FCP's to name) or a `validationmethods` list without `dns-01` (every
 certificate FCP orders uses the managed DNS challenge). No record at all, or a lookup that
 fails (`unchecked`), passes; so does a name too deep to walk to the top (more than
-`MAX_CAA_WALK` labels, also `unchecked`, never "no records"). The verdict is kept with the test
-(`observedSettings`: `caa`, `caaIssuer`, `caaCertificate`, `caaAt`). While the account's last test
-ended on it, the setup plan (`accounts[].reasons`), the setup run's first stage, the start guards
-of a rotation naming the account, the preflight and the selection all refuse it with that code
-before anything is allocated (`certificateRefusalOf`), and it does not count toward the
-account's API health. Fix the records or pick another CA, then test again. Changing a setting
-the test's answers depend on (the DNS account, or the TLS configuration, which decides the
-wildcard reused: `EDGE_RETEST_SETTINGS`) or the account's default certificate authority or
+`MAX_CAA_WALK` labels, also `unchecked`, never "no records"). The verdict is kept with the
+location's check (`edgeLocations.observed`: `caa`, `caaIssuer`, `caaCertificate`, `caaAt`; the
+refusal as its `checkError`). While a zone's last check ended on it, the setup plan (the
+location's reasons), the setup run's first stage, the start guards of a rotation naming the
+location, the preflight and the selection all refuse that zone with that code before anything
+is allocated (`certificateRefusalOf(account, location)`), the account's other zones stay
+usable, and it does not count toward the account's API health. Fix the records or pick another
+CA, then check the zone again. Changing the account's default certificate authority or
 certificate scope (its option defaults, see Provider options) marks the account untested
-(`retest_required`) and drops the shared-certificate read: a per-name verdict says nothing
-about `issuewild`. The lookups are DNS
+(`retest_required`) and drops each zone's shared-certificate read: a per-name verdict says
+nothing about `issuewild`. (The DNS account and the TLS configuration are a location's
+placement, never edited: another one is another location, checked on its own.) The lookups are DNS
 queries from the backend (`node:dns`, 4 s, two tries); the offline test suite refuses them like
 `fetch`, and tests answer through `__setFastlyCaaLookup`.
 
@@ -413,8 +416,8 @@ value there, is `tls_challenge_missing` (a DNS API that does not answer says not
 is kept on the edge while it lasts (`edges.waiting`), logged once per change on the rotation and
 on the guided run waiting on it (its progress line names it), raised as attention
 `certificate_waiting`, and a provision that times out while held up ends with that code instead
-of `provision_timeout`. The account's shared certificate is judged the same way and raised on the
-account.
+of `provision_timeout`. A zone's shared certificate is judged the same way and raised on its
+location.
 
 **Domains.** A Fastly edge planned now attaches its hostname as a versionless (Domain
 Management) domain: its own resource, linked to the service by id, created and deleted without a
@@ -2353,15 +2356,43 @@ is missing, and it never appears in the provider id lists or the wire contracts.
 
 ## Provider accounts and locations
 
-An account is a provider plus its credentials; where its edges are created is a **location**
-(`edgeLocations`, `convex/edgeLocations.ts`). `convex/lib/edges/accountSettings.ts` splits every
-provider's settings into the account's (`EDGE_SETTINGS_SCHEMAS`) and the placement
+An account is the **whole provider account**: its credentials and what they reach. Where its
+edges are created is a **location** (`edgeLocations`, `convex/edgeLocations.ts`), chosen when a
+node is protected, an address is added or one is replaced, and frozen on each edge.
+`convex/lib/edges/accountSettings.ts` splits every provider's settings into the account's
+(`EDGE_SETTINGS_SCHEMAS`: credential identifiers and intent defaults) and the placement
 (`EDGE_PLACEMENT_SCHEMAS`); `accountSettings.test.ts` pins that every key sits in exactly one
 classification list. A location holds its frozen placement, `placeKey` (the provider's own
 region or zone id) and `placementHash`; `locationKeyOf` (`lib/edges/locations.ts`) is
 `<provider>:<placeKey>`, account-agnostic, because two accounts in one region share address
-ranges. A CDN account gets exactly one location, `anycast`, created with the account; adding
-another is `edge.location_not_geographic`.
+ranges. Only an OVH key's API endpoint still locates every resource of its account (locked
+while edges exist); nothing else on an account is locked.
+
+**A CDN's place is a DNS zone.** A Cloudflare location's placement is `{zoneId, zoneName}`, one
+of the zones its token reaches; a Fastly location's is `{dnsAccountId, zoneId, zoneName,
+tlsConfigurationId?}`: the DNS account its records are written through, one of that account's
+zones, and the TLS configuration (absent = the Fastly account's default), which decides which
+addresses members reach. Every CDN location keeps `placeKey: anycast`: the zones of one CDN share
+its address ranges, so per-country grades, the renderer's backup tier and the provider-set
+groups treat them as one place. A zone location is checked with the provider when it is created
+(`checkLocation`: readable with the credentials that will use it, active, not paused, its name
+unchanged; the encryption mode `off` is refused), on **Check again**, on an inventory pull, and
+for every location in use whenever the account is tested or its credentials rotate. What the
+check saw (`edgeLocations.observed`: the zone's encryption mode, WebSockets, status) is frozen
+into each new edge's intent; a refusal is `edgeLocations.checkError`, and no new edge is planned
+there (`location_check_failed`) until a check passes. Each zone is its own pick, so a node may
+use several zones of one account, trust is taken per zone, and a detector burn cools only the
+burned zone.
+
+**What an account reaches** is its catalog (`edgeProviderCatalog`, one row per account and kind:
+zones, regions, projects, TLS configurations), listed by `edgeProviderOps.refreshCatalog`
+after a passing credential test or rotation, on `POST providers/{id}/catalog/refresh`
+(throttled), and when a picker finds it older than 12 hours (`GET providers/{id}/catalog`).
+Cloudflare zones are listed page by page up to 1,000 (`truncated` past that). A failed listing
+keeps the last items and records why. The catalog is a menu, never an authority: creating a
+location asks the provider again. An account may be created with credentials alone; the old
+single-place shape (a zone, or a DNS account, among the settings) still makes its first
+location, and a Fastly payload naming only its DNS account takes that account's zone.
 
 **Adding one.** `POST providers/{id}/locations/options {placement?}` lists what the stored
 credentials can use (regions, projects, networks, subnets, the load balancer flavors of a
@@ -2376,14 +2407,23 @@ names it, or an open setup run picked it before creating its first edge (`edge.l
 A create, or a change to the location's template or regional values, refuses
 (`edge.template_value_required`) when a regional value the provider requires (the OVH flavor id)
 would be empty in both the template the location resolves and its own values. An account PATCH that names a placement key is
-`edge.placement_on_location`. Both kinds of call go through the `admin.edges.provider-call`
+`edge.placement_on_location` (a zone included: another zone is another location). A CDN
+location `POST providers/{id}/locations {placement: {zoneId}}` takes the zone's name from the
+catalog; the provider check refuses with `edge.location_not_offered` (the key cannot read the
+zone), `edge.location_unusable` (paused, not active, encryption off, renamed, an unknown TLS
+configuration) or `edge.location_unchecked`, and a front naming a DNS account that is missing,
+switched off or no DNS provider is `edge.dns_account_unusable`. Both kinds of call go through the `admin.edges.provider-call`
 throttle when they reach the provider.
 
 **Frozen per edge.** Each edge records `locationId`, `placeKey` and `placement` when it is
 planned (`edges.ts insertPlannedEdge`, `relays.ts` adopt). `edgeProviderOps.loadAdapter` builds
 the adapter's settings from the account, then the edge's own placement for a call about that
 edge (step, poll, discover, describe, inspect including the live refresh, destroy), or the location's for planning
-(`planProvision`, `effectiveTemplate`, `inventory`, adoption). A credential test takes no
+(`planProvision`, `effectiveTemplate`, `inventory`, adoption); a CDN account's call naming no
+place acts in its default location. For an existing L7 edge every value its intent froze wins
+(`frozenSettingsOf`: zone, DNS account, TLS configuration, certificate authority), so no edit of
+a location or an account moves a live front. An imported front's hostname must sit in the picked
+location's zone (`edge.hostname_not_in_zone`). A credential test takes no
 placement: Gcore and OVH list projects, Scaleway reads its first zone, UpCloud reads the
 account. So a describe or a destroy always reaches the region the resource is in, even when the
 account has others.
@@ -2526,13 +2566,14 @@ nothing about the region, so it stays.
 ## Fastly fronts
 
 A Fastly account is an API token with the global scope (on an automation user, with the
-WebSockets product entitlement) plus settings: the DNS account whose zone holds its names
-(locating: locked while edges exist), the certificate authority, an optional TLS configuration,
-`certificateScope` and `domainModel` (intent defaults: a change moves new edges only). One edge
+WebSockets product entitlement). Each of its front locations names a DNS account and one of
+its zones, with an optional TLS configuration, all frozen on each edge planned there; the
+certificate authority and `certificateScope` are certificate option defaults, and
+`domainModel` an account setting (intent defaults: a change moves new edges only). One edge
 is ten steps: the VCL service, its one origin backend, the WebSocket upgrade snippet, the domain
 (versionless, or classic when the account says so),
 the WebSockets product, the version activation, the certificate (the hostname's own or the
-account's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME
+zone's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME
 (§ "L7 edges" for certificates, the CAA preflight, waiting codes and domains).
 
 **The origin backend.** The origin must listen on its scheme's own port (443 over TLS, 80
@@ -2550,12 +2591,12 @@ port the provider holds.
 - **Switching domains.** On the account page, Domains, "A new front's name is": its own
   domain linked to the service (versionless, the default) or a domain on the service version
   (classic, only on accounts created before September 2025). Fronts that exist keep theirs;
-  like any settings change it untrusts the location until a test and a proven front.
+  like any settings change it untrusts the locations until a test and a proven front.
 - **Switching to the wildcard.** On the account page, Certificates, set Certificate to "One
   wildcard for every front" and save the defaults: nodes protected from then on start from it
   (one node can also choose it alone, under its Options when it is protected). Like a settings
-  change it untrusts the account's location, and as a certificate default it marks the account
-  untested (`retest_required`): test the account again (the CAA preflight then checks
+  change it untrusts the account's locations, and as a certificate default it marks the account
+  untested (`retest_required`): test the account again (each zone's CAA preflight then checks
   `issuewild`), and its next proven front trusts it again. Fronts that exist keep their own
   certificates until they are replaced.
 - **CAA.** Allow the account's CA at the zone (or wherever its CAA records sit, up the tree) with
@@ -2628,13 +2669,15 @@ edge whose frozen choices (tuning) or frozen certificate differ from what its pi
 now (`builtForChoices`, `lib/edges/choices.ts`). A template edit is not a choice: it keeps
 the existing rule (it untrusts the locations that fall back to the template).
 
-**Certificates a node chooses.** A pick whose certificate differs from what the account's
-credential test checked (another authority, the wildcard) is checked against the zone's CAA
-records when its plan is made (`edgeProviderOps.certificatePreflight`, the adapter's
-`certificatePreflight`): a refusal is a problem of that pick, before anything is ordered.
-An account whose own default the zone's CAA refuses stays refused as a whole until its
-default or the zone's records change. The account's shared wildcard is read as a front
-that chose it froze it, even where the account defaults to one certificate per front.
+**Certificates a node chooses.** A pick whose certificate differs from what its location's
+check covered (the account's defaults: another authority, the wildcard) is checked against
+that zone's CAA records when its plan is made (`edgeProviderOps.certificatePreflight` with
+the pick's location, the adapter's `certificatePreflight`): a refusal is a problem of that
+pick, before anything is ordered. A zone whose CAA refuses the account's own default stays
+refused (the location's `checkError`) until the default or the zone's records change and the
+zone is checked again; the account's other zones are not held back. A zone's shared wildcard
+is read as a front there that chose it froze it, even where the account defaults to one
+certificate per front.
 
 The zone holds ONE shared wildcard, issued by the account's default authority (the account
 reads, renews and removes it under that one). A node takes it, or one certificate per front
@@ -2912,13 +2955,16 @@ the only one today. The seam is the `DnsClient` interface in
   records in ONE zone. Every record carries the ownership `comment` marker (at most 100
   characters) that discovery proves ownership with; `findRecordsByName` is one request;
   `deleteRecord` is idempotent (a missing record is a success).
-- `listCaa`, the apex CAA records as the zone itself holds them (the credential test's
+- `listCaa`, the apex CAA records as the zone itself holds them (a front location's CAA
   preflight reads CAA over public DNS instead, since records above the zone decide too).
+- `readZone`, the zone as the credentials read it: a front location's check, and the reach
+  check a credential rotation runs on every zone other accounts write through this one.
 - `zoneId`, `zoneName` and `accountId` (the FCP account the credentials came from), recorded in
   every DNS ledger resource so cleanup acts on the zone the records were written into.
 
 A new DNS provider needs: the id with its credentials and settings schemas (§ "Adding an edge
-provider", steps 1 and 2; its settings name the zone), a `DnsClient` beside `cloudflareDns.ts`
+provider", steps 1 and 2; its placement names the zone, its catalog lists the zones its token
+reaches), a `DnsClient` beside `cloudflareDns.ts`
 (no transport retries, logging off, errors reduced to an HTTP status and a short code, never a
 response body), a credential test that accepts every token kind the provider issues,
 `role: 'dns'` and `providesDns: true` in its capability row, and `dnsClientFor` / the origin-name
@@ -3012,9 +3058,9 @@ lifecycle runs in that test and its rows appear here.
 | ovh        | DELETE | `^/1\.0/cloud/project/[^/]+/region/[^/]+/gateway/[^/]+$`                          | delete the gateway the compound create minted                                                                                                         | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
 | cloudflare | GET    | `^/client/v4/user/tokens/verify$`                                                 | credential test: the token is active                                                                                                                  | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
 | cloudflare | GET    | `^/client/v4/accounts/[^/]+/tokens/verify$`                                       | credential test: an account-owned token is active                                                                                                     | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
-| cloudflare | GET    | `^/client/v4/zones$ ?per_page`                                                    | account form: the zones the token can see                                                                                                             | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
-| cloudflare | GET    | `^/client/v4/zones/[^/]+$`                                                        | credential test: the zone is active and not paused                                                                                                    | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
-| cloudflare | GET    | `^/client/v4/zones/[^/]+/settings/(ssl\|websockets)$`                             | zone encryption mode and WebSockets setting (recorded, not required)                                                                                  | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones$ ?page&per_page`                                               | credential test (one page) and the account catalog (paged, up to 1,000): the zones the token reaches                                                  | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones/[^/]+$`                                                        | location check: the zone is readable, active and not paused (also a DNS account's zone read)                                                          | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones/[^/]+/settings/(ssl\|websockets)$`                             | location check: zone encryption mode and WebSockets setting (recorded, not required)                                                                  | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
 | cloudflare | POST   | `^/client/v4/zones/[^/]+/dns_records$`                                            | create the proxied record that IS the edge; also the ACME and traffic records a Fastly edge writes into this zone                                     | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
 | cloudflare | GET    | `^/client/v4/zones/[^/]+/dns_records$ ?name.exact&per_page`                       | look one name up (unknown-outcome discovery, CAA preflight), including for a Fastly edge                                                              | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
 | cloudflare | GET    | `^/client/v4/zones/[^/]+/dns_records$ ?page&per_page&proxied`                     | paged sweep of proxied records for the import inventory                                                                                               | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
@@ -3064,6 +3110,26 @@ lifecycle runs in that test and its rows appear here.
 | fastly     | GET    | `^/current_customer$`                                                             | credential test: the pricing plan (informational)                                                                                                     | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Provider accounts** (CDN zones as locations) widen the schema only: an L7 account's zone
+keys (Cloudflare `zoneId` / `zoneName`, a Fastly account's `dnsAccountId` and
+`tlsConfigurationId`) become optional in its settings and appear on its location's
+placement, locations gain `observed`, `observedAt`, `checkError`, `checkErrorDetail` and
+`sharedCertificate`, and the `edgeProviderCatalog` table is new. `seedCutover` runs
+`edgeL7Locations:migrate`: ONE transaction, idempotent, location ids unchanged. It moves each
+L7 account's zone onto its `anycast` location (with the zone facts its last test read), moves
+a Fastly account's `*.<zone>` shared certificate onto that location, and strips the legacy
+keys; live edges are untouched (their intent froze their zone). Until it has run, a read
+fallback serves the legacy keys (`lib/edges/l7Place.ts`), so no maintenance freeze is needed.
+Check `edgeL7Locations:status` afterwards: `legacyAccounts` and `locationsWithoutZone` are 0
+(`openRuns` is for information). Then test each CDN account again, so every zone records its
+own check (the CAA verdict included). To roll back, run
+`edgeL7Locations:unmigrate {"confirm":"restore-single-zone-settings"}` first: it puts each
+single-zone account's keys, zone facts and shared certificate back on the account and drops
+what an older schema refuses (the location check fields, the catalog); an account with a
+second zone is reported, and must be cut back to one zone before the older build is deployed.
+A rollback past provider options then runs `edgeProviderAccounts:purgeOptionsForRollback`. A
+later release drops the legacy keys and the fallback.
 
 **Provider options** add optional fields only (`edgeProviderAccounts.optionDefaults`, pick and
 run `options`, the edges' `choices`, `baseTemplateHash` and `learnedAddresses`, rotations'

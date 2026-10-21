@@ -48,12 +48,7 @@ import {
   providerHealthSatisfies,
   zoneModeGovernsOrigin,
 } from './lib/edges/providers/capabilities';
-import {
-  buildProvisionIntent,
-  IntentError,
-  parseIntent,
-  parseObservedSettings,
-} from './lib/edges/intent';
+import { buildProvisionIntent, IntentError, parseIntent } from './lib/edges/intent';
 import {
   qualificationBinding,
   qualificationRefusal,
@@ -76,6 +71,7 @@ import { removableUnder } from './lib/edges/providerSet';
 import { resolveTemplateFor } from './edgeTemplates';
 import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choices';
 import { defaultLocationOf } from './edgeLocations';
+import { l7PlaceOf } from './lib/edges/l7Place';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRestore, hasHideRows, startRestoreWorkflow } from './lib/edges/restore';
 import {
@@ -1389,10 +1385,15 @@ async function insertAdoptedEdge(
       accountRow!._id,
       a.locationRow ?? null,
     );
-    const dnsAccountId = (accountRow!.settings as { dnsAccountId?: string }).dnsAccountId;
-    const dnsAccount = dnsAccountId
-      ? await ctx.db.get(dnsAccountId as Id<'edgeProviderAccounts'>)
-      : null;
+    // The front lives in the picked location's zone: its records are looked
+    // for there, so a hostname outside it cannot be described or destroyed.
+    const place = await l7PlaceOf(ctx.db, accountRow!, a.locationRow ?? null);
+    const zone = place.zoneName?.toLowerCase();
+    if (zone && hostname && hostname !== zone && !hostname.endsWith(`.${zone}`))
+      throw new ConvexError({
+        code: 'edge.hostname_not_in_zone',
+        message: `The hostname is not in ${zone}: pick the location of its zone`,
+      });
     try {
       provisionIntent = JSON.stringify(
         buildProvisionIntent({
@@ -1400,8 +1401,8 @@ async function insertAdoptedEdge(
             id: accountRow!._id as string,
             provider: accountRow!.provider,
             settings: accountRow!.settings as Record<string, unknown>,
-            observedSettings: parseObservedSettings(accountRow!.observedSettings),
           },
+          place,
           // An imported front serves the certificate it has; the account's
           // defaults are what a discovery or a destroy looks for.
           certificate: certificateValuesFor(
@@ -1409,14 +1410,6 @@ async function insertAdoptedEdge(
             accountOptionDefaultsOf(accountRow!),
             null,
           ),
-          dnsAccount: dnsAccount
-            ? {
-                id: dnsAccount._id as string,
-                provider: dnsAccount.provider,
-                settings: dnsAccount.settings as Record<string, unknown>,
-                observedSettings: parseObservedSettings(dnsAccount.observedSettings),
-              }
-            : null,
           specName: `adopted-${origin.slug}-${now.toString(36)}`,
           templateParams: template.params,
           templateHash: template.hash,

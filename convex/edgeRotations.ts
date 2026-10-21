@@ -119,7 +119,6 @@ import {
   buildProvisionIntent,
   IntentError,
   parseIntent,
-  parseObservedSettings,
   type ProvisionIntent,
 } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
@@ -146,6 +145,7 @@ import {
 } from './nodeActivation';
 import type { PublicationShape } from './lib/backend/activation';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
+import { l7PlaceOf, l7PlaceProblemOf } from './lib/edges/l7Place';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -702,7 +702,9 @@ export async function collectStartBlockers(
     const named = a.requestedLocationId ? await ctx.db.get(a.requestedLocationId) : null;
     const accountId = a.requestedAccountId ?? named?.accountId;
     const acct = accountId ? await ctx.db.get(accountId) : null;
-    const certificate = acct ? certificateRefusalOf(acct) : null;
+    // The zone it would be planned in: the named one, else the account's default.
+    const zone = named ?? (acct ? await defaultLocationOf(ctx.db, acct) : null);
+    const certificate = acct ? certificateRefusalOf(acct, zone) : null;
     if (certificate)
       push(
         `edge.${certificate}`,
@@ -1614,16 +1616,20 @@ export const commitSelection = internalMutation({
     if (!origin || !account || !listener) return { ok: false as const, code: 'missing' as const };
     const layer = edgeLayerOf(account.provider);
     // Freeze the intent HERE, before any provider call: from this point on, an
-    // operator editing the account's zone, its DNS account, the TLS
-    // configuration or the template no longer moves this edge. Everything the
-    // remaining steps, discovery, describe and destroy need is on the row.
+    // operator editing the account's certificate authority or the template no
+    // longer moves this edge (the location's zone, DNS account and TLS
+    // configuration never change). Everything the remaining steps, discovery,
+    // describe and destroy need is on the row.
     let provisionIntent: ProvisionIntent | null = null;
     if (layer === 'l7') {
-      const dnsAccountId = (account.settings as { dnsAccountId?: string }).dnsAccountId;
-      const dnsAccount = dnsAccountId
-        ? await ctx.db.get(dnsAccountId as Id<'edgeProviderAccounts'>)
+      const location = a.locationId
+        ? await ctx.db.get(a.locationId)
+        : await defaultLocationOf(ctx.db, account);
+      const place = await l7PlaceOf(ctx.db, account, location);
+      const dnsAccount = place.dnsAccountId
+        ? await ctx.db.get(place.dnsAccountId as Id<'edgeProviderAccounts'>)
         : null;
-      if (dnsAccountId && !dnsAccount)
+      if (place.dnsAccountId && !dnsAccount)
         return { ok: false as const, code: 'dns_account_missing' as const };
       // A disabled DNS account stops NEW allocations (reconciliation and
       // destroy keep working through it, which is why this is the only gate).
@@ -1635,22 +1641,14 @@ export const commitSelection = internalMutation({
             id: account._id as string,
             provider: account.provider,
             settings: account.settings as Record<string, unknown>,
-            observedSettings: parseObservedSettings(account.observedSettings),
           },
+          place,
           // The certificate the node's pick asks for (the account's defaults otherwise).
           certificate: certificateValuesFor(
             account.provider,
             accountOptionDefaultsOf(account),
             a.choices !== undefined ? parseOptionValues(a.choices) : null,
           ),
-          dnsAccount: dnsAccount
-            ? {
-                id: dnsAccount._id as string,
-                provider: dnsAccount.provider,
-                settings: dnsAccount.settings as Record<string, unknown>,
-                observedSettings: parseObservedSettings(dnsAccount.observedSettings),
-              }
-            : null,
           specName: edgeResourceName(origin.slug, a.nameNonce),
           templateParams: (a.templateParams as Record<string, unknown>) ?? {},
           templateHash: a.templateHash,
@@ -2929,7 +2927,8 @@ export async function selectionContext(
     if (!a.enabled) return failure('account_disabled');
     // A certificate that cannot be had (CAA forbids the CA, the shared
     // wildcard failed) is named as such, before the generic untested.
-    const certificate = certificateRefusalOf(a);
+    const zone = named ?? (await defaultLocationOf(ctx.db, a));
+    const certificate = certificateRefusalOf(a, zone);
     if (certificate) return failure(certificate);
     if (!accountTested(a)) return failure('account_untested');
     // A DNS account named on purpose still fronts nothing while the switch is off.
@@ -2939,6 +2938,10 @@ export async function selectionContext(
     const where = named ?? (await defaultLocationOf(ctx.db, a));
     if (!where) return failure('no_location');
     if (!where.enabled) return failure('location_disabled');
+    // A CDN place a new edge cannot be planned in (no zone, a refused check,
+    // its DNS account gone or off, its encryption mode never read).
+    const placeProblem = await l7PlaceProblemOf(ctx.db, a, where);
+    if (placeProblem) return failure(placeProblem);
     if (!where.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)
       return failure('account_mismatch');
@@ -2986,17 +2989,20 @@ export async function selectionContext(
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
-    // An account whose front could not get a certificate is never picked.
-    const certificate = certificateRefusalOf(a);
-    if (certificate) {
-      certificateRefused = certificateRefused ?? certificate;
-      continue;
-    }
     // Same rule as the insert-time capacity check: observe-only edges were not
     // provisioned by FCP and never consume its allocation.
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
     for (const loc of await locationsOfAccount(ctx.db, a._id)) {
-      if (!loc.enabled) continue;
+      // A zone whose fronts could not get a certificate is never picked.
+      const certificate = certificateRefusalOf(a, loc);
+      if (certificate) {
+        certificateRefused = certificateRefused ?? certificate;
+        continue;
+      }
+      // A place whose last check refused it (a paused zone) gets no new edge.
+      // A place no new edge can be planned in (a CDN zone with no zone, a
+      // refused check, its DNS account off, an unread encryption mode).
+      if (!loc.enabled || (await l7PlaceProblemOf(ctx.db, a, loc))) continue;
       keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
       if (underApproval) {
         const tpl = await resolveBuildFor(
@@ -3126,27 +3132,19 @@ async function describeAccount(
   account: Doc<'edgeProviderAccounts'>,
   location: Doc<'edgeLocations'>,
 ): Promise<Pick<SelectionContext, 'account' | 'accountFailure'>> {
-  // The zone the hostname will be minted under: the account's own (a provider
-  // that hosts its DNS) or the referenced DNS account's.
-  const settings = account.settings as { zoneName?: string; dnsAccountId?: string };
-  let zoneName = settings.zoneName ?? null;
-  // The zone's encryption mode is observed on the account that HOSTS the zone
-  // (a provider that hosts its own DNS: itself; otherwise the DNS account).
-  let zoneHost = account;
-  if (!zoneName && settings.dnsAccountId) {
-    const dns = await ctx.db.get(settings.dnsAccountId as Id<'edgeProviderAccounts'>);
-    zoneName = (dns?.settings as { zoneName?: string } | undefined)?.zoneName ?? null;
-    if (dns) zoneHost = dns;
-  }
+  // The zone the hostname will be minted under and its encryption mode: the
+  // location's (a CDN place is its zone), read once its check observed it.
+  const place =
+    edgeLayerOf(account.provider) === 'l7' ? await l7PlaceOf(ctx.db, account, location) : null;
   return {
     account: {
       id: account._id,
       locationId: location._id,
       provider: account.provider,
       defaultTemplateId: account.defaultTemplateId ?? null,
-      zoneName,
-      zoneSslMode: parseObservedSettings(zoneHost.observedSettings).zoneSslMode ?? null,
-      zonePlan: parseObservedSettings(zoneHost.observedSettings).zonePlan ?? null,
+      zoneName: place?.zoneName ?? null,
+      zoneSslMode: place?.observed?.zoneSslMode ?? null,
+      zonePlan: place?.observed?.zonePlan ?? null,
     },
     accountFailure: null,
   };

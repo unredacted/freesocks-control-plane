@@ -410,18 +410,21 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/client/v4/zones$',
-        purpose: 'account form: the zones the token can see',
-        query: ['per_page'],
+        purpose:
+          'credential test (one page) and the account catalog (paged, up to 1,000): the zones the token reaches',
+        query: ['page', 'per_page'],
       },
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+$',
-        purpose: 'credential test: the zone is active and not paused',
+        purpose:
+          "location check: the zone is readable, active and not paused (also a DNS account's zone read)",
       },
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+/settings/(ssl|websockets)$',
-        purpose: 'zone encryption mode and WebSockets setting (recorded, not required)',
+        purpose:
+          'location check: zone encryption mode and WebSockets setting (recorded, not required)',
       },
       {
         method: 'POST',

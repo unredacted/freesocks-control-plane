@@ -20,6 +20,7 @@ import { locationKeyOf } from './locations';
 import { accountsForSlot } from './rotation';
 import { dnsProvidersFrontOf } from '../edgeConfig';
 import { edgeRoleOf } from './providers/capabilities';
+import { l7PlaceProblemOf } from './l7Place';
 import {
   coverTargets,
   coverageDeficit,
@@ -127,6 +128,9 @@ export async function setPicksOf(
     if (!account) continue;
     const fronts =
       edgeRoleOf(account.provider) !== 'dns' || (dnsFront ??= await dnsProvidersFrontOf(db));
+    // A CDN place no new edge can be planned in carries nothing (no zone, a
+    // refused check, its DNS account gone or off, an unread encryption mode).
+    const placeOk = location.enabled && !(await l7PlaceProblemOf(db, account, location));
     out.push({
       pick: {
         locationId: location._id as string,
@@ -136,11 +140,7 @@ export async function setPicksOf(
       location,
       account,
       usable:
-        fronts &&
-        location.enabled &&
-        account.enabled &&
-        !!account.lastTestOkAt &&
-        !account.lastTestError,
+        fronts && placeOk && account.enabled && !!account.lastTestOkAt && !account.lastTestError,
     });
   }
   return out;
@@ -172,7 +172,8 @@ export interface SetState {
 
 /**
  * The origin's requirement and where it stands. A pick that is not usable
- * (switched off, its account disabled or untested) carries nothing: like a
+ * (switched off, a CDN place no new edge can be planned in, its account
+ * disabled or untested) carries nothing: like a
  * cooling one, automatic work is never asked to provision into it.
  */
 export async function setStateOf(

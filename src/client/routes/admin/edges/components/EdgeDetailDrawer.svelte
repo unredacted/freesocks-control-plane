@@ -1,6 +1,8 @@
 <script lang="ts">
   /**
-   * One edge in a side sheet: identity, addresses, publication, readiness,
+   * One edge in a side sheet: identity (its location and, for a CDN front, the
+   * zone, DNS account, TLS configuration and certificate authority it froze),
+   * addresses, publication, readiness,
    * qualification, provider resources, reachability, the checks from each
    * country (with "Mark for a country" and "Check from every country now"),
    * recent probes and the live
@@ -30,16 +32,17 @@
     edgeCountriesQuery,
     edgeDetailQuery,
     invalidateEdge,
+    providersQuery,
     refreshEdgeLive,
     setEdgeLiveSnapshot,
   } from '@client/lib/edgesApi';
   import { codeLabel, humanizeCode, readinessTone, READINESS_LABELS } from '@client/lib/edgeCodes';
+  import { EDGE_PROVIDER_META } from '@client/lib/edgeProviderMeta';
   import { countryName } from '@client/lib/countries';
   import AdminListState from '../../AdminListState.svelte';
   import StatusBadge from './StatusBadge.svelte';
   import LayerBadge from './LayerBadge.svelte';
   import KeyValue from './KeyValue.svelte';
-  import { providersQuery } from '@client/lib/edgesApi';
   import { optionSummary } from '../lib/options';
   import CodeNote from './CodeNote.svelte';
   import EdgeCountryActions from './EdgeCountryActions.svelte';
@@ -75,6 +78,28 @@
   const edge = $derived(detail.data?.edge ?? null);
   const live = $derived(detail.data?.live ?? null);
 
+  // The accounts (with their locations) name the edge's location and the DNS
+  // account its front writes through. The page around the drawer reads the
+  // same list, so this shares its cache.
+  const providers = providersQuery();
+  const accounts = $derived(providers.data?.accounts ?? []);
+  const locationLabel = $derived.by((): string => {
+    if (!edge) return '';
+    if (edge.locationId) {
+      for (const a of accounts) {
+        const l = a.locations.find((x) => x.id === edge.locationId);
+        if (l) return l.label;
+      }
+    }
+    return edge.placeKey ?? '';
+  });
+  const accountName = (id: string): string => accounts.find((a) => a.id === id)?.name ?? id;
+  const CERTIFICATE_AUTHORITY_WORDS: Record<string, string> = {
+    certainly: 'Certainly',
+    'lets-encrypt': "Let's Encrypt",
+    globalsign: 'GlobalSign',
+  };
+
   const refresh = createMutation(() => ({
     mutationFn: (id: string) => refreshEdgeLive(id),
     onSuccess: (data, id) => {
@@ -93,20 +118,45 @@
   );
 
   // The node's options it was built with, in words (empty: built before options).
-  const providersQ = providersQuery();
   const builtWith = $derived.by(() => {
     if (!edge?.choices || !edge.provider) return '';
     const said = optionSummary(
-      providersQ.data?.optionSchemas[edge.provider]?.fields ?? [],
+      providers.data?.optionSchemas[edge.provider]?.fields ?? [],
       edge.choices,
     );
     return said.length > 0 ? said.join(', ') : "The location's defaults";
   });
+  // What an L7 edge froze when it was planned: later edits of its location or
+  // account never move it, so these are the values its provider calls use.
+  const frontRows = $derived.by((): KeyValueRow[] => {
+    const f = edge?.front;
+    if (!edge || !f) return [];
+    // Only a front whose records go through a DNS account picks a TLS configuration.
+    const picksTls = !!edge.provider && EDGE_PROVIDER_META[edge.provider].needsDnsAccount;
+    return [
+      { label: 'Zone', value: f.zoneName, mono: true, copy: true },
+      { label: 'DNS account', value: f.dnsAccountId ? accountName(f.dnsAccountId) : '' },
+      {
+        label: 'TLS configuration',
+        value: f.tlsConfigurationId ?? (picksTls ? 'Default' : ''),
+        mono: !!f.tlsConfigurationId,
+      },
+      {
+        label: 'Certificate authority',
+        value: f.certificateAuthority
+          ? (CERTIFICATE_AUTHORITY_WORDS[f.certificateAuthority] ?? f.certificateAuthority)
+          : '',
+      },
+    ];
+  });
+
   const identityRows = $derived.by((): KeyValueRow[] => {
     if (!edge) return [];
     return [
       { label: 'Name', value: edge.name, mono: true, copy: true },
       { label: 'Provider', value: providerLabel(edge.provider) },
+      { label: 'Location', value: locationLabel },
+      ...frontRows,
       {
         label: 'Managed by FCP',
         value: edge.managed,

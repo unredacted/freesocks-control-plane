@@ -1852,7 +1852,7 @@ export const prepareContext = internalQuery({
         account: account ? { provider: account.provider, name: account.name } : null,
         location: location && location.enabled ? { id: location._id, label: location.label } : null,
         accountTested: !!account && accountTested(account),
-        certificateRefusal: account ? certificateRefusalOf(account) : null,
+        certificateRefusal: account ? certificateRefusalOf(account, location) : null,
         accountEnabled: !!account && account.enabled,
       });
     }

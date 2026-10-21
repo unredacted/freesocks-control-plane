@@ -647,12 +647,17 @@ async function accounts(t: T) {
   await t.mutation(internal.edgeProviderAccounts.recordTest, { id: l4, ok: true });
   const l7 = await createAccount(t, { provider: 'cloudflare', name: 'acct-l7' });
   await t.mutation(internal.edgeProviderAccounts.recordTest, { id: l7, ok: true });
-  await t.run((ctx) =>
-    ctx.db.patch(l7, {
-      observedSettings: JSON.stringify({ zoneSslMode: 'full' }),
-      observedAt: Date.now(),
-    }),
-  );
+  // The zone's encryption mode, as the zone location's check observed it.
+  await t.run(async (ctx) => {
+    for (const zone of await ctx.db
+      .query('edgeLocations')
+      .withIndex('by_account', (q) => q.eq('accountId', l7))
+      .collect())
+      await ctx.db.patch(zone._id, {
+        observed: JSON.stringify({ zoneSslMode: 'full' }),
+        observedAt: Date.now(),
+      });
+  });
   return { l4, l7 };
 }
 

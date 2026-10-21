@@ -442,8 +442,15 @@ export const DEFAULT_MODE_SETUP: readonly ModeSetupInput[] = [
 export const BackendSetupInput = z.object({
   profileName: z.string().min(1).max(60).default('FreeSocks-Config'),
   modes: z.array(ModeSetupInput).min(1).max(12),
-  /** The Cloudflare account whose zone WebSocket nodes get their origin names in; null = explicit hostnames per node. */
-  originDns: z.object({ accountId: z.string() }).nullable().default(null),
+  /**
+   * The DNS account and the one of its zones WebSocket nodes get their origin
+   * names in; null = explicit hostnames per node. A request without `zoneId`
+   * keeps the zone the setup has with that account, else the account's only one.
+   */
+  originDns: z
+    .object({ accountId: z.string(), zoneId: z.string().min(1).max(64).optional() })
+    .nullable()
+    .default(null),
   /** A backend that already has nodes or addresses is taken over only when the operator says so (typed). */
   adopt: z.boolean().default(false),
 });
@@ -487,7 +494,9 @@ export const BackendSetupView = z.object({
     z.object({ family: z.string(), state: z.enum(['matched', 'drifted', 'refused']) }),
   ),
   privacy: z.enum(['ok', 'drifted']).nullable(),
-  originDns: z.object({ accountId: z.string(), zoneName: z.string() }).nullable(),
+  originDns: z
+    .object({ accountId: z.string(), zoneId: z.string(), zoneName: z.string() })
+    .nullable(),
   /** Whether this backend was taken over with existing nodes or addresses. */
   adopted: z.boolean(),
   /**

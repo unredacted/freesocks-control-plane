@@ -154,16 +154,32 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'providers' && b && c === 'inventory' && d === 'refresh') {
     return 'admin.edges.provider-call';
   }
-  // A location's choices and its creation ask the provider for its regions.
+  // A location's choices and its creation ask the provider for its regions;
+  // checking one again asks about its zone.
   if (a === 'providers' && b && c === 'locations' && (d === 'options' || !d)) {
+    return 'admin.edges.provider-call';
+  }
+  if (a === 'providers' && b && c === 'locations' && d && parts[4] === 'check' && !parts[5]) {
+    return 'admin.edges.provider-call';
+  }
+  // Listing what an account reaches (its zones, regions, TLS configurations).
+  if (a === 'providers' && b && c === 'catalog' && d === 'refresh' && !parts[4]) {
     return 'admin.edges.provider-call';
   }
   // Credential rotation tests the new secret against the provider first.
   if (a === 'providers' && b && c === 'rotate-credentials' && !d) {
     return 'admin.edges.provider-call';
   }
-  // Removing a shared certificate deletes it (and its ACME record) at the provider.
-  if (a === 'providers' && b && c === 'shared-certificate' && d === 'remove' && !parts[4]) {
+  // Removing a zone's shared certificate deletes it (and its ACME record) at the provider.
+  if (
+    a === 'providers' &&
+    b &&
+    c === 'locations' &&
+    d &&
+    parts[4] === 'shared-certificate' &&
+    parts[5] === 'remove' &&
+    !parts[6]
+  ) {
     return 'admin.edges.provider-call';
   }
   // The test link fetches the credential body and lists the backend Hosts.
@@ -301,6 +317,13 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     if (c === 'locations' && !d)
       return json(
         await ctx.runQuery(internal.edgeLocations.listForAccount, {
+          accountId: id<'edgeProviderAccounts'>(b),
+        }),
+      );
+    // What the account's credentials reach, as last listed (the pickers' menu).
+    if (c === 'catalog' && !d)
+      return json(
+        await ctx.runQuery(internal.edgeProviderCatalog.view, {
           accountId: id<'edgeProviderAccounts'>(b),
         }),
       );
@@ -871,15 +894,30 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      // Ask the provider about this place again (a zone's encryption mode).
+      if (d && parts[4] === 'check' && !parts[5])
+        return json(
+          await ctx.runAction(internal.edgeProviderOps.checkLocation, {
+            accountId,
+            locationId: id<'edgeLocations'>(d),
+          }),
+        );
+      // A zone's wildcard no live edge fronts through: deleted at the provider
+      // with the ACME record FCP wrote for it (refused while one is in use).
+      if (d && parts[4] === 'shared-certificate' && parts[5] === 'remove' && !parts[6])
+        return json(
+          await ctx.runAction(internal.edgeProviderOps.removeSharedCertificate, {
+            accountId,
+            locationId: id<'edgeLocations'>(d),
+            ...act,
+          }),
+        );
       return notFound();
     }
-    if (c === 'shared-certificate' && d === 'remove' && !parts[4])
-      // A wildcard no live edge fronts through: deleted at the provider with
-      // the ACME record FCP wrote for it (refused while one is in use).
+    if (c === 'catalog' && d === 'refresh' && !parts[4])
       return json(
-        await ctx.runAction(internal.edgeProviderOps.removeSharedCertificate, {
+        await ctx.runAction(internal.edgeProviderOps.refreshCatalog, {
           accountId: id<'edgeProviderAccounts'>(b),
-          ...act,
         }),
       );
     if (c === 'rotate-credentials' && !d) {

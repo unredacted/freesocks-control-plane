@@ -7,8 +7,10 @@
    * one whose locations all cool, one no location carries).
    *
    * Change: "Add a location" lists the locations that carry at least one of
-   * the node's transports; on a live enrolled node adding one starts a run (new
-   * addresses, tested, reviewed when they are a new place) whose progress opens.
+   * the node's transports, and makes a new one from any account (another
+   * region, or any DNS zone a CDN account reaches: `LocationPicker`); on a
+   * live enrolled node adding one starts a run (new addresses, tested, reviewed
+   * when they are a new place) whose progress opens.
    * "Remove" drains that location's addresses, refused while what is left
    * elsewhere would not serve every transport with a tested address.
    * "Change options" protects the node again with other provider options at
@@ -26,6 +28,8 @@
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
   import { Skeleton } from '@client/components/ui/skeleton';
+  import * as Select from '@client/components/ui/select';
+  import { Label } from '@client/components/ui/label';
   import {
     changeProviderSet,
     invalidateRelay,
@@ -37,6 +41,8 @@
   import OptionFields from '../templates/OptionFields.svelte';
   import { asParams, type Params } from '../templates/params';
   import { optionSummary, overrides, pickBase } from '../lib/options';
+  import { EDGE_PROVIDER_META } from '@client/lib/edgeProviderMeta';
+  import LocationPicker from '../forms/LocationPicker.svelte';
   import type { ProviderSetView } from '@shared/contracts/edges';
   import AdminListState from '../../AdminListState.svelte';
   import CodeNote from '../components/CodeNote.svelte';
@@ -66,6 +72,16 @@
 
   let adding = $state(false);
   let chosen = $state<string[]>([]);
+  /** The account a new location is being made in (the dialog's "New location"). */
+  let newIn = $state<string | null>(null);
+  const providers = providersQuery();
+  const accounts = $derived((providers.data?.accounts ?? []).filter((a) => a.enabled));
+  const newAccount = $derived(accounts.find((a) => a.id === newIn) ?? null);
+  function onNewLocation(id: string) {
+    newIn = null;
+    invalidateRelay(qc, relay.slug);
+    chosen = [...chosen.filter((x) => x !== id), id];
+  }
   let removing = $state<ProviderSetView['picks'][number] | null>(null);
   let removeOpen = $state(false);
 
@@ -84,11 +100,10 @@
   const issue = $derived(change.error ? edgeErrorIssue(change.error) : null);
 
   // --- options of one pick (changing them protects the node again) --------------------------------
-  const providersQ = providersQuery();
   const templatesQ = templatesQuery();
   function optionsOf(p: ProviderSetView['picks'][number]) {
-    const schema = providersQ.data?.optionSchemas[p.provider];
-    const account = providersQ.data?.accounts.find((a) => a.id === p.accountId);
+    const schema = providers.data?.optionSchemas[p.provider];
+    const account = providers.data?.accounts.find((a) => a.id === p.accountId);
     if (!schema || !account) return null;
     const location = account.locations.find((l) => l.id === p.locationId) ?? null;
     const base = pickBase(
@@ -196,10 +211,7 @@
         size="sm"
         variant="outline"
         class="h-11 sm:h-8"
-        disabled={busy || change.isPending || view.available.length === 0}
-        title={view.available.length === 0
-          ? 'No other location carries a transport of this node'
-          : undefined}
+        disabled={busy || change.isPending}
         onclick={() => (adding = true)}
       >
         Add a location
@@ -209,7 +221,7 @@
 </section>
 
 <Dialog.Root bind:open={adding}>
-  <Dialog.Content class="sm:max-w-lg">
+  <Dialog.Content class={newIn ? 'sm:max-w-2xl' : 'sm:max-w-lg'}>
     <Dialog.Header>
       <Dialog.Title>Add a location</Dialog.Title>
       <Dialog.Description>
@@ -242,7 +254,49 @@
           </span>
         </label>
       {/each}
+      {#if (view?.available ?? []).length === 0}
+        <p class="text-muted-foreground text-sm">
+          No other location carries a transport of this node yet. Make one below.
+        </p>
+      {/if}
     </fieldset>
+    <div class="space-y-2 border-t pt-3">
+      <div class="space-y-1.5">
+        <Label for={`${uid}-new-in`}>New location in</Label>
+        <Select.Root
+          type="single"
+          value={newIn ?? ''}
+          onValueChange={(v: string) => (newIn = v || null)}
+          disabled={change.isPending}
+        >
+          <Select.Trigger id={`${uid}-new-in`} class="w-full">
+            {newAccount ? newAccount.name : 'Choose an account'}
+          </Select.Trigger>
+          <Select.Content>
+            {#each accounts as a (a.id)}
+              <Select.Item value={a.id} label={a.name}>
+                {a.name}
+                <span class="text-muted-foreground text-xs">
+                  {providerLabel(a.provider)}{EDGE_PROVIDER_META[a.provider].layer === 'l7'
+                    ? ', any zone it reaches'
+                    : ', another region'}
+                </span>
+              </Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+      {#if newAccount}
+        {#key newAccount.id}
+          <LocationPicker
+            accountId={newAccount.id}
+            provider={newAccount.provider}
+            onCreated={onNewLocation}
+            onCancel={() => (newIn = null)}
+          />
+        {/key}
+      {/if}
+    </div>
     <Dialog.Footer>
       <Button
         class="h-11 sm:h-8"

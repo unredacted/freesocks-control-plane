@@ -123,9 +123,13 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
 );
-// Account settings: credential identifiers, the DNS zone / account and intent
-// defaults. WHERE an account's edges live is never here: it is a location
-// (`edgeLocations.placement`, frozen on each edge).
+// Account settings: credential identifiers and intent defaults. WHERE an
+// account's edges live is never here: it is a location
+// (`edgeLocations.placement`, frozen on each edge), including a CDN front's DNS
+// zone. The zone / DNS account / TLS configuration keys below are the legacy
+// shape the L7 locations migration (`edgeL7Locations.ts`) moves onto the
+// account's location; they are read only as its fallback and dropped by the
+// follow-up cleanup.
 const relayProviderSettings = v.union(
   v.object({ type: v.literal('gcore') }),
   v.object({ type: v.literal('upcloud') }),
@@ -138,35 +142,37 @@ const relayProviderSettings = v.union(
     applicationKey: v.string(), // public app identifier, not a secret
     endpoint: v.union(v.literal('ovh-eu'), v.literal('ovh-ca'), v.literal('ovh-us')),
   }),
-  // L7 (CDN front): the zone the account's hostnames live in. Both locate.
+  // L7 (CDN front): the token's Cloudflare account (account-owned tokens).
   v.object({
     type: v.literal('cloudflare'),
-    zoneId: v.string(),
-    zoneName: v.string(),
     accountId: v.optional(v.string()),
+    zoneId: v.optional(v.string()), // legacy (migrated onto the location)
+    zoneName: v.optional(v.string()), // legacy (migrated onto the location)
   }),
-  // L7: the DNS records of a Fastly edge live in a Cloudflare account FCP also
-  // manages (`dnsAccountId`); the TLS configuration is a default frozen into
-  // each edge's provisionIntent. `certificateAuthority` is the pre-options
-  // copy of the account's authority, moved into `optionDefaults` on deploy
-  // (edgeProviderAccounts.migrateOptionDefaults); kept readable until a
-  // cleanup drops it.
+  // L7: nothing of its own. `certificateAuthority` / `certificateScope` are the
+  // pre-options copies of the account's certificate options, moved into
+  // `optionDefaults` on deploy (edgeProviderAccounts.migrateOptionDefaults);
+  // `dnsAccountId` / `tlsConfigurationId` the pre-location copies of where its
+  // fronts live, moved onto its location (edgeL7Locations.migrate). Kept
+  // readable until a cleanup drops them.
   v.object({
     type: v.literal('fastly'),
-    dnsAccountId: v.string(),
     certificateAuthority: v.optional(
       v.union(v.literal('certainly'), v.literal('lets-encrypt'), v.literal('globalsign')),
     ),
-    tlsConfigurationId: v.optional(v.string()),
     // One wildcard certificate per account and zone, or one per front (absent).
     certificateScope: v.optional(v.union(v.literal('per_host'), v.literal('wildcard'))),
+    dnsAccountId: v.optional(v.string()), // legacy (migrated onto the location)
+    tlsConfigurationId: v.optional(v.string()), // legacy (migrated onto the location)
     // A new front's domain: versionless (Domain Management, absent) or classic.
     domainModel: v.optional(v.union(v.literal('versionless'), v.literal('classic'))),
   }),
 );
-// Where an edge's resources live (lib/edges/accountSettings.ts
-// EDGE_PLACEMENT_SCHEMAS): what a location holds and each edge freezes. A CDN
-// provider has no place (an empty placement, one `anycast` location).
+// Where an edge's resources live (`lib/edges/accountSettings.ts`
+// EDGE_PLACEMENT_SCHEMAS validates every new one). A CDN front's keys are
+// optional here only because edges planned before L7 locations froze `{type}`
+// alone (their provisionIntent holds the zone) and a location the migration
+// could not complete keeps it.
 const relayEdgePlacement = v.union(
   v.object({
     type: v.literal('gcore'),
@@ -190,8 +196,18 @@ const relayEdgePlacement = v.union(
     subnetId: v.string(),
     gatewayId: v.optional(v.string()),
   }),
-  v.object({ type: v.literal('cloudflare') }),
-  v.object({ type: v.literal('fastly') }),
+  v.object({
+    type: v.literal('cloudflare'),
+    zoneId: v.optional(v.string()),
+    zoneName: v.optional(v.string()),
+  }),
+  v.object({
+    type: v.literal('fastly'),
+    dnsAccountId: v.optional(v.string()),
+    zoneId: v.optional(v.string()),
+    zoneName: v.optional(v.string()),
+    tlsConfigurationId: v.optional(v.string()),
+  }),
 );
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
 // front (address = hostname). Absent on rows written before L7 = l4.
@@ -1246,13 +1262,14 @@ export default defineSchema({
     apiFailures: v.optional(v.number()),
     apiFailingSince: v.optional(v.number()),
     lastApiError: v.optional(v.string()),
-    // The account-wide certificate its edges share (Fastly's `*.<zone>`
-    // wildcard), as last read at the provider (edgeProviderOps
-    // `refreshSharedCertificate`: the credential test and the reconcile cron).
-    // `state` is the provider's, or `absent` / `ambiguous`; `code` a fixed one.
+    // Legacy: the shared wildcard certificate as it was recorded per account,
+    // before an account fronted in several zones. The L7 locations migration
+    // moves it onto the location of its zone (`edgeLocations.sharedCertificate`,
+    // where `state` is the provider's, or `absent` / `ambiguous`, and `code` a
+    // fixed one); a cleanup drops it.
     // Shared provider objects an edge of this account CREATED (`<kind>:<id>`,
-    // most recent last, capped): proof that FCP ordered the account's wildcard,
-    // so it alone may be removed from the account page.
+    // most recent last, capped): proof that FCP ordered a zone's wildcard, so
+    // it alone may be removed from the account page.
     orderedSharedResources: v.optional(v.array(v.string())),
     sharedCertificate: v.optional(
       v.object({
@@ -1305,12 +1322,58 @@ export default defineSchema({
     // Last provider inventory pull here (LBs / IPs / flavors), JSON, admin-only.
     inventorySnapshot: v.optional(v.string()),
     inventoryAt: v.optional(v.number()),
+    // What the provider said about this place when it was last checked (a
+    // CDN zone: its encryption mode, WebSockets, status). JSON, string values
+    // only; the encryption mode is frozen into each new edge's intent.
+    observed: v.optional(v.string()),
+    observedAt: v.optional(v.number()),
+    // The last check refused the place (a paused zone, a zone the token can no
+    // longer read): no new edge is planned here until a check passes. A short
+    // code, plus the provider's redacted answer for the admin.
+    checkError: v.optional(v.string()),
+    checkErrorDetail: v.optional(v.string()),
+    // The wildcard certificate (`*.<zone>`) the account's fronts in this zone
+    // share, as the provider last showed it (a front provider that orders one
+    // per account and zone). Read by the credential test and the reconcile cron.
+    sharedCertificate: v.optional(
+      v.object({
+        name: v.string(),
+        subscriptionId: v.optional(v.string()),
+        state: v.string(),
+        code: v.optional(v.string()),
+        notAfter: v.optional(v.string()),
+        checkedAt: v.number(),
+      }),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_account', ['accountId', 'enabled'])
     .index('by_place', ['provider', 'placeKey'])
     .index('by_account_placement', ['accountId', 'placementHash']),
+
+  // What one account's credentials reach at its provider, as last listed
+  // (`edgeProviderCatalog.ts`): the zones, regions, projects or TLS
+  // configurations the pickers offer. A hint only: every write that takes one
+  // asks the provider again. One row per (account, kind); `items` is JSON
+  // `[{id, label, facts?}]`, admin-only.
+  edgeProviderCatalog: defineTable({
+    accountId: v.id('edgeProviderAccounts'),
+    kind: v.union(
+      v.literal('zones'),
+      v.literal('regions'),
+      v.literal('projects'),
+      v.literal('tlsConfigurations'),
+    ),
+    items: v.string(),
+    // The listing stopped at its cap (more exist than are listed).
+    truncated: v.optional(v.boolean()),
+    refreshedAt: v.number(),
+    // A failed listing keeps the previous items and says why.
+    error: v.optional(v.string()),
+    errorDetail: v.optional(v.string()),
+    errorAt: v.optional(v.number()),
+  }).index('by_account_kind', ['accountId', 'kind']),
 
   // Provisioning parameters for one provider (flavor/plan/type, health monitor,
   // timeouts, allowed CIDRs, tags, IP-family options). `params` is JSON validated

@@ -53,6 +53,7 @@
       });
     }
     if (pick.provider) rows.push({ label: 'Provider', value: providerLabel(pick.provider) });
+    if (pick.locationLabel) rows.push({ label: 'Location', value: pick.locationLabel });
     if (pick.listenerKey) rows.push({ label: 'Listener', value: pick.listenerKey, mono: true });
     if (pick.standbyEdgeId) {
       rows.push({

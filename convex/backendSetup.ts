@@ -61,6 +61,9 @@ import {
 } from './lib/backend/subscriptionTemplates';
 import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
+import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
+import { catalogOf } from './edgeProviderCatalog';
+import { locationsOfAccount } from './edgeLocations';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -81,7 +84,7 @@ const modeInput = v.object({
 export const setupInput = v.object({
   profileName: v.string(),
   modes: v.array(modeInput),
-  originDns: v.union(v.object({ accountId: v.string() }), v.null()),
+  originDns: v.union(v.object({ accountId: v.string(), zoneId: v.optional(v.string()) }), v.null()),
   adopt: v.boolean(),
 });
 type ModeInput = {
@@ -95,7 +98,7 @@ type ModeInput = {
 type SetupInput = {
   profileName: string;
   modes: ModeInput[];
-  originDns: { accountId: string } | null;
+  originDns: { accountId: string; zoneId?: string } | null;
   adopt: boolean;
 };
 
@@ -309,6 +312,57 @@ async function checkChange(
   return zoneKey(before) !== zoneKey(originDns) ? { kind: 'origin' } : { kind: 'none' };
 }
 
+/**
+ * The DNS account and zone a backend's origin names go into. The account must
+ * host DNS, and be switched on for a new pick (the zone the setup already has
+ * is kept even while it is off); the zone must be one it reaches: listed (and
+ * active) in its catalog, or the zone of one of its own locations (checked with
+ * the provider when that location was created), or the one the setup already
+ * uses. A request naming only the account (the shape before zones were
+ * picked) gets the zone the setup already has with that account, else the
+ * account's only known zone.
+ */
+async function originZoneOf(
+  db: QueryCtx['db'],
+  pick: { accountId: string; zoneId?: string },
+  current: Promise<Setup | null>,
+): Promise<NonNullable<Setup['originDns']>> {
+  const accountId = db.normalizeId('edgeProviderAccounts', pick.accountId);
+  const acct = accountId ? await db.get(accountId) : null;
+  if (!acct || !EDGE_PROVIDER_CAPABILITIES[acct.provider].providesDns)
+    return refuse('servers.origin_account_unusable', 'Origin names need a switched-on DNS account');
+  const kept = (await current)?.originDns ?? null;
+  const known = new Map<string, { zoneName: string; status?: string }>();
+  for (const z of (await catalogOf(db, acct._id, 'zones')).items)
+    known.set(z.id, { zoneName: z.label, status: z.facts?.status });
+  for (const l of await locationsOfAccount(db, acct._id)) {
+    const p = l.placement as { zoneId?: string; zoneName?: string };
+    if (p.zoneId && p.zoneName && !known.has(p.zoneId))
+      known.set(p.zoneId, { zoneName: p.zoneName });
+  }
+  let zoneId = pick.zoneId;
+  if (!zoneId) {
+    if (kept && kept.accountId === acct._id) zoneId = kept.zoneId;
+    else if (known.size === 1) zoneId = [...known.keys()][0];
+    else return refuse('servers.origin_zone_required', 'Pick the zone the origin names go into');
+  }
+  // The zone the setup already has is kept as it is, even while its account is
+  // switched off (another part of the setup may still change meanwhile).
+  if (kept && kept.accountId === acct._id && kept.zoneId === zoneId)
+    return { accountId: acct._id, zoneId: kept.zoneId, zoneName: kept.zoneName };
+  if (!acct.enabled)
+    return refuse('servers.origin_account_unusable', 'Origin names need a switched-on DNS account');
+  const zone = known.get(zoneId);
+  if (!zone)
+    return refuse(
+      'servers.origin_zone_unknown',
+      "That zone is not one this account reaches: refresh the account's zones",
+    );
+  if (zone.status && zone.status !== 'active')
+    return refuse('servers.origin_zone_inactive', 'That zone is not active at its provider');
+  return { accountId: acct._id, zoneId, zoneName: zone.zoneName };
+}
+
 // --- start ----------------------------------------------------------------------------------------
 
 export const start = internalMutation({
@@ -344,18 +398,9 @@ export const start = internalMutation({
       if (!family || !family.enabled)
         refuse('servers.family_missing', `Mode ${m.name} names a family that does not exist`);
     }
-    let originDns: Setup['originDns'] = null;
-    if (input.originDns) {
-      const acct = await ctx.db.get(input.originDns.accountId as Id<'edgeProviderAccounts'>);
-      const settings = acct?.settings as { zoneId?: string; zoneName?: string } | undefined;
-      if (!acct || acct.provider !== 'cloudflare' || !settings?.zoneId || !settings.zoneName)
-        refuse('validation', 'Origin names need a Cloudflare account with a zone');
-      originDns = {
-        accountId: acct!._id,
-        zoneId: settings!.zoneId!,
-        zoneName: settings!.zoneName!,
-      };
-    }
+    const originDns: Setup['originDns'] = input.originDns
+      ? await originZoneOf(ctx.db, input.originDns, setupRow(ctx, sid))
+      : null;
     // A backend with nodes or addresses on it is adopted, never quietly set
     // up; one FCP already writes has nothing left to adopt (`fcpWrites`).
     const [nodes, addresses] = await Promise.all([
@@ -1344,7 +1389,11 @@ export const view = internalQuery({
       templates: row.templates.map((t) => ({ family: t.family, state: t.state })),
       privacy: row.privacy ?? null,
       originDns: row.originDns
-        ? { accountId: row.originDns.accountId, zoneName: row.originDns.zoneName }
+        ? {
+            accountId: row.originDns.accountId,
+            zoneId: row.originDns.zoneId,
+            zoneName: row.originDns.zoneName,
+          }
         : null,
       adopted: row.adopted,
       established: fcpWrites(row),

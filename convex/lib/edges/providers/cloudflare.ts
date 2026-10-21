@@ -42,6 +42,7 @@ import type {
   InspectResult,
   Inventory,
   LedgerResource,
+  LocationCheckResult,
   ReadinessState,
   ResourceStep,
   StepOutcome,
@@ -377,6 +378,50 @@ async function zoneSetting(
   }
 }
 
+/** One zone as the listing shows it. */
+interface ListedZone {
+  id: string;
+  name: string;
+  status: string;
+  paused: boolean;
+  /** The Cloudflare account the zone belongs to (an account-owned token's verify needs it). */
+  accountId?: string;
+}
+
+/** Zones per listing page, and the most pages one listing reads (1,000 zones). */
+const ZONE_PAGE = 50;
+const ZONE_PAGES_MAX = 20;
+
+/**
+ * The zones a token reaches, page by page up to `maxPages` (`truncated` when
+ * more exist). Each page is one request against the rate limit shared with the
+ * dashboard, so a credential test reads one page and the catalog all of them.
+ */
+async function listZones(
+  apiToken: string,
+  step: string,
+  maxPages = ZONE_PAGES_MAX,
+): Promise<{ zones: ListedZone[]; truncated: boolean }> {
+  const client = cloudflareClient({ apiToken });
+  const zones: ListedZone[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const res = await cfCall(step, () => client.zones.list({ per_page: ZONE_PAGE, page }), [
+      apiToken,
+    ]);
+    for (const z of res.result) {
+      zones.push({
+        id: z.id,
+        name: normalizeDnsName(z.name),
+        status: typeof z.status === 'string' ? z.status : 'unknown',
+        paused: z.paused === true,
+        ...(z.account?.id ? { accountId: z.account.id } : {}),
+      });
+    }
+    if (res.result.length < ZONE_PAGE) return { zones, truncated: false };
+  }
+  return { zones, truncated: true };
+}
+
 // --- the adapter ---------------------------------------------------------------------
 
 export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTemplateParams> = {
@@ -386,39 +431,25 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
   defaultTemplate: CloudflareTemplate.parse({}),
 
   /**
-   * Token works and is active, the zone is usable, and the soft preconditions
-   * are reported as short codes in `detail` (never as free text from the API).
-   * The zone's `ssl` mode is RECORDED, not required: `flexible|full|strict` are
-   * all usable and the feasibility check against a slot's origin transport
-   * happens at plan time, not here. Only `off` is refused outright.
-   *
-   * The two settings also travel as `observed`, the machine-readable half of
-   * `detail`: the orchestrator stores them on the account and freezes
-   * `zoneSslMode` into each new edge's intent, which is the ONLY way the mode
-   * reaches `planProvision` (see `zoneSslModeOf`). A setting the token cannot
-   * read leaves `zoneSslMode` out entirely (planning then refuses) and reports
-   * `websockets: 'off'`, the conservative answer.
+   * The token works, is active and reaches at least one zone. The account is
+   * the whole Cloudflare account: which zone a front or a DNS record lives in
+   * is its location's, checked by `checkLocation`, so no zone is read here.
    *
    * User tokens and account-owned tokens both pass (`verifyCloudflareToken`);
-   * an account token's account id is the zone's own, else the settings'
-   * `accountId`. The zone is read once either way; a zone the token cannot read
-   * fails the test on that read's own code.
+   * an account token's account id is the first listed zone's, else the
+   * settings' `accountId`. One page of zones is read either way.
    */
   async testCredentials(cfg): Promise<CredentialTestResult> {
     const detail: string[] = [];
-    let zoneRead: ReturnType<typeof readZone> | undefined;
-    const readZone = () =>
-      cfCall('test', () => cloudflareClient(cfg).zones.get({ zone_id: cfg.zoneId }), [
-        cfg.apiToken,
-      ]);
-    const zoneOnce = () => (zoneRead ??= readZone());
+    let listing: ReturnType<typeof listZones> | undefined;
+    const listOnce = () => (listing ??= listZones(cfg.apiToken, 'test', 1));
     try {
       const token = await verifyCloudflareToken(cfg, async () => {
         try {
-          return (await zoneOnce()).account?.id || cfg.accountId || undefined;
+          return (await listOnce()).zones[0]?.accountId || cfg.accountId || undefined;
         } catch (e) {
           if (cfg.accountId) return cfg.accountId;
-          // A zone read that may succeed next time is not a rejection: with no
+          // A listing that may succeed next time is not a rejection: with no
           // account id to fall back to, the test fails retryable on it.
           if (e instanceof EdgeProviderError && e.meta.retryable) throw e;
           return undefined;
@@ -426,15 +457,55 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       });
       if (token.status !== 'active') return { ok: false, code: 'token_not_active' };
       detail.push(`token_${token.kind}`);
-      const zone = await zoneOnce();
-      const ssl = await zoneSetting(cfg, 'ssl', 'test');
-      const websockets = await zoneSetting(cfg, 'websockets', 'test');
+      const { zones, truncated } = await listOnce();
+      if (zones.length === 0) {
+        detail.push('zones_none');
+        return { ok: false, code: 'no_zones', detail: detail.join(' ') };
+      }
+      detail.push(truncated ? `zones_${zones.length}_plus` : `zones_${zones.length}`);
+      return { ok: true, detail: detail.join(' ') };
+    } catch (e) {
+      return credentialTestFailure(e);
+    }
+  },
+
+  /**
+   * One zone (the location's) is usable: readable with this token, active,
+   * not paused, its name the one the location recorded. The soft
+   * preconditions are reported as short codes in `detail` (never as free text
+   * from the API). The zone's `ssl` mode is RECORDED, not required:
+   * `flexible|full|strict` are all usable and the feasibility check against a
+   * slot's origin transport happens at plan time, not here. Only `off` is
+   * refused outright.
+   *
+   * The two settings also travel as `observed`, the machine-readable half of
+   * `detail`: the orchestrator stores them on the location and freezes
+   * `zoneSslMode` into each new edge's intent, which is the ONLY way the mode
+   * reaches `planProvision` (see `zoneSslModeOf`). A setting the token cannot
+   * read leaves `zoneSslMode` out entirely (planning then refuses) and reports
+   * `websockets: 'off'`, the conservative answer. A zone the token cannot read
+   * fails on that read's own code.
+   */
+  async checkLocation(cfg): Promise<LocationCheckResult> {
+    const detail: string[] = [];
+    try {
+      const zone = await cfCall(
+        'location',
+        () => cloudflareClient(cfg).zones.get({ zone_id: cfg.zoneId }),
+        [cfg.apiToken],
+      );
+      const name = normalizeDnsName(zone.name);
+      if (cfg.zoneName && name !== normalizeDnsName(cfg.zoneName))
+        return { ok: false, code: 'zone_name_mismatch', detail: 'zone_name_mismatch', label: name };
+      const ssl = await zoneSetting(cfg, 'ssl', 'location');
+      const websockets = await zoneSetting(cfg, 'websockets', 'location');
       const plan = (zone.plan as { legacy_id?: string } | undefined)?.legacy_id;
       const observed: Record<string, string> = {
         ...(ssl ? { zoneSslMode: ssl } : {}),
         websockets: websockets === 'on' ? 'on' : 'off',
         // What the zone's plan offers decides record tags and per-record flattening.
         ...(plan ? { zonePlan: plan } : {}),
+        zoneStatus: zone.paused === true ? 'paused' : String(zone.status ?? 'unknown'),
       };
       if (ssl) detail.push(`ssl_${ssl}`);
       else detail.push('ssl_unknown');
@@ -443,40 +514,52 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       else detail.push('websockets_off');
       // Free zones cap DNS comments and Origin Rules; useful for the operator.
       if (plan === 'free') detail.push('plan_free');
-      if (ssl === 'off')
-        return { ok: false, code: 'zone_ssl_off', detail: detail.join(' '), observed };
+      const out = (code?: string): LocationCheckResult => ({
+        ok: !code,
+        ...(code ? { code } : {}),
+        detail: detail.join(' '),
+        observed,
+        label: name,
+        zoneName: name,
+      });
+      if (ssl === 'off') return out('zone_ssl_off');
       if (zone.paused === true) {
         detail.push('zone_paused');
-        return { ok: false, code: 'zone_paused', detail: detail.join(' '), observed };
+        return out('zone_paused');
       }
       if (zone.status !== 'active') {
         detail.push('zone_not_active');
-        return { ok: false, code: 'zone_not_active', detail: detail.join(' '), observed };
+        return out('zone_not_active');
       }
-      return { ok: true, detail: detail.join(' '), observed };
+      return out();
     } catch (e) {
-      return credentialTestFailure(e);
+      const failed = credentialTestFailure(e);
+      if (failed.code === 'error' || !(e instanceof EdgeProviderError) || e.meta.retryable) throw e;
+      return { ok: false, code: failed.code ?? 'zone_unreadable', detail: failed.detail };
     }
   },
 
-  /** Cloudflare has no regions; the account's "region" choice is its DNS zone. */
+  /** Cloudflare has no regions; the places it offers are the zones the token reaches. */
   async listRegions(cfg) {
-    const page = await cfCall('zones', () => cloudflareClient(cfg).zones.list({ per_page: 50 }), [
-      cfg.apiToken,
-    ]);
-    return page.result.map((z) => ({ id: z.id, label: z.name }));
+    return (await listZones(cfg.apiToken, 'zones')).zones.map((z) => ({ id: z.id, label: z.name }));
   },
 
   async discoverOptions(partial): Promise<DiscoverResult> {
     const apiToken = typeof partial.apiToken === 'string' ? partial.apiToken : '';
     if (!apiToken) return {};
     try {
-      const page = await cfCall(
-        'zones',
-        () => cloudflareClient({ apiToken }).zones.list({ per_page: 50 }),
-        [apiToken],
-      );
-      return { zones: page.result.map((z) => ({ id: z.id, label: z.name })) };
+      const { zones, truncated } = await listZones(apiToken, 'zones');
+      return {
+        zones: zones.map((z) => ({
+          id: z.id,
+          label: z.name,
+          facts: {
+            status: z.paused ? 'paused' : z.status,
+            ...(z.accountId ? { account: z.accountId } : {}),
+          },
+        })),
+        ...(truncated ? { truncated: ['zones'] } : {}),
+      };
     } catch (e) {
       const out: DiscoverResult = {};
       noteDiscoverError(out, 'zones', e);

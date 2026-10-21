@@ -1733,17 +1733,22 @@ describe('edgeSetupRuns: a certificate wait the run is waiting on', () => {
   });
 });
 
-describe('edgeSetupRuns: an account whose fronts could get no certificate', () => {
-  test('the plan names it, and a run stops at its first stage instead of provisioning', async () => {
+describe('edgeSetupRuns: a zone whose fronts could get no certificate', () => {
+  test('the plan names it on the zone, and a run stops at its first stage instead of provisioning', async () => {
     const { t, serverId, accountId } = await seed();
     const { runId } = await startRun(t, serverId, accountId);
-    // The account's next credential test ends on the CAA preflight.
-    await t.run((ctx) => ctx.db.patch(accountId, { lastTestError: 'caa_forbids_ca' }));
-    const plan = await planFor(t, serverId);
-    expect(plan.accounts.find((a) => a.id === accountId)).toMatchObject({
-      compatible: false,
-      reasons: ['caa_forbids_ca'],
+    // The zone's next check ends on the CAA preflight.
+    await t.run(async (ctx) => {
+      for (const l of await ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', accountId))
+        .collect())
+        await ctx.db.patch(l._id, { checkError: 'caa_forbids_ca' });
     });
+    const plan = await planFor(t, serverId);
+    const offered = plan.accounts.find((a) => a.id === accountId)!;
+    expect(offered).toMatchObject({ compatible: false, reasons: ['no_location'] });
+    expect((offered.locations ?? []).every((l) => l.reasons.includes('caa_forbids_ca'))).toBe(true);
     const r = await pump(t, runId, settled);
     expect(r.need).toMatchObject({ code: 'account_incompatible', detail: 'caa_forbids_ca' });
     const relay = r.relayId ? await t.run((ctx) => ctx.db.get(r.relayId!)) : null;

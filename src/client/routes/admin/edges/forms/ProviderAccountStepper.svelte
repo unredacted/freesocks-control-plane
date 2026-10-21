@@ -51,6 +51,7 @@
     discoverProviderOptions,
     edgeConfigQuery,
     invalidateProviders,
+    providerCatalogQuery,
     providersQuery,
     testProviderCredentials,
   } from '@client/lib/edgesApi';
@@ -78,6 +79,7 @@
     applyDiscovery,
     credentialLabel,
     fieldsFor,
+    firstLocationOptional,
     hasLocations,
     missingRequired,
     optionsFor,
@@ -85,6 +87,7 @@
     settingsBody,
     type ProviderField,
   } from './providerFields';
+  import { zoneChoices } from './zones';
 
   interface Props {
     onCreated: (accountId: string) => void;
@@ -161,7 +164,17 @@
   const meta = $derived(EDGE_PROVIDER_META[provider]);
   const secretNames = $derived(providers.data?.credentialFields[provider] ?? []);
   const accounts = $derived(providers.data?.accounts ?? []);
-  const ctx = $derived({ discovered, accounts, values });
+  /** A front's DNS account, and the zones it reaches (its catalog plus its own zones). */
+  const dnsCatalog = providerCatalogQuery(() =>
+    meta.needsDnsAccount && values['dnsAccountId'] ? values['dnsAccountId'] : null,
+  );
+  const dnsZones = $derived(
+    zoneChoices(
+      dnsCatalog.data,
+      accounts.find((a) => a.id === values['dnsAccountId'])?.locations ?? [],
+    ).map((z) => ({ id: z.id, label: z.name })),
+  );
+  const ctx = $derived({ discovered, accounts, values, dnsZones });
 
   function setProvider(next: EdgeProviderId) {
     if (next === provider) return;
@@ -184,7 +197,11 @@
     for (const l of missingRequired(provider, values, 'credentials')) out.push(`Enter the ${l}.`);
     return out;
   });
-  const placementMissing = $derived(missingRequired(provider, values, 'placement'));
+  const placementMissing = $derived(
+    missingRequired(provider, values, 'placement', { firstLocation: true }),
+  );
+  /** A CDN account is its token: its first zone may be picked here or when a node is protected. */
+  const locationOptional = $derived(firstLocationOptional(provider));
   const dnsAccounts = $derived(accounts.filter((a) => EDGE_PROVIDER_META[a.provider].providesDns));
   const needsDnsFirst = $derived(meta.needsDnsAccount && dnsAccounts.length === 0);
   /** "Add a DNS account first": back to the credentials, on the (first) DNS provider. */
@@ -224,7 +241,12 @@
         return;
       }
       discovered = r;
-      values = applyDiscovery(provider, values, { discovered: r, accounts });
+      values = applyDiscovery(
+        provider,
+        values,
+        { discovered: r, accounts },
+        { firstLocation: true },
+      );
       // Connected: on to the placement (Connect has nothing else to decide).
       if (connecting) {
         connecting = false;
@@ -259,8 +281,13 @@
 
   function onFieldChange(f: ProviderField, value: string) {
     const next = { ...values, [f.key]: value };
-    if (f.from === 'zones')
+    if (f.from === 'zones' || f.from === 'dnsZones')
       next['zoneName'] = optionsFor(f, ctx).find((o) => o.id === value)?.label ?? '';
+    // Another DNS account has other zones.
+    if (f.from === 'dnsAccounts') {
+      next['zoneId'] = '';
+      next['zoneName'] = '';
+    }
     if (f.from === 'networks') next['subnetId'] = '';
     values = next;
     // Lists below a project or a region depend on it.
@@ -342,20 +369,28 @@
       },
       {
         id: 'placement',
-        title: hasLocations(provider)
+        title: locationOptional
           ? compact
-            ? 'First location'
-            : 'First location and limits'
-          : compact
-            ? 'Settings'
-            : 'Settings and limits',
-        description: hasLocations(provider)
+            ? 'Settings and a first zone'
+            : 'Settings, a first zone and limits'
+          : hasLocations(provider)
+            ? compact
+              ? 'First location'
+              : 'First location and limits'
+            : compact
+              ? 'Settings'
+              : 'Settings and limits',
+        description: locationOptional
           ? compact
-            ? 'Where its first addresses are created. Add more locations later.'
-            : 'Where its first edges are created (add more locations later), and how many this account may run.'
-          : compact
-            ? 'Where its addresses are created.'
-            : 'Where its edges are created, and how many this account may run.',
+            ? 'Optionally a first zone to front in. Any zone the token reaches can be picked when a node is protected.'
+            : 'Optionally a first zone to front in (any zone the token reaches can be picked when a node is protected), and how many this account may run.'
+          : hasLocations(provider)
+            ? compact
+              ? 'Where its first addresses are created. Add more locations later.'
+              : 'Where its first edges are created (add more locations later), and how many this account may run.'
+            : compact
+              ? 'Where its addresses are created.'
+              : 'Where its edges are created, and how many this account may run.',
         status: status('placement'),
         ...(step !== 'placement' ? { note: 'after connecting' } : {}),
       },
@@ -407,15 +442,24 @@
       </Select.Root>
     {:else if f.from === 'dnsAccounts'}
       <AdminListState
-        emptyText="No DNS account exists yet. Add one first (see DNS providers in the provider list), then add this one."
+        emptyText="No DNS account exists yet. Add one (see DNS providers in the provider list) to pick a zone for this account's fronts."
       />
+    {:else if f.from === 'dnsZones'}
+      <p class="text-muted-foreground text-sm">
+        {values['dnsAccountId']
+          ? dnsCatalog.isPending
+            ? 'Reading the zones this DNS account reaches.'
+            : 'This DNS account lists no zone yet. Test it from its page to list its zones.'
+          : 'Choose the DNS account first.'}
+      </p>
     {:else}
       <Input
         id={`${uid}-${f.key}`}
         class="font-mono"
         value={current}
         placeholder={f.placeholder}
-        readonly={f.readOnly === true && (discovered?.zones?.length ?? 0) > 0}
+        readonly={f.readOnly === true &&
+          ((discovered?.zones?.length ?? 0) > 0 || dnsZones.length > 0)}
         disabled={held}
         oninput={(e) => onFieldChange(f, e.currentTarget.value)}
       />
@@ -506,11 +550,11 @@
             class="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
           >
             <p>
-              {providerLabel(provider)} needs a DNS account first: its names, and the certificate challenge
+              {providerLabel(provider)} fronts need a DNS account: their names, and the certificate challenge
               for each one, are written into a zone of a DNS provider account.
               {needsDnsFirst
-                ? 'No DNS account exists yet.'
-                : `You have ${dnsAccounts.length === 1 ? 'one' : dnsAccounts.length} to choose from in the next step.`}
+                ? 'No DNS account exists yet. This account can be added now and its fronts picked once one does.'
+                : `You have ${dnsAccounts.length === 1 ? 'one' : dnsAccounts.length} to choose from.`}
             </p>
             {#if needsDnsFirst && dnsProviders.length > 0}
               <Button
@@ -639,12 +683,18 @@
             </Button>
           {/if}
         </div>
+        {#if locationOptional}
+          <p class="text-muted-foreground text-sm">
+            A first zone is optional: leave the zone empty to add the account alone.
+          </p>
+        {/if}
         {#if needsDnsFirst}
           <CodeNote
+            tone="warning"
             issue={{
               code: 'dns_account_missing',
               detail:
-                'This provider keeps its hostnames in a zone of a DNS account. Add that account first.',
+                'This provider keeps its hostnames in a zone of a DNS account. Its fronts can be picked once one exists.',
             }}
           >
             {#snippet actions()}
@@ -746,7 +796,7 @@
         {:else}
           <div class="flex flex-wrap gap-2">
             <Button
-              disabled={create.isPending || limitsBad || needsDnsFirst}
+              disabled={create.isPending || limitsBad}
               onclick={() => {
                 triedNext = true;
                 if (placementMissing.length === 0) create.mutate();

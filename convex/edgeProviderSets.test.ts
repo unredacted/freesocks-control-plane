@@ -42,17 +42,19 @@ describe('provider set view and state', () => {
     });
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: fx.accountId, ok: true });
     const dns = await createAccount(t, { provider: 'cloudflare', name: 'acct-dns' });
-    await t.mutation(internal.edgeProviderAccounts.recordTest, {
-      id: dns,
-      ok: true,
-      observed: { zoneSslMode: 'full', websockets: 'on' },
-    });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: dns, ok: true });
     const locationOf = (accountId: Id<'edgeProviderAccounts'>) =>
       t.run(
         async (c) =>
           (await c.db.query('edgeLocations').collect()).find((l) => l.accountId === accountId)!,
       );
     const dnsLocation = await locationOf(dns);
+    // The zone's facts, as its location's check observed them.
+    await t.mutation(internal.edgeLocations.recordCheck, {
+      id: dnsLocation._id,
+      ok: true,
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
     const l4Location = await locationOf(fx.accountId);
     // A set picked while the switch was on.
     await t.run((c) =>

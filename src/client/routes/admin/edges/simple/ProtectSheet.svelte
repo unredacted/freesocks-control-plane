@@ -760,7 +760,8 @@
                             <button
                               type="button"
                               class={`${LINK} inline-flex min-h-11 items-center sm:min-h-0`}
-                              onclick={() => (addingLocationFor = a.id)}>Add a location</button
+                              onclick={() => (addingLocationFor = a.id)}
+                              >{a.layer === 'l7' ? 'Add a zone' : 'Add a location'}</button
                             >
                           {:else if href}
                             <Link
@@ -864,7 +865,7 @@
                         class="mx-3 mb-3 h-11 sm:h-7"
                         onclick={() => (addingLocationFor = a.id)}
                       >
-                        Add a location
+                        {a.layer === 'l7' ? 'Add another zone' : 'Add a location'}
                       </Button>
                     {/if}
                   {/if}

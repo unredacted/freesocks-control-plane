@@ -317,6 +317,18 @@ export function cloudflareDnsClient(cfg: CloudflareDnsConfig, fetchImpl?: FetchL
       }
     },
 
+    async readZone() {
+      const zone = await cfCall('location', () => client.zones.get({ zone_id }), [cfg.apiToken]);
+      const plan = (zone.plan as { legacy_id?: string } | undefined)?.legacy_id;
+      return {
+        id: zone.id,
+        name: normalizeDnsName(zone.name),
+        status: typeof zone.status === 'string' ? zone.status : 'unknown',
+        paused: zone.paused === true,
+        ...(plan ? { plan } : {}),
+      };
+    },
+
     async listCaa(): Promise<Array<{ flags: number; tag: string; value: string }>> {
       const apex = normalizeDnsName(cfg.zoneName);
       const page = await cfCall('dns-caa', () =>
