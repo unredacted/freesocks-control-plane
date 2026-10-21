@@ -2167,9 +2167,11 @@ depend on it:
 - **Go-live.** For an enrolled node, `edgeSetupRuns.goLive` promotes the node's activation run
   inside its own mutation (`nodeActivation.promoteCandidate`): the edges it published are the
   run's candidate resources, filtered from members until then.
-- **The origin TLS contract.** Recorded per combination: Fastly with `overrideHost: 'origin'`
-  (SNI = Host = the origin name, a public certificate naming it) is supported; Fastly with
-  `'hostname'` only when the node's verified ingress accepts any Host header; Cloudflare `full`
+- **The origin TLS contract.** Recorded per combination: Fastly always presents the origin's
+  certificate name as SNI and verifies against it (`ssl_sni_hostname`, `ssl_cert_hostname`, on
+  port 443); with `overrideHost: 'origin'` (Host = the origin name too, a public certificate
+  naming it) it is supported, with `'hostname'` only when the node's verified ingress accepts
+  any Host header; Cloudflare `full`
   (SNI and Host = the edge hostname, served by Caddy's `fallback_sni` plus a catch-all site) is
   supported. Cloudflare `strict` is admitted only for an origin whose certificate is publicly
   trusted (`certPublic`), and it validates the EDGE hostname, which an enrolled node's
@@ -2481,6 +2483,15 @@ the WebSockets product, the version activation, the certificate (the hostname's 
 account's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME
 (§ "L7 edges" for certificates, the CAA preflight, waiting codes and domains).
 
+**The origin backend.** The origin must listen on its scheme's own port (443 over TLS, 80
+without; `origin_port_unsupported` at plan time otherwise), and the backend carries that `port`
+explicitly, with the origin's TLS name as `ssl_cert_hostname` and `ssl_sni_hostname` (the origin
+address when its certificate covers it, else the first exact certificate name). Fastly's
+WebSockets guide lists only name, address, TLS and Host override as supported, yet the front
+dials the backend's `port`, which the API defaults to 80 whatever `use_ssl` says: a backend
+without it spoke TLS to port 80 and every front failed its qualification. Inspect reports the
+port the provider holds.
+
 - **Switching to the wildcard.** On the account page, Certificates, pick "One wildcard for every
   front". Like any settings change it untrusts the account's location: test the account again
   (the CAA preflight then checks `issuewild`), and its next proven front trusts it again. Fronts
@@ -2653,7 +2664,7 @@ lifecycle runs in that test and its rows appear here.
 | fastly     | GET    | `^/service/[^/]+/version/[^/]+/validate$`                                         | validate a version before activating it                                                                                                               | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | PUT    | `^/service/[^/]+/version/[^/]+/activate$`                                         | activate the version                                                                                                                                  | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | PUT    | `^/service/[^/]+/version/[^/]+/deactivate$`                                       | deactivate the active version before deleting the service                                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | POST   | `^/service/[^/]+/version/[^/]+/backend$`                                          | create the single origin backend (only fields the WebSocket path honours)                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | POST   | `^/service/[^/]+/version/[^/]+/backend$`                                          | create the single origin backend, its port always sent (the API defaults it to 80) with the TLS name for SNI and verification                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | GET    | `^/service/[^/]+/version/[^/]+/backend$`                                          | list backends: inspect and the import ownership check                                                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | GET    | `^/service/[^/]+/version/[^/]+/backend/[^/]+$`                                    | discover the backend by name; read it back after a destroy                                                                                            | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | POST   | `^/service/[^/]+/version/[^/]+/snippet$`                                          | install the VCL snippet that hands an Upgrade request to the WebSocket path                                                                           | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |

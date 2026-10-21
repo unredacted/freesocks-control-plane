@@ -25,7 +25,7 @@ import type {
   StepOutcome,
 } from './types';
 import type { DnsClient, DnsCreateArgs, DnsRecord, DnsRecordType } from './dns/types';
-import { __setFastlyBasePath } from './fastly/sdk';
+import { __setFastlyBasePath, fastlyApiFor } from './fastly/sdk';
 import type { CaaRecord } from '../caa';
 import {
   FASTLY_DESTROY_ORDER,
@@ -35,6 +35,7 @@ import {
   __setFastlyDnsClientFactory,
   fastlyBackendBody,
   fastlyDestroyKey,
+  fastlyOriginTlsName,
   fastlyProvider,
   fastlySnippetBody,
   fastlyTlsSubscriptionBody,
@@ -403,14 +404,56 @@ describe('fastly: what it refuses before any provider call', () => {
 // --- pure wire bodies ---------------------------------------------------------------------
 
 describe('fastly: request bodies', () => {
-  test('the backend carries only the four fields the WebSocket path honours (plus a marker comment)', () => {
+  test('the backend names its port and TLS name explicitly (plus a marker comment)', () => {
     expect(fastlyBackendBody(spec, tpl)).toEqual({
       name: 'origin',
       address: ORIGIN,
+      // Never left to the API: it defaults to 80 even with use_ssl.
+      port: 443,
       use_ssl: true,
+      // The origin address is the name its certificate covers.
+      ssl_cert_hostname: ORIGIN,
+      ssl_sni_hostname: ORIGIN,
       override_host: HOST,
       comment: spec.name,
     });
+  });
+
+  test('the TLS name is a name the certificate covers, never a wildcard, and absent without TLS', () => {
+    const byIp: EdgeSpec = {
+      ...spec,
+      listeners: [{ edgePort: 443, members: [{ address: '198.51.100.7', port: 443 }] }],
+      originTransport: {
+        ...spec.originTransport!,
+        certNames: ['*.origin.example.net', 'origin.example.net'],
+      },
+    };
+    expect(fastlyOriginTlsName(byIp)).toBe('origin.example.net');
+    expect(fastlyBackendBody(byIp, tpl)).toMatchObject({
+      address: '198.51.100.7',
+      port: 443,
+      ssl_sni_hostname: 'origin.example.net',
+    });
+    const onlyWildcard: EdgeSpec = {
+      ...byIp,
+      originTransport: { ...spec.originTransport!, certNames: ['*.origin.example.net'] },
+    };
+    expect(fastlyOriginTlsName(onlyWildcard)).toBeUndefined();
+    expect(fastlyBackendBody(onlyWildcard, tpl)).not.toHaveProperty('ssl_sni_hostname');
+    const http: EdgeSpec = {
+      ...spec,
+      listeners: [{ edgePort: 443, members: [{ address: ORIGIN, port: 80 }] }],
+      originTransport: {
+        scheme: 'http',
+        certPublic: false,
+        certNames: [],
+        acceptsHostHeader: 'any',
+      },
+    };
+    const body = fastlyBackendBody(http, tpl);
+    expect(body).toMatchObject({ port: 80, use_ssl: false });
+    expect(body).not.toHaveProperty('ssl_cert_hostname');
+    expect(body).not.toHaveProperty('ssl_sni_hostname');
   });
 
   test('overrideHost `origin` sends the origin its own name instead of the fronted one', () => {
@@ -2541,5 +2584,88 @@ describe('fastly: one wildcard certificate per account and zone', () => {
     expect(rec!.calls.at(-1)!.query).toEqual({ include: 'tls_authorizations,tls_certificates' });
     // A per-host account has no shared certificate at all.
     expect(await fastlyProvider.sharedCertificate!(cfg)).toBeNull();
+  });
+});
+
+// --- what the front dials ------------------------------------------------------------------
+
+describe('fastly: the front dials the origin on its own port', () => {
+  /**
+   * A provider that KEEPS the backend it was given, with the API's own
+   * defaults for what the request left out: `port` 80 (whatever `use_ssl`
+   * says) and no TLS name. The front then dials exactly what is stored.
+   */
+  function backendKeepingProvider() {
+    let stored: Record<string, unknown> | null = null;
+    const route: Route = (c) => {
+      if (c.method === 'POST' && /\/backend$/.test(c.path)) {
+        const b = c.body as Record<string, string>;
+        stored = {
+          name: b.name,
+          address: b.address,
+          hostname: b.address,
+          port: b.port !== undefined ? Number(b.port) : 80,
+          use_ssl: b.use_ssl === 'true',
+          ssl_cert_hostname: b.ssl_cert_hostname ?? null,
+          ssl_sni_hostname: b.ssl_sni_hostname ?? null,
+          override_host: b.override_host ?? null,
+          comment: b.comment ?? null,
+        };
+        return { status: 200, body: stored };
+      }
+      if (c.method === 'GET' && /\/backend$/.test(c.path))
+        return { status: 200, body: stored ? [stored] : [] };
+      if (c.method === 'GET' && /\/backend\/origin$/.test(c.path))
+        return stored ? { status: 200, body: stored } : NOT_FOUND;
+      return defaultReply(c);
+    };
+    return { route, stored: () => stored };
+  }
+
+  /** Where a front with this backend opens its connection, and how. */
+  function frontDials(b: Record<string, unknown>) {
+    return {
+      host: b.address,
+      port: b.port,
+      tls: b.use_ssl === true,
+      sni: b.use_ssl === true ? (b.ssl_sni_hostname ?? null) : null,
+    };
+  }
+
+  test('an https origin is dialled on 443 with TLS, presenting and verifying its own name', async () => {
+    const p = backendKeepingProvider();
+    await serve(p.route);
+    fakeDns();
+    const ledger = await provision();
+    expect(frontDials(p.stored()!)).toEqual({ host: ORIGIN, port: 443, tls: true, sni: ORIGIN });
+    expect(p.stored()!.ssl_cert_hostname).toBe(ORIGIN);
+    // What inspect reports is the port the provider holds, not one derived from TLS.
+    const seen = await fastlyProvider.inspect(cfg, ledger);
+    expect(seen.summary.members).toEqual([{ address: ORIGIN, port: 443 }]);
+  });
+
+  test('a backend created without its port is dialled on 80, which the inspect read shows', async () => {
+    // The regression this guards against: the body without `port` lands on 80.
+    const p = backendKeepingProvider();
+    const r = await serve(p.route);
+    const { port: _dropped, ...withoutPort } = fastlyBackendBody(spec, tpl);
+    await fastlyApiFor(cfg).createBackend(SVC, 1, withoutPort as never);
+    expect(frontDials(p.stored()!)).toMatchObject({ port: 80, tls: true });
+    const ledger: Ledger = {
+      steps: [],
+      resources: [
+        {
+          stepId: 'service',
+          kind: 'service',
+          resourceId: SVC,
+          ownership: 'created',
+          deleteState: 'present',
+          meta: JSON.stringify({ version: 1, name: spec.name }),
+        },
+      ],
+    };
+    const seen = await fastlyProvider.inspect(cfg, ledger);
+    expect(seen.summary.members).toEqual([{ address: ORIGIN, port: 80 }]);
+    expect(r.calls.length).toBeGreaterThan(0);
   });
 });

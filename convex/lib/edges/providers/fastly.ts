@@ -24,10 +24,14 @@
  * an HTTP status plus a code from a fixed allowlist; `detail` is never read.
  * Nothing here adds a body, a URL or a credential to an error.
  *
- * WebSockets constraints that shape the model: for WS traffic a backend honours
- * only `name`, `address`, `use_ssl` and `override_host`, so the origin port is
- * fixed (443 with `use_ssl`, 80 without) and an https origin must present a
- * publicly trusted certificate. Those are plan-time refusals below.
+ * WebSockets constraints that shape the model: Fastly's WebSockets guide lists
+ * only `name`, `address`, `use_ssl` and `override_host` as the settings it
+ * supports, and an https origin must present a publicly trusted certificate.
+ * But the backend's `port` IS used, and defaults to 80 whatever `use_ssl` says
+ * (found on a beta walk: the front spoke TLS to the origin's port 80). So FCP
+ * keeps the origin on the scheme's own port (443 over TLS, 80 without, refused
+ * at plan time otherwise) and always SENDS that port, with the origin's TLS
+ * name for SNI and verification, instead of relying on any default.
  *
  * Domains. A new edge's hostname is a VERSIONLESS domain (Domain Management):
  * its own resource, linked to the service by id, created and deleted without a
@@ -72,6 +76,8 @@ import type {
 import { firstResource, metaOf, resourcesOfKind, stepOf } from './types';
 import { EdgeProviderError, credentialTestFailure, noteDiscoverError } from './http';
 import { acmeChallengeName, normalizeZoneName } from '../hostname';
+import { addressFamily } from '../ip';
+import { certCovers } from '../layers';
 import { checkCaa, wildcardBase, wildcardNameFor, type CaaLookup, type CaaRecord } from '../caa';
 import type { L7CertificateCode } from '../../../../src/shared/contracts/edgeCodes';
 import type { DnsClient, DnsRecord } from './dns/types';
@@ -179,6 +185,16 @@ function domainModelOf(cfg: FastlyConfig): 'classic' | 'versionless' {
   return cfg.domainModel === 'versionless' ? 'versionless' : 'classic';
 }
 
+/**
+ * The DNS zone this account's fronts live in, as the resolved config carries it
+ * (`edgeProviderOps.loadAdapter` fills `cfg.dns` from the frozen intent of an
+ * existing edge, or from the account when planning). The ONE place the adapter
+ * reads the zone outside a front's own hostname; undefined without a DNS account.
+ */
+export function fastlyZoneOf(cfg: FastlyConfig): string | undefined {
+  return cfg.dns?.zoneName ? normalizeZoneName(cfg.dns.zoneName) : undefined;
+}
+
 /** The name the edge's certificate is ordered for: its hostname, or the zone's wildcard. */
 function certificateNameOf(cfg: FastlyConfig, hostname: string): string {
   return certificateScopeOf(cfg) === 'wildcard' ? wildcardNameFor(hostname) : hostname;
@@ -259,10 +275,9 @@ function originMember(spec: EdgeSpec, step: string): { address: string; port: nu
 }
 
 /**
- * The origin transport refusals the WebSockets data path forces. A backend used
- * for WS honours neither `port` nor certificate overrides, so the origin must
- * sit on the scheme's own port and, over TLS, present a publicly trusted
- * certificate.
+ * The origin transport refusals the WebSockets data path forces: the origin
+ * sits on the scheme's own port (the one place every Fastly setting agrees on)
+ * and, over TLS, presents a publicly trusted certificate.
  */
 export function assertFastlyOriginTransport(spec: EdgeSpec, step = 'plan'): void {
   const t = spec.originTransport;
@@ -299,14 +314,35 @@ export function highestDraftVersion(versions: FastlyVersion[]): FastlyVersion | 
 
 // --- wire bodies (pure, pinned by the wire-contract test) ---------------------------
 
+/**
+ * The name the front presents (SNI) and verifies the origin's certificate
+ * against: the origin address when it is a name the certificate covers, else
+ * the certificate's first exact (non-wildcard) name. None for a plaintext
+ * origin, or when the declaration names nothing usable (Fastly's own default
+ * then applies).
+ */
+export function fastlyOriginTlsName(spec: EdgeSpec): string | undefined {
+  const t = spec.originTransport;
+  if (t?.scheme !== 'https') return undefined;
+  const { address } = originMember(spec, 'backend');
+  if (addressFamily(address) === null && certCovers(address, t.certNames))
+    return address.toLowerCase().replace(/\.$/, '');
+  return t.certNames.find((n) => !n.includes('*'))?.toLowerCase();
+}
+
 export function fastlyBackendBody(spec: EdgeSpec, tpl: FastlyTemplateParams): FastlyBackendBody {
   const hostname = requireHostname(spec, 'backend');
-  const { address } = originMember(spec, 'backend');
+  const { address, port } = originMember(spec, 'backend');
   assertFastlyOriginTransport(spec, 'backend');
+  const tlsName = fastlyOriginTlsName(spec);
   return {
     name: BACKEND_NAME,
     address,
+    // Sent explicitly: Fastly defaults a backend's port to 80 even with
+    // `use_ssl`, and the WebSocket path dials it (443 / 80, checked above).
+    port,
     use_ssl: spec.originTransport?.scheme === 'https',
+    ...(tlsName ? { ssl_cert_hostname: tlsName, ssl_sni_hostname: tlsName } : {}),
     // The Host the front sends the node: the minted hostname, or the origin
     // address when the node only answers to its own name.
     override_host: tpl.overrideHost === 'hostname' ? hostname : address,
@@ -688,8 +724,8 @@ async function caaPreflight(cfg: FastlyConfig): Promise<
     }
   | undefined
 > {
-  if (!cfg.dns?.zoneName) return undefined;
-  const zone = normalizeZoneName(cfg.dns.zoneName);
+  const zone = fastlyZoneOf(cfg);
+  if (!zone) return undefined;
   const wildcard = certificateScopeOf(cfg) === 'wildcard';
   const v = await checkCaa({
     name: wildcard ? `*.${zone}` : zone,
@@ -1187,8 +1223,9 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
    * without a DNS zone). Never orders anything.
    */
   async sharedCertificate(cfg): Promise<SharedCertificateStatus | null> {
-    if (certificateScopeOf(cfg) !== 'wildcard' || !cfg.dns?.zoneName) return null;
-    const name = `*.${normalizeZoneName(cfg.dns.zoneName)}`;
+    const zone = fastlyZoneOf(cfg);
+    if (certificateScopeOf(cfg) !== 'wildcard' || !zone) return null;
+    const name = `*.${zone}`;
     const api = fastlyApiFor(cfg);
     const found = sharedSubscriptionOf(await api.listTlsSubscriptionsForDomain(name), name, cfg);
     if (found.status === 'absent') return { name, state: 'absent' };
@@ -1784,7 +1821,8 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         addresses: hostname ? { hostname } : {},
         members: backends.map((b) => ({
           address: b.address ?? b.hostname ?? '',
-          port: b.use_ssl ? 443 : 80,
+          // The port Fastly dials: its own field (80 when the API has none).
+          port: b.port ?? 80,
         })),
         listeners: [{ port: 443, protocol: 'https' }],
       },
