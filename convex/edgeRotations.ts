@@ -3722,6 +3722,26 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         ...(pending.state === 'requested' ? {} : { detail: `step ${pending.stepId} requested` }),
         ...(changed ? { waitCode: code } : {}),
       });
+    } else if (out.refused) {
+      // The provider refused what FCP built (a draft that does not compile):
+      // the same call would be refused again, so the run ends on its code now,
+      // not after every retry as `step_retries_exhausted`. What was built stays
+      // for the operator to read; the provider's reason lives there, never here.
+      // The EDGE needs the operator too (the fail below keeps such an edge as it
+      // is), so its billed resources stay raised until someone deletes them.
+      await settle(opId, {
+        stepPatch: { stepId: pending.stepId, state: 'needs_operator', started: true },
+        addResources: out.resources,
+        failure: { step: pending.stepId, code: out.code },
+        waiting: null,
+        status: 'needs_operator',
+      });
+      await advanceCall(ctx, r._id, sv, {
+        type: 'fail',
+        code: out.code ?? 'step_refused',
+        detail: pending.stepId,
+        rollback: false,
+      });
     } else {
       // `partial` means the call REACHED the provider and created some children
       // before failing, so the step HAS started: without the flag a lost
@@ -3814,9 +3834,9 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         });
         return;
       }
-      // A known outcome (done / requested) releases the shared object; a
-      // `partial` leaves it half-written, so the lock is held until discovery.
-      if (out.status !== 'partial') await releaseLock();
+      // A known outcome (done / requested / refused) releases the shared object;
+      // a `partial` leaves it half-written, so the lock is held until discovery.
+      if (out.status !== 'partial' || out.refused) await releaseLock();
       await applyOutcome(cl.opId, out);
       return;
     }

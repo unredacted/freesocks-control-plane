@@ -1231,7 +1231,12 @@ any point, and never writes twice what it cannot prove:
   `ambiguous_resource`. `unresolved`: keep looking for 30 minutes after the step started, then
   `discovery_timeout`. A provision has its own 20-minute cap (`provision_timeout`). Shared
   external locks use the same lease and are held on a thrown or partial write until discovery
-  answers.
+  answers. A step the provider REFUSED (`StepOutcome` partial with `refused`: what FCP built
+  does not compile, Fastly's `version_invalid`) is never retried, since the same draft is
+  refused the same way: the run fails on that code at once, the edge (not only the step) needs
+  an operator, so its `needs_operator` attention stays raised while its billed resources
+  exist, and what was built stays so the operator can read the provider's reason at the
+  provider (FCP keeps only the code).
 - **Hosts.** The Host plan is captured **per listener** from the live listing; when FCP owns the
   Hosts and none exists for the listener yet, the flip CREATES it through the Host state
   machine. The forward write is claimed before it is sent (`forwardWriteAttempted`), so a write
@@ -2718,44 +2723,56 @@ version may not be above the highest, and keepalive timings need keepalive on.
 
 **The member's address at a Fastly front.** Fastly sets `Fastly-Client-IP` and adds the
 member's address to `X-Forwarded-For` on the incoming request, before any VCL runs (its header
-reference). It also sends `Fastly-WAF-Client-IP` with the member's address on the WebSocket
-path: Fastly documents that header nowhere (its header reference, special headers, WebSockets
-passthrough, Fanout and Next-Gen WAF client address pages, re-read 2026-10-21), and a capture
-on a beta node showed it on every upgrade request through a front built without it in the
-list. By default (`forwardClientAddress` off, for every account, template and front,
+reference). By default (`forwardClientAddress` off, for every account, template and front,
 including fronts planned before the option, whose frozen params do not name it) the front's
 service version gets three snippets: in `vcl_recv`, on every request, `unset` of every header
 in `FASTLY_CLIENT_ADDRESS_HEADERS` (`providers/fastly.ts`), then the WebSocket handoff; in
 `vcl_miss` and `vcl_pass`, the same headers removed from the backend request, for a request
 that is not handed off. The list, by name:
 
-- Fastly's own: `Fastly-Client-IP`, `X-Forwarded-For`, `Fastly-Temp-XFF` (a name Fastly's
-  generated VCL has kept its copy of the forwarding chain under) and `Fastly-WAF-Client-IP`;
-- what a client, or a proxy on its side, may send: `True-Client-IP`, `X-Real-IP`, `Forwarded`,
-  `X-Client-IP`, `Client-IP` and `X-Cluster-Client-IP`.
+- Fastly's own: `Fastly-Client-IP` and `X-Forwarded-For`;
+- what a client, or a proxy on its side, may send: `True-Client-IP`, `X-Real-IP` and
+  `Forwarded`.
 
-A header found later is one line in that list; never a protected header (`Fastly-FF`, which
-names Fastly's servers, not the member): VCL that touches one fails to compile. The generated
-VCL is pinned whole by `fastly.test.ts`. On passes them all through (the upgrade snippet only,
-as before the option).
+The generated VCL is pinned whole by `fastly.test.ts`. On passes them all through (the upgrade
+snippet only, as before the option).
+
+**`Fastly-WAF-Client-IP` reaches the node.** Fastly also sends `Fastly-WAF-Client-IP`, with the
+member's address, on every request through a front (a capture on a beta node showed it on
+every WebSocket upgrade). Fastly documents that header nowhere (its header reference, special
+and protected headers, WebSockets passthrough, Fanout and Next-Gen WAF client address pages,
+re-read 2026-10-21), and it is protected: VCL that unsets it does not compile (`Variable
+req.http.Fastly-WAF-Client-IP cannot be unset`), so no snippet can remove it, on any front.
+What keeps it from the node's software is the node: the role's Caddyfile (in
+`ansible-role-freesocks`) can drop it in each `reverse_proxy` with
+`header_up -Fastly-WAF-Client-IP`, which keeps it from Xray, though Caddy, which keeps no access
+log, still receives it. Fastly support is the place to ask for a service-level way to stop it.
+Until either is in place, a node behind a Fastly front receives each member's address.
+
+**A list only of names that compiled.** Fastly protects headers it does not document, and one
+protected name in a snippet fails the whole version: activation answers `version_invalid` and
+no front builds at all. Lists are no proof (Fastly's own and the one the VCL linter Falco
+models both leave `Fastly-WAF-Client-IP` out), so a name joins `FASTLY_CLIENT_ADDRESS_HEADERS`
+only once it has compiled in an activated version, `unset` on `req` and on `bereq`; every name
+above has. `fastly.test.ts` refuses any name on a hard-coded denylist (Fastly's documented
+protected headers, `Fastly-FF` among them, plus `Fastly-WAF-Client-IP`) in the list or anywhere
+in a generated snippet.
+
+**`version_invalid`.** The draft version did not compile. The run fails on that code at once
+(the same draft would be refused again) and keeps what it built: open the front's service at
+the provider, where the draft version shows the compile error, then delete the front. FCP keeps
+the code only, never the provider's words.
 
 **What VCL cannot reach.** `return(upgrade)` ends VCL in `vcl_recv`, so no later VCL puts a
-removed header back on the upgrade path. Fastly's WebSocket path does add headers AFTER the
-handoff (`CDN-Loop: Fanout` arrives at the node, and no VCL wrote it), and nothing in Fastly's
-documentation says which phase adds `Fastly-WAF-Client-IP`. So the `unset` of it is proven only
-by a capture through a front built with it in the list. If such a capture still shows it, it is
-added after the handoff and no snippet can remove it, on any front. The levers then are
-outside VCL: Fastly's (check the service's other products,
-`GET /enabled-products/v1/{ngwaf|ddos_protection|bot_management}/services/{id}`, and ask
-Fastly support to stop the header for the service) and the node's (the role's Caddyfile could
-drop it with `header_up -Fastly-WAF-Client-IP`, which keeps it from Xray, though Caddy still
-receives it).
+removed header back on the upgrade path. Fastly's WebSocket path adds headers after the handoff
+(`CDN-Loop: Fanout` arrives at the node, and no VCL wrote it), and a protected header such as
+`Fastly-WAF-Client-IP` cannot be removed at all: only a capture on the node shows what arrives.
 
 **Fronts built before a change to the list.** FCP never edits a live or spare front's service
 (an option's `live` is informational only): a front behaves as its version was built until it
 is replaced. Its `ws-upgrade` snippet shows which list it has
-(`GET /service/{id}/version/{n}/snippet/ws-upgrade`). Replace each front built before
-`Fastly-WAF-Client-IP` joined the list, spares first, so no replace puts an old spare in use:
+(`GET /service/{id}/version/{n}/snippet/ws-upgrade`). To replace one, spares first, so no
+replace puts an old spare in use:
 
 - a spare: "Doesn't work" on its test card destroys it and builds a new spare in its place
   (the spare dialog's renew);
@@ -3189,15 +3206,16 @@ second zone is reported, and must be cut back to one zone before the older build
 A rollback past provider options then runs `edgeProviderAccounts:purgeOptionsForRollback`. A
 later release drops the legacy keys and the fallback.
 
-**Fastly-WAF-Client-IP** joins the headers a Fastly front removes (with `Fastly-Temp-XFF`,
-`X-Client-IP`, `Client-IP` and `X-Cluster-Client-IP`): no schema change, no migration, one
-deploy. It reaches only fronts built after the deploy; every Fastly front and spare built
-before it keeps sending `Fastly-WAF-Client-IP` to its node until it is replaced (§ "Provider
-options", "Fronts built before a change to the list"). After the deploy, build one front,
-capture on its node as that section describes, and replace the older fronts only once the
-capture shows no client address. If the header is still there, VCL cannot remove it (same
-section, "What VCL cannot reach"): every Fastly front then sends it, and whether one goes in
-use is the owner's call.
+**Fastly front VCL back to what compiles.** The previous deploy added `Fastly-WAF-Client-IP`
+(with `Fastly-Temp-XFF`, `X-Client-IP`, `Client-IP` and `X-Cluster-Client-IP`) to the headers a
+Fastly front removes. Fastly protects `Fastly-WAF-Client-IP`, so every front planned under it
+failed to activate (`version_invalid`, after every retry, as `step_retries_exhausted`). This
+deploy puts the list back to the five headers fronts activated with before, and a refused step
+now fails the run on its own code at once: no schema change, no migration, one deploy. Fronts
+built before that deploy carry exactly this list and need no replacing. Delete each front left
+by a failed run under it (the run's attention names it), then build again. The member's address
+still reaches the node in `Fastly-WAF-Client-IP` (§ "Provider options"): drop it in the node
+role's Caddyfile, and ask Fastly support for a service-level way to stop it.
 
 **Provider options** add optional fields only (`edgeProviderAccounts.optionDefaults`, pick and
 run `options`, the edges' `choices`, `baseTemplateHash` and `learnedAddresses`, rotations'
