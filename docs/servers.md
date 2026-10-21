@@ -588,6 +588,16 @@ against the old template while the write is in flight. A node approved but not y
 until it is approved again (`servers.review_stale`); live nodes are untouched. Members get the
 new body on their app's next subscription refresh.
 
+**Where a template sends traffic.** Every template sends what no rule claims to its proxy
+group: the Clash, Mihomo and Stash ones route by rule (`mode: rule`; global mode ignores
+`rules:` and routes through the engine's built-in GLOBAL group, which is DIRECT, so a member's
+traffic would leave unproxied while the app looks connected) and end in `MATCH,<group>`; the
+sing-box one's default outbound (its first, no `route.final`) is the selector, and its clash API
+starts in rule mode. `defaultRouteFaults` (`lib/backend/subscriptionTemplates/defaultRoute.ts`)
+pins it on every template, on rendered and renamed member bodies, and in the compatibility
+suite, where real engines run what the panel serves from these templates
+(`docs/client-compatibility.md`).
+
 ### Changing a backend's setup
 
 Once FCP writes a backend, a new setup request is a **change** of its setup, never a fresh

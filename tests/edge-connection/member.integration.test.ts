@@ -52,6 +52,7 @@ import { qualifyFront } from '../../convex/lib/edges/frontCheck';
 import { createAccount } from '../../convex/lib/edges/testing/fixtures';
 import { signValue } from '../../convex/lib/cookies';
 import { outgoingAddresses } from '../../convex/lib/edges/render';
+import { defaultRouteFaults } from '../../convex/lib/backend/subscriptionTemplates/defaultRoute';
 import type { Cohort, CohortCursor, CohortPage } from '../../convex/lib/edges/cohorts';
 import { detectBodyFormat } from '../../convex/lib/edges/clientFamilies';
 import { ActivationReview } from '../../src/shared/contracts/servers';
@@ -883,6 +884,8 @@ async function connectThrough(
   edge: CellEdge,
   peer: string,
 ) {
+  // The body's own default route takes its proxies (the sandbox then picks one).
+  expect(defaultRouteFaults(served.body), 'the served default route').toEqual([]);
   const { config, port } = sandboxServed(engine, served.body, served.entry);
   // The sandbox changed the plumbing only: the rendered proxies are FCP's.
   expect(

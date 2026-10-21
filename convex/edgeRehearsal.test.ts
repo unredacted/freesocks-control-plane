@@ -80,7 +80,7 @@ function bodyFor(
       ],
     });
   return `mixed-port: 7890
-mode: global
+mode: rule
 proxies:
   - name: ${remark}
     type: vless
