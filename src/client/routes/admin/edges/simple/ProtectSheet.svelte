@@ -57,7 +57,9 @@
     edgeKeys,
     nodeCandidatesQuery,
     planSetupRun,
+    providersQuery,
     refreshNodeCandidates,
+    templatesQuery,
   } from '@client/lib/edgesApi';
   import { adminModeName } from '@client/lib/connectionModeCopy';
   import { SETUP_ACCOUNT_REASON_COPY, inboundUnsupportedCopy } from '@client/lib/edgeCodes';
@@ -78,6 +80,9 @@
   import { edgesPaths } from '../lib/routes';
   import { router } from '@client/stores/router.svelte';
   import ProtectProgress from './ProtectProgress.svelte';
+  import PickOptions from './PickOptions.svelte';
+  import { overrides, pickBase } from '../lib/options';
+  import type { Params } from '../templates/params';
   import { planWords, setWords } from './runWords';
 
   interface Props {
@@ -171,8 +176,12 @@
   // (null: the plan's own set). The create sends the same choice.
   let chosenKeys = $state<string[] | null>(null);
   const planM = createMutation(() => ({
-    mutationFn: (v: { uuid: string; keys: string[] | null; picks: string[] }) =>
-      planSetupRun(serverId, v.uuid, v.keys ?? undefined, v.picks),
+    mutationFn: (v: {
+      uuid: string;
+      keys: string[] | null;
+      picks: string[];
+      options: Record<string, Params>;
+    }) => planSetupRun(serverId, v.uuid, v.keys ?? undefined, v.picks, v.options),
     onSuccess: (p, v) => {
       // A slower answer for a node, a choice or a set the operator has since
       // moved away from is dropped: the review and the run must never use
@@ -182,22 +191,26 @@
         p.backendServerId !== serverId ||
         v.keys !== chosenKeys ||
         // By value: `picks` reads back as Svelte's proxy of the array sent.
-        v.picks.join(',') !== picks.join(',')
+        v.picks.join(',') !== picks.join(',') ||
+        // What would be sent now (an emptied pick or one no longer chosen drops out).
+        JSON.stringify(v.options) !== JSON.stringify(optionsSent())
       )
         return;
       plan = p;
       if (p.activeRunId) onRunCreated(p.activeRunId);
     },
   }));
-  const replan = () => planM.mutate({ uuid: nodeUuid, keys: chosenKeys, picks });
+  const replan = () =>
+    planM.mutate({ uuid: nodeUuid, keys: chosenKeys, picks, options: optionsSent() });
   function pickNode(uuid: string) {
     nodeUuid = uuid;
     plan = null;
     chosenKeys = null;
     choosingTransports = false;
     picks = [];
+    pickOptions = {};
     autoPicked = false;
-    planM.mutate({ uuid, keys: null, picks: [] });
+    planM.mutate({ uuid, keys: null, picks: [], options: {} });
   }
   const planIssue = $derived(planM.error ? edgeErrorIssue(planM.error) : null);
   // A transport in words: never its internal key.
@@ -245,6 +258,43 @@
   // set makes (addresses per pick, transports with no backup elsewhere).
   let picks = $state<string[]>([]);
   let autoPicked = false;
+  // The provider options chosen for each pick (only what differs from what the
+  // location builds with anyway); the plan checks them where they build.
+  let pickOptions = $state<Record<string, Params>>({});
+  const optionsSent = (): Record<string, Params> =>
+    Object.fromEntries(
+      Object.entries($state.snapshot(pickOptions)).filter(
+        ([id, v]) => picks.includes(id) && Object.keys(v).length > 0,
+      ),
+    );
+  const providersQ = providersQuery();
+  const templatesQ = templatesQuery();
+  /** The pick's account and location rows (for what it builds with by default). */
+  const pickRows = (locationId: string) => {
+    for (const a of providersQ.data?.accounts ?? []) {
+      const l = a.locations.find((x) => x.id === locationId);
+      if (l) return { account: a, location: l };
+    }
+    return null;
+  };
+  function optionsOf(provider: string, locationId: string) {
+    const schema = providersQ.data?.optionSchemas[provider];
+    const rows = pickRows(locationId);
+    if (!schema || !rows) return null;
+    const base = pickBase(
+      schema,
+      templatesQ.data?.schemas[provider]?.defaults ?? {},
+      templatesQ.data?.templates ?? [],
+      rows.account,
+      rows.location,
+    );
+    return { fields: schema.fields, base };
+  }
+  function setPickOptions(locationId: string, base: Params, values: Params) {
+    const schema = providersQ.data?.optionSchemas[pickRows(locationId)?.account.provider ?? ''];
+    pickOptions = { ...pickOptions, [locationId]: overrides(values, base, schema?.fields ?? []) };
+    replan();
+  }
   let addingLocationFor = $state<string | null>(null);
   // How each offered location fares from the checked countries (read live while open).
   const countriesQ = edgeCountriesQuery({ enabled: () => open && !runId });
@@ -270,7 +320,7 @@
   );
   function setPicks(next: string[]) {
     picks = next;
-    planM.mutate({ uuid: nodeUuid, keys: chosenKeys, picks: next });
+    planM.mutate({ uuid: nodeUuid, keys: chosenKeys, picks: next, options: optionsSent() });
   }
   function toggleLocation(id: string, on: boolean) {
     setPicks(on ? [...picks.filter((x) => x !== id), id] : picks.filter((x) => x !== id));
@@ -354,6 +404,7 @@
         backendServerId: plan!.backendServerId,
         nodeUuid: plan!.nodeUuid,
         picks,
+        ...(Object.keys(optionsSent()).length > 0 ? { pickOptions: optionsSent() } : {}),
         planHash: plan!.planHash,
         approvedHideUuids: keepDirect ? [] : (words?.uncovered?.uuids ?? []),
         ...(keepDirect ? { keepDirect: true } : {}),
@@ -788,6 +839,21 @@
                               {/if}
                             </span>
                           </label>
+                          {#if picks.includes(l.id)}
+                            {@const o = optionsOf(a.provider, l.id)}
+                            {#if o}
+                              <div class="pl-7">
+                                <PickOptions
+                                  accountId={a.id}
+                                  locationId={l.id}
+                                  fields={o.fields}
+                                  base={o.base}
+                                  values={pickOptions[l.id] ?? {}}
+                                  onchange={(next) => setPickOptions(l.id, o.base, next)}
+                                />
+                              </div>
+                            {/if}
+                          {/if}
                         </li>
                       {/each}
                     </ul>
@@ -839,9 +905,8 @@
                   {#if setW.tooLarge}<p class="text-destructive">{setW.tooLarge}</p>{/if}
                   {#each set?.problems ?? [] as pr (pr.locationId + pr.reason)}
                     <p class="text-destructive">
-                      {set?.picks.find((x) => x.locationId === pr.locationId)?.label ?? ''}: {reasonLabel(
-                        pr.reason,
-                      )}.
+                      {set?.picks.find((x) => x.locationId === pr.locationId)?.label ?? ''}: {pr.detail ??
+                        reasonLabel(pr.reason)}.
                     </p>
                   {/each}
                   {#if setW.reduced}<p class="text-muted-foreground">{setW.reduced}</p>{/if}

@@ -14,7 +14,9 @@
    * an account at its limit gets the new spare later ("Add a spare" again).
    *
    * Where: Automatic (the dry run's own choice, said in words), or one location
-   * of the node's set for the transport Automatic would pick.
+   * of the node's set for the transport Automatic would pick. A named location
+   * offers "Options for this address" (prefilled with the node's options there);
+   * an address built with other options is never taken by automatic work.
    *
    * Props:
    *   open (bindable); relay; renew?: { edgeId, listenerId, listenerKey } | null
@@ -34,9 +36,14 @@
     edgeKeys,
     invalidateRelay,
     preflightRelay,
+    providersQuery,
     provisionRelay,
     relayProvidersQuery,
+    templatesQuery,
   } from '@client/lib/edgesApi';
+  import PickOptions from './PickOptions.svelte';
+  import { overrides, pickBase } from '../lib/options';
+  import { asParams, deepEqual, type Params } from '../templates/params';
   import CodeNote from '../components/CodeNote.svelte';
   import AdminListState from '../../AdminListState.svelte';
   import ActionConfirm from '../relay/ActionConfirm.svelte';
@@ -69,6 +76,33 @@
     poll: false,
   });
   const picks = $derived((setQ.data?.picks ?? []).filter((p) => p.usable));
+  // Options for this one address, at a named location: the node's there to start with.
+  const providersQ = providersQuery();
+  const templatesQ = templatesQuery();
+  const whereOptions = $derived.by(() => {
+    const p = picks.find((x) => x.locationId === where);
+    const schema = p ? providersQ.data?.optionSchemas[p.provider] : undefined;
+    const account = p ? providersQ.data?.accounts.find((a) => a.id === p.accountId) : undefined;
+    if (!p || !schema || !account) return null;
+    const base = pickBase(
+      schema,
+      templatesQ.data?.schemas[p.provider]?.defaults ?? {},
+      templatesQ.data?.templates ?? [],
+      account,
+      account.locations.find((l) => l.id === p.locationId) ?? null,
+    );
+    return {
+      pick: p,
+      fields: schema.fields,
+      base,
+      chosen: overrides(asParams(p.options), base, schema.fields),
+    };
+  });
+  let oneOff = $state<Params | null>(null);
+  $effect(() => {
+    void where;
+    oneOff = null;
+  });
   const spareCheck = (listenerKey?: string, locationId?: string) =>
     preflightRelay(relay.id, {
       kind: 'provision',
@@ -110,7 +144,15 @@
       await provisionRelay(
         relay.id,
         where && autoListener
-          ? { publish: false, listenerId: autoListener.id, locationId: where }
+          ? {
+              publish: false,
+              listenerId: autoListener.id,
+              locationId: where,
+              // Only when they differ from the node's own options there.
+              ...(oneOff && whereOptions && !deepEqual(oneOff, whereOptions.chosen)
+                ? { options: $state.snapshot(oneOff) }
+                : {}),
+            }
           : { publish: false },
       );
       toast.success('Creating a spare address. Test it here once it is ready.');
@@ -175,6 +217,21 @@
         </Select.Content>
       </Select.Root>
       {#if autoWords}<p class="text-muted-foreground text-xs">{autoWords}</p>{/if}
+      {#if whereOptions}
+        <PickOptions
+          accountId={whereOptions.pick.accountId}
+          locationId={whereOptions.pick.locationId}
+          fields={whereOptions.fields}
+          base={whereOptions.base}
+          values={oneOff ?? whereOptions.chosen}
+          onchange={(next) => (oneOff = overrides(next, whereOptions.base, whereOptions.fields))}
+        />
+        {#if oneOff && !deepEqual(oneOff, whereOptions.chosen)}
+          <p class="text-muted-foreground text-xs">
+            This address only. Automatic work never puts an address built with other options in use.
+          </p>
+        {/if}
+      {/if}
     </div>
   {/if}
   {#if !renew}

@@ -14,6 +14,7 @@
  * The reconcile cron itself lives in edgeReconcile.ts (it needs the Node
  * provider actions and the rotation machine).
  */
+import { parseOptionValues } from './lib/edges/providers/options';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
@@ -25,6 +26,7 @@ import { dropEdgeFromPool, liveEdgesOfAccount } from './relays';
 import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
 import { parseIntent, type ProvisionIntent } from './lib/edges/intent';
 import {
+  holdLearnedAddresses,
   needsEndpointVerification,
   verificationCurrent,
   verificationStale,
@@ -106,6 +108,7 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     required,
     current: !required ? true : listener ? verificationCurrent(e, listener) : null,
     stale: !required ? false : listener ? verificationStale(e, listener) : null,
+    learnedAddress: e.learnedAddresses?.v6 ?? e.learnedAddresses?.v4 ?? null,
     record: rec
       ? {
           rung: rec.rung,
@@ -127,6 +130,8 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     placeKey: e.placeKey ?? null,
     templateId: (e.templateId as string | undefined) ?? null,
     templateHash: e.templateHash ?? null,
+    // The node's options this edge was built with, frozen (null: built before options).
+    choices: e.choices !== undefined ? parseOptionValues(e.choices) : null,
     provider: e.provider ?? null,
     managed: e.managed,
     name: e.name,
@@ -301,6 +306,9 @@ export interface PlannedEdgeInput {
   locationId?: Id<'edgeLocations'> | null;
   templateId?: Id<'edgeTemplates'> | null;
   templateHash: string;
+  /** With a node's choices: the location's own template hash and the choices (JSON), frozen. */
+  baseTemplateHash?: string;
+  choices?: string;
   listeners: Array<{
     edgePort: number;
     originAddress: string;
@@ -370,6 +378,9 @@ export async function insertPlannedEdge(
     placement: location.placement,
     templateId: a.templateId ?? undefined,
     templateHash: a.templateHash,
+    ...(a.choices !== undefined
+      ? { choices: a.choices, baseTemplateHash: a.baseTemplateHash ?? a.templateHash }
+      : {}),
     provider: account.provider,
     managed: true,
     name,
@@ -715,7 +726,7 @@ export const recordDescribe = internalMutation({
     const addressLossObservations = losesAddress ? (edge.addressLossObservations ?? 0) + 1 : 0;
     const applyLoss = addressLossObservations >= ADDRESS_LOSS_OBSERVATIONS_REQUIRED;
     const keepKnown = losesAddress && !applyLoss;
-    const addressesNext =
+    const reported =
       a.state === 'active' && !keepKnown
         ? { v4: a.addresses.v4, v6: a.addresses.v6, hostname: a.addresses.hostname }
         : {
@@ -723,6 +734,14 @@ export const recordDescribe = internalMutation({
             v6: a.addresses.v6 ?? known6,
             hostname: a.addresses.hostname ?? knownName,
           };
+    // A family a confirmed L4 edge did not have is held apart until it is
+    // tested (lib/edges/verification.ts `holdLearnedAddresses`); only an
+    // active describe decides what is held, the others keep it.
+    const held =
+      a.state === 'active'
+        ? holdLearnedAddresses(edge, reported)
+        : { addresses: reported, learned: edge.learnedAddresses ?? undefined };
+    const addressesNext = held.addresses;
     let resources = added.length > 0 ? [...edge.resources, ...added] : edge.resources;
     let transition: Partial<Edge> = {};
     const gone = a.state === 'gone' && edge.status !== 'destroyed';
@@ -759,6 +778,7 @@ export const recordDescribe = internalMutation({
     }
     await ctx.db.patch(a.edgeId, {
       addresses: addressesNext,
+      learnedAddresses: held.learned,
       health: a.health as Edge['health'],
       lastHealthAt: now,
       ...(resources !== edge.resources ? { resources } : {}),

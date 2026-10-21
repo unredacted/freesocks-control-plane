@@ -57,6 +57,7 @@
   import InventoryTab from './providers/InventoryTab.svelte';
   import LimitsCard from './providers/LimitsCard.svelte';
   import LocationsCard from './providers/LocationsCard.svelte';
+  import OptionDefaultsCard from './providers/OptionDefaultsCard.svelte';
   import QualifyDialog from './providers/QualifyDialog.svelte';
   import RenameDialog from './providers/RenameDialog.svelte';
   import RotateCredentialsDialog from './providers/RotateCredentialsDialog.svelte';
@@ -150,29 +151,22 @@
   const sharesCertificates = $derived(
     a ? EDGE_PROVIDER_META[a.provider].sharedCertificates : false,
   );
-  const scopeNow = $derived(
-    a && a.settings.certificateScope === 'wildcard' ? 'wildcard' : 'per_host',
-  );
-  const SCOPE_WORDS: Record<string, string> = {
-    wildcard: 'One wildcard for every front',
-    per_host: 'One certificate per front',
-  };
-  let scopeChoice = $state<string | null>(null);
-  let scopeOpen = $state(false);
   const sharedWords = $derived(
     a?.sharedCertificate ? sharedCertificateWords(a.sharedCertificate) : null,
   );
-  async function saveScope() {
-    if (!a || !scopeChoice) return;
-    await updateProvider(a.id, { settings: { ...a.settings, certificateScope: scopeChoice } });
-    invalidateProviders(qc);
-    toast.success('Certificates changed');
-    scopeChoice = null;
-  }
+  // The provider's certificate options (the account's defaults for its nodes).
+  const certificateFields = $derived(
+    a
+      ? (providers.data?.optionSchemas[a.provider]?.fields ?? []).filter(
+          (f) => f.kind === 'certificate',
+        )
+      : [],
+  );
   // A wildcard FCP ordered that no live front uses any more can be removed at
   // the provider (and must be before the account is deleted): FCP never removes
   // it by itself, and never removes one it only found there.
-  const REMOVABLE = ['pending', 'processing', 'issued', 'renewing', 'failed'];
+  // `ambiguous` counts when FCP ordered it (another authority than the account's now).
+  const REMOVABLE = ['pending', 'processing', 'issued', 'renewing', 'failed', 'ambiguous'];
   const sharedRemovable = $derived(
     !!a?.sharedCertificate &&
       a.sharedCertificate.orderedByFcp &&
@@ -431,63 +425,45 @@
         </Card>
       {/if}
 
+      {#if certificateFields.length > 0}
+        <OptionDefaultsCard account={a} fields={certificateFields}>
+          {#if a.sharedCertificate && sharedWords}
+            <div class="space-y-1">
+              <div class="text-xs text-muted-foreground">Shared certificate</div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-mono text-sm">{a.sharedCertificate.name}</span>
+                <Badge variant={sharedWords.tone}>{sharedWords.label}</Badge>
+              </div>
+              <p class="text-xs text-muted-foreground">{sharedWords.detail}</p>
+              {#if sharedRemovable}
+                <Button size="sm" variant="outline" onclick={() => (removeSharedOpen = true)}>
+                  Remove shared certificate
+                </Button>
+              {:else if !a.sharedCertificate.orderedByFcp}
+                <p class="text-xs text-muted-foreground">
+                  FCP found this certificate at the provider and reuses it. It removes only
+                  certificates its own fronts ordered.
+                </p>
+              {/if}
+            </div>
+          {:else if sharesCertificates && a.optionDefaults.certificateScope === 'wildcard'}
+            <p class="text-xs text-muted-foreground">
+              The shared certificate is read at the provider when the account is tested, and ordered
+              by the first new front.
+            </p>
+          {/if}
+        </OptionDefaultsCard>
+      {/if}
+
       {#if sharesCertificates}
         <Card>
           <CardHeader>
-            <CardTitle class="text-base">Certificates and domains</CardTitle>
+            <CardTitle class="text-base">Domains</CardTitle>
             <CardDescription>
-              How this account's fronts get their certificate and their name. One wildcard is issued
-              once and shared: a new front does not wait for a certificate, and its name never
-              appears in public certificate logs before members use it.
+              How a new front's name is attached to its service. Fronts that exist keep theirs.
             </CardDescription>
           </CardHeader>
           <CardContent class="space-y-4">
-            <div class="flex flex-wrap items-end gap-3">
-              <div class="max-w-md flex-1 space-y-1.5">
-                <Label for="acct-cert-scope">New fronts get</Label>
-                <Select.Root
-                  type="single"
-                  value={scopeChoice ?? scopeNow}
-                  onValueChange={(v) => (scopeChoice = v === scopeNow ? null : v)}
-                >
-                  <Select.Trigger id="acct-cert-scope" class="w-full">
-                    {SCOPE_WORDS[scopeChoice ?? scopeNow]}
-                  </Select.Trigger>
-                  <Select.Content>
-                    <Select.Item value="wildcard">{SCOPE_WORDS.wildcard} (recommended)</Select.Item>
-                    <Select.Item value="per_host">{SCOPE_WORDS.per_host}</Select.Item>
-                  </Select.Content>
-                </Select.Root>
-              </div>
-              <Button disabled={scopeChoice === null} onclick={() => (scopeOpen = true)}>
-                Change certificates
-              </Button>
-            </div>
-            {#if a.sharedCertificate && sharedWords}
-              <div class="space-y-1">
-                <div class="text-xs text-muted-foreground">Shared certificate</div>
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="font-mono text-sm">{a.sharedCertificate.name}</span>
-                  <Badge variant={sharedWords.tone}>{sharedWords.label}</Badge>
-                </div>
-                <p class="text-xs text-muted-foreground">{sharedWords.detail}</p>
-                {#if sharedRemovable}
-                  <Button size="sm" variant="outline" onclick={() => (removeSharedOpen = true)}>
-                    Remove shared certificate
-                  </Button>
-                {:else if !a.sharedCertificate.orderedByFcp}
-                  <p class="text-xs text-muted-foreground">
-                    FCP found this certificate at the provider and reuses it. It removes only
-                    certificates its own fronts ordered.
-                  </p>
-                {/if}
-              </div>
-            {:else if scopeNow === 'wildcard'}
-              <p class="text-xs text-muted-foreground">
-                The shared certificate is read at the provider when the account is tested, and
-                ordered by the first new front.
-              </p>
-            {/if}
             <div class="flex flex-wrap items-end gap-3">
               <div class="max-w-md flex-1 space-y-1.5">
                 <Label for="acct-domains">A new front's name is</Label>
@@ -648,13 +624,6 @@
     body="New edges of this account will get their DNS records through the account you picked. The account loses its qualification and must be tested and qualified again. Existing edges keep the records they have."
     confirmLabel="Change DNS account"
     onConfirm={saveDns}
-  />
-  <ConfirmDialog
-    bind:open={scopeOpen}
-    title="Change how fronts get certificates?"
-    body="New fronts of this account get their certificate the new way; fronts that exist keep theirs. Like any settings change, the account loses its trust: test it again, and its next proven front trusts it."
-    confirmLabel="Change certificates"
-    onConfirm={saveScope}
   />
   <ConfirmDialog
     bind:open={removeSharedOpen}

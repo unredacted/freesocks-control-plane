@@ -47,7 +47,7 @@ import {
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
-import { publicationApproval, startRotation } from './edgeRotations';
+import { edgeFitsPick, publicationApproval, startRotation } from './edgeRotations';
 import {
   claimDeliveryBinding,
   deliveryBindingFor,
@@ -112,6 +112,8 @@ import { isDirect, modeEntry, modeSlug, nodeGateFor } from './nodeIntents';
 import { setupReady } from './backendSetup';
 import { runningRenameOf } from './lib/backend/nodeAliases';
 import { MAX_PROVIDER_PICKS, coverTargets, requirementOf } from './lib/edges/providerSet';
+import { checkPickOptions, relayHasReality } from './edgeTemplates';
+import { parseOptionValues } from './lib/edges/providers/options';
 import { carries, setStateOf } from './lib/edges/setState';
 import { locationKeyOf } from './lib/edges/locations';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
@@ -133,9 +135,15 @@ export function runPick(r: Pick<Run, 'picks'>): {
 export function runPicks(r: Pick<Run, 'picks'>): Array<{
   accountId: Id<'edgeProviderAccounts'> | null;
   locationId: Id<'edgeLocations'> | null;
+  /** The pick's provider options (JSON); absent = a pick from before options. */
+  options?: string;
 }> {
   if (r.picks && r.picks.length > 0)
-    return r.picks.map((p) => ({ accountId: p.accountId, locationId: p.locationId }));
+    return r.picks.map((p) => ({
+      accountId: p.accountId,
+      locationId: p.locationId,
+      ...(p.options !== undefined ? { options: p.options } : {}),
+    }));
   return [runPick(r)];
 }
 
@@ -736,10 +744,25 @@ export const relayContext = internalQuery({
     const edges = await liveEdgesOfRelay(ctx.db, relay._id);
     const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
+    // The edges built with what this run's pick at their location asks for:
+    // only those may be reused (an earlier generation's standby or a spare
+    // built for other choices is not this node's).
+    const fitsPick: string[] = [];
+    for (const e of edges)
+      if (
+        await edgeFitsPick(
+          ctx,
+          { setupRun: { runId: run._id, generation: run.generation } },
+          relay,
+          e,
+        )
+      )
+        fitsPick.push(e._id as string);
     return {
       relay,
       listeners,
       edges,
+      fitsPick,
       cfg,
       frontedEnrolled: await frontedEnrolled(ctx, run.backendServerId, run.nodeName),
       // Keyed by the target's edge: a transport may have one address per pick.
@@ -821,6 +844,10 @@ export const insert = internalMutation({
     planHash: v.string(),
     /** The set's picks (locations), in set order, and the targets the plan's cover asked for. */
     picks: v.optional(v.array(v.id('edgeLocations'))),
+    /** Each pick's provider options (JSON), as the plan showed them. */
+    pickOptions: v.optional(
+      v.array(v.object({ locationId: v.id('edgeLocations'), options: v.string() })),
+    ),
     targets: v.optional(
       v.array(v.object({ listenerKey: v.string(), locationId: v.id('edgeLocations') })),
     ),
@@ -937,7 +964,14 @@ export const insert = internalMutation({
       backendServerId,
       nodeName: plan.nodeName,
       nodeUuid: plan.nodeUuid,
-      picks: picks.map((p) => ({ locationId: p.location._id, accountId: p.account._id })),
+      picks: picks.map((p) => {
+        const options = a.pickOptions?.find((x) => x.locationId === p.location._id)?.options;
+        return {
+          locationId: p.location._id,
+          accountId: p.account._id,
+          ...(options !== undefined ? { options } : {}),
+        };
+      }),
       plan: JSON.stringify(plan),
       planHash: a.planHash,
       planRevision: 1,
@@ -1232,9 +1266,19 @@ function providerSetAfter(relay: Relay, r: Run, now: number): NonNullable<Relay[
   const add = parsePlan(r).reprotect?.mode === 'add';
   const out: NonNullable<Relay['providerSet']> = add ? [...before] : [];
   for (const p of runPicks(r)) {
-    if (!p.locationId || out.some((x) => x.locationId === p.locationId)) continue;
+    if (!p.locationId) continue;
     const kept = before.find((x) => x.locationId === p.locationId);
-    out.push({ locationId: p.locationId, addedAt: kept?.addedAt ?? now });
+    // A pick the run names takes the run's options (an `add` re-protect may
+    // change them for a pick the node already had); one without keeps its own.
+    const options = p.options ?? kept?.options;
+    const entry = {
+      locationId: p.locationId,
+      addedAt: kept?.addedAt ?? now,
+      ...(options !== undefined ? { options } : {}),
+    };
+    const at = out.findIndex((x) => x.locationId === p.locationId);
+    if (at >= 0) out[at] = entry;
+    else out.push(entry);
   }
   return out;
 }
@@ -1894,7 +1938,9 @@ async function stageProvision(ctx: ActionCtx, run: Run): Promise<null> {
               e.accountId === pick.accountId &&
               // The same place: an address in another location of the account is not this pick's.
               (!(l.locationId ?? pick.locationId) ||
-                (e.locationId ?? null) === (l.locationId ?? pick.locationId)),
+                (e.locationId ?? null) === (l.locationId ?? pick.locationId)) &&
+              // Built with what the pick asks for (its options).
+              c.fitsPick.includes(e._id as string),
           )
         : undefined;
     if (reuse) taken.add(reuse._id as string);
@@ -3644,7 +3690,14 @@ export const requireEdges = internalMutation({
       backendServerId: relay.backendServerId,
       nodeName: relay.nodeName,
       nodeUuid: plan.nodeUuid,
-      picks: pickRows.map((p) => ({ locationId: p.location._id, accountId: p.account._id })),
+      picks: pickRows.map((p) => {
+        const options = relay.providerSet?.find((x) => x.locationId === p.location._id)?.options;
+        return {
+          locationId: p.location._id,
+          accountId: p.account._id,
+          ...(options !== undefined ? { options } : {}),
+        };
+      }),
       plan: JSON.stringify(plan),
       planHash: '',
       planRevision: 1,
@@ -3711,6 +3764,8 @@ export const reprotect = internalMutation({
     mode: v.optional(v.union(v.literal('replace_all'), v.literal('add'))),
     /** `add`: the locations joining the node's set. */
     addPicks: v.optional(v.array(v.id('edgeLocations'))),
+    /** Provider options per pick (location id -> values); a pick not named keeps its own. */
+    pickOptions: v.optional(v.any()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: (ctx, a) => startReprotect(ctx, a),
@@ -3723,11 +3778,13 @@ export async function startReprotect(
     relayId,
     actorAdminId,
     addPicks,
+    pickOptions,
     ...rest
   }: {
     relayId: Id<'relays'>;
     mode?: 'replace_all' | 'add';
     addPicks?: Id<'edgeLocations'>[];
+    pickOptions?: Record<string, unknown>;
     actorAdminId?: Id<'adminUsers'>;
   },
 ): Promise<{ runId: Id<'edgeSetupRuns'>; stage: SetupRunStage }> {
@@ -3839,6 +3896,33 @@ export async function startReprotect(
         code: 'edge.account_incompatible',
         message: 'No location to protect this node from',
       });
+    // Each pick's provider options: the ones the operator gives now (checked
+    // where they build), else what the node's set already holds for it.
+    const optionsOfPick = new Map<string, string>();
+    const realityL4 = await relayHasReality(ctx.db, relay._id);
+    for (const p of pickRows) {
+      const key = p.location._id as string;
+      const given = pickOptions?.[key];
+      if (given !== undefined) {
+        const r = await checkPickOptions(ctx, p.location, p.account, given, { realityL4 });
+        if (!r.ok) throw new ConvexError({ code: r.code, message: r.issues.join('; ') || r.code });
+        optionsOfPick.set(key, JSON.stringify(r.options));
+        continue;
+      }
+      const entry = relay.providerSet?.find((x) => x.locationId === p.location._id);
+      if (entry) {
+        // A pick the node already had keeps what it has (the deploy copied the
+        // account's certificate into one from before options).
+        if (entry.options !== undefined) optionsOfPick.set(key, entry.options);
+        continue;
+      }
+      // A pick joining now starts from the account's defaults, copied in, and
+      // is refused now (as given options are) when what it inherits cannot be
+      // built there, rather than failing later in the rotation.
+      const r = await checkPickOptions(ctx, p.location, p.account, {}, { realityL4 });
+      if (!r.ok) throw new ConvexError({ code: r.code, message: r.issues.join('; ') || r.code });
+      optionsOfPick.set(key, JSON.stringify(r.options));
+    }
     // The requirement over the served transports, and its cover: fresh targets
     // over the whole of it (`replace_all`: the new addresses take the old
     // ones' places at go-live), or what the larger set still lacks given what
@@ -3923,6 +4007,9 @@ export async function startReprotect(
           provider: p.account.provider,
           locationKey: locationKeyOf(p.account.provider, p.location.placeKey),
           label: p.location.label,
+          ...(optionsOfPick.has(p.location._id as string)
+            ? { options: parseOptionValues(optionsOfPick.get(p.location._id as string)) }
+            : {}),
         })),
         targets: targets.map((t) => ({ listenerKey: t.listenerKey, locationId: t.locationId })),
         reduced: req.reduced,
@@ -3939,7 +4026,14 @@ export async function startReprotect(
       backendServerId,
       nodeName,
       nodeUuid,
-      picks: pickRows.map((p) => ({ locationId: p.location._id, accountId: p.account._id })),
+      picks: pickRows.map((p) => {
+        const options = optionsOfPick.get(p.location._id as string);
+        return {
+          locationId: p.location._id,
+          accountId: p.account._id,
+          ...(options !== undefined ? { options } : {}),
+        };
+      }),
       plan: JSON.stringify(plan),
       planHash: '',
       planRevision: 1,

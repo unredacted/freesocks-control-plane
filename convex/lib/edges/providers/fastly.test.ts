@@ -30,10 +30,12 @@ import type { CaaRecord } from '../caa';
 import {
   FASTLY_DESTROY_ORDER,
   FASTLY_WS_UPGRADE_VCL,
+  fastlySnippetBodies,
   CERTIFICATE_EXPIRY_WARN_MS,
   TLS_WARNING_GRACE_MS,
   __setFastlyCaaLookup,
   __setFastlyDnsClientFactory,
+  dnsRecordOptions,
   fastlyBackendBody,
   fastlyDestroyKey,
   fastlyOriginTlsName,
@@ -466,13 +468,154 @@ describe('fastly: request bodies', () => {
   });
 
   test('the snippet is the upgrade guard, string-typed as the API wants', () => {
-    expect(fastlySnippetBody()).toEqual({
+    expect(fastlySnippetBody({ forwardClientAddress: true })).toEqual({
       name: 'ws-upgrade',
       type: 'recv',
       content: FASTLY_WS_UPGRADE_VCL,
       priority: '100',
       dynamic: '0',
     });
+  });
+
+  test('backend options reach their API fields; none is sent unchosen', () => {
+    // The fixed fields only: the port and the origin's TLS name are always sent.
+    expect(Object.keys(fastlyBackendBody(spec, tpl)).sort()).toEqual(
+      [
+        'address',
+        'comment',
+        'name',
+        'override_host',
+        'port',
+        'ssl_cert_hostname',
+        'ssl_sni_hostname',
+        'use_ssl',
+      ].sort(),
+    );
+    const t = fastlyProvider.templateSchema.parse({
+      preferIpv6: true,
+      connectTimeoutMs: 2000,
+      firstByteTimeoutMs: 30_000,
+      maxConn: 1000,
+      minTlsVersion: '1.2',
+      maxTlsVersion: '1.3',
+      sslCiphers: 'ECDHE+AESGCM',
+      tcpKeepalive: true,
+      tcpKeepaliveTime: 60,
+      tcpKeepaliveInterval: 5,
+      tcpKeepaliveProbes: 4,
+    });
+    expect(fastlyBackendBody(spec, t)).toMatchObject({
+      prefer_ipv6: true,
+      connect_timeout: 2000,
+      first_byte_timeout: 30_000,
+      max_conn: 1000,
+      min_tls_version: '1.2',
+      max_tls_version: '1.3',
+      ssl_ciphers: 'ECDHE+AESGCM',
+      tcp_keepalive_enable: true,
+      tcp_keepalive_time: 60,
+      tcp_keepalive_interval: 5,
+      tcp_keepalive_probes: 4,
+    });
+  });
+
+  test("by default the node never sees the member's address, on any path", () => {
+    const unset = (obj: string) =>
+      [
+        `unset ${obj}.http.Fastly-Client-IP;`,
+        `unset ${obj}.http.X-Forwarded-For;`,
+        `unset ${obj}.http.True-Client-IP;`,
+        `unset ${obj}.http.X-Real-IP;`,
+        `unset ${obj}.http.Forwarded;`,
+      ].join(' ');
+    // The generated VCL, pinned whole: every request loses the headers in
+    // vcl_recv BEFORE the handoff (nothing runs after return(upgrade)), and a
+    // request that is not handed off loses them again on the backend request.
+    const expected = [
+      {
+        name: 'client-address-miss',
+        type: 'miss',
+        content: unset('bereq'),
+        priority: '100',
+        dynamic: '0',
+      },
+      {
+        name: 'client-address-pass',
+        type: 'pass',
+        content: unset('bereq'),
+        priority: '100',
+        dynamic: '0',
+      },
+      {
+        name: 'ws-upgrade',
+        type: 'recv',
+        content: `${unset('req')} if (req.http.Upgrade) { return(upgrade); }`,
+        priority: '100',
+        dynamic: '0',
+      },
+    ];
+    // Absent (every template and front from before the option) and off are the same.
+    expect(fastlySnippetBodies()).toEqual(expected);
+    expect(fastlySnippetBodies(fastlyProvider.templateSchema.parse({}))).toEqual(expected);
+    expect(fastlySnippetBodies({ forwardClientAddress: false })).toEqual(expected);
+    // The unsets come before the handoff, never inside or after it.
+    const recv = expected[2]!.content;
+    expect(recv.indexOf('return(upgrade)')).toBeGreaterThan(recv.lastIndexOf('unset'));
+    // On: only the upgrade guard, exactly as before the option existed.
+    expect(fastlySnippetBodies({ forwardClientAddress: true })).toEqual([
+      fastlySnippetBody({ forwardClientAddress: true }),
+    ]);
+    expect(fastlySnippetBody({ forwardClientAddress: true }).content).toBe(FASTLY_WS_UPGRADE_VCL);
+  });
+
+  test('a retried snippet step takes the snippets a partial run already made', async () => {
+    let posts = 0;
+    const r = await serve((c) => {
+      if (c.method === 'POST' && /\/snippet$/.test(c.path)) {
+        posts++;
+        // The first strip snippet exists already (made before a crash).
+        if (posts === 1) return { status: 409, body: { msg: 'Duplicate record' } };
+      }
+      if (c.method === 'GET' && /\/snippet\/client-address-miss$/.test(c.path))
+        return ok('snippet-create.json');
+      return defaultReply(c);
+    });
+    const step = fastlyProvider
+      .planProvision(cfg, spec, tpl)
+      .find((x) => x.kind === 'create_snippet')!;
+    const out = await fastlyProvider.runStep(cfg, step, spec, tpl, {
+      steps: [],
+      resources: [
+        {
+          stepId: 'service',
+          kind: 'service',
+          resourceId: SVC,
+          ownership: 'created',
+          deleteState: 'present',
+          meta: JSON.stringify({ version: 1, name: spec.name }),
+        },
+      ],
+    });
+    expect(out.status).toBe('done');
+    expect(
+      r.calls.filter((c) => /\/snippet/.test(c.path)).map((c) => `${c.method} ${c.path}`),
+    ).toEqual([
+      `POST /service/${SVC}/version/1/snippet`,
+      `GET /service/${SVC}/version/1/snippet/client-address-miss`,
+      `POST /service/${SVC}/version/1/snippet`,
+      `POST /service/${SVC}/version/1/snippet`,
+    ]);
+  });
+
+  test("the front's records carry the chosen TTL and tags; only the traffic name flattens", () => {
+    expect(dnsRecordOptions({}, true)).toEqual({});
+    const t = { dnsTtl: 300, dnsTags: { team: 'edge' }, dnsFlatten: true };
+    expect(dnsRecordOptions(t, true)).toEqual({
+      ttl: 300,
+      tags: ['team:edge'],
+      settings: { flatten_cname: true },
+    });
+    expect(dnsRecordOptions(t, false)).toEqual({ ttl: 300, tags: ['team:edge'] });
   });
 
   test('the TLS subscription names the domain, the CA and (only when set) the configuration', () => {
@@ -565,6 +708,9 @@ describe('fastly: provisioning', () => {
     expect(paths).toEqual([
       'POST /service',
       `POST /service/${SVC}/version/1/backend`,
+      // The member's address is stripped by default: two strip snippets, the upgrade one last.
+      `POST /service/${SVC}/version/1/snippet`,
+      `POST /service/${SVC}/version/1/snippet`,
       `POST /service/${SVC}/version/1/snippet`,
       `POST /service/${SVC}/version/1/domain`,
       `PUT /enabled-products/v1/websockets/services/${SVC}`,
@@ -578,11 +724,12 @@ describe('fastly: provisioning', () => {
     ]);
     // The ACME read, the wait's first look and its poll all ask for the
     // authorizations: a wait reports what holds it up.
-    expect(r.calls[8].query).toEqual({ include: 'tls_authorizations' });
+    // (Two places on: the two strip snippets come before the upgrade one.)
+    expect(r.calls[10].query).toEqual({ include: 'tls_authorizations' });
     // The wait reads the certificates too: only a valid one ends it.
-    for (const i of [9, 10])
+    for (const i of [11, 12])
       expect(r.calls[i].query).toEqual({ include: 'tls_authorizations,tls_certificates' });
-    expect(r.calls[11].query).toEqual({ include: 'dns_records', 'page[size]': '100' });
+    expect(r.calls[13].query).toEqual({ include: 'dns_records', 'page[size]': '100' });
   });
 
   test('the two DNS records are the ACME challenge and the traffic CNAME, both marked as ours', async () => {
@@ -2043,6 +2190,18 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
     expect(JSON.stringify(res)).not.toContain(cfg.apiToken);
   });
 
+  test("a node's own authority is checked the same way, without the rest of the test", async () => {
+    caaZone({ 'example.org': [issue('certainly.com')] });
+    expect(await fastlyProvider.certificatePreflight!(cfg)).toEqual({ ok: true });
+    expect(
+      await fastlyProvider.certificatePreflight!({ ...cfg, certificateAuthority: 'lets-encrypt' }),
+    ).toEqual({
+      ok: false,
+      code: 'caa_forbids_ca',
+      detail: 'the CAA records at example.org do not allow letsencrypt.org',
+    });
+  });
+
   test('a record allowing the CA passes, and says where it was decided', async () => {
     await serve();
     caaZone({ 'example.org': [issue('certainly.com')] });
@@ -2817,7 +2976,7 @@ describe('fastly: one wildcard certificate per account and zone', () => {
     ]);
   });
 
-  test('an unused wildcard is removed with OUR records only; one ordered differently is refused', async () => {
+  test('an unused wildcard is removed with OUR records only; one FCP did not order is refused', async () => {
     const p = wildcardProvider();
     p.state.ordered = true;
     p.state.issued = true;
@@ -2854,24 +3013,35 @@ describe('fastly: one wildcard certificate per account and zone', () => {
     p.state.ordered = false;
     expect(await fastlyProvider.sharedCertificate!(cfg)).toBeNull();
 
-    // A wildcard another CA issued is not this account's to delete.
+    // A wildcard under another authority than the account's now: one it did
+    // not order is not its to delete; one it ordered (a node's choice, or the
+    // default before it changed) is, and the read names it so it can be.
     const other = fixture('tls-subscriptions-wildcard-list.json') as {
       data: Array<{ attributes: Record<string, unknown> }>;
     };
     other.data[0]!.attributes.certificate_authority = 'lets-encrypt';
-    await serve((c) =>
+    const r2 = await serve((c) =>
       c.method === 'GET' && c.path === '/tls/subscriptions'
         ? { status: 200, body: other, contentType: 'application/vnd.api+json' }
         : defaultReply(c),
     );
+    expect(await fastlyProvider.removeSharedCertificate!(cfgW, { ordered: [] })).toEqual({
+      removed: false,
+      code: 'shared_certificate_ambiguous',
+    });
+    expect(await fastlyProvider.sharedCertificate!(cfg, { ordered: [] })).toBeNull();
+    expect(
+      await fastlyProvider.sharedCertificate!(cfg, { ordered: [`tls_subscription:${WILD}`] }),
+    ).toEqual({ name: '*.example.org', subscriptionId: WILD, state: 'ambiguous' });
+    expect(r2.calls.some((c) => c.method === 'DELETE')).toBe(false);
     expect(
       await fastlyProvider.removeSharedCertificate!(cfgW, {
         ordered: [`tls_subscription:${WILD}`],
       }),
-    ).toEqual({
-      removed: false,
-      code: 'shared_certificate_ambiguous',
-    });
+    ).toEqual({ removed: true });
+    expect(r2.calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual([
+      `/tls/subscriptions/${WILD}`,
+    ]);
   });
 
   test('a renewal reports what holds it up, and one that is late is raised by itself', async () => {

@@ -146,15 +146,16 @@ const relayProviderSettings = v.union(
     accountId: v.optional(v.string()),
   }),
   // L7: the DNS records of a Fastly edge live in a Cloudflare account FCP also
-  // manages (`dnsAccountId`); certificate authority + TLS configuration are
-  // defaults frozen into each edge's provisionIntent.
+  // manages (`dnsAccountId`); the TLS configuration is a default frozen into
+  // each edge's provisionIntent. `certificateAuthority` is the pre-options
+  // copy of the account's authority, moved into `optionDefaults` on deploy
+  // (edgeProviderAccounts.migrateOptionDefaults); kept readable until a
+  // cleanup drops it.
   v.object({
     type: v.literal('fastly'),
     dnsAccountId: v.string(),
-    certificateAuthority: v.union(
-      v.literal('certainly'),
-      v.literal('lets-encrypt'),
-      v.literal('globalsign'),
+    certificateAuthority: v.optional(
+      v.union(v.literal('certainly'), v.literal('lets-encrypt'), v.literal('globalsign')),
     ),
     tlsConfigurationId: v.optional(v.string()),
     // One wildcard certificate per account and zone, or one per front (absent).
@@ -1233,6 +1234,10 @@ export default defineSchema({
     // values only; frozen per edge into its provisionIntent.
     observedSettings: v.optional(v.string()),
     observedAt: v.optional(v.number()),
+    // The account's defaults for its provider's CERTIFICATE options (JSON,
+    // lib/edges/providers/options.ts): copied into a node's pick when it is
+    // protected, and used live by picks recorded before options existed.
+    optionDefaults: v.optional(v.string()),
     // Provider API health (edgeProviderOps `tracked`): consecutive calls that
     // failed for a reason on the provider's side (timeout, network, 5xx,
     // 401/403/429, an answer the adapter cannot read), reset by the first
@@ -1344,8 +1349,18 @@ export default defineSchema({
     providerPreference: v.optional(relayProviderId),
     // The node's provider set: the (account, location) picks its addresses come
     // from. Absent = any trusted location (origins that are not a backend node).
+    // Each pick may carry the provider OPTIONS chosen for this node there (JSON:
+    // tuning values laid over the location's template, certificate values;
+    // lib/edges/providers/options.ts). Absent = a pick from before options:
+    // the template and the account's defaults.
     providerSet: v.optional(
-      v.array(v.object({ locationId: v.id('edgeLocations'), addedAt: v.number() })),
+      v.array(
+        v.object({
+          locationId: v.id('edgeLocations'),
+          addedAt: v.number(),
+          options: v.optional(v.string()),
+        }),
+      ),
     ),
     // Picks whose address the detector just burned here: no automatic work
     // allocates, provisions or publishes into them until `until`.
@@ -1669,7 +1684,20 @@ export default defineSchema({
     placeKey: v.optional(v.string()),
     placement: v.optional(relayEdgePlacement),
     templateId: v.optional(v.id('edgeTemplates')),
+    // The hash of what the edge was built with: the location's effective
+    // template, with the node's tuning choices laid over it when it had any.
     templateHash: v.optional(v.string()),
+    // With choices: the location's own effective template hash at plan time
+    // (what a template edit is detected against, and what trust evidence
+    // compares), and the node's choices themselves (JSON), frozen.
+    baseTemplateHash: v.optional(v.string()),
+    choices: v.optional(v.string()),
+    // An address family a describe reported after the endpoint was confirmed:
+    // held here, not served and not in the confirmation's hash, until a test
+    // of that address promotes it into `addresses` (edgeVerification.confirm).
+    learnedAddresses: v.optional(
+      v.object({ v4: v.optional(v.string()), v6: v.optional(v.string()) }),
+    ),
     provider: v.optional(relayProviderId),
     managed: v.boolean(), // false = adopted, observe-only, never destroyed
     name: v.string(), // provider-side resource name; the discovery key
@@ -1864,6 +1892,9 @@ export default defineSchema({
     requestedLocationId: v.optional(v.id('edgeLocations')),
     // A replace's explicit spare (the operator named it).
     requestedSpareEdgeId: v.optional(v.id('edges')),
+    // Options for the one edge this run builds (JSON), instead of its pick's:
+    // an operator's "options for this address" on a spare or a replacement.
+    requestedOptions: v.optional(v.string()),
     // A DETECTOR start: the countries its evidence named for the target, taken
     // from the evaluation that started it. The L7 replacement gate and the
     // confirming re-check prove the new front against these, never against the
@@ -1959,7 +1990,12 @@ export default defineSchema({
     // The (account, location) picks the run creates addresses in.
     picks: v.optional(
       v.array(
-        v.object({ locationId: v.id('edgeLocations'), accountId: v.id('edgeProviderAccounts') }),
+        v.object({
+          locationId: v.id('edgeLocations'),
+          accountId: v.id('edgeProviderAccounts'),
+          // The options chosen for this pick (JSON), recorded on the set at go-live.
+          options: v.optional(v.string()),
+        }),
       ),
     ),
     // The plan snapshot (JSON, edgeSetupPlan.ts) + its hash and the consent revision.

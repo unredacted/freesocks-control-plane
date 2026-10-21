@@ -35,6 +35,7 @@ import {
   type SetupRunRetryRequest,
 } from '../src/shared/contracts/edges';
 import { defaultLocationRow, deliveryBindingOf } from './lib/edges/testing/reads';
+import { effectiveTemplateOfLocation } from './edgeLocations';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -799,6 +800,146 @@ describe('edgeSetupRuns: the happy path (cases 1, 26)', () => {
     await expect(t.action(internal.edgeSetupRuns.cancel, { runId })).rejects.toThrow(
       /setup_run_finished/,
     );
+  });
+});
+
+describe('edgeSetupRuns: the provider options a node gets at a pick', () => {
+  test("a pick's options build its edges, freeze on them and go live with the node's set", async () => {
+    const { t, world, serverId, accountId } = await seed();
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const picks = [loc._id as string];
+    // A value the provider refuses is a problem of that pick in the plan.
+    const bad = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks,
+      pickOptions: { [loc._id]: { maxSessions: 0 } },
+    });
+    expect(bad.set?.problems).toEqual([
+      expect.objectContaining({ locationId: loc._id, reason: 'edge.option_invalid' }),
+    ]);
+    const pickOptions = { [loc._id]: { maxSessions: 5000 } };
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks,
+      pickOptions,
+    });
+    expect(plan.set?.picks[0]?.options).toEqual({ maxSessions: 5000 });
+    // The run is refused with other options than the plan was shown with.
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        picks: [loc._id],
+        planHash: plan.planHash,
+        approvedHideUuids: [],
+      }),
+    ).rejects.toThrow(/plan_stale/);
+    const res = await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+      pickOptions,
+      planHash: plan.planHash,
+      approvedHideUuids: [],
+    });
+    const runId = res.runId as Id<'edgeSetupRuns'>;
+    let r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.picks?.[0]?.options).toBe(JSON.stringify({ maxSessions: 5000 }));
+    // The provider was asked for it, and the edge froze it beside the location's own hash.
+    const body = world.lbBodies()[0] as {
+      backends: Array<{ members: Array<{ max_sessions: number }> }>;
+    };
+    expect(body.backends[0]!.members[0]!.max_sessions).toBe(5000);
+    const edge = (await t.run((ctx) => ctx.db.get(r.listeners[0]!.edgeId!)))!;
+    expect(JSON.parse(edge.choices!)).toEqual({ maxSessions: 5000 });
+    const located = await t.run(async (ctx) =>
+      effectiveTemplateOfLocation(
+        ctx,
+        (await ctx.db.get(accountId))!,
+        (await ctx.db.get(loc._id))!,
+      ),
+    );
+    expect(edge.baseTemplateHash).toBe(located.hash);
+    expect(edge.templateHash).not.toBe(located.hash);
+    // Its tick trusts the location: the choices are the node's, the template the place's.
+    const ticked = await tickAll(t, runId);
+    expect(ticked.accountTrusted).toBe(true);
+    r = await pump(t, runId, settled);
+    expect(r.state).toBe('done');
+    // Go-live records the options on the node's set, where later automatic work reads them.
+    const relay = await relayOf(t, runId);
+    expect(relay.providerSet).toEqual([
+      expect.objectContaining({
+        locationId: loc._id,
+        options: JSON.stringify({ maxSessions: 5000 }),
+      }),
+    ]);
+  });
+
+  test('options with the single-location selector are refused, never dropped', async () => {
+    const { t, serverId, accountId } = await seed();
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const plan = await planFor(t, serverId);
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        accountId,
+        planHash: plan.planHash,
+        approvedHideUuids: [],
+        pickOptions: { [loc._id]: { maxSessions: 5000 } },
+      }),
+    ).rejects.toThrow(/single location/);
+  });
+
+  test('a run never reuses a standby built for other choices than its pick asks for', async () => {
+    const { t, world, serverId, accountId } = await seed({
+      inbounds: [inboundA, inboundS],
+      hosts: [directHostA(), directHostS()],
+      failCreateAt: 2,
+    });
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+    });
+    const res = await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+      planHash: plan.planHash,
+      approvedHideUuids: [],
+    });
+    const runId = res.runId as Id<'edgeSetupRuns'>;
+    let r = await pump(t, runId, settled);
+    expect(r.state).toBe('failed');
+    // The standby left behind was built with the location's defaults. A run
+    // that did not build it (a later one, as here: no target holds it) and
+    // whose pick asks for something else must not take it.
+    const standby = r.listeners.find((l) => l.edgeId)?.edgeId;
+    expect(standby).toBeDefined();
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.get(runId))!;
+      await ctx.db.patch(runId, {
+        picks: row.picks!.map((p) => ({ ...p, options: JSON.stringify({ maxSessions: 5000 }) })),
+        listeners: row.listeners.map(({ edgeId: _held, ...l }) => l),
+      });
+    });
+    const before = world.lbCreates();
+    await t.mutation(internal.edgeSetupRuns.retry, { runId });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    // Both listeners get an edge built with the pick's options; the standby is not taken.
+    expect(world.lbCreates()).toBe(before + 2);
+    expect(r.listeners.map((l) => l.edgeId)).not.toContain(standby);
+    for (const l of r.listeners) {
+      const edge = (await t.run((ctx) => ctx.db.get(l.edgeId!)))!;
+      expect(JSON.parse(edge.choices!)).toEqual({ maxSessions: 5000 });
+    }
   });
 });
 

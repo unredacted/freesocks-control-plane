@@ -334,6 +334,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // handle, template body, probe token or provider credential.
   'edge.provider_account.create': ['name', 'provider'],
   'edge.provider_account.update': ['name', 'provider'],
+  // The account's certificate option defaults changed: which keys, with the
+  // values of choices, numbers and switches only (lib/edges/providers/options.ts).
+  'edge.provider_account.options_changed': ['name', 'provider', 'changes'],
+  // A deploy moved option defaults kept under settings into `optionDefaults`.
+  'edge.provider_account.options_migrated': ['name', 'provider', 'keys'],
   'edge.provider_account.delete': ['name', 'provider'],
   'edge.provider_account.upsert': ['name', 'provider', 'created'],
   // Trust is per location: `placeKey` names it (the provider's region id).
@@ -542,9 +547,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.edge.probe.change': ['changedKeys'],
   // `forceGeoEvidence` records that an operator waived the affected-country
   // evidence gate for this run (a boolean; the transport proof is never waived).
-  'admin.edge.rotate': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId'],
-  'admin.edge.burn': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId'],
-  'admin.edge.provision': ['slug', 'trigger', 'forceGeoEvidence', 'rotationId'],
+  'admin.edge.rotate': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId', 'optionKeys'],
+  'admin.edge.burn': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId', 'optionKeys'],
+  'admin.edge.provision': ['slug', 'trigger', 'forceGeoEvidence', 'rotationId', 'optionKeys'],
   'admin.edge.publish': ['slug', 'trigger', 'forceGeoEvidence', 'rotationId', 'edgeId'],
   'admin.edge.cancel': ['slug', 'rotationId', 'deferred'],
 };

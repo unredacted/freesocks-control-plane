@@ -11,6 +11,7 @@ import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import { accountOptionDefaultsOf } from './lib/edges/choices';
 import { z } from 'zod';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { __setEdgeProviderForTests, edgeProviderFor } from './lib/edges/providers/registry';
@@ -627,15 +628,12 @@ describe('edgeProviderOps: an existing edge is driven by its FROZEN intent', () 
         updatedAt: Date.now(),
       }),
     );
-    // The operator repoints the ACCOUNT at another subscription and CA.
+    // The operator repoints the ACCOUNT at another subscription and CA (the
+    // authority is a provider option now: the account's default).
     await t.run((ctx) =>
       ctx.db.patch(fastlyId, {
-        settings: {
-          type: 'fastly',
-          dnsAccountId: dnsId,
-          certificateAuthority: 'lets-encrypt',
-          tlsConfigurationId: 'tls-new',
-        },
+        settings: { type: 'fastly', dnsAccountId: dnsId, tlsConfigurationId: 'tls-new' },
+        optionDefaults: JSON.stringify({ certificateAuthority: 'lets-encrypt' }),
         updatedAt: Date.now(),
       }),
     );
@@ -1066,7 +1064,7 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     const t = newT();
     const { id: accountId, dnsId } = await fastlyAccount(t, { tlsConfigurationId: 'tls-now' });
     const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
-    expect((row.settings as { certificateScope?: string }).certificateScope).toBe('wildcard');
+    expect(accountOptionDefaultsOf(row).certificateScope).toBe('wildcard');
     const seen = standIn();
     // An edge planned before versionless domains, a TLS configuration or a scope existed.
     const old = await edgeWithIntent(t, accountId, dnsId, {});
@@ -1077,9 +1075,11 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       edgeId: old,
     });
     expect(seen[0]).toMatchObject({ domainModel: 'classic' });
-    // What the intent did NOT name stays unnamed: the account's choices now never reach it.
+    // What the intent did NOT name: the account's choices now never reach it.
+    // A TLS configuration stays unnamed; a certificate option reads as what its
+    // absence stood for (one certificate per front), never the account's wildcard.
     expect(seen[0]).not.toHaveProperty('tlsConfigurationId');
-    expect(seen[0]).not.toHaveProperty('certificateScope');
+    expect(seen[0]).toMatchObject({ certificateScope: 'per_host' });
     // Planning a new edge (no edgeId): today's way, and the account's settings.
     await t.action(internal.edgeProviderOps.describe, {
       accountId,
@@ -1457,5 +1457,36 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
     admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
     expect(admin.sharedCertificate).toBeNull();
+  });
+
+  test("a node's wildcard where the account defaults to one per front is still read as a wildcard", async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: accountId,
+      optionDefaults: { certificateScope: 'per_host' },
+    });
+    const asked: Array<Record<string, unknown>> = [];
+    standIn({
+      sharedCertificate: async (cfg: Record<string, unknown>) => {
+        asked.push({ ...cfg });
+        return cfg.certificateScope === 'wildcard'
+          ? { name: '*.example.org', subscriptionId: 'WILD1', state: 'issued' }
+          : null;
+      },
+    });
+    await edgeWithIntent(t, accountId, dnsId, {
+      domainModel: 'versionless',
+      certificateScope: 'wildcard',
+      certificateAuthority: 'lets-encrypt',
+    });
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    expect(asked.at(-1)).toMatchObject({
+      certificateScope: 'wildcard',
+      certificateAuthority: 'lets-encrypt',
+    });
+    const admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
+    expect(admin.sharedCertificate).toMatchObject({ name: '*.example.org', state: 'issued' });
   });
 });

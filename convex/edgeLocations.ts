@@ -374,7 +374,8 @@ export async function evaluateAutoQualificationForLocation(
       id: e._id as string,
       status: e.status,
       layer: e.layer ?? edgeLayerOf(e.provider),
-      templateHash: e.templateHash ?? null,
+      // The location's own template for an edge built with a node's choices.
+      templateHash: e.baseTemplateHash ?? e.templateHash ?? null,
       listenerId: e.listenerId as string,
       listenerRevision: listener.revision,
       endpoint: verificationEndpoint(e),

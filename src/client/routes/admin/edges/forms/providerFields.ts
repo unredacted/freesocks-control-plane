@@ -252,32 +252,6 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       help: "A DNS provider account whose zone holds this account's names and their certificate challenges. Add the DNS account first.",
     },
     {
-      key: 'certificateAuthority',
-      label: 'Certificate authority',
-      kind: 'select',
-      step: 'placement',
-      from: 'fixed',
-      options: [
-        { id: 'certainly', label: 'Certainly (default)' },
-        { id: 'lets-encrypt', label: "Let's Encrypt" },
-        { id: 'globalsign', label: 'GlobalSign (paid plans only)' },
-      ],
-      required: true,
-    },
-    {
-      key: 'certificateScope',
-      label: 'Certificates',
-      kind: 'select',
-      step: 'placement',
-      from: 'fixed',
-      options: [
-        { id: 'wildcard', label: 'One wildcard for every front (recommended)' },
-        { id: 'per_host', label: 'One per front' },
-      ],
-      required: true,
-      help: 'A wildcard is issued once and shared: a new front never waits for a certificate, and its name never appears in public certificate logs before members use it.',
-    },
-    {
       key: 'domainModel',
       label: 'Domains',
       kind: 'select',
@@ -325,11 +299,7 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
 /** The few settings with a sensible value before the operator picks anything. */
 export const DEFAULT_SETTINGS: Partial<Record<EdgeProviderId, Record<string, string>>> = {
   ovh: { endpoint: 'ovh-eu' },
-  fastly: {
-    certificateAuthority: 'certainly',
-    certificateScope: 'wildcard',
-    domainModel: 'versionless',
-  },
+  fastly: { domainModel: 'versionless' },
 };
 
 export function credentialLabel(name: string): string {

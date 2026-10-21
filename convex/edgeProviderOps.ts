@@ -52,6 +52,9 @@ import {
   EDGE_PLACEMENT_SETTINGS,
 } from './lib/edges/accountSettings';
 import { placeKeyOf } from './lib/edges/locations';
+import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choices';
+import { EDGE_CERTIFICATE_OPTIONS, certificateKeysOf } from './lib/edges/providers/templates';
+import { defaultsOf } from './lib/edges/providers/options';
 import { l7HostAccepted, l7HostHeaderFor, zoneModeCarriesOrigin } from './lib/edges/layers';
 import type {
   AdoptionInspection,
@@ -375,11 +378,17 @@ async function loadAdapter(
       timedOut: false,
     });
   }
+  // The account's certificate option defaults (planning a NEW edge reads
+  // them; a node's own choices reach a new edge through its intent).
+  Object.assign(
+    cfg as unknown as Record<string, unknown>,
+    certificateValuesFor(acct.provider, accountOptionDefaultsOf(acct), null),
+  );
   // Acting on an EXISTING edge: every setting the intent froze wins over the
   // account row. The zone/DNS account below is one of them; so is the TLS
-  // subscription (`certificateAuthority`, `tlsConfigurationId`), which decides
-  // which certificate a describe or a destroy acts on. A settings edit after
-  // planning must not move a live edge's certificate to another subscription.
+  // subscription (the certificate options, `tlsConfigurationId`), which
+  // decides which certificate a describe or a destroy acts on. A settings or
+  // default edit after planning must not move a live edge's certificate.
   const intent = edgeId ? await ctx.runQuery(internal.edges.intentOf, { edgeId }) : null;
   const mutable = cfg as unknown as Record<string, unknown>;
   if (intent) {
@@ -389,6 +398,15 @@ async function loadAdapter(
     const frozen = intent as unknown as Record<string, unknown>;
     for (const key of EDGE_INTENT_DEFAULT_SETTINGS[acct.provider]) {
       if (frozen[key] !== undefined) mutable[key] = frozen[key];
+      else delete mutable[key];
+    }
+    // The certificate options: what the intent froze, else the value from
+    // before the option existed (the declared default: one certificate per
+    // front, the default authority), never the account's default now.
+    const declared = defaultsOf(EDGE_CERTIFICATE_OPTIONS[acct.provider].fields);
+    for (const key of certificateKeysOf(acct.provider)) {
+      const v = frozen[key] ?? declared[key];
+      if (v !== undefined) mutable[key] = v;
       else delete mutable[key];
     }
   }
@@ -663,6 +681,29 @@ export const testCredentials = internalAction({
     }),
 });
 
+/**
+ * Whether the certificate options a node chose (other than the ones the
+ * account's credential test checked) can be issued: the adapter's preflight
+ * with those values laid over the account's (the zone's CAA records). A lookup
+ * that cannot be read never refuses: issuance then reports what it meets.
+ */
+export const certificatePreflight = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts'), certificate: v.any() },
+  handler: async (
+    ctx,
+    { accountId, certificate },
+  ): Promise<{ ok: true } | { ok: false; code: string; detail?: string }> => {
+    try {
+      const { provider, cfg } = await loadAdapter(ctx, accountId);
+      if (!provider.certificatePreflight) return { ok: true };
+      Object.assign(cfg as unknown as Record<string, unknown>, certificate as object);
+      return await provider.certificatePreflight(cfg);
+    } catch {
+      return { ok: true };
+    }
+  },
+});
+
 /** Test refusals that are not the provider failing (they never raise `account_api_failing`). */
 const NOT_API_FAILURES: ReadonlySet<string> = new Set(['caa_forbids_ca']);
 
@@ -673,7 +714,23 @@ async function recordSharedCertificate(
   provider: EdgeProvider,
   cfg: EdgeProviderConfig,
 ): Promise<SharedCertificateStatus | null> {
-  const status = provider.sharedCertificate ? await provider.sharedCertificate(cfg) : null;
+  // A node that chose the wildcard where the account defaults to one per front:
+  // the certificate it shares is read as that front froze it.
+  const mutable = cfg as unknown as Record<string, unknown>;
+  if (provider.sharedCertificate && mutable.certificateScope !== 'wildcard') {
+    const shared = await ctx.runQuery(internal.edgeProviderAccounts.sharedCertificateChoice, {
+      accountId,
+    });
+    if (shared) Object.assign(mutable, shared);
+  }
+  // What edges of the account ordered: an FCP-ordered wildcard is named (and
+  // so removable) even under an authority the account no longer defaults to.
+  const ordered = provider.sharedCertificate
+    ? await ctx.runQuery(internal.edgeProviderAccounts.orderedSharedResourcesOf, { accountId })
+    : [];
+  const status = provider.sharedCertificate
+    ? await provider.sharedCertificate(cfg, { ordered })
+    : null;
   await ctx.runMutation(internal.edgeProviderAccounts.recordSharedCertificate, {
     id: accountId,
     status,

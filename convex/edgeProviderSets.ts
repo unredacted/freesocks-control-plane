@@ -26,6 +26,17 @@ import { frontsAllowed } from './lib/edges/providers/capabilities';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRunningSetup, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { coverTargets, MAX_PROVIDER_PICKS, requirementOf } from './lib/edges/providerSet';
+import { parseOptionValues } from './lib/edges/providers/options';
+import { checkPickOptions } from './edgeTemplates';
+
+/** A pick's stored options (null: a pick from before options). */
+function optionsOfPick(
+  relay: Pick<Doc<'relays'>, 'providerSet'>,
+  locationId: Id<'edgeLocations'>,
+): Record<string, unknown> | null {
+  const raw = relay.providerSet?.find((x) => x.locationId === locationId)?.options;
+  return raw !== undefined ? parseOptionValues(raw) : null;
+}
 import { carries, coolingOf, publishedRefOf, setPicksOf, setStateOf } from './lib/edges/setState';
 import { locationsOfAccount } from './edgeLocations';
 import type { PublishedRef } from './lib/edges/providerSet';
@@ -83,6 +94,9 @@ export const view = internalQuery({
         addedAt: new Date(
           relay.providerSet?.find((x) => x.locationId === p.location._id)?.addedAt ?? now,
         ).toISOString(),
+        // The provider options this node's addresses here are built with (null:
+        // a pick from before options: the template and the account's defaults).
+        options: optionsOfPick(relay, p.location._id),
       };
     });
     const available = [];
@@ -205,10 +219,20 @@ export const change = internalMutation({
       });
       runId = res.runId;
     } else {
-      await ctx.db.patch(fresh._id, {
-        providerSet: [...remaining, ...add.map((locationId) => ({ locationId, addedAt: now }))],
-        updatedAt: now,
-      });
+      // A pick joining now starts from its account's defaults, copied in (an
+      // account default only ever prefills a node).
+      const added = [];
+      for (const locationId of add) {
+        const location = await ctx.db.get(locationId);
+        const account = location ? await ctx.db.get(location.accountId) : null;
+        const r = location && account ? await checkPickOptions(ctx, location, account, {}) : null;
+        added.push({
+          locationId,
+          addedAt: now,
+          ...(r?.ok ? { options: JSON.stringify(r.options) } : {}),
+        });
+      }
+      await ctx.db.patch(fresh._id, { providerSet: [...remaining, ...added], updatedAt: now });
     }
     await writeAuditLog(ctx, {
       actorType: a.actorAdminId ? 'admin' : 'system',

@@ -43,6 +43,7 @@ import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
 import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
+import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
 import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
 import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRuns';
@@ -370,12 +371,113 @@ export function refuseSet(set: SetupPlanSet): void {
       code: 'edge.set_too_large',
       message: `These picks need more than ${MAX_DESIRED_PUBLISHED} addresses for one node`,
     });
+  // A pick's options break a rule: refused with the option's own code and words.
+  const option = set.problems.find((p) => p.reason.startsWith('edge.option_'));
+  if (option)
+    throw new ConvexError({ code: option.reason, message: option.detail ?? option.reason });
   if (set.problems.length > 0)
     throw new ConvexError({
       code: 'edge.account_incompatible',
       message: `A picked location cannot be used (${set.problems[0]!.reason})`,
     });
 }
+
+/** Check each pick's options (`checkPicks`) into the set: its options, or a problem. */
+/** Whether the node's transports to protect include a REALITY one. */
+function servesReality(required: ReadonlyArray<{ listenerSpec: unknown }>): boolean {
+  return required.some((i) => (i.listenerSpec as ListenerSpecInput).security === 'reality');
+}
+
+async function applyPickChecks(
+  ctx: ActionCtx,
+  set: SetupPlanSet,
+  pickOptions: Record<string, unknown> | undefined,
+  realityL4: boolean,
+): Promise<void> {
+  const checked = await ctx.runQuery(internal.edgeSetupPlan.checkPicks, {
+    picks: set.picks.map((p) => ({
+      locationId: p.locationId as Id<'edgeLocations'>,
+      options: pickOptions?.[p.locationId] ?? {},
+    })),
+    realityL4,
+  });
+  for (const r of checked) {
+    const pick = set.picks.find((p) => p.locationId === r.locationId);
+    if (!pick) continue;
+    if (r.ok && r.certificateToCheck) {
+      // A certificate the account's credential test never checked (another
+      // authority, the wildcard): the zone's CAA records are read for it now.
+      const pre = await ctx.runAction(internal.edgeProviderOps.certificatePreflight, {
+        accountId: r.accountId as Id<'edgeProviderAccounts'>,
+        certificate: r.certificateToCheck,
+      });
+      if (!pre.ok) {
+        set.problems.push({
+          locationId: r.locationId,
+          reason: pre.code,
+          ...(pre.detail ? { detail: pre.detail } : {}),
+        });
+        continue;
+      }
+    }
+    if (r.ok) pick.options = r.options;
+    else
+      set.problems.push({
+        locationId: r.locationId,
+        reason: r.code,
+        ...(r.issues.length > 0 ? { detail: r.issues.join('; ') } : {}),
+      });
+  }
+}
+
+/**
+ * Each pick's provider options, checked where they will build: the values the
+ * operator chose (validated for the pick's provider), with the account's
+ * certificate defaults copied in (an account default only ever PREFILLS a
+ * node), laid over the location's template and checked as a whole.
+ */
+export const checkPicks = internalQuery({
+  args: {
+    picks: v.array(v.object({ locationId: v.id('edgeLocations'), options: v.any() })),
+    /** The node serves a REALITY transport (an HTTP health check would fail on it). */
+    realityL4: v.optional(v.boolean()),
+  },
+  handler: async (ctx, a) => {
+    const out: Array<
+      | {
+          locationId: string;
+          accountId: string;
+          ok: true;
+          options: Record<string, unknown>;
+          certificateToCheck: Record<string, unknown> | null;
+        }
+      | { locationId: string; ok: false; code: string; issues: string[] }
+    > = [];
+    for (const p of a.picks) {
+      const location = await ctx.db.get(p.locationId);
+      const account = location ? await ctx.db.get(location.accountId) : null;
+      if (!location || !account) {
+        out.push({ locationId: p.locationId, ok: false, code: 'edge.no_location', issues: [] });
+        continue;
+      }
+      const r = await checkPickOptions(ctx, location, account, p.options, {
+        realityL4: a.realityL4,
+      });
+      out.push(
+        r.ok
+          ? {
+              locationId: p.locationId,
+              accountId: account._id as string,
+              ok: true,
+              options: r.options,
+              certificateToCheck: r.certificateToCheck,
+            }
+          : { locationId: p.locationId, ok: false, code: r.code, issues: r.issues },
+      );
+    }
+    return out;
+  },
+});
 
 export function setOfPicks(
   pickIds: readonly string[],
@@ -511,6 +613,8 @@ export async function buildPlan(
     nodeUuid: string;
     listenerKeys?: string[];
     picks?: string[];
+    /** Provider options per pick (location id -> values the operator chose). */
+    pickOptions?: Record<string, unknown>;
   },
 ): Promise<{ plan: SetupPlanSnapshot; planHash: string }> {
   // Only the two keys: `create` hands its whole argument object here.
@@ -637,6 +741,7 @@ export async function buildPlan(
     args.picks && args.picks.length > 0
       ? setOfPicks(args.picks, accounts, required, c.accounts)
       : undefined;
+  if (set) await applyPickChecks(ctx, set, args.pickOptions, servesReality(required));
   const plan: SetupPlanSnapshot = {
     backendServerId: a.backendServerId as string,
     backend: c.backend,
@@ -673,6 +778,9 @@ export async function buildPlan(
       (x.locations ?? []).filter((l) => l.compatible).map((l) => l.id),
     ),
     ...(args.picks ? { pickIds: args.picks } : {}),
+    ...(set
+      ? { pickOptions: Object.fromEntries(set.picks.map((p) => [p.locationId, p.options ?? {}])) }
+      : {}),
   });
   return { plan, planHash };
 }
@@ -689,6 +797,8 @@ export const plan = internalAction({
     nodeUuid: v.string(),
     listenerKeys: v.optional(v.array(v.string())),
     picks: v.optional(v.array(v.string())),
+    /** Provider options per pick (location id -> values). */
+    pickOptions: v.optional(v.any()),
   },
   handler: async (ctx, a) => {
     const { plan, planHash } = await buildPlan(ctx, a);
@@ -713,6 +823,8 @@ export const create = internalAction({
     nodeUuid: v.string(),
     listenerKeys: v.optional(v.array(v.string())),
     picks: v.optional(v.array(v.id('edgeLocations'))),
+    /** Provider options per pick (location id -> values), as the plan was shown with. */
+    pickOptions: v.optional(v.any()),
     accountId: v.optional(v.id('edgeProviderAccounts')),
     locationId: v.optional(v.id('edgeLocations')),
     planHash: v.string(),
@@ -726,6 +838,7 @@ export const create = internalAction({
       nodeUuid: a.nodeUuid,
       listenerKeys: a.listenerKeys,
       picks: a.picks as string[] | undefined,
+      pickOptions: a.pickOptions as Record<string, unknown> | undefined,
     });
     if (planHash !== a.planHash)
       throw new ConvexError({
@@ -753,6 +866,14 @@ export const create = internalAction({
     // The set: the picks the plan was shown with, or the one pick named the old way.
     let set = plan.set;
     if (!set) {
+      // The old single-location selector makes a plan with no set, so no
+      // options were shown or hashed with it: options with it are refused
+      // rather than dropped (name the picks instead).
+      if (a.pickOptions && Object.keys(a.pickOptions as Record<string, unknown>).length > 0)
+        throw new ConvexError({
+          code: 'validation',
+          message: 'Options for a location need the plan made with `picks`, not a single location',
+        });
       const account = a.accountId
         ? plan.accounts.find((x) => x.id === (a.accountId as string))
         : plan.accounts.find((x) => x.locations?.some((l) => l.id === (a.locationId as string)));
@@ -770,6 +891,7 @@ export const create = internalAction({
         nodeUuid: a.nodeUuid,
       });
       set = setOfPicks([location.id], plan.accounts, required, context.accounts);
+      await applyPickChecks(ctx, set, undefined, servesReality(required));
       plan.set = set;
     }
     refuseSet(set);
@@ -779,6 +901,10 @@ export const create = internalAction({
         plan: JSON.stringify(plan),
         planHash,
         picks: set.picks.map((p) => p.locationId as Id<'edgeLocations'>),
+        pickOptions: set.picks.map((p) => ({
+          locationId: p.locationId as Id<'edgeLocations'>,
+          options: JSON.stringify(p.options ?? {}),
+        })),
         targets: set.targets.map((t) => ({
           listenerKey: t.listenerKey,
           locationId: t.locationId as Id<'edgeLocations'>,

@@ -154,7 +154,12 @@ export function installProviderFakes(opts: {
     if (attach && method === 'POST') {
       const lb = lbs.get(attach[1]!);
       if (!lb) return json({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
-      const added: Array<{ address: string }> = body.ip_addresses ?? [];
+      // The documented shape: ONE address and the service network it listens
+      // on (UpCloud's API reference and its official SDK); anything else is
+      // refused, as UpCloud refuses it.
+      if (typeof body.address !== 'string' || body.network_name !== 'public')
+        return json({ error: { error_code: 'INVALID_REQUEST' } }, 400);
+      const added: Array<{ address: string }> = [{ address: body.address }];
       lb.ip_addresses.push(...added);
       // What a provider's LB does from now on: address:frontend port -> the backend member.
       for (const { address } of added)

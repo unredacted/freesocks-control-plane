@@ -623,6 +623,8 @@ export const seedCutover = internalAction({
     const clients = await ctx.runMutation(internal.seed.seedClients, {});
     const modes = await ctx.runMutation(internal.seed.seedConnectionModes, {});
     await ctx.runMutation(internal.seed.seedPeerGroups, {});
+    // Option defaults an account still keeps under its settings (provider options).
+    await ctx.runMutation(internal.edgeProviderAccounts.migrateOptionDefaults, {});
     // Locations still named after a bare region id get their provider's name.
     await ctx.scheduler.runAfter(0, internal.edgeProviderOps.relabelLocations, {});
     return {

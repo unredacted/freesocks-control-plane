@@ -371,6 +371,7 @@ describe('providerPickWords', () => {
             spare: 1,
             coolingUntil: '2026-10-18T12:30:00Z',
             addedAt: '2026-10-01T00:00:00Z',
+            options: null,
           },
         ],
         reduced: [{ listenerKey: 'main', reason: 'one_group' }],

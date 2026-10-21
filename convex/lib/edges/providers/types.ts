@@ -307,19 +307,10 @@ export interface Inventory {
 
 // --- templates ---------------------------------------------------------------------------
 
-export type TemplateFieldType = 'string' | 'number' | 'boolean' | 'select' | 'string-list';
-
-/** A form-descriptor for one template field (the CMS renders a form from these). */
-export interface TemplateFieldDescriptor {
-  key: string; // dotted path into the template params
-  label: string;
-  type: TemplateFieldType;
-  help?: string;
-  options?: Array<{ value: string; label: string }>;
-  required?: boolean;
-  /** The value differs per region (a flavor id): each location can set its own (`regionalParams`). */
-  regional?: boolean;
-}
+export type { OptionField, OptionType } from './options';
+/** The template fields are provider options (`./options`); the old names stay for the adapters. */
+export type TemplateFieldType = import('./options').OptionType;
+export type TemplateFieldDescriptor = import('./options').OptionField;
 
 export interface CredentialTestResult {
   ok: boolean;
@@ -418,6 +409,14 @@ export interface EdgeProvider<
   defaultTemplate: Tpl;
 
   testCredentials(cfg: Cfg): Promise<CredentialTestResult>;
+  /**
+   * Whether the certificate options on `cfg` can be issued at all (a CDN
+   * front's CAA preflight), for a node that chose other certificate options
+   * than the ones the credential test checked. Absent = nothing to check.
+   */
+  certificatePreflight?(
+    cfg: Cfg,
+  ): Promise<{ ok: true } | { ok: false; code: string; detail?: string }>;
   listRegions?(cfg: Cfg): Promise<Array<{ id: string; label: string }>>;
   /**
    * What the account form can offer as choices, given the credentials and any
@@ -467,7 +466,11 @@ export interface EdgeProvider<
    * Adapters whose edges can share one account-wide certificate: its state now
    * (null when the account does not use one). A read; never orders anything.
    */
-  sharedCertificate?(cfg: Cfg): Promise<SharedCertificateStatus | null>;
+  sharedCertificate?(
+    cfg: Cfg,
+    /** What edges of the account ordered (`orderedSharedResources`): theirs to name, whatever its authority. */
+    opts?: { ordered?: readonly string[] },
+  ): Promise<SharedCertificateStatus | null>;
   /**
    * Delete that shared certificate and the records FCP wrote for it (the
    * caller refuses while a live edge uses it). `code` names why nothing was

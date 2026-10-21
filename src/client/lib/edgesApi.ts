@@ -146,10 +146,14 @@ export interface CreateProviderBody {
   dailyAllocationBudget?: number;
   priority?: number;
   defaultTemplateId?: string | null;
+  /** Defaults for the provider's certificate options. */
+  optionDefaults?: Record<string, unknown>;
 }
 export interface ProviderPatch {
   name?: string;
   settings?: Record<string, unknown>;
+  /** The account's certificate option defaults, whole. */
+  optionDefaults?: Record<string, unknown>;
   enabled?: boolean;
   priority?: number;
   dailyAllocationBudget?: number;
@@ -221,6 +225,11 @@ export interface ProvisionBody {
   publish?: boolean;
   /** An explicit location (needs `listenerId`); an untrusted one only with `publish: false`. */
   locationId?: string;
+  /**
+   * Provider options for this one address instead of its pick's (needs `locationId`).
+   * Automatic work never takes such an address afterwards: it was not built for its pick.
+   */
+  options?: Record<string, unknown>;
 }
 export interface PublishRelayEdgeBody {
   edgeId: string;
@@ -234,6 +243,8 @@ export interface RotateBody {
   spareEdgeId?: string;
   /** An explicit location for a new CDN front; Automatic otherwise. */
   locationId?: string;
+  /** Provider options for the new address instead of its pick's (needs `locationId`). */
+  options?: Record<string, unknown>;
 }
 export interface AdoptEdgeBody {
   accountId?: string;
@@ -324,6 +335,7 @@ export const planSetupRun = (
   nodeUuid: string,
   listenerKeys?: string[],
   picks?: string[],
+  pickOptions?: Record<string, Record<string, unknown>>,
 ) =>
   apiClient.post(
     `${BASE}/setup-runs/plan`,
@@ -332,6 +344,7 @@ export const planSetupRun = (
       nodeUuid,
       ...(listenerKeys ? { listenerKeys } : {}),
       ...(picks && picks.length > 0 ? { picks } : {}),
+      ...(pickOptions && Object.keys(pickOptions).length > 0 ? { pickOptions } : {}),
     },
     SetupPlanResponse,
   );
@@ -357,10 +370,14 @@ export const serveRelayDirect = (relayId: string) =>
  * candidate addresses, Try it, the approval when one is needed). Members keep
  * what they have until it goes live; cancelling drops only its candidates.
  */
-export const reprotectRelay = (relayId: string, mode?: 'replace_all' | 'add') =>
+export const reprotectRelay = (
+  relayId: string,
+  mode?: 'replace_all' | 'add',
+  pickOptions?: Record<string, Record<string, unknown>>,
+) =>
   apiClient.post(
     `${BASE}/relays/${enc(relayId)}/reprotect`,
-    mode ? { mode } : {},
+    { ...(mode ? { mode } : {}), ...(pickOptions ? { pickOptions } : {}) },
     SetupRunCreatedResponse,
   );
 /** The node's provider set: its picks, what they hold, what could be added. */

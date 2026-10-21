@@ -393,10 +393,11 @@ ended on it, the setup plan (`accounts[].reasons`), the setup run's first stage,
 of a rotation naming the account, the preflight and the selection all refuse it with that code
 before anything is allocated (`certificateRefusalOf`), and it does not count toward the
 account's API health. Fix the records or pick another CA, then test again. Changing a setting
-the test's answers depend on (the DNS account, the certificate authority, the TLS configuration,
-which decides the wildcard reused, or `certificateScope`: `EDGE_RETEST_SETTINGS`) marks the
-account untested (`retest_required`) and drops the shared-certificate read: a per-name verdict
-says nothing about `issuewild`. The lookups are DNS
+the test's answers depend on (the DNS account, or the TLS configuration, which decides the
+wildcard reused: `EDGE_RETEST_SETTINGS`) or the account's default certificate authority or
+certificate scope (its option defaults, see Provider options) marks the account untested
+(`retest_required`) and drops the shared-certificate read: a per-name verdict says nothing
+about `issuewild`. The lookups are DNS
 queries from the backend (`node:dns`, 4 s, two tries); the offline test suite refuses them like
 `fetch`, and tests answer through `__setFastlyCaaLookup`.
 
@@ -2546,26 +2547,334 @@ dials the backend's `port`, which the API defaults to 80 whatever `use_ssl` says
 without it spoke TLS to port 80 and every front failed its qualification. Inspect reports the
 port the provider holds.
 
-- **Switching domains.** On the account page, Certificates and domains, "A new front's name
-  is": its own domain linked to the service (versionless, the default) or a domain on the
-  service version (classic, only on accounts created before September 2025). Fronts that exist
-  keep theirs; like any settings change it untrusts the location until a test and a proven
-  front.
-- **Switching to the wildcard.** On the account page, Certificates and domains, pick "One
-  wildcard for every front". Like any settings change it untrusts the account's location, and
-  as a certificate setting it marks the account untested (`retest_required`): test the account
-  again (the CAA preflight then checks `issuewild`), and its next proven front trusts it again. Fronts
-  that exist keep their own certificates until they are replaced.
+- **Switching domains.** On the account page, Domains, "A new front's name is": its own
+  domain linked to the service (versionless, the default) or a domain on the service version
+  (classic, only on accounts created before September 2025). Fronts that exist keep theirs;
+  like any settings change it untrusts the location until a test and a proven front.
+- **Switching to the wildcard.** On the account page, Certificates, set Certificate to "One
+  wildcard for every front" and save the defaults: nodes protected from then on start from it
+  (one node can also choose it alone, under its Options when it is protected). Like a settings
+  change it untrusts the account's location, and as a certificate default it marks the account
+  untested (`retest_required`): test the account again (the CAA preflight then checks
+  `issuewild`), and its next proven front trusts it again. Fronts that exist keep their own
+  certificates until they are replaced.
 - **CAA.** Allow the account's CA at the zone (or wherever its CAA records sit, up the tree) with
   `issue`, and with `issuewild` for the wildcard: `0 issue "certainly.com"` and
   `0 issuewild "certainly.com"` for Certainly.
 - **A failed shared certificate.** Fix what the account page says it waited on, retry the
   subscription at the provider, and the next reconcile pass reads it again.
-- **Retiring the wildcard.** Switch the account to one certificate per front and replace its
-  fronts; once none uses the wildcard, the account page offers "Remove shared certificate"
+- **Retiring the wildcard.** Switch the account's default to one certificate per front (and
+  any node that chose the wildcard, under its Options) and replace its fronts; once none uses the wildcard, the account page offers "Remove shared certificate"
   (for one FCP ordered only), which deletes it and the ACME record FCP wrote (never another
   customer's record). An account is deleted only after that. A wildcard FCP found and reused is
-  removed at the provider by hand, if nothing else uses it.
+  removed at the provider by hand, if nothing else uses it. Removal reads the wildcard with the
+  account's default certificate authority: one a node ordered under another authority reads as
+  `shared_certificate_ambiguous` until the default names that authority again.
+
+## Provider options
+
+Every settable field of every resource FCP creates at a provider is an OPTION, declared once
+per provider in `convex/lib/edges/providers/templates.ts` (a zod leaf, plus a descriptor:
+label, help in plain words, group, unit, default, the API field it fills, whether it is
+shown first for a node, a `when` condition). `providers/options.ts` holds the generic half:
+`describeFields` completes a descriptor's bounds, choices and default from the schema,
+`wireBody` writes a resource's chosen fields into its request body, and the hash helper. The
+admin forms render from the same descriptors (`optionSchemas` on `GET providers`, `schemas`
+on `GET templates`) through one component, `OptionFields.svelte`.
+
+**Two kinds, one home each.**
+
+- **Tuning** options configure the resources an edge is built from (a size, a timeout, a
+  health check, an IPv6 preference). Their defaults live in **templates**, in the template
+  hash as before. The Templates tab edits them.
+- **Certificate** options decide a CDN front's certificate (the authority, one wildcard or one
+  per front). Their defaults live on the **account** (`edgeProviderAccounts.optionDefaults`),
+  outside the template hash, frozen in each front's intent and proven per edge by its front
+  proof. An account's defaults only PREFILL: a node protected from it copies them into its
+  pick.
+
+**Per node.** Any option can be chosen for one node at one location: the protect sheet's
+Options fold on each pick, `relays.providerSet[i].options` once the run goes live
+(`edgeSetupRuns.picks[i].options` while it runs). A pick stores only what differs from what
+the location builds with anyway, plus the certificate values copied from the account. The
+deploy copies the account's certificate defaults into every pick from before options too
+(`migrateOptionDefaults`), so a later change of an account's defaults reaches nodes
+protected after it, never one that exists (what the account page says). Changing a live node's options is a re-protect (`reprotect {pickOptions}`,
+every address replaced, members move at go-live), never an edit of a live edge. A manual
+spare or replacement may carry options for that one address (`options` with `locationId`);
+automatic work never takes such an address.
+
+**Frozen per edge.** When an edge is planned, `resolveBuildFor` lays the pick's tuning
+choices over the template the location resolves (and checks the result against the
+provider's rules). The edge records `choices` (the pick's whole set, JSON) and
+`baseTemplateHash` (the location's own hash); its `templateHash` is the base hash when the
+pick chose no tuning value, else the hash of the template with the tuning choices laid over
+it. The certificate is the approval shape's own part instead (`certificateDigest`,
+`lib/edges/choices.ts`: the authority and scope, defaults filled in): a review line and a
+publication carry it for a provider whose certificate is a node's option, so a re-protect or
+a replacement that changes only the authority or the scope returns to `node_not_approved`,
+while a pick that merely copied the account's defaults builds under the template's own hash.
+A review line approved before options names no certificate and takes the one the node is
+built with. So the node's approval shape covers its choices, a tick on such an edge is
+still trust evidence for its location (trust compares the location's own hash), and a
+template edit is still detected mid-provision against the base hash. Certificate values go
+into the L7 intent like the authority always did; `loadAdapter` lays the account's defaults
+under them for a new edge and the intent's values over them for an existing one (an intent
+without a value reads as what its absence meant: one certificate per front, the default
+authority).
+
+**Spares follow their pick.** Selection's standby candidates and `verifiedSpareFor` skip an
+edge whose frozen choices (tuning) or frozen certificate differ from what its pick asks for
+now (`builtForChoices`, `lib/edges/choices.ts`). A template edit is not a choice: it keeps
+the existing rule (it untrusts the locations that fall back to the template).
+
+**Certificates a node chooses.** A pick whose certificate differs from what the account's
+credential test checked (another authority, the wildcard) is checked against the zone's CAA
+records when its plan is made (`edgeProviderOps.certificatePreflight`, the adapter's
+`certificatePreflight`): a refusal is a problem of that pick, before anything is ordered.
+An account whose own default the zone's CAA refuses stays refused as a whole until its
+default or the zone's records change. The account's shared wildcard is read as a front
+that chose it froze it, even where the account defaults to one certificate per front.
+
+The zone holds ONE shared wildcard, issued by the account's default authority (the account
+reads, renews and removes it under that one). A node takes it, or one certificate per front
+from any authority; a pick asking for the wildcard from another authority is refused
+(`edge.option_invalid`, in words), and so is a wildcard pick while the zone's wildcard is
+one the account would not order (`edge.shared_certificate_ambiguous`). A wildcard an edge of
+the account ORDERED stays the account's to remove whatever authority it was ordered under
+(the default may have changed since): the reconcile read names it (`ambiguous` with its
+subscription, shown even on an account that now defaults to one per front) and "Remove shared
+certificate" deletes it. One the account did not order, or several, never.
+
+**What a place cannot do.** Some values are valid for a provider but not where an edge is
+about to be built (`contextProblems`, `providers/templates.ts`), refused with
+`edge.option_invalid` and words when a pick is planned (protect, re-protect, a spare's
+options) and again when the edge is built (the rotation fails `option_invalid` before it
+allocates anything):
+
+- an HTTP or HTTPS health check (Gcore, OVH) on a node that serves a REALITY transport: a
+  REALITY port answers no plain HTTP request, so every member would be marked down;
+- record tags (Cloudflare `recordTags`, Fastly `dnsTags`) or a flattened traffic record
+  (Fastly `dnsFlatten`) on a Cloudflare zone on the Free plan: Cloudflare offers tags from
+  Pro up and per-record flattening on paid zones only. The plan comes from the zone's last
+  credential test (`observedSettings.zonePlan`); a zone never tested since is not refused here.
+
+Write rules (on a template or a pick, `WRITE_CHECKS`) also cover Fastly: the lowest backend TLS
+version may not be above the highest, and keepalive timings need keepalive on.
+
+**The member's address at a Fastly front.** Fastly sets `Fastly-Client-IP` and adds the
+member's address to `X-Forwarded-For` on the incoming request, before any VCL runs (its header
+reference). By default (`forwardClientAddress` off, for every account, template and front,
+including fronts planned before the option, whose frozen params do not name it) the front's
+service version gets three snippets: in `vcl_recv`, on every request, `unset` of
+`Fastly-Client-IP`, `X-Forwarded-For`, `True-Client-IP`, `X-Real-IP` and `Forwarded`, then the
+WebSocket handoff (`return(upgrade)` ends VCL there and hands the request as it then is to the
+node, so nothing later can put one back); in `vcl_miss` and `vcl_pass`, the same headers
+removed from the backend request, for a request that is not handed off. The generated VCL is
+pinned whole by `fastly.test.ts`. On passes Fastly's two through (the upgrade snippet only, as
+before the option). A front whose version was activated before this behaves as it was built
+until it is replaced.
+
+To verify it on a live front: the active version's snippets
+(`GET /service/{id}/version/{n}/snippet`) list `client-address-miss`, `client-address-pass`
+and `ws-upgrade` with the unsets above. On the node, a capture of the front's requests shows
+none of those headers. Through a plaintext origin (port 80) `tcpdump -A -s0 -i any 'tcp port
+80'` shows the upgrade request's headers directly. Through a TLS origin a capture shows only
+ciphertext, so read it where the request is decrypted: Xray's WebSocket and HTTPUpgrade
+inbounds (`ApplyTrustedXForwardedFor`, Xray-core `common/protocol/http/headers.go`) log the
+warning `received "X-Forwarded-For" from ... but "sockopt.trustedXForwardedFor" is not
+configured` for every request that carries one. With the node's log level at warning, members
+connecting through the front and no such line means the header never reached it.
+
+**A second address after the tick.** A provider may report an address family an L4 edge did
+not have when its endpoint was confirmed (a dual-stack load balancer whose IPv6 is only read
+from `additional_vips`, as Gcore's is now). `recordDescribe` holds it apart
+(`edges.learnedAddresses`): it is not served, not in the confirmation's hash, and the
+confirmation of what IS served stands, so the IPv4 keeps rendering. The edge's addresses
+line says "new address ... not served until tested" with Test it; the test link carries that
+address only, its binding is the configuration that serves it, and its tick moves it into
+`addresses` (`edgeVerification.confirm`). A family the provider stops reporting is dropped
+from the hold; an edge without a confirmation takes a new address at once, as before.
+
+**The hash rule.** An option added after a provider's first schema is `.optional()`, with
+its default declared on the descriptor and applied where it is sent, and an option a
+template never set stays UNSENT (the provider's own default), so an existing node's next
+replacement sends exactly what it sent before. Two fields that predate options keep their
+old wire: Gcore's node timeouts are sent on the listener as they always were (not added to
+the pool), and OVH's `timeoutMemberDataMs`, shown before but never sent, stays hidden and
+unsent (`nodeIdleTimeoutMs` sends `timeoutMemberData` when chosen). Two UpCloud changes are
+corrections, checked against UpCloud's own Go SDK (`upcloud/request/load_balancer.go`,
+v8.42.0): attaching a floating IP posts `{address, network_name}`
+(`AttachLoadBalancerIPAddressRequest`), and backend properties have no
+`health_check_timeout`, so it is no longer sent. A stored template then
+parses to exactly the object it did before, so no template hash, location trust or
+in-flight provision moves on deploy. `templates.test.ts` pins every provider's empty
+template hash. Rules across fields (a check timeout below its interval, IPv4 ranges only)
+apply to WRITES only (`validateTemplateWrite`; for a pick, `checkBuiltParams` on the pick
+laid over the template its location builds with, never against the compiled defaults, since a
+pick may lean on its template's interval or keepalive switch): on the read schema a stored
+template that broke one would stop parsing and `resolveTemplateFor` would silently fall back
+to another template. A location joining a node by re-protect is refused at once when what it
+inherits cannot be built there; options sent with the old single-location selector (no
+`picks`) are refused, never dropped.
+
+**Refusals and audit.** `edge.option_unknown` (not an option of the provider),
+`edge.option_invalid` (a value or a rule, in words), `edge.option_not_here` (a tuning option
+on the account, a certificate one in a template). The plan reports them per pick
+(`set.problems[].detail`). `edge.provider_account.options_changed` records which keys
+changed, with values for choices, numbers and switches only;
+`edge.provider_account.options_migrated` the deploy move; rotation starts carry `optionKeys`.
+A change of an account's certificate defaults untrusts its locations like a settings change.
+
+**Migration.** One deploy, optional fields only. `seedCutover` runs
+`edgeProviderAccounts.migrateOptionDefaults` (idempotent): a Fastly account's
+`certificateAuthority` and `certificateScope` are copied into `optionDefaults` without
+touching `credentialsChangedAt` or trust, and every pick from before options gets its
+account's certificate copied in. The copy under `settings` STAYS, and every settings write
+keeps it in step with `optionDefaults` (`settingsWithOptionCopy`), so a build from before
+options still validates and reads the account's certificate. An older client still sending
+them under `settings` is translated, and is never a settings change. A new Fastly account
+starts from a wildcard (`EDGE_NEW_ACCOUNT_OPTION_DEFAULTS`).
+
+**Rollback.** Before deploying a build from before options, run
+`edgeProviderAccounts:purgeOptionsForRollback` with no arguments (it schedules itself
+through accounts, relays, edges, rotations and runs, page by page): it removes
+`optionDefaults`, pick and run `options`, the edges' `choices`, `baseTemplateHash` and
+`learnedAddresses`, and rotations' `requestedOptions`, which the older schema refuses, while
+accounts keep the settings copy it reads.
+
+**Kept fixed on purpose.** Each with its reason:
+
+- names, tags and comments FCP finds its resources by (load balancer and backend names,
+  ownership tags and record comments): changing one orphans the resource;
+- values derived from the node (member address and port, the listener's port and scheme, a
+  Fastly backend's port and the origin's TLS name it presents and checks, the linkage ids
+  between resources);
+- the proxied flag of a DNS record: an unproxied front publishes the origin;
+- PROXY protocol, `X-Forwarded-*` insertion at an L4 balancer and access logs: they hand
+  members' addresses to nodes or the provider, and a node not expecting a PROXY header breaks
+  every connection (a Fastly front strips the member's address by default, see above; passing
+  Fastly's own two headers on is its one option here);
+- TLS termination, HTTP modes, certificates and HTTP/3 at an L4 balancer: they break the
+  end-to-end passthrough;
+- balancing methods, stickiness, weights and backup members: one origin per edge, so they
+  change nothing (the existing algorithm fields stay, with that said in their help);
+- Fastly shielding, caching, request settings, health checks, `between_bytes_timeout`,
+  keepalive reuse: the WebSocket path gains nothing from them or ignores them;
+- Cloudflare zone-wide settings (encryption mode, minimum TLS, HTTP/3, WebSockets, IPv6, edge
+  certificates): they change the operator's other sites, so FCP observes them only;
+- resources FCP does not create (Cloudflare Configuration Rules and per-hostname TLS, UpCloud
+  frontend rules, a Scaleway ACL, OVH's v2-only listener fields): a new resource, not a field;
+- polling, request timeouts and page sizes: internal safety, deliberately not settings.
+
+Fastly documents only name, address, TLS and Host as WebSocket backend settings, so the help
+of its other backend options says their effect is not proven until a beta walk shows it.
+
+### Every provider option
+
+Generated from the option registry and pinned by `providers/optionTable.test.ts`. "Chosen":
+where a value can be set (a template or a location's regional value, an account default),
+and per node always. "Live change": what the provider's API would take to change it on a
+live resource; FCP never applies one (a new edge is built instead).
+
+| provider   | group             | option                                | API field                                        | default        | chosen                         | live change at the provider |
+| ---------- | ----------------- | ------------------------------------- | ------------------------------------------------ | -------------- | ------------------------------ | --------------------------- |
+| gcore      | Load balancer     | Size                                  | `loadbalancer.flavor`                            | lb1-1-2        | template or location, per node | in place                    |
+| gcore      | Load balancer     | IP versions                           | `loadbalancer.vip_ip_family`                     | IPv4 and IPv6  | template, per node             | rebuild                     |
+| gcore      | Load balancer     | Address type                          | `loadbalancer.vip_network_id`                    | Public address | template, per node             | rebuild                     |
+| gcore      | Load balancer     | Extra tags                            | `loadbalancer.tags`                              | none           | template, per node             | in place                    |
+| gcore      | Listener          | Most connections at once              | `listener.connection_limit`                      | 0              | template, per node             | in place                    |
+| gcore      | Listener          | Client idle timeout                   | `listener.timeout_client_data`                   | 300000 ms      | template, per node             | in place                    |
+| gcore      | Listener          | Allowed client ranges                 | `listener.allowed_cidrs`                         | none           | template, per node             | in place                    |
+| gcore      | Listener          | Node connect timeout                  | `listener.timeout_member_connect`                | 5000 ms        | template, per node             | in place                    |
+| gcore      | Listener          | Node idle timeout                     | `listener.timeout_member_data`                   | 300000 ms      | template, per node             | in place                    |
+| gcore      | Pool              | Balancing method                      | `pool.lb_algorithm`                              | Round robin    | template, per node             | in place                    |
+| gcore      | Health check      | Check type                            | `health_monitor.type`                            | TCP            | template, per node             | rebuild                     |
+| gcore      | Health check      | Check interval                        | `health_monitor.delay`                           | 10 s           | template, per node             | in place                    |
+| gcore      | Health check      | Check timeout                         | `health_monitor.timeout`                         | 5 s            | template, per node             | in place                    |
+| gcore      | Health check      | Healthy after                         | `health_monitor.max_retries`                     | 3              | template, per node             | in place                    |
+| gcore      | Health check      | Unhealthy after                       | `health_monitor.max_retries_down`                | 3              | template, per node             | in place                    |
+| gcore      | Health check      | Check port                            | `member.monitor_port`                            | provider's own | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check method                     | `health_monitor.http_method`                     | GET            | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check path                       | `health_monitor.url_path`                        | /              | template, per node             | in place                    |
+| gcore      | Health check      | Healthy status codes                  | `health_monitor.expected_codes`                  | 200            | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check version                    | `health_monitor.http_version`                    | 1.0            | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check host name                  | `health_monitor.domain_name`                     | provider's own | template, per node             | in place                    |
+| upcloud    | Load balancer     | Plan                                  | `loadbalancer.plan`                              | development    | template, per node             | in place                    |
+| upcloud    | Load balancer     | Maintenance day                       | `loadbalancer.maintenance_dow`                   | provider's own | template, per node             | in place                    |
+| upcloud    | Load balancer     | Maintenance time (UTC)                | `loadbalancer.maintenance_time`                  | provider's own | template, per node             | in place                    |
+| upcloud    | Load balancer     | Labels                                | `loadbalancer.labels`                            | none           | template, per node             | in place                    |
+| upcloud    | Frontend          | Client idle timeout                   | `frontend.properties.timeout_client`             | 300 s          | template, per node             | in place                    |
+| upcloud    | Backend           | Node idle timeout                     | `backend.properties.timeout_server`              | 300 s          | template, per node             | in place                    |
+| upcloud    | Backend           | Tunnel timeout                        | `backend.properties.timeout_tunnel`              | 3600 s         | template, per node             | in place                    |
+| upcloud    | Health check      | Check interval                        | `backend.properties.health_check_interval`       | 10 s           | template, per node             | in place                    |
+| upcloud    | Health check      | Unhealthy after                       | `backend.properties.health_check_fall`           | 3              | template, per node             | in place                    |
+| upcloud    | Health check      | Healthy after                         | `backend.properties.health_check_rise`           | 3              | template, per node             | in place                    |
+| upcloud    | Health check      | Close connections on failure          | `backend.properties.health_check_on_down`        | off            | template, per node             | in place                    |
+| upcloud    | Member            | Most connections at once              | `member.max_sessions`                            | 1000           | template, per node             | in place                    |
+| upcloud    | Address           | Delegate a floating IPv4              | `ip_address.floating`                            | on             | template, per node             | rebuild                     |
+| scaleway   | Load balancer     | Size                                  | `loadbalancer.type`                              | LB-S           | template or location, per node | in place                    |
+| scaleway   | Load balancer     | Description                           | `loadbalancer.description`                       | origin edge    | template, per node             | in place                    |
+| scaleway   | Load balancer     | Extra tags                            | `loadbalancer.tags`                              | none           | template, per node             | in place                    |
+| scaleway   | Address           | Also an IPv6 address                  | `ip.is_ipv6`                                     | on             | template, per node             | rebuild                     |
+| scaleway   | Address           | Reverse DNS name                      | `ip.reverse`                                     | provider's own | template, per node             | in place                    |
+| scaleway   | Frontend          | Client idle timeout                   | `frontend.timeout_client`                        | 600s           | template, per node             | in place                    |
+| scaleway   | Frontend          | New connections per second            | `frontend.connection_rate_limit`                 | 0              | template, per node             | in place                    |
+| scaleway   | Backend           | Node idle timeout                     | `backend.timeout_server`                         | 600s           | template, per node             | in place                    |
+| scaleway   | Backend           | Node connect timeout                  | `backend.timeout_connect`                        | 5s             | template, per node             | in place                    |
+| scaleway   | Backend           | Tunnel timeout                        | `backend.timeout_tunnel`                         | 3600s          | template, per node             | in place                    |
+| scaleway   | Backend           | Most connections at once              | `backend.max_connections`                        | provider's own | template, per node             | in place                    |
+| scaleway   | Backend           | Queue wait limit                      | `backend.timeout_queue`                          | provider's own | template, per node             | in place                    |
+| scaleway   | Backend           | Node connect retries                  | `backend.max_retries`                            | provider's own | template, per node             | in place                    |
+| scaleway   | Backend           | Balancing method                      | `backend.forward_port_algorithm`                 | Round robin    | template, per node             | in place                    |
+| scaleway   | Health check      | Close connections on failure          | `backend.on_marked_down_action`                  | off            | template, per node             | in place                    |
+| scaleway   | Health check      | Check interval                        | `backend.health_check.check_delay`               | 5s             | template, per node             | in place                    |
+| scaleway   | Health check      | Check timeout                         | `backend.health_check.check_timeout`             | 3s             | template, per node             | in place                    |
+| scaleway   | Health check      | Unhealthy after                       | `backend.health_check.check_max_retries`         | 3              | template, per node             | in place                    |
+| scaleway   | Health check      | Recheck interval while changing state | `backend.health_check.transient_check_delay`     | 0.5s           | template, per node             | in place                    |
+| ovh        | Load balancer     | Size                                  | `loadbalancer.flavorId`                          | provider's own | template or location, per node | in place                    |
+| ovh        | Gateway           | Gateway size                          | `gateway.model`                                  | S (200 Mbps)   | template, per node             | in place                    |
+| ovh        | Listener          | Client idle timeout                   | `listener.timeoutClientData`                     | 300000 ms      | template, per node             | rebuild                     |
+| ovh        | Listener          | Node idle timeout                     | `listener.timeoutMemberData`                     | provider's own | template, per node             | rebuild                     |
+| ovh        | Listener          | Allowed client ranges                 | `listener.allowedCidrs`                          | none           | template, per node             | in place                    |
+| ovh        | Pool              | Balancing method                      | `pool.algorithm`                                 | Round robin    | template, per node             | in place                    |
+| ovh        | Health check      | Check type                            | `health_monitor.monitorType`                     | TCP            | template, per node             | rebuild                     |
+| ovh        | Health check      | Check interval                        | `health_monitor.delay`                           | 5 s            | template, per node             | in place                    |
+| ovh        | Health check      | Check timeout                         | `health_monitor.timeout`                         | 3 s            | template, per node             | in place                    |
+| ovh        | Health check      | Healthy after                         | `health_monitor.maxRetries`                      | 3              | template, per node             | in place                    |
+| ovh        | Health check      | Unhealthy after                       | `health_monitor.maxRetriesDown`                  | 3              | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check method                     | `health_monitor.httpConfiguration.httpMethod`    | GET            | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check path                       | `health_monitor.httpConfiguration.urlPath`       | /              | template, per node             | in place                    |
+| ovh        | Health check      | Healthy status codes                  | `health_monitor.httpConfiguration.expectedCodes` | 200            | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check version                    | `health_monitor.httpConfiguration.httpVersion`   | 1.0            | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check host name                  | `health_monitor.httpConfiguration.domainName`    | provider's own | template, per node             | in place                    |
+| cloudflare | Names             | Name length                           |                                                  | 12             | template, per node             | rebuild                     |
+| cloudflare | Names             | Name prefix                           |                                                  | provider's own | template, per node             | rebuild                     |
+| cloudflare | DNS record        | Record comment prefix                 | `dns_record.comment`                             | fcp            | template, per node             | in place                    |
+| cloudflare | DNS record        | Answer addresses                      | `dns_record.settings.ipv4_only`                  | IPv4 and IPv6  | template, per node             | in place                    |
+| cloudflare | DNS record        | Record tags                           | `dns_record.tags`                                | provider's own | template, per node             | in place                    |
+| cloudflare | Origin rule       | Allow a node port override            | `origin_rule.action_parameters.origin.port`      | on             | template, per node             | in place                    |
+| fastly     | Names             | Name length                           |                                                  | 12             | template, per node             | rebuild                     |
+| fastly     | Names             | Name prefix                           |                                                  | provider's own | template, per node             | rebuild                     |
+| fastly     | Service           | Service note                          | `service.comment`                                | origin edge    | template, per node             | new service version         |
+| fastly     | Backend           | Host sent to the node                 | `backend.override_host`                          | The front name | template, per node             | new service version         |
+| fastly     | Backend           | Prefer IPv6 to the node               | `backend.prefer_ipv6`                            | off            | template, per node             | new service version         |
+| fastly     | Backend           | Node connect timeout                  | `backend.connect_timeout`                        | 1000 ms        | template, per node             | new service version         |
+| fastly     | Backend           | Upgrade answer timeout                | `backend.first_byte_timeout`                     | 15000 ms       | template, per node             | new service version         |
+| fastly     | Backend           | Most connections per Fastly server    | `backend.max_conn`                               | 200            | template, per node             | new service version         |
+| fastly     | Backend TLS       | Lowest TLS version to the node        | `backend.min_tls_version`                        | provider's own | template, per node             | new service version         |
+| fastly     | Backend TLS       | Highest TLS version to the node       | `backend.max_tls_version`                        | provider's own | template, per node             | new service version         |
+| fastly     | Backend TLS       | Ciphers to the node                   | `backend.ssl_ciphers`                            | provider's own | template, per node             | new service version         |
+| fastly     | Backend keepalive | TCP keepalive to the node             | `backend.tcp_keepalive_enable`                   | provider's own | template, per node             | new service version         |
+| fastly     | Backend keepalive | Keepalive idle time                   | `backend.tcp_keepalive_time`                     | 300 s          | template, per node             | new service version         |
+| fastly     | Backend keepalive | Keepalive interval                    | `backend.tcp_keepalive_interval`                 | 10 s           | template, per node             | new service version         |
+| fastly     | Backend keepalive | Keepalive probes                      | `backend.tcp_keepalive_probes`                   | 3              | template, per node             | new service version         |
+| fastly     | Request           | Pass the member's address to the node | `snippet.content`                                | off            | template, per node             | new service version         |
+| fastly     | DNS records       | Record TTL                            | `dns_record.ttl`                                 | 1 s            | template, per node             | in place                    |
+| fastly     | DNS records       | Record tags                           | `dns_record.tags`                                | provider's own | template, per node             | in place                    |
+| fastly     | DNS records       | Flatten the front name                | `dns_record.settings.flatten_cname`              | off            | template, per node             | in place                    |
+| fastly     | Certificate       | Certificate authority                 | `tls_subscription.certificate_authority`         | Certainly      | account default, per node      | rebuild                     |
+| fastly     | Certificate       | Certificate                           | `tls_subscription.tls_domains`                   | One per front  | account default, per node      | rebuild                     |
 
 ## Adding an edge provider
 
@@ -2579,7 +2888,8 @@ Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts
    `convex/schema.ts`: the credentials, settings and `relayEdgePlacement` union variants. The
    credential test must work without a placement.
 3. `convex/lib/edges/providers/templates.ts`: the template schema, field descriptors and
-   defaults; `providers/capabilities.ts`: the capability row (layer, role, address kind, transports,
+   defaults (every settable field of every resource the adapter creates is an option,
+   § "Provider options"; options added later follow its hash rule); `providers/capabilities.ts`: the capability row (layer, role, address kind, transports,
    DNS roles, origin-port mode, `udp`, async and health flags, settle floor).
 4. `convex/lib/edges/providers/<id>.ts`: the `EdgeProvider` adapter, registered in
    `providers/registry.ts`, with `<id>.test.ts` on the recording transport.
@@ -2754,6 +3064,17 @@ lifecycle runs in that test and its rows appear here.
 | fastly     | GET    | `^/current_customer$`                                                             | credential test: the pricing plan (informational)                                                                                                     | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Provider options** add optional fields only (`edgeProviderAccounts.optionDefaults`, pick and
+run `options`, the edges' `choices`, `baseTemplateHash` and `learnedAddresses`, rotations'
+`requestedOptions`): one deploy, no freeze. `seedCutover` copies each Fastly account's
+certificate into `optionDefaults` and into its nodes' picks, keeping the copy under `settings`
+(§ "Provider options", Migration); no template hash moves. Fronts planned after the deploy
+keep the member's address from their node (`forwardClientAddress` off); a front activated
+before keeps forwarding it until it is replaced: replace such fronts once, and check one as
+§ "Provider options" describes. An activation run open across the deploy whose review
+has a Fastly line reads as changed once (its line now names the certificate): read the
+review again. To roll back, run `edgeProviderAccounts:purgeOptionsForRollback` first.
 
 **Fastly certificates and domains** add optional fields only (`edges.waiting`,
 `edgeProviderAccounts.sharedCertificate`, the Fastly settings `certificateScope` and

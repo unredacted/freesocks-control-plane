@@ -112,6 +112,8 @@ export const EdgeProviderAccountAdmin = z.object({
   name: z.string(),
   /** The account's own settings (identifiers, the L7 zone or DNS account); never a placement. */
   settings: z.record(z.string(), z.unknown()),
+  /** Defaults for the provider's certificate options, copied into a node when it is protected. */
+  optionDefaults: z.record(z.string(), z.unknown()).default({}),
   credentialsSet: z.record(z.string(), z.boolean()),
   defaultTemplateId: z.string().nullable(),
   /** The location pickers preselect. */
@@ -164,10 +166,81 @@ export const EdgeProviderAccountAdmin = z.object({
 export type EdgeProviderAccountAdmin = z.infer<typeof EdgeProviderAccountAdmin>;
 export const EdgeProviderAccountList = z.array(EdgeProviderAccountAdmin);
 
+/**
+ * One provider OPTION as the forms see it (convex/lib/edges/providers/options.ts
+ * `OptionField`): one settable field of one resource, with its type, bounds,
+ * default and where it may be chosen.
+ */
+export const EdgeTemplateField = z.object({
+  key: z.string(),
+  label: z.string(),
+  type: z.enum(['string', 'number', 'boolean', 'select', 'string-list', 'key-value']),
+  help: z.string().optional(),
+  options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
+  required: z.boolean().optional(),
+  /** The value differs per region: each location can set its own. */
+  regional: z.boolean().optional(),
+  /** The resource it configures, as the form heads its section. */
+  group: z.string().optional(),
+  unit: z.string().optional(),
+  /** Folded away until the operator asks for every option. */
+  advanced: z.boolean().optional(),
+  /** Offered first when choosing for one node. */
+  prominent: z.boolean().optional(),
+  /** Kept only so stored templates parse as before: never shown. */
+  hidden: z.boolean().optional(),
+  /** A key/value field stored as `[{key, value}]`. */
+  pairs: z.boolean().optional(),
+  /** `certificate`: an account default, frozen in a front's intent. Absent = tuning (a template's). */
+  kind: z.enum(['tuning', 'certificate']).optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  pattern: z.string().optional(),
+  maxItems: z.number().optional(),
+  /** What applies when nothing sets a value. */
+  default: z.unknown().optional(),
+  /** Shown only while another option holds one of these values. */
+  when: z
+    .object({ key: z.string(), in: z.array(z.union([z.string(), z.number(), z.boolean()])) })
+    .optional(),
+  /** A select filled from the location's offered sizes. */
+  from: z.literal('flavors').optional(),
+  /** The provider API field it fills (admin information). */
+  wire: z
+    .object({
+      resource: z.string(),
+      field: z.string(),
+      scale: z.number().optional(),
+      manual: z.boolean().optional(),
+    })
+    .optional(),
+  /** What a change would take on a live resource (FCP never applies one). */
+  live: z.enum(['in_place', 'new_version', 'rebuild']).optional(),
+});
+export type EdgeTemplateField = z.infer<typeof EdgeTemplateField>;
+
 export const EdgeCredentialFields = z.record(z.string(), z.array(z.string()));
+
+/**
+ * Every option of each provider (convex/lib/edges/providers/templates.ts): the
+ * tuning ones a template holds and the certificate ones an account defaults,
+ * with the values that apply when nothing sets one.
+ */
+export const EdgeOptionSchemas = z.record(
+  z.string(),
+  z.object({
+    fields: z.array(EdgeTemplateField),
+    defaults: z.record(z.string(), z.unknown()),
+    /** What a NEW account's defaults start from where they differ (a new Fastly account: wildcard). */
+    newAccountDefaults: z.record(z.string(), z.unknown()).default({}),
+  }),
+);
+export type EdgeOptionSchemas = z.infer<typeof EdgeOptionSchemas>;
+
 export const EdgeProviderAccountsResponse = z.object({
   accounts: EdgeProviderAccountList,
   credentialFields: EdgeCredentialFields,
+  optionSchemas: EdgeOptionSchemas.default({}),
 });
 export type EdgeProviderAccountsResponse = z.infer<typeof EdgeProviderAccountsResponse>;
 
@@ -260,18 +333,6 @@ export type EdgeInventoryResponse = z.infer<typeof EdgeInventoryResponse>;
 
 // --- templates --------------------------------------------------------------------------
 
-export const EdgeTemplateField = z.object({
-  key: z.string(),
-  label: z.string(),
-  type: z.enum(['string', 'number', 'boolean', 'select', 'string-list']),
-  help: z.string().optional(),
-  options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
-  required: z.boolean().optional(),
-  /** The value differs per region: each location can set its own. */
-  regional: z.boolean().optional(),
-});
-export type EdgeTemplateField = z.infer<typeof EdgeTemplateField>;
-
 export const EdgeTemplateAdmin = z.object({
   id: z.string(),
   provider: EdgeProviderId,
@@ -280,6 +341,8 @@ export const EdgeTemplateAdmin = z.object({
   params: z.unknown(),
   paramsHash: z.string(),
   isDefault: z.boolean(),
+  /** When it was created: the provisioning fallback takes the earliest unscoped one. */
+  createdAt: iso.optional(),
   updatedAt: iso,
 });
 export type EdgeTemplateAdmin = z.infer<typeof EdgeTemplateAdmin>;
@@ -606,6 +669,12 @@ export const EdgeVerificationView = z.object({
       listenerRevision: z.number(),
     })
     .nullable(),
+  /**
+   * An address the provider reported after the endpoint was confirmed: not
+   * served until it is tested on its own (the served addresses keep their
+   * confirmation meanwhile). Absent from an older server.
+   */
+  learnedAddress: z.string().nullable().optional(),
 });
 export type EdgeVerificationView = z.infer<typeof EdgeVerificationView>;
 
@@ -684,6 +753,8 @@ export const EdgeAdmin = z.object({
   placeKey: z.string().nullable().default(null),
   templateId: z.string().nullable(),
   templateHash: z.string().nullable(),
+  /** The node's provider options it was built with, frozen at plan time (null: from before options). */
+  choices: z.record(z.string(), z.unknown()).nullable().default(null),
   provider: EdgeProviderId.nullable(),
   managed: z.boolean(),
   name: z.string(),
@@ -2060,6 +2131,8 @@ export const ProviderSetView = z.object({
       /** A burn here: automatic work keeps away until then. */
       coolingUntil: iso.nullable(),
       addedAt: iso,
+      /** The provider options its addresses are built with (null: from before options). */
+      options: z.record(z.string(), z.unknown()).nullable().default(null),
     }),
   ),
   /** Transports with no backup in another failure domain. */
@@ -2101,6 +2174,8 @@ export const SetupPlanSet = z.object({
       provider: z.string(),
       locationKey: z.string(),
       label: z.string(),
+      /** The provider options this node gets here (chosen, with the account's certificate defaults). */
+      options: z.record(z.string(), z.unknown()).optional(),
     }),
   ),
   /** The (transport, pick) addresses the run creates: the fewest that meet the requirement. */
@@ -2111,7 +2186,9 @@ export const SetupPlanSet = z.object({
   uncovered: z.array(z.string()),
   /** More addresses than one origin publishes (`edge.set_too_large`). */
   tooLarge: z.boolean(),
-  problems: z.array(z.object({ locationId: z.string(), reason: z.string() })),
+  problems: z.array(
+    z.object({ locationId: z.string(), reason: z.string(), detail: z.string().optional() }),
+  ),
 });
 export type SetupPlanSet = z.infer<typeof SetupPlanSet>;
 
@@ -2160,6 +2237,8 @@ export const SetupRunCreateRequest = z.object({
   keepDirect: z.boolean().optional(),
   /** The transports to protect, when the plan had `tooManyInbounds` (the same keys the plan was shown with). */
   listenerKeys: z.array(z.string()).optional(),
+  /** Provider options per pick (location id -> the values chosen; the plan was shown with the same). */
+  pickOptions: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
 });
 export type SetupRunCreateRequest = z.infer<typeof SetupRunCreateRequest>;
 export const SetupRunCreatedResponse = z.object({ runId: z.string(), stage: SetupRunStage });

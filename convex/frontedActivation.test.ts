@@ -2720,10 +2720,11 @@ describe("a node's provider set, edited by hand", () => {
     );
     // Nothing retired; the set is the union.
     expect((await t.run((c) => c.db.get(live.e1)))!.publication).toBe('published');
-    expect((await relayRow(t, live.relayId)).providerSet!.map((p) => p.locationId)).toEqual([
-      firstLoc,
-      second,
-    ]);
+    const set = (await relayRow(t, live.relayId)).providerSet!;
+    expect(set.map((p) => p.locationId)).toEqual([firstLoc, second]);
+    // The joining pick starts from its account's defaults, copied in: never a
+    // pick from before options (which would follow the account's defaults live).
+    expect(set[1]!.options).toBe('{}');
   });
 
   test("an address published since the last commit is in the add run's snapshot and its commit", async () => {

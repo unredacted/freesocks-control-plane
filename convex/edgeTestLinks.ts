@@ -42,7 +42,11 @@ import { decodeLinkList, linkAddresses } from './lib/edges/render/links';
 import { fragmentText, parseProxyUri, uriAgrees, uriSupported } from './lib/edges/render/uri';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import type { ListenerProto } from './lib/edges/protocols';
-import { needsEndpointVerification, verificationBinding } from './lib/edges/verification';
+import {
+  learnedBinding,
+  needsEndpointVerification,
+  verificationBinding,
+} from './lib/edges/verification';
 import { toPublishedEdge } from './edgeRender';
 import { listenerRemark } from './relayListeners';
 
@@ -86,7 +90,11 @@ export const context = internalQuery({
       throw new ConvexError({ code: 'edge.listener_retired', message: 'Listener not found' });
     const relay = await ctx.db.get(edge.relayId);
     if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
-    const binding = verificationBinding(edge, await verificationListenerOf(ctx.db, listener));
+    const vl = await verificationListenerOf(ctx.db, listener);
+    // An address the edge learned after its confirmation is tested on its own:
+    // the link carries that address only, and the binding is the one that serves it.
+    const learned = learnedBinding(edge, vl);
+    const binding = learned ?? verificationBinding(edge, vl);
     if (!binding)
       throw new ConvexError({ code: 'edge.no_address', message: 'The edge has no address yet' });
     if (!relay.backendServerId)
@@ -164,7 +172,12 @@ export const context = internalQuery({
       ],
       proto,
       listenerKey: listener.listenerKey,
-      published: toPublishedEdge(edge, listener, 0, true),
+      published: toPublishedEdge(
+        learned ? { ...edge, addresses: { ...(edge.learnedAddresses ?? {}) } } : edge,
+        listener,
+        0,
+        true,
+      ),
       rule,
       binding,
       epoch: relay.publicationEpoch,

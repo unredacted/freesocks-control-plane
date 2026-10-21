@@ -293,6 +293,22 @@ describe('cloudflare: request bodies', () => {
     expect(cloudflareRecordBody(cfg, byName, tpl).type).toBe('CNAME');
   });
 
+  test('record options: tags as name:value, one answer family for the proxied name', () => {
+    const body = cloudflareRecordBody(
+      cfg,
+      specFor(),
+      CloudflareTemplate.parse({ recordTags: { team: 'edge' }, answerFamily: 'ipv4' }),
+    );
+    expect(body).toMatchObject({ tags: ['team:edge'], settings: { ipv4_only: true }, ttl: 1 });
+    expect(
+      cloudflareRecordBody(cfg, specFor(), CloudflareTemplate.parse({ answerFamily: 'ipv6' }))
+        .settings,
+    ).toEqual({ ipv6_only: true });
+    expect(
+      cloudflareRecordBody(cfg, specFor(), CloudflareTemplate.parse({ answerFamily: 'both' })),
+    ).not.toHaveProperty('settings');
+  });
+
   test('a spec without a hostname is refused, and so is a hostname outside the zone', () => {
     const noHost = specFor();
     delete noHost.hostname;
@@ -890,7 +906,7 @@ describe('cloudflare: credentials + discovery options', () => {
     const res = await cloudflareProvider.testCredentials(cfg);
     expect(res.ok).toBe(true);
     expect(res.detail).toContain('websockets_off');
-    expect(res.observed).toEqual({ zoneSslMode: 'full', websockets: 'off' });
+    expect(res.observed).toEqual({ zoneSslMode: 'full', websockets: 'off', zonePlan: 'free' });
   });
 
   test('the two settings travel as `observed`, which is what planning is later given', async () => {
@@ -899,7 +915,8 @@ describe('cloudflare: credentials + discovery options', () => {
       ssl.result.value = mode;
       mockFetch(route({ '/settings/ssl': () => jsonRes(ssl) }));
       const res = await cloudflareProvider.testCredentials(cfg);
-      expect(res.observed).toEqual({ zoneSslMode: mode, websockets: 'on' });
+      // The zone's plan rides along (record tags and flattening depend on it).
+      expect(res.observed).toEqual({ zoneSslMode: mode, websockets: 'on', zonePlan: 'free' });
       // The observed mode is exactly what `zoneSslModeOf` accepts as a param.
       expect(zoneSslModeOf(specFor(443), withMode(res.observed!.zoneSslMode))).toBe(mode);
     }
@@ -910,6 +927,7 @@ describe('cloudflare: credentials + discovery options', () => {
     expect((await cloudflareProvider.testCredentials(cfg)).observed).toEqual({
       zoneSslMode: 'off',
       websockets: 'on',
+      zonePlan: 'free',
     });
   });
 
@@ -924,7 +942,7 @@ describe('cloudflare: credentials + discovery options', () => {
     expect(res.ok).toBe(true);
     // No zoneSslMode at all: an edge planned from this account is refused with
     // zone_mode_unknown instead of being built against an unread setting.
-    expect(res.observed).toEqual({ websockets: 'off' });
+    expect(res.observed).toEqual({ websockets: 'off', zonePlan: 'free' });
     expect(() => zoneSslModeOf(specFor(443), withMode(res.observed!.zoneSslMode ?? ''))).toThrow(
       /zone_mode_unknown/,
     );
