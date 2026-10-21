@@ -1363,6 +1363,80 @@ describe('edgeRotations: a certificate that waits says what it waits on', () => 
   });
 });
 
+describe('edgeRotations: a configuration the provider refuses ends the run on its code', () => {
+  test('one refusal fails the run with that code at once, keeps what was built, and says so', async () => {
+    vi.useFakeTimers();
+    const ran: string[] = [];
+    const provider = {
+      id: 'cloudflare',
+      templateSchema: z.object({}).passthrough(),
+      templateFields: [],
+      defaultTemplate: {},
+      testCredentials: async () => ({ ok: true }),
+      planProvision: (_cfg: unknown, spec: EdgeSpec) => [
+        {
+          id: 'service',
+          kind: 'create_service',
+          resourceName: spec.name,
+          discoverability: 'by_name',
+        },
+        {
+          id: 'activate',
+          kind: 'activate_version',
+          resourceName: spec.name,
+          discoverability: 'none',
+        },
+      ],
+      runStep: async (_cfg: unknown, step: { id: string }) => {
+        ran.push(step.id);
+        return step.id === 'service'
+          ? {
+              status: 'done',
+              resources: [{ kind: 'service', resourceId: 'svc-1', ownership: 'created' }],
+            }
+          : { status: 'partial', resources: [], code: 'version_invalid', refused: true };
+      },
+      discover: async () => ({ status: 'confirmed_absent' }),
+      describe: async () => ({ state: 'pending', addresses: {}, health: 'unknown' }),
+      inspect: async () => ({ summary: { addresses: {}, members: [], listeners: [] }, raw: {} }),
+      inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
+      planDestroy: () => [],
+      runDestroy: async () => ({ status: 'confirmed_gone' }),
+    } as unknown as EdgeProvider;
+    __setEdgeProviderForTests('cloudflare', provider);
+    fakePanel();
+    const { t, relayId, listenerId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      listenerId,
+      publishOnDone: false,
+    });
+    await drain(t, rotationId);
+
+    // Validated once, never again: the same draft would be refused the same way.
+    expect(ran).toEqual(['service', 'activate']);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('failed');
+    expect(r.outcome).toBe('version_invalid');
+    expect(r.events.find((e) => e.level === 'error')).toMatchObject({
+      code: 'version_invalid',
+      detail: 'activate',
+    });
+    expect(r.events.some((e) => e.code === 'step_retries_exhausted')).toBe(false);
+    // What was built stays, for the operator to read the provider's reason there.
+    const edge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    expect(edge.failure).toMatchObject({ code: 'version_invalid' });
+    expect(edge.resources.map((x) => x.resourceId)).toEqual(['svc-1']);
+    expect(edge.steps.find((s) => s.stepId === 'activate')?.state).toBe('needs_operator');
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.find((i) => i.kind === 'rotation_failed')).toMatchObject({
+      code: 'version_invalid',
+    });
+  });
+});
+
 describe('edgeRotations: a front that could get no certificate is never planned', () => {
   async function refuseCertificates(
     t: ReturnType<typeof convexTest>,

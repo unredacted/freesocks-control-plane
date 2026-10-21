@@ -528,18 +528,15 @@ describe('fastly: request bodies', () => {
       [
         `unset ${obj}.http.Fastly-Client-IP;`,
         `unset ${obj}.http.X-Forwarded-For;`,
-        `unset ${obj}.http.Fastly-Temp-XFF;`,
-        `unset ${obj}.http.Fastly-WAF-Client-IP;`,
         `unset ${obj}.http.True-Client-IP;`,
         `unset ${obj}.http.X-Real-IP;`,
         `unset ${obj}.http.Forwarded;`,
-        `unset ${obj}.http.X-Client-IP;`,
-        `unset ${obj}.http.Client-IP;`,
-        `unset ${obj}.http.X-Cluster-Client-IP;`,
       ].join(' ');
     // The generated VCL, pinned whole: every request loses the headers in
     // vcl_recv BEFORE the handoff (nothing runs after return(upgrade)), and a
     // request that is not handed off loses them again on the backend request.
+    // Each of these compiled in an activated version; a new name joins only
+    // once it has too (see the protected-header test below).
     const expected = [
       {
         name: 'client-address-miss',
@@ -577,18 +574,49 @@ describe('fastly: request bodies', () => {
     expect(fastlySnippetBody({ forwardClientAddress: true }).content).toBe(FASTLY_WS_UPGRADE_VCL);
   });
 
-  test('Fastly-WAF-Client-IP, seen on a node behind a front, goes before the handoff too', () => {
-    // A capture on a node's loopback showed it, with the member's address, on
-    // every WebSocket request through a front whose VCL removed only the
-    // other headers. It goes in vcl_recv (the upgrade path runs nothing
-    // later) and from the backend request of one that is not handed off.
+  test('no snippet touches a header Fastly protects: one would fail every front', () => {
+    // Fastly refuses to compile VCL that sets or unsets a protected header,
+    // and a version that does not compile never activates (`version_invalid`),
+    // so no front builds at all. Its documented list (special and protected
+    // headers; the VCL linter Falco models the same ten), plus what Fastly's
+    // compiler refused that no list names: `Fastly-WAF-Client-IP` ("cannot be
+    // unset", on beta, 2026-10-21). It carries the member's address, and no
+    // VCL can remove it. Header names compare case-blind, as Fastly's do.
+    const PROTECTED = [
+      'Content-Length',
+      'Content-Range',
+      'Expect',
+      'Fastly-FF',
+      'Proxy-Authenticate',
+      'Proxy-Authorization',
+      'TE',
+      'Trailer',
+      'Transfer-Encoding',
+      'Upgrade',
+      'Fastly-WAF-Client-IP',
+    ].map((h) => h.toLowerCase());
+    for (const h of FASTLY_CLIENT_ADDRESS_HEADERS) expect(PROTECTED).not.toContain(h.toLowerCase());
+
+    // Nor does any generated snippet name one, in any form, either way the
+    // option is set. The only one read is `Upgrade`, the handoff's own test,
+    // and nothing writes it.
+    const vcl = [
+      ...fastlySnippetBodies(),
+      ...fastlySnippetBodies({ forwardClientAddress: true }),
+    ].map((s) => s.content);
+    const named = vcl.flatMap((c) => [...c.matchAll(/\.http\.([A-Za-z0-9-]+)/g)].map((m) => m[1]!));
+    const written = vcl.flatMap((c) =>
+      [...c.matchAll(/\b(?:set|unset|add)\s+[a-z]+\.http\.([A-Za-z0-9-]+)/g)].map((m) => m[1]!),
+    );
+    expect(named.length).toBeGreaterThan(0);
+    expect(
+      named.filter((h) => PROTECTED.includes(h.toLowerCase()) && h.toLowerCase() !== 'upgrade'),
+    ).toEqual([]);
+    expect(written.filter((h) => PROTECTED.includes(h.toLowerCase()))).toEqual([]);
+    expect(vcl.join(' ')).not.toMatch(/header\.(filter|filter_except|set|unset)\(/);
+
+    // Every listed header is removed on every path, each exactly once.
     const [miss, pass, recv] = fastlySnippetBodies().map((s) => s.content);
-    const waf = (obj: string) => `unset ${obj}.http.Fastly-WAF-Client-IP;`;
-    expect(recv).toContain(waf('req'));
-    expect(recv!.indexOf(waf('req'))).toBeLessThan(recv!.indexOf('return(upgrade)'));
-    expect(miss).toContain(waf('bereq'));
-    expect(pass).toContain(waf('bereq'));
-    // Every named header is removed on every path, each exactly once.
     for (const h of FASTLY_CLIENT_ADDRESS_HEADERS) {
       expect(recv!.split(`unset req.http.${h};`)).toHaveLength(2);
       expect(miss!.split(`unset bereq.http.${h};`)).toHaveLength(2);
@@ -902,6 +930,7 @@ describe('fastly: provisioning', () => {
       status: 'partial',
       resources: [],
       code: 'version_invalid',
+      refused: true,
     });
     expect(r.calls.some((c) => c.path.endsWith('/activate'))).toBe(false);
   });

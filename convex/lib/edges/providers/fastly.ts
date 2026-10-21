@@ -408,31 +408,28 @@ export function fastlyBackendBody(spec: EdgeSpec, tpl: FastlyTemplateParams): Fa
 }
 
 /**
- * The request headers that can carry the member's address to the node, by
- * name: one more is one line here, and every snippet below removes it.
+ * The request headers that can carry the member's address to the node and
+ * that VCL may remove, by name: every snippet below removes each of them.
  *
  * Fastly's own: it sets `Fastly-Client-IP` and adds the address to
  * `X-Forwarded-For` on the incoming request, before any VCL runs (its header
- * reference, re-read 2026-10-21); `Fastly-Temp-XFF` is a name its generated
- * VCL has kept its copy of that chain under. `Fastly-WAF-Client-IP` is in none
- * of Fastly's documentation, yet a capture on a node showed it, with the
- * member's address, on every WebSocket request through a front built without
- * it here. The rest are only ever what a client (or a proxy on its side) sent,
- * removed so no client can pass an address on either. Never a protected header
- * (`Fastly-FF`, which names Fastly's own servers): VCL touching one fails to
- * compile, and the version would not activate.
+ * reference, re-read 2026-10-21). The rest are only ever what a client (or a
+ * proxy on its side) sent, removed so no client can pass an address on either.
+ *
+ * Every name here has compiled in an activated version, `unset` on `req` and
+ * on `bereq`. A name that has not is NOT added on the strength of a list:
+ * Fastly protects headers it documents nowhere, and one protected name fails
+ * the whole version (`version_invalid`), so no front builds at all. That is
+ * how `Fastly-WAF-Client-IP` left: it carries the member's address on every
+ * request, and VCL cannot remove it ("cannot be unset"). `fastly.test.ts`
+ * keeps the known protected ones out.
  */
 export const FASTLY_CLIENT_ADDRESS_HEADERS = [
   'Fastly-Client-IP',
   'X-Forwarded-For',
-  'Fastly-Temp-XFF',
-  'Fastly-WAF-Client-IP',
   'True-Client-IP',
   'X-Real-IP',
   'Forwarded',
-  'X-Client-IP',
-  'Client-IP',
-  'X-Cluster-Client-IP',
 ] as const;
 
 const unsetAll = (obj: 'req' | 'bereq') =>
@@ -442,9 +439,9 @@ const unsetAll = (obj: 'req' | 'bereq') =>
  * The upgrade snippet of a front whose node must not see the member's
  * address (the default): every such header goes in `vcl_recv`, on EVERY
  * request, before the WebSocket handoff. `return(upgrade)` ends VCL there, so
- * no later VCL can put one back on the upgrade path. A header Fastly's
- * WebSocket path adds AFTER the handoff (it adds `CDN-Loop: Fanout`) is beyond
- * any VCL: only a capture on the node shows that none of these is one.
+ * no later VCL can put one back on the upgrade path. What VCL may not touch
+ * (`Fastly-WAF-Client-IP`) or never sees (`CDN-Loop: Fanout`, added after the
+ * handoff) still reaches the node: only a capture there shows what does.
  */
 export const FASTLY_WS_UPGRADE_VCL_NO_CLIENT_ADDRESS = `${unsetAll('req')} if (req.http.Upgrade) { return(upgrade); }`;
 
@@ -1758,8 +1755,11 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       case 'activate_version': {
         const svc = serviceOf(ledger);
         const validation = await api.validateServiceVersion(svc.id, svc.version);
+        // The draft does not compile (a protected header, say): validating it
+        // again changes nothing. Fastly's own words stay with the draft
+        // version, where the operator reads them; FCP keeps only the code.
         if (validation.status !== 'ok')
-          return { status: 'partial', resources: [], code: 'version_invalid' };
+          return { status: 'partial', resources: [], code: 'version_invalid', refused: true };
         await api.activateServiceVersion(svc.id, svc.version);
         return {
           status: 'done',

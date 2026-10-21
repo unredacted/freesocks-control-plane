@@ -957,6 +957,12 @@ const COPY = {
     label: 'No load signal',
     explain: 'This origin kind reports no user load, so the detector uses reports and probes only.',
   },
+  version_invalid: {
+    label: 'Configuration refused',
+    explain:
+      'The provider refused the configuration FCP generated for this front, so it was never activated. Trying again would be refused the same way.',
+    fix: 'Open the front’s service at the provider: its draft version shows why. Then delete the front.',
+  },
   // --- published pool (reserved allocation, capacity, rebalance) -------------------------
   pool_full: {
     label: 'Pool full',

@@ -220,8 +220,13 @@ export interface EdgeReadiness {
 export type StepOutcome =
   /** The call completed; every child it created is listed. */
   | { status: 'done'; resources: ChildResource[]; addresses?: Addresses }
-  /** The call failed after creating some children (all listed). */
-  | { status: 'partial'; resources: ChildResource[]; code?: string }
+  /**
+   * The call failed after creating some children (all listed). `refused`: the
+   * provider answered and refused what FCP built (a configuration that does
+   * not compile), so the same call would be refused again; the run stops on
+   * `code` at once and keeps what was built for the operator to read.
+   */
+  | { status: 'partial'; resources: ChildResource[]; code?: string; refused?: true }
   /**
    * Async provider: an operation/task to poll; children known so far listed.
    * `code`: what the wait is held up by, when the provider says (a code from a
