@@ -180,9 +180,16 @@ describe('scaleway: options', () => {
     await scalewayProvider.runStep(cfg, steps[3], spec, tpl, ledgerWith(['lb', 'lb-1']));
     const backend = api.createBackend.mock.calls[0]![0] as Record<string, unknown>;
     expect(backend.onMarkedDownAction).toBe('on_marked_down_action_none');
-    for (const k of ['maxConnections', 'timeoutQueue', 'maxRetries']) expect(backend).not.toHaveProperty(k);
+    for (const k of ['maxConnections', 'timeoutQueue', 'maxRetries'])
+      expect(backend).not.toHaveProperty(k);
     expect(backend.healthCheck).not.toHaveProperty('transientCheckDelay');
-    await scalewayProvider.runStep(cfg, steps[4], spec, tpl, ledgerWith(['lb', 'lb-1'], ['backend', 'be-1']));
+    await scalewayProvider.runStep(
+      cfg,
+      steps[4],
+      spec,
+      tpl,
+      ledgerWith(['lb', 'lb-1'], ['backend', 'be-1']),
+    );
     expect(api.createFrontend.mock.calls[0]![0]).not.toHaveProperty('connectionRateLimit');
   });
 
@@ -196,11 +203,18 @@ describe('scaleway: options', () => {
       maxRetries: 2,
       closeOnFailure: true,
       connectionRateLimit: 100,
-      healthCheck: { checkDelay: '5s', checkTimeout: '3s', checkMaxRetries: 3, transientCheckDelay: '0.5s' },
+      healthCheck: {
+        checkDelay: '5s',
+        checkTimeout: '3s',
+        checkMaxRetries: 3,
+        transientCheckDelay: '0.5s',
+      },
     });
     const steps = scalewayProvider.planProvision(cfg, spec, t);
     await scalewayProvider.runStep(cfg, steps[0], spec, t, ledgerWith());
-    expect(api.createIp).toHaveBeenCalledWith(expect.objectContaining({ reverse: 'edge.example.org' }));
+    expect(api.createIp).toHaveBeenCalledWith(
+      expect.objectContaining({ reverse: 'edge.example.org' }),
+    );
     await scalewayProvider.runStep(cfg, steps[2], spec, t, ledgerWith(['ip', 'ip4-1']));
     expect(api.createLb).toHaveBeenCalledWith(expect.objectContaining({ description: 'spare' }));
     await scalewayProvider.runStep(cfg, steps[3], spec, t, ledgerWith(['lb', 'lb-1']));
@@ -213,8 +227,16 @@ describe('scaleway: options', () => {
         healthCheck: expect.objectContaining({ transientCheckDelay: '0.5s' }),
       }),
     );
-    await scalewayProvider.runStep(cfg, steps[4], spec, t, ledgerWith(['lb', 'lb-1'], ['backend', 'be-1']));
-    expect(api.createFrontend).toHaveBeenCalledWith(expect.objectContaining({ connectionRateLimit: 100 }));
+    await scalewayProvider.runStep(
+      cfg,
+      steps[4],
+      spec,
+      t,
+      ledgerWith(['lb', 'lb-1'], ['backend', 'be-1']),
+    );
+    expect(api.createFrontend).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionRateLimit: 100 }),
+    );
   });
 });
 

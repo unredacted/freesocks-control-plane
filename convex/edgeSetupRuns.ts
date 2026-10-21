@@ -3887,8 +3887,7 @@ export async function startReprotect(
       const given = pickOptions?.[key];
       if (given !== undefined) {
         const r = await checkPickOptions(ctx, p.location, p.account, given);
-        if (!r.ok)
-          throw new ConvexError({ code: r.code, message: r.issues.join('; ') || r.code });
+        if (!r.ok) throw new ConvexError({ code: r.code, message: r.issues.join('; ') || r.code });
         optionsOfPick.set(key, JSON.stringify(r.options));
         continue;
       }

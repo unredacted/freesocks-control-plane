@@ -51,10 +51,7 @@ import { protocolLabel } from './lib/edges/protocols';
 import { destroyedPatch, mapEdgeAdmin } from './edges';
 import { deliveryStyleOf, publishedEdgesOf } from './edgeRender';
 import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
-import {
-  EDGE_NEW_ACCOUNT_OPTION_DEFAULTS,
-  optionFieldsOf,
-} from './lib/edges/providers/templates';
+import { EDGE_NEW_ACCOUNT_OPTION_DEFAULTS, optionFieldsOf } from './lib/edges/providers/templates';
 import { defaultsOf } from './lib/edges/providers/options';
 import { EDGE_PROVIDER_IDS } from './lib/edgeProviderIds';
 

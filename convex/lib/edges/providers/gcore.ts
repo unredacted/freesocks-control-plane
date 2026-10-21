@@ -85,7 +85,9 @@ const Lb = z
     vip_address: z.string().nullish(),
     vip_ipv6_address: z.string().nullish(),
     // Where the current API reports a second (IPv6) VIP.
-    additional_vips: z.array(z.object({ ip_address: z.string().nullish() }).passthrough()).nullish(),
+    additional_vips: z
+      .array(z.object({ ip_address: z.string().nullish() }).passthrough())
+      .nullish(),
     floating_ips: z.array(FloatingIp).nullish(),
     flavor: z
       .union([z.string(), z.object({ flavor_name: z.string().nullish() }).passthrough()])
@@ -246,7 +248,9 @@ export function gcoreLbBody(cfg: GcoreConfig, spec: EdgeSpec, tpl: GcoreTemplate
             address: m.address,
             protocol_port: m.port,
             weight: 1,
-            ...(tpl.healthMonitor.port !== undefined ? { monitor_port: tpl.healthMonitor.port } : {}),
+            ...(tpl.healthMonitor.port !== undefined
+              ? { monitor_port: tpl.healthMonitor.port }
+              : {}),
           })),
           healthmonitor: gcoreHealthMonitor(tpl.healthMonitor),
         },
@@ -279,9 +283,12 @@ export function gcoreLbAddresses(lb: {
   const out: Addresses = {};
   const fip = lb.floating_ips?.find((f) => f.floating_ip_address)?.floating_ip_address ?? undefined;
   const extra = (lb.additional_vips ?? []).map((v) => v.ip_address ?? undefined);
-  const candidates = [fip, lb.vip_address ?? undefined, lb.vip_ipv6_address ?? undefined, ...extra].filter(
-    (x): x is string => !!x && isPublicIpLiteral(x),
-  );
+  const candidates = [
+    fip,
+    lb.vip_address ?? undefined,
+    lb.vip_ipv6_address ?? undefined,
+    ...extra,
+  ].filter((x): x is string => !!x && isPublicIpLiteral(x));
   for (const c of candidates) {
     const fam = addressFamily(c);
     if (fam === 'v4' && !out.v4) out.v4 = c;

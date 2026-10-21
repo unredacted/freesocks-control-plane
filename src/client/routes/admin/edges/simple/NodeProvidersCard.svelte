@@ -99,7 +99,11 @@
       location,
     );
     // What this node chose there: its stored options, less what it would get anyway.
-    return { fields: schema.fields, base, chosen: overrides(asParams(p.options), base, schema.fields) };
+    return {
+      fields: schema.fields,
+      base,
+      chosen: overrides(asParams(p.options), base, schema.fields),
+    };
   }
   let optionsFor = $state<ProviderSetView['picks'][number] | null>(null);
   let draft = $state<Params>({});
@@ -283,7 +287,9 @@
         disabled={reprotect.isPending}
         onclick={() => (confirmOptions = true)}>Protect again with these</Button
       >
-      <Button variant="outline" class="h-11 sm:h-8" onclick={() => (optionsFor = null)}>Cancel</Button>
+      <Button variant="outline" class="h-11 sm:h-8" onclick={() => (optionsFor = null)}
+        >Cancel</Button
+      >
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
@@ -295,7 +301,10 @@
   confirmLabel="Protect again"
   onConfirm={async () => {
     if (optionsFor)
-      await reprotect.mutateAsync({ locationId: optionsFor.locationId, values: $state.snapshot(draft) });
+      await reprotect.mutateAsync({
+        locationId: optionsFor.locationId,
+        values: $state.snapshot(draft),
+      });
   }}
 />
 

@@ -91,7 +91,12 @@
       account,
       account.locations.find((l) => l.id === p.locationId) ?? null,
     );
-    return { pick: p, fields: schema.fields, base, chosen: overrides(asParams(p.options), base, schema.fields) };
+    return {
+      pick: p,
+      fields: schema.fields,
+      base,
+      chosen: overrides(asParams(p.options), base, schema.fields),
+    };
   });
   let oneOff = $state<Params | null>(null);
   $effect(() => {

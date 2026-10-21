@@ -37,7 +37,12 @@ const EMPTY_TEMPLATE_HASHES: Record<string, string> = {
   fastly: '5cfb164e8072eb8e',
 };
 
-type Node = { type?: string; properties?: Record<string, Node>; anyOf?: Node[]; additionalProperties?: unknown };
+type Node = {
+  type?: string;
+  properties?: Record<string, Node>;
+  anyOf?: Node[];
+  additionalProperties?: unknown;
+};
 
 /** Every value-bearing path of a schema: objects are walked, maps and lists are leaves. */
 function leafPaths(schema: z.ZodType): string[] {
@@ -48,7 +53,8 @@ function leafPaths(schema: z.ZodType): string[] {
       let child = child0;
       while (child.anyOf) child = child.anyOf.find((x) => x.type !== 'null') ?? {};
       const key = prefix ? `${prefix}.${k}` : k;
-      if (child.type === 'object' && child.properties && !child.additionalProperties) walk(child, key);
+      if (child.type === 'object' && child.properties && !child.additionalProperties)
+        walk(child, key);
       else out.push(key);
     }
   };
@@ -70,16 +76,19 @@ describe('provider option registry', () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it.each(EDGE_PROVIDER_IDS)('%s: every option has a label, a group, a kind that fits and a default', (p) => {
-    for (const f of optionFieldsOf(p)) {
-      expect(f.label.length, f.key).toBeGreaterThan(0);
-      expect(f.label, f.key).not.toMatch(/—/);
-      expect(f.help ?? '', f.key).not.toMatch(/—/);
-      if (certificateKeysOf(p).includes(f.key)) expect(f.kind, f.key).toBe('certificate');
-      else expect(f.kind ?? 'tuning', f.key).toBe('tuning');
-      if (f.type === 'select') expect(f.options?.length, f.key).toBeGreaterThan(0);
-    }
-  });
+  it.each(EDGE_PROVIDER_IDS)(
+    '%s: every option has a label, a group, a kind that fits and a default',
+    (p) => {
+      for (const f of optionFieldsOf(p)) {
+        expect(f.label.length, f.key).toBeGreaterThan(0);
+        expect(f.label, f.key).not.toMatch(/\u2014/);
+        expect(f.help ?? '', f.key).not.toMatch(/\u2014/);
+        if (certificateKeysOf(p).includes(f.key)) expect(f.kind, f.key).toBe('certificate');
+        else expect(f.kind ?? 'tuning', f.key).toBe('tuning');
+        if (f.type === 'select') expect(f.options?.length, f.key).toBeGreaterThan(0);
+      }
+    },
+  );
 });
 
 describe('validation by level', () => {
@@ -104,10 +113,12 @@ describe('validation by level', () => {
       ok: false,
       code: 'edge.option_not_here',
     });
-    expect(validateAccountOptionDefaults('fastly', { certificateAuthority: 'globalsign' })).toEqual({
-      ok: true,
-      values: { certificateAuthority: 'globalsign' },
-    });
+    expect(validateAccountOptionDefaults('fastly', { certificateAuthority: 'globalsign' })).toEqual(
+      {
+        ok: true,
+        values: { certificateAuthority: 'globalsign' },
+      },
+    );
   });
 
   it('never lets a template hold a certificate option', () => {
@@ -118,9 +129,9 @@ describe('validation by level', () => {
 
   it('checks the params a pick builds as a whole', () => {
     expect(checkBuiltParams('gcore', EDGE_TEMPLATES.gcore.defaults).ok).toBe(true);
-    expect(checkBuiltParams('gcore', { ...EDGE_TEMPLATES.gcore.defaults, ipFamily: 'ipv6' }).ok).toBe(
-      false,
-    );
+    expect(
+      checkBuiltParams('gcore', { ...EDGE_TEMPLATES.gcore.defaults, ipFamily: 'ipv6' }).ok,
+    ).toBe(false);
   });
 });
 
@@ -131,17 +142,21 @@ describe('provider rules on writes', () => {
   };
 
   it('a check timeout must stay below its interval (Gcore, OVH)', () => {
-    expect(issues('gcore', { healthMonitor: { delay: 5, timeout: 5, maxRetries: 3, maxRetriesDown: 3 } })).toEqual([
-      'Check timeout: must be below the check interval',
-    ]);
-    expect(issues('ovh', { flavorId: 'f', healthMonitor: { delay: 3, timeout: 4, maxRetries: 3 } })).toHaveLength(1);
+    expect(
+      issues('gcore', {
+        healthMonitor: { delay: 5, timeout: 5, maxRetries: 3, maxRetriesDown: 3 },
+      }),
+    ).toEqual(['Check timeout: must be below the check interval']);
+    expect(
+      issues('ovh', { flavorId: 'f', healthMonitor: { delay: 3, timeout: 4, maxRetries: 3 } }),
+    ).toHaveLength(1);
     expect(issues('ovh', { flavorId: 'f' })).toEqual([]);
   });
 
   it('OVH takes IPv4 ranges only; an IPv4-only Gcore edge too', () => {
-    expect(issues('ovh', { flavorId: 'f', allowedCidrs: ['192.0.2.0/24', '2001:db8::/32'] })).toEqual([
-      'Allowed client ranges: "2001:db8::/32" is not an IPv4 range',
-    ]);
+    expect(
+      issues('ovh', { flavorId: 'f', allowedCidrs: ['192.0.2.0/24', '2001:db8::/32'] }),
+    ).toEqual(['Allowed client ranges: "2001:db8::/32" is not an IPv4 range']);
     expect(issues('gcore', { ipFamily: 'ipv4', allowedCidrs: ['2001:db8::/32'] })).toHaveLength(1);
     expect(issues('gcore', { ipFamily: 'dual', allowedCidrs: ['2001:db8::/32'] })).toEqual([]);
   });
@@ -157,9 +172,13 @@ describe('provider rules on writes', () => {
     expect(
       issues('scaleway', {
         timeoutClient: '600s',
-        healthCheck: { checkDelay: '5s', checkTimeout: '3s', checkMaxRetries: 3, transientCheckDelay: '0.5s' },
+        healthCheck: {
+          checkDelay: '5s',
+          checkTimeout: '3s',
+          checkMaxRetries: 3,
+          transientCheckDelay: '0.5s',
+        },
       }),
     ).toEqual([]);
   });
 });
-

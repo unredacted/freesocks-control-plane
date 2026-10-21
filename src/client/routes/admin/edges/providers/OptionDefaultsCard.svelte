@@ -80,7 +80,8 @@
       <p class="text-xs text-muted-foreground">Now: {changes.join(', ')}.</p>
     {/if}
     <div class="flex gap-2">
-      <Button disabled={!dirty || saving} onclick={() => (confirmOpen = true)}>Save defaults</Button>
+      <Button disabled={!dirty || saving} onclick={() => (confirmOpen = true)}>Save defaults</Button
+      >
       {#if dirty}
         <Button variant="ghost" disabled={saving} onclick={() => (values = seed)}>Undo</Button>
       {/if}

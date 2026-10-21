@@ -50,7 +50,11 @@ describe('visibleFields', () => {
 
 describe('groupsOf', () => {
   it('keeps the order groups first appear in', () => {
-    expect(groupsOf(fields).map((g) => g.group)).toEqual(['Load balancer', 'Health check', 'Member']);
+    expect(groupsOf(fields).map((g) => g.group)).toEqual([
+      'Load balancer',
+      'Health check',
+      'Member',
+    ]);
     expect(groupsOf(fields)[0]!.fields.map((f) => f.key)).toEqual(['size', 'tags']);
   });
 });
@@ -67,7 +71,11 @@ describe('key/value text', () => {
 describe('overrides and words', () => {
   it('keeps only what differs from the inherited values', () => {
     expect(
-      overrides({ size: 'big', check: { type: 'TCP' }, cap: 5 }, { size: 'small', check: { type: 'TCP' } }, fields),
+      overrides(
+        { size: 'big', check: { type: 'TCP' }, cap: 5 },
+        { size: 'small', check: { type: 'TCP' } },
+        fields,
+      ),
     ).toEqual({ size: 'big', cap: 5 });
   });
 
@@ -89,7 +97,13 @@ describe('pickBase', () => {
       { size: 's' },
       [
         { id: 't1', provider: 'p', accountId: null, isDefault: true, params: { size: 'm' } },
-        { id: 't2', provider: 'p', accountId: null, isDefault: false, params: { size: 'l', cap: 5 } },
+        {
+          id: 't2',
+          provider: 'p',
+          accountId: null,
+          isDefault: false,
+          params: { size: 'l', cap: 5 },
+        },
       ],
       { id: 'a', provider: 'p', defaultTemplateId: null, optionDefaults: { authority: 'other' } },
       { defaultTemplateId: 't2', regionalParams: { size: 'xl' } },

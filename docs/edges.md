@@ -2493,6 +2493,209 @@ account's shared wildcard), its ACME record, the wait for issuance and the traff
 - **Retiring the wildcard.** FCP never deletes it. Switch the account to one certificate per
   front, replace its fronts, then delete the subscription (and its ACME record) at the provider.
 
+## Provider options
+
+Every settable field of every resource FCP creates at a provider is an OPTION, declared once
+per provider in `convex/lib/edges/providers/templates.ts` (a zod leaf, plus a descriptor:
+label, help in plain words, group, unit, default, the API field it fills, whether it is
+shown first for a node, a `when` condition). `providers/options.ts` holds the generic half:
+`describeFields` completes a descriptor's bounds, choices and default from the schema,
+`wireBody` writes a resource's chosen fields into its request body, and the hash helper. The
+admin forms render from the same descriptors (`optionSchemas` on `GET providers`, `schemas`
+on `GET templates`) through one component, `OptionFields.svelte`.
+
+**Two kinds, one home each.**
+
+- **Tuning** options configure the resources an edge is built from (a size, a timeout, a
+  health check, an IPv6 preference). Their defaults live in **templates**, in the template
+  hash as before. The Templates tab edits them.
+- **Certificate** options decide a CDN front's certificate (the authority, one wildcard or one
+  per front). Their defaults live on the **account** (`edgeProviderAccounts.optionDefaults`),
+  outside the template hash, frozen in each front's intent and proven per edge by its front
+  proof. An account's defaults only PREFILL: a node protected from it copies them into its
+  pick.
+
+**Per node.** Any option can be chosen for one node at one location: the protect sheet's
+Options fold on each pick, `relays.providerSet[i].options` once the run goes live
+(`edgeSetupRuns.picks[i].options` while it runs). A pick stores only what differs from what
+the location builds with anyway, plus the certificate values copied from the account. A
+pick from before options (no `options`) keeps the template and the account's defaults,
+live, as before. Changing a live node's options is a re-protect (`reprotect {pickOptions}`,
+every address replaced, members move at go-live), never an edit of a live edge. A manual
+spare or replacement may carry options for that one address (`options` with `locationId`);
+automatic work never takes such an address.
+
+**Frozen per edge.** When an edge is planned, `resolveBuildFor` lays the pick's tuning
+choices over the template the location resolves (and checks the result against the
+provider's rules). The edge records `choices` (the pick's whole set, JSON) and
+`baseTemplateHash` (the location's own hash); its `templateHash` is the base hash when the
+pick chose no tuning value, else the hash of the template with the choices laid over it. So
+the node's approval shape covers its choices, a tick on such an edge proves only that edge
+(trust evidence compares the location's own hash), and a template edit is still detected
+mid-provision against the base hash. Certificate values go into the L7 intent like the
+authority always did; `loadAdapter` lays the account's defaults under them for a new edge
+and the intent's values over them for an existing one (an intent without a value reads as
+what its absence meant: one certificate per front, the default authority).
+
+**Spares follow their pick.** Selection's standby candidates and `verifiedSpareFor` skip an
+edge whose frozen choices (tuning) or frozen certificate differ from what its pick asks for
+now (`builtForChoices`, `lib/edges/choices.ts`). A template edit is not a choice: it keeps
+the existing rule (it untrusts the locations that fall back to the template).
+
+**The hash rule.** An option added after a provider's first schema is `.optional()`, with
+its default declared on the descriptor and applied where it is sent. A stored template then
+parses to exactly the object it did before, so no template hash, location trust or
+in-flight provision moves on deploy. `templates.test.ts` pins every provider's empty
+template hash. Rules across fields (a check timeout below its interval, IPv4 ranges only)
+apply to WRITES only (`validateTemplateWrite`, `validatePickOptions`): on the read schema a
+stored template that broke one would stop parsing and `resolveTemplateFor` would silently
+fall back to another template.
+
+**Refusals and audit.** `edge.option_unknown` (not an option of the provider),
+`edge.option_invalid` (a value or a rule, in words), `edge.option_not_here` (a tuning option
+on the account, a certificate one in a template). The plan reports them per pick
+(`set.problems[].detail`). `edge.provider_account.options_changed` records which keys
+changed, with values for choices, numbers and switches only;
+`edge.provider_account.options_migrated` the deploy move; rotation starts carry `optionKeys`.
+A change of an account's certificate defaults untrusts its locations like a settings change.
+
+**Migration.** One deploy, optional fields only. `seedCutover` runs
+`edgeProviderAccounts.migrateOptionDefaults`: a Fastly account's `certificateAuthority` and
+`certificateScope` move from `settings` to `optionDefaults` without touching
+`credentialsChangedAt` or trust (idempotent). An older client still sending them under
+`settings` is translated, and is never a settings change. A new Fastly account starts from a
+wildcard (`EDGE_NEW_ACCOUNT_OPTION_DEFAULTS`).
+
+**Kept fixed on purpose.** Each with its reason:
+
+- names, tags and comments FCP finds its resources by (load balancer and backend names,
+  ownership tags and record comments): changing one orphans the resource;
+- values derived from the node (member address and port, the listener's port and scheme, the
+  linkage ids between resources);
+- the proxied flag of a DNS record: an unproxied front publishes the origin;
+- PROXY protocol, `X-Forwarded-*` insertion and access logs: they hand members' addresses to
+  nodes or the provider, and a node not expecting a PROXY header breaks every connection;
+- TLS termination, HTTP modes, certificates and HTTP/3 at an L4 balancer: they break the
+  end-to-end passthrough;
+- balancing methods, stickiness, weights and backup members: one origin per edge, so they
+  change nothing (the existing algorithm fields stay, with that said in their help);
+- Fastly shielding, caching, request settings, health checks, `between_bytes_timeout`,
+  keepalive reuse: the WebSocket path gains nothing from them or ignores them;
+- Cloudflare zone-wide settings (encryption mode, minimum TLS, HTTP/3, WebSockets, IPv6, edge
+  certificates): they change the operator's other sites, so FCP observes them only;
+- resources FCP does not create (Cloudflare Configuration Rules and per-hostname TLS, UpCloud
+  frontend rules, a Scaleway ACL, OVH's v2-only listener fields): a new resource, not a field;
+- polling, request timeouts and page sizes: internal safety, deliberately not settings.
+
+Fastly documents only name, address, TLS and Host as WebSocket backend settings, so the help
+of its other backend options says their effect is not proven until a beta walk shows it.
+
+### Every provider option
+
+Generated from the option registry and pinned by `providers/optionTable.test.ts`. "Chosen":
+where a value can be set (a template or a location's regional value, an account default),
+and per node always. "Live change": what the provider's API would take to change it on a
+live resource; FCP never applies one (a new edge is built instead).
+
+| provider   | group             | option                                | API field                                        | default        | chosen                         | live change at the provider |
+| ---------- | ----------------- | ------------------------------------- | ------------------------------------------------ | -------------- | ------------------------------ | --------------------------- |
+| gcore      | Load balancer     | Size                                  | `loadbalancer.flavor`                            | lb1-1-2        | template or location, per node | in place                    |
+| gcore      | Load balancer     | IP versions                           | `loadbalancer.vip_ip_family`                     | IPv4 and IPv6  | template, per node             | rebuild                     |
+| gcore      | Load balancer     | Address type                          | `loadbalancer.vip_network_id`                    | Public address | template, per node             | rebuild                     |
+| gcore      | Load balancer     | Extra tags                            | `loadbalancer.tags`                              | none           | template, per node             | in place                    |
+| gcore      | Listener          | Most connections at once              | `listener.connection_limit`                      | 0              | template, per node             | in place                    |
+| gcore      | Listener          | Client idle timeout                   | `listener.timeout_client_data`                   | 300000 ms      | template, per node             | in place                    |
+| gcore      | Listener          | Allowed client ranges                 | `listener.allowed_cidrs`                         | none           | template, per node             | in place                    |
+| gcore      | Pool              | Node connect timeout                  | `pool.timeout_member_connect`                    | 5000 ms        | template, per node             | in place                    |
+| gcore      | Pool              | Node idle timeout                     | `pool.timeout_member_data`                       | 300000 ms      | template, per node             | in place                    |
+| gcore      | Pool              | Balancing method                      | `pool.lb_algorithm`                              | Round robin    | template, per node             | in place                    |
+| gcore      | Health check      | Check type                            | `health_monitor.type`                            | TCP            | template, per node             | rebuild                     |
+| gcore      | Health check      | Check interval                        | `health_monitor.delay`                           | 10 s           | template, per node             | in place                    |
+| gcore      | Health check      | Check timeout                         | `health_monitor.timeout`                         | 5 s            | template, per node             | in place                    |
+| gcore      | Health check      | Healthy after                         | `health_monitor.max_retries`                     | 3              | template, per node             | in place                    |
+| gcore      | Health check      | Unhealthy after                       | `health_monitor.max_retries_down`                | 3              | template, per node             | in place                    |
+| gcore      | Health check      | Check port                            | `member.monitor_port`                            | provider's own | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check method                     | `health_monitor.http_method`                     | GET            | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check path                       | `health_monitor.url_path`                        | /              | template, per node             | in place                    |
+| gcore      | Health check      | Healthy status codes                  | `health_monitor.expected_codes`                  | 200            | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check version                    | `health_monitor.http_version`                    | 1.0            | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check host name                  | `health_monitor.domain_name`                     | provider's own | template, per node             | in place                    |
+| upcloud    | Load balancer     | Plan                                  | `loadbalancer.plan`                              | development    | template, per node             | in place                    |
+| upcloud    | Load balancer     | Maintenance day                       | `loadbalancer.maintenance_dow`                   | provider's own | template, per node             | in place                    |
+| upcloud    | Load balancer     | Maintenance time (UTC)                | `loadbalancer.maintenance_time`                  | provider's own | template, per node             | in place                    |
+| upcloud    | Load balancer     | Labels                                | `loadbalancer.labels`                            | none           | template, per node             | in place                    |
+| upcloud    | Frontend          | Client idle timeout                   | `frontend.properties.timeout_client`             | 300 s          | template, per node             | in place                    |
+| upcloud    | Backend           | Node idle timeout                     | `backend.properties.timeout_server`              | 300 s          | template, per node             | in place                    |
+| upcloud    | Backend           | Tunnel timeout                        | `backend.properties.timeout_tunnel`              | 3600 s         | template, per node             | in place                    |
+| upcloud    | Health check      | Check interval                        | `backend.properties.health_check_interval`       | 10 s           | template, per node             | in place                    |
+| upcloud    | Health check      | Unhealthy after                       | `backend.properties.health_check_fall`           | 3              | template, per node             | in place                    |
+| upcloud    | Health check      | Healthy after                         | `backend.properties.health_check_rise`           | 3              | template, per node             | in place                    |
+| upcloud    | Health check      | Close connections on failure          | `backend.properties.health_check_on_down`        | off            | template, per node             | in place                    |
+| upcloud    | Member            | Most connections at once              | `member.max_sessions`                            | 1000           | template, per node             | in place                    |
+| upcloud    | Address           | Delegate a floating IPv4              | `ip_address.floating`                            | on             | template, per node             | rebuild                     |
+| scaleway   | Load balancer     | Size                                  | `loadbalancer.type`                              | LB-S           | template or location, per node | in place                    |
+| scaleway   | Load balancer     | Description                           | `loadbalancer.description`                       | origin edge    | template, per node             | in place                    |
+| scaleway   | Load balancer     | Extra tags                            | `loadbalancer.tags`                              | none           | template, per node             | in place                    |
+| scaleway   | Address           | Also an IPv6 address                  | `ip.is_ipv6`                                     | on             | template, per node             | rebuild                     |
+| scaleway   | Address           | Reverse DNS name                      | `ip.reverse`                                     | provider's own | template, per node             | in place                    |
+| scaleway   | Frontend          | Client idle timeout                   | `frontend.timeout_client`                        | 600s           | template, per node             | in place                    |
+| scaleway   | Frontend          | New connections per second            | `frontend.connection_rate_limit`                 | 0              | template, per node             | in place                    |
+| scaleway   | Backend           | Node idle timeout                     | `backend.timeout_server`                         | 600s           | template, per node             | in place                    |
+| scaleway   | Backend           | Node connect timeout                  | `backend.timeout_connect`                        | 5s             | template, per node             | in place                    |
+| scaleway   | Backend           | Tunnel timeout                        | `backend.timeout_tunnel`                         | 3600s          | template, per node             | in place                    |
+| scaleway   | Backend           | Most connections at once              | `backend.max_connections`                        | provider's own | template, per node             | in place                    |
+| scaleway   | Backend           | Queue wait limit                      | `backend.timeout_queue`                          | provider's own | template, per node             | in place                    |
+| scaleway   | Backend           | Node connect retries                  | `backend.max_retries`                            | provider's own | template, per node             | in place                    |
+| scaleway   | Backend           | Balancing method                      | `backend.forward_port_algorithm`                 | Round robin    | template, per node             | in place                    |
+| scaleway   | Health check      | Close connections on failure          | `backend.on_marked_down_action`                  | off            | template, per node             | in place                    |
+| scaleway   | Health check      | Check interval                        | `backend.health_check.check_delay`               | 5s             | template, per node             | in place                    |
+| scaleway   | Health check      | Check timeout                         | `backend.health_check.check_timeout`             | 3s             | template, per node             | in place                    |
+| scaleway   | Health check      | Unhealthy after                       | `backend.health_check.check_max_retries`         | 3              | template, per node             | in place                    |
+| scaleway   | Health check      | Recheck interval while changing state | `backend.health_check.transient_check_delay`     | 0.5s           | template, per node             | in place                    |
+| ovh        | Load balancer     | Size                                  | `loadbalancer.flavorId`                          | provider's own | template or location, per node | in place                    |
+| ovh        | Gateway           | Gateway size                          | `gateway.model`                                  | S (200 Mbps)   | template, per node             | in place                    |
+| ovh        | Listener          | Client idle timeout                   | `listener.timeoutClientData`                     | 300000 ms      | template, per node             | rebuild                     |
+| ovh        | Listener          | Node idle timeout                     | `listener.timeoutMemberData`                     | 300000 ms      | template, per node             | rebuild                     |
+| ovh        | Listener          | Allowed client ranges                 | `listener.allowedCidrs`                          | none           | template, per node             | in place                    |
+| ovh        | Pool              | Balancing method                      | `pool.algorithm`                                 | Round robin    | template, per node             | in place                    |
+| ovh        | Health check      | Check type                            | `health_monitor.monitorType`                     | TCP            | template, per node             | rebuild                     |
+| ovh        | Health check      | Check interval                        | `health_monitor.delay`                           | 5 s            | template, per node             | in place                    |
+| ovh        | Health check      | Check timeout                         | `health_monitor.timeout`                         | 3 s            | template, per node             | in place                    |
+| ovh        | Health check      | Healthy after                         | `health_monitor.maxRetries`                      | 3              | template, per node             | in place                    |
+| ovh        | Health check      | Unhealthy after                       | `health_monitor.maxRetriesDown`                  | 3              | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check method                     | `health_monitor.httpConfiguration.httpMethod`    | GET            | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check path                       | `health_monitor.httpConfiguration.urlPath`       | /              | template, per node             | in place                    |
+| ovh        | Health check      | Healthy status codes                  | `health_monitor.httpConfiguration.expectedCodes` | 200            | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check version                    | `health_monitor.httpConfiguration.httpVersion`   | 1.0            | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check host name                  | `health_monitor.httpConfiguration.domainName`    | provider's own | template, per node             | in place                    |
+| cloudflare | Names             | Name length                           |                                                  | 12             | template, per node             | rebuild                     |
+| cloudflare | Names             | Name prefix                           |                                                  | provider's own | template, per node             | rebuild                     |
+| cloudflare | DNS record        | Record comment prefix                 | `dns_record.comment`                             | fcp            | template, per node             | in place                    |
+| cloudflare | DNS record        | Answer addresses                      | `dns_record.settings.ipv4_only`                  | IPv4 and IPv6  | template, per node             | in place                    |
+| cloudflare | DNS record        | Record tags                           | `dns_record.tags`                                | provider's own | template, per node             | in place                    |
+| cloudflare | Origin rule       | Allow a node port override            | `origin_rule.action_parameters.origin.port`      | on             | template, per node             | in place                    |
+| fastly     | Names             | Name length                           |                                                  | 12             | template, per node             | rebuild                     |
+| fastly     | Names             | Name prefix                           |                                                  | provider's own | template, per node             | rebuild                     |
+| fastly     | Service           | Service note                          | `service.comment`                                | origin edge    | template, per node             | new service version         |
+| fastly     | Backend           | Host sent to the node                 | `backend.override_host`                          | The front name | template, per node             | new service version         |
+| fastly     | Backend           | Prefer IPv6 to the node               | `backend.prefer_ipv6`                            | off            | template, per node             | new service version         |
+| fastly     | Backend           | Node connect timeout                  | `backend.connect_timeout`                        | 1000 ms        | template, per node             | new service version         |
+| fastly     | Backend           | Upgrade answer timeout                | `backend.first_byte_timeout`                     | 15000 ms       | template, per node             | new service version         |
+| fastly     | Backend           | Most connections per Fastly server    | `backend.max_conn`                               | 200            | template, per node             | new service version         |
+| fastly     | Backend TLS       | Lowest TLS version to the node        | `backend.min_tls_version`                        | provider's own | template, per node             | new service version         |
+| fastly     | Backend TLS       | Highest TLS version to the node       | `backend.max_tls_version`                        | provider's own | template, per node             | new service version         |
+| fastly     | Backend TLS       | Ciphers to the node                   | `backend.ssl_ciphers`                            | provider's own | template, per node             | new service version         |
+| fastly     | Backend keepalive | TCP keepalive to the node             | `backend.tcp_keepalive_enable`                   | provider's own | template, per node             | new service version         |
+| fastly     | Backend keepalive | Keepalive idle time                   | `backend.tcp_keepalive_time`                     | 300 s          | template, per node             | new service version         |
+| fastly     | Backend keepalive | Keepalive interval                    | `backend.tcp_keepalive_interval`                 | 10 s           | template, per node             | new service version         |
+| fastly     | Backend keepalive | Keepalive probes                      | `backend.tcp_keepalive_probes`                   | 3              | template, per node             | new service version         |
+| fastly     | Request           | Pass the member's address to the node | `snippet.content`                                | on             | template, per node             | new service version         |
+| fastly     | DNS records       | Record TTL                            | `dns_record.ttl`                                 | 1 s            | template, per node             | in place                    |
+| fastly     | DNS records       | Record tags                           | `dns_record.tags`                                | provider's own | template, per node             | in place                    |
+| fastly     | DNS records       | Flatten the front name                | `dns_record.settings.flatten_cname`              | off            | template, per node             | in place                    |
+| fastly     | Certificate       | Certificate authority                 | `tls_subscription.certificate_authority`         | Certainly      | account default, per node      | rebuild                     |
+| fastly     | Certificate       | Certificate                           | `tls_subscription.tls_domains`                   | One per front  | account default, per node      | rebuild                     |
+
 ## Adding an edge provider
 
 Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts`; every
@@ -2505,7 +2708,8 @@ Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts
    `convex/schema.ts`: the credentials, settings and `relayEdgePlacement` union variants. The
    credential test must work without a placement.
 3. `convex/lib/edges/providers/templates.ts`: the template schema, field descriptors and
-   defaults; `providers/capabilities.ts`: the capability row (layer, role, address kind, transports,
+   defaults (every settable field of every resource the adapter creates is an option,
+   § "Provider options"; options added later follow its hash rule); `providers/capabilities.ts`: the capability row (layer, role, address kind, transports,
    DNS roles, origin-port mode, `udp`, async and health flags, settle floor).
 4. `convex/lib/edges/providers/<id>.ts`: the `EdgeProvider` adapter, registered in
    `providers/registry.ts`, with `<id>.test.ts` on the recording transport.

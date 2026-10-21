@@ -270,7 +270,10 @@ export function withoutPlacementKeys(
   provider: EdgeProviderId,
   raw: Record<string, unknown>,
 ): Record<string, unknown> {
-  const drop = new Set([...EDGE_PLACEMENT_SETTINGS[provider], ...EDGE_LEGACY_OPTION_SETTINGS[provider]]);
+  const drop = new Set([
+    ...EDGE_PLACEMENT_SETTINGS[provider],
+    ...EDGE_LEGACY_OPTION_SETTINGS[provider],
+  ]);
   return Object.fromEntries(Object.entries(raw).filter(([k]) => !drop.has(k)));
 }
 

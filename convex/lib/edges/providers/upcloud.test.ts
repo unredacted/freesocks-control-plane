@@ -67,7 +67,9 @@ describe('upcloud: request shapes + plan', () => {
       }),
     );
     expect(body.backends[0].members[0]!.max_sessions).toBe(25_000);
-    expect(body.backends[0].properties).toMatchObject({ health_check_on_down: 'shutdown-sessions' });
+    expect(body.backends[0].properties).toMatchObject({
+      health_check_on_down: 'shutdown-sessions',
+    });
     expect(body).toMatchObject({
       maintenance_dow: 'sunday',
       maintenance_time: '03:00:00Z',

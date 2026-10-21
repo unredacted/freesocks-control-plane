@@ -322,7 +322,6 @@ export type EdgeInventoryResponse = z.infer<typeof EdgeInventoryResponse>;
 
 // --- templates --------------------------------------------------------------------------
 
-
 export const EdgeTemplateAdmin = z.object({
   id: z.string(),
   provider: EdgeProviderId,

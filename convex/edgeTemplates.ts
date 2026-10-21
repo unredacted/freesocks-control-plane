@@ -179,7 +179,14 @@ export async function resolveBuildFor(
   choices: Values | null;
   invalid: string[] | null;
 }> {
-  const base = await resolveTemplateFor(ctx, provider, explicitId, accountDefaultId, accountId, location);
+  const base = await resolveTemplateFor(
+    ctx,
+    provider,
+    explicitId,
+    accountDefaultId,
+    accountId,
+    location,
+  );
   const { tuning } = splitChoices(optionFieldsOf(provider), choices ?? {});
   if (Object.keys(tuning).length === 0)
     return { ...base, baseHash: base.hash, choices, invalid: null };
@@ -205,9 +212,7 @@ export async function checkPickOptions(
   location: Doc<'edgeLocations'>,
   account: Doc<'edgeProviderAccounts'>,
   raw: unknown,
-): Promise<
-  { ok: true; options: Values } | { ok: false; code: string; issues: string[] }
-> {
+): Promise<{ ok: true; options: Values } | { ok: false; code: string; issues: string[] }> {
   const res = validatePickOptions(account.provider, raw);
   if (!res.ok) return { ok: false, code: res.code, issues: res.issues };
   const options = {

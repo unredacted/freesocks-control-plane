@@ -670,7 +670,9 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           .map((x) =>
             typeof x === 'string'
               ? x
-              : x && typeof x === 'object' && typeof (x as { locationId?: unknown }).locationId === 'string'
+              : x &&
+                  typeof x === 'object' &&
+                  typeof (x as { locationId?: unknown }).locationId === 'string'
                 ? (x as { locationId: string }).locationId
                 : '',
           )

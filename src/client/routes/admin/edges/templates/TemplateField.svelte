@@ -54,7 +54,9 @@
   const sizeChoices = $derived.by(() => {
     if (field.from !== 'flavors' || offered.length === 0) return null;
     const cur = typeof value === 'string' && value !== '' ? value : null;
-    return cur && !offered.some((o) => o.id === cur) ? [...offered, { id: cur, label: cur }] : offered;
+    return cur && !offered.some((o) => o.id === cur)
+      ? [...offered, { id: cur, label: cur }]
+      : offered;
   });
 
   const uid = $props.id();
@@ -93,10 +95,9 @@
 <div class="space-y-1.5">
   <div class="flex flex-wrap items-center justify-between gap-2">
     <Label for={`${uid}-f`}>
-      {field.label}{#if field.unit}<span class="text-muted-foreground"> ({field.unit})</span
-        >{/if}{#if field.required}<span class="text-destructive" aria-hidden="true">
-          *</span
-        >{/if}
+      {field.label}{#if field.unit}<span class="text-muted-foreground">
+          ({field.unit})</span
+        >{/if}{#if field.required}<span class="text-destructive" aria-hidden="true"> *</span>{/if}
     </Label>
     {#if changed}
       <span class="flex items-center gap-1">

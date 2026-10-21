@@ -18,7 +18,17 @@ import {
 } from './options';
 
 /** Methods an HTTP health check may send (Gcore and OVH take the same list). */
-const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'CONNECT', 'TRACE'] as const;
+const HTTP_METHODS = [
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'DELETE',
+  'OPTIONS',
+  'PATCH',
+  'CONNECT',
+  'TRACE',
+] as const;
 
 // --- Gcore -------------------------------------------------------------------------
 
@@ -64,7 +74,10 @@ export const GcoreTemplate = z.object({
         .regex(/^\d{3}(-\d{3})?(,\d{3}(-\d{3})?)*$/, 'like 200, 200,202 or 200-299')
         .optional(),
       httpVersion: z.enum(['1.0', '1.1']).optional(),
-      domainName: z.string().regex(/^[A-Za-z0-9._-]{1,253}$/, 'a host name').optional(),
+      domainName: z
+        .string()
+        .regex(/^[A-Za-z0-9._-]{1,253}$/, 'a host name')
+        .optional(),
       port: z.number().int().min(1).max(65_535).optional(),
     })
     .default({ delay: 10, timeout: 5, maxRetries: 3, maxRetriesDown: 3 }),
@@ -751,7 +764,10 @@ export const OvhTemplate = z.object({
       type: z.enum(OVH_MONITOR_TYPES).optional(),
       maxRetriesDown: z.number().int().min(1).max(10).optional(),
       httpMethod: z.enum(HTTP_METHODS).optional(),
-      urlPath: z.string().regex(/^\/[\x21-\x7e]{0,254}$/, 'a path starting with /').optional(),
+      urlPath: z
+        .string()
+        .regex(/^\/[\x21-\x7e]{0,254}$/, 'a path starting with /')
+        .optional(),
       expectedCodes: z
         .string()
         .regex(/^\d{3}(-\d{3})?(,\d{3}(-\d{3})?)*$/, 'like 200, 200,202 or 200-299')
@@ -973,7 +989,10 @@ const LABEL_FIELDS = {
  * (32 at most), a value of 100 at most; paid zones only (a Free zone refuses them).
  */
 const RECORD_TAGS = z
-  .record(z.string().regex(/^[A-Za-z0-9_-]{1,32}$/, 'letters, digits, - and _'), z.string().max(100))
+  .record(
+    z.string().regex(/^[A-Za-z0-9_-]{1,32}$/, 'letters, digits, - and _'),
+    z.string().max(100),
+  )
   .refine((t) => Object.keys(t).length <= 20, { message: 'at most 20 tags' });
 
 /** The hostname label fields' descriptors, shared by the L7 providers. */
@@ -1355,7 +1374,9 @@ export const FASTLY_CERTIFICATE_FIELDS: TemplateFieldDescriptor[] = [
  * declared ones (an existing account keeps the declared, older behaviour until
  * it is switched): a new Fastly account shares one wildcard certificate.
  */
-export const EDGE_NEW_ACCOUNT_OPTION_DEFAULTS: Partial<Record<EdgeProviderId, Record<string, unknown>>> = {
+export const EDGE_NEW_ACCOUNT_OPTION_DEFAULTS: Partial<
+  Record<EdgeProviderId, Record<string, unknown>>
+> = {
   fastly: { certificateScope: 'wildcard' },
 };
 
@@ -1432,8 +1453,7 @@ export function validateTemplateParams(
   };
 }
 
-const IPV4_CIDR =
-  /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}\/(3[0-2]|[12]?\d)$/;
+const IPV4_CIDR = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}\/(3[0-2]|[12]?\d)$/;
 
 /**
  * Rules a provider enforces across fields (a check timeout under its interval)
@@ -1443,7 +1463,10 @@ const IPV4_CIDR =
  * `resolveTemplateFor` would then silently fall back to another template.
  */
 const WRITE_CHECKS: Partial<
-  Record<EdgeProviderId, (params: Record<string, unknown>, label: (k: string) => string) => string[]>
+  Record<
+    EdgeProviderId,
+    (params: Record<string, unknown>, label: (k: string) => string) => string[]
+  >
 > = {
   scaleway: (p, label) => {
     const out: string[] = [];
@@ -1487,7 +1510,8 @@ const WRITE_CHECKS: Partial<
     // An IPv4-only edge takes IPv4 ranges only.
     if (p.ipFamily === 'ipv4')
       for (const c of (p.allowedCidrs as string[] | undefined) ?? [])
-        if (c.includes(':')) out.push(`${label('allowedCidrs')}: "${c}" is IPv6 on an IPv4-only edge`);
+        if (c.includes(':'))
+          out.push(`${label('allowedCidrs')}: "${c}" is IPv6 on an IPv4-only edge`);
     return out;
   },
   upcloud: (p, label) => {
@@ -1522,10 +1546,9 @@ export function validateTemplateWrite(
 ): { ok: true; params: Record<string, unknown> } | { ok: false; issues: string[] } {
   const res = validateTemplateParams(provider, raw);
   if (!res.ok) return res;
-  const cert = setKeys(
-    (raw ?? {}) as Values,
-    EDGE_CERTIFICATE_OPTIONS[provider].fields,
-  ).filter((k) => certificateKeysOf(provider).includes(k));
+  const cert = setKeys((raw ?? {}) as Values, EDGE_CERTIFICATE_OPTIONS[provider].fields).filter(
+    (k) => certificateKeysOf(provider).includes(k),
+  );
   if (cert.length > 0) {
     const label = labelOf(provider);
     return {
@@ -1539,7 +1562,11 @@ export function validateTemplateWrite(
 
 export type OptionCheck =
   | { ok: true; values: Values }
-  | { ok: false; code: 'edge.option_unknown' | 'edge.option_invalid' | 'edge.option_not_here'; issues: string[] };
+  | {
+      ok: false;
+      code: 'edge.option_unknown' | 'edge.option_invalid' | 'edge.option_not_here';
+      issues: string[];
+    };
 
 /**
  * The options chosen for ONE node's pick: any option of the provider. Returns
@@ -1585,14 +1612,22 @@ function checkOptions(provider: EdgeProviderId, raw: unknown, level: OptionLevel
   const { tuning, certificate } = splitChoices(fields, raw as Values);
   const certRes = EDGE_CERTIFICATE_OPTIONS[provider].schema.safeParse(certificate);
   if (!certRes.success)
-    return { ok: false, code: 'edge.option_invalid', issues: issuesInWords(provider, certRes.error.issues) };
+    return {
+      ok: false,
+      code: 'edge.option_invalid',
+      issues: issuesInWords(provider, certRes.error.issues),
+    };
   const tuningKeys = keys.filter((k) => !certKeys.includes(k));
   let tuningValues: Values = {};
   if (tuningKeys.length > 0) {
     const merged = deepMerge(EDGE_TEMPLATES[provider].defaults, tuning);
     const tplRes = EDGE_TEMPLATES[provider].schema.safeParse(merged);
     if (!tplRes.success)
-      return { ok: false, code: 'edge.option_invalid', issues: issuesInWords(provider, tplRes.error.issues) };
+      return {
+        ok: false,
+        code: 'edge.option_invalid',
+        issues: issuesInWords(provider, tplRes.error.issues),
+      };
     const rules = WRITE_CHECKS[provider]?.(tplRes.data, labelOf(provider)) ?? [];
     if (rules.length > 0) return { ok: false, code: 'edge.option_invalid', issues: rules };
     tuningValues = pickKeys(tplRes.data, tuningKeys);

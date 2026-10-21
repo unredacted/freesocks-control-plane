@@ -81,8 +81,12 @@ describe('gcore: options', () => {
   });
 
   test('the node timeouts reach the pool, where the API documents them', () => {
-    const l = gcoreLbBody(cfg, spec, GcoreTemplate.parse({ timeoutMemberDataMs: 120_000 })).listeners[0]!;
-    expect(l.pools[0]).toMatchObject({ timeout_member_connect: 5000, timeout_member_data: 120_000 });
+    const l = gcoreLbBody(cfg, spec, GcoreTemplate.parse({ timeoutMemberDataMs: 120_000 }))
+      .listeners[0]!;
+    expect(l.pools[0]).toMatchObject({
+      timeout_member_connect: 5000,
+      timeout_member_data: 120_000,
+    });
   });
 
   test('an HTTP check carries its fields and a check port reaches the member', () => {
@@ -90,7 +94,15 @@ describe('gcore: options', () => {
       cfg,
       spec,
       GcoreTemplate.parse({
-        healthMonitor: { delay: 10, timeout: 5, maxRetries: 3, maxRetriesDown: 3, type: 'HTTP', port: 8080, httpVersion: '1.1' },
+        healthMonitor: {
+          delay: 10,
+          timeout: 5,
+          maxRetries: 3,
+          maxRetriesDown: 3,
+          type: 'HTTP',
+          port: 8080,
+          httpVersion: '1.1',
+        },
       }),
     ).listeners[0]!.pools[0]!;
     expect(pool.healthmonitor).toMatchObject({
@@ -105,7 +117,10 @@ describe('gcore: options', () => {
 
   test('a second VIP reported under additional_vips is the IPv6 address', () => {
     expect(
-      gcoreLbAddresses({ vip_address: '203.0.113.5', additional_vips: [{ ip_address: '2001:db8::5' }] }),
+      gcoreLbAddresses({
+        vip_address: '203.0.113.5',
+        additional_vips: [{ ip_address: '2001:db8::5' }],
+      }),
     ).toEqual({ v4: '203.0.113.5', v6: '2001:db8::5' });
   });
 });

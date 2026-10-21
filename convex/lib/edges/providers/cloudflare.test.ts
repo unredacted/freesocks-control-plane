@@ -301,7 +301,8 @@ describe('cloudflare: request bodies', () => {
     );
     expect(body).toMatchObject({ tags: ['team:edge'], settings: { ipv4_only: true }, ttl: 1 });
     expect(
-      cloudflareRecordBody(cfg, specFor(), CloudflareTemplate.parse({ answerFamily: 'ipv6' })).settings,
+      cloudflareRecordBody(cfg, specFor(), CloudflareTemplate.parse({ answerFamily: 'ipv6' }))
+        .settings,
     ).toEqual({ ipv6_only: true });
     expect(
       cloudflareRecordBody(cfg, specFor(), CloudflareTemplate.parse({ answerFamily: 'both' })),

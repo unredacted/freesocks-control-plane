@@ -25,13 +25,7 @@
 import { z } from 'zod';
 import { canonicalJson } from './template';
 
-export type OptionType =
-  | 'string'
-  | 'number'
-  | 'boolean'
-  | 'select'
-  | 'string-list'
-  | 'key-value';
+export type OptionType = 'string' | 'number' | 'boolean' | 'select' | 'string-list' | 'key-value';
 
 export type OptionKind = 'tuning' | 'certificate';
 
@@ -135,7 +129,10 @@ export function deepMerge(base: Values, over: Values): Values {
  * The option keys a value object sets, as dotted paths: descends into plain
  * objects except where a field's value IS an object (a key/value map).
  */
-export function setKeys(values: Values, fields: readonly Pick<OptionField, 'key' | 'type'>[]): string[] {
+export function setKeys(
+  values: Values,
+  fields: readonly Pick<OptionField, 'key' | 'type'>[],
+): string[] {
   const leaf = new Set(fields.map((f) => f.key));
   const out: string[] = [];
   const walk = (v: Values, prefix: string) => {
@@ -223,11 +220,7 @@ export function defaultsOf(fields: readonly OptionField[]): Values {
  * before the option existed), scaled, at its wire path. Fields an adapter
  * writes itself (`manual`) are left out.
  */
-export function wireBody(
-  fields: readonly OptionField[],
-  resource: string,
-  values: Values,
-): Values {
+export function wireBody(fields: readonly OptionField[], resource: string, values: Values): Values {
   let out: Values = {};
   for (const f of fields) {
     if (!f.wire || f.wire.manual || f.wire.resource !== resource) continue;

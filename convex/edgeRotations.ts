@@ -923,7 +923,10 @@ export async function startRotation(
       });
     const checked = await checkPickOptions(ctx, where, owner, a.requestedOptions);
     if (!checked.ok)
-      throw new ConvexError({ code: checked.code, message: checked.issues.join('; ') || checked.code });
+      throw new ConvexError({
+        code: checked.code,
+        message: checked.issues.join('; ') || checked.code,
+      });
     requestedOptions = JSON.stringify(checked.options);
   }
   const id = await ctx.db.insert('edgeRotations', {

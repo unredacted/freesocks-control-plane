@@ -274,7 +274,10 @@ describe('origin capability record ⇔ adapters', () => {
     '%s: ipv6 + idleTimeoutConfigurable mirror the template fields',
     (id) => {
       const keys = EDGE_PROVIDERS[id].templateFields.map((f) => f.key);
-      expect(keys.some((k) => /ipv6|ipFamily/i.test(k))).toBe(EDGE_PROVIDER_CAPABILITIES[id].ipv6);
+      // The PUBLIC side's family (an option preferring IPv6 toward the node is not one).
+      expect(keys.some((k) => /^(ipv6|ipFamily)$/.test(k))).toBe(
+        EDGE_PROVIDER_CAPABILITIES[id].ipv6,
+      );
       expect(keys.some((k) => /timeoutClient/i.test(k))).toBe(
         EDGE_PROVIDER_CAPABILITIES[id].idleTimeoutConfigurable,
       );

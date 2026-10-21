@@ -849,12 +849,18 @@ describe('edgeSetupRuns: the provider options a node gets at a pick', () => {
     expect(r.need?.code).toBe('try_it');
     expect(r.picks?.[0]?.options).toBe(JSON.stringify({ maxSessions: 5000 }));
     // The provider was asked for it, and the edge froze it beside the location's own hash.
-    const body = world.lbBodies()[0] as { backends: Array<{ members: Array<{ max_sessions: number }> }> };
+    const body = world.lbBodies()[0] as {
+      backends: Array<{ members: Array<{ max_sessions: number }> }>;
+    };
     expect(body.backends[0]!.members[0]!.max_sessions).toBe(5000);
     const edge = (await t.run((ctx) => ctx.db.get(r.listeners[0]!.edgeId!)))!;
     expect(JSON.parse(edge.choices!)).toEqual({ maxSessions: 5000 });
     const located = await t.run(async (ctx) =>
-      effectiveTemplateOfLocation(ctx, (await ctx.db.get(accountId))!, (await ctx.db.get(loc._id))!),
+      effectiveTemplateOfLocation(
+        ctx,
+        (await ctx.db.get(accountId))!,
+        (await ctx.db.get(loc._id))!,
+      ),
     );
     expect(edge.baseTemplateHash).toBe(located.hash);
     expect(edge.templateHash).not.toBe(located.hash);
@@ -864,7 +870,10 @@ describe('edgeSetupRuns: the provider options a node gets at a pick', () => {
     // Go-live records the options on the node's set, where later automatic work reads them.
     const relay = await relayOf(t, runId);
     expect(relay.providerSet).toEqual([
-      expect.objectContaining({ locationId: loc._id, options: JSON.stringify({ maxSessions: 5000 }) }),
+      expect.objectContaining({
+        locationId: loc._id,
+        options: JSON.stringify({ maxSessions: 5000 }),
+      }),
     ]);
   });
 });

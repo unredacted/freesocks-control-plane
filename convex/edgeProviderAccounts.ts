@@ -659,7 +659,11 @@ export const update = internalMutation({
       optionsChanged = !sameValues(next, before);
       optionChangeList = optionChanges(optionFieldsOf(row.provider), before, next);
       patch.optionDefaults = storedOptions(next);
-    } else if (patch.settings !== undefined && !row.optionDefaults && Object.keys(before).length > 0)
+    } else if (
+      patch.settings !== undefined &&
+      !row.optionDefaults &&
+      Object.keys(before).length > 0
+    )
       patch.optionDefaults = storedOptions(before);
     if (a.credentials !== undefined) {
       const creds = buildCredentials(
@@ -732,7 +736,11 @@ export const update = internalMutation({
         action: 'edge.provider_account.options_changed',
         targetType: 'edge_provider_account',
         targetId: a.id,
-        payload: { name: patch.name ?? row.name, provider: row.provider, changes: optionChangeList },
+        payload: {
+          name: patch.name ?? row.name,
+          provider: row.provider,
+          changes: optionChangeList,
+        },
       });
     return { ok: true as const, requalify };
   },

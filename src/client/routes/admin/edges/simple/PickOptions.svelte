@@ -52,10 +52,10 @@
     <Collapsible.Trigger
       class="group text-muted-foreground hover:text-foreground flex min-h-11 items-center gap-1 text-left text-xs sm:min-h-0"
     >
-      <ChevronRight class="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-      <span
-        >Options{words.length > 0 ? `: ${words.join(', ')}` : ": the location's defaults"}</span
-      >
+      <ChevronRight
+        class="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90"
+      />
+      <span>Options{words.length > 0 ? `: ${words.join(', ')}` : ": the location's defaults"}</span>
     </Collapsible.Trigger>
     <Collapsible.Content class="pt-2">
       <OptionFields

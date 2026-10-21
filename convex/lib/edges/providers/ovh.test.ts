@@ -43,14 +43,20 @@ describe('ovh: options', () => {
   });
 
   test('the node idle timeout reaches the listener (it was shown but never sent)', () => {
-    const l = ovhLbBody(cfg, spec, OvhTemplate.parse({ flavorId: 'small', timeoutMemberDataMs: 120_000 }))
-      .listeners[0]!;
+    const l = ovhLbBody(
+      cfg,
+      spec,
+      OvhTemplate.parse({ flavorId: 'small', timeoutMemberDataMs: 120_000 }),
+    ).listeners[0]!;
     expect(l).toMatchObject({ timeoutClientData: 300_000, timeoutMemberData: 120_000 });
   });
 
   test('source IP balancing is sent in the API spelling', () => {
-    const pool = ovhLbBody(cfg, spec, OvhTemplate.parse({ flavorId: 'small', algorithm: 'sourceIp' }))
-      .listeners[0]!.pool;
+    const pool = ovhLbBody(
+      cfg,
+      spec,
+      OvhTemplate.parse({ flavorId: 'small', algorithm: 'sourceIp' }),
+    ).listeners[0]!.pool;
     expect(pool.algorithm).toBe('sourceIP');
   });
 
@@ -60,18 +66,34 @@ describe('ovh: options', () => {
       spec,
       OvhTemplate.parse({
         flavorId: 'small',
-        healthMonitor: { delay: 10, timeout: 4, maxRetries: 2, type: 'http', maxRetriesDown: 5, urlPath: '/h' },
+        healthMonitor: {
+          delay: 10,
+          timeout: 4,
+          maxRetries: 2,
+          type: 'http',
+          maxRetriesDown: 5,
+          urlPath: '/h',
+        },
       }),
     ).listeners[0]!.pool.healthMonitor;
     expect(hm).toMatchObject({
       monitorType: 'http',
       maxRetriesDown: 5,
-      httpConfiguration: { httpMethod: 'GET', urlPath: '/h', expectedCodes: '200', httpVersion: '1.0' },
+      httpConfiguration: {
+        httpMethod: 'GET',
+        urlPath: '/h',
+        expectedCodes: '200',
+        httpVersion: '1.0',
+      },
     });
   });
 
   test('a bigger gateway model reaches the gateway it creates', () => {
-    const body = ovhLbBody({ ...cfg, gatewayId: undefined }, spec, OvhTemplate.parse({ flavorId: 'small', gatewayModel: '2xl' }));
+    const body = ovhLbBody(
+      { ...cfg, gatewayId: undefined },
+      spec,
+      OvhTemplate.parse({ flavorId: 'small', gatewayModel: '2xl' }),
+    );
     expect(body.network.private).toMatchObject({ gatewayCreate: { model: '2xl' } });
   });
 });

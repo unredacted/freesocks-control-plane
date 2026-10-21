@@ -20,7 +20,14 @@
   import * as Collapsible from '@client/components/ui/collapsible';
   import type { EdgeTemplateField } from '../../../../../shared/contracts/edges';
   import TemplateField from './TemplateField.svelte';
-  import { differsFromDefault, getPath, resetField, setPath, unsetPath, type Params } from './params';
+  import {
+    differsFromDefault,
+    getPath,
+    resetField,
+    setPath,
+    unsetPath,
+    type Params,
+  } from './params';
   import { groupsOf, visibleFields } from '../lib/options';
 
   interface Props {

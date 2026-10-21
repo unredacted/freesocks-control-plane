@@ -37,7 +37,12 @@ const fields: OptionField[] = [
     type: 'number',
     wire: { resource: 'listener', field: 'timeout', manual: true },
   },
-  { key: 'check.delay', label: 'Delay', type: 'number', wire: { resource: 'pool', field: 'hm.delay' } },
+  {
+    key: 'check.delay',
+    label: 'Delay',
+    type: 'number',
+    wire: { resource: 'pool', field: 'hm.delay' },
+  },
   { key: 'check.retries', label: 'Retries', type: 'number', default: 3 },
   { key: 'tags', label: 'Tags', type: 'key-value' },
   {
@@ -81,12 +86,14 @@ describe('paths and merging', () => {
   });
 
   it('lists the keys a value object sets, stopping at map-valued fields', () => {
+    expect(setKeys({ size: 'm', check: { delay: 5 }, tags: { a: 'b' } }, fields).sort()).toEqual([
+      'check.delay',
+      'size',
+      'tags',
+    ]);
     expect(
-      setKeys({ size: 'm', check: { delay: 5 }, tags: { a: 'b' } }, fields).sort(),
-    ).toEqual(['check.delay', 'size', 'tags']);
-    expect(pickKeys({ size: 'm', check: { delay: 5, retries: 2 } }, ['check.delay', 'nope'])).toEqual(
-      { check: { delay: 5 } },
-    );
+      pickKeys({ size: 'm', check: { delay: 5, retries: 2 } }, ['check.delay', 'nope']),
+    ).toEqual({ check: { delay: 5 } });
   });
 
   it('collects the defaults of every field', () => {
@@ -109,7 +116,14 @@ describe('wireBody', () => {
     expect(wireBody(fields, 'member', v)).toEqual({ max_sessions: 2 });
     expect(
       wireBody(
-        [{ key: 's', label: 'S', type: 'number', wire: { resource: 'x', field: 'ms', scale: 1000 } }],
+        [
+          {
+            key: 's',
+            label: 'S',
+            type: 'number',
+            wire: { resource: 'x', field: 'ms', scale: 1000 },
+          },
+        ],
         'x',
         { s: 3 },
       ),
