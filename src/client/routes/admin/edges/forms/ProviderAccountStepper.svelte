@@ -65,6 +65,7 @@
   import AdminListState from '../../AdminListState.svelte';
   import Stepper from '../components/Stepper.svelte';
   import NumberField from '../components/NumberField.svelte';
+  import OptionFields from '../templates/OptionFields.svelte';
   import LayerBadge from '../components/LayerBadge.svelte';
   import CodeNote from '../components/CodeNote.svelte';
   import ProviderAnswer from '../components/ProviderAnswer.svelte';
@@ -146,6 +147,17 @@
   let limitsInvalid = $state({ max: false, budget: false, priority: false });
   let triedNext = $state(false);
 
+  // The provider's certificate options: the new account's defaults for its nodes.
+  const optionSchema = $derived(providers.data?.optionSchemas[provider]);
+  const certificateFields = $derived(
+    (optionSchema?.fields ?? []).filter((f) => f.kind === 'certificate'),
+  );
+  const certificateBase = $derived({
+    ...(optionSchema?.defaults ?? {}),
+    ...(optionSchema?.newAccountDefaults ?? {}),
+  });
+  let optionValues = $state<Record<string, unknown>>({});
+
   const meta = $derived(EDGE_PROVIDER_META[provider]);
   const secretNames = $derived(providers.data?.credentialFields[provider] ?? []);
   const accounts = $derived(providers.data?.accounts ?? []);
@@ -156,6 +168,7 @@
     provider = next;
     credentials = {};
     values = { ...(DEFAULT_SETTINGS[next] ?? {}) };
+    optionValues = {};
     discovered = null;
     discover.reset();
     triedNext = false;
@@ -271,6 +284,9 @@
         maxLiveEdges,
         dailyAllocationBudget,
         priority,
+        ...(Object.keys(optionValues).length > 0
+          ? { optionDefaults: $state.snapshot(optionValues) }
+          : {}),
       });
       createdId = id;
       // The account exists from here on: a failed test is reported, never thrown away.
@@ -656,6 +672,15 @@
               {/each}
             </div>
           {/if}
+        {/if}
+        {#if certificateFields.length > 0}
+          <OptionFields
+            fields={certificateFields}
+            values={optionValues}
+            base={certificateBase}
+            disabled={locked}
+            onchange={(next) => (optionValues = next)}
+          />
         {/if}
         <div class="grid gap-4 sm:grid-cols-3" class:hidden={compact}>
           <NumberField

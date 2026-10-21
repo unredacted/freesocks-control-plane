@@ -279,11 +279,12 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     if (b === 'usage' && !c)
       return json(await ctx.runQuery(internal.edgeOperator.providersUsage, {}));
     if (!b) {
-      const [accounts, credentialFields] = await Promise.all([
+      const [accounts, credentialFields, optionSchemas] = await Promise.all([
         ctx.runQuery(internal.edgeProviderAccounts.listForAdmin, {}),
         ctx.runQuery(internal.edgeAdmin.credentialFields, {}),
+        ctx.runQuery(internal.edgeAdmin.optionSchemas, {}),
       ]);
-      return json({ accounts, credentialFields });
+      return json({ accounts, credentialFields, optionSchemas });
     }
     if (c === 'inventory') {
       const location = query.get('location');

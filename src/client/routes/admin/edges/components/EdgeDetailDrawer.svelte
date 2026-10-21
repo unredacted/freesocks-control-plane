@@ -39,6 +39,8 @@
   import StatusBadge from './StatusBadge.svelte';
   import LayerBadge from './LayerBadge.svelte';
   import KeyValue from './KeyValue.svelte';
+  import { providersQuery } from '@client/lib/edgesApi';
+  import { optionSummary } from '../lib/options';
   import CodeNote from './CodeNote.svelte';
   import EdgeCountryActions from './EdgeCountryActions.svelte';
   import { anyCountryCheckPending } from '../lib/countryCheckRequests';
@@ -90,6 +92,16 @@
     !!edge && ['planning', 'provisioning', 'verifying', 'destroying'].includes(edge.status),
   );
 
+  // The node's options it was built with, in words (empty: built before options).
+  const providersQ = providersQuery();
+  const builtWith = $derived.by(() => {
+    if (!edge?.choices || !edge.provider) return '';
+    const said = optionSummary(
+      providersQ.data?.optionSchemas[edge.provider]?.fields ?? [],
+      edge.choices,
+    );
+    return said.length > 0 ? said.join(', ') : "The location's defaults";
+  });
   const identityRows = $derived.by((): KeyValueRow[] => {
     if (!edge) return [];
     return [
@@ -105,6 +117,11 @@
       { label: 'IPv6', value: edge.addresses.v6, mono: true, copy: true },
       { label: 'Hostname', value: edge.addresses.hostname, mono: true, copy: true },
       { label: 'Edge id', value: edge.id, mono: true, copy: true },
+      {
+        label: 'Built with',
+        value: builtWith,
+        hint: 'The options frozen when it was planned: a later change never moves it.',
+      },
     ];
   });
   const timeRows = $derived.by((): KeyValueRow[] => {

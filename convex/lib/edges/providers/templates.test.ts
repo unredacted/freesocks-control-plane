@@ -123,3 +123,43 @@ describe('validation by level', () => {
     );
   });
 });
+
+describe('provider rules on writes', () => {
+  const issues = (p: Parameters<typeof validateTemplateWrite>[0], params: unknown) => {
+    const r = validateTemplateWrite(p, params);
+    return r.ok ? [] : r.issues;
+  };
+
+  it('a check timeout must stay below its interval (Gcore, OVH)', () => {
+    expect(issues('gcore', { healthMonitor: { delay: 5, timeout: 5, maxRetries: 3, maxRetriesDown: 3 } })).toEqual([
+      'Check timeout: must be below the check interval',
+    ]);
+    expect(issues('ovh', { flavorId: 'f', healthMonitor: { delay: 3, timeout: 4, maxRetries: 3 } })).toHaveLength(1);
+    expect(issues('ovh', { flavorId: 'f' })).toEqual([]);
+  });
+
+  it('OVH takes IPv4 ranges only; an IPv4-only Gcore edge too', () => {
+    expect(issues('ovh', { flavorId: 'f', allowedCidrs: ['192.0.2.0/24', '2001:db8::/32'] })).toEqual([
+      'Allowed client ranges: "2001:db8::/32" is not an IPv4 range',
+    ]);
+    expect(issues('gcore', { ipFamily: 'ipv4', allowedCidrs: ['2001:db8::/32'] })).toHaveLength(1);
+    expect(issues('gcore', { ipFamily: 'dual', allowedCidrs: ['2001:db8::/32'] })).toEqual([]);
+  });
+
+  it('tag and label shapes the providers refuse are refused on save', () => {
+    expect(issues('gcore', { tags: { 'a b': 'x', ok: '' } })).toHaveLength(2);
+    expect(issues('upcloud', { labels: [{ key: '_x', value: 'v' }] })).toHaveLength(1);
+    expect(issues('upcloud', { labels: [{ key: 'team', value: 'edge' }] })).toEqual([]);
+  });
+
+  it('Scaleway durations are written in seconds, decimals allowed', () => {
+    expect(issues('scaleway', { timeoutClient: '10m' })).toHaveLength(1);
+    expect(
+      issues('scaleway', {
+        timeoutClient: '600s',
+        healthCheck: { checkDelay: '5s', checkTimeout: '3s', checkMaxRetries: 3, transientCheckDelay: '0.5s' },
+      }),
+    ).toEqual([]);
+  });
+});
+

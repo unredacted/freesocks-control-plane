@@ -26,6 +26,16 @@ import { frontsAllowed } from './lib/edges/providers/capabilities';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRunningSetup, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { coverTargets, MAX_PROVIDER_PICKS, requirementOf } from './lib/edges/providerSet';
+import { parseOptionValues } from './lib/edges/providers/options';
+
+/** A pick's stored options (null: a pick from before options). */
+function optionsOfPick(
+  relay: Pick<Doc<'relays'>, 'providerSet'>,
+  locationId: Id<'edgeLocations'>,
+): Record<string, unknown> | null {
+  const raw = relay.providerSet?.find((x) => x.locationId === locationId)?.options;
+  return raw !== undefined ? parseOptionValues(raw) : null;
+}
 import { carries, coolingOf, publishedRefOf, setPicksOf, setStateOf } from './lib/edges/setState';
 import { locationsOfAccount } from './edgeLocations';
 import type { PublishedRef } from './lib/edges/providerSet';
@@ -83,6 +93,9 @@ export const view = internalQuery({
         addedAt: new Date(
           relay.providerSet?.find((x) => x.locationId === p.location._id)?.addedAt ?? now,
         ).toISOString(),
+        // The provider options this node's addresses here are built with (null:
+        // a pick from before options: the template and the account's defaults).
+        options: optionsOfPick(relay, p.location._id),
       };
     });
     const available = [];

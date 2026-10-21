@@ -94,7 +94,11 @@ export const describeSchemas = internalQuery({
     Object.fromEntries(
       EDGE_PROVIDER_IDS.map((id) => [
         id,
-        { fields: EDGE_TEMPLATES[id].fields, defaults: EDGE_TEMPLATES[id].defaults },
+        {
+          // A hidden field is kept only so stored templates parse as before.
+          fields: EDGE_TEMPLATES[id].fields.filter((f) => !f.hidden),
+          defaults: EDGE_TEMPLATES[id].defaults,
+        },
       ]),
     ),
 });

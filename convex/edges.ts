@@ -14,6 +14,7 @@
  * The reconcile cron itself lives in edgeReconcile.ts (it needs the Node
  * provider actions and the rotation machine).
  */
+import { parseOptionValues } from './lib/edges/providers/options';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
@@ -127,6 +128,8 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     placeKey: e.placeKey ?? null,
     templateId: (e.templateId as string | undefined) ?? null,
     templateHash: e.templateHash ?? null,
+    // The node's options this edge was built with, frozen (null: built before options).
+    choices: e.choices !== undefined ? parseOptionValues(e.choices) : null,
     provider: e.provider ?? null,
     managed: e.managed,
     name: e.name,

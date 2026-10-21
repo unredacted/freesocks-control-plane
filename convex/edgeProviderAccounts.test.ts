@@ -1094,6 +1094,84 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     ).rejects.toThrow(/Certificate/);
   });
 
+  test('the deploy moves certificate defaults out of settings without touching trust; once', async () => {
+    const { t, dnsId, fastlyId } = await pair();
+    // A row from before options: its authority and scope still under settings.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fastlyId, {
+        settings: {
+          type: 'fastly',
+          dnsAccountId: dnsId,
+          certificateAuthority: 'lets-encrypt',
+          certificateScope: 'wildcard',
+        },
+        optionDefaults: undefined,
+        credentialsChangedAt: 123,
+      });
+      for (const l of await ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', fastlyId))
+        .collect())
+        await ctx.db.patch(l._id, { qualified: true });
+    });
+    expect(await t.mutation(internal.edgeProviderAccounts.migrateOptionDefaults, {})).toEqual({
+      moved: 1,
+    });
+    const row = (await t.run((ctx) => ctx.db.get(fastlyId)))!;
+    expect(row.settings).toEqual({ type: 'fastly', dnsAccountId: dnsId });
+    expect(JSON.parse(row.optionDefaults!)).toEqual({
+      certificateAuthority: 'lets-encrypt',
+      certificateScope: 'wildcard',
+    });
+    expect(row.credentialsChangedAt).toBe(123);
+    const locs = await t.run((ctx) =>
+      ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', fastlyId))
+        .collect(),
+    );
+    expect(locs.every((l) => l.qualified)).toBe(true);
+    expect(await t.mutation(internal.edgeProviderAccounts.migrateOptionDefaults, {})).toEqual({
+      moved: 0,
+    });
+    // An older client re-sending the old settings shape is not a settings change.
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      settings: {
+        dnsAccountId: dnsId,
+        certificateAuthority: 'lets-encrypt',
+        certificateScope: 'wildcard',
+      },
+    });
+    expect((await t.run((ctx) => ctx.db.get(fastlyId)))!.credentialsChangedAt).toBe(123);
+  });
+
+  test('a change of the certificate defaults is audited by key and untrusts like a settings change', async () => {
+    const { t, fastlyId } = await pair();
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: fastlyId,
+      optionDefaults: { certificateAuthority: 'globalsign', certificateScope: 'wildcard' },
+    });
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'edge.provider_account.options_changed'))
+        .collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload).toMatchObject({
+      changes: [{ key: 'certificateAuthority', from: 'certainly', to: 'globalsign' }],
+    });
+    expect((await t.run((ctx) => ctx.db.get(fastlyId)))!.credentialsChangedAt).toBeGreaterThan(0);
+    // A tuning option is a template's, never the account's.
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, {
+        id: fastlyId,
+        optionDefaults: { preferIpv6: true },
+      }),
+    ).rejects.toThrow(/template/);
+  });
+
   test('dnsAccountId must name an existing account that can host DNS', async () => {
     const { t, fastlyId } = await pair();
     await expect(

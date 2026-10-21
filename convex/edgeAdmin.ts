@@ -51,6 +51,12 @@ import { protocolLabel } from './lib/edges/protocols';
 import { destroyedPatch, mapEdgeAdmin } from './edges';
 import { deliveryStyleOf, publishedEdgesOf } from './edgeRender';
 import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
+import {
+  EDGE_NEW_ACCOUNT_OPTION_DEFAULTS,
+  optionFieldsOf,
+} from './lib/edges/providers/templates';
+import { defaultsOf } from './lib/edges/providers/options';
+import { EDGE_PROVIDER_IDS } from './lib/edgeProviderIds';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 
@@ -895,4 +901,27 @@ export const nodeCandidates = internalQuery({
 export const credentialFields = internalQuery({
   args: {},
   handler: async () => EDGE_CREDENTIAL_FIELDS,
+});
+
+/**
+ * Every provider's options as the forms render them: the tuning ones a
+ * template holds and the certificate ones an account defaults, with the value
+ * each takes when nothing sets one (lib/edges/providers/templates.ts).
+ */
+export const optionSchemas = internalQuery({
+  args: {},
+  handler: async () =>
+    Object.fromEntries(
+      EDGE_PROVIDER_IDS.map((p) => {
+        const fields = optionFieldsOf(p).filter((f) => !f.hidden);
+        return [
+          p,
+          {
+            fields,
+            defaults: defaultsOf(fields),
+            newAccountDefaults: EDGE_NEW_ACCOUNT_OPTION_DEFAULTS[p] ?? {},
+          },
+        ];
+      }),
+    ),
 });

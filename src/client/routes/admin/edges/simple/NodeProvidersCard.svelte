@@ -11,6 +11,8 @@
    * addresses, tested, reviewed when they are a new place) whose progress opens.
    * "Remove" drains that location's addresses, refused while what is left
    * elsewhere would not serve every transport with a tested address.
+   * "Change options" protects the node again with other provider options at
+   * that location: every address is replaced, members move at go-live.
    *
    * Props:
    *   relay: { id, slug }      the origin
@@ -24,7 +26,17 @@
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
   import { Skeleton } from '@client/components/ui/skeleton';
-  import { changeProviderSet, invalidateRelay, relayProvidersQuery } from '@client/lib/edgesApi';
+  import {
+    changeProviderSet,
+    invalidateRelay,
+    providersQuery,
+    relayProvidersQuery,
+    reprotectRelay,
+    templatesQuery,
+  } from '@client/lib/edgesApi';
+  import OptionFields from '../templates/OptionFields.svelte';
+  import { asParams, type Params } from '../templates/params';
+  import { optionSummary, overrides, pickBase } from '../lib/options';
   import type { ProviderSetView } from '@shared/contracts/edges';
   import AdminListState from '../../AdminListState.svelte';
   import CodeNote from '../components/CodeNote.svelte';
@@ -70,6 +82,44 @@
     },
   }));
   const issue = $derived(change.error ? edgeErrorIssue(change.error) : null);
+
+  // --- options of one pick (changing them protects the node again) --------------------------------
+  const providersQ = providersQuery();
+  const templatesQ = templatesQuery();
+  function optionsOf(p: ProviderSetView['picks'][number]) {
+    const schema = providersQ.data?.optionSchemas[p.provider];
+    const account = providersQ.data?.accounts.find((a) => a.id === p.accountId);
+    if (!schema || !account) return null;
+    const location = account.locations.find((l) => l.id === p.locationId) ?? null;
+    const base = pickBase(
+      schema,
+      templatesQ.data?.schemas[p.provider]?.defaults ?? {},
+      templatesQ.data?.templates ?? [],
+      account,
+      location,
+    );
+    // What this node chose there: its stored options, less what it would get anyway.
+    return { fields: schema.fields, base, chosen: overrides(asParams(p.options), base, schema.fields) };
+  }
+  let optionsFor = $state<ProviderSetView['picks'][number] | null>(null);
+  let draft = $state<Params>({});
+  let confirmOptions = $state(false);
+  const editing = $derived(optionsFor ? optionsOf(optionsFor) : null);
+  function openOptions(p: ProviderSetView['picks'][number]) {
+    optionsFor = p;
+    draft = optionsOf(p)?.chosen ?? {};
+  }
+  const reprotect = createMutation(() => ({
+    mutationFn: (v: { locationId: string; values: Params }) =>
+      reprotectRelay(relay.id, 'replace_all', { [v.locationId]: v.values }),
+    onSuccess: (r) => {
+      invalidateRelay(qc, relay.slug);
+      optionsFor = null;
+      toast.success('Protecting the node again with the new options.');
+      onRunStarted(r.runId);
+    },
+    onError: (e) => toast.error(edgeErrorMessage(e)),
+  }));
 </script>
 
 <section aria-labelledby={`${uid}-providers`}>
@@ -88,6 +138,7 @@
         <ul class="divide-y">
           {#each view.picks as p (p.locationId)}
             {@const line = words.picks.find((x) => x.locationId === p.locationId)}
+            {@const o = optionsOf(p)}
             <li class="flex flex-wrap items-start justify-between gap-2 py-2 first:pt-0 last:pb-0">
               <div class="min-w-0 space-y-0.5">
                 <p class="flex flex-wrap items-center gap-2 text-sm font-medium">
@@ -100,6 +151,18 @@
                 </p>
                 <p class="text-muted-foreground text-xs">{line?.counts}</p>
                 {#if line?.cooling}<p class="text-xs">{line.cooling}</p>{/if}
+                {#if o}
+                  {@const said = optionSummary(o.fields, o.chosen)}
+                  <p class="text-muted-foreground text-xs">
+                    {said.length > 0 ? `Options: ${said.join(', ')}.` : "The location's defaults."}
+                    <button
+                      type="button"
+                      class="text-primary min-h-11 underline-offset-2 hover:underline disabled:opacity-50 sm:min-h-0"
+                      disabled={busy || reprotect.isPending}
+                      onclick={() => openOptions(p)}>Change options</button
+                    >
+                  </p>
+                {/if}
               </div>
               {#if view.picks.length > 1}
                 <Button
@@ -188,6 +251,53 @@
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
+
+<Dialog.Root
+  open={optionsFor !== null}
+  onOpenChange={(v) => {
+    if (!v) optionsFor = null;
+  }}
+>
+  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+    <Dialog.Header>
+      <Dialog.Title>Options at {optionsFor?.label ?? 'this location'}</Dialog.Title>
+      <Dialog.Description>
+        What this node's addresses there are built with. Saving protects the node again: every
+        address is replaced and members move at go-live. Addresses that exist keep theirs until
+        then.
+      </Dialog.Description>
+    </Dialog.Header>
+    {#if editing}
+      <OptionFields
+        fields={editing.fields}
+        values={draft}
+        base={editing.base}
+        baseWord="the location's defaults"
+        prominentFirst
+        onchange={(next) => (draft = overrides(next, editing.base, editing.fields))}
+      />
+    {/if}
+    <Dialog.Footer>
+      <Button
+        class="h-11 sm:h-8"
+        disabled={reprotect.isPending}
+        onclick={() => (confirmOptions = true)}>Protect again with these</Button
+      >
+      <Button variant="outline" class="h-11 sm:h-8" onclick={() => (optionsFor = null)}>Cancel</Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<ConfirmDialog
+  bind:open={confirmOptions}
+  title="Protect the node again?"
+  body="Fresh addresses are made everywhere, tested, and reviewed when a review is needed. Members keep what they have until the new addresses go live; the old ones then drain."
+  confirmLabel="Protect again"
+  onConfirm={async () => {
+    if (optionsFor)
+      await reprotect.mutateAsync({ locationId: optionsFor.locationId, values: $state.snapshot(draft) });
+  }}
+/>
 
 <ConfirmDialog
   bind:open={removeOpen}
