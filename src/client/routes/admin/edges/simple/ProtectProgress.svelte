@@ -91,7 +91,7 @@
   const buttons = $derived(need ? needButtons(need.code) : null);
   const latest = $derived(run?.events.at(-1) ?? null);
 
-  // Elapsed, ticking while live.
+  // Elapsed in the current attempt (a retry starts the clock again), ticking while live.
   let now = $state(Date.now());
   $effect(() => {
     if (!live) return;
@@ -102,7 +102,7 @@
     run
       ? durationLabel(
           (run.finishedAt ? new Date(run.finishedAt).getTime() : now) -
-            new Date(run.startedAt).getTime(),
+            new Date(run.attemptStartedAt).getTime(),
         )
       : '',
   );

@@ -318,6 +318,7 @@ export type AutoRotateVeto =
   | 'edge_disabled'
   | 'auto_rotate_off'
   | 'setup_owned'
+  | 'not_live'
   | 'not_suspected'
   | 'evidence_incomplete'
   | 'no_edge_evidence'
@@ -405,6 +406,11 @@ export function autoRotateDecision(args: {
     autoRotate: boolean;
     /** A guided setup owns the origin: automatic replacement never touches it. */
     setupOwned?: boolean;
+    /**
+     * A guided origin no run is working on that never went live (a cancelled or
+     * failed setup's leftover): nothing to replace for members yet.
+     */
+    notLive?: boolean;
     quarantined: boolean;
     rotationActive: boolean;
     cooldownUntil: number | null;
@@ -424,6 +430,7 @@ export function autoRotateDecision(args: {
   if (!cfg.enabled || !cfg.autoRotate) return { veto: 'edge_disabled' };
   if (!origin.autoRotate) return { veto: 'auto_rotate_off' };
   if (origin.setupOwned) return { veto: 'setup_owned' };
+  if (origin.notLive) return { veto: 'not_live' };
   // 3. suspected
   if (ev.state !== 'suspected') return { veto: 'not_suspected' };
   // 3b. the evidence is whole: a window truncated at the read cap under-counts

@@ -45,7 +45,7 @@ import { __setEdgeProviderForTests } from './lib/edges/providers/registry';
 import type { EdgeProvider, EdgeSpec, Ledger, LedgerResource } from './lib/edges/providers/types';
 import { jsonRes, mockFetch, routeFetch, type PartialHandler } from './lib/edges/testing/mockFetch';
 import { __setStageOpsForTests, type StageOps } from './edgeSetupRuns';
-import { __setPlanOpsForTests } from './edgeSetupPlan';
+import { __setPlanOpsForTests, ORIGIN_PROBE_ATTEMPTS } from './edgeSetupPlan';
 import { __setFrontIngressCheckForTests } from './nodeIntentOps';
 import { __setFrontChecker } from './frontQualifyOps';
 import { MIRROR_UNAVAILABLE_STUB, __setS3SendForTests, type S3Op } from './storage';
@@ -454,6 +454,8 @@ function installSeams(w: World) {
   };
   __setStageOpsForTests(ops);
   __setPlanOpsForTests({
+    // Timers are fake here: a retried probe does not wait for them.
+    pause: async () => {},
     probeOrigins: async (_ctx, a) =>
       a.targets.map((tg) => ({
         listenerKey: tg.listenerKey,
@@ -777,6 +779,75 @@ describe('a fronted node goes from enrollment to members', () => {
     }
   });
 
+  test('freedom-ws (L7): an origin probe that got no answer is asked again; one that never answers reads "could not reach the origin", not "cannot carry"', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    installSeams(w);
+    const l7Fake = installFakeL7();
+    try {
+      const { l7 } = await accounts(t);
+      await enrollReady(w, {
+        name: NODE_W,
+        mode: 'freedom-ws',
+        v4: ORIGIN_W_V4,
+        hostname: ORIGIN_W_NAME,
+      });
+      const node = (
+        await t.run((c) =>
+          c.db
+            .query('backendNodeInventory')
+            .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+            .collect(),
+        )
+      ).find((n) => n.name === NODE_W)!;
+      let looks = 0;
+      let answerFrom = 2;
+      __setPlanOpsForTests({
+        pause: async () => {},
+        probeOrigins: async (_ctx, a) => {
+          looks++;
+          return a.targets.map((tg) => ({
+            listenerKey: tg.listenerKey,
+            ...(looks >= answerFrom
+              ? {
+                  originTransport: {
+                    scheme: 'https' as const,
+                    certPublic: true,
+                    certNames: [tg.originAddress],
+                    acceptsHostHeader: 'names' as const,
+                  },
+                }
+              : { originTransport: null, reason: 'timeout' }),
+          }));
+        },
+      });
+      const plan = () =>
+        t.action(internal.edgeSetupPlan.plan, {
+          backendServerId: serverId,
+          nodeUuid: node.nodeUuid,
+        });
+      // One dropped look: the second answers and the CDN account is offered.
+      let p = await plan();
+      expect(looks).toBe(2);
+      expect(p.inbounds.find((i) => i.frontable)?.layers).toContain('l7');
+      expect(p.accounts.find((a) => a.id === (l7 as string))?.compatible).toBe(true);
+      // No answer at all: asked ORIGIN_PROBE_ATTEMPTS times, then said so.
+      looks = 0;
+      answerFrom = Infinity;
+      p = await plan();
+      expect(looks).toBe(ORIGIN_PROBE_ATTEMPTS);
+      const ws = p.inbounds.find((i) => i.frontable)!;
+      expect(ws.layers).toEqual(['l4']);
+      expect(ws.probeFailed).toBe('timeout');
+      const acct = p.accounts.find((a) => a.id === (l7 as string))!;
+      expect(acct.compatible).toBe(false);
+      expect(acct.reasons).toContain('origin_unreachable');
+      expect(acct.reasons).not.toContain('layer_mismatch');
+    } finally {
+      l7Fake.uninstall();
+    }
+  });
+
   test('freedom-ws (L7): the loopback WebSocket is frontable at L7 by its origin name, and parks at publish without a tick', async () => {
     const w = await world();
     const { t, serverId } = w;
@@ -814,6 +885,11 @@ describe('a fronted node goes from enrollment to members', () => {
 
       const runId = await protectToPark(w, { nodeName: NODE_W, accountId: l7 });
       const parkedRun = await setupRun(t, runId);
+      // A WebSocket front node has no direct address: its status says so.
+      const att = await t.query(internal.edgeOperator.attention, {});
+      expect(
+        att.origins.find((o) => o.relayId === (parkedRun.relayId as string))?.status.fronted,
+      ).toBe(true);
       // An L7 front is proven by its own session, never ticked by hand.
       expect(parkedRun.testLinks ?? []).toEqual([]);
       expect(parkedRun.listeners.every((l) => l.layer === 'l7' && l.verify === 'verified')).toBe(
@@ -1599,6 +1675,49 @@ describe('ownership links and attempt fencing', () => {
     const done = await drive(t, () => setupRun(t, runId), movedOn, 'run after the next approval');
     expect([done.stage, done.state]).toEqual(['done', 'done']);
     expect((await activationRun(t, act2)).state).toBe('committed');
+  });
+
+  test('a cancel at publish when nothing ever reached members removes the origin, and its unused spares are not drained', async () => {
+    const w = await world();
+    const { t, serverId } = w;
+    installSeams(w);
+    const { l4 } = await accounts(t);
+    await enrollReady(w, { name: NODE, mode: 'freedom-reality', v4: ORIGIN_V4 });
+    const runId = await protectToPark(w, { nodeName: NODE, accountId: l4 });
+    const parkedRun = await setupRun(t, runId);
+    expect(parkedRun.stage).toBe('publish');
+    const relayId = parkedRun.relayId!;
+    const candidates = async () =>
+      (await t.query(internal.edgeAdmin.nodeCandidates, { backendServerId: serverId })).nodes.find(
+        (n) => n.name === NODE,
+      )!;
+    // A run is working on it: protected, not a leftover.
+    expect(await candidates()).toMatchObject({ leftover: false });
+    expect((await candidates()).relaySlug).not.toBeNull();
+    // Had the run stopped, the protect sheet would pick the origin up again.
+    await t.run((c) => c.db.patch(runId, { state: 'failed' }));
+    expect(await candidates()).toMatchObject({ leftover: true });
+    await t.run((c) => c.db.patch(runId, { state: parkedRun.state }));
+    const spares = (
+      await t.run((c) =>
+        c.db
+          .query('edges')
+          .withIndex('by_relay_status', (q) => q.eq('relayId', relayId))
+          .collect(),
+      )
+    ).filter((e) => e.status === 'active');
+    expect(spares.length).toBeGreaterThan(0);
+    expect(spares.every((e) => e.publishedAt === undefined)).toBe(true);
+    const res = await t.action(internal.edgeSetupRuns.cancel, { runId });
+    // Nothing to restore and nothing worth keeping: removed, not left half set up.
+    expect(res.disposition).toBe('deleted');
+    expect(w.calls.restores).toEqual([]);
+    expect((await t.run((c) => c.db.get(relayId)))?.deleting).toBe(true);
+    for (const e of spares) {
+      const after = (await t.run((c) => c.db.get(e._id)))!;
+      expect(after.status).toBe('draining');
+      expect(after.drainUntil!).toBeLessThanOrEqual(Date.now());
+    }
   });
 
   test('a go-live waiting for a fresh approval can be cancelled; nothing was bound', async () => {

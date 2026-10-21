@@ -264,10 +264,12 @@ export function automationNote(state: AutomationState): string | null {
  * actually decides whether this node's blocked address is replaced (the master
  * switch, automatic rotation, a setup run that owns the node, this node's own
  * switch), and on its own line whether spares come back by themselves.
+ * `runLive: false` = no setup run is working on a setup-owned node (a cancelled
+ * or failed one left it): it is simply not live yet.
  */
 export function nodeAutomationWords(
   config: AutomationConfig,
-  node: { autoRotate: boolean; setupOwned: boolean },
+  node: { autoRotate: boolean; setupOwned: boolean; runLive?: boolean },
 ): { line: string; spares: string | null } {
   const spares = config.autoProvisionToDesired
     ? null
@@ -280,6 +282,11 @@ export function nodeAutomationWords(
   if (!config.autoRotate)
     return {
       line: 'Automatic rotation is off for every node (Edges, Settings). This switch acts once it is on.',
+      spares: null,
+    };
+  if (node.setupOwned && node.runLive === false)
+    return {
+      line: 'This node is not live yet. Automatic replacement starts once it goes live.',
       spares: null,
     };
   if (node.setupOwned)

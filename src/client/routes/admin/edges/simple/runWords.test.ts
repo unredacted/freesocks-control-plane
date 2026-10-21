@@ -110,6 +110,10 @@ describe('automation state and words', () => {
       /Automatic rotation is off for every node/,
     );
     expect(nodeAutomationWords(on, { ...node, setupOwned: true }).line).toMatch(/setup run/);
+    // A cancelled or failed setup left it owned, but no run works on it.
+    expect(nodeAutomationWords(on, { ...node, setupOwned: true, runLive: false }).line).toMatch(
+      /not live yet/,
+    );
     expect(nodeAutomationWords(on, { ...node, autoRotate: false }).line).toMatch(
       /Off for this node/,
     );

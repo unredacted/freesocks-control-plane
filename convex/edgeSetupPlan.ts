@@ -71,15 +71,51 @@ export interface PlanOps {
     ctx: ActionCtx,
     a: { targets: ReturnType<typeof originProbeTargets> },
   ): Promise<OriginProbeOutcome[]>;
+  /** The wait before an origin that did not answer is probed again. */
+  pause(ms: number): Promise<void>;
 }
 
 const defaultPlanOps: PlanOps = {
   listNodeInbounds: (ctx, a) => ctx.runAction(internal.backends.listNodeInbounds, a),
   listHosts: (ctx, a) => ctx.runAction(internal.backends.listHosts, a),
   probeOrigins: (ctx, a) => ctx.runAction(internal.edgeOriginProbeOps.probe, a),
+  pause: (ms) => new Promise((r) => setTimeout(r, ms)),
 };
 
 let planOps: PlanOps = defaultPlanOps;
+
+/** Looks at an origin that did not answer before the plan takes "no answer" for it. */
+export const ORIGIN_PROBE_ATTEMPTS = 3;
+const ORIGIN_PROBE_PAUSE_MS = 500;
+/** Probe answers that a second look cannot change (the address itself rules it out). */
+const PROBE_FINAL_REASONS = new Set(['no_address', 'private_address']);
+
+/**
+ * The origin probe with retries: one dropped packet or slow handshake must not
+ * leave a WebSocket transport L4-only (and every CDN account unable to carry
+ * it). Only the targets that got no answer are asked again.
+ */
+async function probeOriginsWithRetries(
+  ctx: ActionCtx,
+  targets: ReturnType<typeof originProbeTargets>,
+): Promise<OriginProbeOutcome[]> {
+  let outcomes = await planOps.probeOrigins(ctx, { targets });
+  for (let attempt = 1; attempt < ORIGIN_PROBE_ATTEMPTS; attempt++) {
+    const again = new Set(
+      outcomes
+        .filter((o) => !o.originTransport && !PROBE_FINAL_REASONS.has(o.reason ?? ''))
+        .map((o) => o.listenerKey),
+    );
+    if (again.size === 0) break;
+    await planOps.pause(ORIGIN_PROBE_PAUSE_MS);
+    const next = await planOps.probeOrigins(ctx, {
+      targets: targets.filter((t) => again.has(t.listenerKey)),
+    });
+    const byKey = new Map(next.map((o) => [o.listenerKey, o]));
+    outcomes = outcomes.map((o) => byKey.get(o.listenerKey) ?? o);
+  }
+  return outcomes;
+}
 
 /** Test seam: replace the backend calls (null = the defaults). */
 export function __setPlanOpsForTests(over: Partial<PlanOps> | null): void {
@@ -289,6 +325,8 @@ function accountCompatibility(
   const carries: string[] = [];
   let portOnly = false;
   let scoped = false;
+  // A transport the account WOULD carry had the origin answered its probe.
+  let unanswered = false;
   for (const inb of required) {
     const spec = inb.listenerSpec as ListenerSpecInput;
     const proto = {
@@ -312,6 +350,18 @@ function accountCompatibility(
       carries.push(inb.listenerKey);
       continue;
     }
+    if (
+      inb.probeFailed &&
+      !inb.layers.includes(layer) &&
+      accountsForSlot([a], {
+        layers: [...inb.layers, layer],
+        proto,
+        originPort: spec.originPort,
+        allowL7: true,
+        dnsProvidersFront,
+      }).length > 0
+    )
+      unanswered = true;
     // The layer and the transport fit, the port does not (gRPC behind a CDN
     // is proxied to 443 only): say so, the operator moves the transport.
     if (
@@ -323,7 +373,13 @@ function accountCompatibility(
   }
   if (carries.length === 0)
     reasons.push(
-      scoped ? 'provider_mismatch' : portOnly ? 'origin_port_not_carried' : 'layer_mismatch',
+      scoped
+        ? 'provider_mismatch'
+        : unanswered
+          ? 'origin_unreachable'
+          : portOnly
+            ? 'origin_port_not_carried'
+            : 'layer_mismatch',
     );
   // Room for one address: what a pick really gets is the set's cover, summed
   // per account and location over its targets (`setOfPicks`).
@@ -662,12 +718,13 @@ export async function buildPlan(
   // only); the origin probe fills it in, exactly as the transport-candidates
   // route does, so a WS / HTTP-upgrade / gRPC origin can be offered an L7 account.
   const targets = originProbeTargets(mapped.candidates, originAddress);
-  // The probe handles an unreachable origin per target; a throw here is a fault
-  // of the probe itself, so it is reported rather than hidden as "L4 only".
+  // The probe handles an unreachable origin per target (asked again before
+  // the plan believes it); a throw here is a fault of the probe itself, so it
+  // is reported rather than hidden as "L4 only".
   const outcomes =
     targets.length > 0
       ? await planStage('probing how the origin answers HTTP transports', () =>
-          planOps.probeOrigins(ctx, { targets }),
+          probeOriginsWithRetries(ctx, targets),
         )
       : [];
   const candidates = applyOriginProbes(
@@ -685,6 +742,8 @@ export async function buildPlan(
       frontable,
       formats: cand.formats,
       needsName: cand.needsName,
+      // The origin never answered for this HTTP transport, so it stayed L4-only.
+      ...(cand.probe && !cand.probe.ok ? { probeFailed: cand.probe.reason ?? 'no_answer' } : {}),
       ...(frontable
         ? {}
         : cand.needsName

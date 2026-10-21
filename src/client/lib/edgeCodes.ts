@@ -794,6 +794,11 @@ const COPY = {
       'A front’s certificate cannot be issued until something outside FCP changes, such as a CAA record or the validation record in the DNS zone.',
     fix: 'Open it to see what the certificate waits on.',
   },
+  setup_run_failed: {
+    label: 'Setup stopped',
+    explain: 'The guided setup for this node stopped before it finished. Its run says why.',
+    fix: 'Open the run and try again, or remove protection to start over.',
+  },
   pool_below_desired: {
     label: 'Pool below desired',
     explain: 'Fewer edges are published than the origin wants.',
@@ -1002,6 +1007,12 @@ const COPY = {
     label: 'Owned by a setup run',
     explain: 'A guided setup owns this origin, so automatic replacement leaves it alone.',
     fix: 'Finish or cancel the setup run.',
+  },
+  not_live: {
+    label: 'Not live yet',
+    explain:
+      'No setup run is working on this origin, but it never went live, so automatic replacement leaves it alone.',
+    fix: 'Go live from the node page, or protect it again.',
   },
   // A guided run's event: it parked at publish until the enrolled node is approved.
   publish_held: {
@@ -1721,6 +1732,7 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_node: 'Review go-live',
   open_modes: 'Open Connection modes',
   open_probes: 'See the checks',
+  open_run: 'Open the run',
 };
 
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
@@ -1745,6 +1757,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_node: 'Open node',
   open_modes: 'Connection modes',
   open_probes: 'Open probes',
+  open_run: 'Open run',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {
@@ -1877,6 +1890,12 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   layer_mismatch: {
     label: 'Cannot carry every transport',
     explain: 'The account fronts at a layer one of the transports cannot use.',
+  },
+  origin_unreachable: {
+    label: "Couldn't reach the origin. Try again",
+    explain:
+      'The node did not answer the check of its WebSocket or HTTP transport, so no CDN account can carry it yet. This is usually a passing network fault.',
+    fix: 'Check again in a moment.',
   },
   origin_port_not_carried: {
     label: 'Wrong port for gRPC',

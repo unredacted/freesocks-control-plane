@@ -1504,6 +1504,48 @@ describe('edgeSetupRuns: cancel', () => {
   });
 });
 
+describe('edgeSetupRuns: a failed run is found again', () => {
+  test("the origin status names the failed run and an attention item opens it; a retry restarts the sheet's clock and clears both", async () => {
+    const { t, serverId, accountId } = await seed({ failCreateAt: 1 });
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.state).toBe('failed');
+    const attention = () => t.query(internal.edgeOperator.attention, {});
+    let att = await attention();
+    const item = att.items.find((i) => i.kind === 'setup_run_failed');
+    expect(item).toMatchObject({
+      severity: 'warning',
+      action: 'open_run',
+      relayId: r.relayId as string,
+      facts: { runId: runId as string },
+    });
+    let status = att.origins.find((o) => o.relayId === (r.relayId as string))!.status;
+    expect(status).toMatchObject({
+      kind: 'needs-you',
+      code: 'setup_run_failed',
+      runId: null,
+      failedRunId: runId as string,
+    });
+    // The sheet counts the first attempt from the start, a retried one from its retry.
+    let admin = (await t.query(internal.edgeSetupRuns.getForAdmin, { id: runId }))!;
+    expect(admin.attemptStartedAt).toBe(admin.startedAt);
+    vi.advanceTimersByTime(60_000);
+    await t.mutation(internal.edgeSetupRuns.retry, { runId });
+    admin = (await t.query(internal.edgeSetupRuns.getForAdmin, { id: runId }))!;
+    expect(Date.parse(admin.attemptStartedAt) - Date.parse(admin.startedAt)).toBeGreaterThanOrEqual(
+      60_000,
+    );
+    // Running again: the live run is what the status names.
+    att = await attention();
+    expect(att.items.some((i) => i.kind === 'setup_run_failed')).toBe(false);
+    status = att.origins.find((o) => o.relayId === (r.relayId as string))!.status;
+    expect(status.failedRunId).toBeNull();
+    expect(status.runId).toBe(runId as string);
+    r = await run(t, runId);
+    expect(r.state).toBe('running');
+  });
+});
+
 describe('edgeSetupRuns: maintenance', () => {
   test('a freeze refuses a new run, blocks stage 1 and 3, but a run past try_it finishes its publish under setup.complete', async () => {
     const { t, serverId, accountId } = await seed();

@@ -41,6 +41,8 @@ const status = (over: Partial<OriginStatus> = {}): OriginStatus => ({
   layers: ['l4'],
   attention: false,
   delivery: { kind: 'serving', code: null },
+  failedRunId: null,
+  fronted: false,
   ...over,
 });
 
@@ -101,6 +103,16 @@ describe('originSentence', () => {
     );
     expect(originSentence(status({ kind: 'not-live', published: 0 }))).toBe(
       'Not protected yet. Members use the direct address.',
+    );
+    // A fronted node (a WebSocket front, say) has no direct address to fall back on.
+    expect(originSentence(status({ kind: 'not-live', published: 0, fronted: true }))).toBe(
+      'Not protected yet. Members get no address for this node until it goes live.',
+    );
+    expect(originSentence(status({ kind: 'not-live', published: 1, fronted: true }))).toBe(
+      'Address ready, not live yet. Members get no address for this node until it goes live.',
+    );
+    expect(originSentence(status({ kind: 'needs-you', code: 'setup_run_failed' }))).toBe(
+      'Setup stopped. It needs you.',
     );
     expect(originSentence(status({ kind: 'unprotected', published: 0 }))).toBe(
       'No address in use. Members get nothing.',

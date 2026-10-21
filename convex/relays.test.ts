@@ -1060,7 +1060,7 @@ describe('origins: delete lifecycle', () => {
     steps: [{ id: 'lb', kind: 'loadbalancer', resourceName: 'x' }],
   };
 
-  test('requestDelete honours the origin drain window unless forced', async () => {
+  test('requestDelete honours the origin drain window unless forced, or the edge never served', async () => {
     const { t, relayId, listenerId, accountId } = await seed();
     const planned = await insertPlanned(t, {
       relayId,
@@ -1069,6 +1069,11 @@ describe('origins: delete lifecycle', () => {
       ...plan,
     });
     await t.mutation(internal.edges.patchEdge, { edgeId: planned.id, status: 'active' });
+    // It served members once (published, since moved back to standby).
+    await t.run((ctx) => ctx.db.patch(planned.id, { publishedAt: Date.now() - 60_000 }));
+    // A spare that was never published served nobody: nothing to drain.
+    const unused = await insertPlanned(t, { relayId, listenerId, accountId, ...plan });
+    await t.mutation(internal.edges.patchEdge, { edgeId: unused.id, status: 'active' });
     const relay = (await t.query(internal.relays.get, { id: relayId }))!;
     await t.mutation(internal.relays.requestDelete, { id: relayId, disposition: 'restore-direct' });
     const drained = (await t.query(internal.edges.get, { id: planned.id }))!;
@@ -1077,6 +1082,9 @@ describe('origins: delete lifecycle', () => {
     expect(drained.drainUntil).toBeGreaterThanOrEqual(
       Date.now() + EDGE_DEFAULTS.drainMinutes * 60_000 - 5_000,
     );
+    const never = (await t.query(internal.edges.get, { id: unused.id }))!;
+    expect(never.status).toBe('draining');
+    expect(never.drainUntil).toBeLessThanOrEqual(Date.now());
     expect((await audits(t, 'relay.delete'))[0].payload).toEqual({
       slug: FIXTURE_RELAY_SLUG,
       force: false,

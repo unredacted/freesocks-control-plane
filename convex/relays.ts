@@ -1138,10 +1138,13 @@ export async function applyDeleteBody(
         continue;
       }
       if (['active', 'verifying'].includes(e.status)) {
+        // An edge that was never published never served a member: no one is
+        // connected through it, so there is nothing to drain.
+        const served = e.publishedAt !== undefined;
         await ctx.db.patch(e._id, {
           status: 'draining',
           publication: 'draining',
-          drainUntil: force ? now : now + drainMs,
+          drainUntil: force || !served ? now : now + drainMs,
           statusChangedAt: now,
           updatedAt: now,
         });

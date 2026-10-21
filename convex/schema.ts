@@ -2162,6 +2162,9 @@ export default defineSchema({
     stageEnteredAt: v.number(),
     stepStartedAt: v.optional(v.number()),
     nextStepAt: v.optional(v.number()),
+    // When the current attempt began (a retry starts a new one); absent = the
+    // first attempt, which began at `startedAt`.
+    attemptStartedAt: v.optional(v.number()),
     // Bounded live log for the progress view (display only).
     events: v.array(
       v.object({

@@ -39,6 +39,7 @@ import { applyEdgeRender } from './lib/edges/renderPipeline';
 import { effectiveRule } from './lib/edges/render';
 import { publishedCount } from './lib/edges/pool';
 import { isTerminalPhase, progressPercent } from './lib/edges/rotation';
+import { isTerminalRunState } from './lib/edges/setupRuns';
 import {
   assertNoRotationOrQuarantine,
   dropEdgeFromPool,
@@ -862,6 +863,8 @@ export const publishedEdgeIdsOf = internalQuery({
  * Nodes the backend currently lists (the healthcheck cron's inventory cache, or a
  * fresh pull via backendNodes.refreshNodeInventory), with whether an origin is
  * already registered for each: the "New origin" picker pre-fills from these.
+ * `leftover`: that origin is one an earlier guided setup left half set up (it
+ * still owns it, no run is working on it): a new protect picks it up.
  */
 export const nodeCandidates = internalQuery({
   args: { backendServerId: v.id('backendServers') },
@@ -875,6 +878,21 @@ export const nodeCandidates = internalQuery({
       .withIndex('by_backend_server', (q) => q.eq('backendServerId', backendServerId))
       .collect();
     const bound = new Map(relays.filter((r) => r.nodeName).map((r) => [r.nodeName!, r.slug]));
+    const runs = await ctx.db
+      .query('edgeSetupRuns')
+      .withIndex('by_origin', (q) => q.eq('backendServerId', backendServerId))
+      .collect();
+    const working = new Set(
+      runs.filter((r) => !isTerminalRunState(r.state)).map((r) => r.nodeName),
+    );
+    const leftovers = new Set(
+      relays
+        .filter(
+          (r) =>
+            r.nodeName && r.setupOwned && !r.deleting && !r.restore && !working.has(r.nodeName),
+        )
+        .map((r) => r.nodeName!),
+    );
     return {
       fetchedAt: rows.length
         ? new Date(Math.max(...rows.map((r) => r.lastStatsAt))).toISOString()
@@ -890,6 +908,7 @@ export const nodeCandidates = internalQuery({
           online: r.online,
           usersOnline: r.usersOnline,
           relaySlug: bound.get(r.name) ?? null,
+          leftover: leftovers.has(r.name),
         })),
     };
   },

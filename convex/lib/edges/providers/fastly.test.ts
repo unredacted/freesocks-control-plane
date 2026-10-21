@@ -1484,7 +1484,10 @@ describe('fastly: destroy', () => {
     expect(plan.map(fastlyDestroyKey)).toEqual(['service', 'backend', 'snippet', 'domain']);
     r.calls.length = 0;
     for (const resource of plan) await fastlyProvider.runDestroy(cfg, resource, ledger);
-    expect(r.calls.map((c) => `${c.method} ${c.path}`)).toEqual([`DELETE /service/${SVC}`]);
+    // The children are only read back (they go with the service), never deleted.
+    expect(r.calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.path}`)).toEqual([
+      `DELETE /service/${SVC}`,
+    ]);
     expect(dns.deleted).toEqual([]);
   });
 
@@ -1510,15 +1513,87 @@ describe('fastly: destroy', () => {
       'ws_product=delete_requested',
     ]);
     expect(dns.deleted).toEqual(['rec2', 'rec1']);
+    // The ledger here never records the service gone, so the children are
+    // read back on its version (present: they wait for it), never deleted.
     expect(r.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
       `DELETE /tls/subscriptions/${SUB}`,
       `GET /service/${SVC}/details`,
       `PUT /service/${SVC}/version/1/deactivate`,
       `DELETE /service/${SVC}`,
+      `GET /service/${SVC}/version/1/backend/origin`,
+      `GET /service/${SVC}/version/1/snippet/ws-upgrade`,
+      `GET /service/${SVC}/version/1/domain/${HOST}`,
       `DELETE /enabled-products/v1/websockets/services/${SVC}`,
     ]);
     // The subscription delete must force, or an enabled domain blocks it.
     expect(r.calls[0].query).toEqual({ force: 'true' });
+  });
+
+  test('the children of a deleted service are confirmed gone, never deleted (the walk does not stall on them)', async () => {
+    const r = await serve();
+    fakeDns();
+    const ledger = await provision();
+    const gone = (l: Ledger, kinds: string[]): Ledger => ({
+      ...l,
+      resources: l.resources.map((x) =>
+        kinds.includes(x.kind) ? { ...x, deleteState: 'confirmed_gone' as const } : x,
+      ),
+    });
+    const children = (l: Ledger) =>
+      l.resources.filter((x) => ['backend', 'snippet', 'domain'].includes(x.kind));
+    // The walk recorded the service gone: its children follow without a call.
+    const after = gone(ledger, ['service', 'active_version', 'ws_product']);
+    r.calls.length = 0;
+    for (const child of children(after)) {
+      expect(await fastlyProvider.runDestroy(cfg, child, after)).toEqual({
+        status: 'confirmed_gone',
+      });
+      expect(await fastlyProvider.confirmDestroyed!(cfg, child, after)).toEqual({
+        status: 'confirmed_gone',
+      });
+    }
+    expect(r.calls).toEqual([]);
+    // A second service row discovery could not prove is this edge's (a
+    // candidate) is not the children's service: never in the plan, and it does
+    // not keep them waiting once the edge's own service is gone.
+    const candidate = {
+      ...ledger.resources.find((x) => x.kind === 'service')!,
+      resourceId: 'someone-elses',
+      deleteState: 'present' as const,
+      meta: JSON.stringify({ version: 1, name: 'other', candidate: true }),
+    };
+    const withCandidate: Ledger = { ...after, resources: [...after.resources, candidate] };
+    expect(fastlyProvider.planDestroy(cfg, withCandidate).map(fastlyDestroyKey)).toEqual([
+      'dns_record:traffic',
+      'tls_subscription',
+      'dns_record:acme',
+      'backend',
+      'snippet',
+      'domain',
+    ]);
+    for (const child of children(withCandidate))
+      expect(await fastlyProvider.runDestroy(cfg, child, withCandidate)).toEqual({
+        status: 'confirmed_gone',
+      });
+    expect(r.calls).toEqual([]);
+  });
+
+  test('a child whose service the provider no longer has is confirmed by its read-back, even when the ledger still lists the service', async () => {
+    let deleted = false;
+    const r = await serve((c) =>
+      deleted && c.path.startsWith(`/service/${SVC}/version/`) ? NOT_FOUND : defaultReply(c),
+    );
+    fakeDns();
+    const ledger = await provision();
+    deleted = true;
+    r.calls.length = 0;
+    for (const child of ledger.resources.filter((x) =>
+      ['backend', 'snippet', 'domain'].includes(x.kind),
+    ))
+      expect(await fastlyProvider.runDestroy(cfg, child, ledger)).toEqual({
+        status: 'confirmed_gone',
+      });
+    expect(r.calls.every((c) => c.method === 'GET')).toBe(true);
   });
 
   test('confirmation reads each resource back rather than trusting the delete', async () => {

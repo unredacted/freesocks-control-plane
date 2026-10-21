@@ -137,8 +137,12 @@
   // The ONE status the server judged for this origin (the attention response).
   const status = $derived(statusOf(attention.data?.origins, slug));
   const runId = $derived(status?.runId ?? null);
+  // The newest setup run when it stopped: its sheet has Try again.
+  const failedRunId = $derived(status?.failedRunId ?? null);
   const autoWords = $derived(
-    config.data && relay ? nodeAutomationWords(config.data.config, relay) : null,
+    config.data && relay
+      ? nodeAutomationWords(config.data.config, { ...relay, runLive: !!runId })
+      : null,
   );
   // The oldest of what the panel shows, and one way to read it all again now.
   const updatedAt = $derived(
@@ -168,6 +172,25 @@
       !busy,
   );
   const protectAgainFirst = $derived(canProtectAgain && enrolled?.stage !== 'live');
+  // A first protection that stopped short with nothing in use and no run to
+  // open (an earlier cancel left it): the protect sheet picks it up again.
+  const continueSetup = $derived(
+    relay &&
+      relay.origin.kind === 'panel-node' &&
+      relay.origin.nodeUuid &&
+      relay.setupOwned &&
+      !runId &&
+      !failedRunId &&
+      !relay.restore &&
+      !relay.deleting &&
+      published.length === 0
+      ? edgesPaths.home({
+          protect: '1',
+          server: relay.origin.backendServerId,
+          node: relay.origin.nodeUuid,
+        })
+      : null,
+  );
 
   // Put a spare in use: the server's publish item for this origin (it names the
   // spare that passes the publish checks), and the same call the Edges home makes.
@@ -278,6 +301,13 @@
             >
               Watch
             </Link>
+          {:else if failedRunId}
+            <Link
+              href={edgesPaths.home({ run: failedRunId })}
+              class="text-primary inline-flex min-h-11 items-center text-sm font-normal underline underline-offset-4 sm:min-h-0"
+            >
+              Open the run
+            </Link>
           {/if}
         </p>
         {#if relay.restore}
@@ -298,6 +328,8 @@
           <Button disabled={goLiveBusy} onclick={goLive}>Go live</Button>
         {:else if published.length > 0}
           <Button disabled={busy} onclick={() => replace('rotate')}>Replace address</Button>
+        {:else if continueSetup}
+          <Button onclick={() => router.navigate(continueSetup)}>Continue setup</Button>
         {/if}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>

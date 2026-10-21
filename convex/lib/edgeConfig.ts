@@ -901,8 +901,10 @@ const PLUMBING_DEFAULTS = {
   maxFlipAttempts: 6,
   /** Tries to restore the previous state before the origin is quarantined. */
   maxRollbackAttempts: 6,
-  /** Tries to delete a provider resource before the edge is left to the operator. */
+  /** Destroy passes (each may walk several resources) before the edge is left to the operator. */
   maxDestroyAttempts: 48,
+  /** Resources one destroy pass may walk on one edge, in the provider's kind order. */
+  maxDestroyStepsPerPass: 12,
   /** Automatic starts one reconcile pass may make (`edge.enabled` is the switch). */
   maxReconcileStartsPerTick: 1,
   /** Report rows read per origin per evaluation; past it the window is `incomplete` (no rotation). */

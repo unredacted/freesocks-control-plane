@@ -1387,6 +1387,45 @@ function destroyRank(r: LedgerResource): number {
 }
 
 /**
+ * The service this edge's version-scoped children (backend, snippets, a
+ * classic domain, the active version, the WebSockets product) live on: the
+ * live service row `planDestroy` deletes, never a candidate discovery could
+ * not prove is this edge's. Absent once that service is gone, and so are they:
+ * a deleted service takes every version and everything on them with it.
+ */
+function ownServiceOf(ledger: Ledger): LedgerResource | undefined {
+  return resourcesOfKind(ledger, 'service').find((r) => metaOf(r).candidate !== true);
+}
+
+/**
+ * A version-scoped child (backend, snippet, classic domain) is never deleted
+ * on its own: it goes with its service. With the service gone it is gone
+ * (no call). Otherwise it is read back on the service's version: a 404 is
+ * gone (the service went under a ledger that never recorded it), present is
+ * `present` for the caller to word (it waits for the service).
+ */
+async function versionChildState(
+  api: FastlyApi,
+  r: LedgerResource,
+  ledger: Ledger,
+): Promise<'gone' | 'present' | 'unknown'> {
+  const svc = ownServiceOf(ledger);
+  if (!svc) return 'gone';
+  const raw = metaOf(svc).version;
+  const version = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(version)) return 'unknown';
+  try {
+    if (r.kind === 'backend') await api.getBackend(svc.resourceId, version, r.resourceId);
+    else if (r.kind === 'snippet') await api.getSnippet(svc.resourceId, version, SNIPPET_NAME);
+    else await api.getDomain(svc.resourceId, version, r.resourceId);
+  } catch (e) {
+    if (isFastlyNotFound(e)) return 'gone';
+    throw e;
+  }
+  return 'present';
+}
+
+/**
  * DNS readiness of a versionless domain. There is no version to run a domain
  * check on: the front is ready when the domain is still linked to the edge's
  * service and its traffic name points at the provider, which FCP knows from
@@ -2392,7 +2431,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
    * paying for, and renewing, a certificate for a hostname nobody serves.
    */
   planDestroy(_cfg, ledger) {
-    const svc = firstResource(ledger, 'service');
+    const svc = ownServiceOf(ledger);
     const shared = !!svc && metaOf(svc).shared === true;
     // A candidate discovery could not prove is this edge's is never destroyed.
     const live = ledger.resources.filter(
@@ -2414,9 +2453,9 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
 
   async runDestroy(cfg, r, ledger) {
     const api = fastlyApiFor(cfg);
-    const svc = firstResource(ledger, 'service');
+    const svc = ownServiceOf(ledger);
     const shared = !!svc && metaOf(svc).shared === true;
-    const serviceGone = !svc || svc.deleteState === 'confirmed_gone';
+    const serviceGone = !svc;
     // Never somebody else's: a candidate is left exactly as it was found.
     if (metaOf(r).candidate === true) return { status: 'confirmed_gone' };
     try {
@@ -2457,17 +2496,17 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           await api.deleteVersionlessDomain(r.resourceId);
           return { status: 'delete_requested' };
         }
-        case 'domain': {
-          // A domain on an exclusively owned service dies with the service; on a
-          // SHARED service it is removed by the persisted shared teardown (see
-          // planSharedTeardown / sharedTeardownStep), which the caller drives.
-          if (shared) return { status: 'unresolved' };
-          if (serviceGone) return { status: 'confirmed_gone' };
-          return { status: 'unresolved' };
-        }
+        case 'domain':
         case 'backend':
-        case 'snippet':
-          return serviceGone ? { status: 'confirmed_gone' } : { status: 'unresolved' };
+        case 'snippet': {
+          // A domain on a SHARED service is removed by the persisted shared
+          // teardown (see planSharedTeardown / sharedTeardownStep), which the
+          // caller drives. Otherwise these die with the service: confirmed,
+          // never deleted, so a deleted service never leaves them waiting.
+          if (r.kind === 'domain' && shared) return { status: 'unresolved' };
+          const state = await versionChildState(api, r, ledger);
+          return state === 'gone' ? { status: 'confirmed_gone' } : { status: 'unresolved' };
+        }
         case 'ws_product': {
           // Last, and pointless once the service is gone (it went with it).
           if (shared || serviceGone) return { status: 'confirmed_gone' };
@@ -2485,7 +2524,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
 
   async confirmDestroyed(cfg, r, ledger) {
     const api = fastlyApiFor(cfg);
-    const svc = firstResource(ledger, 'service');
+    const svc = ownServiceOf(ledger);
     if (metaOf(r).candidate === true) return { status: 'confirmed_gone' };
     try {
       switch (r.kind) {
@@ -2523,7 +2562,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           }
         }
         case 'active_version': {
-          if (!svc || svc.deleteState === 'confirmed_gone') return { status: 'confirmed_gone' };
+          if (!svc) return { status: 'confirmed_gone' };
           const meta = metaOf(r);
           const version = typeof meta.version === 'number' ? meta.version : Number(r.resourceId);
           const detail = await api.getServiceDetail(svc.resourceId);
@@ -2535,23 +2574,12 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           await api.getWebsockets(r.resourceId);
           return { status: 'still_present' };
         }
-        case 'domain': {
-          if (!svc || svc.deleteState === 'confirmed_gone') return { status: 'confirmed_gone' };
-          const target = serviceOf(ledger);
-          await api.getDomain(target.id, target.version, r.resourceId);
-          return { status: 'still_present' };
-        }
-        case 'backend': {
-          if (!svc || svc.deleteState === 'confirmed_gone') return { status: 'confirmed_gone' };
-          const target = serviceOf(ledger);
-          await api.getBackend(target.id, target.version, r.resourceId);
-          return { status: 'still_present' };
-        }
+        case 'domain':
+        case 'backend':
         case 'snippet': {
-          if (!svc || svc.deleteState === 'confirmed_gone') return { status: 'confirmed_gone' };
-          const target = serviceOf(ledger);
-          await api.getSnippet(target.id, target.version, SNIPPET_NAME);
-          return { status: 'still_present' };
+          const state = await versionChildState(api, r, ledger);
+          if (state === 'unknown') return { status: 'unresolved' };
+          return state === 'gone' ? { status: 'confirmed_gone' } : { status: 'still_present' };
         }
         default:
           return { status: 'unresolved' };

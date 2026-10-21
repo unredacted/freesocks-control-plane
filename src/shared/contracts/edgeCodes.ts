@@ -269,6 +269,8 @@ export const ATTENTION_KINDS = [
   // An L7 front's certificate waits on something FCP cannot fix (a CAA record,
   // the validation record), or an account's shared certificate failed.
   'certificate_waiting',
+  // The node's newest guided setup run failed and nothing replaced it (its sheet has Try again).
+  'setup_run_failed',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -301,6 +303,8 @@ export const ATTENTION_ACTIONS = [
   'open_modes',
   // The Probes page (its sources and the checks from each country).
   'open_probes',
+  // A guided setup run's sheet (its progress, and Try again when it failed).
+  'open_run',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 
@@ -354,6 +358,7 @@ export const POOL_CODES = [
   'pool_below_coverage',
   'no_duplicate',
   'setup_owned',
+  'not_live',
 ] as const;
 export type PoolCode = (typeof POOL_CODES)[number];
 
@@ -514,6 +519,8 @@ export const SETUP_ACCOUNT_REASONS = [
   'account_untested',
   'account_disabled',
   'layer_mismatch',
+  // The account could carry a transport whose origin did not answer the probe.
+  'origin_unreachable',
   'origin_port_not_carried',
   'account_capacity_reached',
   'account_budget_exhausted',

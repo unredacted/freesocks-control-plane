@@ -76,6 +76,11 @@ export function originSentence(s: OriginStatus): string {
     case 'off':
       return 'Protection is switched off (Advanced).';
     case 'not-live':
+      // A fronted node has no direct address to fall back on.
+      if (s.fronted)
+        return s.published > 0
+          ? 'Address ready, not live yet. Members get no address for this node until it goes live.'
+          : 'Not protected yet. Members get no address for this node until it goes live.';
       return s.published > 0
         ? 'Address ready, not live yet. Members still use the direct address.'
         : 'Not protected yet. Members use the direct address.';

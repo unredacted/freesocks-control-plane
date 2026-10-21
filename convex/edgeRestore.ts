@@ -27,10 +27,14 @@
  *     everything and leaves the origin re-activatable (`bindingDeferred`);
  *     `delete_relay` runs the deletion body only now.
  *
- * One phase advances per `step` (the reconcile cron drives it every tick); a
- * phase that cannot advance records `attempt` + `lastError` and is retried.
- * The raw checks fetch through the same subscription fetch path the sub route
- * uses (no render).
+ * One phase advances per `step`; the reconcile cron chains steps in one pass
+ * until a phase must wait (a running rotation, hides still settling, a raw body
+ * not there yet, the panel unreachable), so a workflow with nothing to wait
+ * for finishes in the pass that reaches it. A phase that cannot advance records
+ * `attempt` + `lastError` and is retried next pass. An origin that was never
+ * bound and never hid a direct Host has nothing to restore: `freeze` goes
+ * straight to `finish`. The raw checks fetch through the same subscription
+ * fetch path the sub route uses (no render).
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -183,6 +187,8 @@ export interface RestoreContext {
   /** Confirmed disable rows still to restore, and unsettled rows of either intent. */
   confirmedDisables: HideRow[];
   unsettled: number;
+  /** Hide rows of any intent or state: none = the origin never hid a direct Host. */
+  hideRows: number;
 }
 
 export const context = internalQuery({
@@ -234,6 +240,7 @@ export const context = internalQuery({
       },
       confirmedDisables: rows.filter((r) => r.intent === 'disable' && r.state === 'confirmed'),
       unsettled: rows.filter((r) => ['intended', 'written', 'unresolved'].includes(r.state)).length,
+      hideRows: rows.length,
     };
   },
 });
@@ -485,6 +492,9 @@ export const step = internalAction({
     switch (phase) {
       case 'freeze':
         if (c.rotationRunning) return stay('rotation_running');
+        // Never bound and nothing ever hidden: no binding to release, no Host
+        // to put back and no body to check, so every middle phase is a no-op.
+        if (!c.bound && c.hideRows === 0) return go('finish');
         return go('settle');
       case 'settle': {
         if (c.unsettled > 0) {
@@ -551,7 +561,13 @@ export const step = internalAction({
   },
 });
 
-/** The reconcile pass: one phase per origin in a restore workflow. */
+/** Phases one pass may advance on one origin: each of the seven once, plus slack. */
+const MAX_PHASES_PER_PASS = 8;
+
+/**
+ * The reconcile pass: every origin in a restore workflow advances phase after
+ * phase until one must wait or the workflow finishes.
+ */
 export const reconcilePass = internalAction({
   args: {},
   handler: async (ctx): Promise<{ stepped: number; finished: number; errors: number }> => {
@@ -559,9 +575,15 @@ export const reconcilePass = internalAction({
     const report = { stepped: 0, finished: 0, errors: 0 };
     for (const relayId of ids) {
       try {
-        const r = await ctx.runAction(internal.edgeRestore.step, { relayId });
-        report.stepped++;
-        if (r.done) report.finished++;
+        for (let i = 0; i < MAX_PHASES_PER_PASS; i++) {
+          const r = await ctx.runAction(internal.edgeRestore.step, { relayId });
+          report.stepped++;
+          if (r.done) {
+            report.finished++;
+            break;
+          }
+          if (!r.advanced) break;
+        }
       } catch (err) {
         report.errors++;
         console.warn(
