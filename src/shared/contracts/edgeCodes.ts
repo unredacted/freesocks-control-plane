@@ -169,6 +169,7 @@ export const PREFLIGHT_BLOCKER_CODES = [
   // an L7 front's certificate cannot be had (L7_CERTIFICATE_CODES)
   'caa_forbids_ca',
   'shared_certificate_failed',
+  'shared_certificate_ambiguous',
   // the fleet guards on an automatic rotation (lib/edges/fleet.ts)
   'fleet_brake',
   'fleet_daily_cap',
@@ -195,6 +196,8 @@ export const L7_CERTIFICATE_CODES = [
   'shared_certificate_failed',
   // a shared certificate whose renewal is late: it expires within a week, or has
   'certificate_expiring',
+  // the zone's wildcard is covered by a certificate the account would not order
+  'shared_certificate_ambiguous',
 ] as const;
 export type L7CertificateCode = (typeof L7_CERTIFICATE_CODES)[number];
 
@@ -520,6 +523,7 @@ export const SETUP_ACCOUNT_REASONS = [
   // the account's shared wildcard certificate failed to issue.
   'caa_forbids_ca',
   'shared_certificate_failed',
+  'shared_certificate_ambiguous',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 

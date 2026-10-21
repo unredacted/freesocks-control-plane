@@ -75,7 +75,7 @@ import {
   rotationListenerKey,
   selectionContext,
 } from './edgeRotations';
-import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
+import { accountTested, API_FAILING_AFTER, sharedCertificateUsers } from './edgeProviderAccounts';
 import {
   defaultLocationOf,
   effectiveTemplateOfLocation,
@@ -1523,7 +1523,13 @@ export const attention = internalQuery({
       // (a CAA record, the validation record) or failed: every new front of
       // the account waits on it too.
       const sc = a.sharedCertificate;
-      if (sc && (sc.code || sc.state === 'failed')) {
+      // Raised for a wildcard the account (or one of its live fronts) still
+      // uses; one it switched away from and nothing uses is only shown.
+      const usesShared =
+        !!sc &&
+        ((a.settings as { certificateScope?: string }).certificateScope === 'wildcard' ||
+          (await sharedCertificateUsers(ctx.db, a._id)) > 0);
+      if (sc && usesShared && (sc.code || sc.state === 'failed')) {
         // Critical once the fronts are about to lose (or lost) their certificate.
         const daysLeft = sc.notAfter ? (Date.parse(sc.notAfter) - now) / 86_400_000 : null;
         items.push({

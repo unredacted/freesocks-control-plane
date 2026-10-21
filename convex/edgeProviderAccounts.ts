@@ -417,12 +417,58 @@ export function accountTested(
  */
 export function certificateRefusalOf(
   a: Pick<Doc<'edgeProviderAccounts'>, 'lastTestError' | 'settings' | 'sharedCertificate'>,
-): 'caa_forbids_ca' | 'shared_certificate_failed' | null {
+): 'caa_forbids_ca' | 'shared_certificate_failed' | 'shared_certificate_ambiguous' | null {
   if (a.lastTestError === 'caa_forbids_ca') return 'caa_forbids_ca';
   const wildcard = (a.settings as { certificateScope?: string }).certificateScope === 'wildcard';
   if (wildcard && a.sharedCertificate?.state === 'failed') return 'shared_certificate_failed';
+  // A wildcard the account would not order (another CA or configuration, or
+  // several): its certificate step refuses every time, so nothing is built
+  // for it first.
+  if (wildcard && a.sharedCertificate?.state === 'ambiguous') return 'shared_certificate_ambiguous';
   return null;
 }
+
+/** Shared-certificate states that are FCP's to remove (a record of another account's is not). */
+const REMOVABLE_SHARED_STATES = new Set(['pending', 'processing', 'issued', 'renewing', 'failed']);
+
+/**
+ * Whether the account still holds a shared certificate FCP can remove: the
+ * account delete refuses then, so the certificate and its ACME record are
+ * never left at the provider with no credentials left to remove them.
+ */
+export function holdsSharedCertificate(a: Pick<Doc<'edgeProviderAccounts'>, 'sharedCertificate'>) {
+  return !!a.sharedCertificate && REMOVABLE_SHARED_STATES.has(a.sharedCertificate.state);
+}
+
+/** How many live edges front through the account's shared wildcard (the removal guard). */
+export const sharedCertificateUsage = internalQuery({
+  args: { id: v.id('edgeProviderAccounts') },
+  handler: (ctx, { id }) => sharedCertificateUsers(ctx.db, id),
+});
+
+/** A removed shared certificate: the record goes, the removal is audited. */
+export const noteSharedCertificateRemoved = internalMutation({
+  args: {
+    id: v.id('edgeProviderAccounts'),
+    removed: v.boolean(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { id, removed, actorAdminId }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    const certificate = row.sharedCertificate?.name ?? null;
+    await ctx.db.patch(id, { sharedCertificate: undefined });
+    await writeAuditLog(ctx, {
+      actorType: actorAdminId ? 'admin' : 'system',
+      actorId: actorAdminId ?? undefined,
+      action: 'edge.provider_account.shared_certificate_removed',
+      targetType: 'edge_provider_account',
+      targetId: id,
+      payload: { name: row.name, provider: row.provider, certificate, removed },
+    });
+    return null;
+  },
+});
 
 export const create = internalMutation({
   args: upsertArgs,
@@ -680,6 +726,13 @@ export const remove = internalMutation({
         message: 'Edges still reference this account',
       });
     }
+    // Nor one whose shared certificate is still at the provider: with the
+    // credentials gone, nothing could remove it or its ACME record any more.
+    if (holdsSharedCertificate(row))
+      throw new ConvexError({
+        code: 'edge.shared_certificate_present',
+        message: 'The account still has a shared certificate; remove it first',
+      });
     // An account other accounts write DNS through cannot go either: their
     // records live in its zone and are addressed with its credentials.
     const referencing = await fastlyAccountsUsing(ctx.db, id);
@@ -1030,10 +1083,12 @@ export const listForSharedCertificates = internalQuery({
         if (!sc) return true;
         // A renewal is watched as closely as a first issuance: it is the
         // one wait that can let every front of the account lapse at once.
+        // One an account switched away from is only kept in view (it can be
+        // removed from the account page).
         const expiring =
           !!sc.notAfter && Date.parse(sc.notAfter) - now < SHARED_CERTIFICATE_EXPIRY_WARN_MS;
         const settled = sc.state === 'issued' && !sc.code && !expiring;
-        return !settled || !uses || now - sc.checkedAt >= SHARED_CERTIFICATE_RECHECK_MS;
+        return (uses && !settled) || now - sc.checkedAt >= SHARED_CERTIFICATE_RECHECK_MS;
       })
       .map((r) => r._id);
   },

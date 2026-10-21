@@ -1184,6 +1184,67 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     expect(JSON.parse(row.observedSettings!)).toMatchObject({ caa: 'forbids' });
   });
 
+  test('an unused shared certificate is removed on request, and an account holding one cannot be deleted', async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    const removed: string[] = [];
+    standIn({
+      sharedCertificate: async () => ({
+        name: '*.example.org',
+        subscriptionId: 'WILD1',
+        state: 'issued',
+      }),
+      removeSharedCertificate: async () => {
+        removed.push('*.example.org');
+        return { removed: true };
+      },
+    });
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    // Deleting the account now would strand the certificate at the provider.
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.remove, { id: accountId }),
+    ).rejects.toThrow(/shared_certificate_present/);
+    // While a live front uses it, it stays.
+    const edgeId = await edgeWithIntent(t, accountId, dnsId, {
+      domainModel: 'versionless',
+      certificateScope: 'wildcard',
+    });
+    await expect(
+      t.action(internal.edgeProviderOps.removeSharedCertificate, { accountId }),
+    ).rejects.toThrow(/shared_certificate_in_use/);
+    expect(removed).toEqual([]);
+    await t.run((ctx) => ctx.db.patch(edgeId, { status: 'destroyed' }));
+    expect(await t.action(internal.edgeProviderOps.removeSharedCertificate, { accountId })).toEqual(
+      { ok: true, removed: true },
+    );
+    expect(removed).toEqual(['*.example.org']);
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(row.sharedCertificate).toBeUndefined();
+    const audit = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'edge.provider_account.shared_certificate_removed'))
+        .collect(),
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.payload).toMatchObject({ certificate: '*.example.org', removed: true });
+  });
+
+  test('a wildcard the account would not order refuses new fronts before anything is built', async () => {
+    const t = newT();
+    const { id: accountId } = await fastlyAccount(t);
+    standIn({ sharedCertificate: async () => ({ name: '*.example.org', state: 'ambiguous' }) });
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(certificateRefusalOf(row)).toBe('shared_certificate_ambiguous');
+    // Not ours to remove, so it does not hold up the account's deletion either.
+    expect((await t.mutation(internal.edgeProviderAccounts.remove, { id: accountId })).ok).toBe(
+      true,
+    );
+  });
+
   test('the shared certificate is read at the provider and kept on the account, with its users', async () => {
     const t = newT();
     const { id: accountId, dnsId } = await fastlyAccount(t);

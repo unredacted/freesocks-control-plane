@@ -70,8 +70,12 @@ const KNOWN_TAGS = new Set([
   'contactphone',
 ]);
 
-/** Never more than this many names are looked up for one verdict. */
-const MAX_WALK = 10;
+/**
+ * Never more than this many names are looked up for one verdict. A name with
+ * more labels than this is `unchecked`, never `no_records`: the records that
+ * decide could sit above the cut.
+ */
+export const MAX_CAA_WALK = 16;
 
 function normalizeName(name: string): string {
   return name.trim().toLowerCase().replace(/\.$/, '');
@@ -80,10 +84,7 @@ function normalizeName(name: string): string {
 /** `a.b.example.org` -> `[a.b.example.org, b.example.org, example.org, org]` (the root is never asked). */
 export function caaWalkNames(name: string): string[] {
   const labels = normalizeName(name).split('.').filter(Boolean);
-  const out: string[] = [];
-  for (let i = 0; i < labels.length && out.length < MAX_WALK; i++)
-    out.push(labels.slice(i).join('.'));
-  return out;
+  return labels.map((_, i) => labels.slice(i).join('.'));
 }
 
 /** The issuer domain of an `issue` / `issuewild` value (`;` alone = none). */
@@ -160,7 +161,10 @@ export async function checkCaa(a: {
   const base = wildcard ? a.name.trim().slice(2) : a.name;
   const issuer =
     CA_CAA_DOMAINS[a.certificateAuthority as CaaCertificateAuthority] ?? a.certificateAuthority;
-  for (const name of caaWalkNames(base)) {
+  const names = caaWalkNames(base);
+  // Too deep to walk to the top: an answer from part of the tree is no answer.
+  if (names.length > MAX_CAA_WALK) return { verdict: 'unchecked', issuer, wildcard };
+  for (const name of names) {
     let records: CaaRecord[];
     try {
       records = await a.lookup(name);

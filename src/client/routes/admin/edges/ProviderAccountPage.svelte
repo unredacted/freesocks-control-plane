@@ -37,6 +37,7 @@
     providersQuery,
     providersUsageQuery,
     templatesQuery,
+    removeSharedCertificate,
     updateProvider,
   } from '../../../lib/edgesApi';
   import AdminListState from '../AdminListState.svelte';
@@ -168,6 +169,22 @@
     toast.success('Certificates changed');
     scopeChoice = null;
   }
+  // A wildcard no live front uses any more can be removed at the provider (and
+  // must be before the account is deleted): FCP never removes it by itself.
+  const REMOVABLE = ['pending', 'processing', 'issued', 'renewing', 'failed'];
+  const sharedRemovable = $derived(
+    !!a?.sharedCertificate &&
+      a.sharedCertificate.edges === 0 &&
+      REMOVABLE.includes(a.sharedCertificate.state),
+  );
+  let removeSharedOpen = $state(false);
+  async function removeShared() {
+    if (!a) return;
+    await removeSharedCertificate(a.id);
+    invalidateProviders(qc);
+    toast.success('Shared certificate removed');
+  }
+
   // How a new front's name is attached to its service (absent = its own domain).
   const domainsNow = $derived(
     a && a.settings.domainModel === 'classic' ? 'classic' : 'versionless',
@@ -452,6 +469,11 @@
                   <Badge variant={sharedWords.tone}>{sharedWords.label}</Badge>
                 </div>
                 <p class="text-xs text-muted-foreground">{sharedWords.detail}</p>
+                {#if sharedRemovable}
+                  <Button size="sm" variant="outline" onclick={() => (removeSharedOpen = true)}>
+                    Remove shared certificate
+                  </Button>
+                {/if}
               </div>
             {:else if scopeNow === 'wildcard'}
               <p class="text-xs text-muted-foreground">
@@ -626,6 +648,13 @@
     body="New fronts of this account get their certificate the new way; fronts that exist keep theirs. Like any settings change, the account loses its trust: test it again, and its next proven front trusts it."
     confirmLabel="Change certificates"
     onConfirm={saveScope}
+  />
+  <ConfirmDialog
+    bind:open={removeSharedOpen}
+    title="Remove the shared certificate?"
+    body="The wildcard certificate is deleted at the provider, with the validation record FCP wrote for it. No live front uses it now; a later front of this account on the wildcard orders a new one and waits for it to be issued."
+    confirmLabel="Remove certificate"
+    onConfirm={removeShared}
   />
   <ConfirmDialog
     bind:open={domainsOpen}

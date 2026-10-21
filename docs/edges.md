@@ -321,7 +321,11 @@ account's `certificateScope` (an intent default, § "Fastly fronts"):
   waits for issuance: the wait step looks once and finishes when the certificate is issued.
   The subscription and its ACME record (`_acme-challenge.<zone>`, commented
   `fcp-cert:<customer>:<subscription>`) are recorded on each edge as `shared`, so no edge's
-  destroy deletes them, and FCP never deletes them at all. The certificate and ACME steps hold
+  destroy deletes them; only an operator removes them, from the account page, once no live
+  front uses them (`edge.shared_certificate_in_use` otherwise; `POST
+providers/{id}/shared-certificate/remove`, audited), and an account still holding one cannot be
+  deleted (`edge.shared_certificate_present`), so nothing is left at the provider with no
+  credentials to remove it. The certificate and ACME steps hold
   the external lock `fastly-certificate:<account>:<zone>`, so two rotations never both order it.
   A subscription is reused only when it matches the account's certificate authority and its
   EFFECTIVE TLS configuration (the default one when the account names none, the same one the
@@ -329,7 +333,9 @@ account's `certificateScope` (an intent default, § "Fastly fronts"):
   (`shared_certificate_ambiguous`). At the challenge name, a record with another customer's
   marker or none is never reused, replaced or deleted (`acme_name_in_use`); our own customer's
   marker for a subscription that no longer exists (a failed one deleted at the provider) is
-  stale, and the step replaces it with the new subscription's. The subscription's state is kept
+  stale, and the step replaces it with the new subscription's; so is our own record that no
+  longer holds the challenge's current value (edited by hand, or a target the provider moved).
+  The subscription's state is kept
   on the account (`sharedCertificate`, read by the credential test and by the reconcile cron,
   every pass while it is not issued, while it renews and within a week of expiry, every 30
   minutes otherwise) and shown on the account page with its expiry and how many fronts use it.
@@ -337,7 +343,10 @@ account's `certificateScope` (an intent default, § "Fastly fronts"):
   certificate expires within a week, or has: `certificate_expiring`) is raised by itself;
   Certainly's 30-day certificates renew with about ten days left, so a week means days overdue.
   Attention `certificate_waiting` on the account is critical once under three days remain. A
-  failed one refuses new fronts of the account (`shared_certificate_failed`).
+  failed one refuses new fronts of the account (`shared_certificate_failed`), and so does one
+  the account would not order (`shared_certificate_ambiguous`), before anything is built for
+  the front. An account switched back to one certificate per front still shows the wildcard it
+  left behind, without raising it, until it is removed.
 - `per_host` (an account created before, until it is switched): one subscription per front
   hostname, deleted with the edge.
 
@@ -366,7 +375,8 @@ not name the account's CA (`certainly.com` for Certainly, `letsencrypt.org` for 
 names it with parameters the issuance cannot meet (RFC 8657): an `accounturi` (the provider's
 ACME account is not FCP's to name) or a `validationmethods` list without `dns-01` (every
 certificate FCP orders uses the managed DNS challenge). No record at all, or a lookup that
-fails (`unchecked`), passes. The verdict is kept with the test
+fails (`unchecked`), passes; so does a name too deep to walk to the top (more than
+`MAX_CAA_WALK` labels, also `unchecked`, never "no records"). The verdict is kept with the test
 (`observedSettings`: `caa`, `caaIssuer`, `caaCertificate`, `caaAt`). While the account's last test
 ended on it, the setup plan (`accounts[].reasons`), the setup run's first stage, the start guards
 of a rotation naming the account, the preflight and the selection all refuse it with that code
@@ -399,7 +409,8 @@ to classic without a code change (`EDGE_INTENT_FACTS`). An edge planned before k
 version-scoped (classic) domain, read, renewed and destroyed as before; the adapter reads which
 one an edge has from its ledger (`versionless_domain` or `domain`). Discovery finds a versionless
 domain by its exact name and owns it only when it is linked to the edge's own service; DNS
-readiness is that link plus the traffic record FCP wrote (no version holds the domain, so there
+readiness is that link plus the traffic record as the zone holds it now, read back and still
+pointing at the CNAME of the front's TLS configuration (no version holds the domain, so there
 is no domain check to run); destroy deletes it by id after the certificate and before the
 service, on a shared service too (no version workflow). Fastly offers classic domains only to
 accounts created before 2025-09-16; its documentation names no service-type limit for
@@ -2530,8 +2541,10 @@ port the provider holds.
   `0 issuewild "certainly.com"` for Certainly.
 - **A failed shared certificate.** Fix what the account page says it waited on, retry the
   subscription at the provider, and the next reconcile pass reads it again.
-- **Retiring the wildcard.** FCP never deletes it. Switch the account to one certificate per
-  front, replace its fronts, then delete the subscription (and its ACME record) at the provider.
+- **Retiring the wildcard.** Switch the account to one certificate per front and replace its
+  fronts; once none uses the wildcard, the account page offers "Remove shared certificate",
+  which deletes it and the ACME record FCP wrote (never another customer's record). An account
+  is deleted only after that.
 
 ## Adding an edge provider
 

@@ -686,6 +686,46 @@ async function recordSharedCertificate(
  * recorded on the account (the reconcile cron, so a renewal or a failure shows
  * on the account page and in attention). Orders nothing.
  */
+/**
+ * Remove the account's shared certificate at the provider, with the ACME
+ * record FCP wrote for it: an operator's explicit action for a wildcard no
+ * live edge fronts through any more (an account switched back to one
+ * certificate per front, or about to be deleted, which refuses while one is
+ * held). Refused while a live edge still uses it.
+ */
+export const removeSharedCertificate = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: (ctx, { accountId, actorAdminId }): Promise<{ ok: true; removed: boolean }> =>
+    tracked(ctx, accountId, async (seen) => {
+      const users = await ctx.runQuery(internal.edgeProviderAccounts.sharedCertificateUsage, {
+        id: accountId,
+      });
+      if (users > 0)
+        throw new ConvexError({
+          code: 'edge.shared_certificate_in_use',
+          message: `${users} live edge(s) still front through the shared certificate`,
+        });
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
+      if (!provider.removeSharedCertificate)
+        throw new ConvexError({
+          code: 'validation',
+          message: 'This provider shares no certificate',
+        });
+      const res = await provider.removeSharedCertificate(cfg);
+      if (res.code)
+        throw new ConvexError({
+          code: `edge.${res.code}`,
+          message: 'The shared certificate cannot be removed by FCP',
+        });
+      await ctx.runMutation(internal.edgeProviderAccounts.noteSharedCertificateRemoved, {
+        id: accountId,
+        removed: res.removed,
+        actorAdminId,
+      });
+      return { ok: true as const, removed: res.removed };
+    }),
+});
+
 export const refreshSharedCertificate = internalAction({
   args: { accountId: v.id('edgeProviderAccounts') },
   handler: (ctx, { accountId }): Promise<SharedCertificateStatus | null> =>

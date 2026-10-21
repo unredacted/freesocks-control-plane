@@ -2278,7 +2278,7 @@ describe('fastly: a new edge gets a versionless domain', () => {
           }
         : defaultReply(c),
     );
-    fakeDns();
+    const dns = fakeDns();
     const ledger = await provisionV();
     r.calls.length = 0;
     expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
@@ -2287,6 +2287,18 @@ describe('fastly: a new edge gets a versionless domain', () => {
       addresses: { hostname: HOST },
     });
     expect(r.calls.some((c) => c.path.endsWith('/check'))).toBe(false);
+    // The traffic record is read back: pointed elsewhere, or gone, is not ready.
+    const traffic = dns.rows.find((x) => x.name === HOST)!;
+    traffic.content = 'elsewhere.example.net';
+    expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
+      state: 'pending',
+      readiness: { dns: 'pending' },
+    });
+    dns.rows.splice(dns.rows.indexOf(traffic), 1);
+    expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
+      readiness: { dns: 'pending' },
+    });
+    dns.rows.push({ ...traffic, content: TRAFFIC_TARGET });
     linkedTo = 'OTHERSVC';
     expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
       state: 'pending',
@@ -2726,6 +2738,74 @@ describe('fastly: one wildcard certificate per account and zone', () => {
     expect(dns2.deleted).toEqual([]);
   });
 
+  test('our record pointing at another validation target is replaced with the current one', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    await serve(p.route);
+    const dns = fakeDns([
+      {
+        ...challengeRecord(sharedAcmeMarker(CUSTOMER, WILD), 'acme1'),
+        content: 'edited-by-hand.example.net',
+      },
+    ]);
+    const acme = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_dns_acme')!;
+    expect(await fastlyProvider.discover(cfgW, acme, spec, afterTls(WILD), 1)).toEqual({
+      status: 'confirmed_absent',
+    });
+    expect((await fastlyProvider.runStep(cfgW, acme, spec, tpl, afterTls(WILD))).status).toBe(
+      'done',
+    );
+    expect(dns.deleted).toEqual(['acme1']);
+    expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toEqual([
+      expect.objectContaining({ content: WILD_ACME, comment: sharedAcmeMarker(CUSTOMER, WILD) }),
+    ]);
+  });
+
+  test('an unused wildcard is removed with OUR records only; one ordered differently is refused', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    p.state.issued = true;
+    const r = await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions/OLDSUB' ? NOT_FOUND : p.route(c, 0),
+    );
+    const dns = fakeDns([
+      { ...challengeRecord(sharedAcmeMarker(CUSTOMER, WILD), 'ours'), content: WILD_ACME },
+      challengeRecord(sharedAcmeMarker(CUSTOMER, 'OLDSUB'), 'stale'),
+      challengeRecord('fcp-cert:SOMEONEELSE:THEIRS', 'theirs'),
+    ]);
+    // A per-host account still sees the wildcard it left behind, to remove it.
+    expect(await fastlyProvider.sharedCertificate!(cfg)).toMatchObject({
+      name: '*.example.org',
+      state: 'issued',
+    });
+    expect(await fastlyProvider.removeSharedCertificate!(cfg)).toEqual({ removed: true });
+    expect(
+      r.calls.filter((c) => c.method === 'DELETE').map((c) => [c.path, c.query.force]),
+    ).toEqual([[`/tls/subscriptions/${WILD}`, 'true']]);
+    expect(dns.deleted.sort()).toEqual(['ours', 'stale']);
+    expect(dns.rows.map((x) => x.id)).toEqual(['theirs']);
+    // Nothing left to see on a per-host account.
+    p.state.ordered = false;
+    expect(await fastlyProvider.sharedCertificate!(cfg)).toBeNull();
+
+    // A wildcard another CA issued is not this account's to delete.
+    const other = fixture('tls-subscriptions-wildcard-list.json') as {
+      data: Array<{ attributes: Record<string, unknown> }>;
+    };
+    other.data[0]!.attributes.certificate_authority = 'lets-encrypt';
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? { status: 200, body: other, contentType: 'application/vnd.api+json' }
+        : defaultReply(c),
+    );
+    expect(await fastlyProvider.removeSharedCertificate!(cfgW)).toEqual({
+      removed: false,
+      code: 'shared_certificate_ambiguous',
+    });
+  });
+
   test('a renewal reports what holds it up, and one that is late is raised by itself', async () => {
     const renewing = (extra: Record<string, unknown>) => {
       const doc = fixture('tls-subscription-wildcard-issued.json') as {
@@ -2800,7 +2880,10 @@ describe('fastly: one wildcard certificate per account and zone', () => {
       notAfter: '2026-11-19T10:12:00.000Z',
     });
     expect(rec!.calls.at(-1)!.query).toEqual({ include: 'tls_authorizations,tls_certificates' });
-    // A per-host account has no shared certificate at all.
+    // A per-host account sees the wildcard only while one exists (to remove
+    // it); with none at all it has no shared certificate.
+    expect(await fastlyProvider.sharedCertificate!(cfg)).toMatchObject({ state: 'issued' });
+    p.state.ordered = false;
     expect(await fastlyProvider.sharedCertificate!(cfg)).toBeNull();
   });
 });

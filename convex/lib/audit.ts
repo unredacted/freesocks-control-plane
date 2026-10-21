@@ -365,6 +365,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
   'edge.verification.rung': ['relaySlug', 'edgeId', 'listenerKey', 'rung'],
   // Rotation keeps the qualification: booleans only, never a key or identifier.
+  'edge.provider_account.shared_certificate_removed': [
+    'name',
+    'provider',
+    'certificate',
+    'removed',
+  ],
   'edge.provider_account.credentials_rotated': [
     'name',
     'provider',

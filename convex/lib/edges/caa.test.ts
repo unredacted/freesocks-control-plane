@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   CA_CAA_DOMAINS,
+  MAX_CAA_WALK,
   caaIssuerOf,
   caaParamsAllow,
   caaProbeName,
@@ -104,6 +105,17 @@ describe('caa: the walk a CA does', () => {
       lookup: zone({ 'example.org': [issue('letsencrypt.org; validationmethods=dns-01')] }),
     });
     expect(v).toMatchObject({ verdict: 'allows', issuer: 'letsencrypt.org', wildcard: true });
+  });
+
+  test('a name too deep to walk to the top is unchecked, never unrestricted', async () => {
+    const deep = `${Array.from({ length: MAX_CAA_WALK }, (_, i) => `l${i}`).join('.')}.example.org`;
+    const lookup = zone({});
+    expect(await checkCaa({ name: deep, certificateAuthority: 'certainly', lookup })).toEqual({
+      verdict: 'unchecked',
+      issuer: 'certainly.com',
+      wildcard: false,
+    });
+    expect(lookup.asked).toEqual([]);
   });
 
   test('a failed lookup is unchecked, never a guess', async () => {

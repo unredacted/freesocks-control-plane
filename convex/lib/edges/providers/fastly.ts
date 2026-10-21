@@ -970,14 +970,24 @@ async function sharedAcmeRecord(
   const dns = await dnsClientFor(cfg);
   const records = await dns.findRecordsByName(name, 'CNAME');
   const ours = records.find((r) => r.comment === marker);
-  if (ours)
-    return {
-      status: 'found',
-      resource: { ...dnsResource('acme', ours, dns, true), ownership: 'adopted' },
-    };
   const stale: DnsRecord[] = [];
+  if (ours) {
+    // Ours, but is it still what the provider validates with? A record edited
+    // by hand, or a challenge the provider moved for a renewal, is replaced
+    // like a stale one; with no challenge on offer there is nothing to check.
+    const challenge = managedDnsChallenge(
+      await api.getTlsSubscription(sub.resourceId, 'tls_authorizations'),
+    );
+    if (!challenge || sameDnsName(ours.content, challenge.values[0]!))
+      return {
+        status: 'found',
+        resource: { ...dnsResource('acme', ours, dns, true), ownership: 'adopted' },
+      };
+    stale.push(ours);
+  }
   const foreign: DnsRecord[] = [];
   for (const r of records) {
+    if (r === ours) continue;
     const m = parseSharedAcmeMarker(r.comment);
     if (!m || m.customerId !== customerId) {
       foreign.push(r);
@@ -1249,6 +1259,7 @@ function destroyRank(r: LedgerResource): number {
  */
 async function versionlessDnsReadiness(
   api: FastlyApi,
+  cfg: FastlyConfig,
   domain: LedgerResource,
   serviceId: string,
   ledger: Ledger,
@@ -1260,8 +1271,26 @@ async function versionlessDnsReadiness(
     return isFastlyNotFound(e) ? 'pending' : 'unknown';
   }
   if (d.service_id !== serviceId) return 'pending';
-  const traffic = resourcesOfKind(ledger, 'dns_record').some((r) => metaOf(r).role === 'traffic');
-  return traffic || d.activated === true ? 'ready' : 'pending';
+  const traffic = resourcesOfKind(ledger, 'dns_record').find(
+    (r) => metaOf(r).role === 'traffic' && metaOf(r).candidate !== true,
+  );
+  if (!traffic) return d.activated === true ? 'ready' : 'pending';
+  // The record as the zone holds it NOW: still there, and still pointing at
+  // the CNAME target of the TLS configuration the front uses.
+  try {
+    const meta = metaOf(traffic);
+    const record = await (
+      await dnsClientFor(cfg)
+    ).getRecord(typeof meta.recordId === 'string' ? meta.recordId : traffic.resourceId);
+    if (!record) return 'pending';
+    const target = parseTrafficCname(
+      await api.listTlsConfigurations('dns_records'),
+      cfg.tlsConfigurationId,
+    );
+    return target && sameDnsName(record.content, target) ? 'ready' : 'pending';
+  } catch {
+    return 'unknown';
+  }
 }
 
 // --- the adapter ---------------------------------------------------------------------
@@ -1302,12 +1331,15 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
    */
   async sharedCertificate(cfg): Promise<SharedCertificateStatus | null> {
     const zone = fastlyZoneOf(cfg);
-    if (certificateScopeOf(cfg) !== 'wildcard' || !zone) return null;
+    if (!zone) return null;
     const name = `*.${zone}`;
     const api = fastlyApiFor(cfg);
     const found = await sharedSubscriptionOf(api, name, cfg);
-    if (found.status === 'absent') return { name, state: 'absent' };
-    if (found.status === 'ambiguous') return { name, state: 'ambiguous' };
+    // An account switched back to one certificate per front still shows the
+    // wildcard it left behind, so it can be removed; it never shows "absent".
+    const wildcard = certificateScopeOf(cfg) === 'wildcard';
+    if (found.status === 'absent') return wildcard ? { name, state: 'absent' } : null;
+    if (found.status === 'ambiguous') return wildcard ? { name, state: 'ambiguous' } : null;
     const doc = await api.getTlsSubscription(
       found.resource.id,
       'tls_authorizations,tls_certificates',
@@ -1334,6 +1366,47 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       ...(reported ? { code: reported } : {}),
       ...(notAfter ? { notAfter } : {}),
     };
+  },
+
+  /**
+   * Remove the account's wildcard and OUR records at its challenge name, for
+   * an operator who no longer wants it (the caller refuses while a live edge
+   * fronts through it). A wildcard this account would not order is not ours to
+   * delete (`shared_certificate_ambiguous`); a record with another customer's
+   * marker, or none, is never touched.
+   */
+  async removeSharedCertificate(cfg): Promise<{ removed: boolean; code?: string }> {
+    const zone = fastlyZoneOf(cfg);
+    if (!zone) return { removed: false, code: 'dns_zone_missing' };
+    const api = fastlyApiFor(cfg);
+    const found = await sharedSubscriptionOf(api, `*.${zone}`, cfg);
+    if (found.status === 'ambiguous')
+      return { removed: false, code: 'shared_certificate_ambiguous' };
+    if (found.status === 'found') {
+      try {
+        await api.deleteTlsSubscription(found.resource.id);
+      } catch (e) {
+        if (!isFastlyNotFound(e)) throw e;
+      }
+    }
+    const customerId = (await api.getLoggedInCustomer()).id;
+    if (customerId) {
+      const dns = await dnsClientFor(cfg);
+      for (const r of await dns.findRecordsByName(acmeChallengeName(zone), 'CNAME')) {
+        const m = parseSharedAcmeMarker(r.comment);
+        if (!m || m.customerId !== customerId) continue;
+        let gone = m.subscriptionId === (found.status === 'found' ? found.resource.id : null);
+        if (!gone)
+          try {
+            await api.getTlsSubscription(m.subscriptionId);
+          } catch (e) {
+            if (!isFastlyNotFound(e)) throw e;
+            gone = true;
+          }
+        if (gone) await dns.deleteRecord(r.id);
+      }
+    }
+    return { removed: found.status === 'found' };
   },
 
   /** The account form offers the TLS configurations this token can see. */
@@ -1834,7 +1907,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     const readiness: EdgeReadiness = { dns: 'unknown', certificate: 'unknown' };
     const versionless = firstResource(ledger, 'versionless_domain');
     if (versionless) {
-      readiness.dns = await versionlessDnsReadiness(api, versionless, svc.id, ledger);
+      readiness.dns = await versionlessDnsReadiness(api, cfg, versionless, svc.id, ledger);
     } else if (hostname) {
       try {
         const check = parseDomainCheck(await api.checkDomain(svc.id, svc.version, hostname));

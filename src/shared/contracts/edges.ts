@@ -169,6 +169,15 @@ export const EdgeProviderAccountsResponse = z.object({
 });
 export type EdgeProviderAccountsResponse = z.infer<typeof EdgeProviderAccountsResponse>;
 
+/** POST …/providers/{id}/shared-certificate/remove: whether a certificate was there to delete. */
+export const EdgeSharedCertificateRemoveResponse = z.object({
+  ok: z.literal(true),
+  removed: z.boolean(),
+});
+export type EdgeSharedCertificateRemoveResponse = z.infer<
+  typeof EdgeSharedCertificateRemoveResponse
+>;
+
 export const EdgeTestCredentialsResponse = z.object({
   ok: z.boolean(),
   code: z.string().nullable(),
