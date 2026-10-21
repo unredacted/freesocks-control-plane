@@ -74,7 +74,7 @@ import { EdgeProviderError, credentialTestFailure, noteDiscoverError } from './h
 import { acmeChallengeName, normalizeZoneName } from '../hostname';
 import { checkCaa, wildcardBase, wildcardNameFor, type CaaLookup, type CaaRecord } from '../caa';
 import type { L7CertificateCode } from '../../../../src/shared/contracts/edgeCodes';
-import type { DnsClient, DnsRecord } from './dns/types';
+import type { DnsClient, DnsCreateArgs, DnsRecord } from './dns/types';
 import {
   fastlyApiFor,
   isFastlyNotFound,
@@ -88,7 +88,13 @@ import {
   type FastlyVersion,
   type FastlyVersionlessDomain,
 } from './fastly/sdk';
-import { FastlyTemplate, FASTLY_TEMPLATE_FIELDS, type FastlyTemplateParams } from './templates';
+import {
+  EDGE_TEMPLATES,
+  FastlyTemplate,
+  FASTLY_TEMPLATE_FIELDS,
+  type FastlyTemplateParams,
+} from './templates';
+import { wireBody } from './options';
 
 export { FastlyTemplate, FASTLY_TEMPLATE_FIELDS } from './templates';
 export type { FastlyTemplateParams } from './templates';
@@ -299,6 +305,19 @@ export function highestDraftVersion(versions: FastlyVersion[]): FastlyVersion | 
 
 // --- wire bodies (pure, pinned by the wire-contract test) ---------------------------
 
+/** The record options the template chose for the front's records (the traffic name may be flattened). */
+export function dnsRecordOptions(
+  tpl: Pick<FastlyTemplateParams, 'dnsTtl' | 'dnsTags' | 'dnsFlatten'>,
+  traffic: boolean,
+): Pick<DnsCreateArgs, 'ttl' | 'tags' | 'settings'> {
+  const tags = Object.entries(tpl.dnsTags ?? {}).map(([k, v]) => `${k}:${v}`);
+  return {
+    ...(tpl.dnsTtl !== undefined ? { ttl: tpl.dnsTtl } : {}),
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(traffic && tpl.dnsFlatten ? { settings: { flatten_cname: true } } : {}),
+  };
+}
+
 export function fastlyBackendBody(spec: EdgeSpec, tpl: FastlyTemplateParams): FastlyBackendBody {
   const hostname = requireHostname(spec, 'backend');
   const { address } = originMember(spec, 'backend');
@@ -311,14 +330,28 @@ export function fastlyBackendBody(spec: EdgeSpec, tpl: FastlyTemplateParams): Fa
     // address when the node only answers to its own name.
     override_host: tpl.overrideHost === 'hostname' ? hostname : address,
     comment: spec.name,
+    // The options the template (or the node) chose; nothing unset is sent.
+    ...(wireBody(EDGE_TEMPLATES.fastly.fields, 'backend', tpl) as Partial<FastlyBackendBody>),
   };
 }
 
-export function fastlySnippetBody(): FastlySnippetBody {
+/**
+ * The upgrade snippet without the two headers Fastly fills with the member's
+ * address, for a front whose node must never see it.
+ */
+export const FASTLY_WS_UPGRADE_VCL_NO_CLIENT_ADDRESS =
+  'if (req.http.Upgrade) { unset req.http.Fastly-Client-IP; unset req.http.X-Forwarded-For; return(upgrade); }';
+
+export function fastlySnippetBody(
+  tpl?: Pick<FastlyTemplateParams, 'forwardClientAddress'>,
+): FastlySnippetBody {
   return {
     name: SNIPPET_NAME,
     type: 'recv',
-    content: FASTLY_WS_UPGRADE_VCL,
+    content:
+      tpl?.forwardClientAddress === false
+        ? FASTLY_WS_UPGRADE_VCL_NO_CLIENT_ADDRESS
+        : FASTLY_WS_UPGRADE_VCL,
     // Late enough to run after the generated boilerplate, string-typed as the API wants.
     priority: '100',
     dynamic: '0',
@@ -1278,7 +1311,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       }
       case 'create_snippet': {
         const svc = serviceOf(ledger);
-        const snippet = await api.createSnippet(svc.id, svc.version, fastlySnippetBody());
+        const snippet = await api.createSnippet(svc.id, svc.version, fastlySnippetBody(tpl));
         return {
           status: 'done',
           resources: [
@@ -1431,6 +1464,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           content: challenge.values[0],
           proxied: false,
           comment: shared ? sharedAcmeMarker(sub.resourceId) : spec.name,
+          ...dnsRecordOptions(tpl, false),
         });
         return { status: 'done', resources: [dnsResource('acme', record, dns, !!shared)] };
       }
@@ -1453,6 +1487,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           content: target,
           proxied: false,
           comment: spec.name,
+          ...dnsRecordOptions(tpl, true),
         });
         return {
           status: 'done',

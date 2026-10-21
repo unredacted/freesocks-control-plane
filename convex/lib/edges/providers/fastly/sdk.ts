@@ -456,6 +456,18 @@ export interface FastlyBackendBody {
   use_ssl: boolean;
   override_host: string;
   comment: string;
+  /** Provider options (templates.ts `FASTLY_TEMPLATE_FIELDS`), sent only when chosen. */
+  prefer_ipv6?: boolean;
+  connect_timeout?: number;
+  first_byte_timeout?: number;
+  max_conn?: number;
+  min_tls_version?: string;
+  max_tls_version?: string;
+  ssl_ciphers?: string;
+  tcp_keepalive_enable?: boolean;
+  tcp_keepalive_time?: number;
+  tcp_keepalive_interval?: number;
+  tcp_keepalive_probes?: number;
 }
 export interface FastlySnippetBody {
   name: string;

@@ -33,6 +33,7 @@ import {
   TLS_WARNING_GRACE_MS,
   __setFastlyCaaLookup,
   __setFastlyDnsClientFactory,
+  dnsRecordOptions,
   fastlyBackendBody,
   fastlyDestroyKey,
   fastlyProvider,
@@ -426,6 +427,57 @@ describe('fastly: request bodies', () => {
       priority: '100',
       dynamic: '0',
     });
+  });
+
+  test('backend options reach their API fields; none is sent unchosen', () => {
+    expect(Object.keys(fastlyBackendBody(spec, tpl)).sort()).toEqual(
+      ['address', 'comment', 'name', 'override_host', 'use_ssl'].sort(),
+    );
+    const t = fastlyProvider.templateSchema.parse({
+      preferIpv6: true,
+      connectTimeoutMs: 2000,
+      firstByteTimeoutMs: 30_000,
+      maxConn: 1000,
+      minTlsVersion: '1.2',
+      maxTlsVersion: '1.3',
+      sslCiphers: 'ECDHE+AESGCM',
+      tcpKeepalive: true,
+      tcpKeepaliveTime: 60,
+      tcpKeepaliveInterval: 5,
+      tcpKeepaliveProbes: 4,
+    });
+    expect(fastlyBackendBody(spec, t)).toMatchObject({
+      prefer_ipv6: true,
+      connect_timeout: 2000,
+      first_byte_timeout: 30_000,
+      max_conn: 1000,
+      min_tls_version: '1.2',
+      max_tls_version: '1.3',
+      ssl_ciphers: 'ECDHE+AESGCM',
+      tcp_keepalive_enable: true,
+      tcp_keepalive_time: 60,
+      tcp_keepalive_interval: 5,
+      tcp_keepalive_probes: 4,
+    });
+  });
+
+  test("the snippet can keep the member's address from the node", () => {
+    expect(fastlySnippetBody({ forwardClientAddress: true }).content).toBe(FASTLY_WS_UPGRADE_VCL);
+    const off = fastlySnippetBody({ forwardClientAddress: false }).content;
+    expect(off).toContain('unset req.http.Fastly-Client-IP;');
+    expect(off).toContain('unset req.http.X-Forwarded-For;');
+    expect(off).toMatch(/return\(upgrade\); \}$/);
+  });
+
+  test("the front's records carry the chosen TTL and tags; only the traffic name flattens", () => {
+    expect(dnsRecordOptions({}, true)).toEqual({});
+    const t = { dnsTtl: 300, dnsTags: { team: 'edge' }, dnsFlatten: true };
+    expect(dnsRecordOptions(t, true)).toEqual({
+      ttl: 300,
+      tags: ['team:edge'],
+      settings: { flatten_cname: true },
+    });
+    expect(dnsRecordOptions(t, false)).toEqual({ ttl: 300, tags: ['team:edge'] });
   });
 
   test('the TLS subscription names the domain, the CA and (only when set) the configuration', () => {
