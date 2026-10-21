@@ -10,7 +10,9 @@
  * extra ports), and the test picks which of the body's proxies carries its
  * request (the route's final outbound, a Mihomo MATCH rule). The proxies
  * themselves, where everything FCP rendered lives, are untouched; the caller
- * asserts it.
+ * asserts it. A Mihomo body keeps its own `mode`: in any mode but `rule` the
+ * engine ignores the picked rule, so a body that would send a member's
+ * traffic around its proxies fails here instead of passing.
  *
  * A try_it test link (one share link, what an operator's client imports) is
  * turned into the same engines' configuration by the same rules a client
@@ -282,6 +284,7 @@ export function sandboxServed(
   const port = 7890;
   const out: Record<string, unknown> = {
     ...MIHOMO_SANDBOX(port),
+    mode: c.mode,
     proxies: c.proxies,
     'proxy-groups': c['proxy-groups'],
     rules: [`MATCH,${pick}`],

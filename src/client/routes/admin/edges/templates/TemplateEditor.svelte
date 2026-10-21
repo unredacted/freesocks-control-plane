@@ -39,18 +39,14 @@
   } from '../../../../lib/edgesApi';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { providerLabel } from '../lib/format';
-  import TemplateField from './TemplateField.svelte';
+  import OptionFields from './OptionFields.svelte';
   import {
     asParams,
     changedKeys,
     deepEqual,
     formatParams,
-    getPath,
     issueInWords,
     parseParamsJson,
-    resetField,
-    setPath,
-    unsetPath,
     type Params,
   } from './params';
 
@@ -98,8 +94,6 @@
       jsonError = parsed.error;
     }
   }
-  const setField = (key: string, value: unknown) =>
-    setParams(value === undefined ? unsetPath(params, key) : setPath(params, key, value));
 
   const changed = $derived(new Set(changedKeys(params, schema.defaults, schema.fields)));
   const dirty = $derived(
@@ -219,19 +213,13 @@
         This provider declares no form fields. Edit the parameters as JSON below.
       </p>
     {/if}
-    <div class="grid gap-4 sm:grid-cols-2">
-      {#each schema.fields as f (f.key)}
-        <TemplateField
-          field={f}
-          value={getPath(params, f.key)}
-          defaultValue={getPath(schema.defaults, f.key)}
-          changed={changed.has(f.key)}
-          disabled={jsonError !== null}
-          onchange={(v) => setField(f.key, v)}
-          onreset={() => setParams(resetField(params, schema.defaults, f.key))}
-        />
-      {/each}
-    </div>
+    <OptionFields
+      fields={schema.fields}
+      values={params}
+      base={schema.defaults}
+      disabled={jsonError !== null}
+      onchange={(next) => setParams(next)}
+    />
   </div>
 
   <Collapsible.Root>

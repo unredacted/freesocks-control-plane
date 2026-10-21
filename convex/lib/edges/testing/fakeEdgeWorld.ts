@@ -17,6 +17,8 @@ import { jsonRes, mockFetch, routeFetch, type FetchStub, type PartialHandler } f
 export interface FakeUpcloud {
   lbs: Map<string, { uuid: string; name: string; operational_state: string }>;
   lbCreates: () => number;
+  /** Every load-balancer create body, in order. */
+  lbBodies: () => unknown[];
   handle: PartialHandler;
 }
 
@@ -30,11 +32,13 @@ export function createFakeUpcloud(
 ): FakeUpcloud {
   const lbs = new Map<string, { uuid: string; name: string; operational_state: string }>();
   let lbCreates = 0;
+  const bodies: unknown[] = [];
   const addressFor = opts.addressFor ?? ((n: number) => `198.51.100.${10 + n}`);
   const handle: PartialHandler = (c) => {
     if (new URL(c.url).hostname !== 'api.upcloud.com') return null;
     if (c.path === '/1.3/load-balancer' && c.method === 'POST') {
       lbCreates++;
+      bodies.push(c.body);
       if (opts.failCreateAt !== undefined && lbCreates === opts.failCreateAt)
         return jsonRes({ error: { error_code: 'INTERNAL' } }, 500);
       const uuid = `lb-${lbs.size + 1}`;
@@ -60,7 +64,7 @@ export function createFakeUpcloud(
     }
     throw new Error(`unexpected ${c.method} ${c.url}`);
   };
-  return { lbs, lbCreates: () => lbCreates, handle };
+  return { lbs, lbCreates: () => lbCreates, lbBodies: () => bodies, handle };
 }
 
 export interface BackendAddress {
@@ -84,6 +88,8 @@ export function fakeEdgeWorld(opts: { hosts: BackendAddress[]; failCreateAt?: nu
   lbs: FakeUpcloud['lbs'];
   creates: () => number;
   lbCreates: () => number;
+  /** Every load-balancer create body, in order. */
+  lbBodies: () => unknown[];
 } {
   const panelHosts = opts.hosts;
   let creates = 0;
@@ -119,5 +125,6 @@ export function fakeEdgeWorld(opts: { hosts: BackendAddress[]; failCreateAt?: nu
     lbs: upcloud.lbs,
     creates: () => creates,
     lbCreates: upcloud.lbCreates,
+    lbBodies: upcloud.lbBodies,
   };
 }

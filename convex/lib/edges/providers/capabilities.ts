@@ -15,6 +15,13 @@ import type { EdgeSpec } from './types';
 export type EdgeLayer = 'l4' | 'l7';
 export type EdgeAddressKind = 'ip' | 'hostname';
 /**
+ * What an account of the provider is FOR. `edge`: it fronts member traffic.
+ * `dns`: it holds the records FCP writes for L7 fronts (a front's certificate
+ * challenge and traffic name, a front node's origin name) and fronts nothing
+ * itself unless `edge.l7.dnsProvidersFront` says so (`frontsAllowed`).
+ */
+export type EdgeProviderRole = 'edge' | 'dns';
+/**
  * How the provider reaches the origin port: `any` (an L4 forwarder dials
  * whatever the listener says), `fixed` (the port follows the origin scheme:
  * 443 for https, 80 for http), `default-or-override` (a default by the zone's
@@ -25,6 +32,7 @@ export type OriginPortMode = 'any' | 'fixed' | 'default-or-override';
 export interface EdgeProviderCapabilities {
   /** L4 = a TCP forwarder in front of the node; L7 = a CDN front terminating TLS + HTTP. */
   layer: EdgeLayer;
+  role: EdgeProviderRole;
   /** What members connect to: an IP literal (L4) or a hostname (L7). */
   addressKind: EdgeAddressKind;
   /** HTTP-carried stream transports an L7 front can carry (empty for L4: it carries any TCP listener). */
@@ -52,6 +60,12 @@ export interface EdgeProviderCapabilities {
    * gate must not wait for `online` from it.
    */
   memberHealth: boolean;
+  /**
+   * The account's edges can share ONE certificate (Fastly's `*.<zone>`
+   * wildcard, `certificateScope`): the adapter reports it (`sharedCertificate`)
+   * and the reconcile cron keeps its state on the account.
+   */
+  sharedCertificates: boolean;
   /** Typical wall clock from create to active (informational; bounds `discoverySettleMs`). */
   typicalProvisionMs: number;
   /**
@@ -67,11 +81,13 @@ const MIN = 60_000;
 
 const L4 = {
   layer: 'l4',
+  role: 'edge',
   addressKind: 'ip',
   l7Transports: [] as readonly ListenerStreamTransport[],
   needsDnsAccount: false,
   providesDns: false,
   originPortMode: 'any',
+  sharedCertificates: false,
 } as const satisfies Partial<EdgeProviderCapabilities>;
 
 export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapabilities> = {
@@ -128,6 +144,9 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
   // front qualification instead.
   cloudflare: {
     layer: 'l7',
+    // A DNS account first: fronting member traffic through it is an operator
+    // switch, off by default (`frontsAllowed`).
+    role: 'dns',
     addressKind: 'hostname',
     // XHTTP packet-up is plain GET + POST requests; the stream modes would need
     // the zone's gRPC switch, which the packet-up proof never depends on.
@@ -140,6 +159,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     needsDnsAccount: false,
     providesDns: true,
     originPortMode: 'default-or-override',
+    sharedCertificates: false,
     asyncOps: false,
     asyncDelete: false,
     needsPrivateNetwork: false,
@@ -152,15 +172,20 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
   },
   // A service + domain + backend + WebSockets product + TLS subscription, with
   // the DNS records written into a Cloudflare account. Certificate issuance is
-  // asynchronous (minutes). The WebSockets path honours only name/address/
-  // use_ssl/override_host on the backend, hence the fixed origin port.
+  // asynchronous (minutes). The origin port is fixed to the scheme's own (443
+  // over TLS, 80 without) and sent explicitly: Fastly's WebSockets guide lists
+  // only name/address/use_ssl/override_host, yet dials the backend's `port`,
+  // which defaults to 80.
   fastly: {
     layer: 'l7',
+    role: 'edge',
     addressKind: 'hostname',
     l7Transports: ['ws'],
     needsDnsAccount: true,
     providesDns: false,
     originPortMode: 'fixed',
+    // One `*.<zone>` subscription for every front of the account (`certificateScope`).
+    sharedCertificates: true,
     asyncOps: true,
     asyncDelete: true,
     needsPrivateNetwork: false,
@@ -177,6 +202,24 @@ export function edgeLayerOf(id: EdgeProviderId | string | null | undefined): Edg
   return id && id in EDGE_PROVIDER_CAPABILITIES
     ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId].layer
     : 'l4';
+}
+
+export function edgeRoleOf(id: EdgeProviderId | string | null | undefined): EdgeProviderRole {
+  return id && id in EDGE_PROVIDER_CAPABILITIES
+    ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId].role
+    : 'edge';
+}
+
+/**
+ * Whether NEW edges may be placed on an account of this provider. A DNS
+ * provider fronts member traffic only while `edge.l7.dnsProvidersFront` is on;
+ * edges that already exist are never torn down by it.
+ */
+export function frontsAllowed(
+  id: EdgeProviderId | string | null | undefined,
+  dnsProvidersFront: boolean,
+): boolean {
+  return edgeRoleOf(id) !== 'dns' || dnsProvidersFront;
 }
 
 export function edgeAddressKindOf(id: EdgeProviderId | string | null | undefined): EdgeAddressKind {

@@ -1372,6 +1372,10 @@ describe('origin admin routes: importing an existing L7 front', () => {
   async function l7Fixture() {
     const s = await seed();
     const { call, t, serverId } = s;
+    // A Cloudflare account is a DNS provider: it fronts only with the switch on.
+    await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { l7: { dnsProvidersFront: true } },
+    });
     const acct = (await (
       await call('POST', 'providers', {
         provider: 'cloudflare',
@@ -1380,13 +1384,17 @@ describe('origin admin routes: importing an existing L7 front', () => {
         credentials: { apiToken: 'cf' },
       })
     ).json()) as { id: string };
-    // The zone's encryption mode comes from the credential test, never typed.
-    await t.run((ctx) =>
-      ctx.db.patch(acct.id as Id<'edgeProviderAccounts'>, {
-        observedSettings: JSON.stringify({ zoneSslMode: 'flexible' }),
+    // The zone's encryption mode comes from the zone location's check, never typed.
+    await t.run(async (ctx) => {
+      const [zone] = await ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', acct.id as Id<'edgeProviderAccounts'>))
+        .collect();
+      await ctx.db.patch(zone._id, {
+        observed: JSON.stringify({ zoneSslMode: 'flexible' }),
         observedAt: Date.now(),
-      }),
-    );
+      });
+    });
     const created = await call('POST', 'relays', {
       ...createBody(serverId, [
         {

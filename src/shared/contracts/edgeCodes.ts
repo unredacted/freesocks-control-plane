@@ -154,6 +154,8 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'account_disabled',
   'account_untested',
   'account_incompatible',
+  // a DNS account named while `edge.l7.dnsProvidersFront` is off
+  'dns_account_not_fronting',
   'account_budget_exhausted',
   'account_capacity_reached',
   'template_not_found',
@@ -164,6 +166,10 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'dns_zone_missing',
   'origin_transport_missing',
   'zone_mode_unknown',
+  // an L7 front's certificate cannot be had (L7_CERTIFICATE_CODES)
+  'caa_forbids_ca',
+  'shared_certificate_failed',
+  'shared_certificate_ambiguous',
   // the fleet guards on an automatic rotation (lib/edges/fleet.ts)
   'fleet_brake',
   'fleet_daily_cap',
@@ -171,6 +177,29 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'outside_approved_shape',
 ] as const;
 export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
+
+/**
+ * Why an L7 front's certificate cannot be had, or what its issuance waits on
+ * (docs/edges.md § "L7 edges"): the CAA preflight's refusal (the credential
+ * test and planning), the codes a waiting issuance reports, mapped from the
+ * provider's own authorization warnings, whose text is never kept, and an
+ * account's shared certificate that failed to issue.
+ */
+export const L7_CERTIFICATE_CODES = [
+  'caa_forbids_ca',
+  'tls_caa_conflict',
+  'tls_challenge_conflict',
+  'tls_challenge_missing',
+  'tls_authorization_failed',
+  'tls_authorization_warning',
+  'tls_failed',
+  'shared_certificate_failed',
+  // a shared certificate whose renewal is late: it expires within a week, or has
+  'certificate_expiring',
+  // the zone's wildcard is covered by a certificate the account would not order
+  'shared_certificate_ambiguous',
+] as const;
+export type L7CertificateCode = (typeof L7_CERTIFICATE_CODES)[number];
 
 /** Things that will not stop the operation but the operator should know. */
 export const PREFLIGHT_WARNING_CODES = [
@@ -237,6 +266,11 @@ export const ATTENTION_KINDS = [
   // before it was ever in use.
   'country_wide_failure',
   'new_edge_blocked_in',
+  // An L7 front's certificate waits on something FCP cannot fix (a CAA record,
+  // the validation record), or an account's shared certificate failed.
+  'certificate_waiting',
+  // The node's newest guided setup run failed and nothing replaced it (its sheet has Try again).
+  'setup_run_failed',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -269,6 +303,8 @@ export const ATTENTION_ACTIONS = [
   'open_modes',
   // The Probes page (its sources and the checks from each country).
   'open_probes',
+  // A guided setup run's sheet (its progress, and Try again when it failed).
+  'open_run',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 
@@ -322,6 +358,7 @@ export const POOL_CODES = [
   'pool_below_coverage',
   'no_duplicate',
   'setup_owned',
+  'not_live',
 ] as const;
 export type PoolCode = (typeof POOL_CODES)[number];
 
@@ -474,11 +511,18 @@ export const SETUP_RUN_NEEDS = [
 ] as const;
 export type SetupRunNeed = (typeof SETUP_RUN_NEEDS)[number];
 
-/** Why a provider account cannot be offered by the setup plan (`accounts[].reasons`). */
+/**
+ * Why a provider account, or one of its locations, cannot be offered by the
+ * setup plan (`accounts[].reasons`, `accounts[].locations[].reasons`).
+ */
 export const SETUP_ACCOUNT_REASONS = [
   'account_untested',
   'account_disabled',
   'layer_mismatch',
+  // The account could carry a transport whose origin did not answer the probe,
+  // or whose address the probe refuses outright (private, or none at all).
+  'origin_unreachable',
+  'origin_not_public',
   'origin_port_not_carried',
   'account_capacity_reached',
   'account_budget_exhausted',
@@ -487,6 +531,16 @@ export const SETUP_ACCOUNT_REASONS = [
   'no_location',
   'location_disabled',
   'location_capacity_reached',
+  // The zone's CAA records do not let the account's certificate authority issue;
+  // the account's shared wildcard certificate failed to issue.
+  'caa_forbids_ca',
+  'shared_certificate_failed',
+  'shared_certificate_ambiguous',
+  // an L7 location (edgeSetupPlan placeProblemOf): its zone, its DNS account
+  'location_check_failed',
+  'dns_account_missing',
+  'dns_account_disabled',
+  'zone_mode_unknown',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 

@@ -25,6 +25,7 @@ import type {
   AttentionSeverity,
   DeliveryUnavailableCode,
   InboundUnsupportedCode,
+  L7CertificateCode,
   LayerExclusionCode,
   PreflightBlockerCode,
   PoolCode,
@@ -47,6 +48,12 @@ export interface CodeCopy {
   explain: string;
   /** One sentence: what the operator can do about it (absent when nothing). */
   fix?: string;
+  /**
+   * Refusals only: the server's message names the specific reason (which
+   * state of a zone, which DNS account check), so an error line shows it in
+   * place of `fix` (lib/edgeErrors.ts); `fix` stays the fallback.
+   */
+  reasonFromServer?: boolean;
 }
 
 type KnownCode =
@@ -57,7 +64,8 @@ type KnownCode =
   | LayerExclusionCode
   | DeliveryUnavailableCode
   | PoolCode
-  | SettingsWarningCode;
+  | SettingsWarningCode
+  | L7CertificateCode;
 
 const COPY = {
   // --- origin --------------------------------------------------------------------------
@@ -109,21 +117,75 @@ const COPY = {
     explain: 'The last credential test against the provider was refused.',
     fix: 'Rotate the credentials on the account and test again.',
   },
+  // credential test answers (an adapter's short codes)
+  token_rejected: {
+    label: 'Token rejected',
+    explain:
+      'Cloudflare rejected this token, both as a user API token and as an account API token.',
+    fix: 'FCP accepts user API tokens and account API tokens. Check that the token is active and has the permissions a Cloudflare account needs.',
+  },
+  token_not_active: {
+    label: 'Token not active',
+    explain: 'The provider knows this token, but it is disabled or expired.',
+    fix: 'Enable the token or roll a new one in the provider dashboard, then test again.',
+  },
   dns_account_missing: {
     label: 'DNS account missing',
-    explain: 'This CDN provider needs another account to host DNS records for its hostnames.',
-    fix: 'Add a DNS-capable account and name it in the CDN account settings.',
+    explain:
+      'This CDN front needs a DNS account to hold its records, and its location names none that still exists.',
+    fix: 'Add a location that names a DNS account, on the provider page.',
+  },
+  no_zones: {
+    label: 'No DNS zone reached',
+    explain: 'The token reaches no DNS zone.',
+    fix: 'Give the token access to at least one zone, then test again.',
   },
   zone_mode_unknown: {
     label: 'Zone mode unknown',
     explain: 'The zone facts (TLS mode, WebSocket setting) have not been observed yet.',
-    fix: 'Test the account credentials so the zone can be read.',
+    fix: 'Check the location again on the provider page so the zone can be read.',
   },
   zone_websockets_off: {
     label: 'Zone has WebSockets off',
     explain:
       'The CDN zone refuses WebSocket upgrades, so a WebSocket listener cannot be fronted there.',
     fix: 'Turn WebSockets on in the zone at the provider, then re-test the account.',
+  },
+  // a CDN location's zone check (what the provider said about the zone)
+  zone_unreadable: {
+    label: 'Zone unreadable',
+    explain: 'The key cannot read that zone.',
+    fix: 'Give the key read access to the zone, then check the location again.',
+  },
+  zone_name_mismatch: {
+    label: 'Zone name changed',
+    explain: "The zone's name changed at the provider.",
+    fix: 'Refresh the list of zones and pick it again.',
+  },
+  zone_ssl_off: {
+    label: 'Zone encryption off',
+    explain: "The zone's encryption mode is off, so a front there cannot serve HTTPS.",
+    fix: 'Set Flexible, Full or Full (strict) on the zone at the provider, then check the location again.',
+  },
+  zone_paused: {
+    label: 'Zone paused',
+    explain: 'The zone is paused at the provider.',
+    fix: 'Resume the zone at the provider, then check the location again.',
+  },
+  zone_not_active: {
+    label: 'Zone not active yet',
+    explain: 'The zone is not active at the provider yet.',
+    fix: 'Finish setting up the zone at the provider, then check the location again.',
+  },
+  tls_configuration_missing: {
+    label: 'TLS configuration not found',
+    explain: 'The Fastly key does not see that TLS configuration.',
+    fix: 'Pick one the key can see, or leave it empty for the default.',
+  },
+  location_check_failed: {
+    label: 'Location check refused',
+    explain: "This location's last check refused it, so no new address is planned there.",
+    fix: 'Check it again from the provider page.',
   },
   // --- template ------------------------------------------------------------------------
   no_default_template: {
@@ -534,6 +596,12 @@ const COPY = {
     label: 'Account incompatible',
     explain: 'The named account cannot carry this listener.',
   },
+  dns_account_not_fronting: {
+    label: 'DNS account, not a front',
+    explain:
+      'The named account is a DNS account: it holds the records FCP writes for L7 fronts and carries no member traffic.',
+    fix: 'Pick an edge provider account, or turn on Let DNS accounts front traffic in Settings.',
+  },
   template_not_found: {
     label: 'Template not found',
     explain: 'The named template does not exist.',
@@ -541,18 +609,101 @@ const COPY = {
   // --- preflight: plan phase ------------------------------------------------------------
   dns_account_disabled: {
     label: 'DNS account disabled',
-    explain: 'The DNS account the CDN provider relies on is switched off.',
-    fix: 'Enable the DNS account.',
+    explain: 'The DNS account this front writes its records through is switched off.',
+    fix: 'Switch the DNS account on from its provider page.',
   },
   dns_zone_missing: {
     label: 'DNS zone missing',
-    explain: 'The account settings name no DNS zone for the hostnames.',
-    fix: 'Set the zone in the account settings.',
+    explain: 'This location names no DNS zone.',
+    fix: 'Add a location in one of the zones the account reaches.',
   },
   origin_transport_missing: {
     label: 'Origin transport missing',
     explain: 'The listener does not declare how a CDN front should dial the origin.',
     fix: 'Edit the listener and turn on "A CDN front can reach this transport", or protect the node from Edges.',
+  },
+  origin_cert_not_public: {
+    label: 'Origin certificate not public',
+    explain:
+      'A front that dials the origin over TLS needs the origin to present a publicly trusted certificate.',
+    fix: 'Give the origin a publicly trusted certificate, or let the front dial it over plain HTTP.',
+  },
+  origin_cert_name_uncovered: {
+    label: 'Origin name not on its certificate',
+    explain:
+      'Over TLS the front checks the origin by the address it dials, so that address must be a name the origin’s certificate covers. An IP address never is.',
+    fix: 'Address the origin by a name on its certificate, or add the name to the certificate.',
+  },
+  origin_port_unsupported: {
+    label: 'Origin port not supported',
+    explain:
+      'This front reaches the origin only on the scheme’s own port: 443 over TLS, 80 over plain HTTP.',
+    fix: 'Move the origin listener to that port.',
+  },
+  retest_required: {
+    label: 'Test again',
+    explain:
+      'A certificate setting of this account changed, and the last test checked the old one (the CAA records for one name say nothing about the shared wildcard).',
+    fix: 'Test the account again.',
+  },
+  // --- an L7 front's certificate (L7_CERTIFICATE_CODES) ---------------------------------
+  caa_forbids_ca: {
+    label: 'CAA forbids the CA',
+    explain:
+      'The zone’s CAA records do not let the account’s certificate authority issue. Certainly is named certainly.com, Let’s Encrypt letsencrypt.org and GlobalSign globalsign.com, under issue for one name and issuewild for the shared wildcard certificate.',
+    fix: 'Add a CAA record that allows the certificate authority, or pick one the records allow, then test the account again.',
+  },
+  tls_caa_conflict: {
+    label: 'Certificate blocked by CAA',
+    explain:
+      'The provider reports that the zone’s CAA records stop its certificate authority from issuing, so the certificate waits.',
+    fix: 'Allow the account’s certificate authority in the zone’s CAA records (certainly.com, letsencrypt.org or globalsign.com). Issuance carries on by itself.',
+  },
+  tls_challenge_conflict: {
+    label: 'Validation record conflict',
+    explain:
+      'Other records sit at the name the certificate is validated with, so the provider cannot validate it.',
+    fix: 'Remove the other records at that name in the DNS zone. Issuance carries on by itself.',
+  },
+  tls_challenge_missing: {
+    label: 'Validation record missing',
+    explain:
+      'The DNS record the certificate is validated with is missing, or does not hold what the provider expects.',
+    fix: 'Check the validation record in the DNS zone, or replace the front so FCP writes it again.',
+  },
+  tls_authorization_failed: {
+    label: 'Name validation failed',
+    explain: 'The provider could not validate the name the certificate is for.',
+    fix: 'Check the zone’s CAA records and the validation record, then replace the front.',
+  },
+  tls_authorization_warning: {
+    label: 'Certificate warning',
+    explain:
+      'The provider reports a problem with the certificate’s validation that FCP has no words for.',
+    fix: 'Open the certificate at the provider to read the warning.',
+  },
+  tls_failed: {
+    label: 'Certificate failed',
+    explain: 'The provider gave up issuing the certificate.',
+    fix: 'Fix what it waited on, then retry the certificate at the provider or replace the front.',
+  },
+  certificate_expiring: {
+    label: 'Certificate renewal late',
+    explain:
+      'The wildcard certificate the account’s fronts share expires within a week, or already has, and the provider has not renewed it.',
+    fix: 'Check what the account page says it waits on, such as the CAA records or the validation record. The provider renews it once that is fixed.',
+  },
+  shared_certificate_ambiguous: {
+    label: 'Wildcard not reusable',
+    explain:
+      'The zone’s wildcard is already covered by a certificate this account would not order (another certificate authority or TLS configuration, or several), so a new front cannot share it.',
+    fix: 'Remove that certificate at the provider, match the account’s settings to it, or switch the account to one certificate per front.',
+  },
+  shared_certificate_failed: {
+    label: 'Shared certificate failed',
+    explain:
+      'The wildcard certificate the account’s fronts share failed to issue, so a new front cannot get one.',
+    fix: 'Fix what the account page says it waited on and retry it at the provider, or switch the account to one certificate per front.',
   },
   // --- preflight warnings ---------------------------------------------------------------
   edge_disabled: {
@@ -636,6 +787,17 @@ const COPY = {
     explain:
       'A spare address that was never in use is blocked from at least one censored country while it works from elsewhere. Members there could not use it.',
     fix: 'Replace the spare, or mark the country if you know better.',
+  },
+  certificate_waiting: {
+    label: 'Certificate waiting',
+    explain:
+      'A front’s certificate cannot be issued until something outside FCP changes, such as a CAA record or the validation record in the DNS zone.',
+    fix: 'Open it to see what the certificate waits on.',
+  },
+  setup_run_failed: {
+    label: 'Setup stopped',
+    explain: 'The guided setup for this node stopped before it finished. Its run says why.',
+    fix: 'Open the run and try again, or remove protection to start over.',
   },
   pool_below_desired: {
     label: 'Pool below desired',
@@ -800,10 +962,16 @@ const COPY = {
     label: 'No load signal',
     explain: 'This origin kind reports no user load, so the detector uses reports and probes only.',
   },
+  version_invalid: {
+    label: 'Configuration refused',
+    explain:
+      'The provider refused the configuration FCP generated for this front, so it was never activated. Trying again would be refused the same way.',
+    fix: 'Open the front’s service at the provider: its draft version shows why. Then delete the front.',
+  },
   // --- published pool (reserved allocation, capacity, rebalance) -------------------------
   pool_full: {
     label: 'Pool full',
-    explain: 'Every published slot of this origin is taken.',
+    explain: 'Every pool slot of this origin is taken.',
     fix: 'Raise the published edges wanted on the origin, or unpublish an edge first.',
   },
   pool_reserved: {
@@ -820,7 +988,7 @@ const COPY = {
   listener_cap: {
     label: 'Listener cap reached',
     explain:
-      'An origin can carry at most eight deployed, enabled listeners, one published slot each; this one would be the ninth.',
+      'An origin can carry at most eight deployed, enabled listeners, each with its own slot in the pool; this one would be the ninth.',
     fix: 'Retire or disable a listener you do not need, or register the listener on another origin.',
   },
   pool_below_coverage: {
@@ -839,6 +1007,12 @@ const COPY = {
     label: 'Owned by a setup run',
     explain: 'A guided setup owns this origin, so automatic replacement leaves it alone.',
     fix: 'Finish or cancel the setup run.',
+  },
+  not_live: {
+    label: 'Not live yet',
+    explain:
+      'No setup run is working on this origin, but it never went live, so automatic replacement leaves it alone.',
+    fix: 'Go live from the node page, or protect it again.',
   },
   // A guided run's event: it parked at publish until the enrolled node is approved.
   publish_held: {
@@ -1259,9 +1433,22 @@ const REFUSAL_COPY = {
     explain: 'An address still lives in this location, or a protected node uses it.',
     fix: 'Remove or replace those addresses first.',
   },
-  location_not_geographic: {
-    label: 'No regions for this provider',
-    explain: 'This provider is not tied to a region: its account has one location already.',
+  shared_certificate_in_use: {
+    label: 'Certificate still in use',
+    explain: 'Live fronts in this zone still use its shared certificate.',
+    fix: 'Replace or remove those fronts first.',
+  },
+  shared_certificate_present: {
+    label: 'Shared certificate still there',
+    explain:
+      'The account still has a shared certificate at the provider, which nothing could remove once the account is gone.',
+    fix: 'Remove it with its zone under Locations on the account page first, or delete it at the provider and test the account again.',
+  },
+  shared_certificate_not_ours: {
+    label: 'Certificate not ordered by FCP',
+    explain:
+      'FCP found this wildcard certificate already at the provider and reused it. It removes only certificates its own fronts ordered.',
+    fix: 'Remove it at the provider if nothing else uses it, then test the account again.',
   },
   template_value_required: {
     label: 'Choose a value for this region',
@@ -1272,6 +1459,24 @@ const REFUSAL_COPY = {
     label: 'Region is set per location',
     explain: 'Where edges are created is part of a location, not of the account.',
     fix: 'Add a location on the provider page instead.',
+  },
+  // a CDN location (a DNS zone) and what an import must match there
+  location_unusable: {
+    label: 'Zone cannot be used',
+    explain: 'The provider reached that zone, but it cannot be used now.',
+    fix: 'Fix the zone at the provider, then add the location again.',
+    reasonFromServer: true,
+  },
+  dns_account_unusable: {
+    label: 'DNS account cannot be used',
+    explain: 'That DNS account cannot hold the records of this location.',
+    fix: 'Pick a DNS account that can host DNS records and is switched on.',
+    reasonFromServer: true,
+  },
+  hostname_not_in_zone: {
+    label: 'Hostname outside the zone',
+    explain: 'The hostname is not in the zone of the picked location.',
+    fix: 'Pick the location whose zone holds the hostname.',
   },
 } as const satisfies Record<string, CodeCopy>;
 
@@ -1312,13 +1517,19 @@ export function humanizeCode(code: string): string {
   return words.join(' ');
 }
 
+/** A provider's own numeric error code (`1000`, `9109`) or an HTTP status, never shown bare. */
+const PROVIDER_NUMBER = /^\d{3,6}$/;
+
 export function codeLabel(code: string | null | undefined): string {
   if (!code) return '';
+  if (!EDGE_CODE_COPY[code] && PROVIDER_NUMBER.test(code)) return `Provider error ${code}`;
   return EDGE_CODE_COPY[code]?.label ?? humanizeCode(code);
 }
 
 export function codeExplain(code: string | null | undefined): string {
   if (!code) return '';
+  if (!EDGE_CODE_COPY[code] && PROVIDER_NUMBER.test(code))
+    return `The provider refused the call with its own error code ${code}.`;
   return EDGE_CODE_COPY[code]?.explain ?? `The server reported ${humanizeCode(code)}.`;
 }
 
@@ -1521,6 +1732,7 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_node: 'Review go-live',
   open_modes: 'Open Connection modes',
   open_probes: 'See the checks',
+  open_run: 'Open the run',
 };
 
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
@@ -1545,6 +1757,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_node: 'Open node',
   open_modes: 'Connection modes',
   open_probes: 'Open probes',
+  open_run: 'Open run',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {
@@ -1678,6 +1891,18 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Cannot carry every transport',
     explain: 'The account fronts at a layer one of the transports cannot use.',
   },
+  origin_unreachable: {
+    label: "Couldn't reach the origin. Try again",
+    explain:
+      'The node did not answer the check of its WebSocket or HTTP transport, so no CDN account can carry it yet. This is usually a passing network fault.',
+    fix: 'Check again in a moment.',
+  },
+  origin_not_public: {
+    label: 'Origin address is not public',
+    explain:
+      'The node’s address or name leads to no public address, so no CDN can reach its WebSocket or HTTP transport. Checking again gives the same answer.',
+    fix: 'Give the node a public address or point its name at one, then plan again.',
+  },
   origin_port_not_carried: {
     label: 'Wrong port for gRPC',
     explain: 'A CDN passes gRPC only to a node listening on port 443.',
@@ -1699,8 +1924,8 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   },
   dns_zone_missing: {
     label: 'No DNS zone',
-    explain: 'The CDN account names no DNS account for its hostnames.',
-    fix: 'Set the DNS account on the provider.',
+    explain: 'This location names no DNS zone.',
+    fix: 'Add a location in one of the zones the account reaches.',
   },
   no_location: {
     label: 'No location yet',
@@ -1716,6 +1941,41 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Location full',
     explain: 'This location has fewer free addresses than this node needs.',
     fix: 'Raise its limit or free an address there.',
+  },
+  caa_forbids_ca: {
+    label: 'CAA forbids its CA',
+    explain: 'The zone’s CAA records do not let this account’s certificate authority issue.',
+    fix: 'Allow it in the CAA records and check the zone again, or choose another authority for this node.',
+  },
+  shared_certificate_failed: {
+    label: 'Shared certificate failed',
+    explain: 'The wildcard certificate this account’s fronts share in this zone failed to issue.',
+    fix: 'Open the account to see why, then retry the certificate.',
+  },
+  shared_certificate_ambiguous: {
+    label: 'Wildcard not reusable',
+    explain: 'The zone’s wildcard is covered by a certificate this account would not order.',
+    fix: 'Open the account to see it, or switch it to one certificate per front.',
+  },
+  location_check_failed: {
+    label: 'Zone check refused',
+    explain: "This zone's last check refused it.",
+    fix: 'Check it again from the provider page.',
+  },
+  dns_account_missing: {
+    label: 'DNS account gone',
+    explain: 'The DNS account this front writes its records through no longer exists.',
+    fix: 'Add a location that names another DNS account.',
+  },
+  dns_account_disabled: {
+    label: 'DNS account switched off',
+    explain: 'The DNS account this front writes its records through is switched off.',
+    fix: 'Switch it on from its provider page.',
+  },
+  zone_mode_unknown: {
+    label: 'Zone mode not read',
+    explain: "The zone's encryption mode was never read.",
+    fix: 'Check the zone again from the provider page.',
   },
 };
 
@@ -1867,8 +2127,44 @@ export const PLAIN_WORDS: Record<string, string> = {
   'provision or publish an edge': 'create an address or put one in use',
   'provision a new edge': 'create a new address',
   'raise the published edges wanted': 'raise the number of addresses in use',
+  'published edges wanted': 'addresses wanted in use',
+  'the transport of this listener': 'this transport',
   'edge work': 'new work',
 };
+
+// A verb swapped for "<verb> address" keeps its own object ("Rotate the
+// credentials" is "Replace the credentials", never "Replace address the ...").
+const VERB_OBJECT = /\b(replace|create) address (the|this|that|an?|its|one)\b/gi;
+
+// "In use" and "paused for safety" follow their noun in English ("an address in
+// use", never "a in use address"): a plain phrase spliced in front of one of
+// these nouns is moved behind it.
+const AFTER_NOUN =
+  /\b(in use|paused for safety) (CDN fronts?|fronts?|address(?:es)?|protected nodes?|spares?|transports?)\b/gi;
+// The article before a plain word whose first sound differs from the word it
+// replaced ("a published edge", "an origin").
+const AN_WORDS = new Set(['address', 'addresses', 'update']);
+const A_WORDS = new Set([
+  'protected',
+  'spare',
+  'spares',
+  'retiring',
+  'replace',
+  'replaced',
+  'create',
+  'created',
+  'creating',
+  'trusted',
+  'trust',
+  'paused',
+  'transport',
+  'transports',
+  'resume',
+  'check',
+  'put',
+  'raise',
+  'new',
+]);
 
 /** Rewrite a technical sentence in plain words (whole-word, longest match first). */
 export function plainWords(text: string): string {
@@ -1881,7 +2177,18 @@ export function plainWords(text: string): string {
       return m[0] === m[0]!.toUpperCase() ? plain[0]!.toUpperCase() + plain.slice(1) : plain;
     });
   }
-  return out;
+  out = out.replace(VERB_OBJECT, '$1 $2');
+  out = out.replace(AFTER_NOUN, (m, phrase: string, noun: string) => {
+    const head = m[0] === m[0]!.toUpperCase() ? noun[0]!.toUpperCase() + noun.slice(1) : noun;
+    return `${head} ${phrase.toLowerCase()}`;
+  });
+  return out.replace(/\b(a|an)(\s+)([a-z]+)/gi, (m, article: string, gap: string, word: string) => {
+    const w = word.toLowerCase();
+    const want = AN_WORDS.has(w) ? 'an' : A_WORDS.has(w) ? 'a' : null;
+    if (!want || want === article.toLowerCase()) return m;
+    const cased = article[0] === 'A' ? want[0]!.toUpperCase() + want.slice(1) : want;
+    return `${cased}${gap}${word}`;
+  });
 }
 
 /** The node page's timeline: the audit action in plain words. */

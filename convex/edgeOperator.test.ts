@@ -13,6 +13,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import { upsertSettingRow } from './appSettings';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { isCancellable } from './edgeRotations';
@@ -393,6 +394,19 @@ describe('test-provision and preflight', () => {
 });
 
 describe('attention, timeline, usage, lookups, maintenance', () => {
+  test('a DNS-only account (its provider may not front) asks for no trust; it does once fronting is allowed', async () => {
+    const { t, get } = await seed();
+    const dnsId = await createAccount(t, { provider: 'cloudflare', name: 'dns-only' });
+    await markTested(t, dnsId);
+    const trustItems = async () =>
+      (await get('attention', AttentionResponse)).items.filter(
+        (i) => i.kind === 'account_unqualified' && i.accountId === (dnsId as string),
+      );
+    expect(await trustItems()).toEqual([]);
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.l7.dnsProvidersFront', 'true'));
+    expect(await trustItems()).toHaveLength(1);
+  });
+
   test('attention ranks quarantine above the pool shortfall and the untested account; freeze adds an info item with a thaw action', async () => {
     const { t, call, get, relayId, listenerId, accountId } = await seed();
     await adoptL4Edge(t, relayId, listenerId, { publish: true });

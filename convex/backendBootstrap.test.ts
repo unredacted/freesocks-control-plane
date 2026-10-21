@@ -16,8 +16,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { insertPanelServer } from './lib/edges/testing/fixtures';
-import { addressRemark, addressesOf, ownsAddress } from './nodeIntents';
+import { FIXTURE_PANEL_SLUG, createAccount, insertPanelServer } from './lib/edges/testing/fixtures';
+import { addressRemark, addressesOf, enrolledOriginOf, ownsAddress } from './nodeIntents';
 import { gateOfNode } from './lib/edges/testing/reads';
 import {
   SUBSCRIPTION_TEMPLATES,
@@ -25,7 +25,9 @@ import {
   templateHash,
 } from './lib/backend/subscriptionTemplates';
 import { TEMPLATE_RECHECK_MS } from './backendSetup';
-import { NodeIntentView } from '../src/shared/contracts/servers';
+import { BackendSetupView, NodeIntentView, NodeRoleView } from '../src/shared/contracts/servers';
+import { __setFrontIngressCheckForTests, __setOriginResolutionForTests } from './nodeIntentOps';
+import { verifyResolution } from './lib/backend/originDns';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -39,6 +41,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  __setOriginResolutionForTests(null);
+  __setFrontIngressCheckForTests(null);
 });
 
 const UUID = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
@@ -65,6 +69,14 @@ interface Panel {
   /** Called on every template read, and before a template write is applied. */
   onTemplateRead?: () => Promise<void>;
   onTemplateWrite?: () => Promise<void>;
+  /** Every node reads as not connected (a machine that is down). */
+  offline?: boolean;
+  /** The origin-names zone (the DNS provider's API, `/client/v4/zones/<id>/dns_records`). */
+  zone: { id: string; type: string; name: string; content: string; comment?: string }[];
+  /** Public resolvers answer what the zone holds (true), or nothing yet (false). */
+  resolving: boolean;
+  /** Every name an origin resolution check asked for. */
+  lookups: string[];
   writes: { call: string; body: any }[];
   seq: number;
 }
@@ -76,23 +88,61 @@ function installPanel(): Panel {
     hosts: [],
     nodes: [],
     templates: [],
+    zone: [],
+    resolving: true,
+    lookups: [],
     writes: [],
     seq: 10,
   };
+  // The suite resolves no real name either.
+  __setOriginResolutionForTests(async ({ hostname, expected }) => {
+    panel.lookups.push(hostname);
+    const at = panel.resolving ? panel.zone.filter((r) => r.name === hostname) : [];
+    const of = (type: string) => at.filter((r) => r.type === type).map((r) => r.content);
+    const answers = { v4: of('A'), v6: of('AAAA') };
+    return { resolves: verifyResolution(answers, expected), answers };
+  });
   const json = (o: unknown, status = 200) =>
     new Response(JSON.stringify({ response: o }), {
       status,
       headers: { 'content-type': 'application/json' },
     });
+  const envelope = (result: unknown, extra: Record<string, unknown> = {}) =>
+    new Response(JSON.stringify({ result, success: true, errors: [], messages: [], ...extra }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: string | URL, init: RequestInit = {}) => {
-      const path = new URL(typeof input === 'string' ? input : input.toString()).pathname;
+      const url = new URL(typeof input === 'string' ? input : input.toString());
+      const path = url.pathname;
       const method = (init.method ?? 'GET').toUpperCase();
       const body = init.body ? JSON.parse(init.body as string) : {};
+      const records = /^\/client\/v4\/zones\/[^/]+\/dns_records(?:\/([^/]+))?$/.exec(path);
+      if (records) {
+        const id = records[1];
+        if (method === 'GET' && !id) {
+          const hits = panel.zone.filter((r) => r.name === url.searchParams.get('name.exact'));
+          return envelope(hits, {
+            result_info: { page: 1, per_page: 5, count: hits.length, total_count: hits.length },
+          });
+        }
+        if (method === 'GET') return envelope(panel.zone.find((r) => r.id === id) ?? null);
+        panel.writes.push({ call: `${method} ${path}`, body });
+        if (method === 'POST') {
+          const made = { id: `rec${++panel.seq}`, ...body };
+          panel.zone.push(made);
+          return envelope(made);
+        }
+        if (method === 'DELETE') {
+          panel.zone = panel.zone.filter((r) => r.id !== id);
+          return envelope({ id });
+        }
+      }
       if (method === 'GET') {
         if (path === '/api/nodes')
-          return json(panel.nodes.map((n) => ({ ...n, isConnected: true })));
+          return json(panel.nodes.map((n) => ({ ...n, isConnected: !panel.offline })));
         if (path === '/api/hosts') return json(panel.hosts);
         if (path === '/api/internal-squads') return json({ internalSquads: panel.squads });
         if (path === '/api/config-profiles') return json({ configProfiles: panel.profiles });
@@ -173,7 +223,25 @@ function installPanel(): Panel {
   return panel;
 }
 
-const setupInput = {
+type ModeArg = {
+  slug: string;
+  name: string;
+  shape: {
+    transport: 'reality' | 'xhttp-reality' | 'ws';
+    fronting: 'direct' | 'edge-l4' | 'edge-l7';
+  };
+  familySlug?: string;
+  acceptProxyProtocol: boolean;
+  ws?: { path: string; port: number };
+};
+type SetupInputArg = {
+  profileName: string;
+  modes: ModeArg[];
+  originDns: { accountId: string; zoneId?: string } | null;
+  adopt: boolean;
+};
+
+const setupInput: SetupInputArg = {
   profileName: 'FreeSocks-Config',
   modes: [
     {
@@ -254,7 +322,7 @@ async function settled<R extends { claim?: unknown }>(get: () => Promise<R | nul
   throw new Error('workflow did not settle');
 }
 
-async function runSetup(t: T, serverId: Id<'backendServers'>, input = setupInput) {
+async function runSetup(t: T, serverId: Id<'backendServers'>, input: SetupInputArg = setupInput) {
   const started = await t.mutation(internal.backendSetup.start, {
     backendServerId: serverId,
     input,
@@ -460,6 +528,730 @@ describe('setting up a fresh backend', () => {
     expect(again.state).toBe('failed');
     expect(again.code).toBe('servers.family_bound_elsewhere:fam-other');
     expect(again.modes!.find((m) => m.slug === 'privacy-reality')!.family).toBe('bound_elsewhere');
+  });
+});
+
+describe("changing a backend's setup", () => {
+  const change = (t: T, serverId: Id<'backendServers'>, over: Partial<SetupInputArg> = {}) =>
+    t.mutation(internal.backendSetup.start, {
+      backendServerId: serverId,
+      input: { ...setupInput, ...over },
+    });
+  const setupOf = (t: T, serverId: Id<'backendServers'>) =>
+    t.run((ctx) =>
+      ctx.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .unique(),
+    );
+  async function enroll(t: T, serverId: Id<'backendServers'>, name: string, mode: string) {
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name,
+      mode,
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: mode === 'freedom-ws', ipv6: false },
+      },
+    });
+    return { intentId, intent: await runIntent(t, intentId) };
+  }
+  /** Poll (real timers) until `ok` holds for what `get` reads. */
+  async function until<R>(get: () => Promise<R>, ok: (r: R) => boolean): Promise<R> {
+    for (let i = 0; i < 500; i++) {
+      const r = await get();
+      if (ok(r)) return r;
+      await new Promise((res) => setTimeout(res, 5));
+    }
+    throw new Error('condition never held');
+  }
+  const changedAudit = async (t: T) =>
+    (await t.run((ctx) => ctx.db.query('auditLog').collect()))
+      .filter((a) => a.action === 'servers.setup.changed')
+      .map((a) => a.payload);
+
+  test('a backend FCP set up asks no adoption for its own nodes: origin names are added in place, nothing on the backend is touched', async () => {
+    const { t, serverId, panel } = await seed();
+    const first = await runSetup(t, serverId);
+    expect(first.readyAt).toBeDefined();
+    const { intentId, intent: before } = await enroll(t, serverId, 'node-a', 'privacy-reality');
+    // FCP's own node and its addresses are on the backend now.
+    expect(panel.nodes).toHaveLength(1);
+    expect(panel.hosts).toHaveLength(2);
+    const acct = await createAccount(t, { provider: 'cloudflare', name: 'dns' });
+    const writes = panel.writes.length;
+
+    const res = await change(t, serverId, { originDns: { accountId: acct } });
+    expect(res).toMatchObject({ state: 'ready', started: false, generation: 2 });
+    const row = (await setupOf(t, serverId))!;
+    expect(row).toMatchObject({
+      state: 'ready',
+      generation: 2,
+      adopted: false,
+      originDns: { accountId: acct, zoneName: 'example.org' },
+    });
+    expect(row.claim).toBeUndefined();
+    // Nothing was looked for again: every mode keeps what the setup found.
+    expect(row.modes).toEqual(first.modes);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(panel.writes.length).toBe(writes);
+    const after = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect({ g: after.generation, r: after.machineRevision, s: after.settings }).toEqual({
+      g: before.generation,
+      r: before.machineRevision,
+      s: before.settings,
+    });
+    expect(await changedAudit(t)).toEqual([
+      {
+        backendSlug: expect.any(String),
+        generation: 2,
+        change: 'origin',
+        originZone: 'example.org',
+        addedModes: '',
+      },
+    ]);
+    const view = BackendSetupView.parse(
+      await t.query(internal.backendSetup.view, { backendServerId: serverId }),
+    );
+    expect(view).toMatchObject({
+      established: true,
+      generation: 2,
+      originDns: { accountId: acct, zoneName: 'example.org' },
+    });
+    expect(view.modes.find((m) => m.slug === 'freedom-ws')).toMatchObject({
+      acceptProxyProtocol: false,
+      ws: { path: '/ws', port: 8443 },
+    });
+
+    // The same request again, or the modes in another order, changes nothing.
+    expect(await change(t, serverId, { originDns: { accountId: acct } })).toMatchObject({
+      generation: 2,
+      started: false,
+    });
+    expect(
+      await change(t, serverId, {
+        originDns: { accountId: acct },
+        modes: [...setupInput.modes].reverse(),
+      }),
+    ).toMatchObject({ generation: 2, started: false });
+    // Taking it away again is fine while no node has a name in the zone.
+    expect(await change(t, serverId, { originDns: null })).toMatchObject({
+      state: 'ready',
+      generation: 3,
+    });
+    expect((await setupOf(t, serverId))!.originDns).toBeNull();
+    expect(panel.writes.length).toBe(writes);
+  });
+
+  test('origin names go into the zone picked, one of the zones the DNS account reaches', async () => {
+    const { t, serverId } = await seed();
+    await runSetup(t, serverId);
+    const acct = await createAccount(t, { provider: 'cloudflare', name: 'dns' });
+    // A second zone the token reaches, as a listing found it.
+    await t.mutation(internal.edgeProviderCatalog.record, {
+      accountId: acct,
+      lists: [
+        {
+          kind: 'zones',
+          items: [
+            { id: 'a'.repeat(32), label: 'example.org', facts: { status: 'active' } },
+            { id: 'b'.repeat(32), label: 'example.net', facts: { status: 'active' } },
+            { id: 'c'.repeat(32), label: 'pending.example.org', facts: { status: 'pending' } },
+          ],
+        },
+      ],
+      errors: [],
+    });
+    // Two zones: the account alone does not say which.
+    await expect(change(t, serverId, { originDns: { accountId: acct } })).rejects.toThrow(
+      /origin_zone_required/,
+    );
+    await expect(
+      change(t, serverId, { originDns: { accountId: acct, zoneId: 'd'.repeat(32) } }),
+    ).rejects.toThrow(/origin_zone_unknown/);
+    await expect(
+      change(t, serverId, { originDns: { accountId: acct, zoneId: 'c'.repeat(32) } }),
+    ).rejects.toThrow(/origin_zone_inactive/);
+    expect(
+      await change(t, serverId, { originDns: { accountId: acct, zoneId: 'b'.repeat(32) } }),
+    ).toMatchObject({ state: 'ready', started: false });
+    expect((await setupOf(t, serverId))!.originDns).toEqual({
+      accountId: acct,
+      zoneId: 'b'.repeat(32),
+      zoneName: 'example.net',
+    });
+    // The account alone now keeps the zone the setup has with it.
+    expect(await change(t, serverId, { originDns: { accountId: acct } })).toMatchObject({
+      started: false,
+    });
+    expect((await setupOf(t, serverId))!.originDns?.zoneId).toBe('b'.repeat(32));
+    // The zone the setup has stays while its account is switched off (another
+    // change of the setup may still go through); a new pick needs it on.
+    await t.run((ctx) => ctx.db.patch(acct, { enabled: false }));
+    expect(await change(t, serverId, { originDns: { accountId: acct } })).toMatchObject({
+      started: false,
+    });
+    await expect(
+      change(t, serverId, { originDns: { accountId: acct, zoneId: 'a'.repeat(32) } }),
+    ).rejects.toThrow(/origin_account_unusable/);
+    await t.run((ctx) => ctx.db.patch(acct, { enabled: true }));
+    // A front account is no DNS account.
+    const front = await createAccount(t, {
+      provider: 'fastly',
+      name: 'front',
+      settings: { certificateAuthority: 'certainly' },
+    });
+    await expect(change(t, serverId, { originDns: { accountId: front } })).rejects.toThrow(
+      /origin_account_unusable/,
+    );
+  });
+
+  test('a setup that never got to ready proves nothing: what is on the backend still asks for adoption', async () => {
+    const { t, serverId, panel } = await seed();
+    await t.mutation(internal.sniFamilies.create, {
+      slug: 'fam-empty',
+      label: 'fam-empty',
+      targetAddress: 'decoy-c.example',
+      targetPort: 443,
+    });
+    const failed = await runSetup(t, serverId, {
+      ...setupInput,
+      modes: setupInput.modes.map((m) =>
+        m.slug === 'privacy-reality' ? { ...m, familySlug: 'fam-empty' } : m,
+      ),
+    });
+    expect(failed).toMatchObject({ state: 'failed', code: 'servers.family_empty' });
+    expect(failed.readyAt).toBeUndefined();
+    panel.nodes.push({
+      uuid: UUID(99),
+      name: 'stranger',
+      address: '192.0.2.99',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: { activeConfigProfileUuid: UUID(98), activeInbounds: [] },
+    });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    await expect(change(t, serverId)).rejects.toThrow(/adopt_required/);
+    expect(
+      BackendSetupView.parse(
+        await t.query(internal.backendSetup.view, { backendServerId: serverId }),
+      ).established,
+    ).toBe(false);
+    expect(panel.writes).toHaveLength(0);
+    const adopted = await runSetup(t, serverId, { ...setupInput, adopt: true });
+    expect(adopted).toMatchObject({ state: 'ready', adopted: true });
+  });
+
+  test('what nodes and members rely on stays as it is: refused before anything is written', async () => {
+    const { t, serverId, panel } = await seed();
+    await runSetup(t, serverId);
+    await enroll(t, serverId, 'node-a', 'privacy-reality');
+    const writes = panel.writes.length;
+    const [direct, l4, xhttp, ws] = setupInput.modes as [ModeArg, ModeArg, ModeArg, ModeArg];
+    await expect(change(t, serverId, { profileName: 'Other-Config' })).rejects.toThrow(
+      /setup_profile_kept/,
+    );
+    await expect(change(t, serverId, { modes: [direct, l4, ws] })).rejects.toThrow(
+      /setup_mode_kept:freedom-xhttp/,
+    );
+    const moves: [ModeArg, string][] = [
+      [{ ...ws, ws: { path: '/ws', port: 9443 } }, 'freedom-ws'],
+      [{ ...ws, ws: { path: '/feed', port: 8443 } }, 'freedom-ws'],
+      [{ ...direct, familySlug: 'fam-fronted' }, 'privacy-reality'],
+      [{ ...direct, name: 'Private' }, 'privacy-reality'],
+      [{ ...l4, acceptProxyProtocol: true }, 'freedom-reality'],
+      [{ ...l4, shape: { transport: 'reality', fronting: 'direct' } }, 'freedom-reality'],
+    ];
+    for (const [moved, slug] of moves) {
+      const modes = [direct, l4, xhttp, ws].map((m) => (m.slug === slug ? moved : m));
+      await expect(change(t, serverId, { modes })).rejects.toThrow(
+        new RegExp(`setup_mode_kept:${slug}`),
+      );
+    }
+
+    expect(panel.writes.length).toBe(writes);
+
+    // The zone, while a WebSocket node has a name in it.
+    const zoneA = await createAccount(t, { provider: 'cloudflare', name: 'dns-a' });
+    await change(t, serverId, { originDns: { accountId: zoneA } });
+    await enroll(t, serverId, 'node-w', 'freedom-ws');
+    const enrolled = panel.writes.length;
+    const zoneB = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'dns-b',
+      settings: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+    });
+    await expect(change(t, serverId, { originDns: { accountId: zoneB } })).rejects.toThrow(
+      /origin_zone_in_use/,
+    );
+    await expect(change(t, serverId, { originDns: null })).rejects.toThrow(/origin_zone_in_use/);
+    // Another account holding the same zone is fine: every name stays what it is.
+    const zoneA2 = await createAccount(t, { provider: 'cloudflare', name: 'dns-a2' });
+    expect(await change(t, serverId, { originDns: { accountId: zoneA2 } })).toMatchObject({
+      state: 'ready',
+      started: false,
+    });
+    expect((await setupOf(t, serverId))!.originDns).toMatchObject({
+      accountId: zoneA2,
+      zoneName: 'example.org',
+    });
+    // Nothing on the backend or in the zone moved for any of it.
+    expect(panel.writes.length).toBe(enrolled);
+  });
+
+  test('a new mode needs its transport in the profile first', async () => {
+    const { t, serverId, panel } = await seed();
+    const [direct, l4, xhttp, ws] = setupInput.modes;
+    await runSetup(t, serverId, { ...setupInput, modes: [direct!, l4!, ws!] });
+    const writes = panel.writes.length;
+    await expect(change(t, serverId, { modes: [direct!, l4!, ws!, xhttp!] })).rejects.toThrow(
+      /setup_transport_missing:FREEDOM_XHTTP:missing/,
+    );
+    expect((await setupOf(t, serverId))!).toMatchObject({ state: 'ready', generation: 1 });
+    expect(panel.writes.length).toBe(writes);
+  });
+
+  test('a mode a stopped run never set up can be taken out again, with no adoption asked', async () => {
+    const { t, serverId, panel } = await seed();
+    const [direct, l4, xhttp, ws] = setupInput.modes as [ModeArg, ModeArg, ModeArg, ModeArg];
+    const first = await runSetup(t, serverId, { ...setupInput, modes: [direct, l4, ws] });
+    await enroll(t, serverId, 'node-a', 'privacy-reality');
+    // The last look said the profile had the transport; the backend says otherwise.
+    await t.run(async (ctx) => {
+      const p = (await ctx.db
+        .query('panelProfiles')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .first())!;
+      const like = p.inbounds.find((i) => i.tag === 'FREEDOM_REALITY')!;
+      await ctx.db.patch(p._id, {
+        inbounds: [
+          ...p.inbounds,
+          { ...like, tag: 'FREEDOM_XHTTP', inboundUuid: UUID(77), network: 'xhttp', path: '/' },
+        ],
+      });
+    });
+    const stopped = await runSetup(t, serverId, {
+      ...setupInput,
+      modes: [direct, l4, ws, xhttp],
+    });
+    expect(stopped).toMatchObject({ state: 'failed' });
+    expect(stopped.code).toMatch(/^servers\.profile_incompatible:FREEDOM_XHTTP:missing/);
+    // Still FCP's backend: its own node asks for no adoption, and the mode
+    // that never got set up goes again; the rest stays as it was.
+    expect(
+      BackendSetupView.parse(
+        await t.query(internal.backendSetup.view, { backendServerId: serverId }),
+      ).established,
+    ).toBe(true);
+    const writes = panel.writes.length;
+    const back = await runSetup(t, serverId, { ...setupInput, modes: [direct, l4, ws] });
+    expect(back).toMatchObject({ state: 'ready', adopted: false });
+    expect(back.modes).toEqual(first.modes);
+    expect(panel.writes.length).toBe(writes);
+  });
+
+  test('a node reconciled while the setup runs waits pending and goes on once the setup is ready', async () => {
+    const { t, serverId } = await seed();
+    const first = await runSetup(t, serverId);
+    const { intentId } = await enroll(t, serverId, 'node-a', 'privacy-reality');
+    await t.action(internal.nodeIntents.bootstrap, { intentId });
+    // A run of the setup is under way (a change, or one an attempt left pending).
+    await t.run((ctx) => ctx.db.patch(first._id, { state: 'pending' }));
+    // The role reports meanwhile: its reconcile can read nothing, and lets go.
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+    });
+    const waiting = await runIntent(t, intentId);
+    expect(waiting).toMatchObject({ state: 'pending', code: 'servers.setup_running' });
+    expect(waiting.claim).toBeUndefined();
+    expect(waiting.activation.stage).toBe('machine_applied');
+    // The setup runs to ready, and the node is reconciled at once, not by the sweep.
+    const ready = await runSetup(t, serverId);
+    expect(ready.state).toBe('ready');
+    const done = await until(
+      () => t.run((ctx) => ctx.db.get(intentId)),
+      (i) => !i!.claim && i!.state !== 'pending',
+    );
+    expect(done).toMatchObject({ state: 'ready' });
+    expect(done!.activation.stage).toBe('machine_ready');
+  });
+
+  test('a WebSocket node enrolled before there was a zone takes its managed name when the zone comes', async () => {
+    const { t, serverId } = await seed();
+    await runSetup(t, serverId);
+    const waiting = await enroll(t, serverId, 'node-w', 'freedom-ws');
+    expect(waiting.intent).toMatchObject({
+      state: 'blocked',
+      code: 'servers.origin_hostname_missing',
+      machineRevision: 1,
+      settings: { originHostnameSource: 'explicit' },
+    });
+    // One with a hostname of its own keeps it.
+    const own = await enroll(t, serverId, 'node-own', 'freedom-ws');
+    await t.mutation(internal.nodeIntents.patchSettings, {
+      intentId: own.intentId,
+      patch: { explicitHostname: 'own.example.net' },
+    });
+    const ownBefore = await runIntent(t, own.intentId);
+
+    const acct = await createAccount(t, { provider: 'cloudflare', name: 'dns' });
+    await change(t, serverId, { originDns: { accountId: acct } });
+    const named = await until(
+      () => t.run((ctx) => ctx.db.get(waiting.intentId)),
+      (i) => i!.settings.originHostnameSource === 'managed' && !i!.claim,
+    );
+    expect(named!.machineRevision).toBe(2);
+    expect(named!.code).not.toBe('servers.origin_hostname_missing');
+    const origin = await t.run((ctx) => enrolledOriginOf(ctx, serverId, 'node-w'));
+    expect(origin!.originAddress).toBe('node-w.example.org');
+    const ownAfter = (await t.run((ctx) => ctx.db.get(own.intentId)))!;
+    expect(ownAfter.settings).toEqual(ownBefore.settings);
+    expect(ownAfter.machineRevision).toBe(ownBefore.machineRevision);
+    const audit = (await t.run((ctx) => ctx.db.query('auditLog').collect())).filter(
+      (a) =>
+        a.action === 'servers.node.settings' &&
+        (a.payload as { change?: string }).change === 'origin_name',
+    );
+    expect(audit.map((a) => (a.payload as { name: string }).name)).toEqual(['node-w']);
+
+    // While a change of the setup runs, edges keep dialing the same name.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .unique();
+      await ctx.db.patch(row!._id, { state: 'pending' });
+    });
+    expect((await t.run((ctx) => enrolledOriginOf(ctx, serverId, 'node-w')))!.originAddress).toBe(
+      'node-w.example.org',
+    );
+  });
+});
+
+/**
+ * A WebSocket node's managed origin name, in the order the role runs: enroll
+ * (`PUT`), wait for `ready`, bootstrap, wait for `origin.dns` to say
+ * `resolves`, set the machine up (Caddy's certificate needs the name), report
+ * applied. FCP has to prove the name resolves BEFORE the applied report: the
+ * role never gets to it otherwise.
+ */
+describe("a front node's origin name", () => {
+  const NAME = 'node-w';
+  const HOST = 'node-w.example.org';
+  const V4 = '203.0.113.10';
+
+  async function frontNode() {
+    const s = await seed();
+    const acct = await createAccount(s.t, { provider: 'cloudflare', name: 'dns' });
+    await runSetup(s.t, s.serverId, { ...setupInput, originDns: { accountId: acct } });
+    return s;
+  }
+  /** The role's `PUT`: enroll, or report this run's observations. */
+  async function put(t: T, serverId: Id<'backendServers'>) {
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: NAME,
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: V4 },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    return intentId;
+  }
+  const view = async (t: T, serverId: Id<'backendServers'>) =>
+    NodeRoleView.parse(
+      await t.query(internal.nodeIntents.roleViewByName, { backendServerId: serverId, name: NAME }),
+    );
+  /** The role's two waits before it sets the machine up (register_node.yml). */
+  const roleWaitsPass = (v: NodeRoleView) =>
+    ['ready', 'blocked'].includes(v.registration.state) &&
+    ['resolves', 'none'].includes(v.origin.dns);
+  const quickRetries = (t: T) =>
+    t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (j) => /nodeIntents(\.js)?:resume$/.test(j.name) && j.state.kind === 'pending',
+      ),
+    );
+  const windowChecks = (t: T) =>
+    t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+        (j) => /nodeIntents(\.js)?:afterRoleRunWindow$/.test(j.name) && j.state.kind === 'pending',
+      ),
+    );
+  const ingressOk = {
+    resolves: true,
+    answers: { v4: [V4], v6: [] },
+    tlsValid: true,
+    certNames: [HOST],
+    pathProxied: true,
+    foreignHostAnswered: true,
+  };
+
+  test('the name resolves before the applied report: the role is never left waiting on it', async () => {
+    const { t, serverId, panel } = await frontNode();
+    const ingress: string[] = [];
+    __setFrontIngressCheckForTests(async (a) => {
+      ingress.push(a.hostname);
+      return ingressOk;
+    });
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.action(internal.nodeIntents.bootstrap, { intentId });
+
+    // The record is FCP's, and public resolvers answer the node's address.
+    expect(panel.zone).toMatchObject([
+      { type: 'A', name: HOST, content: V4, comment: `fcp-origin:${FIXTURE_PANEL_SLUG}:${NAME}` },
+    ]);
+    const v = await view(t, serverId);
+    expect(v).toMatchObject({
+      registration: { state: 'ready', code: null },
+      stage: 'bootstrap_available',
+      appliedRevision: null,
+      origin: { hostname: HOST, dns: 'resolves' },
+    });
+    // What the deadlock was: `created` here, and `resolves` only after an
+    // applied report the role sends once it has seen `resolves`.
+    expect(roleWaitsPass(v)).toBe(true);
+    expect(panel.lookups).toEqual([HOST]);
+    // Nothing was dialled: TLS, the path and the foreign Host wait for the machine.
+    expect(ingress).toEqual([]);
+  });
+
+  test('a name that does not resolve yet parks the node and is looked at again shortly', async () => {
+    const { t, serverId, panel } = await frontNode();
+    panel.resolving = false;
+    const intentId = await put(t, serverId);
+    const parked = await runIntent(t, intentId);
+    expect(parked).toMatchObject({
+      state: 'pending',
+      code: 'servers.origin_not_resolving',
+      origin: { hostname: HOST, dns: 'created' },
+    });
+    expect(roleWaitsPass(await view(t, serverId))).toBe(false);
+    // The role is in contact: a retry in 30 seconds, not at the next sweep.
+    const retries = await quickRetries(t);
+    expect(retries).toHaveLength(1);
+    expect(retries[0]!.scheduledTime - parked.updatedAt).toBeGreaterThanOrEqual(29_000);
+    expect(retries[0]!.scheduledTime - parked.updatedAt).toBeLessThanOrEqual(31_000);
+
+    // The name propagates; the retry fires.
+    panel.resolving = true;
+    await t.mutation(internal.nodeIntents.resume, { intentId });
+    const ready = await runIntent(t, intentId);
+    expect(ready).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(ready.code).toBeUndefined();
+    expect(roleWaitsPass(await view(t, serverId))).toBe(true);
+    // One record, written once: the retry only looked.
+    expect(panel.zone).toHaveLength(1);
+    expect(panel.writes.filter((w) => w.call.startsWith('POST /client/v4/'))).toHaveLength(1);
+  });
+
+  test('the role runs again: a kept record keeps `resolves`; a moved one asks again', async () => {
+    const { t, serverId, panel } = await frontNode();
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    expect(panel.lookups).toEqual([HOST]);
+
+    // The next deploy runs the role again: the same observations, the same record.
+    await put(t, serverId);
+    const again = await runIntent(t, intentId);
+    expect(again).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(panel.lookups).toEqual([HOST]);
+    expect(panel.writes.filter((w) => w.call.includes('/client/v4/'))).toHaveLength(1);
+
+    // The record moved under it (FCP's own, other content): replaced, proved again.
+    panel.zone[0]!.content = '203.0.113.99';
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId });
+    const replaced = await runIntent(t, intentId);
+    expect(replaced).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(panel.zone).toMatchObject([{ content: V4 }]);
+    expect(panel.lookups).toEqual([HOST, HOST]);
+  });
+
+  test('the applied report still brings the full machine check; the proof is never taken back', async () => {
+    const { t, serverId } = await frontNode();
+    const ingress: { hostname: string; expected: unknown }[] = [];
+    let check = { ...ingressOk, tlsValid: false };
+    __setFrontIngressCheckForTests(async (a) => {
+      ingress.push({ hostname: a.hostname, expected: a.expected });
+      return check;
+    });
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.action(internal.nodeIntents.bootstrap, { intentId });
+    expect(ingress).toEqual([]);
+
+    // Caddy has no certificate yet.
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: false,
+    });
+    const waiting = await runIntent(t, intentId);
+    expect(waiting).toMatchObject({
+      state: 'pending',
+      code: 'servers.origin_certificate',
+      origin: { dns: 'resolves' },
+    });
+    expect(waiting.activation.stage).toBe('machine_applied');
+    expect(ingress).toEqual([{ hostname: HOST, expected: { v4: V4, v6: null } }]);
+
+    check = ingressOk;
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    const ready = await runIntent(t, intentId);
+    expect(ready).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(ready.activation.stage).toBe('machine_ready');
+    expect(ready.activation.evidence.map((e) => e.kind).sort()).toEqual([
+      'dns_resolves',
+      'ingress_verified',
+      'machine_applied',
+      'machine_ready',
+    ]);
+    expect(ingress).toHaveLength(2);
+  });
+
+  test('a role run repairing a machine that is down is not held behind the machine check', async () => {
+    const { t, serverId, panel } = await frontNode();
+    __setFrontIngressCheckForTests(async () => ingressOk);
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    expect(await runIntent(t, intentId)).toMatchObject({ state: 'ready' });
+
+    // The machine goes down; the sweep sees it.
+    panel.offline = true;
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId });
+    expect(await runIntent(t, intentId)).toMatchObject({
+      state: 'pending',
+      code: 'servers.node_offline',
+    });
+
+    // The operator runs the role to bring it back. Its `PUT` is answered
+    // `ready` (the row is in line), so it goes on to start the node: the
+    // machine is looked at when this run reports, not before.
+    await new Promise((r) => setTimeout(r, 2));
+    await put(t, serverId);
+    const during = await runIntent(t, intentId);
+    expect(during).toMatchObject({ state: 'ready', origin: { dns: 'resolves' } });
+    expect(during.code).toBeUndefined();
+    expect(roleWaitsPass(await view(t, serverId))).toBe(true);
+    // A ready node is not on the sweep: the end of the run's window comes back for it.
+    const windows = await windowChecks(t);
+    expect(windows).toHaveLength(1);
+    expect(windows[0]!.args[0]).toEqual({ intentId, observedAt: during.observed.at });
+    expect(windows[0]!.scheduledTime - during.observed.at).toBeGreaterThanOrEqual(19 * 60_000);
+
+    panel.offline = false;
+    await new Promise((r) => setTimeout(r, 2));
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    expect(await runIntent(t, intentId)).toMatchObject({ state: 'ready' });
+    // The run reported: the end of its window has nothing to do.
+    expect(
+      await t.mutation(internal.nodeIntents.afterRoleRunWindow, {
+        intentId,
+        observedAt: during.observed.at,
+      }),
+    ).toBe(false);
+
+    // A run that never reports is over once its window is: the machine is
+    // looked at again, and found down.
+    panel.offline = true;
+    await new Promise((r) => setTimeout(r, 2));
+    await put(t, serverId);
+    expect(await runIntent(t, intentId)).toMatchObject({ state: 'ready' });
+    const observedAt = Date.now() - 21 * 60_000;
+    await t.run(async (ctx) => {
+      const i = (await ctx.db.get(intentId))!;
+      await ctx.db.patch(intentId, {
+        observed: { ...i.observed, at: observedAt },
+        appliedAt: Date.now() - 30 * 60_000,
+      });
+    });
+    expect(
+      await t.mutation(internal.nodeIntents.afterRoleRunWindow, { intentId, observedAt }),
+    ).toBe(true);
+    expect(await runIntent(t, intentId)).toMatchObject({
+      state: 'pending',
+      code: 'servers.node_offline',
+    });
+  });
+
+  test("the role's report fences an attempt that looked at the machine before it", async () => {
+    const { t, serverId } = await frontNode();
+    __setFrontIngressCheckForTests(async () => ingressOk);
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    const before = await runIntent(t, intentId);
+    expect(before).toMatchObject({ state: 'ready' });
+
+    // A reconcile is probing the machine (the path is not proxied: Caddy is
+    // broken) when the role's run to repair it reports its observations.
+    let entered = false;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let probes = 0;
+    __setFrontIngressCheckForTests(async () => {
+      probes++;
+      entered = true;
+      await gate;
+      return { ...ingressOk, pathProxied: false };
+    });
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId });
+    for (let i = 0; i < 500 && !entered; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(entered).toBe(true);
+    await new Promise((r) => setTimeout(r, 2));
+    const { generation } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: NAME,
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: V4 },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    // Unchanged observations, yet the attempt holding the lease is fenced.
+    expect(generation).toBe(before.generation + 1);
+    release();
+
+    // Its failure is not recorded: the handover reconciles the run's node.
+    const after = await runIntent(t, intentId);
+    expect(after).toMatchObject({ state: 'ready', generation: before.generation + 1 });
+    expect(after.code).toBeUndefined();
+    expect(roleWaitsPass(await view(t, serverId))).toBe(true);
+    expect(probes).toBe(1);
   });
 });
 

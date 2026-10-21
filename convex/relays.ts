@@ -24,6 +24,7 @@ import {
   drainWarnings,
   originOverrideNames,
   originPolicy,
+  dnsProvidersFrontOf,
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
@@ -42,16 +43,12 @@ import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeAddressKindOf,
   edgeLayerOf,
+  edgeRoleOf,
   protocolCarriedBy,
   providerHealthSatisfies,
   zoneModeGovernsOrigin,
 } from './lib/edges/providers/capabilities';
-import {
-  buildProvisionIntent,
-  IntentError,
-  parseIntent,
-  parseObservedSettings,
-} from './lib/edges/intent';
+import { buildProvisionIntent, IntentError, parseIntent } from './lib/edges/intent';
 import {
   qualificationBinding,
   qualificationRefusal,
@@ -72,7 +69,9 @@ import { ensurePoolCapacity } from './lib/edges/poolCapacity';
 import { admissionOf, publishedRefOf, setStateOf } from './lib/edges/setState';
 import { removableUnder } from './lib/edges/providerSet';
 import { resolveTemplateFor } from './edgeTemplates';
+import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choices';
 import { defaultLocationOf } from './edgeLocations';
+import { l7PlaceOf } from './lib/edges/l7Place';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRestore, hasHideRows, startRestoreWorkflow } from './lib/edges/restore';
 import {
@@ -1139,10 +1138,13 @@ export async function applyDeleteBody(
         continue;
       }
       if (['active', 'verifying'].includes(e.status)) {
+        // An edge that was never published never served a member: no one is
+        // connected through it, so there is nothing to drain.
+        const served = e.publishedAt !== undefined;
         await ctx.db.patch(e._id, {
           status: 'draining',
           publication: 'draining',
-          drainUntil: force ? now : now + drainMs,
+          drainUntil: force || !served ? now : now + drainMs,
           statusChangedAt: now,
           updatedAt: now,
         });
@@ -1386,10 +1388,15 @@ async function insertAdoptedEdge(
       accountRow!._id,
       a.locationRow ?? null,
     );
-    const dnsAccountId = (accountRow!.settings as { dnsAccountId?: string }).dnsAccountId;
-    const dnsAccount = dnsAccountId
-      ? await ctx.db.get(dnsAccountId as Id<'edgeProviderAccounts'>)
-      : null;
+    // The front lives in the picked location's zone: its records are looked
+    // for there, so a hostname outside it cannot be described or destroyed.
+    const place = await l7PlaceOf(ctx.db, accountRow!, a.locationRow ?? null);
+    const zone = place.zoneName?.toLowerCase();
+    if (zone && hostname && hostname !== zone && !hostname.endsWith(`.${zone}`))
+      throw new ConvexError({
+        code: 'edge.hostname_not_in_zone',
+        message: `The hostname is not in ${zone}: pick the location of its zone`,
+      });
     try {
       provisionIntent = JSON.stringify(
         buildProvisionIntent({
@@ -1397,16 +1404,15 @@ async function insertAdoptedEdge(
             id: accountRow!._id as string,
             provider: accountRow!.provider,
             settings: accountRow!.settings as Record<string, unknown>,
-            observedSettings: parseObservedSettings(accountRow!.observedSettings),
           },
-          dnsAccount: dnsAccount
-            ? {
-                id: dnsAccount._id as string,
-                provider: dnsAccount.provider,
-                settings: dnsAccount.settings as Record<string, unknown>,
-                observedSettings: parseObservedSettings(dnsAccount.observedSettings),
-              }
-            : null,
+          place,
+          // An imported front serves the certificate it has; the account's
+          // defaults are what a discovery or a destroy looks for.
+          certificate: certificateValuesFor(
+            accountRow!.provider,
+            accountOptionDefaultsOf(accountRow!),
+            null,
+          ),
           specName: `adopted-${origin.slug}-${now.toString(36)}`,
           templateParams: template.params,
           templateHash: template.hash,
@@ -1681,7 +1687,10 @@ function udpProviderAvailable(): boolean {
  * ≥1 active name when it presents one behind an L4 edge, the edge's provider
  * matches the listener's scope and can carry the listener at the edge's layer,
  * and, for an L7 front, an authenticated end-to-end session has proven exactly
- * this configuration and has not expired.
+ * this configuration and has not expired. An edge of a DNS account (role `dns`)
+ * goes live only while `edge.l7.dnsProvidersFront` is on: a spare made earlier
+ * must not start carrying members once the switch is off (a published one is
+ * left as it is).
  *
  * `skipVerification` takes ONLY the L4 endpoint-verification rule out (the
  * verification-binding view asks "what else blocks this edge once tested?");
@@ -1695,6 +1704,8 @@ export async function checkPublishable(
 ): Promise<PublishCheck> {
   if (edge.status !== 'active') return { ok: false, code: 'edge_not_active' };
   if (edge.publication === 'published') return { ok: false, code: 'already_published' };
+  if (edgeRoleOf(edge.provider) === 'dns' && !(await dnsProvidersFrontOf(ctx.db)))
+    return { ok: false, code: 'dns_account_not_fronting' };
   if (!hasPublishableAddress(edge)) return { ok: false, code: 'no_address' };
   const listener = await ctx.db.get(edge.listenerId);
   if (!listener || listener.retired) return { ok: false, code: 'listener_retired' };

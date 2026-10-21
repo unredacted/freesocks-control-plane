@@ -30,6 +30,82 @@ const base = '/1.0/cloud/project/svc-1/region/GRA9/loadbalancing';
 const withTime = (rest: (c: Captured) => Response) => (c: Captured) =>
   c.path.endsWith('/auth/time') ? jsonRes(1_700_000_000) : rest(c);
 
+describe('ovh: options', () => {
+  test('options left unset send a TCP check without the new fields', () => {
+    const hm = ovhLbBody(cfg, spec, tpl).listeners[0]!.pool.healthMonitor;
+    expect(hm).toEqual({
+      name: `${spec.name}-hm443`,
+      monitorType: 'tcp',
+      delay: 5,
+      timeout: 3,
+      maxRetries: 3,
+    });
+  });
+
+  test('the node idle timeout is sent only when chosen; the old field still never is', () => {
+    // A stored template's value of the old field (shown, never sent) stays unsent.
+    const old = ovhLbBody(
+      cfg,
+      spec,
+      OvhTemplate.parse({ flavorId: 'small', timeoutMemberDataMs: 120_000 }),
+    ).listeners[0]!;
+    expect(old).toMatchObject({ timeoutClientData: 300_000 });
+    expect(old).not.toHaveProperty('timeoutMemberData');
+    const chosen = ovhLbBody(
+      cfg,
+      spec,
+      OvhTemplate.parse({ flavorId: 'small', nodeIdleTimeoutMs: 120_000 }),
+    ).listeners[0]!;
+    expect(chosen).toMatchObject({ timeoutMemberData: 120_000 });
+  });
+
+  test('source IP balancing is sent in the API spelling', () => {
+    const pool = ovhLbBody(
+      cfg,
+      spec,
+      OvhTemplate.parse({ flavorId: 'small', algorithm: 'sourceIp' }),
+    ).listeners[0]!.pool;
+    expect(pool.algorithm).toBe('sourceIP');
+  });
+
+  test('an HTTP check carries its configuration, with the declared defaults filled in', () => {
+    const hm = ovhLbBody(
+      cfg,
+      spec,
+      OvhTemplate.parse({
+        flavorId: 'small',
+        healthMonitor: {
+          delay: 10,
+          timeout: 4,
+          maxRetries: 2,
+          type: 'http',
+          maxRetriesDown: 5,
+          urlPath: '/h',
+        },
+      }),
+    ).listeners[0]!.pool.healthMonitor;
+    expect(hm).toMatchObject({
+      monitorType: 'http',
+      maxRetriesDown: 5,
+      httpConfiguration: {
+        httpMethod: 'GET',
+        urlPath: '/h',
+        expectedCodes: '200',
+        httpVersion: '1.0',
+      },
+    });
+  });
+
+  test('a bigger gateway model reaches the gateway it creates', () => {
+    const body = ovhLbBody(
+      { ...cfg, gatewayId: undefined },
+      spec,
+      OvhTemplate.parse({ flavorId: 'small', gatewayModel: '2xl' }),
+    );
+    expect(body.network.private).toMatchObject({ gatewayCreate: { model: '2xl' } });
+  });
+});
+
 describe('ovh: body + signing', () => {
   test('body: private network + existing gateway + minted floating ip + inline tcp listener/pool', () => {
     const body = ovhLbBody(cfg, spec, tpl);

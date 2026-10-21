@@ -13,11 +13,18 @@
 import { ConvexError, v } from 'convex/values';
 import { fakeShadowedIds } from './lib/edges/providers/fake';
 import { internalMutation, internalQuery } from './_generated/server';
+import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
 import { edgeProviderIdValidator, type EdgeProviderId } from './lib/edgeProviderIds';
+export { accountOptionDefaultsOf } from './lib/edges/choices';
 import {
+  EDGE_NEW_ACCOUNT_SETTINGS,
+  EDGE_RETEST_SETTINGS,
   buildCredentials,
+  legacyOptionDefaults,
+  legacySettingsOf,
   locatingSettingsChanged,
   maskCredentials,
   placementKeysOf,
@@ -29,11 +36,34 @@ import {
   type EdgeSettings,
 } from './lib/edges/accountSettings';
 import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
+import {
+  optionChanges,
+  parseOptionValues,
+  sameValues,
+  type Values,
+} from './lib/edges/providers/options';
+import {
+  accountOptionDefaultsOf,
+  certificateValuesFor,
+  settingsWithOptionCopy,
+} from './lib/edges/choices';
+import {
+  EDGE_NEW_ACCOUNT_OPTION_DEFAULTS,
+  certificateKeysOf,
+  optionFieldsOf,
+  validateAccountOptionDefaults,
+} from './lib/edges/providers/templates';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { liveEdgesOfAccount } from './relays';
+import { fastlyCertificateLockKey } from './lib/edges/lockKeys';
+import { l7PlaceOf } from './lib/edges/l7Place';
+import {
+  removableSharedCertificate,
+  sharedCertificateOrderedByFcp as orderedByFcp,
+  type SharedCertificateRecord,
+} from './lib/edges/sharedCertificate';
 import { assertAdmission } from './lib/edges/maintenance';
 import { type AutoQualifyEvidence } from './lib/edges/autoQualify';
-import { placementHashOf } from './lib/edges/locations';
 import {
   applyLocationQualification,
   defaultLocationOf,
@@ -43,15 +73,28 @@ import {
   locationInUse,
   locationsAdminOf,
   locationsOfAccount,
+  sharedCertificateUsers,
   untrustAccountLocations,
   untrustLocation,
   upsertLocation,
+  assertDnsAccountOfPlacement,
   type LocationAdmin,
 } from './edgeLocations';
+import { deleteCatalogOf } from './edgeProviderCatalog';
 
 // A display label (never a provider resource name or a URL segment): same shape as a
 // template name.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}$/;
+
+/** Option defaults an admin payload sets, checked (`edge.option_*` refusals). */
+function checkedOptionDefaults(provider: EdgeProviderId, raw: Values): Values {
+  const res = validateAccountOptionDefaults(provider, raw);
+  if (!res.ok) throw new ConvexError({ code: res.code, message: res.issues.join('; ') });
+  return res.values;
+}
+
+const storedOptions = (v: Values): string | undefined =>
+  Object.keys(v).length > 0 ? JSON.stringify(v) : undefined;
 
 function checkName(name: string): void {
   if (!NAME_RE.test(name) || name !== name.trim()) {
@@ -77,6 +120,8 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>, locations: Locat
     provider: r.provider,
     name: r.name,
     settings,
+    // Defaults for the provider's certificate options (copied into a node's pick).
+    optionDefaults: accountOptionDefaultsOf(r),
     credentialsSet: maskCredentials(r.credentials as Record<string, unknown>),
     defaultTemplateId: (r.defaultTemplateId as string | undefined) ?? null,
     defaultLocationId: dflt?.id ?? null,
@@ -99,6 +144,22 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>, locations: Locat
     observedSettings: r.observedSettings ? parseObservedSettings(r.observedSettings) : null,
     observedAt: r.observedAt ? new Date(r.observedAt).toISOString() : null,
     inventoryAt: dflt?.inventoryAt ?? null,
+    // The certificate the fronts in its default zone share, as last read at
+    // the provider (each zone's is on its location; an account the L7
+    // locations migration has not moved yet still holds its own).
+    sharedCertificate:
+      dflt?.sharedCertificate ??
+      (r.sharedCertificate
+        ? {
+            name: r.sharedCertificate.name,
+            state: r.sharedCertificate.state,
+            code: r.sharedCertificate.code ?? null,
+            notAfter: r.sharedCertificate.notAfter ?? null,
+            checkedAt: new Date(r.sharedCertificate.checkedAt).toISOString(),
+            edges: 0,
+            orderedByFcp: sharedCertificateOrderedByFcp(r, r.sharedCertificate),
+          }
+        : null),
     // Dev only: the adapter behind this account is the in-memory fake, so the
     // CMS can badge it and no screenshot shows a real adapter name for it.
     fake: fakeShadowedIds().includes(r.provider),
@@ -118,6 +179,8 @@ export interface RelayAccountWithSecret {
   name: string;
   credentials: EdgeCredentials;
   settings: EdgeSettings;
+  /** The certificate option defaults as stored (JSON; `accountOptionDefaultsOf` reads them). */
+  optionDefaults?: string;
   enabled: boolean;
   defaultTemplateId: Id<'edgeTemplates'> | null;
   /** Row version for compare-and-set writes (a rotation applies only to the row it tested). */
@@ -133,6 +196,7 @@ function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
     name: r.name,
     credentials: r.credentials as EdgeCredentials,
     settings: r.settings as EdgeSettings,
+    ...(r.optionDefaults !== undefined ? { optionDefaults: r.optionDefaults } : {}),
     enabled: r.enabled,
     defaultTemplateId: r.defaultTemplateId ?? null,
     updatedAt: r.updatedAt,
@@ -200,6 +264,8 @@ const upsertArgs = {
   dailyAllocationBudget: v.optional(v.number()),
   maxLiveEdges: v.optional(v.number()),
   defaultTemplateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
+  /** Defaults for the provider's certificate options (lib/edges/providers/options.ts). */
+  optionDefaults: v.optional(v.any()),
   actorAdminId: v.optional(v.id('adminUsers')),
 };
 
@@ -254,58 +320,96 @@ async function assertTemplateUsable(
 
 // --- DNS-account references ------------------------------------------------------------
 //
-// A Fastly-style account writes its records through ANOTHER account's
-// credentials (`settings.dnsAccountId` → a Cloudflare account). That makes the
-// referenced account load-bearing for edges that never name it directly: their
-// DNS records live in ITS zone, addressed by ITS credentials. So every rule that
+// A Fastly-style front writes its records through ANOTHER account's
+// credentials: its location names the DNS account (`placement.dnsAccountId`,
+// a Cloudflare account) and one of its zones. That makes the referenced
+// account load-bearing for edges that never name it directly: their DNS
+// records live in ITS zone, addressed by ITS credentials. So every rule that
 // protects an account from being moved or removed under its own edges has to
-// see through the reference too.
+// see through the reference too. Origin names of front nodes are the other
+// reference (`panelSetups.originDns`).
 
-/** Accounts that name `id` as their DNS account (the small, operator-managed table). */
-async function fastlyAccountsUsing(
+/**
+ * Accounts with a front location that writes through `id` (or, on an account
+ * the L7 locations migration has not moved yet, legacy settings naming it).
+ * The account table is small and operator-managed.
+ */
+async function accountsWritingThrough(
   db: import('./_generated/server').DatabaseReader,
   id: Id<'edgeProviderAccounts'>,
 ): Promise<Doc<'edgeProviderAccounts'>[]> {
-  const rows = await db.query('edgeProviderAccounts').collect();
-  return rows.filter((r) => (r.settings as { dnsAccountId?: string }).dnsAccountId === id);
+  const out: Doc<'edgeProviderAccounts'>[] = [];
+  for (const r of await db.query('edgeProviderAccounts').collect()) {
+    if (!EDGE_PROVIDER_CAPABILITIES[r.provider].needsDnsAccount) continue;
+    if ((r.settings as { dnsAccountId?: string }).dnsAccountId === id) {
+      out.push(r);
+      continue;
+    }
+    const locations = await locationsOfAccount(db, r._id);
+    if (locations.some((l) => (l.placement as { dnsAccountId?: string }).dnsAccountId === id))
+      out.push(r);
+  }
+  return out;
 }
 
 /**
- * Non-destroyed edges that depend on this account for DNS: the ones provisioned
- * from an account that references it, whose FROZEN intent names it as the DNS
- * account or names its zone. The intent is what makes this complete: an edge is
- * covered from `insertPlanned` onward, including one whose DNS create response
- * was lost and has no recorded resource yet.
+ * Non-destroyed edges that depend on this account for DNS: every front whose
+ * FROZEN intent names it as the DNS account (whatever its location says
+ * today), and an intent-less edge of an account that writes through it. The
+ * intent is what makes this complete: an edge is covered from `insertPlanned`
+ * onward, including one whose DNS create response was lost and has no
+ * recorded resource yet.
  */
 async function edgesDependingOnDnsAccount(
   db: import('./_generated/server').DatabaseReader,
   account: Doc<'edgeProviderAccounts'>,
 ): Promise<number> {
-  const zoneId = (account.settings as { zoneId?: string }).zoneId;
+  const writing = new Set(
+    (await accountsWritingThrough(db, account._id)).map((a) => a._id as string),
+  );
   let n = 0;
-  for (const referencing of await fastlyAccountsUsing(db, account._id)) {
-    for (const e of await liveEdgesOfAccount(db, referencing._id)) {
+  for (const front of await db.query('edgeProviderAccounts').collect()) {
+    if (!EDGE_PROVIDER_CAPABILITIES[front.provider].needsDnsAccount) continue;
+    for (const e of await liveEdgesOfAccount(db, front._id)) {
       const intent = parseIntent(e.provisionIntent);
-      if (!intent) {
-        // No intent yet is not "no dependency": the edge belongs to an account
-        // that names this one, so it is counted.
-        n++;
-        continue;
-      }
-      if (intent.dnsAccountId === (account._id as string) || (zoneId && intent.zoneId === zoneId))
-        n++;
+      // No intent yet is not "no dependency": an edge of an account that
+      // writes through this one is counted.
+      if (intent ? intent.dnsAccountId === (account._id as string) : writing.has(front._id)) n++;
     }
   }
   return n;
 }
 
 /**
- * Editing a DNS account's credentials or settings invalidates every Fastly
- * account that writes through it: their qualification was taken with the old
- * token against the old zone, and neither is what would be used now. Every
- * dependent account (qualified or not) is stamped `dependencyChangedAt`, so
- * the auto-trust rule (lib/edges/autoQualify.ts) cannot re-trust it from a
- * proof or a credential test taken through the old dependency.
+ * What still writes DNS through this account outside its own edges: backend
+ * setups whose origin names live in one of its zones, and origin-name records
+ * whose write is still in flight. Either would lose the credentials its
+ * records are addressed with.
+ */
+async function originNamesUsing(
+  db: import('./_generated/server').DatabaseReader,
+  id: Id<'edgeProviderAccounts'>,
+): Promise<number> {
+  let n = 0;
+  for (const setup of await db.query('panelSetups').collect())
+    if (setup.originDns?.accountId === id) n++;
+  for (const state of ['pending', 'sent', 'unresolved'] as const) {
+    const open = await db
+      .query('backendObligations')
+      .withIndex('by_state', (q) => q.eq('state', state))
+      .collect();
+    n += open.filter((o) => o.kind === 'dns.record' && o.dns?.accountId === id).length;
+  }
+  return n;
+}
+
+/**
+ * Editing a DNS account's credentials or settings invalidates every front
+ * account that writes through it: trust was taken with the old token, which is
+ * not what would be used now. Every dependent account (trusted or not) is
+ * stamped `dependencyChangedAt`, so the auto-trust rule
+ * (lib/edges/autoQualify.ts) cannot re-trust it from a proof or a credential
+ * test taken through the old dependency.
  */
 async function clearQualificationOfReferencing(
   ctx: import('./_generated/server').MutationCtx,
@@ -314,7 +418,7 @@ async function clearQualificationOfReferencing(
 ): Promise<number> {
   let n = 0;
   const now = Date.now();
-  for (const r of await fastlyAccountsUsing(ctx.db, id)) {
+  for (const r of await accountsWritingThrough(ctx.db, id)) {
     await ctx.db.patch(r._id, { dependencyChangedAt: now, updatedAt: now });
     n += await untrustAccountLocations(ctx, r, { actorAdminId });
   }
@@ -322,31 +426,35 @@ async function clearQualificationOfReferencing(
 }
 
 /**
- * Validate `settings.dnsAccountId`: it must name an existing account whose
- * provider can host DNS. A dangling or wrong-kind reference would only surface
- * at provision time, with a paid-for edge half-created.
+ * The first location an account created with the old single-location shape
+ * gets, completed: a Fastly payload that named only its DNS account takes that
+ * account's zone (its default location's, or its legacy settings') when it
+ * has exactly one place to offer. Null when nothing names a place.
  */
-async function assertDnsAccountUsable(
+async function completedInitialPlacement(
   db: import('./_generated/server').DatabaseReader,
   provider: EdgeProviderId,
-  settings: Record<string, unknown>,
-) {
-  if (!EDGE_PROVIDER_CAPABILITIES[provider].needsDnsAccount) return;
-  const ref = settings.dnsAccountId;
-  if (typeof ref !== 'string' || ref.length === 0)
-    throw new ConvexError({ code: 'validation', message: 'a DNS account is required' });
-  const row = await db.get(ref as Id<'edgeProviderAccounts'>);
-  if (!row || !EDGE_PROVIDER_CAPABILITIES[row.provider].providesDns)
-    throw new ConvexError({
-      code: 'validation',
-      message: 'dnsAccountId must name an account that can host DNS records',
-    });
+  rawSettings: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  const initial = initialPlacementOf(provider, rawSettings);
+  if (!initial || !EDGE_PROVIDER_CAPABILITIES[provider].needsDnsAccount) return initial;
+  if (typeof initial.zoneId === 'string' || typeof initial.dnsAccountId !== 'string')
+    return initial;
+  const id = db.normalizeId('edgeProviderAccounts', initial.dnsAccountId);
+  const dns = id ? await db.get(id) : null;
+  if (!dns) return initial;
+  const dflt = await defaultLocationOf(db, dns);
+  const zone =
+    (dflt?.placement as { zoneId?: string; zoneName?: string } | undefined) ??
+    (dns.settings as { zoneId?: string; zoneName?: string });
+  return zone?.zoneId ? { ...initial, zoneId: zone.zoneId, zoneName: zone.zoneName } : initial;
 }
 
 /**
  * A settings payload may still carry placement keys (the old single-location
- * shape). Re-sending the place the account already has is accepted; any other
- * place is a new location, never an edit of this account.
+ * shape). Re-sending the place the account's default location already has
+ * (all of it or some of its keys) is accepted; any other place is a new
+ * location, never an edit of this account.
  */
 async function assertPlacementUnchanged(
   db: import('./_generated/server').DatabaseReader,
@@ -355,14 +463,14 @@ async function assertPlacementUnchanged(
 ): Promise<void> {
   const keys = placementKeysOf(row.provider, raw);
   if (!keys) return;
-  const parsed = validatePlacement(row.provider, keys);
-  if (!parsed.ok) throw new ConvexError({ code: 'validation', message: parsed.issues.join('; ') });
-  const hash = placementHashOf(parsed.placement);
   const dflt = await defaultLocationOf(db, row);
-  if (dflt && dflt.placementHash === hash) return;
+  // The place it already has, whole or in part (an older client re-sends the
+  // single-place keys it knew, a Fastly account's DNS account alone).
+  const held = (dflt?.placement ?? {}) as Record<string, unknown>;
+  if (dflt && Object.entries(keys).every(([k, v]) => settingsEqual(held[k], v))) return;
   throw new ConvexError({
     code: 'edge.placement_on_location',
-    message: 'A place belongs to a location: add a location instead of moving the account',
+    message: 'A place (a region, a DNS zone) belongs to a location: add a location instead',
   });
 }
 
@@ -377,6 +485,129 @@ export function accountTested(
 ): boolean {
   return !!a.lastTestOkAt && !a.lastTestError;
 }
+
+// One rule for every caller (lib/edges/certificateRefusal.ts).
+export { certificateRefusalFor, certificateRefusalOf } from './lib/edges/certificateRefusal';
+
+function pick(obj: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (obj[k] !== undefined) out[k] = obj[k];
+  return out;
+}
+
+/**
+ * Whether the account still holds a shared certificate FCP can remove, in any
+ * of its zones (or, before the L7 locations migration, on the account): the
+ * account delete refuses then, so the certificate and its ACME record are
+ * never left at the provider with no credentials left to remove them.
+ */
+export async function holdsSharedCertificate(
+  db: QueryCtx['db'],
+  a: Pick<Doc<'edgeProviderAccounts'>, '_id' | 'sharedCertificate' | 'orderedSharedResources'>,
+): Promise<boolean> {
+  const ordered = a.orderedSharedResources;
+  if (removableSharedCertificate(ordered, a.sharedCertificate)) return true;
+  for (const loc of await locationsOfAccount(db, a._id))
+    if (removableSharedCertificate(ordered, loc.sharedCertificate)) return true;
+  return false;
+}
+
+/**
+ * Whether an edge of this account ORDERED a recorded shared certificate (a
+ * zone's): only then is it FCP's to remove (lib/edges/sharedCertificate.ts).
+ */
+export function sharedCertificateOrderedByFcp(
+  a: Pick<Doc<'edgeProviderAccounts'>, 'orderedSharedResources'>,
+  sc: SharedCertificateRecord,
+): boolean {
+  return orderedByFcp(a.orderedSharedResources, sc);
+}
+
+/** A removal's hold on the zone's certificate lock (the provisioning steps wait on it). */
+const REMOVAL_LOCK_MS = 2 * 60_000;
+
+/**
+ * The start of a zone's shared-certificate removal, in ONE transaction: the
+ * account's certificate lock for that zone (the one an edge's certificate and
+ * ACME steps hold) is taken and the zone's live users are counted again under
+ * it, so a front planned a moment earlier is seen and one planned later waits
+ * for the removal to end. Refuses a certificate no edge of the account ordered.
+ */
+export const beginSharedCertificateRemoval = internalMutation({
+  args: { id: v.id('edgeProviderAccounts'), locationId: v.id('edgeLocations'), opId: v.string() },
+  handler: async (ctx, { id, locationId, opId }) => {
+    const row = await ctx.db.get(id);
+    const location = await ctx.db.get(locationId);
+    if (!row || !location || location.accountId !== id)
+      return { ok: false as const, code: 'not_found' };
+    if (!sharedCertificateOrderedByFcp(row, location.sharedCertificate))
+      return { ok: false as const, code: 'shared_certificate_not_ours' };
+    const { zoneId } = await l7PlaceOf(ctx.db, row, location);
+    if (!zoneId) return { ok: false as const, code: 'dns_zone_missing' };
+    const key = fastlyCertificateLockKey(id, zoneId);
+    const now = Date.now();
+    const lock = await ctx.db
+      .query('externalLocks')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+    if (lock && lock.expiresAt > now) return { ok: false as const, code: 'lock_busy' };
+    if (lock?.holderEdgeId) return { ok: false as const, code: 'lock_busy' };
+    const users = await sharedCertificateUsers(ctx.db, location);
+    if (users > 0) return { ok: false as const, code: 'shared_certificate_in_use', users };
+    if (lock) await ctx.db.delete(lock._id);
+    await ctx.db.insert('externalLocks', {
+      key,
+      holderAccountId: id,
+      opId,
+      claimedAt: now,
+      expiresAt: now + REMOVAL_LOCK_MS,
+    });
+    return {
+      ok: true as const,
+      key,
+      ordered: row.orderedSharedResources ?? [],
+    };
+  },
+});
+
+/** A removed shared certificate: the zone's record goes, the removal is audited. */
+export const noteSharedCertificateRemoved = internalMutation({
+  args: {
+    id: v.id('edgeProviderAccounts'),
+    locationId: v.id('edgeLocations'),
+    removed: v.boolean(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { id, locationId, removed, actorAdminId }) => {
+    const row = await ctx.db.get(id);
+    const location = await ctx.db.get(locationId);
+    if (!row || !location) return null;
+    const certificate = location.sharedCertificate?.name ?? null;
+    const subscription = location.sharedCertificate?.subscriptionId;
+    await ctx.db.patch(locationId, { sharedCertificate: undefined });
+    if (subscription)
+      await ctx.db.patch(id, {
+        orderedSharedResources: (row.orderedSharedResources ?? []).filter(
+          (x) => x !== `tls_subscription:${subscription}`,
+        ),
+      });
+    await writeAuditLog(ctx, {
+      actorType: actorAdminId ? 'admin' : 'system',
+      actorId: actorAdminId ?? undefined,
+      action: 'edge.provider_account.shared_certificate_removed',
+      targetType: 'edge_provider_account',
+      targetId: id,
+      payload: {
+        name: row.name,
+        provider: row.provider,
+        locationId: locationId as string,
+        certificate,
+        removed,
+      },
+    });
+    return null;
+  },
+});
 
 export const create = internalMutation({
   args: upsertArgs,
@@ -395,13 +626,19 @@ export const create = internalMutation({
     // that place as the account's first location, so nothing that created
     // accounts that way breaks; a CDN account always gets its one location.
     const rawSettings = (a.settings ?? {}) as Record<string, unknown>;
-    const settings = validateSettings(a.provider, withoutPlacementKeys(a.provider, rawSettings));
+    // What a new account gets when the payload leaves it out (a new Fastly
+    // account's fronts get versionless domains); existing rows never get it.
+    const settings = validateSettings(a.provider, {
+      ...(EDGE_NEW_ACCOUNT_SETTINGS[a.provider] ?? {}),
+      ...withoutPlacementKeys(a.provider, rawSettings),
+    });
     if (!settings.ok)
       throw new ConvexError({ code: 'validation', message: settings.issues.join('; ') });
-    const initialPlacement = initialPlacementOf(a.provider, rawSettings);
+    const initialPlacement = await completedInitialPlacement(ctx.db, a.provider, rawSettings);
     if (initialPlacement) {
       const p = validatePlacement(a.provider, initialPlacement);
       if (!p.ok) throw new ConvexError({ code: 'validation', message: p.issues.join('; ') });
+      await assertDnsAccountOfPlacement(ctx.db, a.provider, initialPlacement);
     }
     const creds = buildCredentials(
       a.provider,
@@ -413,7 +650,14 @@ export const create = internalMutation({
         message: `missing credentials: ${creds.missing.join(', ')}`,
       });
     }
-    await assertDnsAccountUsable(ctx.db, a.provider, settings.settings as Record<string, unknown>);
+    // What a new account starts with where the payload leaves it out (a new
+    // Fastly account shares one wildcard certificate); an older client's
+    // authority or scope under settings is the same default.
+    const optionDefaults = checkedOptionDefaults(a.provider, {
+      ...(EDGE_NEW_ACCOUNT_OPTION_DEFAULTS[a.provider] ?? {}),
+      ...legacyOptionDefaults(a.provider, rawSettings),
+      ...((a.optionDefaults ?? {}) as Values),
+    });
     // A template picked at creation can only be unscoped (the account has no id yet).
     if (a.defaultTemplateId)
       await assertTemplateUsable(ctx.db, a.defaultTemplateId, a.provider, null);
@@ -422,7 +666,13 @@ export const create = internalMutation({
       provider: a.provider,
       name: a.name,
       credentials: creds.credentials as never,
-      settings: settings.settings as never,
+      // With the pre-options copy of the certificate defaults (rollback-safe).
+      settings: settingsWithOptionCopy(
+        a.provider,
+        settings.settings as Record<string, unknown>,
+        optionDefaults,
+      ) as never,
+      optionDefaults: storedOptions(optionDefaults),
       defaultTemplateId: a.defaultTemplateId ?? undefined,
       enabled: a.enabled ?? true,
       priority: a.priority ?? 0,
@@ -467,6 +717,8 @@ export const update = internalMutation({
     dailyAllocationBudget: v.optional(v.number()),
     maxLiveEdges: v.optional(v.number()),
     defaultTemplateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
+    /** The account's certificate option defaults, whole (replaces the stored set). */
+    optionDefaults: v.optional(v.any()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
@@ -478,9 +730,15 @@ export const update = internalMutation({
     // the one exception, so an operator can always stop it at once.
     const onlySwitchingOff =
       a.enabled === false &&
-      [a.name, a.settings, a.credentials, a.priority, a.maxLiveEdges, a.defaultTemplateId].every(
-        (x) => x === undefined,
-      );
+      [
+        a.name,
+        a.settings,
+        a.credentials,
+        a.priority,
+        a.maxLiveEdges,
+        a.defaultTemplateId,
+        a.optionDefaults,
+      ].every((x) => x === undefined);
     if (a.dailyAllocationBudget === undefined && !onlySwitchingOff)
       checkLimits({ dailyAllocationBudget: row.dailyAllocationBudget });
     await assertAdmission(ctx.db, 'provider.write');
@@ -538,13 +796,52 @@ export const update = internalMutation({
             message: `${total} edge(s) still reference this account; destroy them before changing its settings`,
           });
       }
-      await assertDnsAccountUsable(
-        ctx.db,
-        row.provider,
-        settings.settings as Record<string, unknown>,
-      );
-      patch.settings = settings.settings as never;
+      patch.settings = {
+        ...(settings.settings as Record<string, unknown>),
+        ...legacySettingsOf(row.provider, row.settings as Record<string, unknown>),
+      } as never;
     }
+    // The certificate option defaults: a whole set from `optionDefaults`, or an
+    // older client's authority under `settings` laid over the stored ones. A
+    // row that still keeps a copy under `settings` keeps it through any
+    // settings write (the validated settings no longer hold it).
+    const before = accountOptionDefaultsOf(row);
+    const legacyIncoming =
+      a.settings !== undefined
+        ? legacyOptionDefaults(row.provider, a.settings as Record<string, unknown>)
+        : {};
+    let optionsChanged = false;
+    let optionChangeList: ReturnType<typeof optionChanges> = [];
+    // The defaults this write sets (an empty set too: it stores no blob, so the
+    // settings copy below must say the declared defaults, not the old values).
+    let nextDefaults: Values | undefined;
+    if (a.optionDefaults !== undefined || Object.keys(legacyIncoming).length > 0) {
+      const next = checkedOptionDefaults(
+        row.provider,
+        a.optionDefaults !== undefined
+          ? { ...legacyIncoming, ...(a.optionDefaults as Values) }
+          : { ...before, ...legacyIncoming },
+      );
+      optionsChanged = !sameValues(next, before);
+      optionChangeList = optionChanges(optionFieldsOf(row.provider), before, next);
+      patch.optionDefaults = storedOptions(next);
+      nextDefaults = next;
+    } else if (
+      patch.settings !== undefined &&
+      !row.optionDefaults &&
+      Object.keys(before).length > 0
+    ) {
+      patch.optionDefaults = storedOptions(before);
+      nextDefaults = before;
+    }
+    // Any write of either keeps the pre-options copy under `settings` in step
+    // with the defaults (what an older build reads after a rollback deploy).
+    if (patch.settings !== undefined || nextDefaults !== undefined)
+      patch.settings = settingsWithOptionCopy(
+        row.provider,
+        (patch.settings ?? row.settings) as Record<string, unknown>,
+        nextDefaults ?? accountOptionDefaultsOf(row),
+      ) as never;
     if (a.credentials !== undefined) {
       const creds = buildCredentials(
         row.provider,
@@ -580,7 +877,29 @@ export const update = internalMutation({
     // `edgeProviderOps.rotateCredentials` (tests the new secret first) instead.
     // New credentials or a moved account: the automatic rules may look again
     // once a test AFTER this change passes (lib/edges/autoQualify.ts).
+    // The certificate defaults decide what a node protected from now on (and a
+    // pick from before options) gets: a change is untrusted like a settings change.
+    if (optionsChanged) settingsChanged = true;
     if (credentialsChanged || settingsChanged) patch.credentialsChangedAt = Date.now();
+    // What the certificate checks of the last test answered for (the CAA
+    // records for this CA and scope, the shared certificate in this zone) no
+    // longer applies once those settings move: the account is untested until
+    // a new test answers for the new ones, so nothing is planned on the old.
+    if (
+      (patch.settings &&
+        !settingsEqual(
+          pick(patch.settings as Record<string, unknown>, EDGE_RETEST_SETTINGS[row.provider]),
+          pick(row.settings as Record<string, unknown>, EDGE_RETEST_SETTINGS[row.provider]),
+        )) ||
+      // A certificate option's account default (the authority, the scope).
+      optionChangeList.some((c) => certificateKeysOf(row.provider).includes(c.key))
+    ) {
+      // Each zone's shared certificate record stays: it is the proof a
+      // wildcard FCP ordered is still at the provider (its removal and the
+      // delete guards read it); the test that comes next reads it again.
+      patch.lastTestError = 'retest_required';
+      patch.lastTestErrorDetail = undefined;
+    }
     await ctx.db.patch(a.id, patch);
     const fresh = (await ctx.db.get(a.id))!;
     let requalify = 0;
@@ -606,6 +925,19 @@ export const update = internalMutation({
       targetId: a.id,
       payload: { name: patch.name ?? row.name, provider: row.provider },
     });
+    if (optionsChanged)
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: a.actorAdminId ?? undefined,
+        action: 'edge.provider_account.options_changed',
+        targetType: 'edge_provider_account',
+        targetId: a.id,
+        payload: {
+          name: patch.name ?? row.name,
+          provider: row.provider,
+          changes: optionChangeList,
+        },
+      });
     return { ok: true as const, requalify };
   },
 });
@@ -629,15 +961,27 @@ export const remove = internalMutation({
         message: 'Edges still reference this account',
       });
     }
+    // Nor one whose shared certificate is still at the provider: with the
+    // credentials gone, nothing could remove it or its ACME record any more.
+    if (await holdsSharedCertificate(ctx.db, row))
+      throw new ConvexError({
+        code: 'edge.shared_certificate_present',
+        message: 'The account still has a shared certificate; remove it first',
+      });
     // An account other accounts write DNS through cannot go either: their
-    // records live in its zone and are addressed with its credentials.
-    const referencing = await fastlyAccountsUsing(ctx.db, id);
+    // records live in its zones and are addressed with its credentials.
+    const referencing = await accountsWritingThrough(ctx.db, id);
     if (referencing.length > 0 || (await edgesDependingOnDnsAccount(ctx.db, row)) > 0) {
       throw new ConvexError({
         code: 'edge.account_referenced',
         message: 'Another provider account uses this one for DNS; repoint or remove it first',
       });
     }
+    if ((await originNamesUsing(ctx.db, id)) > 0)
+      throw new ConvexError({
+        code: 'edge.account_referenced',
+        message: "A backend's origin names use this account; change its setup first",
+      });
     // Its locations go with it, unless a protected node or an open setup run
     // still names one.
     const locations = await locationsOfAccount(ctx.db, id);
@@ -650,6 +994,7 @@ export const remove = internalMutation({
         });
     }
     for (const loc of locations) await ctx.db.delete(loc._id);
+    await deleteCatalogOf(ctx, id);
     await ctx.db.delete(id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -728,7 +1073,14 @@ export const applyCredentialRotation = internalMutation({
     const now = Date.now();
     await ctx.db.patch(a.id, {
       credentials: creds.credentials as never,
-      settings: settings.settings as never,
+      settings: settingsWithOptionCopy(
+        row.provider,
+        {
+          ...(settings.settings as Record<string, unknown>),
+          ...legacySettingsOf(row.provider, row.settings as Record<string, unknown>),
+        },
+        accountOptionDefaultsOf(row),
+      ) as never,
       lastTestOkAt: now,
       lastTestError: undefined,
       // The passing test observed the provider's live facts; a test that observed
@@ -906,6 +1258,56 @@ export const recordTest = internalMutation({
   },
 });
 
+/**
+ * An issued shared certificate is read again this often; one still waiting, renewing
+ * or close to expiry (`SHARED_CERTIFICATE_EXPIRY_WARN_MS`), every pass.
+ */
+export const SHARED_CERTIFICATE_RECHECK_MS = 30 * 60_000;
+/** The adapters' "renewal is late" threshold (Fastly `CERTIFICATE_EXPIRY_WARN_MS`), mirrored for the isolate. */
+export const SHARED_CERTIFICATE_EXPIRY_WARN_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * The zones whose shared certificate the reconcile cron reads now: a zone of
+ * an account that uses one (its default says so, or a front there does) or
+ * still records one (so one switched back is cleared), when it has not been
+ * read yet, is not issued, or was last read longer ago than the recheck
+ * interval.
+ */
+export const listForSharedCertificates = internalQuery({
+  args: { now: v.number() },
+  handler: async (ctx, { now }) => {
+    const out: Array<{ accountId: Id<'edgeProviderAccounts'>; locationId: Id<'edgeLocations'> }> =
+      [];
+    for (const r of await ctx.db.query('edgeProviderAccounts').collect()) {
+      if (!EDGE_PROVIDER_CAPABILITIES[r.provider].sharedCertificates) continue;
+      // The account's default, or a node that chose the wildcard there.
+      const byDefault = accountOptionDefaultsOf(r).certificateScope === 'wildcard';
+      for (const loc of await locationsOfAccount(ctx.db, r._id)) {
+        const uses = byDefault || (await sharedCertificateUsers(ctx.db, loc)) > 0;
+        const sc = loc.sharedCertificate;
+        if (!uses && !sc) continue;
+        // A renewal is watched as closely as a first issuance: it is the one
+        // wait that can let every front in the zone lapse at once. One the
+        // account switched away from is only kept in view (it can be removed
+        // from the account page).
+        const expiring =
+          !!sc?.notAfter && Date.parse(sc.notAfter) - now < SHARED_CERTIFICATE_EXPIRY_WARN_MS;
+        const settled = !!sc && sc.state === 'issued' && !sc.code && !expiring;
+        if (!sc || (uses && !settled) || now - sc.checkedAt >= SHARED_CERTIFICATE_RECHECK_MS)
+          out.push({ accountId: r._id, locationId: loc._id });
+      }
+    }
+    return out;
+  },
+});
+
+/** The shared resources edges of the account ordered (`tls_subscription:<id>`, ...). */
+export const orderedSharedResourcesOf = internalQuery({
+  args: { accountId: v.id('edgeProviderAccounts') },
+  handler: async (ctx, { accountId }): Promise<string[]> =>
+    (await ctx.db.get(accountId))?.orderedSharedResources ?? [],
+});
+
 /** A provider failing this many calls in a row is raised as attention `account_api_failing`. */
 export const API_FAILING_AFTER = 3;
 
@@ -989,3 +1391,172 @@ export async function reserveAllocation(
   });
   return true;
 }
+
+/**
+ * Before deploying a build from before provider options: removes every field
+ * this feature wrote, page by page (Convex refuses an older schema while they
+ * exist), keeping what the older build reads. An account keeps the copy of its
+ * certificate defaults under `settings` (written on every settings write);
+ * picks, edges, rotations and runs lose their option fields, and an address an
+ * edge learned after its tick is dropped (the next describe reports it again).
+ * Run `edgeProviderAccounts:purgeOptionsForRollback` with no arguments; it
+ * schedules itself through every step.
+ */
+export const purgeOptionsForRollback = internalMutation({
+  args: {
+    step: v.optional(
+      v.union(
+        v.literal('accounts'),
+        v.literal('relays'),
+        v.literal('edges'),
+        v.literal('rotations'),
+        v.literal('runs'),
+      ),
+    ),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, a) => {
+    const step = a.step ?? 'accounts';
+    const next = {
+      accounts: 'relays',
+      relays: 'edges',
+      edges: 'rotations',
+      rotations: 'runs',
+      runs: null,
+    } as const;
+    const PAGE = 200;
+    let done = true;
+    let cursor: string | null = null;
+    if (step === 'accounts') {
+      for (const r of await ctx.db.query('edgeProviderAccounts').collect()) {
+        if (r.optionDefaults === undefined) continue;
+        await ctx.db.patch(r._id, {
+          settings: settingsWithOptionCopy(
+            r.provider,
+            r.settings as Record<string, unknown>,
+            accountOptionDefaultsOf(r),
+          ) as never,
+          optionDefaults: undefined,
+        });
+      }
+    } else if (step === 'relays') {
+      for (const r of await ctx.db.query('relays').collect())
+        if (r.providerSet?.some((p) => p.options !== undefined))
+          await ctx.db.patch(r._id, {
+            providerSet: r.providerSet.map(({ options: _o, ...p }) => p),
+          });
+    } else {
+      const page =
+        step === 'edges'
+          ? await ctx.db.query('edges').paginate({ cursor: a.cursor ?? null, numItems: PAGE })
+          : step === 'rotations'
+            ? await ctx.db
+                .query('edgeRotations')
+                .paginate({ cursor: a.cursor ?? null, numItems: PAGE })
+            : await ctx.db
+                .query('edgeSetupRuns')
+                .paginate({ cursor: a.cursor ?? null, numItems: PAGE });
+      for (const row of page.page) {
+        if (step === 'edges') {
+          const e = row as Doc<'edges'>;
+          if (
+            e.choices !== undefined ||
+            e.baseTemplateHash !== undefined ||
+            e.learnedAddresses !== undefined
+          )
+            await ctx.db.patch(e._id, {
+              choices: undefined,
+              baseTemplateHash: undefined,
+              learnedAddresses: undefined,
+            });
+        } else if (step === 'rotations') {
+          const r = row as Doc<'edgeRotations'>;
+          if (r.requestedOptions !== undefined)
+            await ctx.db.patch(r._id, { requestedOptions: undefined });
+        } else {
+          const r = row as Doc<'edgeSetupRuns'>;
+          if (r.picks?.some((p) => p.options !== undefined))
+            await ctx.db.patch(r._id, { picks: r.picks.map(({ options: _o, ...p }) => p) });
+        }
+      }
+      done = page.isDone;
+      cursor = page.continueCursor;
+    }
+    const following = done ? next[step] : step;
+    if (following)
+      await ctx.scheduler.runAfter(0, internal.edgeProviderAccounts.purgeOptionsForRollback, {
+        step: following,
+        cursor: done ? null : cursor,
+      });
+    return { step, done };
+  },
+});
+
+/**
+ * Deploy step (seedCutover), idempotent:
+ *  - an account whose certificate defaults are still only under `settings`
+ *    (the Fastly authority and scope from before options) gets them in
+ *    `optionDefaults` too. The copy under `settings` STAYS
+ *    (`settingsWithOptionCopy`): a build from before options, deployed again,
+ *    finds rows its schema accepts and the certificate the account uses. The
+ *    effective configuration is unchanged, so trust, `credentialsChangedAt`
+ *    and every location stay as they are;
+ *  - a node's pick from before options on such an account gets the account's
+ *    certificate defaults copied in, as a pick made now does: a later change of
+ *    the account's defaults reaches nodes protected after it, never one that
+ *    exists (the account page says so).
+ */
+export const migrateOptionDefaults = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let moved = 0;
+    for (const row of await ctx.db.query('edgeProviderAccounts').collect()) {
+      if (certificateKeysOf(row.provider).length === 0) continue;
+      const defaults = accountOptionDefaultsOf(row);
+      const optionDefaults = row.optionDefaults ?? storedOptions(defaults);
+      const settings = settingsWithOptionCopy(
+        row.provider,
+        row.settings as Record<string, unknown>,
+        defaults,
+      );
+      if (optionDefaults === row.optionDefaults && settingsEqual(settings, row.settings)) continue;
+      await ctx.db.patch(row._id, { settings: settings as never, optionDefaults });
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'edge.provider_account.options_migrated',
+        targetType: 'edge_provider_account',
+        targetId: row._id,
+        payload: { name: row.name, provider: row.provider, keys: certificateKeysOf(row.provider) },
+      });
+      moved++;
+    }
+    let picks = 0;
+    for (const relay of await ctx.db.query('relays').collect()) {
+      if (!relay.providerSet?.some((p) => p.options === undefined)) continue;
+      let changed = false;
+      const next = [];
+      for (const p of relay.providerSet) {
+        if (p.options !== undefined) {
+          next.push(p);
+          continue;
+        }
+        const location = await ctx.db.get(p.locationId);
+        const account = location ? await ctx.db.get(location.accountId) : null;
+        if (!account || certificateKeysOf(account.provider).length === 0) {
+          next.push(p);
+          continue;
+        }
+        const values = certificateValuesFor(
+          account.provider,
+          accountOptionDefaultsOf(account),
+          null,
+        );
+        next.push({ ...p, options: JSON.stringify(values) });
+        changed = true;
+        picks++;
+      }
+      if (changed) await ctx.db.patch(relay._id, { providerSet: next });
+    }
+    return { moved, picks };
+  },
+});

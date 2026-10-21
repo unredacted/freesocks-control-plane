@@ -34,14 +34,16 @@ import { classifyDirectHosts } from './lib/edges/directHosts';
 import { templateHostRemark } from './lib/edges/hosts';
 import { accountsForSlot } from './lib/edges/rotation';
 import {
-  EDGE_PROVIDER_CAPABILITIES,
   edgeLayerOf,
+  frontsAllowed,
   originPortCarriedBy,
 } from './lib/edges/providers/capabilities';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
-import { accountTested } from './edgeProviderAccounts';
+import { l7PlaceProblemOf } from './lib/edges/l7Place';
+import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
+import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
 import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
 import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRuns';
@@ -69,15 +71,51 @@ export interface PlanOps {
     ctx: ActionCtx,
     a: { targets: ReturnType<typeof originProbeTargets> },
   ): Promise<OriginProbeOutcome[]>;
+  /** The wait before an origin that did not answer is probed again. */
+  pause(ms: number): Promise<void>;
 }
 
 const defaultPlanOps: PlanOps = {
   listNodeInbounds: (ctx, a) => ctx.runAction(internal.backends.listNodeInbounds, a),
   listHosts: (ctx, a) => ctx.runAction(internal.backends.listHosts, a),
   probeOrigins: (ctx, a) => ctx.runAction(internal.edgeOriginProbeOps.probe, a),
+  pause: (ms) => new Promise((r) => setTimeout(r, ms)),
 };
 
 let planOps: PlanOps = defaultPlanOps;
+
+/** Looks at an origin that did not answer before the plan takes "no answer" for it. */
+export const ORIGIN_PROBE_ATTEMPTS = 3;
+const ORIGIN_PROBE_PAUSE_MS = 500;
+/** Probe answers that a second look cannot change (the address itself rules it out). */
+const PROBE_FINAL_REASONS = new Set(['no_address', 'private_address']);
+
+/**
+ * The origin probe with retries: one dropped packet or slow handshake must not
+ * leave a WebSocket transport L4-only (and every CDN account unable to carry
+ * it). Only the targets that got no answer are asked again.
+ */
+async function probeOriginsWithRetries(
+  ctx: ActionCtx,
+  targets: ReturnType<typeof originProbeTargets>,
+): Promise<OriginProbeOutcome[]> {
+  let outcomes = await planOps.probeOrigins(ctx, { targets });
+  for (let attempt = 1; attempt < ORIGIN_PROBE_ATTEMPTS; attempt++) {
+    const again = new Set(
+      outcomes
+        .filter((o) => !o.originTransport && !PROBE_FINAL_REASONS.has(o.reason ?? ''))
+        .map((o) => o.listenerKey),
+    );
+    if (again.size === 0) break;
+    await planOps.pause(ORIGIN_PROBE_PAUSE_MS);
+    const next = await planOps.probeOrigins(ctx, {
+      targets: targets.filter((t) => again.has(t.listenerKey)),
+    });
+    const byKey = new Map(next.map((o) => [o.listenerKey, o]));
+    outcomes = outcomes.map((o) => byKey.get(o.listenerKey) ?? o);
+  }
+  return outcomes;
+}
 
 /** Test seam: replace the backend calls (null = the defaults). */
 export function __setPlanOpsForTests(over: Partial<PlanOps> | null): void {
@@ -112,8 +150,11 @@ async function planContextOf(
     const relayListeners = relay
       ? (await listenersOf(ctx, relay._id)).filter((l) => !l.retired)
       : [];
+    const cfg = await resolveEdgeConfig(ctx.db);
+    // A DNS account (it holds the records of other fronts) is not offered as a
+    // place to front this node unless the operator switched that on.
     const accounts = (await ctx.db.query('edgeProviderAccounts').collect()).filter(
-      (a) => a.enabled,
+      (a) => a.enabled && frontsAllowed(a.provider, cfg.l7.dnsProvidersFront),
     );
     const accountLive: Record<string, number> = {};
     const accountLocations: Record<
@@ -127,6 +168,10 @@ async function planContextOf(
         isDefault: boolean;
         live: number;
         maxLiveEdges: number | null;
+        /** Why an L7 place cannot front yet (no zone, a refused check, its DNS account off). */
+        placeProblem: string | null;
+        /** Why a front on the account's default certificate gets none there (CAA, its wildcard). */
+        certificateRefusal: string | null;
       }>
     > = {};
     for (const a of accounts) {
@@ -145,10 +190,15 @@ async function planContextOf(
           isDefault: !!dflt && dflt._id === loc._id,
           live: await liveCountForLocation(ctx.db, loc),
           maxLiveEdges: loc.maxLiveEdges ?? null,
+          // Why no new front can be planned in this place (the zone itself).
+          placeProblem: await l7PlaceProblemOf(ctx.db, a, loc),
+          // The certificate the account's DEFAULT could not get there (CAA, a
+          // failed or foreign wildcard): a pick with its own certificate may
+          // still go, so it is shown, and its pick check judges it.
+          certificateRefusal: certificateRefusalOf(a, loc),
         });
       accountLocations[a._id as string] = rows;
     }
-    const cfg = await resolveEdgeConfig(ctx.db);
     const runs = await ctx.db
       .query('edgeSetupRuns')
       .withIndex('by_origin', (q) =>
@@ -218,6 +268,7 @@ async function planContextOf(
         name: a.name,
         provider: a.provider,
         tested: accountTested(a),
+        certificateRefusal: certificateRefusalOf(a),
         maxLiveEdges: a.maxLiveEdges,
         live: accountLive[a._id as string] ?? 0,
         dailyAllocationBudget: a.dailyAllocationBudget,
@@ -226,6 +277,7 @@ async function planContextOf(
         locations: accountLocations[a._id as string] ?? [],
       })),
       renderEnabled: cfg.render.enabled,
+      dnsProvidersFront: cfg.l7.dnsProvidersFront,
       familiesDisabled: RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled),
       otherEnabledRelays,
       activeRunId: activeRun ? (activeRun._id as string) : null,
@@ -262,13 +314,21 @@ function accountCompatibility(
   a: PlanContext['accounts'][number],
   required: SetupPlanInbound[],
   relay: PlanContext['relay'],
+  dnsProvidersFront: boolean,
 ): SetupPlanAccount {
   const reasons: string[] = [];
   const layer = edgeLayerOf(a.provider);
-  if (!a.tested) reasons.push('account_untested');
+  // A front of this account could get no certificate: named first, since a
+  // test alone does not fix it.
+  if (a.certificateRefusal) reasons.push(a.certificateRefusal);
+  else if (!a.tested) reasons.push('account_untested');
   const carries: string[] = [];
   let portOnly = false;
   let scoped = false;
+  // A transport the account WOULD carry had the origin answered its probe:
+  // `retry` when another look may answer, `final` when the address itself
+  // rules it out (private or none).
+  let unanswered: 'retry' | 'final' | null = null;
   for (const inb of required) {
     const spec = inb.listenerSpec as ListenerSpecInput;
     const proto = {
@@ -286,22 +346,45 @@ function accountCompatibility(
       proto,
       originPort: spec.originPort,
       allowL7: true,
+      dnsProvidersFront,
     });
     if (eligible.length > 0) {
       carries.push(inb.listenerKey);
       continue;
     }
+    if (
+      inb.probeFailed &&
+      !inb.layers.includes(layer) &&
+      accountsForSlot([a], {
+        layers: [...inb.layers, layer],
+        proto,
+        originPort: spec.originPort,
+        allowL7: true,
+        dnsProvidersFront,
+      }).length > 0
+    )
+      unanswered =
+        unanswered === 'retry' || !PROBE_FINAL_REASONS.has(inb.probeFailed) ? 'retry' : 'final';
     // The layer and the transport fit, the port does not (gRPC behind a CDN
     // is proxied to 443 only): say so, the operator moves the transport.
     if (
-      accountsForSlot([a], { layers: inb.layers, proto, allowL7: true }).length > 0 &&
+      accountsForSlot([a], { layers: inb.layers, proto, allowL7: true, dnsProvidersFront }).length >
+        0 &&
       !originPortCarriedBy(a.provider as EdgeProviderId, proto, spec.originPort)
     )
       portOnly = true;
   }
   if (carries.length === 0)
     reasons.push(
-      scoped ? 'provider_mismatch' : portOnly ? 'origin_port_not_carried' : 'layer_mismatch',
+      scoped
+        ? 'provider_mismatch'
+        : unanswered === 'retry'
+          ? 'origin_unreachable'
+          : unanswered === 'final'
+            ? 'origin_not_public'
+            : portOnly
+              ? 'origin_port_not_carried'
+              : 'layer_mismatch',
     );
   // Room for one address: what a pick really gets is the set's cover, summed
   // per account and location over its targets (`setOfPicks`).
@@ -309,12 +392,10 @@ function accountCompatibility(
   if (a.maxLiveEdges - a.live < need) reasons.push('account_capacity_reached');
   if (a.dailyAllocationBudget !== 0 && a.dailyAllocationBudget - a.allocationsToday < need)
     reasons.push('account_budget_exhausted');
-  const caps = EDGE_PROVIDER_CAPABILITIES[a.provider];
-  if (layer === 'l7' && caps.needsDnsAccount && !a.settings.dnsAccountId)
-    reasons.push('dns_zone_missing');
   const locations = a.locations.map((loc) => {
     const why: string[] = [];
     if (!loc.enabled) why.push('location_disabled');
+    if (loc.placeProblem) why.push(loc.placeProblem);
     if (loc.maxLiveEdges !== null && loc.maxLiveEdges - loc.live < need)
       why.push('location_capacity_reached');
     return {
@@ -325,6 +406,7 @@ function accountCompatibility(
       qualified: loc.qualified,
       compatible: why.length === 0,
       reasons: why,
+      certificateRefusal: loc.certificateRefusal,
     };
   });
   if (!locations.some((l) => l.compatible)) reasons.push('no_location');
@@ -359,12 +441,114 @@ export function refuseSet(set: SetupPlanSet): void {
       code: 'edge.set_too_large',
       message: `These picks need more than ${MAX_DESIRED_PUBLISHED} addresses for one node`,
     });
+  // A pick's options break a rule: refused with the option's own code and words.
+  const option = set.problems.find((p) => p.reason.startsWith('edge.option_'));
+  if (option)
+    throw new ConvexError({ code: option.reason, message: option.detail ?? option.reason });
   if (set.problems.length > 0)
     throw new ConvexError({
       code: 'edge.account_incompatible',
       message: `A picked location cannot be used (${set.problems[0]!.reason})`,
     });
 }
+
+/** Check each pick's options (`checkPicks`) into the set: its options, or a problem. */
+/** Whether the node's transports to protect include a REALITY one. */
+function servesReality(required: ReadonlyArray<{ listenerSpec: unknown }>): boolean {
+  return required.some((i) => (i.listenerSpec as ListenerSpecInput).security === 'reality');
+}
+
+async function applyPickChecks(
+  ctx: ActionCtx,
+  set: SetupPlanSet,
+  pickOptions: Record<string, unknown> | undefined,
+  realityL4: boolean,
+): Promise<void> {
+  const checked = await ctx.runQuery(internal.edgeSetupPlan.checkPicks, {
+    picks: set.picks.map((p) => ({
+      locationId: p.locationId as Id<'edgeLocations'>,
+      options: pickOptions?.[p.locationId] ?? {},
+    })),
+    realityL4,
+  });
+  for (const r of checked) {
+    const pick = set.picks.find((p) => p.locationId === r.locationId);
+    if (!pick) continue;
+    if (r.ok && r.certificateToCheck) {
+      // A certificate the location's check never covered (another authority,
+      // the wildcard): the zone's CAA records are read for it now.
+      const pre = await ctx.runAction(internal.edgeProviderOps.certificatePreflight, {
+        accountId: r.accountId as Id<'edgeProviderAccounts'>,
+        locationId: r.locationId as Id<'edgeLocations'>,
+        certificate: r.certificateToCheck,
+      });
+      if (!pre.ok) {
+        set.problems.push({
+          locationId: r.locationId,
+          reason: pre.code,
+          ...(pre.detail ? { detail: pre.detail } : {}),
+        });
+        continue;
+      }
+    }
+    if (r.ok) pick.options = r.options;
+    else
+      set.problems.push({
+        locationId: r.locationId,
+        reason: r.code,
+        ...(r.issues.length > 0 ? { detail: r.issues.join('; ') } : {}),
+      });
+  }
+}
+
+/**
+ * Each pick's provider options, checked where they will build: the values the
+ * operator chose (validated for the pick's provider), with the account's
+ * certificate defaults copied in (an account default only ever PREFILLS a
+ * node), laid over the location's template and checked as a whole.
+ */
+export const checkPicks = internalQuery({
+  args: {
+    picks: v.array(v.object({ locationId: v.id('edgeLocations'), options: v.any() })),
+    /** The node serves a REALITY transport (an HTTP health check would fail on it). */
+    realityL4: v.optional(v.boolean()),
+  },
+  handler: async (ctx, a) => {
+    const out: Array<
+      | {
+          locationId: string;
+          accountId: string;
+          ok: true;
+          options: Record<string, unknown>;
+          certificateToCheck: Record<string, unknown> | null;
+        }
+      | { locationId: string; ok: false; code: string; issues: string[] }
+    > = [];
+    for (const p of a.picks) {
+      const location = await ctx.db.get(p.locationId);
+      const account = location ? await ctx.db.get(location.accountId) : null;
+      if (!location || !account) {
+        out.push({ locationId: p.locationId, ok: false, code: 'edge.no_location', issues: [] });
+        continue;
+      }
+      const r = await checkPickOptions(ctx, location, account, p.options, {
+        realityL4: a.realityL4,
+      });
+      out.push(
+        r.ok
+          ? {
+              locationId: p.locationId,
+              accountId: account._id as string,
+              ok: true,
+              options: r.options,
+              certificateToCheck: r.certificateToCheck,
+            }
+          : { locationId: p.locationId, ok: false, code: r.code, issues: r.issues },
+      );
+    }
+    return out;
+  },
+});
 
 export function setOfPicks(
   pickIds: readonly string[],
@@ -500,6 +684,8 @@ export async function buildPlan(
     nodeUuid: string;
     listenerKeys?: string[];
     picks?: string[];
+    /** Provider options per pick (location id -> values the operator chose). */
+    pickOptions?: Record<string, unknown>;
   },
 ): Promise<{ plan: SetupPlanSnapshot; planHash: string }> {
   // Only the two keys: `create` hands its whole argument object here.
@@ -537,12 +723,13 @@ export async function buildPlan(
   // only); the origin probe fills it in, exactly as the transport-candidates
   // route does, so a WS / HTTP-upgrade / gRPC origin can be offered an L7 account.
   const targets = originProbeTargets(mapped.candidates, originAddress);
-  // The probe handles an unreachable origin per target; a throw here is a fault
-  // of the probe itself, so it is reported rather than hidden as "L4 only".
+  // The probe handles an unreachable origin per target (asked again before
+  // the plan believes it); a throw here is a fault of the probe itself, so it
+  // is reported rather than hidden as "L4 only".
   const outcomes =
     targets.length > 0
       ? await planStage('probing how the origin answers HTTP transports', () =>
-          planOps.probeOrigins(ctx, { targets }),
+          probeOriginsWithRetries(ctx, targets),
         )
       : [];
   const candidates = applyOriginProbes(
@@ -560,6 +747,8 @@ export async function buildPlan(
       frontable,
       formats: cand.formats,
       needsName: cand.needsName,
+      // The origin never answered for this HTTP transport, so it stayed L4-only.
+      ...(cand.probe && !cand.probe.ok ? { probeFailed: cand.probe.reason ?? 'no_answer' } : {}),
       ...(frontable
         ? {}
         : cand.needsName
@@ -619,11 +808,14 @@ export async function buildPlan(
       covered: false,
     })),
   ];
-  const accounts = c.accounts.map((acct) => accountCompatibility(acct, required, c.relay));
+  const accounts = c.accounts.map((acct) =>
+    accountCompatibility(acct, required, c.relay, c.dnsProvidersFront),
+  );
   const set =
     args.picks && args.picks.length > 0
       ? setOfPicks(args.picks, accounts, required, c.accounts)
       : undefined;
+  if (set) await applyPickChecks(ctx, set, args.pickOptions, servesReality(required));
   const plan: SetupPlanSnapshot = {
     backendServerId: a.backendServerId as string,
     backend: c.backend,
@@ -660,6 +852,9 @@ export async function buildPlan(
       (x.locations ?? []).filter((l) => l.compatible).map((l) => l.id),
     ),
     ...(args.picks ? { pickIds: args.picks } : {}),
+    ...(set
+      ? { pickOptions: Object.fromEntries(set.picks.map((p) => [p.locationId, p.options ?? {}])) }
+      : {}),
   });
   return { plan, planHash };
 }
@@ -676,6 +871,8 @@ export const plan = internalAction({
     nodeUuid: v.string(),
     listenerKeys: v.optional(v.array(v.string())),
     picks: v.optional(v.array(v.string())),
+    /** Provider options per pick (location id -> values). */
+    pickOptions: v.optional(v.any()),
   },
   handler: async (ctx, a) => {
     const { plan, planHash } = await buildPlan(ctx, a);
@@ -700,6 +897,8 @@ export const create = internalAction({
     nodeUuid: v.string(),
     listenerKeys: v.optional(v.array(v.string())),
     picks: v.optional(v.array(v.id('edgeLocations'))),
+    /** Provider options per pick (location id -> values), as the plan was shown with. */
+    pickOptions: v.optional(v.any()),
     accountId: v.optional(v.id('edgeProviderAccounts')),
     locationId: v.optional(v.id('edgeLocations')),
     planHash: v.string(),
@@ -713,6 +912,7 @@ export const create = internalAction({
       nodeUuid: a.nodeUuid,
       listenerKeys: a.listenerKeys,
       picks: a.picks as string[] | undefined,
+      pickOptions: a.pickOptions as Record<string, unknown> | undefined,
     });
     if (planHash !== a.planHash)
       throw new ConvexError({
@@ -740,6 +940,14 @@ export const create = internalAction({
     // The set: the picks the plan was shown with, or the one pick named the old way.
     let set = plan.set;
     if (!set) {
+      // The old single-location selector makes a plan with no set, so no
+      // options were shown or hashed with it: options with it are refused
+      // rather than dropped (name the picks instead).
+      if (a.pickOptions && Object.keys(a.pickOptions as Record<string, unknown>).length > 0)
+        throw new ConvexError({
+          code: 'validation',
+          message: 'Options for a location need the plan made with `picks`, not a single location',
+        });
       const account = a.accountId
         ? plan.accounts.find((x) => x.id === (a.accountId as string))
         : plan.accounts.find((x) => x.locations?.some((l) => l.id === (a.locationId as string)));
@@ -757,6 +965,7 @@ export const create = internalAction({
         nodeUuid: a.nodeUuid,
       });
       set = setOfPicks([location.id], plan.accounts, required, context.accounts);
+      await applyPickChecks(ctx, set, undefined, servesReality(required));
       plan.set = set;
     }
     refuseSet(set);
@@ -766,6 +975,10 @@ export const create = internalAction({
         plan: JSON.stringify(plan),
         planHash,
         picks: set.picks.map((p) => p.locationId as Id<'edgeLocations'>),
+        pickOptions: set.picks.map((p) => ({
+          locationId: p.locationId as Id<'edgeLocations'>,
+          options: JSON.stringify(p.options ?? {}),
+        })),
         targets: set.targets.map((t) => ({
           listenerKey: t.listenerKey,
           locationId: t.locationId as Id<'edgeLocations'>,

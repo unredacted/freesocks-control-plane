@@ -319,7 +319,7 @@
     <SettingsSectionCard
       id="l7"
       title="CDN fronts (L7)"
-      description="Limits and proof lifetimes of hostname fronts. Whether automation may pick them is in Basics."
+      description="Limits of hostname fronts, and whether a DNS account may be one. Whether automation may pick them is in Basics."
       {form}
       paths={SECTION_PATHS.l7}
       collapsible

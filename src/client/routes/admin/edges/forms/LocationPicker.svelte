@@ -8,6 +8,13 @@
    * checks the region is offered to this key before it saves the location, and
    * the same place twice is the same location.
    *
+   * A CDN account's location is a DNS zone: one of the zones its token reaches
+   * (a front that writes its records elsewhere: a DNS account, one of that
+   * account's zones, and optionally a TLS configuration). Those lists come from
+   * the accounts' catalogs (what each reaches, as last listed; listed again when
+   * old or on Refresh), and the server checks the zone with the provider before
+   * it saves the location.
+   *
    * Props:
    *   accountId: string
    *   provider: EdgeProviderId
@@ -26,11 +33,15 @@
   import type { EdgeDiscoverResponse, EdgeProviderId } from '@shared/contracts/edges';
   import {
     createProviderLocation,
+    edgeKeys,
     invalidateProviders,
     locationOptions,
+    providerCatalogQuery,
     providersQuery,
+    refreshProviderCatalog,
     templatesQuery,
   } from '@client/lib/edgesApi';
+  import { EDGE_PROVIDER_META } from '@client/lib/edgeProviderMeta';
   import CodeNote from '../components/CodeNote.svelte';
   import ProviderAnswer from '../components/ProviderAnswer.svelte';
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
@@ -41,6 +52,7 @@
     placementBody,
     type ProviderField,
   } from './providerFields';
+  import { catalogStale, zoneChoices } from './zones';
 
   interface Props {
     accountId: string;
@@ -62,8 +74,67 @@
   let costNote = $state('');
   let tried = $state(false);
 
-  const fields = $derived(locationFields(provider));
-  const ctx = $derived({ discovered, accounts: [], values });
+  const meta = $derived(EDGE_PROVIDER_META[provider]);
+  /** A CDN's place is a DNS zone, picked from the accounts' catalogs. */
+  const cdn = $derived(meta.layer === 'l7');
+  const fields = $derived(locationFields(provider).filter((f) => !f.readOnly));
+  const accounts = $derived(providers.data?.accounts ?? []);
+  const account = $derived(accounts.find((a) => a.id === accountId) ?? null);
+  const catalog = providerCatalogQuery(() => (cdn ? accountId : null));
+  const dnsAccountId = $derived(meta.needsDnsAccount ? (values['dnsAccountId'] ?? '') : '');
+  const dnsCatalog = providerCatalogQuery(() => dnsAccountId || null);
+  /** "example.org", or "example.org (not active)" for a zone the provider lists as not active. */
+  const zoneOptions = (list: ReturnType<typeof zoneChoices>) =>
+    list.map((z) => ({
+      id: z.id,
+      label: z.status && z.status !== 'active' ? `${z.name} (not active)` : z.name,
+    }));
+  const ownZones = $derived(zoneChoices(catalog.data, account?.locations ?? []));
+  const dnsZoneList = $derived(
+    zoneChoices(dnsCatalog.data, accounts.find((a) => a.id === dnsAccountId)?.locations ?? []),
+  );
+  /** For a CDN the lists are the catalogs' (zones, TLS configurations), never a live listing. */
+  const cdnDiscovered = $derived<EdgeDiscoverResponse>({
+    ...(meta.providesDns ? { zones: zoneOptions(ownZones) } : {}),
+    ...(catalog.data?.kinds.tlsConfigurations
+      ? { tlsConfigurations: catalog.data.kinds.tlsConfigurations.items }
+      : {}),
+  });
+  const ctx = $derived({
+    discovered: cdn ? cdnDiscovered : discovered,
+    accounts,
+    values,
+    dnsZones: zoneOptions(dnsZoneList),
+  });
+  /** The catalog errors worth saying (a listing that failed keeps its last items). */
+  const catalogErrors = $derived(
+    [
+      ...Object.entries(catalog.data?.kinds ?? {}),
+      ...Object.entries(dnsCatalog.data?.kinds ?? {}).filter(([k]) => k === 'zones'),
+    ].flatMap(([kind, e]) => (e?.error ? [{ kind, code: e.error, detail: e.errorDetail }] : [])),
+  );
+  const refresh = createMutation(() => ({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) await refreshProviderCatalog(id);
+    },
+    onSuccess: (_r, ids) => {
+      for (const id of ids) void qc.invalidateQueries({ queryKey: edgeKeys.providerCatalog(id) });
+    },
+  }));
+  const refreshIds = $derived([accountId, ...(dnsAccountId ? [dnsAccountId] : [])]);
+  // A catalog never listed, or older than the server says, is listed again once.
+  const autoRefreshed = new Set<string>();
+  $effect(() => {
+    if (!cdn) return;
+    for (const [id, data] of [
+      [accountId, catalog.data],
+      [dnsAccountId, dnsCatalog.data],
+    ] as const) {
+      if (!id || !data || autoRefreshed.has(id) || !catalogStale(data)) continue;
+      autoRefreshed.add(id);
+      untrack(() => refresh.mutate([id]));
+    }
+  });
   const missing = $derived(
     missingRequired(provider, values).filter((l) => fields.some((f) => f.label === l)),
   );
@@ -109,11 +180,20 @@
       values = next;
     },
   }));
-  untrack(() => load.mutate({}));
+  untrack(() => {
+    if (!cdn) load.mutate({});
+  });
 
   function onFieldChange(f: ProviderField, value: string) {
     const next = { ...values, [f.key]: value };
     if (f.from === 'networks') next['subnetId'] = '';
+    if (f.from === 'zones' || f.from === 'dnsZones')
+      next['zoneName'] =
+        (f.from === 'zones' ? ownZones : dnsZoneList).find((z) => z.id === value)?.name ?? '';
+    if (f.from === 'dnsAccounts') {
+      next['zoneId'] = '';
+      next['zoneName'] = '';
+    }
     values = next;
     // The networks, subnets and flavors of a region depend on the project and the region.
     if (f.from === 'projects' || f.from === 'regions') load.mutate(placementBody(provider, values));
@@ -140,6 +220,11 @@
     );
   }
   const issue = $derived(create.error ? edgeErrorIssue(create.error) : null);
+  const cdnHint = $derived(
+    meta.needsDnsAccount
+      ? "The front's names and their certificate challenges are written into this zone of the DNS account."
+      : 'Every name FCP writes sits directly under the zone apex.',
+  );
   const regionHint = $derived(
     nodeCountry
       ? `The node is in ${nodeCountry}. Pick a region close to it: members reach the address, which forwards to the node.`
@@ -180,20 +265,52 @@
         disabled={create.isPending}
         oninput={(e) => onFieldChange(f, e.currentTarget.value)}
       />
-      {#if f.kind === 'select' && f.from !== 'subnets' && !load.isPending}
+      {#if f.from === 'dnsZones' && !dnsAccountId}
+        <p class="text-muted-foreground text-xs">Choose the DNS account first.</p>
+      {:else if f.kind === 'select' && f.from !== 'subnets' && !load.isPending}
         <p class="text-muted-foreground text-xs">
-          The provider returned no list for this, so type the id.
+          {cdn
+            ? 'No list is stored for this yet: refresh it, or type the id.'
+            : 'The provider returned no list for this, so type the id.'}
         </p>
       {/if}
     {/if}
     {#if f.help}<p class="text-muted-foreground text-xs">{f.help}</p>{/if}
     {#if f.from === 'regions'}<p class="text-muted-foreground text-xs">{regionHint}</p>{/if}
+    {#if f.from === 'zones' || f.from === 'dnsZones'}
+      <p class="text-muted-foreground text-xs">{cdnHint}</p>
+    {/if}
   </div>
 {/snippet}
 
 <div class="space-y-4">
   <div aria-live="polite">
-    {#if load.isPending && !discovered}
+    {#if cdn}
+      <div class="flex flex-wrap items-center gap-2">
+        <p class="text-muted-foreground text-sm" role="status">
+          {refresh.isPending
+            ? 'Asking the provider which zones these credentials reach.'
+            : 'Zones and configurations as these credentials reach them.'}
+        </p>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-11 sm:h-7"
+          disabled={refresh.isPending}
+          onclick={() => refresh.mutate(refreshIds)}
+        >
+          Refresh the lists
+        </Button>
+      </div>
+      {#each catalogErrors as e (e.kind)}
+        <CodeNote
+          tone="warning"
+          issue={{ code: e.code, subject: e.kind, detail: 'This list could not be read again.' }}
+        />
+        <ProviderAnswer detail={e.detail ?? undefined} />
+      {/each}
+      {#if refresh.isError}<InlineError message={edgeErrorMessage(refresh.error)} />{/if}
+    {:else if load.isPending && !discovered}
       <p class="text-muted-foreground text-sm" role="status">
         Asking the provider where this account can create addresses.
       </p>
@@ -288,13 +405,17 @@
   <div class="flex flex-wrap gap-2">
     <Button
       class="h-11 sm:h-8"
-      disabled={create.isPending || load.isPending}
+      disabled={create.isPending || (!cdn && load.isPending)}
       onclick={() => {
         tried = true;
         if (missing.length === 0 && regionalMissing.length === 0) create.mutate();
       }}
     >
-      {create.isPending ? 'Adding the location' : 'Add location'}
+      {create.isPending
+        ? cdn
+          ? 'Checking the zone and adding it'
+          : 'Adding the location'
+        : 'Add location'}
     </Button>
     {#if onCancel}
       <Button variant="outline" class="h-11 sm:h-8" onclick={onCancel}>Cancel</Button>

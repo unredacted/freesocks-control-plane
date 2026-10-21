@@ -4,7 +4,7 @@ socks-port: 7891
 redir-port: 7892
 allow-lan: true
 ipv6: true
-mode: global
+mode: rule
 log-level: info
 external-controller: 127.0.0.1:9090
 dns:

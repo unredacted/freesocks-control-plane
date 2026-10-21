@@ -28,6 +28,8 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
+import { appendRunEvent } from './lib/edges/setupRuns';
+import { fastlyCertificateLockKey } from './lib/edges/lockKeys';
 import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
 import {
   EDGE_PLUMBING,
@@ -46,7 +48,7 @@ import {
   todayKey,
 } from './relays';
 import { insertPlannedEdge } from './edges';
-import { accountTested, dayKey } from './edgeProviderAccounts';
+import { accountTested, certificateRefusalFor, dayKey } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
 import {
   matchSlotHosts,
@@ -58,7 +60,26 @@ import {
 } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
 import { allocatePoolIndex, withEdgeAt, withoutEdge } from './lib/edges/pool';
-import { resolveTemplateFor } from './edgeTemplates';
+import {
+  checkPickOptions,
+  relayHasReality,
+  resolveBuildFor,
+  resolveTemplateFor,
+} from './edgeTemplates';
+import {
+  deepMerge,
+  parseOptionValues,
+  splitChoices,
+  type Values,
+} from './lib/edges/providers/options';
+import { contextProblems, optionFieldsOf } from './lib/edges/providers/templates';
+import type { EdgeProviderId } from './lib/edgeProviderIds';
+import {
+  accountOptionDefaultsOf,
+  builtForChoices,
+  certificateDigest,
+  certificateValuesFor,
+} from './lib/edges/choices';
 import {
   appendEvent,
   isTerminalPhase,
@@ -98,12 +119,12 @@ import {
   buildProvisionIntent,
   IntentError,
   parseIntent,
-  parseObservedSettings,
   type ProvisionIntent,
 } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
 import {
   edgeLayerOf,
+  frontsAllowed,
   providerHealthSatisfies,
   zoneModeGovernsOrigin,
 } from './lib/edges/providers/capabilities';
@@ -124,6 +145,7 @@ import {
 } from './nodeActivation';
 import type { PublicationShape } from './lib/backend/activation';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
+import { l7PlaceOf, l7PlaceProblemOf } from './lib/edges/l7Place';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -437,6 +459,12 @@ const startArgs = {
   requestedLocationId: v.optional(v.id('edgeLocations')),
   /** A replace's explicit spare (L4): that tested spare of the same listener, or nothing. */
   requestedSpareEdgeId: v.optional(v.id('edges')),
+  /**
+   * Provider options for the one edge this start builds, instead of its pick's
+   * (needs `requestedLocationId`, where they are checked). Such an edge is never
+   * taken by automatic work afterwards: it was not built for its pick.
+   */
+  requestedOptions: v.optional(v.any()),
   reason: v.optional(v.string()),
   actorAdminId: v.optional(v.id('adminUsers')),
   /** The guided setup run starting this rotation (+ its generation, reported by the terminal hook). */
@@ -465,6 +493,7 @@ export interface StartRotationArgs {
   allowUnqualified?: boolean;
   requestedLocationId?: Id<'edgeLocations'>;
   requestedSpareEdgeId?: Id<'edges'>;
+  requestedOptions?: unknown;
   reason?: string;
   actorAdminId?: Id<'adminUsers'>;
   setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
@@ -503,11 +532,16 @@ export async function publicationApproval(
 ): Promise<PublicationAdmission> {
   if (origin.origin.kind !== 'panel-node' || !origin.backendServerId) return { kind: 'unmanaged' };
   const listener = await ctx.db.get(to.listenerId);
+  const certificate = certificateDigest(
+    to.provider,
+    parseIntent(to.provisionIntent) as unknown as Values | null,
+  );
   return publicationAdmission(ctx, origin.backendServerId, origin.origin.nodeName, {
     listenerKey: listener?.listenerKey ?? '',
     accountId: to.accountId ? String(to.accountId) : null,
     locationId: to.locationId ? String(to.locationId) : null,
     templateHash: to.templateHash ?? null,
+    ...(certificate !== undefined ? { certificate } : {}),
   });
 }
 
@@ -661,6 +695,40 @@ export async function collectStartBlockers(
   if (a.kind === 'provision' && (a.requestedAccountId || a.requestedLocationId) && !a.listenerId) {
     push('validation', 'listenerId is required for an explicit account');
   }
+  // An explicitly named account whose front could get no certificate (the
+  // zone's CAA records forbid its CA, its shared wildcard failed) is refused
+  // before anything is planned or allocated.
+  if (a.kind === 'provision' && (a.requestedAccountId || a.requestedLocationId)) {
+    const named = a.requestedLocationId ? await ctx.db.get(a.requestedLocationId) : null;
+    const accountId = a.requestedAccountId ?? named?.accountId;
+    const acct = accountId ? await ctx.db.get(accountId) : null;
+    // The zone it would be planned in: the named one, else the account's
+    // default, with the certificate this front would ask for there.
+    const zone = named ?? (acct ? await defaultLocationOf(ctx.db, acct) : null);
+    const choices =
+      zone && origin
+        ? await choicesFor(
+            ctx,
+            {
+              setupRun: a.setupRun,
+              requestedOptions:
+                a.requestedOptions !== undefined ? JSON.stringify(a.requestedOptions) : undefined,
+            },
+            origin,
+            zone._id,
+          )
+        : null;
+    const certificate = acct ? certificateRefusalFor(acct, zone, choices) : null;
+    if (certificate)
+      push(
+        `edge.${certificate}`,
+        certificate === 'caa_forbids_ca'
+          ? 'The zone’s CAA records do not let the account’s certificate authority issue'
+          : certificate === 'shared_certificate_failed'
+            ? 'The account’s shared certificate failed to issue'
+            : 'The zone’s wildcard is covered by a certificate this account would not order',
+      );
+  }
   if (listenerId) {
     const listener = await ctx.db.get(listenerId);
     if (!listener || listener.relayId !== a.relayId || listener.retired) {
@@ -724,7 +792,14 @@ export async function collectStartBlockers(
     publishesUnderApproval(a) &&
     origin.origin.kind === 'panel-node'
   ) {
-    const sel = await selectionContext(ctx, { ...a, listenerId }, origin, targetEdge, cfg);
+    // Automatic starts carry no options of their own: the picks' apply.
+    const sel = await selectionContext(
+      ctx,
+      { ...a, listenerId, requestedOptions: undefined },
+      origin,
+      targetEdge,
+      cfg,
+    );
     if (sel.accountFailure === 'outside_approved_shape')
       push(
         'edge.outside_approved_shape',
@@ -778,6 +853,7 @@ async function verifiedSpareFor(
     // The same health rule `pickStandby` applies (an observe-only import with
     // no provider is not a candidate the selection would take).
     if (!providerHealthSatisfies(e.provider, e.health, cfg.requireProviderHealth)) continue;
+    if (!(await edgeFitsPick(ctx, {}, origin, e))) continue;
     if ((await checkPublishable(ctx, e, cfg.requireProviderHealth)).ok) return true;
   }
   return false;
@@ -866,6 +942,26 @@ export async function startRotation(
       code: 'validation',
       message: 'Only a detector start carries affected countries or a test block',
     });
+  // Options for this one edge: checked where the edge will build.
+  let requestedOptions: string | undefined;
+  if (a.requestedOptions !== undefined && a.kind !== 'publish') {
+    const where = a.requestedLocationId ? await ctx.db.get(a.requestedLocationId) : null;
+    const owner = where ? await ctx.db.get(where.accountId) : null;
+    if (!where || !owner)
+      throw new ConvexError({
+        code: 'validation',
+        message: 'Options for one address need the location it is built in',
+      });
+    const checked = await checkPickOptions(ctx, where, owner, a.requestedOptions, {
+      realityL4: await relayHasReality(ctx.db, a.relayId),
+    });
+    if (!checked.ok)
+      throw new ConvexError({
+        code: checked.code,
+        message: checked.issues.join('; ') || checked.code,
+      });
+    requestedOptions = JSON.stringify(checked.options);
+  }
   const id = await ctx.db.insert('edgeRotations', {
     relayId: a.relayId,
     kind: a.kind,
@@ -883,6 +979,7 @@ export async function startRotation(
     requestedLocationId:
       a.kind === 'provision' || a.kind === 'replace' ? a.requestedLocationId : undefined,
     requestedSpareEdgeId: a.kind === 'replace' ? a.requestedSpareEdgeId : undefined,
+    requestedOptions,
     affectedCountries: a.affectedCountries?.slice(0, 20),
     simulationId: a.simulationId,
     setupRun: a.setupRun,
@@ -961,6 +1058,10 @@ export async function startRotation(
         forceGeoEvidence: a.forceGeoEvidence === true,
         rotationId: id,
         edgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
+        // The options keys an operator set for this one address (values stay on the rotation).
+        optionKeys: requestedOptions
+          ? Object.keys(parseOptionValues(requestedOptions)).sort()
+          : undefined,
       },
     });
   }
@@ -1068,6 +1169,12 @@ const advanceEvent = v.union(
     detail: v.optional(v.string()),
     countPoll: v.optional(v.boolean()),
     countError: v.optional(v.boolean()),
+    /**
+     * What the new edge's step now waits on (a code from `L7_CERTIFICATE_CODES`),
+     * sent only when it CHANGED: the rotation's log, and a guided run's, get
+     * one warning per change instead of one per poll.
+     */
+    waitCode: v.optional(v.string()),
   }),
   v.object({ type: v.literal('provisioned') }),
   v.object({ type: v.literal('verified') }),
@@ -1222,6 +1329,22 @@ async function placeAt(
   };
 }
 
+/**
+ * A guided run waiting on this rotation hears what its new edge waits on (one
+ * event per change), so its progress line says why it is still waiting. Only
+ * the run's own generation, and only while it is waiting on THIS rotation.
+ */
+async function noteRunWaiting(ctx: MutationCtx, r: Rotation, code: string, now: number) {
+  if (!r.setupRun) return;
+  const run = await ctx.db.get(r.setupRun.runId);
+  if (!run || run.generation !== r.setupRun.generation || run.state !== 'waiting') return;
+  if (run.expect?.rotationId !== r._id) return;
+  await ctx.db.patch(run._id, {
+    events: appendRunEvent(run.events, { at: now, level: 'warn', code }),
+    updatedAt: now,
+  });
+}
+
 export const advance = internalMutation({
   args: { rotationId: v.id('edgeRotations'), stepVersion: v.number(), event: advanceEvent },
   handler: async (ctx, { rotationId, stepVersion, event }) => {
@@ -1253,13 +1376,18 @@ export const advance = internalMutation({
         return { ok: true as const };
       }
       case 'progress': {
+        let events = event.detail
+          ? ev(event.countError ? 'warn' : 'info', 'progress', event.detail)
+          : r.events;
+        if (event.waitCode) {
+          events = appendEvent(events, { at: now, level: 'warn', code: event.waitCode });
+          await noteRunWaiting(ctx, r, event.waitCode, now);
+        }
         await ctx.db.patch(rotationId, {
           stepVersion: next,
           pollAttempts: event.countPoll ? r.pollAttempts + 1 : r.pollAttempts,
           stepErrors: event.countError ? (r.stepErrors ?? 0) + 1 : r.stepErrors,
-          events: event.detail
-            ? ev(event.countError ? 'warn' : 'info', 'progress', event.detail)
-            : r.events,
+          events,
           updatedAt: now,
         });
         await scheduleStep(ctx, rotationId, event.delayMs);
@@ -1357,6 +1485,8 @@ export const advance = internalMutation({
               status: 'failed',
               statusChangedAt: now,
               failure: { step: r.phase, code: event.code },
+              // A failed edge waits on nothing any more (the code is the failure now).
+              waiting: undefined,
               updatedAt: now,
             });
           }
@@ -1468,6 +1598,9 @@ export const commitSelection = internalMutation({
     locationId: v.optional(v.id('edgeLocations')),
     templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     templateHash: v.string(),
+    /** The location's own template hash, and the pick's choices (JSON), when the pick has options. */
+    baseTemplateHash: v.optional(v.string()),
+    choices: v.optional(v.string()),
     nameNonce: v.string(),
     listeners: v.array(
       v.object({
@@ -1497,16 +1630,20 @@ export const commitSelection = internalMutation({
     if (!origin || !account || !listener) return { ok: false as const, code: 'missing' as const };
     const layer = edgeLayerOf(account.provider);
     // Freeze the intent HERE, before any provider call: from this point on, an
-    // operator editing the account's zone, its DNS account, the TLS
-    // configuration or the template no longer moves this edge. Everything the
-    // remaining steps, discovery, describe and destroy need is on the row.
+    // operator editing the account's certificate authority or the template no
+    // longer moves this edge (the location's zone, DNS account and TLS
+    // configuration never change). Everything the remaining steps, discovery,
+    // describe and destroy need is on the row.
     let provisionIntent: ProvisionIntent | null = null;
     if (layer === 'l7') {
-      const dnsAccountId = (account.settings as { dnsAccountId?: string }).dnsAccountId;
-      const dnsAccount = dnsAccountId
-        ? await ctx.db.get(dnsAccountId as Id<'edgeProviderAccounts'>)
+      const location = a.locationId
+        ? await ctx.db.get(a.locationId)
+        : await defaultLocationOf(ctx.db, account);
+      const place = await l7PlaceOf(ctx.db, account, location);
+      const dnsAccount = place.dnsAccountId
+        ? await ctx.db.get(place.dnsAccountId as Id<'edgeProviderAccounts'>)
         : null;
-      if (dnsAccountId && !dnsAccount)
+      if (place.dnsAccountId && !dnsAccount)
         return { ok: false as const, code: 'dns_account_missing' as const };
       // A disabled DNS account stops NEW allocations (reconciliation and
       // destroy keep working through it, which is why this is the only gate).
@@ -1518,16 +1655,14 @@ export const commitSelection = internalMutation({
             id: account._id as string,
             provider: account.provider,
             settings: account.settings as Record<string, unknown>,
-            observedSettings: parseObservedSettings(account.observedSettings),
           },
-          dnsAccount: dnsAccount
-            ? {
-                id: dnsAccount._id as string,
-                provider: dnsAccount.provider,
-                settings: dnsAccount.settings as Record<string, unknown>,
-                observedSettings: parseObservedSettings(dnsAccount.observedSettings),
-              }
-            : null,
+          place,
+          // The certificate the node's pick asks for (the account's defaults otherwise).
+          certificate: certificateValuesFor(
+            account.provider,
+            accountOptionDefaultsOf(account),
+            a.choices !== undefined ? parseOptionValues(a.choices) : null,
+          ),
           specName: edgeResourceName(origin.slug, a.nameNonce),
           templateParams: (a.templateParams as Record<string, unknown>) ?? {},
           templateHash: a.templateHash,
@@ -1549,6 +1684,9 @@ export const commitSelection = internalMutation({
         locationId: a.locationId ?? null,
         templateId: a.templateId,
         templateHash: a.templateHash,
+        ...(a.choices !== undefined
+          ? { choices: a.choices, baseTemplateHash: a.baseTemplateHash }
+          : {}),
         listeners: a.listeners,
         steps: a.steps,
         nameNonce: a.nameNonce,
@@ -2442,6 +2580,57 @@ export interface SelectionRequest {
   requestedSpareEdgeId?: Id<'edges'>;
   /** Started by a guided setup run (the operator chose its account). */
   setupRun?: { runId: Id<'edgeSetupRuns'>; generation: number };
+  /** Options for this one edge instead of its pick's (JSON, `parseOptionValues`). */
+  requestedOptions?: string;
+}
+
+/**
+ * What a node's pick at `locationId` asks its edges to be built with
+ * (lib/edges/providers/options.ts): a run's own pick while it runs, else the
+ * node's provider set. `null` = a pick from before options (or no pick): the
+ * template and the account's defaults. An operator's options for one edge win.
+ */
+export async function choicesFor(
+  ctx: { db: QueryCtx['db'] },
+  rotation: Pick<SelectionRequest, 'setupRun' | 'requestedOptions'>,
+  origin: Pick<Origin, 'providerSet'>,
+  locationId: Id<'edgeLocations'> | string,
+): Promise<Values | null> {
+  if (rotation.requestedOptions !== undefined) return parseOptionValues(rotation.requestedOptions);
+  if (rotation.setupRun) {
+    const run = await ctx.db.get(rotation.setupRun.runId);
+    const p = run?.picks?.find((x) => (x.locationId as string) === (locationId as string));
+    if (p) return p.options !== undefined ? parseOptionValues(p.options) : null;
+  }
+  const p = origin.providerSet?.find((x) => (x.locationId as string) === (locationId as string));
+  return p?.options !== undefined ? parseOptionValues(p.options) : null;
+}
+
+/**
+ * Whether an edge was built with what its node's pick asks for NOW
+ * (lib/edges/choices.ts). Automatic work never takes a spare built for other
+ * choices; a template edit is not a choice and keeps today's rule.
+ */
+export async function edgeFitsPick(
+  ctx: { db: QueryCtx['db'] },
+  rotation: Pick<SelectionRequest, 'setupRun' | 'requestedOptions'>,
+  origin: Pick<Origin, 'providerSet'>,
+  edge: Edge,
+): Promise<boolean> {
+  if (!edge.locationId) return true;
+  const wanted = await choicesFor(ctx, rotation, origin, edge.locationId);
+  if (wanted === null && edge.choices === undefined) return true;
+  const account = edge.accountId ? await ctx.db.get(edge.accountId) : null;
+  return builtForChoices(
+    {
+      provider: edge.provider,
+      choices: edge.choices,
+      intent: parseIntent(edge.provisionIntent) as unknown as Values | null,
+    },
+    wanted,
+    account ? accountOptionDefaultsOf(account) : {},
+    (json) => parseOptionValues(json),
+  );
 }
 
 export interface SelectionContext {
@@ -2457,12 +2646,21 @@ export interface SelectionContext {
     zoneName: string | null;
     /** L7: the zone's OBSERVED encryption mode (null = the account was never tested). */
     zoneSslMode: string | null;
+    /** The plan of the zone its DNS records go to, as its test read it (null = unknown). */
+    zonePlan?: string | null;
   } | null;
   accountFailure: string | null;
   template: {
     id: Id<'edgeTemplates'> | null;
+    /** What the edge builds with: the template, with the pick's tuning choices laid over it. */
     params: Record<string, unknown>;
     hash: string;
+    /** The location's own effective template hash. */
+    baseHash: string;
+    /** The pick's choices as stored (null = a pick from before options). */
+    choices: Values | null;
+    /** Provider rules the choices break once laid over the template. */
+    invalid: string[] | null;
   } | null;
 }
 
@@ -2570,14 +2768,34 @@ export async function selectionContext(
     accountId: string | null,
     locationId: string | null,
     templateHash: string | null,
+    certificate: string | undefined,
   ) =>
     !underApproval ||
     (await shapeAdmitted(
       ctx,
       origin,
-      { listenerKey: listener.listenerKey, accountId, locationId, templateHash },
+      {
+        listenerKey: listener.listenerKey,
+        accountId,
+        locationId,
+        templateHash,
+        ...(certificate !== undefined ? { certificate } : {}),
+      },
       { replace: rotation.kind === 'replace' },
     ));
+  // The certificate a new edge at a location will freeze (the pick's, else the account's defaults).
+  const certificateAt = async (
+    account: Doc<'edgeProviderAccounts'>,
+    locationId: Id<'edgeLocations'>,
+  ) =>
+    certificateDigest(
+      account.provider,
+      certificateValuesFor(
+        account.provider,
+        accountOptionDefaultsOf(account),
+        await choicesFor(ctx, rotation, origin, locationId),
+      ),
+    );
   // Automatic work (the detector, upkeep) stays inside the node's provider set
   // and out of a pick that cools (D6); an operator's own request is not held.
   const automatic = rotation.trigger === 'detector' || rotation.trigger === 'reconcile';
@@ -2604,10 +2822,15 @@ export async function selectionContext(
       publication: e.publication,
       health: e.health,
       // An untested L4 spare is not a candidate (lib/edges/verification.ts),
-      // nor one outside the node's approved shape.
+      // nor one outside the node's approved shape, nor a DNS account's spare
+      // while DNS accounts may not front.
       hasAddress:
         hasPublishableAddress(e) &&
         standbyEligible(e, slotOfEdge) &&
+        frontsAllowed(e.provider, cfg.l7.dnsProvidersFront) &&
+        // Built with what its pick asks for now (the operator's named spare excepted).
+        (e._id === rotation.requestedSpareEdgeId ||
+          (await edgeFitsPick(ctx, rotation, origin, e))) &&
         (e.listenerId !== slot._id ||
           e.status !== 'active' ||
           e.publication !== 'unpublished' ||
@@ -2615,6 +2838,10 @@ export async function selectionContext(
             e.accountId ? String(e.accountId) : null,
             e.locationId ? String(e.locationId) : null,
             e.templateHash ?? null,
+            certificateDigest(
+              e.provider,
+              parseIntent(e.provisionIntent) as unknown as Values | null,
+            ),
           ))),
     });
   }
@@ -2682,7 +2909,13 @@ export async function selectionContext(
     l7SelectionAllowed(cfg);
   const eligibleAccounts = accountsForSlot(
     (await ctx.db.query('edgeProviderAccounts').collect()).filter((a) => a.enabled),
-    { layers, proto: protoOf(listener), originPort: listener.originPort, allowL7 },
+    {
+      layers,
+      proto: protoOf(listener),
+      originPort: listener.originPort,
+      allowL7,
+      dnsProvidersFront: cfg.l7.dnsProvidersFront,
+    },
   );
   const accounts = eligibleAccounts;
   const failure = (code: string): SelectionContext => ({
@@ -2706,11 +2939,27 @@ export async function selectionContext(
     const a = await ctx.db.get((rotation.requestedAccountId ?? named!.accountId)!);
     if (!a) return failure('account_not_found');
     if (!a.enabled) return failure('account_disabled');
+    // A certificate that cannot be had (CAA forbids the CA, the shared
+    // wildcard failed) is named as such, before the generic untested.
+    const zone = named ?? (await defaultLocationOf(ctx.db, a));
+    const certificate = certificateRefusalFor(
+      a,
+      zone,
+      zone ? await choicesFor(ctx, rotation, origin, zone._id) : null,
+    );
+    if (certificate) return failure(certificate);
     if (!accountTested(a)) return failure('account_untested');
+    // A DNS account named on purpose still fronts nothing while the switch is off.
+    if (!frontsAllowed(a.provider, cfg.l7.dnsProvidersFront))
+      return failure('dns_account_not_fronting');
     if (!eligibleAccounts.some((e) => e._id === a._id)) return failure('account_incompatible');
     const where = named ?? (await defaultLocationOf(ctx.db, a));
     if (!where) return failure('no_location');
     if (!where.enabled) return failure('location_disabled');
+    // A CDN place a new edge cannot be planned in (no zone, a refused check,
+    // its DNS account gone or off, its encryption mode never read).
+    const placeProblem = await l7PlaceProblemOf(ctx.db, a, where);
+    if (placeProblem) return failure(placeProblem);
     if (!where.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)
       return failure('account_mismatch');
@@ -2724,17 +2973,25 @@ export async function selectionContext(
     const today = a.allocationsDayKey === todayKey() ? a.allocationsToday : 0;
     if (a.dailyAllocationBudget !== 0 && today >= a.dailyAllocationBudget)
       return failure('account_budget_exhausted');
-    const template = await resolveTemplateFor(
+    const template = await resolveBuildFor(
       ctx,
       a.provider,
       rotation.requestedTemplateId ?? null,
       a.defaultTemplateId ?? null,
       a._id,
       where,
+      await choicesFor(ctx, rotation, origin, where._id),
     );
     if (rotation.requestedTemplateId && template.id !== rotation.requestedTemplateId)
       return failure('template_not_found');
-    if (!(await fitsApproval(a._id as string, where._id as string, template.hash)))
+    if (
+      !(await fitsApproval(
+        a._id as string,
+        where._id as string,
+        template.hash,
+        await certificateAt(a, where._id),
+      ))
+    )
       return failure('outside_approved_shape');
     return { listener, standbyId: null, ...(await describeAccount(ctx, a, where)), template };
   }
@@ -2746,6 +3003,7 @@ export async function selectionContext(
   const candidates: AccountCandidate[] = [];
   const keyOfLocation = new Map<string, string>();
   let outsideShape = 0;
+  let certificateRefused: string | null = null;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
@@ -2753,18 +3011,39 @@ export async function selectionContext(
     // provisioned by FCP and never consume its allocation.
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
     for (const loc of await locationsOfAccount(ctx.db, a._id)) {
-      if (!loc.enabled) continue;
+      // A zone where this front could not get its certificate is never picked.
+      const certificate = certificateRefusalFor(
+        a,
+        loc,
+        await choicesFor(ctx, rotation, origin, loc._id),
+      );
+      if (certificate) {
+        certificateRefused = certificateRefused ?? certificate;
+        continue;
+      }
+      // A place whose last check refused it (a paused zone) gets no new edge.
+      // A place no new edge can be planned in (a CDN zone with no zone, a
+      // refused check, its DNS account off, an unread encryption mode).
+      if (!loc.enabled || (await l7PlaceProblemOf(ctx.db, a, loc))) continue;
       keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
       if (underApproval) {
-        const tpl = await resolveTemplateFor(
+        const tpl = await resolveBuildFor(
           ctx,
           a.provider,
           null,
           a.defaultTemplateId ?? null,
           a._id,
           loc,
+          await choicesFor(ctx, rotation, origin, loc._id),
         );
-        if (!(await fitsApproval(a._id as string, loc._id as string, tpl.hash))) {
+        if (
+          !(await fitsApproval(
+            a._id as string,
+            loc._id as string,
+            tpl.hash,
+            await certificateAt(a, loc._id),
+          ))
+        ) {
           outsideShape++;
           continue;
         }
@@ -2841,19 +3120,25 @@ export async function selectionContext(
       account: null,
       // Every account that could front the listener is outside what the node
       // was approved for: a new review is the way forward, not another account.
+      // Nothing left but accounts whose fronts could get no certificate: say so.
       accountFailure:
-        candidates.length === 0 && outsideShape > 0 ? 'outside_approved_shape' : picked.code,
+        candidates.length === 0 && outsideShape > 0
+          ? 'outside_approved_shape'
+          : candidates.length === 0 && certificateRefused
+            ? certificateRefused
+            : picked.code,
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
   const location = (await ctx.db.get(picked.account.locationId as Id<'edgeLocations'>))!;
-  const template = await resolveTemplateFor(
+  const template = await resolveBuildFor(
     ctx,
     account.provider,
     null,
     account.defaultTemplateId ?? null,
     account._id,
     location,
+    await choicesFor(ctx, rotation, origin, location._id),
   );
   return {
     listener,
@@ -2869,26 +3154,19 @@ async function describeAccount(
   account: Doc<'edgeProviderAccounts'>,
   location: Doc<'edgeLocations'>,
 ): Promise<Pick<SelectionContext, 'account' | 'accountFailure'>> {
-  // The zone the hostname will be minted under: the account's own (a provider
-  // that hosts its DNS) or the referenced DNS account's.
-  const settings = account.settings as { zoneName?: string; dnsAccountId?: string };
-  let zoneName = settings.zoneName ?? null;
-  // The zone's encryption mode is observed on the account that HOSTS the zone
-  // (a provider that hosts its own DNS: itself; otherwise the DNS account).
-  let zoneHost = account;
-  if (!zoneName && settings.dnsAccountId) {
-    const dns = await ctx.db.get(settings.dnsAccountId as Id<'edgeProviderAccounts'>);
-    zoneName = (dns?.settings as { zoneName?: string } | undefined)?.zoneName ?? null;
-    if (dns) zoneHost = dns;
-  }
+  // The zone the hostname will be minted under and its encryption mode: the
+  // location's (a CDN place is its zone), read once its check observed it.
+  const place =
+    edgeLayerOf(account.provider) === 'l7' ? await l7PlaceOf(ctx.db, account, location) : null;
   return {
     account: {
       id: account._id,
       locationId: location._id,
       provider: account.provider,
       defaultTemplateId: account.defaultTemplateId ?? null,
-      zoneName,
-      zoneSslMode: parseObservedSettings(zoneHost.observedSettings).zoneSslMode ?? null,
+      zoneName: place?.zoneName ?? null,
+      zoneSslMode: place?.observed?.zoneSslMode ?? null,
+      zonePlan: place?.observed?.zonePlan ?? null,
     },
     accountFailure: null,
   };
@@ -2930,7 +3208,13 @@ function specOf(edge: Edge) {
  */
 function templateParamsOf(edge: Edge, fallback: Record<string, unknown>): Record<string, unknown> {
   const intent = parseIntent(edge.provisionIntent);
-  if (!intent) return fallback;
+  if (!intent) {
+    // L4: the template the location resolves, with the node's frozen tuning
+    // choices laid over it again (the guard above holds the template still).
+    if (edge.choices === undefined || !edge.provider) return fallback;
+    const { tuning } = splitChoices(optionFieldsOf(edge.provider), parseOptionValues(edge.choices));
+    return Object.keys(tuning).length > 0 ? deepMerge(fallback, tuning) : fallback;
+  }
   return {
     ...intent.templateParams,
     ...(intent.zoneSslMode ? { zoneSslMode: intent.zoneSslMode } : {}),
@@ -2946,8 +3230,17 @@ function templateParamsOf(edge: Edge, fallback: Record<string, unknown>): Record
  * every account row pointing at that zone serialises on it.
  */
 export function stepLockKey(edge: Edge, stepKind: string): string | null {
-  if (stepKind !== 'create_origin_rule') return null;
   const intent = parseIntent(edge.provisionIntent);
+  // A wildcard certificate is ONE subscription (and one ACME record) per
+  // account and zone: two edges ordering it at once would each find none and
+  // each order one, so its steps serialise on the account and the zone.
+  if (
+    (stepKind === 'create_tls_subscription' || stepKind === 'create_dns_acme') &&
+    intent?.certificateScope === 'wildcard' &&
+    edge.accountId
+  )
+    return fastlyCertificateLockKey(edge.accountId, intent.zoneId);
+  if (stepKind !== 'create_origin_rule') return null;
   return intent?.zoneId ? `cloudflare-zone:${intent.zoneId}` : null;
 }
 
@@ -3162,6 +3455,27 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     });
     return;
   }
+  // The node's options, laid over the location's template, break a provider
+  // rule, or ask what this place cannot do (an HTTP check on a REALITY port,
+  // record tags on a Free zone): refused before anything is allocated.
+  const placeProblems = contextProblems(
+    selection.account.provider as EdgeProviderId,
+    selection.template.params,
+    {
+      realityL4: selection.listener.security === 'reality',
+      zonePlan: selection.account.zonePlan ?? null,
+    },
+  );
+  const invalid = [...(selection.template.invalid ?? []), ...placeProblems];
+  if (invalid.length > 0) {
+    await advanceCall(ctx, r._id, sv, {
+      type: 'fail',
+      code: 'option_invalid',
+      detail: invalid.join('; ').slice(0, 300),
+      rollback: false,
+    });
+    return;
+  }
   const nonce = randomHex(4);
   const name = edgeResourceName(origin.slug, nonce);
   const listeners = [
@@ -3258,6 +3572,12 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     locationId: selection.account.locationId,
     templateId: selection.template.id,
     templateHash: selection.template.hash,
+    ...(selection.template.choices !== null
+      ? {
+          choices: JSON.stringify(selection.template.choices),
+          baseTemplateHash: selection.template.baseHash,
+        }
+      : {}),
     nameNonce: nonce,
     listeners,
     templateParams: effectiveParams,
@@ -3282,7 +3602,15 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
   }
   const now = Date.now();
   if (edge._creationTime + EDGE_PLUMBING.provisionTimeoutMs < now) {
-    await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'provision_timeout', rollback: false });
+    // A wait that was held up by something known ends with THAT as the reason
+    // (a CAA record forbidding the CA), not as a bare timeout.
+    const held = edge.waiting?.code;
+    await advanceCall(ctx, r._id, sv, {
+      type: 'fail',
+      code: held ?? 'provision_timeout',
+      ...(held ? { detail: 'provision_timeout' } : {}),
+      rollback: false,
+    });
     return;
   }
   // The template must not change under a running provision.
@@ -3295,7 +3623,8 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
     accountId: edge.accountId,
     locationId: edge.locationId ?? null,
   });
-  if (tpl.hash !== edge.templateHash) {
+  // An edge built with a node's choices froze the location's own hash beside them.
+  if (tpl.hash !== (edge.baseTemplateHash ?? edge.templateHash)) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'template_changed', rollback: false });
     return;
   }
@@ -3369,6 +3698,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         addResources: out.resources,
         addresses: out.addresses,
         status: 'provisioning',
+        waiting: null,
       });
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
@@ -3376,14 +3706,41 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         detail: `step ${pending.stepId} done`,
       });
     } else if (out.status === 'requested') {
+      // What the wait is held up by (a CAA record, the validation record):
+      // kept on the edge while it lasts, logged once per change.
+      const code = out.code ?? null;
+      const changed = code !== null && code !== (edge.waiting?.code ?? null);
       await settle(opId, {
         stepPatch: { stepId: pending.stepId, state: 'requested', opRef: out.opRef, started: true },
         addResources: out.resources,
+        waiting: code ? { step: pending.stepId, code } : null,
       });
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
         delayMs: poll,
-        detail: `step ${pending.stepId} requested`,
+        // One line per state the step reaches, not one per look while it waits.
+        ...(pending.state === 'requested' ? {} : { detail: `step ${pending.stepId} requested` }),
+        ...(changed ? { waitCode: code } : {}),
+      });
+    } else if (out.refused) {
+      // The provider refused what FCP built (a draft that does not compile):
+      // the same call would be refused again, so the run ends on its code now,
+      // not after every retry as `step_retries_exhausted`. What was built stays
+      // for the operator to read; the provider's reason lives there, never here.
+      // The EDGE needs the operator too (the fail below keeps such an edge as it
+      // is), so its billed resources stay raised until someone deletes them.
+      await settle(opId, {
+        stepPatch: { stepId: pending.stepId, state: 'needs_operator', started: true },
+        addResources: out.resources,
+        failure: { step: pending.stepId, code: out.code },
+        waiting: null,
+        status: 'needs_operator',
+      });
+      await advanceCall(ctx, r._id, sv, {
+        type: 'fail',
+        code: out.code ?? 'step_refused',
+        detail: pending.stepId,
+        rollback: false,
       });
     } else {
       // `partial` means the call REACHED the provider and created some children
@@ -3394,6 +3751,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         stepPatch: { stepId: pending.stepId, state: 'unresolved', started: true },
         addResources: out.resources,
         failure: { step: pending.stepId, code: out.code },
+        waiting: null,
       });
       await advanceCall(ctx, r._id, sv, {
         type: 'progress',
@@ -3476,9 +3834,9 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         });
         return;
       }
-      // A known outcome (done / requested) releases the shared object; a
-      // `partial` leaves it half-written, so the lock is held until discovery.
-      if (out.status !== 'partial') await releaseLock();
+      // A known outcome (done / requested / refused) releases the shared object;
+      // a `partial` leaves it half-written, so the lock is held until discovery.
+      if (out.status !== 'partial' || out.refused) await releaseLock();
       await applyOutcome(cl.opId, out);
       return;
     }
@@ -3688,6 +4046,7 @@ async function settleEdgeOp(
     addresses?: { v4?: string; v6?: string };
     status?: string;
     failure?: { step: string; code?: string; status?: number };
+    waiting?: { step: string; code: string } | null;
   },
 ) {
   await ctx.runMutation(internal.edges.settleOp, { edgeId, opId, ...patch });

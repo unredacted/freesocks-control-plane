@@ -336,6 +336,25 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.setup_failed': 'Setting up stopped on an error. Look at the backend, then try again.',
   'servers.adopt_required':
     'This backend already has nodes or addresses. Adopt it (typed) to make FCP its writer.',
+  // Changing the setup of a backend FCP writes.
+  'servers.setup_profile_kept':
+    'A set-up backend keeps its profile: its nodes run it. Keep the profile name as it is.',
+  'servers.setup_mode_kept':
+    'A mode stays as it was set up, since nodes and members rely on it. Add a new mode instead.',
+  'servers.setup_mode_drifted':
+    "A mode's group changed on the backend since it was set up (it no longer carries exactly its transport). Look at it under Mode groups, then change the setup.",
+  'servers.setup_transport_missing':
+    "The profile has no usable transport for the new mode yet. Add it with Add a transport on a node's page (its tag is the group name in capitals), then add the mode.",
+  'servers.origin_zone_in_use':
+    'WebSocket nodes have origin names in this zone. Keep it (another account holding the same zone is fine), or retire those nodes first.',
+  'servers.origin_account_unusable':
+    'Origin names need a DNS account that is switched on. Switch it on under Edges, Providers, or pick another account.',
+  'servers.origin_zone_required':
+    'This account reaches several zones. Pick the one for origin names.',
+  'servers.origin_zone_unknown':
+    'That zone is not one this account reaches. Refresh its zones, then pick it again.',
+  'servers.origin_zone_inactive':
+    'That zone is not active at its provider yet. Finish setting it up there, or pick another zone.',
   'servers.modes_invalid': 'The modes are not usable. Check their names and shapes.',
   'servers.mode_unknown':
     'No such connection mode exists yet, or this backend is not set up for it. Add it under Connection modes first.',
@@ -391,7 +410,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.foreign_profile_edit': 'The profile was edited outside FCP. See it, then try again.',
   'servers.node_offline': 'The node is not connected to the backend.',
   'servers.origin_hostname_missing':
-    'This front node has no origin name yet. Set one under Settings.',
+    'This front node has no origin name yet. Give the backend a zone for origin names (Change setup), or set a hostname under Settings.',
   'servers.origin_name_taken':
     'Something else holds a DNS record at the origin name. Free it in the zone, then try again.',
   'servers.origin_not_resolving': 'The origin name does not resolve to the node yet.',

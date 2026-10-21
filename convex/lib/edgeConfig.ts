@@ -149,6 +149,13 @@ export interface EdgeConfig {
     autoSelect: boolean;
     /** Same-provider L7 replacements per origin per UTC day (a new hostname is not a new frontend IP). */
     maxSameProviderReplacementsPerDay: number;
+    /**
+     * Whether a DNS provider's account (role `dns`: it holds the records FCP
+     * writes for L7 fronts) may itself be chosen to front member traffic, by
+     * anyone: a setup run, an operator's request, automation. Ships off, so a
+     * DNS account is never steered into fronting; existing edges are kept.
+     */
+    dnsProvidersFront: boolean;
   };
   render: {
     /** Master switch for FCP-rendered origin endpoints; off = the backend body passes through. */
@@ -271,6 +278,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   l7: {
     autoSelect: false,
     maxSameProviderReplacementsPerDay: 2,
+    dnsProvidersFront: false,
   },
   render: {
     enabled: false,
@@ -421,6 +429,7 @@ export const EDGE_KEYS = {
   'detect.fleetRotationsPerDay': 'edge.detect.fleetRotationsPerDay',
   'l7.autoSelect': 'edge.l7.autoSelect',
   'l7.maxSameProviderReplacementsPerDay': 'edge.l7.maxSameProviderReplacementsPerDay',
+  'l7.dnsProvidersFront': 'edge.l7.dnsProvidersFront',
   'render.enabled': 'edge.render.enabled',
   'render.autoGroupName': 'edge.render.autoGroupName',
   'render.primaryLabel': 'edge.render.primaryLabel',
@@ -568,6 +577,7 @@ export function sanitizeRelayConfig(
         50,
         D.l7.maxSameProviderReplacementsPerDay,
       ),
+      dnsProvidersFront: sanitizeBool(raw['l7.dnsProvidersFront'], D.l7.dnsProvidersFront),
     },
     render: {
       enabled: sanitizeBool(raw['render.enabled'], D.render.enabled),
@@ -694,6 +704,17 @@ export function controlCountriesOf(
   return cfg.country.controlCountries
     .split(' ')
     .filter((c) => /^[A-Z]{2}$/.test(c) && !listed.includes(c));
+}
+
+/**
+ * `l7.dnsProvidersFront` alone: ONE point read, for code that judges a provider
+ * set's picks and has no other use for the whole config.
+ */
+export async function dnsProvidersFrontOf(db: DatabaseReader): Promise<boolean> {
+  return sanitizeBool(
+    await readSetting(db, EDGE_KEYS['l7.dnsProvidersFront']),
+    EDGE_DEFAULTS.l7.dnsProvidersFront,
+  );
 }
 
 export async function resolveEdgeConfig(db: DatabaseReader): Promise<EdgeConfig> {
@@ -880,8 +901,10 @@ const PLUMBING_DEFAULTS = {
   maxFlipAttempts: 6,
   /** Tries to restore the previous state before the origin is quarantined. */
   maxRollbackAttempts: 6,
-  /** Tries to delete a provider resource before the edge is left to the operator. */
+  /** Destroy passes (each may walk several resources) before the edge is left to the operator. */
   maxDestroyAttempts: 48,
+  /** Resources one destroy pass may walk on one edge, in the provider's kind order. */
+  maxDestroyStepsPerPass: 12,
   /** Automatic starts one reconcile pass may make (`edge.enabled` is the switch). */
   maxReconcileStartsPerTick: 1,
   /** Report rows read per origin per evaluation; past it the window is `incomplete` (no rotation). */

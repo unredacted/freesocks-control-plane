@@ -2,8 +2,8 @@
   /**
    * Servers -> Nodes (`/admin/servers[?instance=<slug>]`, the leaf's default
    * tab): one status sentence, what needs you, one row per node, the quiet
-   * leftovers, mode groups, recent changes, and the two switches in the
-   * footer. "Add a node" adds one by hand (the node role is the normal way). A
+   * leftovers, how the backend is set up (with Change setup), mode groups,
+   * recent changes, and the two switches in the footer. "Add a node" adds one by hand (the node role is the normal way). A
    * node's details and every action on it live on its own page (NodePage).
    *
    * Everything shown is non-secret by construction (docs/servers.md). All
@@ -20,6 +20,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Switch } from '@client/components/ui/switch';
   import Link from '@client/components/Link.svelte';
+  import { EDGE_PROVIDER_META } from '@client/lib/edgeProviderMeta';
   import { providersQuery } from '@client/lib/edgesApi';
   import {
     acknowledgeForeignEdit,
@@ -46,6 +47,7 @@
   import { codeOf } from './lib/run';
   import { nodeMatches } from './lib/nodeFilter';
   import { pickInstance, serversPaths } from './lib/routes';
+  import { setupSummary } from './lib/setupChange';
   import {
     ago,
     countryLabel,
@@ -70,12 +72,14 @@
   const providers = providersQuery();
   let setupOpen = $state(false);
   let nodeQuery = $state('');
-  // A query belongs to the backend it was typed on: switching backends clears it.
+  // A query belongs to the backend it was typed on: switching backends clears
+  // it, and closes the setup sheet (it was filled in for the other backend).
   let queriedSlug: string | null = null;
   $effect(() => {
     if (slug !== queriedSlug) {
       queriedSlug = slug;
       nodeQuery = '';
+      setupOpen = false;
     }
   });
   let setupRow = $derived(setup.data ? setupWords(setup.data) : null);
@@ -108,10 +112,13 @@
       invalidateServers(qc);
     }
   }
+  // Every DNS account can hold origin names in one of its zones (the setup
+  // sheet lists them); switched-on accounts first.
   let originAccounts = $derived(
     (providers.data?.accounts ?? [])
-      .filter((a) => a.provider === 'cloudflare' && typeof a.settings.zoneName === 'string')
-      .map((a) => ({ id: a.id, name: a.name, zoneName: String(a.settings.zoneName) })),
+      .filter((a) => EDGE_PROVIDER_META[a.provider].providesDns)
+      .sort((a, b) => Number(b.enabled) - Number(a.enabled))
+      .map((a) => ({ id: a.id, name: a.name, enabled: a.enabled, locations: a.locations })),
   );
   const intentOf = (node: { nodeUuid: string; name: string }) =>
     intents.data?.intents.find((i) => i.nodeUuid === node.nodeUuid || i.name === node.name) ?? null;
@@ -436,6 +443,23 @@
         </ul>
       {/if}
     </section>
+
+    {#if setup.data?.established && setup.data.state === 'ready'}
+      <section aria-labelledby="backend-setup">
+        <div class="mb-1 flex items-center justify-between gap-3">
+          <h2 id="backend-setup" class="text-base font-semibold">Backend setup</h2>
+          {#if manageOn && instance?.writable}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={setup.data.running}
+              onclick={() => (setupOpen = true)}>Change setup</Button
+            >
+          {/if}
+        </div>
+        <p class="text-muted-foreground text-sm">{setupSummary(setup.data)}</p>
+      </section>
+    {/if}
 
     {#if slug}
       <ModeGroupsCard {slug} tree={t} {canWrite} />

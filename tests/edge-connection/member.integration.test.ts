@@ -52,6 +52,7 @@ import { qualifyFront } from '../../convex/lib/edges/frontCheck';
 import { createAccount } from '../../convex/lib/edges/testing/fixtures';
 import { signValue } from '../../convex/lib/cookies';
 import { outgoingAddresses } from '../../convex/lib/edges/render';
+import { defaultRouteFaults } from '../../convex/lib/backend/subscriptionTemplates/defaultRoute';
 import type { Cohort, CohortCursor, CohortPage } from '../../convex/lib/edges/cohorts';
 import { detectBodyFormat } from '../../convex/lib/edges/clientFamilies';
 import { ActivationReview } from '../../src/shared/contracts/servers';
@@ -327,7 +328,10 @@ beforeAll(async () => {
   // seam), and L7 accounts may be picked by the run (automatic L7 selection is
   // an operator switch, off by default).
   __setEdgePlumbingForTests({ pollMs: 5_000 });
-  await t.mutation(internal.edgeAdmin.patchConfig, { patch: { l7: { autoSelect: true } } });
+  // The L7 front here is a Cloudflare account, a DNS provider: it fronts only with the switch on.
+  await t.mutation(internal.edgeAdmin.patchConfig, {
+    patch: { l7: { autoSelect: true, dnsProvidersFront: true } },
+  });
 
   // The REALITY family: the stack's target serves every name it lists.
   await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });
@@ -404,8 +408,11 @@ beforeAll(async () => {
     dailyAllocationBudget: 30,
     settings: { zoneId: 'ec'.padEnd(32, '0'), zoneName: env.l7Zone },
   });
-  await t.mutation(internal.edgeProviderAccounts.recordTest, {
-    id: l7,
+  await t.mutation(internal.edgeProviderAccounts.recordTest, { id: l7, ok: true });
+  // The zone's facts, as the zone location's check observed them.
+  const [zone] = await t.query(internal.edgeLocations.listForAccount, { accountId: l7 });
+  await t.mutation(internal.edgeLocations.recordCheck, {
+    id: zone.id as Id<'edgeLocations'>,
     ok: true,
     observed: { zoneSslMode: 'full', websockets: 'on' },
   });
@@ -877,6 +884,8 @@ async function connectThrough(
   edge: CellEdge,
   peer: string,
 ) {
+  // The body's own default route takes its proxies (the sandbox then picks one).
+  expect(defaultRouteFaults(served.body), 'the served default route').toEqual([]);
   const { config, port } = sandboxServed(engine, served.body, served.entry);
   // The sandbox changed the plumbing only: the rendered proxies are FCP's.
   expect(

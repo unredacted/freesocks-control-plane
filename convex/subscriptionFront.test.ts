@@ -13,6 +13,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { addressRemark } from './lib/backend/hostRemark';
+import { defaultRouteFaults } from './lib/backend/subscriptionTemplates/defaultRoute';
 import { decodeBase64Loose, encodeBase64 } from './lib/edges/render/base64';
 import { signValue } from './lib/cookies';
 
@@ -659,10 +660,10 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
     servername: sni,
     'reality-opts': { 'public-key': 'PUBKEY', 'short-id': 'ab' },
   }));
-  // What the backend makes of its Clash template for this key.
+  // What the backend makes of its Clash template for this key (mode and rule as FCP ships them).
   const BODY = YAML.stringify({
     'mixed-port': 7890,
-    mode: 'global',
+    mode: 'rule',
     proxies: PROXIES,
     'proxy-groups': [{ name: '→ Remnawave', type: 'select', proxies: PROXIES.map((p) => p.name) }],
     rules: ['MATCH,→ Remnawave'],
@@ -701,6 +702,7 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
     expect(doc['proxy-groups'].map((g) => g.name)).toEqual(['FreeSocks Select']);
     expect(doc['proxy-groups'][0].proxies).toEqual(doc.proxies.map((p) => p.name));
     expect(doc.rules).toEqual(['MATCH,FreeSocks Select']);
+    expect(defaultRouteFaults(text, 'FreeSocks Select')).toEqual([]);
 
     await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
@@ -723,6 +725,7 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
     const off = await served(t);
     expect(off.doc['proxy-groups'].map((g) => g.name)).toEqual(['→ Remnawave']);
     expect(off.doc.rules).toEqual(['MATCH,→ Remnawave']);
+    expect(defaultRouteFaults(off.text, '→ Remnawave')).toEqual([]);
   });
 
   test('a body cached before the rename is renamed on a cache hit and when served stale', async () => {

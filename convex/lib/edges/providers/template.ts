@@ -16,9 +16,7 @@ export function renderTemplateValue<T>(value: T, spec: EdgeSpec): T {
   };
   const walk = (v: unknown): unknown => {
     if (typeof v === 'string') {
-      return v.replace(/\{\{\s*([a-zA-Z]+)\s*\}\}/g, (m, key: string) =>
-        key in vars ? vars[key] : m,
-      );
+      return v.replace(/\{\{\s*([a-zA-Z]+)\s*\}\}/g, (m, key: string) => vars[key] ?? m);
     }
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === 'object') {

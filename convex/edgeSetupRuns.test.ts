@@ -35,6 +35,7 @@ import {
   type SetupRunRetryRequest,
 } from '../src/shared/contracts/edges';
 import { defaultLocationRow, deliveryBindingOf } from './lib/edges/testing/reads';
+import { effectiveTemplateOfLocation } from './edgeLocations';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -434,6 +435,35 @@ describe('edgeSetupPlan', () => {
     });
   });
 
+  test('a DNS account is not offered as a front until Settings lets DNS accounts front', async () => {
+    const { t, serverId, accountId } = await seed({
+      inbounds: [inboundA, inboundS],
+      hosts: [directHostA(), directHostS()],
+    });
+    const dns = await createAccount(t, { provider: 'cloudflare', name: 'acct-dns' });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, {
+      id: dns,
+      ok: true,
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    const off = await planFor(t, serverId);
+    expect(off.accounts.map((a) => a.id)).toEqual([accountId]);
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        accountId: dns,
+        planHash: off.planHash,
+        approvedHideUuids: [],
+      }),
+    ).rejects.toThrow(/account_incompatible/);
+    await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { l7: { dnsProvidersFront: true } },
+    });
+    const on = await planFor(t, serverId);
+    expect(on.accounts.map((a) => a.id).sort()).toEqual([accountId, dns].sort());
+  });
+
   test('the plan lists frontable transports, classifies the direct Hosts, judges accounts, and hashes what the run must echo', async () => {
     const { t, serverId, accountId } = await seed({
       inbounds: [inboundA, inboundS, inboundV],
@@ -770,6 +800,146 @@ describe('edgeSetupRuns: the happy path (cases 1, 26)', () => {
     await expect(t.action(internal.edgeSetupRuns.cancel, { runId })).rejects.toThrow(
       /setup_run_finished/,
     );
+  });
+});
+
+describe('edgeSetupRuns: the provider options a node gets at a pick', () => {
+  test("a pick's options build its edges, freeze on them and go live with the node's set", async () => {
+    const { t, world, serverId, accountId } = await seed();
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const picks = [loc._id as string];
+    // A value the provider refuses is a problem of that pick in the plan.
+    const bad = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks,
+      pickOptions: { [loc._id]: { maxSessions: 0 } },
+    });
+    expect(bad.set?.problems).toEqual([
+      expect.objectContaining({ locationId: loc._id, reason: 'edge.option_invalid' }),
+    ]);
+    const pickOptions = { [loc._id]: { maxSessions: 5000 } };
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks,
+      pickOptions,
+    });
+    expect(plan.set?.picks[0]?.options).toEqual({ maxSessions: 5000 });
+    // The run is refused with other options than the plan was shown with.
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        picks: [loc._id],
+        planHash: plan.planHash,
+        approvedHideUuids: [],
+      }),
+    ).rejects.toThrow(/plan_stale/);
+    const res = await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+      pickOptions,
+      planHash: plan.planHash,
+      approvedHideUuids: [],
+    });
+    const runId = res.runId as Id<'edgeSetupRuns'>;
+    let r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.picks?.[0]?.options).toBe(JSON.stringify({ maxSessions: 5000 }));
+    // The provider was asked for it, and the edge froze it beside the location's own hash.
+    const body = world.lbBodies()[0] as {
+      backends: Array<{ members: Array<{ max_sessions: number }> }>;
+    };
+    expect(body.backends[0]!.members[0]!.max_sessions).toBe(5000);
+    const edge = (await t.run((ctx) => ctx.db.get(r.listeners[0]!.edgeId!)))!;
+    expect(JSON.parse(edge.choices!)).toEqual({ maxSessions: 5000 });
+    const located = await t.run(async (ctx) =>
+      effectiveTemplateOfLocation(
+        ctx,
+        (await ctx.db.get(accountId))!,
+        (await ctx.db.get(loc._id))!,
+      ),
+    );
+    expect(edge.baseTemplateHash).toBe(located.hash);
+    expect(edge.templateHash).not.toBe(located.hash);
+    // Its tick trusts the location: the choices are the node's, the template the place's.
+    const ticked = await tickAll(t, runId);
+    expect(ticked.accountTrusted).toBe(true);
+    r = await pump(t, runId, settled);
+    expect(r.state).toBe('done');
+    // Go-live records the options on the node's set, where later automatic work reads them.
+    const relay = await relayOf(t, runId);
+    expect(relay.providerSet).toEqual([
+      expect.objectContaining({
+        locationId: loc._id,
+        options: JSON.stringify({ maxSessions: 5000 }),
+      }),
+    ]);
+  });
+
+  test('options with the single-location selector are refused, never dropped', async () => {
+    const { t, serverId, accountId } = await seed();
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const plan = await planFor(t, serverId);
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        accountId,
+        planHash: plan.planHash,
+        approvedHideUuids: [],
+        pickOptions: { [loc._id]: { maxSessions: 5000 } },
+      }),
+    ).rejects.toThrow(/single location/);
+  });
+
+  test('a run never reuses a standby built for other choices than its pick asks for', async () => {
+    const { t, world, serverId, accountId } = await seed({
+      inbounds: [inboundA, inboundS],
+      hosts: [directHostA(), directHostS()],
+      failCreateAt: 2,
+    });
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+    });
+    const res = await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+      planHash: plan.planHash,
+      approvedHideUuids: [],
+    });
+    const runId = res.runId as Id<'edgeSetupRuns'>;
+    let r = await pump(t, runId, settled);
+    expect(r.state).toBe('failed');
+    // The standby left behind was built with the location's defaults. A run
+    // that did not build it (a later one, as here: no target holds it) and
+    // whose pick asks for something else must not take it.
+    const standby = r.listeners.find((l) => l.edgeId)?.edgeId;
+    expect(standby).toBeDefined();
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.get(runId))!;
+      await ctx.db.patch(runId, {
+        picks: row.picks!.map((p) => ({ ...p, options: JSON.stringify({ maxSessions: 5000 }) })),
+        listeners: row.listeners.map(({ edgeId: _held, ...l }) => l),
+      });
+    });
+    const before = world.lbCreates();
+    await t.mutation(internal.edgeSetupRuns.retry, { runId });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    // Both listeners get an edge built with the pick's options; the standby is not taken.
+    expect(world.lbCreates()).toBe(before + 2);
+    expect(r.listeners.map((l) => l.edgeId)).not.toContain(standby);
+    for (const l of r.listeners) {
+      const edge = (await t.run((ctx) => ctx.db.get(l.edgeId!)))!;
+      expect(JSON.parse(edge.choices!)).toEqual({ maxSessions: 5000 });
+    }
   });
 });
 
@@ -1331,6 +1501,62 @@ describe('edgeSetupRuns: cancel', () => {
     expect(relay.deleting).toBeUndefined();
     expect(relay.publishedEdgeIds.filter(Boolean)).toHaveLength(1);
     expect(await audits(t, 'edge.setup_run.cancelled')).toHaveLength(2);
+    // Protecting the leftover again resumes at publish, not at the rehearsal it
+    // was cancelled in: the new run's listeners hold no edge until publish
+    // (through provision) takes the origin's own back.
+    await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { render: { clients: { mihomo: { enabled: true } } } },
+    });
+    const { runId: run3 } = await startRun(t, serverId, accountId);
+    const r3start = await run(t, run3);
+    expect(r3start.relayId).toBe(relay._id);
+    expect(r3start.stage).toBe('publish');
+    const r3 = await pump(t, run3, settled);
+    // It takes the origin's own edges back and goes live (no card without links).
+    expect([r3.stage, r3.state]).toEqual(['done', 'done']);
+    expect(r3.listeners.every((l) => !!l.edgeId)).toBe(true);
+  });
+});
+
+describe('edgeSetupRuns: a failed run is found again', () => {
+  test("the origin status names the failed run and an attention item opens it; a retry restarts the sheet's clock and clears both", async () => {
+    const { t, serverId, accountId } = await seed({ failCreateAt: 1 });
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.state).toBe('failed');
+    const attention = () => t.query(internal.edgeOperator.attention, {});
+    let att = await attention();
+    const item = att.items.find((i) => i.kind === 'setup_run_failed');
+    expect(item).toMatchObject({
+      severity: 'warning',
+      action: 'open_run',
+      relayId: r.relayId as string,
+      facts: { runId: runId as string },
+    });
+    let status = att.origins.find((o) => o.relayId === (r.relayId as string))!.status;
+    expect(status).toMatchObject({
+      kind: 'needs-you',
+      code: 'setup_run_failed',
+      runId: null,
+      failedRunId: runId as string,
+    });
+    // The sheet counts the first attempt from the start, a retried one from its retry.
+    let admin = (await t.query(internal.edgeSetupRuns.getForAdmin, { id: runId }))!;
+    expect(admin.attemptStartedAt).toBe(admin.startedAt);
+    vi.advanceTimersByTime(60_000);
+    await t.mutation(internal.edgeSetupRuns.retry, { runId });
+    admin = (await t.query(internal.edgeSetupRuns.getForAdmin, { id: runId }))!;
+    expect(Date.parse(admin.attemptStartedAt) - Date.parse(admin.startedAt)).toBeGreaterThanOrEqual(
+      60_000,
+    );
+    // Running again: the live run is what the status names.
+    att = await attention();
+    expect(att.items.some((i) => i.kind === 'setup_run_failed')).toBe(false);
+    status = att.origins.find((o) => o.relayId === (r.relayId as string))!.status;
+    expect(status.failedRunId).toBeNull();
+    expect(status.runId).toBe(runId as string);
+    r = await run(t, runId);
+    expect(r.state).toBe('running');
   });
 });
 
@@ -1531,5 +1757,71 @@ describe('edgeSetupRuns: replacing a pick of a set', () => {
     expect(after.listeners.find((l) => l.locationId === third)!.edgeId).toBeUndefined();
     expect((await t.run((c) => c.db.get(dropped.edgeId!)))!.status).toBe('cancelled');
     expect(after.stage).toBe('provision');
+  });
+});
+
+describe('edgeSetupRuns: a certificate wait the run is waiting on', () => {
+  test('the run hears what its rotation waits on, only while it waits on THAT rotation', async () => {
+    const { t, serverId, accountId } = await seed();
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pumpFine(t, runId, (x) => !!x.expect);
+    const rotationId = r.expect!.rotationId;
+    const advance = async (waitCode?: string) => {
+      const rot = (await t.run((ctx) => ctx.db.get(rotationId)))!;
+      return t.mutation(internal.edgeRotations.advance, {
+        rotationId,
+        stepVersion: rot.stepVersion,
+        event: { type: 'progress', delayMs: 60_000, ...(waitCode ? { waitCode } : {}) },
+      });
+    };
+    await advance('tls_caa_conflict');
+    let now = await run(t, runId);
+    expect(now.events.at(-1)).toMatchObject({ level: 'warn', code: 'tls_caa_conflict' });
+    // The rotation's own log has it too.
+    const rot = (await t.run((ctx) => ctx.db.get(rotationId)))!;
+    expect(rot.events.at(-1)).toMatchObject({ level: 'warn', code: 'tls_caa_conflict' });
+    // A run no longer waiting on this rotation hears nothing.
+    await t.run((ctx) => ctx.db.patch(runId, { expect: undefined }));
+    const before = (await run(t, runId)).events.length;
+    await advance('tls_challenge_missing');
+    now = await run(t, runId);
+    expect(now.events).toHaveLength(before);
+  });
+});
+
+describe('edgeSetupRuns: a zone whose fronts could get no certificate', () => {
+  test('the plan names it on the zone, and a run stops at its first stage instead of provisioning', async () => {
+    const { t, serverId, accountId } = await seed();
+    const { runId } = await startRun(t, serverId, accountId);
+    // The zone's next check ends on the CAA preflight.
+    await t.run(async (ctx) => {
+      for (const l of await ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', accountId))
+        .collect())
+        await ctx.db.patch(l._id, { checkError: 'caa_forbids_ca' });
+    });
+    const plan = await planFor(t, serverId);
+    const offered = plan.accounts.find((a) => a.id === accountId)!;
+    // Named on the zone, which stays pickable: a node may choose another
+    // certificate there under its Options (its pick check judges it).
+    expect(offered).toMatchObject({ compatible: true });
+    expect((offered.locations ?? []).every((l) => l.certificateRefusal === 'caa_forbids_ca')).toBe(
+      true,
+    );
+    // A pick on the account's own certificate is refused by the plan.
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const picked = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id as string],
+    });
+    expect(picked.set?.problems).toEqual([
+      expect.objectContaining({ locationId: loc._id, reason: 'edge.caa_forbids_ca' }),
+    ]);
+    const r = await pump(t, runId, settled);
+    expect(r.need).toMatchObject({ code: 'account_incompatible', detail: 'caa_forbids_ca' });
+    const relay = r.relayId ? await t.run((ctx) => ctx.db.get(r.relayId!)) : null;
+    expect(relay?.activeRotationId ?? null).toBeNull();
   });
 });

@@ -609,6 +609,50 @@ describe('origin block detector', () => {
     expect(samples.some((x) => x.at === NOW)).toBe(false);
   });
 
+  test('a setup-owned origin is held as owned only while a run works on it; its leftover is simply not live', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    await warmBaseline(s.t, s.relayId, 100);
+    await nodeLoad(s.t, s.serverId, 100);
+    const relay = (await s.t.run((ctx) => ctx.db.get(s.relayId)))!;
+    await s.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      await ctx.db.patch(s.relayId, { autoRotate: true, setupOwned: true });
+    });
+    const veto = async () => {
+      await s.t.action(internal.edgeDetector.run, {});
+      return (await s.t.query(internal.relays.get, { id: s.relayId }))!.suspicion?.veto;
+    };
+    // No run at all (a cancelled or failed setup left it owned).
+    expect(await veto()).toBe('not_live');
+    const runId = await s.t.run((ctx) =>
+      ctx.db.insert('edgeSetupRuns', {
+        relayId: s.relayId,
+        relaySlug: relay.slug,
+        backendServerId: relay.backendServerId!,
+        nodeName: relay.nodeName!,
+        nodeUuid: 'node-uuid',
+        plan: '{}',
+        planHash: 'h',
+        planRevision: 1,
+        approvedHideUuids: [],
+        stage: 'publish',
+        state: 'running',
+        generation: 1,
+        stepVersion: 1,
+        listeners: [],
+        stageEnteredAt: NOW,
+        events: [],
+        startedAt: NOW,
+        updatedAt: NOW,
+      }),
+    );
+    expect(await veto()).toBe('setup_owned');
+    await s.t.run((ctx) => ctx.db.patch(runId, { state: 'cancelled', finishedAt: NOW }));
+    expect(await veto()).toBe('not_live');
+  });
+
   test('quiet origin: evaluated, clear, a sample recorded', async () => {
     vi.useFakeTimers({ now: NOW });
     const s = await seed();

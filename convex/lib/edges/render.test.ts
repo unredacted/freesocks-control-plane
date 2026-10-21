@@ -8,7 +8,12 @@
  */
 import { describe, expect, test } from 'vitest';
 import YAML from 'yaml';
+import { CLASH_YAML } from '../backend/subscriptionTemplates/CLASH';
+import { defaultRouteFaults } from '../backend/subscriptionTemplates/defaultRoute';
+import { MIHOMO_YAML } from '../backend/subscriptionTemplates/MIHOMO';
+import { SINGBOX_JSON } from '../backend/subscriptionTemplates/SINGBOX';
 import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
+import { relabelMemberEntries } from '../memberEntryNames';
 import type { AssignedEndpoint, PublishedEdge } from './assignment';
 import {
   effectiveRule,
@@ -28,6 +33,11 @@ const TEMPLATE = `${NODE}-relay-a1`;
 const OTHER_NODE_WS = 'node-b-ws';
 const ORIGIN = '192.0.2.10';
 const UUID = '11111111-2222-3333-4444-555555555555';
+// The selector group of the backend's own templates, and its name in what members receive.
+const TEMPLATE_GROUP = '→ Remnawave';
+const MEMBER_GROUP = 'FreeSocks Select';
+const relabelled = (body: string) =>
+  relabelMemberEntries(body, { siteName: 'FreeSocks', place: null }).content;
 const REALITY_QS =
   'security=reality&encryption=none&pbk=PUBKEY_BASE64&fp=chrome&sni=old.example&sid=abcd1234&type=tcp&flow=xtls-rprx-vision';
 
@@ -696,6 +706,20 @@ describe('sing-box rendering', () => {
     expect(selector.default).toBe('FreeSocks Auto');
     expect(JSON.parse(out.body).route).toEqual(singbox.route);
     expect(out.body).not.toContain(ORIGIN);
+    expect(defaultRouteFaults(out.body, TEMPLATE_GROUP)).toEqual([]);
+  });
+
+  test('the template FCP ships, rendered and relabelled, still defaults to the proxy group', () => {
+    // The backend's body from it: the fixture's entries spliced into its group.
+    const cfg = JSON.parse(JSON.stringify(SINGBOX_JSON)) as {
+      outbounds: Array<Record<string, unknown>>;
+    };
+    cfg.outbounds[0]!.outbounds = [TEMPLATE, OTHER_NODE_WS];
+    cfg.outbounds.splice(1, 0, singbox.outbounds[1]!, singbox.outbounds[2]!);
+    const out = renderSb(cfg);
+    expect(out.delivery).toEqual({ kind: 'serve' });
+    expect(defaultRouteFaults(out.body, TEMPLATE_GROUP)).toEqual([]);
+    expect(defaultRouteFaults(relabelled(out.body), MEMBER_GROUP)).toEqual([]);
   });
 
   test('a template tag still referenced elsewhere (detour, route.final, rules) is rewritten to the rendered fallback, never served', () => {
@@ -813,7 +837,7 @@ describe('sing-box rendering', () => {
 
 describe('clash / mihomo rendering', () => {
   const clash = `mixed-port: 7890
-mode: global
+mode: rule
 proxies: # LEAVE THIS LINE!
   - name: ${TEMPLATE}
     type: vless
@@ -906,6 +930,24 @@ rules:
     expect(doc.rules).toEqual(['MATCH,→ Remnawave']);
     expect(out.body).not.toContain(TEMPLATE);
     expect(out.body).not.toContain(ORIGIN);
+    expect(defaultRouteFaults(out.body, TEMPLATE_GROUP)).toEqual([]);
+  });
+
+  test('the templates FCP ships, rendered and relabelled, still route by rule to the proxy group', () => {
+    const { proxies } = YAML.parse(clash) as { proxies: unknown[] };
+    for (const template of [MIHOMO_YAML, CLASH_YAML]) {
+      // The backend's body from it: the fixture's proxies spliced in at the anchors.
+      const doc = YAML.parse(template) as {
+        proxies: unknown;
+        'proxy-groups': Array<Record<string, unknown>>;
+      };
+      doc.proxies = proxies;
+      doc['proxy-groups'][0]!.proxies = [TEMPLATE, OTHER_NODE_WS];
+      const out = renderClash(YAML.stringify(doc));
+      expect(out.delivery).toEqual({ kind: 'serve' });
+      expect(defaultRouteFaults(out.body, TEMPLATE_GROUP)).toEqual([]);
+      expect(defaultRouteFaults(relabelled(out.body), MEMBER_GROUP)).toEqual([]);
+    }
   });
 
   test('a body without proxies has no template: refused as no_match', () => {

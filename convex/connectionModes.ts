@@ -244,6 +244,11 @@ export const setModePlacements = internalMutation({
         });
       }
       if (nextConfig === null) continue; // no ops in this entry
+      if (existing?.config === nextConfig) {
+        // Already so (a setup run again places what it placed): nothing to write or log.
+        applied++;
+        continue;
+      }
       if (existing) {
         await ctx.db.patch(existing._id, { config: nextConfig, updatedAt: Date.now() });
       } else {

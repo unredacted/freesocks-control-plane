@@ -12,15 +12,18 @@
  *  - `step` says which stepper step shows the field: identifiers a provider
  *    needs on every request belong with the credentials, the rest is placement.
  *  - `location` marks the fields of a LOCATION (region / zone / project /
- *    network): an account is credentials, a location is where its edges live
- *    (docs/edges.md § "Provider accounts and locations"). The account form's
- *    placement step names the account's first location with them; the
- *    location form (`LocationPicker`) adds more.
+ *    network, or a CDN's DNS zone, the DNS account a front writes through and
+ *    its TLS configuration): an account is the whole provider account, a
+ *    location is where its edges live (docs/edges.md § "Provider accounts and
+ *    locations"). The account form's placement step names the account's first
+ *    location with them (optional for a CDN); the location form
+ *    (`LocationPicker`) adds more.
  *
  * Exports:
  *   PROVIDER_FIELDS, CREDENTIAL_LABELS, CREDENTIAL_HELP, DEFAULT_SETTINGS
  *   fieldsFor(provider, step), optionsFor(field, ctx), settingsBody(provider, values)
- *   missingRequired(provider, values, step?), applyDiscovery(provider, values, discovered)
+ *   missingRequired(provider, values, step?, opts?), applyDiscovery(provider, values, ctx, opts?)
+ *   locationFields, hasLocations, firstLocationOptional, placementBody, regionLabelOf
  */
 import type {
   EdgeDiscoverResponse,
@@ -37,6 +40,7 @@ export type FieldSource =
   | 'zones'
   | 'tlsConfigurations'
   | 'dnsAccounts'
+  | 'dnsZones'
   | 'fixed';
 
 export interface ProviderField {
@@ -217,15 +221,17 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'DNS zone',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'zones',
       required: true,
-      help: 'Every edge of this account gets one hostname directly under the zone apex.',
+      help: 'A zone the token reaches.',
     },
     {
       key: 'zoneName',
       label: 'Zone name',
       kind: 'text',
       step: 'placement',
+      location: true,
       required: true,
       readOnly: true,
       help: 'Filled from the chosen zone.',
@@ -238,7 +244,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       step: 'placement',
       required: false,
       advanced: true,
-      help: 'Only needed when the token can see several accounts. Not a secret.',
+      help: 'Only needed for an account API token that reaches no zone yet. Not a secret.',
     },
   ],
   fastly: [
@@ -247,28 +253,52 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       label: 'DNS account',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'dnsAccounts',
       required: true,
-      help: 'The account whose zone holds the hostname records and the certificate challenges. Add that account first.',
+      help: "A DNS provider account whose zone holds this front's names and their certificate challenges.",
     },
     {
-      key: 'certificateAuthority',
-      label: 'Certificate authority',
+      key: 'zoneId',
+      label: 'DNS zone',
+      kind: 'select',
+      step: 'placement',
+      location: true,
+      from: 'dnsZones',
+      required: true,
+      help: 'A zone the DNS account reaches.',
+    },
+    {
+      key: 'zoneName',
+      label: 'Zone name',
+      kind: 'text',
+      step: 'placement',
+      location: true,
+      required: true,
+      readOnly: true,
+      help: 'Filled from the chosen zone.',
+      placeholder: 'front.example',
+    },
+    {
+      key: 'domainModel',
+      label: 'Domains',
       kind: 'select',
       step: 'placement',
       from: 'fixed',
       options: [
-        { id: 'certainly', label: 'Certainly (default)' },
-        { id: 'lets-encrypt', label: "Let's Encrypt" },
-        { id: 'globalsign', label: 'GlobalSign (paid plans only)' },
+        { id: 'versionless', label: 'Its own domain, linked to the service (recommended)' },
+        { id: 'classic', label: 'A domain on the service version (classic)' },
       ],
       required: true,
+      advanced: true,
+      help: 'How a new front’s name is attached to its service. Classic domains exist only on accounts created before September 2025; pick them if the provider refuses the other kind.',
     },
     {
       key: 'tlsConfigurationId',
       label: 'TLS configuration',
       kind: 'select',
       step: 'placement',
+      location: true,
       from: 'tlsConfigurations',
       required: false,
       advanced: true,
@@ -290,7 +320,7 @@ export const CREDENTIAL_LABELS: Record<string, string> = {
 /** What each provider's token must be allowed to do. */
 export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
   cloudflare:
-    'A zone-scoped API token with Zone DNS Edit, Zone Read, Zone Settings Read, SSL and Certificates Read, plus Origin Rules Edit when an edge needs an origin port other than the zone default.',
+    'A user API token or an account API token, scoped to the zone, with Zone Read and Zone DNS Edit. Add Zone Settings Read and SSL and Certificates Read so the test can report the zone settings, and Origin Rules Edit only if this account will also front traffic.',
   fastly:
     'An API token with the global scope, issued on a dedicated automation user. The account also needs the WebSockets product entitlement.',
 };
@@ -298,7 +328,7 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
 /** The few settings with a sensible value before the operator picks anything. */
 export const DEFAULT_SETTINGS: Partial<Record<EdgeProviderId, Record<string, string>>> = {
   ovh: { endpoint: 'ovh-eu' },
-  fastly: { certificateAuthority: 'certainly' },
+  fastly: { domainModel: 'versionless' },
 };
 
 export function credentialLabel(name: string): string {
@@ -313,14 +343,23 @@ export function fieldsFor(provider: EdgeProviderId, step?: ProviderField['step']
   return step ? all.filter((f) => f.step === step) : all;
 }
 
-/** A location's fields (where its edges live); empty for a provider without places (a CDN). */
+/** A location's fields (where its edges live: a region, or a CDN's DNS zone). */
 export function locationFields(provider: EdgeProviderId): ProviderField[] {
   return PROVIDER_FIELDS[provider].filter((f) => f.location);
 }
 
-/** Whether a provider has places at all (a CDN has one per account, created with it). */
+/** Whether a provider has places at all (every provider does: a region, or a CDN's zone). */
 export function hasLocations(provider: EdgeProviderId): boolean {
   return locationFields(provider).length > 0;
+}
+
+/**
+ * Whether the account form may leave its first location out: a CDN account
+ * is its token (its zones are picked when a node is protected); a load
+ * balancer account names the region it starts in.
+ */
+export function firstLocationOptional(provider: EdgeProviderId): boolean {
+  return EDGE_PROVIDER_META[provider].layer === 'l7';
 }
 
 /** Only the location's keys of the form values (numbers where the adapter wants them). */
@@ -352,6 +391,8 @@ export interface OptionsContext {
   discovered: EdgeDiscoverResponse | null;
   accounts: readonly Pick<EdgeProviderAccountAdmin, 'id' | 'name' | 'provider'>[];
   values: Record<string, string>;
+  /** The zones the chosen DNS account reaches (a front's `dnsZones` field). */
+  dnsZones?: ReadonlyArray<{ id: string; label: string }>;
 }
 
 export function optionsFor(
@@ -363,6 +404,7 @@ export function optionsFor(
     return ctx.accounts
       .filter((a) => EDGE_PROVIDER_META[a.provider].providesDns)
       .map((a) => ({ id: a.id, label: a.name }));
+  if (f.from === 'dnsZones') return [...(ctx.dnsZones ?? [])];
   const d = ctx.discovered;
   if (!d) return [];
   switch (f.from) {
@@ -402,9 +444,17 @@ export function missingRequired(
   provider: EdgeProviderId,
   values: Record<string, string>,
   step?: ProviderField['step'],
+  opts: { firstLocation?: boolean } = {},
 ): string[] {
+  const filled = (f: ProviderField) => (values[f.key] ?? '').trim() !== '';
+  // The account form's optional first location: all of it or none of it. It
+  // is started by a field it needs (an optional one alone starts nothing).
+  const skipLocation =
+    opts.firstLocation === true &&
+    firstLocationOptional(provider) &&
+    !locationFields(provider).some((f) => f.required && !f.readOnly && filled(f));
   return fieldsFor(provider, step)
-    .filter((f) => f.required && (values[f.key] ?? '').trim() === '')
+    .filter((f) => f.required && !filled(f) && !(skipLocation && f.location))
     .map((f) => f.label);
 }
 
@@ -417,17 +467,24 @@ export function applyDiscovery(
   provider: EdgeProviderId,
   values: Record<string, string>,
   ctx: Omit<OptionsContext, 'values'>,
+  opts: { firstLocation?: boolean } = {},
 ): Record<string, string> {
   const next = { ...values };
+  // The account form's optional first location is the operator's to start:
+  // a single choice is never picked for them.
+  const pickFor = (f: ProviderField) =>
+    !(opts.firstLocation === true && f.location && firstLocationOptional(provider));
   for (const f of PROVIDER_FIELDS[provider]) {
     if (f.kind !== 'select' || f.from === 'fixed') continue;
-    const opts = optionsFor(f, { ...ctx, values: next });
+    const choices = optionsFor(f, { ...ctx, values: next });
     const current = next[f.key] ?? '';
-    if (current && opts.length > 0 && !opts.some((o) => o.id === current)) next[f.key] = '';
-    if (!next[f.key] && opts.length === 1 && opts[0]) next[f.key] = opts[0].id;
-    if (f.from === 'zones') {
-      const chosen = opts.find((o) => o.id === next[f.key]);
-      if (chosen) next['zoneName'] = chosen.label;
+    if (current && choices.length > 0 && !choices.some((o) => o.id === current)) next[f.key] = '';
+    if (!next[f.key] && choices.length === 1 && choices[0] && pickFor(f))
+      next[f.key] = choices[0].id;
+    if (f.from === 'zones' || f.from === 'dnsZones') {
+      const chosen = choices.find((o) => o.id === next[f.key]);
+      // The name follows the zone, also when the zone is no longer offered.
+      next['zoneName'] = chosen ? chosen.label : next[f.key] ? (next['zoneName'] ?? '') : '';
     }
   }
   return next;

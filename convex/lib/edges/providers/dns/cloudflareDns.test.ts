@@ -77,6 +77,35 @@ describe('cloudflare dns client: request shapes', () => {
     });
   });
 
+  test('record options: a TTL on an unproxied record, never on a proxied one; tags and settings pass', async () => {
+    const stub = mockFetch(() => jsonRes(wire(created)));
+    await cloudflareDnsClient(cfg).createRecord({
+      type: 'CNAME',
+      name: HOSTNAME,
+      content: 'target.example.org',
+      proxied: false,
+      comment: 'm',
+      ttl: 300,
+      tags: ['team:edge'],
+      settings: { flatten_cname: true },
+    });
+    await cloudflareDnsClient(cfg).createRecord({
+      type: 'A',
+      name: HOSTNAME,
+      content: '198.51.100.7',
+      proxied: true,
+      comment: 'm',
+      ttl: 300,
+    });
+    expect((stub.calls[0] as Captured).body).toMatchObject({
+      ttl: 300,
+      tags: ['team:edge'],
+      settings: { flatten_cname: true },
+    });
+    expect((stub.calls[1] as Captured).body).toMatchObject({ ttl: 1 });
+    expect((stub.calls[1] as Captured).body).not.toHaveProperty('tags');
+  });
+
   test('findRecordsByName is ONE request with the exact-name filter (never an N+1 iteration)', async () => {
     const stub = mockFetch(() => jsonRes(wire(listed)));
     const hits = await cloudflareDnsClient(cfg).findRecordsByName(HOSTNAME, 'A');

@@ -1,13 +1,16 @@
 <script lang="ts">
   /**
-   * One template parameter, rendered by its descriptor type
-   * (string | number | boolean | select | string-list).
+   * One provider option, rendered by its descriptor type
+   * (string | number | boolean | select | string-list | key-value).
    *
    * Props:
    *   field: EdgeTemplateField
-   *   value: unknown                      the current value at `field.key` (undefined = default applies)
-   *   defaultValue: unknown               the provider default at the same key
-   *   changed: boolean                    shows the "differs from default" chip + Reset
+   *   value: unknown                      the current value at `field.key` (undefined = inherited)
+   *   defaultValue: unknown               what applies without a value here (the provider's
+   *                                       default in a template; the template's for a node)
+   *   changed: boolean                    shows the "differs from ..." chip + Reset
+   *   baseWord?: string                   what `defaultValue` is, in the chip ("default")
+   *   offered?: { id, label }[]           the location's sizes, for a `from: 'flavors'` field
    *   disabled?: boolean
    *   onchange(value: unknown)            undefined clears the key
    *   onreset()
@@ -23,12 +26,15 @@
   import type { EdgeTemplateField } from '../../../../../shared/contracts/edges';
   import { displayValue } from '../lib/format';
   import { listToText, numberFromInput, textToList } from './params';
+  import { kvToText, textToKv } from '../lib/options';
 
   interface Props {
     field: EdgeTemplateField;
     value: unknown;
     defaultValue: unknown;
     changed: boolean;
+    baseWord?: string;
+    offered?: ReadonlyArray<{ id: string; label: string }>;
     disabled?: boolean;
     onchange: (value: unknown) => void;
     onreset: () => void;
@@ -38,10 +44,20 @@
     value,
     defaultValue,
     changed,
+    baseWord = 'default',
+    offered = [],
     disabled = false,
     onchange,
     onreset,
   }: Props = $props();
+  // A size picked from what the location offers (the current value stays a choice).
+  const sizeChoices = $derived.by(() => {
+    if (field.from !== 'flavors' || offered.length === 0) return null;
+    const cur = typeof value === 'string' && value !== '' ? value : null;
+    return cur && !offered.some((o) => o.id === cur)
+      ? [...offered, { id: cur, label: cur }]
+      : offered;
+  });
 
   const uid = $props.id();
   const shown = $derived(value === undefined ? defaultValue : value);
@@ -79,19 +95,19 @@
 <div class="space-y-1.5">
   <div class="flex flex-wrap items-center justify-between gap-2">
     <Label for={`${uid}-f`}>
-      {field.label}{#if field.required}<span class="text-destructive" aria-hidden="true">
-          *</span
-        >{/if}
+      {field.label}{#if field.unit}<span class="text-muted-foreground">
+          ({field.unit})</span
+        >{/if}{#if field.required}<span class="text-destructive" aria-hidden="true"> *</span>{/if}
     </Label>
     {#if changed}
       <span class="flex items-center gap-1">
-        <Badge variant="info">Differs from default</Badge>
+        <Badge variant="info">Differs from {baseWord}</Badge>
         <Button
           size="sm"
           variant="ghost"
           class="h-6 px-1.5 text-xs"
           {disabled}
-          title={`Back to the default (${defaultWords})`}
+          title={`Back to the ${baseWord} (${defaultWords})`}
           onclick={onreset}
         >
           <RotateCcw class="size-3" /> Reset
@@ -124,11 +140,30 @@
         {/each}
       </Select.Content>
     </Select.Root>
+  {:else if sizeChoices}
+    <Select.Root
+      type="single"
+      value={typeof shown === 'string' ? shown : ''}
+      {disabled}
+      onValueChange={(v) => onchange(v)}
+    >
+      <Select.Trigger id={`${uid}-f`} class="w-full"
+        >{sizeChoices.find((o) => o.id === shown)?.label ??
+          (typeof shown === 'string' && shown !== '' ? shown : 'Choose')}</Select.Trigger
+      >
+      <Select.Content>
+        {#each sizeChoices as o (o.id)}
+          <Select.Item value={o.id}>{o.label}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
   {:else if field.type === 'number'}
     <Input
       id={`${uid}-f`}
       type="number"
       inputmode="decimal"
+      min={field.min}
+      max={field.max}
       {disabled}
       aria-invalid={numberInvalid || missing}
       value={text}
@@ -148,6 +183,16 @@
       onchange={(e) => onchange(textToList(e.currentTarget.value))}
     ></textarea>
     <p class="text-xs text-muted-foreground">One entry per line.</p>
+  {:else if field.type === 'key-value'}
+    <textarea
+      id={`${uid}-f`}
+      rows="3"
+      {disabled}
+      class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
+      value={kvToText(shown)}
+      onchange={(e) => onchange(textToKv(e.currentTarget.value, field.pairs === true))}
+    ></textarea>
+    <p class="text-xs text-muted-foreground">One key=value per line.</p>
   {:else}
     <Input
       id={`${uid}-f`}

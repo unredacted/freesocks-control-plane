@@ -15,6 +15,8 @@ import { jsonRes, mockFetch } from '../testing/mockFetch';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   discoveryMaySettle,
+  edgeRoleOf,
+  frontsAllowed,
   originPortCarriedBy,
   protocolCarriedBy,
   unsupportedTransport,
@@ -109,7 +111,11 @@ const SETTINGS_WITH_NETWORK: Record<(typeof EDGE_PROVIDER_IDS)[number], Record<s
     subnetId: 's',
   },
   cloudflare: { zoneId: '0123456789abcdef0123456789abcdef', zoneName: 'example.org' },
-  fastly: { dnsAccountId: 'acct', certificateAuthority: 'certainly' },
+  fastly: {
+    dnsAccountId: 'acct',
+    zoneId: '0123456789abcdef0123456789abcdef',
+    zoneName: 'example.org',
+  },
 };
 
 const lbLedger: Ledger = {
@@ -166,6 +172,8 @@ describe('origin capability record ⇔ adapters', () => {
     const p = EDGE_PROVIDERS[id];
     expect(caps.asyncOps).toBe(!!p.pollStep);
     expect(caps.asyncDelete).toBe(!!p.confirmDestroyed);
+    // A provider whose fronts can share one certificate reports it to the account.
+    expect(caps.sharedCertificates).toBe(!!p.sharedCertificate);
   });
 
   test.each([...EDGE_PROVIDER_IDS])(
@@ -239,6 +247,21 @@ describe('origin capability record ⇔ adapters', () => {
     },
   );
 
+  test('a DNS provider (role dns) hosts DNS and fronts only while the switch allows', () => {
+    for (const id of EDGE_PROVIDER_IDS) {
+      const caps = EDGE_PROVIDER_CAPABILITIES[id];
+      if (caps.role === 'dns') {
+        expect(caps.providesDns).toBe(true);
+        expect(frontsAllowed(id, false)).toBe(false);
+        expect(frontsAllowed(id, true)).toBe(true);
+      } else expect(frontsAllowed(id, false)).toBe(true);
+      // A provider that needs a DNS account is itself an edge provider.
+      if (caps.needsDnsAccount) expect(caps.role).toBe('edge');
+    }
+    expect(edgeRoleOf('cloudflare')).toBe('dns');
+    expect(edgeRoleOf('unknown-provider')).toBe('edge');
+  });
+
   test('a DNS account reference always points at a providesDns provider', () => {
     const dnsProviders = EDGE_PROVIDER_IDS.filter(
       (id) => EDGE_PROVIDER_CAPABILITIES[id].providesDns,
@@ -255,7 +278,10 @@ describe('origin capability record ⇔ adapters', () => {
     '%s: ipv6 + idleTimeoutConfigurable mirror the template fields',
     (id) => {
       const keys = EDGE_PROVIDERS[id].templateFields.map((f) => f.key);
-      expect(keys.some((k) => /ipv6|ipFamily/i.test(k))).toBe(EDGE_PROVIDER_CAPABILITIES[id].ipv6);
+      // The PUBLIC side's family (an option preferring IPv6 toward the node is not one).
+      expect(keys.some((k) => /^(ipv6|ipFamily)$/.test(k))).toBe(
+        EDGE_PROVIDER_CAPABILITIES[id].ipv6,
+      );
       expect(keys.some((k) => /timeoutClient/i.test(k))).toBe(
         EDGE_PROVIDER_CAPABILITIES[id].idleTimeoutConfigurable,
       );
@@ -356,10 +382,15 @@ describe('origin capability record ⇔ adapters', () => {
     const p = EDGE_PROVIDERS[id];
     const tpl = p.templateSchema.parse(p.defaultTemplate);
     expect(tpl).toEqual(p.defaultTemplate);
-    // Field descriptors point at real template keys.
+    // Field descriptors point at real template keys: present in the parsed
+    // default, or an option added later (optional, its default declared).
+    const shape = (p.templateSchema as unknown as { shape: Record<string, unknown> }).shape;
     for (const f of p.templateFields) {
-      const head = f.key.split('.')[0];
-      expect(Object.keys(tpl as Record<string, unknown>)).toContain(head);
+      const head = f.key.split('.')[0]!;
+      expect(Object.keys(shape)).toContain(head);
+      // A key missing from the parsed default is an option added later: optional,
+      // with the default it stands for declared on the field (or none sent).
+      if (!(head in (tpl as Record<string, unknown>))) expect(f.hidden).not.toBe(true);
     }
     // OVH's default lacks the required flavor; give it one for planning.
     const planTpl = id === 'ovh' ? { ...(tpl as Record<string, unknown>), flavorId: 'small' } : tpl;

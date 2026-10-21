@@ -22,7 +22,7 @@
   import * as Tabs from '@client/components/ui/tabs';
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '../../../lib/api';
-  import { EDGE_PROVIDER_META } from '../../../lib/edgeProviderMeta';
+  import { DNS_ACCOUNT_BLURB, EDGE_PROVIDER_META } from '../../../lib/edgeProviderMeta';
   import { router } from '../../../stores/router.svelte';
   import { searchParam } from '../../../lib/urlState.svelte';
   import {
@@ -51,10 +51,17 @@
   import InventoryTab from './providers/InventoryTab.svelte';
   import LimitsCard from './providers/LimitsCard.svelte';
   import LocationsCard from './providers/LocationsCard.svelte';
+  import OptionDefaultsCard from './providers/OptionDefaultsCard.svelte';
+  import ReachCard from './providers/ReachCard.svelte';
   import QualifyDialog from './providers/QualifyDialog.svelte';
   import RenameDialog from './providers/RenameDialog.svelte';
   import RotateCredentialsDialog from './providers/RotateCredentialsDialog.svelte';
-  import { isTested, settingLabel, settingRows, testWords } from './providers/accountWords';
+  import {
+    isTested,
+    observedRows as observedRowsOf,
+    settingRows,
+    testWords,
+  } from './providers/accountWords';
   import { useAccountActions } from './providers/useAccountActions.svelte';
   import { asParams, changedKeys, effectiveTemplate, qualificationState } from './templates/params';
 
@@ -101,9 +108,7 @@
   );
   const settingsRows = $derived<KeyValueRow[]>(a ? settingRows(a.settings, accountNames) : []);
   const observedRows = $derived<KeyValueRow[]>(
-    a?.observedSettings
-      ? Object.entries(a.observedSettings).map(([k, v]) => ({ label: settingLabel(k), value: v }))
-      : [],
+    a?.observedSettings ? observedRowsOf(a.observedSettings) : [],
   );
   const credentialRows = $derived<KeyValueRow[]>(
     a
@@ -118,20 +123,38 @@
     a ? (providers.data?.credentialFields[a.provider] ?? Object.keys(a.credentialsSet)) : [],
   );
 
-  // --- DNS account -----------------------------------------------------------------------------------
+  // --- DNS accounts (a front writes its records through one) ---------------------------------------
   const needsDns = $derived(a ? EDGE_PROVIDER_META[a.provider].needsDnsAccount : false);
-  const dnsCandidates = $derived(others.filter((x) => EDGE_PROVIDER_META[x.provider].providesDns));
-  const currentDns = $derived(
-    a && typeof a.settings.dnsAccountId === 'string' ? a.settings.dnsAccountId : null,
+  const dnsAccountsExist = $derived(others.some((x) => EDGE_PROVIDER_META[x.provider].providesDns));
+
+  // --- certificates (a provider whose fronts can share one wildcard) ---------------------------------
+  const sharesCertificates = $derived(
+    a ? EDGE_PROVIDER_META[a.provider].sharedCertificates : false,
   );
-  let dnsChoice = $state<string | null>(null);
-  let dnsOpen = $state(false);
-  async function saveDns() {
-    if (!a || !dnsChoice) return;
-    await updateProvider(a.id, { settings: { ...a.settings, dnsAccountId: dnsChoice } });
+  // The provider's certificate options (the account's defaults for its nodes).
+  const certificateFields = $derived(
+    a
+      ? (providers.data?.optionSchemas[a.provider]?.fields ?? []).filter(
+          (f) => f.kind === 'certificate',
+        )
+      : [],
+  );
+  // How a new front's name is attached to its service (absent = its own domain).
+  const domainsNow = $derived(
+    a && a.settings.domainModel === 'classic' ? 'classic' : 'versionless',
+  );
+  const DOMAIN_WORDS: Record<string, string> = {
+    versionless: 'Its own domain, linked to the service',
+    classic: 'A domain on the service version (classic)',
+  };
+  let domainsChoice = $state<string | null>(null);
+  let domainsOpen = $state(false);
+  async function saveDomains() {
+    if (!a || !domainsChoice) return;
+    await updateProvider(a.id, { settings: { ...a.settings, domainModel: domainsChoice } });
     invalidateProviders(qc);
-    toast.success('DNS account changed');
-    dnsChoice = null;
+    toast.success('Domains changed');
+    domainsChoice = null;
   }
 
   // --- dialogs ---------------------------------------------------------------------------------------
@@ -168,12 +191,18 @@
 {:else}
   <SectionHeader
     title={a.name}
-    description={`${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
+    description={EDGE_PROVIDER_META[a.provider].role === 'dns'
+      ? `${providerLabel(a.provider)} DNS account. ${DNS_ACCOUNT_BLURB}`
+      : `${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
     back={{ href: edgesPaths.providers(), label: 'Providers' }}
   >
     {#snippet badges()}
       <FakeBadge fake={a.fake} />
-      <LayerBadge layer={u?.layer ?? EDGE_PROVIDER_META[a.provider].layer} />
+      <LayerBadge
+        layer={EDGE_PROVIDER_META[a.provider].role === 'dns'
+          ? 'dns'
+          : (u?.layer ?? EDGE_PROVIDER_META[a.provider].layer)}
+      />
       <Badge variant={a.enabled ? 'success' : 'muted'}>{a.enabled ? 'Enabled' : 'Disabled'}</Badge>
     {/snippet}
     {#snippet actions()}
@@ -307,50 +336,61 @@
         </Card>
       </div>
 
-      {#if needsDns}
+      <ReachCard account={a} dnsAccountsExist={!needsDns || dnsAccountsExist} />
+
+      {#if certificateFields.length > 0}
+        <OptionDefaultsCard account={a} fields={certificateFields}>
+          {#if sharesCertificates}
+            <p class="text-xs text-muted-foreground">
+              Each zone has its own shared certificate, shown with the zone under Locations. It is
+              read at the provider when the account is tested, and ordered by the first new front
+              there.
+            </p>
+          {/if}
+        </OptionDefaultsCard>
+      {/if}
+
+      {#if sharesCertificates}
         <Card>
           <CardHeader>
-            <CardTitle class="text-base">DNS account</CardTitle>
+            <CardTitle class="text-base">Domains</CardTitle>
             <CardDescription>
-              The hostnames of this provider's edges are written through another account that
-              addresses the DNS zone.
+              How a new front's name is attached to its service. Fronts that exist keep theirs.
             </CardDescription>
           </CardHeader>
-          <CardContent class="space-y-3">
-            {#if dnsCandidates.length === 0}
-              <AdminListState
-                emptyText="No account that can host DNS records exists yet. Add one on the Providers page first."
-              />
-            {:else}
-              <div class="max-w-md space-y-1.5">
-                <Label for="acct-dns">Writes DNS through</Label>
+          <CardContent class="space-y-4">
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="max-w-md flex-1 space-y-1.5">
+                <Label for="acct-domains">A new front's name is</Label>
                 <Select.Root
                   type="single"
-                  value={dnsChoice ?? currentDns ?? ''}
-                  onValueChange={(v) => (dnsChoice = v === currentDns ? null : v)}
+                  value={domainsChoice ?? domainsNow}
+                  onValueChange={(v) => (domainsChoice = v === domainsNow ? null : v)}
                 >
-                  <Select.Trigger id="acct-dns" class="w-full">
-                    {dnsCandidates.find((x) => x.id === (dnsChoice ?? currentDns))?.name ??
-                      (currentDns ? 'An account that was removed' : 'Choose an account')}
+                  <Select.Trigger id="acct-domains" class="w-full">
+                    {DOMAIN_WORDS[domainsChoice ?? domainsNow]}
                   </Select.Trigger>
                   <Select.Content>
-                    {#each dnsCandidates as d (d.id)}
-                      <Select.Item value={d.id}>{d.name} ({providerLabel(d.provider)})</Select.Item>
-                    {/each}
+                    <Select.Item value="versionless"
+                      >{DOMAIN_WORDS.versionless} (recommended)</Select.Item
+                    >
+                    <Select.Item value="classic">{DOMAIN_WORDS.classic}</Select.Item>
                   </Select.Content>
                 </Select.Root>
               </div>
-              <div class="flex justify-end">
-                <Button disabled={dnsChoice === null} onclick={() => (dnsOpen = true)}>
-                  Change DNS account
-                </Button>
-              </div>
-            {/if}
+              <Button disabled={domainsChoice === null} onclick={() => (domainsOpen = true)}>
+                Change domains
+              </Button>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              Classic domains exist only on accounts created before September 2025. Pick them if the
+              provider refuses to link a front's own domain to its service.
+            </p>
           </CardContent>
         </Card>
       {/if}
 
-      <LocationsCard account={a} />
+      <LocationsCard account={a} {accountNames} />
 
       <CountriesCard account={a} />
 
@@ -474,11 +514,11 @@
   <RenameDialog bind:open={renameOpen} account={a} taken={others.map((x) => x.name)} />
   <RotateCredentialsDialog bind:open={rotateOpen} account={a} {credentialFields} />
   <ConfirmDialog
-    bind:open={dnsOpen}
-    title="Change the DNS account?"
-    body="New edges of this account will get their DNS records through the account you picked. The account loses its qualification and must be tested and qualified again. Existing edges keep the records they have."
-    confirmLabel="Change DNS account"
-    onConfirm={saveDns}
+    bind:open={domainsOpen}
+    title="Change how fronts get their names?"
+    body="New fronts of this account get their name the new way; fronts that exist keep theirs. Like any settings change, the account loses its trust: test it again, and its next proven front trusts it."
+    confirmLabel="Change domains"
+    onConfirm={saveDomains}
   />
   <DeleteDialog
     bind:open={deleteOpen}

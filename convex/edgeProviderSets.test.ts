@@ -7,8 +7,13 @@ import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { adoptL4Edge, seedEdgeFixture } from './lib/edges/testing/fixtures';
-import { setStateOf } from './lib/edges/setState';
+import {
+  adoptL4Edge,
+  createAccount,
+  seedEdgeFixture,
+  wsListener,
+} from './lib/edges/testing/fixtures';
+import { setPicksOf, setStateOf } from './lib/edges/setState';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -26,6 +31,73 @@ describe('provider set view and state', () => {
     expect(view!.hasSet).toBe(false);
     expect(view!.picks).toHaveLength(1);
     expect(view!.available.some((a) => a.locationId === view!.picks[0]!.locationId)).toBe(false);
+  });
+
+  test('a DNS account is a usable pick, or one to add, only while DNS accounts may front', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t, {
+      qualified: true,
+      provider: 'upcloud',
+      listeners: [wsListener()],
+    });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: fx.accountId, ok: true });
+    const dns = await createAccount(t, { provider: 'cloudflare', name: 'acct-dns' });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: dns, ok: true });
+    const locationOf = (accountId: Id<'edgeProviderAccounts'>) =>
+      t.run(
+        async (c) =>
+          (await c.db.query('edgeLocations').collect()).find((l) => l.accountId === accountId)!,
+      );
+    const dnsLocation = await locationOf(dns);
+    // The zone's facts, as its location's check observed them.
+    await t.mutation(internal.edgeLocations.recordCheck, {
+      id: dnsLocation._id,
+      ok: true,
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    const l4Location = await locationOf(fx.accountId);
+    // A set picked while the switch was on.
+    await t.run((c) =>
+      c.db.patch(fx.relayId, {
+        providerSet: [
+          { locationId: l4Location._id, addedAt: Date.now() },
+          { locationId: dnsLocation._id, addedAt: Date.now() },
+        ],
+      }),
+    );
+    const usable = () =>
+      t.run(async (c) =>
+        ((await setPicksOf(c.db, (await c.db.get(fx.relayId))!)) ?? []).map((p) => [
+          p.account.provider,
+          p.usable,
+        ]),
+      );
+    // Off (the default): the DNS pick carries nothing and is never offered.
+    expect(await usable()).toEqual([
+      ['upcloud', true],
+      ['cloudflare', false],
+    ]);
+    await t.run((c) => c.db.patch(fx.relayId, { providerSet: undefined }));
+    const view = await t.query(internal.edgeProviderSets.view, { relayId: fx.relayId });
+    expect(view!.available.some((a) => a.accountId === dns)).toBe(false);
+    // On: both are usable again.
+    await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { l7: { dnsProvidersFront: true } },
+    });
+    const viewOn = await t.query(internal.edgeProviderSets.view, { relayId: fx.relayId });
+    expect(viewOn!.available.some((a) => a.accountId === dns)).toBe(true);
+    await t.run((c) =>
+      c.db.patch(fx.relayId, {
+        providerSet: [
+          { locationId: l4Location._id, addedAt: Date.now() },
+          { locationId: dnsLocation._id, addedAt: Date.now() },
+        ],
+      }),
+    );
+    expect(await usable()).toEqual([
+      ['upcloud', true],
+      ['cloudflare', true],
+    ]);
   });
 
   test('an edge of a disabled transport neither covers it nor holds a pick', async () => {

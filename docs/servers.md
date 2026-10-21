@@ -588,13 +588,53 @@ against the old template while the write is in flight. A node approved but not y
 until it is approved again (`servers.review_stale`); live nodes are untouched. Members get the
 new body on their app's next subscription refresh.
 
+**Where a template sends traffic.** Every template sends what no rule claims to its proxy
+group: the Clash, Mihomo and Stash ones route by rule (`mode: rule`; global mode ignores
+`rules:` and routes through the engine's built-in GLOBAL group, which is DIRECT, so a member's
+traffic would leave unproxied while the app looks connected) and end in `MATCH,<group>`; the
+sing-box one's default outbound (its first, no `route.final`) is the selector, and its clash API
+starts in rule mode. `defaultRouteFaults` (`lib/backend/subscriptionTemplates/defaultRoute.ts`)
+pins it on every template, on rendered and renamed member bodies, and in the compatibility
+suite, where real engines run what the panel serves from these templates
+(`docs/client-compatibility.md`).
+
+### Changing a backend's setup
+
+Once FCP writes a backend, a new setup request is a **change** of its setup, never a fresh
+setup. FCP writes a backend when its setup row has been ready (`readyAt`, stamped on the first
+ready; a ready row older than the field counts too) or an admin adopted it (`fcpWrites` in
+`convex/backendSetup.ts`; the view says `established`). Its nodes and addresses then are FCP's
+own (enrolled, added from Servers) or are handled one node at a time (Adopt as an enrolled node,
+holds), and no setup step touches a node or an address, so a change asks for no adoption. A row
+that never got to ready proves nothing: what is on the backend may be anybody's, and
+`servers.adopt_required` still applies.
+
+Admin -> Servers -> Nodes shows **Backend setup** (the modes, the generation, the zone for
+origin names) with **Change setup** while the backend is ready. The sheet opens filled in with
+the current setup and says what the change does before it runs (a confirmation). What may
+change (`checkChange`), anything else refused before a write:
+
+| Change                         | What happens                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The zone for origin names only | Recorded **in place** at a new generation; the row stays ready and nothing runs, since no setup step reads it: no backend read or write, and no node that has a name or serves members is touched. A WebSocket node enrolled while there was no zone (blocked on `servers.origin_hostname_missing`) takes its managed name (below): a new machine revision for the role to apply. Audited `servers.setup.changed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| A mode added                   | The setup **runs again** at a new generation. The new mode's transport must already be in the profile (Add a transport, on a node's page), checked against the last look at the backend (`servers.setup_transport_missing:<tag>:<field>`) and again by the run. Every mode already set up keeps what was found for it while the run looks again, and is **only looked at**: the run never writes its group or placement (on a backend FCP writes, `readyAt` set), and stops with `servers.setup_mode_drifted:<slug>` when its group no longer carries exactly its transport (refused before the start when the last look already shows it). The new mode gets its group and placement. Until the run is done no node can enroll or be approved; a node reconciled meanwhile lets its claim go and waits `pending` (`servers.setup_running`), and is reconciled once the setup is ready (`nodeIntents.afterSetupReady`, from `finish`). Delivery to members is untouched (the gate reads its own version, and edges keep dialing a front node by the same name). |
+| Nothing (modes reordered)      | Nothing: the same generation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+
+Refused, because nodes and members rely on them: another profile name
+(`servers.setup_profile_kept`); a set-up mode removed, or its group name, shape, family, PROXY
+protocol, WebSocket path or port changed (`servers.setup_mode_kept:<slug>`; add a new mode
+instead; a mode a stopped run never set up may be changed or taken out again); another zone, or none, while any node that is not retired has a managed origin name in
+the current one (`servers.origin_zone_in_use`). Another account holding the SAME zone is always
+fine: every name stays, and FCP finds its records again by name and marker.
+
 ### Adopting a backend
 
-A backend that already has nodes or addresses is never quietly set up: `start` refuses with
-`servers.adopt_required` until the request carries `adopt: true` (the sheet's typed
-confirmation). Adopting means FCP becomes the backend's writer as it is: the profile is adopted
-under its existing tags, groups an earlier setup named are renamed in place, and nothing a
-member holds changes. The setup row records `adopted`.
+A backend that already has nodes or addresses, and that FCP does not write yet (above), is never
+quietly set up: `start` refuses with `servers.adopt_required` until the request carries
+`adopt: true` (the sheet's typed confirmation). Adopting means FCP becomes the backend's writer
+as it is: the profile is adopted under its existing tags, groups an earlier setup named are
+renamed in place, and nothing a member holds changes. The setup row records `adopted`; a change
+of the setup later never sets it.
 
 **Adopting a node** (`POST {slug}/nodes/adopt {nodeUuid, mode, externallyFronted?}`,
 `nodeIntents.adoptNode`): a backend node that already serves members becomes an enrolled node
@@ -632,7 +672,7 @@ registered → bootstrap_available → machine_applied → machine_ready → can
 | `registered`          | The intent exists; the node row is created or brought in line through the ledger; a direct node's Host is created **disabled**; a front node's origin record is written (obligations, below).                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `bootstrap_available` | `POST …/bootstrap` served the machine configuration and the backend's node secret. The secret is read from the backend on the call and returned to the caller; FCP never persists, audits or logs it (the machine holds it in its compose file).                                                                                                                                                                                                                                                                                                                                                                                  |
 | `machine_applied`     | The role reported `appliedRevision == machineRevision`. Idempotent; a lower revision is `servers.revision_stale` (run the role again), a higher one `servers.revision_unknown`; a report never regresses a stage.                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `machine_ready`       | The node op that applied the current profile and transport is done by its own ledger evidence, the node is online, the profile token has not moved; a front node's origin name resolves to the intended addresses, presents a publicly valid certificate naming it, proxies the WebSocket path and answers a foreign Host header.                                                                                                                                                                                                                                                                                                 |
+| `machine_ready`       | The node op that applied the current profile and transport is done by its own ledger evidence, the node is online, the profile token has not moved; a front node's origin name resolves to the intended addresses, presents a publicly valid certificate naming it, proxies the WebSocket path and answers a foreign Host header. A managed name's resolution is proved earlier, before the applied report (§ Origin names); the rest once the role has reported, never while a role run is under way (§ Node registration).                                                                                                      |
 | `candidates_verified` | Direct: the isolated **direct test link** (the node's own test credential, the transport's live parameters) confirmed against a **binding** recomputed from live rows: endpoint, machine, config and authentication revisions, the parameters tested, the credential. A moved endpoint refuses (`servers.confirmation_stale`). Fronted: every listener of the open Autopilot run (the one waiting at publish for this approval) has a live, verified standby (L7 proof; L4 confirmation); recorded as `standbys_verified` evidence at approval, refused as `servers.standbys_missing` / `servers.standbys_unverified` until then. |
 | `awaiting_approval`   | The review card hashes the delivery **shape** (mode, ingress, profile revision, every listener with its provider account, location + template, subscription templates, the Host tuple), never individual addresses.                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `activating`          | Approval creates one run with an **immutable candidate snapshot** (`panelActivationRuns`); older runs are superseded. A direct run enables the addresses as **candidate resources**, rehearses the backend's real bodies in every client family (`lib/backend/rehearsal.ts`), and commits. The rehearsal reads EVERY address the run would commit, each with the server name it is there to serve (links `sni`, sing-box `tls.server_name`, Clash `servername`) and the expected REALITY key: one entry proves nothing about the others, and the detail records `<family>:<name>:absent                                           | key | sni`. A failed rehearsal disables the Host again and releases nothing. A run that blocks or fails **parks** the node at `awaiting_approval` with no current run (`staged` again unless it was live): the next approval supersedes it and starts a fresh run. |
@@ -837,6 +877,19 @@ node serves (its mode's transport before the backend node exists) plus the ingre
 port; `pending` = a staged change's port, listed until that change ends. The node API port is
 never listed.
 
+**The role waits on FCP only for what FCP can settle without the machine.** Between its `PUT`
+and its applied report the role polls the view twice: for `registration.state` `ready` (the
+backend row reconciled) and, on a front node, for `origin.dns` `resolves` (§ Origin names).
+Neither waits on the machine the run is about to set up: a reconcile during a role run (the
+`PUT` is newer than the last applied report, for at most 20 minutes) does not look at the
+machine, so a run that repairs an unhealthy machine is not held at `servers.node_offline` or a
+failed ingress check before it can start the node. An attempt that was already looking at the
+machine when the `PUT` arrived is fenced (a new generation; its handover reconciles again), so
+its failure is not recorded either. The applied report that ends the run brings the machine
+check (`machine_ready`); for a run that never reports, the end of its 20 minutes does
+(`nodeIntents.afterRoleRunWindow`, scheduled when the check was skipped, since a ready node is
+not on the sweep).
+
 Refusals. `PUT`: `servers.manage_disabled`, `servers.contract_version`,
 `servers.panel_not_set_up`, `servers.mode_unknown`, `servers.node_retiring`,
 `servers.mode_change_needs_admin`, `servers.node_exists_unowned` (a backend node or Host of that
@@ -859,13 +912,41 @@ for a machine FCP bootstrapped).
 
 ### Origin names
 
-A front node's origin name is `<label>.<zone>` in the Cloudflare zone chosen at setup (or an
-explicit hostname the admin sets). Records are **obligations** (`backendObligations`, kind
-`dns.record`) persisted before the call with the account, zone, marker
-`fcp-origin:<slug>:<name>` and expected content; an uncertain answer is discovered by name and
-marker before anything is sent again; a record FCP did not write, or a CNAME at the name, is
-`servers.origin_name_taken`, never replaced; FCP's own record with other content is replaced.
-Cleanup uses the obligation's own account and zone. `created` and `resolves` are distinct.
+A front node's origin name is `<label>.<zone>` in the DNS zone chosen at setup (or an
+explicit hostname the admin sets). A backend set up without a zone gets one with **Change
+setup** (Admin -> Servers -> Nodes, Backend setup): pick a DNS account, then one of the zones it
+reaches (`originDns: {accountId, zoneId}`; the zones are its catalog's and its own locations',
+docs/edges.md § "Provider accounts and locations"). A zone that is not one the account reaches
+is `servers.origin_zone_unknown`, one its provider lists as not active
+`servers.origin_zone_inactive`, an account that is no switched-on DNS account
+`servers.origin_account_unusable`; a request naming the account alone keeps the zone the setup
+already has with it, else takes the account's only zone (`servers.origin_zone_required` when
+it reaches several). It is recorded in place, touching no node ("Changing a backend's setup"); every
+WebSocket node enrolled from then on gets a managed name, and one enrolled before, blocked on
+`servers.origin_hostname_missing`, takes its managed name once the setup is ready
+(`nodeIntents.afterSetupReady`: a new machine revision for the role to apply, then the usual
+reconcile; a node with a hostname of its own, an adopted one, a retiring one and one that
+was ever live are left alone). The zone stays while any node has a name in it: another account
+holding the same zone may replace the account, another zone may not. The account cannot be
+removed while a setup's origin names, or an origin-name record still being written, use it.
+
+Records are **obligations** (`backendObligations`, kind `dns.record`) persisted before the call
+with the account, zone, marker `fcp-origin:<slug>:<name>` and expected content; an uncertain
+answer is discovered by name and marker before anything is sent again; a record FCP did not
+write, or a CNAME at the name, is `servers.origin_name_taken`, never replaced; FCP's own record
+with other content is replaced. Cleanup uses the obligation's own account and zone.
+
+`created` and `resolves` are distinct, and the order is fixed: **FCP proves resolution before
+the role applies.** The role waits for the view's `origin.dns` to say `resolves` (or `none`)
+before it sets the machine up, since Caddy's ACME certificate needs the name, and reports
+`applied` only after that. So once its records are written the reconcile asks public resolvers
+for the name, by DNS alone (`nodeIntentOps.checkOriginResolves`), against the node's public v4
+and, when published, its v6. A match records `resolves`; anything else parks the node pending
+with `servers.origin_not_resolving`, tried again every 30 seconds while the role is in contact.
+The proof holds while FCP's records stay as they were: a later reconcile that keeps them keeps
+`resolves`, one that writes or withdraws a record asks again. The certificate, the WebSocket
+path and the foreign Host are checked after the applied report (`machine_ready`). A name the
+admin set explicitly is the admin's to publish: FCP looks at it only in that check.
 
 ### Obligations
 
@@ -915,7 +996,9 @@ From an empty machine to a member connecting through an edge, for an L4 mode
      (audited `edge.render.enabled_by_setup`), and the protect plan says so first.
 2. **The backend is set up for the mode** (§ Setting up a backend): Servers → Backends, "Set up
    this backend", with the mode's family and, for a front node, the origin DNS account and zone
-   (§ Origin names).
+   (§ Origin names). A backend already set up without them gets them with Change setup on
+   Servers → Nodes (§ Changing a backend's setup); a mode it lacks is added there too, once its
+   transport is in the profile.
 3. **A provider account for the edge**: added and its credentials tested (in the protect
    sheet's account step, or on the provider pages under Edges → Advanced), with a daily
    allocation budget (0, no limit, is refused outside development). An L4 account is trusted by
@@ -926,10 +1009,10 @@ From an empty machine to a member connecting through an edge, for an L4 mode
    (`admin:servers:write`).
 5. **Run the role** with the node's name and `node_mode` (§ Node registration). It enrolls,
    fetches the bootstrap, lets every `firewall.ports` port in, waits for a front node's origin
-   name to resolve, starts Caddy (front node) and the node, and reports `applied` with the
-   ports it opened. The node reaches `machine_ready` once its applied revision is current and
-   the evidence in § Node lifecycle holds; its page (Servers → Nodes) words each step and what
-   it waits for.
+   name to resolve (FCP proves it, § Origin names), starts Caddy (front node) and the node, and
+   reports `applied` with the ports it opened. The node reaches `machine_ready` once its applied
+   revision is current and the evidence in § Node lifecycle holds; its page (Servers → Nodes)
+   words each step and what it waits for.
 6. **Protect it**: "Protect this node" on the node's page (also offered on the Edges home and as
    attention `node_ready_to_protect`). The protect sheet preselects the node and a sole
    compatible account; Start. The Autopilot run (`docs/edges.md` "Guided setup runs") creates
@@ -1005,8 +1088,10 @@ to Backends and `/admin/remnawave` to Mode pools.
 
 **Nodes** is built like the simple Edges screens: one status sentence, a "Needs you" list only
 when something is broken, one row per node, and the leftovers as quiet one-line notes (a
-transport nobody uses on three nodes is one line, not six). The two switches (regular reading,
-changes from here) sit in the footer.
+transport nobody uses on three nodes is one line, not six). **Backend setup** says how a ready
+backend is set up (its modes, the generation, the zone for origin names) and, with changes from
+here allowed, carries **Change setup** ("Changing a backend's setup"). The two switches (regular
+reading, changes from here) sit in the footer.
 
 **Add a node** (with changes allowed and the backend set up) writes one node row by hand: name,
 where the backend reaches it, country, the profile it runs and the transports it serves. The

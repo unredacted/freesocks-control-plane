@@ -30,8 +30,10 @@ import {
   bindingMatches,
   needsEndpointVerification,
   recordMatchesBinding,
+  learnedBinding,
   verificationBinding,
   verificationCurrent,
+  withLearnedAddresses,
   verificationStale,
 } from './lib/edges/verification';
 import { partialRungFor } from './lib/edges/verifyRung';
@@ -51,6 +53,7 @@ export function verificationView(edge: Doc<'edges'>, listener: VerifiableListene
     required,
     current,
     stale: !!listener && verificationStale(edge, listener),
+    learnedAddress: edge.learnedAddresses?.v6 ?? edge.learnedAddresses?.v4 ?? null,
     record: rec
       ? {
           rung: rec.rung,
@@ -77,7 +80,8 @@ export const binding = internalQuery({
     const raw = await ctx.db.get(edge.listenerId);
     if (!raw) return null;
     const listener = await verificationListenerOf(ctx.db, raw);
-    const b = verificationBinding(edge, listener);
+    // A held (learned) address is what there is to test, when there is one.
+    const b = learnedBinding(edge, listener) ?? verificationBinding(edge, listener);
     if (!b) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
     // What the tick would unlock: the gate's verdict with ONLY the verification
@@ -145,14 +149,20 @@ export async function confirmEndpoint(
     if (!raw || raw.retired)
       throw new ConvexError({ code: 'edge.listener_retired', message: 'Listener not found' });
     const listener = await verificationListenerOf(ctx.db, raw);
-    const current = verificationBinding(edge, listener);
     const echoed = {
       endpoint: a.endpoint,
       listenerKey: listener.listenerKey,
       listenerRevision: a.listenerRevision,
       configHash: a.configHash,
     };
-    if (!bindingMatches(current, echoed))
+    // A test of an address the edge learned after its confirmation serves it
+    // from now on: the edge takes it into its addresses and the record binds
+    // to the configuration with it (the endpoint key stays the edge's usual one).
+    const learned = learnedBinding(edge, listener);
+    const promotes = !!learned && bindingMatches(learned, echoed);
+    const after = promotes ? withLearnedAddresses(edge) : edge;
+    const current = verificationBinding(after, listener);
+    if (!promotes && !bindingMatches(current, echoed))
       throw new ConvexError({
         code: 'edge.verification_stale',
         message:
@@ -161,6 +171,7 @@ export async function confirmEndpoint(
     const relay = await ctx.db.get(edge.relayId);
     const now = Date.now();
     await ctx.db.patch(edge._id, {
+      ...(promotes ? { addresses: after.addresses, learnedAddresses: undefined } : {}),
       verification: {
         rung: 'verified',
         by: 'admin',
@@ -257,8 +268,10 @@ async function accountTrustEvidence(
   if (testedAt <= (account.credentialsChangedAt ?? 0))
     return { ok: false, code: 'tested_before_credential_change' };
   const effective = await effectiveTemplateOfLocation(ctx, account, location);
-  if (!edge.templateHash || edge.templateHash !== effective.hash)
-    return { ok: false, code: 'template_mismatch' };
+  // An edge built with a node's tuning choices is evidence for the location's
+  // own template (`baseTemplateHash`): the choices are the node's, not the place's.
+  const built = edge.baseTemplateHash ?? edge.templateHash;
+  if (!built || built !== effective.hash) return { ok: false, code: 'template_mismatch' };
   return { ok: true, testedAt, templateHash: effective.hash };
 }
 

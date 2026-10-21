@@ -26,6 +26,27 @@ describe('edgeErrorMessage', () => {
     }
   });
 
+  it('shows the server reason in place of the fix when the refusal carries one', () => {
+    const unusable = new ApiCallError(409, {
+      error: { code: 'edge.location_unusable', message: 'That zone is paused at the provider' },
+    });
+    expect(edgeErrorMessage(unusable)).toBe(
+      'The provider reached that zone, but it cannot be used now. That zone is paused at the provider.',
+    );
+    // No message (an `{ ok: false }` refusal, or an empty one): the generic fix stands in.
+    expect(edgeErrorMessage(new EdgeRefusalError('edge.location_unusable'))).toBe(
+      'The provider reached that zone, but it cannot be used now. Fix the zone at the provider, then add the location again.',
+    );
+    const blank = new ApiCallError(409, {
+      error: { code: 'edge.dns_account_unusable', message: ' ' },
+    });
+    expect(edgeErrorMessage(blank)).toBe(
+      'That DNS account cannot hold the records of this location. Pick a DNS account that can host DNS records and is switched on.',
+    );
+    // A refusal without the flag keeps its own words, never the raw server text.
+    expect(edgeErrorMessage(refused('edge.hostname_not_in_zone'))).not.toContain('raw server text');
+  });
+
   it('keeps label plus fix for the status codes', () => {
     expect(edgeErrorMessage(refused('edge.pool_empty'))).toBe('Pool empty. Publish an edge.');
   });

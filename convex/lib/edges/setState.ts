@@ -18,6 +18,9 @@ import type { DatabaseReader } from '../../_generated/server';
 import { listenerLayers } from './layers';
 import { locationKeyOf } from './locations';
 import { accountsForSlot } from './rotation';
+import { dnsProvidersFrontOf } from '../edgeConfig';
+import { edgeRoleOf } from './providers/capabilities';
+import { l7PlaceProblemOf } from './l7Place';
 import {
   coverTargets,
   coverageDeficit,
@@ -66,7 +69,7 @@ export interface SetPickRow {
   pick: SetPick;
   location: Doc<'edgeLocations'>;
   account: Doc<'edgeProviderAccounts'>;
-  /** Switched on, its account enabled and tested: automatic work may use it. */
+  /** Switched on, its account enabled, tested and allowed to front: automatic work may use it. */
   usable: boolean;
 }
 
@@ -102,6 +105,8 @@ export function carries(
       proto,
       originPort: listener.originPort,
       allowL7: true,
+      // The DNS-account switch is applied to a pick as `usable` (setPicksOf).
+      dnsProvidersFront: true,
     }).length > 0
   );
 }
@@ -113,11 +118,19 @@ export async function setPicksOf(
 ): Promise<SetPickRow[] | null> {
   if (!relay.providerSet) return null;
   const out: SetPickRow[] = [];
+  // A DNS account picked while `edge.l7.dnsProvidersFront` was on is not usable
+  // once it is off: nothing new is placed there (its edges are kept).
+  let dnsFront: boolean | undefined;
   for (const p of relay.providerSet) {
     const location = await db.get(p.locationId);
     if (!location) continue;
     const account = await db.get(location.accountId);
     if (!account) continue;
+    const fronts =
+      edgeRoleOf(account.provider) !== 'dns' || (dnsFront ??= await dnsProvidersFrontOf(db));
+    // A CDN place no new edge can be planned in carries nothing (no zone, a
+    // refused check, its DNS account gone or off, an unread encryption mode).
+    const placeOk = location.enabled && !(await l7PlaceProblemOf(db, account, location));
     out.push({
       pick: {
         locationId: location._id as string,
@@ -127,7 +140,7 @@ export async function setPicksOf(
       location,
       account,
       usable:
-        location.enabled && account.enabled && !!account.lastTestOkAt && !account.lastTestError,
+        fronts && placeOk && account.enabled && !!account.lastTestOkAt && !account.lastTestError,
     });
   }
   return out;
@@ -159,7 +172,8 @@ export interface SetState {
 
 /**
  * The origin's requirement and where it stands. A pick that is not usable
- * (switched off, its account disabled or untested) carries nothing: like a
+ * (switched off, a CDN place no new edge can be planned in, its account
+ * disabled or untested) carries nothing: like a
  * cooling one, automatic work is never asked to provision into it.
  */
 export async function setStateOf(

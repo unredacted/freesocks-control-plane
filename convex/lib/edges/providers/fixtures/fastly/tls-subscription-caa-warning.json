@@ -1,0 +1,45 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/tls/subs/#get-tls-sub (include=tls_authorizations; warning shape from go-fastly TLSAuthorizationWarning {type, instructions}, read 2026-10-20)",
+  "data": {
+    "id": "C0cuTFmLzMCiyMcOZuLEZ1",
+    "type": "tls_subscription",
+    "attributes": {
+      "state": "processing",
+      "certificate_authority": "certainly"
+    },
+    "relationships": {
+      "tls_authorizations": {
+        "data": [
+          {
+            "id": "AUTH01",
+            "type": "tls_authorization"
+          }
+        ]
+      }
+    }
+  },
+  "included": [
+    {
+      "id": "AUTH01",
+      "type": "tls_authorization",
+      "attributes": {
+        "state": "pending",
+        "created_at": "2026-10-20T10:10:00Z",
+        "challenges": [
+          {
+            "type": "managed-dns",
+            "record_type": "CNAME",
+            "record_name": "_acme-challenge.k3m7q9zb.example.org",
+            "values": ["6a8mtt5uzzsw2qsl.fastly-validations.com"]
+          }
+        ],
+        "warnings": [
+          {
+            "type": "CAA",
+            "instructions": "The CAA records on example.org do not allow certainly.com to issue for k3m7q9zb.example.org."
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -94,6 +94,8 @@ const status = (slug: string, over: Partial<OriginStatus>): OriginStatusRow => (
     layers: ['l4'],
     attention: false,
     delivery: { kind: 'serving', code: null },
+    failedRunId: null,
+    fronted: false,
     ...over,
   }),
 });

@@ -43,6 +43,9 @@ export const FAKE_ZONES = [
 ] as const;
 export const FAKE_L7_SHADOW: EdgeProviderId = 'cloudflare';
 
+/** The one zone a fake CDN account reaches (a well-formed zone id). */
+export const FAKE_ZONE_ID = 'fa4e'.padEnd(32, '0');
+
 export function fakeEdgeProviderEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.ENVIRONMENT === 'development' && env.DEV_FAKE_EDGE_PROVIDER === 'true';
 }
@@ -136,15 +139,28 @@ export function fakeEdgeProvider<Cfg extends EdgeProviderConfig, Tpl>(
     defaultTemplate: real.defaultTemplate,
     async testCredentials() {
       record('testCredentials');
-      return layer === 'l7'
-        ? { ok: true, observed: { zoneSslMode: 'full', zoneWebsockets: 'on' } }
-        : { ok: true };
+      return { ok: true };
     },
+    ...(layer === 'l7'
+      ? {
+          async checkLocation(cfg: Cfg) {
+            record('checkLocation');
+            const zoneName =
+              (cfg as { zoneName?: string; dns?: { zoneName?: string } }).dns?.zoneName ??
+              (cfg as { zoneName?: string }).zoneName;
+            return {
+              ok: true,
+              observed: { zoneSslMode: 'full', websockets: 'on', zoneStatus: 'active' },
+              ...(zoneName ? { label: zoneName, zoneName } : {}),
+            };
+          },
+        }
+      : {}),
     async discoverOptions() {
       record('discoverOptions');
       return layer === 'l7'
         ? {
-            zones: [{ id: 'zone1234', label: 'edge.example' }],
+            zones: [{ id: FAKE_ZONE_ID, label: 'edge.example', facts: { status: 'active' } }],
             tlsConfigurations: [{ id: 'tls-1', label: 'default' }],
           }
         : {
