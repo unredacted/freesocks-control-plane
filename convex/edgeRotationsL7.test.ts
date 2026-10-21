@@ -1427,11 +1427,18 @@ describe('edgeRotations: a configuration the provider refuses ends the run on it
     expect(r.events.some((e) => e.code === 'step_retries_exhausted')).toBe(false);
     // What was built stays, for the operator to read the provider's reason there.
     const edge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
-    expect(edge.failure).toMatchObject({ code: 'version_invalid' });
+    // The edge itself needs the operator (not merely `failed`), so its billed
+    // resources stay raised after the run's own item ages out.
+    expect(edge.status).toBe('needs_operator');
+    expect(edge.failure).toEqual({ step: 'activate', code: 'version_invalid' });
     expect(edge.resources.map((x) => x.resourceId)).toEqual(['svc-1']);
     expect(edge.steps.find((s) => s.stepId === 'activate')?.state).toBe('needs_operator');
     const attention = await t.query(internal.edgeOperator.attention, {});
     expect(attention.items.find((i) => i.kind === 'rotation_failed')).toMatchObject({
+      code: 'version_invalid',
+    });
+    expect(attention.items.find((i) => i.kind === 'needs_operator')).toMatchObject({
+      edgeId: edge._id,
       code: 'version_invalid',
     });
   });

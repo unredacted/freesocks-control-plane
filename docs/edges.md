@@ -1233,9 +1233,10 @@ any point, and never writes twice what it cannot prove:
   external locks use the same lease and are held on a thrown or partial write until discovery
   answers. A step the provider REFUSED (`StepOutcome` partial with `refused`: what FCP built
   does not compile, Fastly's `version_invalid`) is never retried, since the same draft is
-  refused the same way: the run fails on that code at once, the step needs an operator, and
-  what was built stays so the operator can read the provider's reason at the provider (FCP
-  keeps only the code).
+  refused the same way: the run fails on that code at once, the edge (not only the step) needs
+  an operator, so its `needs_operator` attention stays raised while its billed resources
+  exist, and what was built stays so the operator can read the provider's reason at the
+  provider (FCP keeps only the code).
 - **Hosts.** The Host plan is captured **per listener** from the live listing; when FCP owns the
   Hosts and none exists for the listener yet, the flip CREATES it through the Host state
   machine. The forward write is claimed before it is sent (`forwardWriteAttempted`), so a write
