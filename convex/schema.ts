@@ -1245,6 +1245,10 @@ export default defineSchema({
     // wildcard), as last read at the provider (edgeProviderOps
     // `refreshSharedCertificate`: the credential test and the reconcile cron).
     // `state` is the provider's, or `absent` / `ambiguous`; `code` a fixed one.
+    // Shared provider objects an edge of this account CREATED (`<kind>:<id>`,
+    // most recent last, capped): proof that FCP ordered the account's wildcard,
+    // so it alone may be removed from the account page.
+    orderedSharedResources: v.optional(v.array(v.string())),
     sharedCertificate: v.optional(
       v.object({
         name: v.string(),
@@ -2083,7 +2087,10 @@ export default defineSchema({
   // until the holder re-observes the outcome (same rule as `currentOp`).
   externalLocks: defineTable({
     key: v.string(), // e.g. "cloudflare-zone:<zoneId>", "fastly-service:<serviceId>"
-    holderEdgeId: v.id('edges'),
+    // An edge's step holds it, or an account-level action (removing an
+    // account's shared certificate) does: exactly one of the two.
+    holderEdgeId: v.optional(v.id('edges')),
+    holderAccountId: v.optional(v.id('edgeProviderAccounts')),
     opId: v.string(),
     claimedAt: v.number(),
     expiresAt: v.number(),

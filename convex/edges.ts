@@ -510,6 +510,24 @@ export const settleOp = internalMutation({
       );
     }
     if (a.addResources && a.addResources.length > 0) {
+      // A shared object this edge CREATED (the account's wildcard and its ACME
+      // record) is remembered on the account: the proof that FCP ordered it,
+      // which its removal requires (another edge's destroy never deletes it).
+      const ordered = a.addResources
+        .filter(
+          (r) =>
+            r.ownership === 'created' &&
+            (r.meta as { shared?: unknown } | undefined)?.shared === true,
+        )
+        .map((r) => `${r.kind}:${r.resourceId}`);
+      if (ordered.length > 0 && edge.accountId) {
+        const acct = await ctx.db.get(edge.accountId);
+        if (acct) {
+          const was = acct.orderedSharedResources ?? [];
+          const next = [...was.filter((x) => !ordered.includes(x)), ...ordered].slice(-50);
+          await ctx.db.patch(acct._id, { orderedSharedResources: next });
+        }
+      }
       const known = new Set(edge.resources.map((r) => `${r.kind}:${r.resourceId}`));
       const stepId = a.stepPatch?.stepId ?? 'describe';
       const added: Resource[] = [];
@@ -804,6 +822,19 @@ export const claimExternalLock = internalMutation({
         return { ok: true as const, opId };
       }
       if (existing.expiresAt > now) return { ok: false as const, code: 'edge.lock_busy' as const };
+      // An account-level holder that never released (its action died): what it
+      // did is re-read by the step that takes over, which finds the object or
+      // orders it again, so an expired one is simply taken.
+      if (!existing.holderEdgeId) {
+        await ctx.db.patch(existing._id, {
+          holderEdgeId: edgeId,
+          holderAccountId: undefined,
+          opId,
+          claimedAt: now,
+          expiresAt: now + ttlMs,
+        });
+        return { ok: true as const, opId };
+      }
       // Expired and never settled: the previous holder's outcome is UNKNOWN.
       // Blocking here is the whole point: its discovery pass settles the lock.
       return { ok: false as const, code: LOCK_UNSETTLED };

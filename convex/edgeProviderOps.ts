@@ -697,32 +697,44 @@ export const removeSharedCertificate = internalAction({
   args: { accountId: v.id('edgeProviderAccounts'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: (ctx, { accountId, actorAdminId }): Promise<{ ok: true; removed: boolean }> =>
     tracked(ctx, accountId, async (seen) => {
-      const users = await ctx.runQuery(internal.edgeProviderAccounts.sharedCertificateUsage, {
-        id: accountId,
-      });
-      if (users > 0)
-        throw new ConvexError({
-          code: 'edge.shared_certificate_in_use',
-          message: `${users} live edge(s) still front through the shared certificate`,
-        });
       const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
       if (!provider.removeSharedCertificate)
         throw new ConvexError({
           code: 'validation',
           message: 'This provider shares no certificate',
         });
-      const res = await provider.removeSharedCertificate(cfg);
-      if (res.code)
+      // Under the account's certificate lock, with the users counted again in
+      // the same transaction: a front cannot order or adopt the wildcard while
+      // it is being deleted, nor be planned on it unseen.
+      const opId = `remove-${Math.random().toString(36).slice(2)}`;
+      const begun = await ctx.runMutation(
+        internal.edgeProviderAccounts.beginSharedCertificateRemoval,
+        { id: accountId, opId },
+      );
+      if (!begun.ok)
         throw new ConvexError({
-          code: `edge.${res.code}`,
-          message: 'The shared certificate cannot be removed by FCP',
+          code: `edge.${begun.code}`,
+          message:
+            begun.code === 'shared_certificate_in_use'
+              ? 'Live edges still front through the shared certificate'
+              : 'The shared certificate cannot be removed now',
         });
-      await ctx.runMutation(internal.edgeProviderAccounts.noteSharedCertificateRemoved, {
-        id: accountId,
-        removed: res.removed,
-        actorAdminId,
-      });
-      return { ok: true as const, removed: res.removed };
+      try {
+        const res = await provider.removeSharedCertificate(cfg, { ordered: begun.ordered });
+        if (res.code)
+          throw new ConvexError({
+            code: `edge.${res.code}`,
+            message: 'The shared certificate cannot be removed by FCP',
+          });
+        await ctx.runMutation(internal.edgeProviderAccounts.noteSharedCertificateRemoved, {
+          id: accountId,
+          removed: res.removed,
+          actorAdminId,
+        });
+        return { ok: true as const, removed: res.removed };
+      } finally {
+        await ctx.runMutation(internal.edges.settleExternalLock, { key: begun.key, opId });
+      }
     }),
 });
 

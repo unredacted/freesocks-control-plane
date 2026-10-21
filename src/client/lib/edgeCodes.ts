@@ -574,6 +574,30 @@ const COPY = {
     explain: 'The listener does not declare how a CDN front should dial the origin.',
     fix: 'Edit the listener and turn on "A CDN front can reach this transport", or protect the node from Edges.',
   },
+  origin_cert_not_public: {
+    label: 'Origin certificate not public',
+    explain:
+      'A front that dials the origin over TLS needs the origin to present a publicly trusted certificate.',
+    fix: 'Give the origin a publicly trusted certificate, or let the front dial it over plain HTTP.',
+  },
+  origin_cert_name_uncovered: {
+    label: 'Origin name not on its certificate',
+    explain:
+      'Over TLS the front checks the origin by the address it dials, so that address must be a name the origin’s certificate covers. An IP address never is.',
+    fix: 'Address the origin by a name on its certificate, or add the name to the certificate.',
+  },
+  origin_port_unsupported: {
+    label: 'Origin port not supported',
+    explain:
+      'This front reaches the origin only on the scheme’s own port: 443 over TLS, 80 over plain HTTP.',
+    fix: 'Move the origin listener to that port.',
+  },
+  retest_required: {
+    label: 'Test again',
+    explain:
+      'A certificate setting of this account changed, and the last test checked the old one (the CAA records for one name say nothing about the shared wildcard).',
+    fix: 'Test the account again.',
+  },
   // --- an L7 front's certificate (L7_CERTIFICATE_CODES) ---------------------------------
   caa_forbids_ca: {
     label: 'CAA forbids the CA',
@@ -1354,6 +1378,12 @@ const REFUSAL_COPY = {
     explain:
       'The account still has a shared certificate at the provider, which nothing could remove once the account is gone.',
     fix: 'Remove it on the account page first, or delete it at the provider and test the account again.',
+  },
+  shared_certificate_not_ours: {
+    label: 'Certificate not ordered by FCP',
+    explain:
+      'FCP found this wildcard certificate already at the provider and reused it. It removes only certificates its own fronts ordered.',
+    fix: 'Remove it at the provider if nothing else uses it, then test the account again.',
   },
   location_not_geographic: {
     label: 'No regions for this provider',

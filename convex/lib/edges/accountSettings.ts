@@ -166,6 +166,21 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
 };
 
 /**
+ * Settings whose change makes the account's last credential test answer for
+ * something else (the CAA verdict is for this CA, scope and zone; the shared
+ * certificate for this zone): changing one marks the account untested
+ * (`retest_required`) until a new test runs.
+ */
+export const EDGE_RETEST_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
+  gcore: [],
+  upcloud: [],
+  scaleway: [],
+  ovh: [],
+  cloudflare: [],
+  fastly: ['dnsAccountId', 'certificateAuthority', 'tlsConfigurationId', 'certificateScope'],
+};
+
+/**
  * Settings a NEW account gets when its payload leaves them out, where the
  * schema itself must not default them (an existing account without the key
  * keeps its older behaviour until it is switched).

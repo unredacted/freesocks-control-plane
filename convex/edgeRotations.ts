@@ -29,6 +29,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { appendRunEvent } from './lib/edges/setupRuns';
+import { fastlyCertificateLockKey } from './lib/edges/lockKeys';
 import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
 import {
   EDGE_PLUMBING,
@@ -3031,7 +3032,7 @@ export function stepLockKey(edge: Edge, stepKind: string): string | null {
     intent?.certificateScope === 'wildcard' &&
     edge.accountId
   )
-    return `fastly-certificate:${edge.accountId}:${intent.zoneId}`;
+    return fastlyCertificateLockKey(edge.accountId, intent.zoneId);
   if (stepKind !== 'create_origin_rule') return null;
   return intent?.zoneId ? `cloudflare-zone:${intent.zoneId}` : null;
 }

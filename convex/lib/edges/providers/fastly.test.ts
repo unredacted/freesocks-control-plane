@@ -48,6 +48,7 @@ import {
   planSharedTeardown,
   sharedAcmeMarker,
   sharedTeardownStep,
+  subscriptionServes,
   tlsAuthorizationCode,
   type SharedTeardownState,
 } from './fastly';
@@ -254,7 +255,9 @@ function defaultReply(c: Call): Reply {
   if (m === 'GET' && p === '/tls/subscriptions') return api('tls-subscriptions-list.json');
   if (m === 'GET' && p === `/tls/subscriptions/${SUB}`)
     return api(
-      c.query.include ? 'tls-subscription-authorizations.json' : 'tls-subscription-issued.json',
+      c.query.include?.includes('tls_authorizations')
+        ? 'tls-subscription-authorizations.json'
+        : 'tls-subscription-issued.json',
     );
   if (m === 'DELETE' && p === `/tls/subscriptions/${SUB}`) return { status: 204 };
   if (m === 'GET' && p === '/tls/configurations') return api('tls-configurations.json');
@@ -422,30 +425,28 @@ describe('fastly: request bodies', () => {
     });
   });
 
-  test('the TLS name is a name the certificate covers, never a wildcard, and absent without TLS', () => {
-    const byIp: EdgeSpec = {
-      ...spec,
-      listeners: [{ edgePort: 443, members: [{ address: '198.51.100.7', port: 443 }] }],
-      originTransport: {
-        ...spec.originTransport!,
-        certNames: ['*.origin.example.net', 'origin.example.net'],
-      },
-    };
-    expect(fastlyOriginTlsName(byIp)).toBe('origin.example.net');
-    expect(fastlyBackendBody(byIp, tpl)).toMatchObject({
-      address: '198.51.100.7',
-      port: 443,
-      ssl_sni_hostname: 'origin.example.net',
-    });
-    const onlyWildcard: EdgeSpec = {
-      ...byIp,
-      originTransport: { ...spec.originTransport!, certNames: ['*.origin.example.net'] },
-    };
-    expect(fastlyOriginTlsName(onlyWildcard)).toBeUndefined();
-    expect(fastlyBackendBody(onlyWildcard, tpl)).not.toHaveProperty('ssl_sni_hostname');
+  test('an https origin must be addressed by a name its certificate covers; TLS names follow it', () => {
+    // The WebSocket path honours no TLS-name override: an address the
+    // certificate does not cover (an IP, another name) is refused at plan time.
+    for (const [address, certNames] of [
+      ['198.51.100.7', ['origin.example.net']],
+      ['other.example.net', ['*.origin.example.net']],
+    ] as const) {
+      const bad: EdgeSpec = {
+        ...spec,
+        listeners: [{ edgePort: 443, members: [{ address, port: 443 }] }],
+        originTransport: { ...spec.originTransport!, certNames: [...certNames] },
+      };
+      expect(() => fastlyProvider.planProvision(cfg, bad, tpl)).toThrow(
+        expect.objectContaining({
+          meta: expect.objectContaining({ code: 'origin_cert_name_uncovered' }),
+        }),
+      );
+    }
+    expect(fastlyOriginTlsName(spec)).toBe(ORIGIN);
     const http: EdgeSpec = {
       ...spec,
-      listeners: [{ edgePort: 443, members: [{ address: ORIGIN, port: 80 }] }],
+      listeners: [{ edgePort: 443, members: [{ address: '198.51.100.7', port: 80 }] }],
       originTransport: {
         scheme: 'http',
         certPublic: false,
@@ -577,7 +578,10 @@ describe('fastly: provisioning', () => {
     ]);
     // The ACME read, the wait's first look and its poll all ask for the
     // authorizations: a wait reports what holds it up.
-    for (const i of [8, 9, 10]) expect(r.calls[i].query).toEqual({ include: 'tls_authorizations' });
+    expect(r.calls[8].query).toEqual({ include: 'tls_authorizations' });
+    // The wait reads the certificates too: only a valid one ends it.
+    for (const i of [9, 10])
+      expect(r.calls[i].query).toEqual({ include: 'tls_authorizations,tls_certificates' });
     expect(r.calls[11].query).toEqual({ include: 'dns_records', 'page[size]': '100' });
   });
 
@@ -1093,11 +1097,61 @@ describe('fastly: live views', () => {
     });
   });
 
+  test('a renewing subscription whose certificate expired serves nothing: not ready, not done', async () => {
+    const expired = {
+      data: { id: SUB, type: 'tls_subscription', attributes: { state: 'renewing' } },
+      included: [
+        {
+          id: 'C1',
+          type: 'tls_certificate',
+          attributes: { not_after: new Date(Date.now() - 3_600_000).toISOString() },
+        },
+      ],
+    };
+    let current: unknown = expired;
+    await serve((c) =>
+      c.path === `/tls/subscriptions/${SUB}` && c.query.include?.includes('tls_certificates')
+        ? { status: 200, body: current, contentType: 'application/vnd.api+json' }
+        : defaultReply(c),
+    );
+    const dns = fakeDns();
+    const ledger = await provision();
+    expect(await fastlyProvider.describe(cfg, ledger)).toMatchObject({
+      state: 'pending',
+      code: 'certificate_expiring',
+      readiness: { certificate: 'pending' },
+    });
+    const step = fastlyProvider.planProvision(cfg, spec, tpl).find((x) => x.kind === 'await_tls')!;
+    expect(dns.rows.length).toBeGreaterThan(0);
+    expect(await fastlyProvider.pollStep!(cfg, step, SUB, ledger)).toMatchObject({
+      status: 'requested',
+      code: 'certificate_expiring',
+    });
+    expect(await fastlyProvider.discover(cfg, step, spec, ledger, 1)).toEqual({
+      status: 'unresolved',
+    });
+    // Renewed: valid again, ready again.
+    current = {
+      ...expired,
+      included: [
+        {
+          id: 'C2',
+          type: 'tls_certificate',
+          attributes: { not_after: new Date(Date.now() + 20 * 86_400_000).toISOString() },
+        },
+      ],
+    };
+    expect(await fastlyProvider.describe(cfg, ledger)).toMatchObject({
+      readiness: { certificate: 'ready' },
+    });
+    expect(subscriptionServes(current)).toBe(true);
+  });
+
   test('a failed certificate is an error with a code', async () => {
     // Only the plain read reports failure; the challenge read still answers, so
     // provisioning gets as far as the DNS records.
     await serve((c) =>
-      c.path === `/tls/subscriptions/${SUB}` && !c.query.include
+      c.path === `/tls/subscriptions/${SUB}` && !c.query.include?.includes('tls_authorizations')
         ? api('tls-subscription-failed.json')
         : defaultReply(c),
     );
@@ -2142,7 +2196,7 @@ describe('fastly: a waiting certificate says what holds it up', () => {
       code: 'tls_caa_conflict',
     });
     expect(JSON.stringify(out)).not.toContain('example.org');
-    expect(rec!.calls[0].query).toEqual({ include: 'tls_authorizations' });
+    expect(rec!.calls[0].query).toEqual({ include: 'tls_authorizations,tls_certificates' });
   });
 
   test('a validation record that is missing, or holds another value, is reported', async () => {
@@ -2780,7 +2834,17 @@ describe('fastly: one wildcard certificate per account and zone', () => {
       name: '*.example.org',
       state: 'issued',
     });
-    expect(await fastlyProvider.removeSharedCertificate!(cfg)).toEqual({ removed: true });
+    // Only a wildcard an edge of this account ordered is deleted.
+    expect(await fastlyProvider.removeSharedCertificate!(cfg, { ordered: [] })).toEqual({
+      removed: false,
+      code: 'shared_certificate_not_ours',
+    });
+    expect(r.calls.some((c) => c.method === 'DELETE')).toBe(false);
+    expect(
+      await fastlyProvider.removeSharedCertificate!(cfg, {
+        ordered: [`tls_subscription:${WILD}`],
+      }),
+    ).toEqual({ removed: true });
     expect(
       r.calls.filter((c) => c.method === 'DELETE').map((c) => [c.path, c.query.force]),
     ).toEqual([[`/tls/subscriptions/${WILD}`, 'true']]);
@@ -2800,7 +2864,11 @@ describe('fastly: one wildcard certificate per account and zone', () => {
         ? { status: 200, body: other, contentType: 'application/vnd.api+json' }
         : defaultReply(c),
     );
-    expect(await fastlyProvider.removeSharedCertificate!(cfgW)).toEqual({
+    expect(
+      await fastlyProvider.removeSharedCertificate!(cfgW, {
+        ordered: [`tls_subscription:${WILD}`],
+      }),
+    ).toEqual({
       removed: false,
       code: 'shared_certificate_ambiguous',
     });

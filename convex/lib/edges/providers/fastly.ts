@@ -311,13 +311,22 @@ function originMember(spec: EdgeSpec, step: string): { address: string; port: nu
 export function assertFastlyOriginTransport(spec: EdgeSpec, step = 'plan'): void {
   const t = spec.originTransport;
   if (!t) throw refusal(step, 'origin_transport_missing', 'the slot declares no origin transport');
-  const { port } = originMember(spec, step);
+  const { address, port } = originMember(spec, step);
   if (t.scheme === 'https') {
     if (!t.certPublic)
       throw refusal(
         step,
         'origin_cert_not_public',
         'an https origin behind this front needs a publicly trusted certificate',
+      );
+    // The WebSocket path honours no TLS-name override: the front presents and
+    // verifies the backend's own address, so that address must be a name the
+    // origin's certificate covers.
+    if (addressFamily(address) !== null || !certCovers(address, t.certNames))
+      throw refusal(
+        step,
+        'origin_cert_name_uncovered',
+        'an https origin behind this front must be addressed by a name its certificate covers',
       );
     if (port !== 443)
       throw refusal(step, 'origin_port_unsupported', 'an https origin must listen on 443');
@@ -345,18 +354,15 @@ export function highestDraftVersion(versions: FastlyVersion[]): FastlyVersion | 
 
 /**
  * The name the front presents (SNI) and verifies the origin's certificate
- * against: the origin address when it is a name the certificate covers, else
- * the certificate's first exact (non-wildcard) name. None for a plaintext
- * origin, or when the declaration names nothing usable (Fastly's own default
- * then applies).
+ * against: the origin address itself (plan time refuses an https origin whose
+ * address is not a name its certificate covers, since the WebSocket path
+ * honours no override). Sent explicitly anyway, so a plain HTTP request
+ * through the same backend agrees. None for a plaintext origin.
  */
 export function fastlyOriginTlsName(spec: EdgeSpec): string | undefined {
-  const t = spec.originTransport;
-  if (t?.scheme !== 'https') return undefined;
+  if (spec.originTransport?.scheme !== 'https') return undefined;
   const { address } = originMember(spec, 'backend');
-  if (addressFamily(address) === null && certCovers(address, t.certNames))
-    return address.toLowerCase().replace(/\.$/, '');
-  return t.certNames.find((n) => !n.includes('*'))?.toLowerCase();
+  return address.toLowerCase().replace(/\.$/, '');
 }
 
 export function fastlyBackendBody(spec: EdgeSpec, tpl: FastlyTemplateParams): FastlyBackendBody {
@@ -733,9 +739,15 @@ async function awaitOutcome(
   ledger: Ledger,
   now: number = Date.now(),
 ): Promise<StepOutcome> {
-  const doc = await fastlyApiFor(cfg).getTlsSubscription(opRef, 'tls_authorizations');
+  const doc = await fastlyApiFor(cfg).getTlsSubscription(
+    opRef,
+    'tls_authorizations,tls_certificates',
+  );
   const state = subscriptionState(doc);
-  if (state === 'issued' || state === 'renewing') {
+  // Issued (or renewing) AND a certificate still valid: Fastly keeps a
+  // subscription `renewing` for days past the old certificate's expiry
+  // before it fails, and an expired certificate fronts nobody.
+  if (subscriptionServes(doc, now)) {
     const hostname = fastlyHostnameOf(ledger);
     return { status: 'done', resources: [], ...(hostname ? { addresses: { hostname } } : {}) };
   }
@@ -745,8 +757,22 @@ async function awaitOutcome(
   const startedAt = stepOf(ledger, step.id)?.startedAt;
   const longWait = startedAt !== undefined && now - startedAt >= TLS_WARNING_GRACE_MS;
   const code =
-    tlsAuthorizationCode(doc, { generic: longWait }) ?? (await challengeRecordProblem(cfg, doc));
+    tlsAuthorizationCode(doc, { generic: longWait }) ??
+    (await challengeRecordProblem(cfg, doc)) ??
+    (state === 'issued' || state === 'renewing' ? 'certificate_expiring' : undefined);
   return { status: 'requested', opRef, resources: [], ...(code ? { code } : {}) };
+}
+
+/**
+ * Whether a subscription document (with `tls_certificates` included) serves a
+ * certificate now: issued or renewing, and its latest certificate not past its
+ * `not_after`. A document without certificates is judged by its state alone.
+ */
+export function subscriptionServes(doc: unknown, now: number = Date.now()): boolean {
+  const state = subscriptionState(doc);
+  if (state !== 'issued' && state !== 'renewing') return false;
+  const notAfter = latestNotAfter(doc);
+  return notAfter === undefined || Date.parse(notAfter) > now;
 }
 
 /** The latest `not_after` of the certificates a `?include=tls_certificates` document carries. */
@@ -1375,13 +1401,17 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
    * delete (`shared_certificate_ambiguous`); a record with another customer's
    * marker, or none, is never touched.
    */
-  async removeSharedCertificate(cfg): Promise<{ removed: boolean; code?: string }> {
+  async removeSharedCertificate(cfg, opts): Promise<{ removed: boolean; code?: string }> {
     const zone = fastlyZoneOf(cfg);
     if (!zone) return { removed: false, code: 'dns_zone_missing' };
     const api = fastlyApiFor(cfg);
     const found = await sharedSubscriptionOf(api, `*.${zone}`, cfg);
     if (found.status === 'ambiguous')
       return { removed: false, code: 'shared_certificate_ambiguous' };
+    // Only a wildcard an edge of this account ORDERED is ever deleted: one it
+    // found and reused may still serve somebody else's services.
+    if (found.status === 'found' && !opts.ordered.includes(`tls_subscription:${found.resource.id}`))
+      return { removed: false, code: 'shared_certificate_not_ours' };
     if (found.status === 'found') {
       try {
         await api.deleteTlsSubscription(found.resource.id);
@@ -1872,9 +1902,8 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       case 'await_tls': {
         const sub = firstResource(ledger, 'tls_subscription');
         if (!sub) return { status: 'confirmed_absent' };
-        const doc = await api.getTlsSubscription(sub.resourceId);
-        const state = subscriptionState(doc);
-        if (state === 'issued' || state === 'renewing')
+        const doc = await api.getTlsSubscription(sub.resourceId, 'tls_certificates');
+        if (subscriptionServes(doc))
           return {
             status: 'found',
             resources: [],
@@ -1920,14 +1949,18 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     }
     const sub = firstResource(ledger, 'tls_subscription');
     let certState: string | undefined;
+    let expired = false;
     if (sub) {
       try {
-        certState = subscriptionState(await api.getTlsSubscription(sub.resourceId));
+        const doc = await api.getTlsSubscription(sub.resourceId, 'tls_certificates');
+        certState = subscriptionState(doc);
+        // Issued or renewing with a certificate past its expiry serves nothing.
+        expired = (certState === 'issued' || certState === 'renewing') && !subscriptionServes(doc);
       } catch (e) {
         if (!isFastlyNotFound(e)) throw e;
       }
     }
-    readiness.certificate = certificateReadiness(certState);
+    readiness.certificate = expired ? 'pending' : certificateReadiness(certState);
 
     const ready = readiness.dns === 'ready' && readiness.certificate === 'ready' && versionActive;
     const state: EdgeDescription['state'] =
@@ -1941,7 +1974,11 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       // DNS and certificate existence say nothing about the origin, so an L7
       // front never claims member health (capabilities: memberHealth false).
       health: 'unknown',
-      ...(readiness.certificate === 'failed' ? { code: 'tls_failed' } : {}),
+      ...(readiness.certificate === 'failed'
+        ? { code: 'tls_failed' }
+        : expired
+          ? { code: 'certificate_expiring' }
+          : {}),
       readiness,
     };
   },

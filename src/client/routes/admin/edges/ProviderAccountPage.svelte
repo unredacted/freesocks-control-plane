@@ -169,11 +169,13 @@
     toast.success('Certificates changed');
     scopeChoice = null;
   }
-  // A wildcard no live front uses any more can be removed at the provider (and
-  // must be before the account is deleted): FCP never removes it by itself.
+  // A wildcard FCP ordered that no live front uses any more can be removed at
+  // the provider (and must be before the account is deleted): FCP never removes
+  // it by itself, and never removes one it only found there.
   const REMOVABLE = ['pending', 'processing', 'issued', 'renewing', 'failed'];
   const sharedRemovable = $derived(
     !!a?.sharedCertificate &&
+      a.sharedCertificate.orderedByFcp &&
       a.sharedCertificate.edges === 0 &&
       REMOVABLE.includes(a.sharedCertificate.state),
   );
@@ -473,6 +475,11 @@
                   <Button size="sm" variant="outline" onclick={() => (removeSharedOpen = true)}>
                     Remove shared certificate
                   </Button>
+                {:else if !a.sharedCertificate.orderedByFcp}
+                  <p class="text-xs text-muted-foreground">
+                    FCP found this certificate at the provider and reuses it. It removes only
+                    certificates its own fronts ordered.
+                  </p>
                 {/if}
               </div>
             {:else if scopeNow === 'wildcard'}

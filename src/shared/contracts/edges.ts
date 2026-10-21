@@ -151,6 +151,8 @@ export const EdgeProviderAccountAdmin = z.object({
       notAfter: isoN,
       checkedAt: iso,
       edges: z.number(),
+      /** An edge of this account ordered it: only then can it be removed from the account page. */
+      orderedByFcp: z.boolean().default(false),
     })
     .nullable()
     .default(null),

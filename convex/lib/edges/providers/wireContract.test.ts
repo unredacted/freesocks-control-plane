@@ -1207,7 +1207,9 @@ describe('wire contract: fastly', () => {
     if (m === 'GET' && p === '/tls/subscriptions') return api('tls-subscriptions-list.json');
     if (m === 'GET' && p === `/tls/subscriptions/${SUB}`)
       return api(
-        c.query.include ? 'tls-subscription-authorizations.json' : 'tls-subscription-issued.json',
+        c.query.include?.includes('tls_authorizations')
+          ? 'tls-subscription-authorizations.json'
+          : 'tls-subscription-issued.json',
       );
     if (m === 'DELETE' && p === `/tls/subscriptions/${SUB}`) return { status: 204 };
     if (m === 'GET' && p === '/tls/configurations') return api('tls-configurations.json');

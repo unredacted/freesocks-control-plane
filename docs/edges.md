@@ -321,12 +321,20 @@ account's `certificateScope` (an intent default, § "Fastly fronts"):
   waits for issuance: the wait step looks once and finishes when the certificate is issued.
   The subscription and its ACME record (`_acme-challenge.<zone>`, commented
   `fcp-cert:<customer>:<subscription>`) are recorded on each edge as `shared`, so no edge's
-  destroy deletes them; only an operator removes them, from the account page, once no live
-  front uses them (`edge.shared_certificate_in_use` otherwise; `POST
-providers/{id}/shared-certificate/remove`, audited), and an account still holding one cannot be
-  deleted (`edge.shared_certificate_present`), so nothing is left at the provider with no
-  credentials to remove it. The certificate and ACME steps hold
-  the external lock `fastly-certificate:<account>:<zone>`, so two rotations never both order it.
+  destroy deletes them. Only an operator removes them, from the account page, and only a
+  subscription an edge of this account ORDERED: the settle that records a shared resource the
+  step created also keeps `<kind>:<id>` on the account (`orderedSharedResources`), and one
+  discovery found and reused is FCP's to use, never to delete (`shared_certificate_not_ours`).
+  The certificate and ACME steps hold the external lock `fastly-certificate:<account>:<zone>`,
+  so two rotations never both order it, and the removal (`POST
+providers/{id}/shared-certificate/remove`, audited) takes the same lock as the account
+  (`externalLocks.holderAccountId`) and recounts the live fronts under it
+  (`edge.shared_certificate_in_use` while one uses it, `edge.lock_busy` while a step holds the
+  lock), so no rotation starts reusing the certificate between the count and the delete. The
+  lock is released when the call ends; one a dead removal left is taken over by the next step
+  once it lapses. An account still holding a wildcard it ordered cannot be deleted
+  (`edge.shared_certificate_present`), so nothing is left at the provider with no credentials to
+  remove it.
   A subscription is reused only when it matches the account's certificate authority and its
   EFFECTIVE TLS configuration (the default one when the account names none, the same one the
   traffic CNAME points at); one ordered another way, or several, is never reused
@@ -342,6 +350,9 @@ providers/{id}/shared-certificate/remove`, audited), and an account still holdin
   A renewal reports what holds it up like a first issuance does, and one that is late (the
   certificate expires within a week, or has: `certificate_expiring`) is raised by itself;
   Certainly's 30-day certificates renew with about ten days left, so a week means days overdue.
+  A subscription serves only while it is issued or renewing AND its newest certificate's
+  `not_after` is still ahead: one renewing past expiry is pending (`certificate_expiring`) to
+  the wait step, discovery and describe alike, so no front is ready on an expired certificate.
   Attention `certificate_waiting` on the account is critical once under three days remain. A
   failed one refuses new fronts of the account (`shared_certificate_failed`), and so does one
   the account would not order (`shared_certificate_ambiguous`), before anything is built for
@@ -381,7 +392,11 @@ fails (`unchecked`), passes; so does a name too deep to walk to the top (more th
 ended on it, the setup plan (`accounts[].reasons`), the setup run's first stage, the start guards
 of a rotation naming the account, the preflight and the selection all refuse it with that code
 before anything is allocated (`certificateRefusalOf`), and it does not count toward the
-account's API health. Fix the records or pick another CA, then test again. The lookups are DNS
+account's API health. Fix the records or pick another CA, then test again. Changing a setting
+the test's answers depend on (the DNS account, the certificate authority, the TLS configuration,
+which decides the wildcard reused, or `certificateScope`: `EDGE_RETEST_SETTINGS`) marks the
+account untested (`retest_required`) and drops the shared-certificate read: a per-name verdict
+says nothing about `issuewild`. The lookups are DNS
 queries from the backend (`node:dns`, 4 s, two tries); the offline test suite refuses them like
 `fetch`, and tests answer through `__setFastlyCaaLookup`.
 
@@ -2201,9 +2216,10 @@ depend on it:
 - **Go-live.** For an enrolled node, `edgeSetupRuns.goLive` promotes the node's activation run
   inside its own mutation (`nodeActivation.promoteCandidate`): the edges it published are the
   run's candidate resources, filtered from members until then.
-- **The origin TLS contract.** Recorded per combination: Fastly always presents the origin's
-  certificate name as SNI and verifies against it (`ssl_sni_hostname`, `ssl_cert_hostname`, on
-  port 443); with `overrideHost: 'origin'` (Host = the origin name too, a public certificate
+- **The origin TLS contract.** Recorded per combination: Fastly presents the backend's own
+  address as SNI and verifies against it, so that address must be a name the origin's
+  certificate covers (`origin_cert_name_uncovered` otherwise; also sent as `ssl_sni_hostname`
+  and `ssl_cert_hostname`, on port 443); with `overrideHost: 'origin'` (Host = the origin name too, a public certificate
   naming it) it is supported, with `'hostname'` only when the node's verified ingress accepts
   any Host header; Cloudflare `full`
   (SNI and Host = the edge hostname, served by Caddy's `fallback_sni` plus a catch-all site) is
@@ -2520,8 +2536,11 @@ account's shared wildcard), its ACME record, the wait for issuance and the traff
 
 **The origin backend.** The origin must listen on its scheme's own port (443 over TLS, 80
 without; `origin_port_unsupported` at plan time otherwise), and the backend carries that `port`
-explicitly, with the origin's TLS name as `ssl_cert_hostname` and `ssl_sni_hostname` (the origin
-address when its certificate covers it, else the first exact certificate name). Fastly's
+explicitly, with the origin's TLS name as `ssl_cert_hostname` and `ssl_sni_hostname`. The
+WebSocket path honours no TLS-name override, though: the front presents and verifies the
+backend's own address, so an https origin must be addressed by a name its certificate covers
+(never an IP address; `origin_cert_name_uncovered` at plan time otherwise), and that address is
+the TLS name sent. Fastly's
 WebSockets guide lists only name, address, TLS and Host override as supported, yet the front
 dials the backend's `port`, which the API defaults to 80 whatever `use_ssl` says: a backend
 without it spoke TLS to port 80 and every front failed its qualification. Inspect reports the
@@ -2533,8 +2552,9 @@ port the provider holds.
   keep theirs; like any settings change it untrusts the location until a test and a proven
   front.
 - **Switching to the wildcard.** On the account page, Certificates and domains, pick "One
-  wildcard for every front". Like any settings change it untrusts the account's location: test the account again
-  (the CAA preflight then checks `issuewild`), and its next proven front trusts it again. Fronts
+  wildcard for every front". Like any settings change it untrusts the account's location, and
+  as a certificate setting it marks the account untested (`retest_required`): test the account
+  again (the CAA preflight then checks `issuewild`), and its next proven front trusts it again. Fronts
   that exist keep their own certificates until they are replaced.
 - **CAA.** Allow the account's CA at the zone (or wherever its CAA records sit, up the tree) with
   `issue`, and with `issuewild` for the wildcard: `0 issue "certainly.com"` and
@@ -2542,9 +2562,10 @@ port the provider holds.
 - **A failed shared certificate.** Fix what the account page says it waited on, retry the
   subscription at the provider, and the next reconcile pass reads it again.
 - **Retiring the wildcard.** Switch the account to one certificate per front and replace its
-  fronts; once none uses the wildcard, the account page offers "Remove shared certificate",
-  which deletes it and the ACME record FCP wrote (never another customer's record). An account
-  is deleted only after that.
+  fronts; once none uses the wildcard, the account page offers "Remove shared certificate"
+  (for one FCP ordered only), which deletes it and the ACME record FCP wrote (never another
+  customer's record). An account is deleted only after that. A wildcard FCP found and reused is
+  removed at the provider by hand, if nothing else uses it.
 
 ## Adding an edge provider
 

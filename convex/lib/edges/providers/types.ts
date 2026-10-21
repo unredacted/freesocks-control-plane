@@ -473,7 +473,10 @@ export interface EdgeProvider<
    * caller refuses while a live edge uses it). `code` names why nothing was
    * removed (a certificate the account would not have ordered is not its own).
    */
-  removeSharedCertificate?(cfg: Cfg): Promise<{ removed: boolean; code?: string }>;
+  removeSharedCertificate?(
+    cfg: Cfg,
+    opts: { ordered: readonly string[] },
+  ): Promise<{ removed: boolean; code?: string }>;
 
   /**
    * Ledger resources in destroy order, skipping gone ones. Ordered by KIND

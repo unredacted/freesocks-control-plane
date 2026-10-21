@@ -19,6 +19,7 @@ import { writeAuditLog } from './lib/audit';
 import { edgeProviderIdValidator, type EdgeProviderId } from './lib/edgeProviderIds';
 import {
   EDGE_NEW_ACCOUNT_SETTINGS,
+  EDGE_RETEST_SETTINGS,
   buildCredentials,
   locatingSettingsChanged,
   maskCredentials,
@@ -33,6 +34,7 @@ import {
 import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { liveEdgesOfAccount } from './relays';
+import { fastlyCertificateLockKey } from './lib/edges/lockKeys';
 import { assertAdmission } from './lib/edges/maintenance';
 import { type AutoQualifyEvidence } from './lib/edges/autoQualify';
 import { placementHashOf } from './lib/edges/locations';
@@ -115,6 +117,8 @@ export function mapAccountAdmin(
           notAfter: r.sharedCertificate.notAfter ?? null,
           checkedAt: new Date(r.sharedCertificate.checkedAt).toISOString(),
           edges: sharedUsers,
+          // FCP ordered it (only then can it be removed from the account page).
+          orderedByFcp: sharedCertificateOrderedByFcp(r),
         }
       : null,
     // Dev only: the adapter behind this account is the in-memory fake, so the
@@ -428,6 +432,12 @@ export function certificateRefusalOf(
   return null;
 }
 
+function pick(obj: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (obj[k] !== undefined) out[k] = obj[k];
+  return out;
+}
+
 /** Shared-certificate states that are FCP's to remove (a record of another account's is not). */
 const REMOVABLE_SHARED_STATES = new Set(['pending', 'processing', 'issued', 'renewing', 'failed']);
 
@@ -436,9 +446,75 @@ const REMOVABLE_SHARED_STATES = new Set(['pending', 'processing', 'issued', 'ren
  * account delete refuses then, so the certificate and its ACME record are
  * never left at the provider with no credentials left to remove them.
  */
-export function holdsSharedCertificate(a: Pick<Doc<'edgeProviderAccounts'>, 'sharedCertificate'>) {
-  return !!a.sharedCertificate && REMOVABLE_SHARED_STATES.has(a.sharedCertificate.state);
+export function holdsSharedCertificate(
+  a: Pick<Doc<'edgeProviderAccounts'>, 'sharedCertificate' | 'orderedSharedResources'>,
+) {
+  return (
+    !!a.sharedCertificate &&
+    REMOVABLE_SHARED_STATES.has(a.sharedCertificate.state) &&
+    sharedCertificateOrderedByFcp(a)
+  );
 }
+
+/**
+ * Whether an edge of this account ORDERED the recorded shared certificate
+ * (`orderedSharedResources`, written when its step created it): a wildcard
+ * the account merely found and reused may serve somebody else's services,
+ * so FCP never removes it.
+ */
+export function sharedCertificateOrderedByFcp(
+  a: Pick<Doc<'edgeProviderAccounts'>, 'sharedCertificate' | 'orderedSharedResources'>,
+): boolean {
+  const id = a.sharedCertificate?.subscriptionId;
+  return !!id && (a.orderedSharedResources ?? []).includes(`tls_subscription:${id}`);
+}
+
+/** A removal's hold on the account's certificate lock (the provisioning steps wait on it). */
+const REMOVAL_LOCK_MS = 2 * 60_000;
+
+/**
+ * The start of a shared-certificate removal, in ONE transaction: the account's
+ * certificate lock (the one an edge's certificate and ACME steps hold) is
+ * taken and the live users are counted again under it, so a front planned a
+ * moment earlier is seen and one planned later waits for the removal to end.
+ * Refuses a certificate no edge of the account ordered.
+ */
+export const beginSharedCertificateRemoval = internalMutation({
+  args: { id: v.id('edgeProviderAccounts'), opId: v.string() },
+  handler: async (ctx, { id, opId }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return { ok: false as const, code: 'not_found' };
+    if (!sharedCertificateOrderedByFcp(row))
+      return { ok: false as const, code: 'shared_certificate_not_ours' };
+    const dnsAccountId = (row.settings as { dnsAccountId?: string }).dnsAccountId;
+    const dns = dnsAccountId ? await ctx.db.get(dnsAccountId as Id<'edgeProviderAccounts'>) : null;
+    const zoneId = (dns?.settings as { zoneId?: string } | undefined)?.zoneId;
+    if (!zoneId) return { ok: false as const, code: 'dns_zone_missing' };
+    const key = fastlyCertificateLockKey(id, zoneId);
+    const now = Date.now();
+    const lock = await ctx.db
+      .query('externalLocks')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+    if (lock && lock.expiresAt > now) return { ok: false as const, code: 'lock_busy' };
+    if (lock?.holderEdgeId) return { ok: false as const, code: 'lock_busy' };
+    const users = await sharedCertificateUsers(ctx.db, id);
+    if (users > 0) return { ok: false as const, code: 'shared_certificate_in_use', users };
+    if (lock) await ctx.db.delete(lock._id);
+    await ctx.db.insert('externalLocks', {
+      key,
+      holderAccountId: id,
+      opId,
+      claimedAt: now,
+      expiresAt: now + REMOVAL_LOCK_MS,
+    });
+    return {
+      ok: true as const,
+      key,
+      ordered: row.orderedSharedResources ?? [],
+    };
+  },
+});
 
 /** How many live edges front through the account's shared wildcard (the removal guard). */
 export const sharedCertificateUsage = internalQuery({
@@ -457,7 +533,17 @@ export const noteSharedCertificateRemoved = internalMutation({
     const row = await ctx.db.get(id);
     if (!row) return null;
     const certificate = row.sharedCertificate?.name ?? null;
-    await ctx.db.patch(id, { sharedCertificate: undefined });
+    const subscription = row.sharedCertificate?.subscriptionId;
+    await ctx.db.patch(id, {
+      sharedCertificate: undefined,
+      ...(subscription
+        ? {
+            orderedSharedResources: (row.orderedSharedResources ?? []).filter(
+              (x) => x !== `tls_subscription:${subscription}`,
+            ),
+          }
+        : {}),
+    });
     await writeAuditLog(ctx, {
       actorType: actorAdminId ? 'admin' : 'system',
       actorId: actorAdminId ?? undefined,
@@ -678,6 +764,21 @@ export const update = internalMutation({
     // New credentials or a moved account: the automatic rules may look again
     // once a test AFTER this change passes (lib/edges/autoQualify.ts).
     if (credentialsChanged || settingsChanged) patch.credentialsChangedAt = Date.now();
+    // What the certificate checks of the last test answered for (the CAA
+    // records for this CA and scope, the shared certificate in this zone) no
+    // longer applies once those settings move: the account is untested until
+    // a new test answers for the new ones, so nothing is planned on the old.
+    if (
+      patch.settings &&
+      !settingsEqual(
+        pick(patch.settings as Record<string, unknown>, EDGE_RETEST_SETTINGS[row.provider]),
+        pick(row.settings as Record<string, unknown>, EDGE_RETEST_SETTINGS[row.provider]),
+      )
+    ) {
+      patch.lastTestError = 'retest_required';
+      patch.lastTestErrorDetail = undefined;
+      patch.sharedCertificate = undefined;
+    }
     await ctx.db.patch(a.id, patch);
     const fresh = (await ctx.db.get(a.id))!;
     let requalify = 0;
