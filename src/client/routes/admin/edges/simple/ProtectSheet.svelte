@@ -192,7 +192,8 @@
         v.keys !== chosenKeys ||
         // By value: `picks` reads back as Svelte's proxy of the array sent.
         v.picks.join(',') !== picks.join(',') ||
-        JSON.stringify(v.options) !== JSON.stringify(pickOptions)
+        // What would be sent now (an emptied pick or one no longer chosen drops out).
+        JSON.stringify(v.options) !== JSON.stringify(optionsSent())
       )
         return;
       plan = p;

@@ -878,6 +878,53 @@ describe('edgeSetupRuns: the provider options a node gets at a pick', () => {
       }),
     ]);
   });
+
+  test('a run never reuses a standby built for other choices than its pick asks for', async () => {
+    const { t, world, serverId, accountId } = await seed({
+      inbounds: [inboundA, inboundS],
+      hosts: [directHostA(), directHostS()],
+      failCreateAt: 2,
+    });
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const plan = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+    });
+    const res = await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+      planHash: plan.planHash,
+      approvedHideUuids: [],
+    });
+    const runId = res.runId as Id<'edgeSetupRuns'>;
+    let r = await pump(t, runId, settled);
+    expect(r.state).toBe('failed');
+    // The standby left behind was built with the location's defaults. A run
+    // that did not build it (a later one, as here: no target holds it) and
+    // whose pick asks for something else must not take it.
+    const standby = r.listeners.find((l) => l.edgeId)?.edgeId;
+    expect(standby).toBeDefined();
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.get(runId))!;
+      await ctx.db.patch(runId, {
+        picks: row.picks!.map((p) => ({ ...p, options: JSON.stringify({ maxSessions: 5000 }) })),
+        listeners: row.listeners.map(({ edgeId: _held, ...l }) => l),
+      });
+    });
+    const before = world.lbCreates();
+    await t.mutation(internal.edgeSetupRuns.retry, { runId });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    // Both listeners get an edge built with the pick's options; the standby is not taken.
+    expect(world.lbCreates()).toBe(before + 2);
+    expect(r.listeners.map((l) => l.edgeId)).not.toContain(standby);
+    for (const l of r.listeners) {
+      const edge = (await t.run((ctx) => ctx.db.get(l.edgeId!)))!;
+      expect(JSON.parse(edge.choices!)).toEqual({ maxSessions: 5000 });
+    }
+  });
 });
 
 describe('edgeSetupRuns: two listeners (cases 2, 20)', () => {

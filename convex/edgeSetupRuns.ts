@@ -47,7 +47,7 @@ import {
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
-import { publicationApproval, startRotation } from './edgeRotations';
+import { edgeFitsPick, publicationApproval, startRotation } from './edgeRotations';
 import {
   claimDeliveryBinding,
   deliveryBindingFor,
@@ -744,10 +744,25 @@ export const relayContext = internalQuery({
     const edges = await liveEdgesOfRelay(ctx.db, relay._id);
     const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
+    // The edges built with what this run's pick at their location asks for:
+    // only those may be reused (an earlier generation's standby or a spare
+    // built for other choices is not this node's).
+    const fitsPick: string[] = [];
+    for (const e of edges)
+      if (
+        await edgeFitsPick(
+          ctx,
+          { setupRun: { runId: run._id, generation: run.generation } },
+          relay,
+          e,
+        )
+      )
+        fitsPick.push(e._id as string);
     return {
       relay,
       listeners,
       edges,
+      fitsPick,
       cfg,
       frontedEnrolled: await frontedEnrolled(ctx, run.backendServerId, run.nodeName),
       // Keyed by the target's edge: a transport may have one address per pick.
@@ -1923,7 +1938,9 @@ async function stageProvision(ctx: ActionCtx, run: Run): Promise<null> {
               e.accountId === pick.accountId &&
               // The same place: an address in another location of the account is not this pick's.
               (!(l.locationId ?? pick.locationId) ||
-                (e.locationId ?? null) === (l.locationId ?? pick.locationId)),
+                (e.locationId ?? null) === (l.locationId ?? pick.locationId)) &&
+              // Built with what the pick asks for (its options).
+              c.fitsPick.includes(e._id as string),
           )
         : undefined;
     if (reuse) taken.add(reuse._id as string);
