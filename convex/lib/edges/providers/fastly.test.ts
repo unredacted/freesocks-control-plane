@@ -25,17 +25,19 @@ import type {
   StepOutcome,
 } from './types';
 import type { DnsClient, DnsCreateArgs, DnsRecord, DnsRecordType } from './dns/types';
-import { __setFastlyBasePath } from './fastly/sdk';
+import { __setFastlyBasePath, fastlyApiFor } from './fastly/sdk';
 import type { CaaRecord } from '../caa';
 import {
   FASTLY_DESTROY_ORDER,
   FASTLY_WS_UPGRADE_VCL,
+  CERTIFICATE_EXPIRY_WARN_MS,
   TLS_WARNING_GRACE_MS,
   __setFastlyCaaLookup,
   __setFastlyDnsClientFactory,
   dnsRecordOptions,
   fastlyBackendBody,
   fastlyDestroyKey,
+  fastlyOriginTlsName,
   fastlyProvider,
   fastlySnippetBody,
   fastlyTlsSubscriptionBody,
@@ -47,6 +49,7 @@ import {
   planSharedTeardown,
   sharedAcmeMarker,
   sharedTeardownStep,
+  subscriptionServes,
   tlsAuthorizationCode,
   type SharedTeardownState,
 } from './fastly';
@@ -134,6 +137,8 @@ const ORIGIN = 'node-7.origin.example.net';
 const SVC = 'SU1Z0isxPaozGVKXdv0eY';
 const SUB = 'C0cuTFmLzMCiyMcOZuLEZ1';
 const DM = 'DMDOM01kq7v3xzwYb9pRn';
+/** The Fastly customer `current-customer.json` names (the shared ACME marker's owner). */
+const CUSTOMER = 'x4xCwxxJxGCx123Rgqjx8k';
 const ACME_TARGET = '6a8mtt5uzzsw2qsl.fastly-validations.com';
 const TRAFFIC_TARGET = 'j.sni.global.fastly.net';
 
@@ -251,7 +256,9 @@ function defaultReply(c: Call): Reply {
   if (m === 'GET' && p === '/tls/subscriptions') return api('tls-subscriptions-list.json');
   if (m === 'GET' && p === `/tls/subscriptions/${SUB}`)
     return api(
-      c.query.include ? 'tls-subscription-authorizations.json' : 'tls-subscription-issued.json',
+      c.query.include?.includes('tls_authorizations')
+        ? 'tls-subscription-authorizations.json'
+        : 'tls-subscription-issued.json',
     );
   if (m === 'DELETE' && p === `/tls/subscriptions/${SUB}`) return { status: 204 };
   if (m === 'GET' && p === '/tls/configurations') return api('tls-configurations.json');
@@ -404,14 +411,54 @@ describe('fastly: what it refuses before any provider call', () => {
 // --- pure wire bodies ---------------------------------------------------------------------
 
 describe('fastly: request bodies', () => {
-  test('the backend carries only the four fields the WebSocket path honours (plus a marker comment)', () => {
+  test('the backend names its port and TLS name explicitly (plus a marker comment)', () => {
     expect(fastlyBackendBody(spec, tpl)).toEqual({
       name: 'origin',
       address: ORIGIN,
+      // Never left to the API: it defaults to 80 even with use_ssl.
+      port: 443,
       use_ssl: true,
+      // The origin address is the name its certificate covers.
+      ssl_cert_hostname: ORIGIN,
+      ssl_sni_hostname: ORIGIN,
       override_host: HOST,
       comment: spec.name,
     });
+  });
+
+  test('an https origin must be addressed by a name its certificate covers; TLS names follow it', () => {
+    // The WebSocket path honours no TLS-name override: an address the
+    // certificate does not cover (an IP, another name) is refused at plan time.
+    for (const [address, certNames] of [
+      ['198.51.100.7', ['origin.example.net']],
+      ['other.example.net', ['*.origin.example.net']],
+    ] as const) {
+      const bad: EdgeSpec = {
+        ...spec,
+        listeners: [{ edgePort: 443, members: [{ address, port: 443 }] }],
+        originTransport: { ...spec.originTransport!, certNames: [...certNames] },
+      };
+      expect(() => fastlyProvider.planProvision(cfg, bad, tpl)).toThrow(
+        expect.objectContaining({
+          meta: expect.objectContaining({ code: 'origin_cert_name_uncovered' }),
+        }),
+      );
+    }
+    expect(fastlyOriginTlsName(spec)).toBe(ORIGIN);
+    const http: EdgeSpec = {
+      ...spec,
+      listeners: [{ edgePort: 443, members: [{ address: '198.51.100.7', port: 80 }] }],
+      originTransport: {
+        scheme: 'http',
+        certPublic: false,
+        certNames: [],
+        acceptsHostHeader: 'any',
+      },
+    };
+    const body = fastlyBackendBody(http, tpl);
+    expect(body).toMatchObject({ port: 80, use_ssl: false });
+    expect(body).not.toHaveProperty('ssl_cert_hostname');
+    expect(body).not.toHaveProperty('ssl_sni_hostname');
   });
 
   test('overrideHost `origin` sends the origin its own name instead of the fronted one', () => {
@@ -430,8 +477,18 @@ describe('fastly: request bodies', () => {
   });
 
   test('backend options reach their API fields; none is sent unchosen', () => {
+    // The fixed fields only: the port and the origin's TLS name are always sent.
     expect(Object.keys(fastlyBackendBody(spec, tpl)).sort()).toEqual(
-      ['address', 'comment', 'name', 'override_host', 'use_ssl'].sort(),
+      [
+        'address',
+        'comment',
+        'name',
+        'override_host',
+        'port',
+        'ssl_cert_hostname',
+        'ssl_sni_hostname',
+        'use_ssl',
+      ].sort(),
     );
     const t = fastlyProvider.templateSchema.parse({
       preferIpv6: true,
@@ -583,7 +640,10 @@ describe('fastly: provisioning', () => {
     ]);
     // The ACME read, the wait's first look and its poll all ask for the
     // authorizations: a wait reports what holds it up.
-    for (const i of [8, 9, 10]) expect(r.calls[i].query).toEqual({ include: 'tls_authorizations' });
+    expect(r.calls[8].query).toEqual({ include: 'tls_authorizations' });
+    // The wait reads the certificates too: only a valid one ends it.
+    for (const i of [9, 10])
+      expect(r.calls[i].query).toEqual({ include: 'tls_authorizations,tls_certificates' });
     expect(r.calls[11].query).toEqual({ include: 'dns_records', 'page[size]': '100' });
   });
 
@@ -963,6 +1023,12 @@ describe('fastly: discovery answers the four outcomes', () => {
       'sub-other',
       SUB,
     ]);
+    // Not proven ours: a destroy never deletes a certificate it recorded this way.
+    const ledger = apply({ steps: [], resources: [] }, tlsStep(), {
+      status: 'done',
+      resources: res.status === 'ambiguous' ? res.candidates : [],
+    });
+    expect(fastlyProvider.planDestroy(cfg, ledger)).toEqual([]);
   });
 
   test('a subscription whose CA or TLS configuration is not the frozen one is ambiguous', async () => {
@@ -1007,9 +1073,9 @@ describe('fastly: discovery answers the four outcomes', () => {
     });
   });
 
-  test('a DNS record with a foreign comment is ambiguous, never adopted', async () => {
+  test('a DNS record with a foreign comment is ambiguous, never adopted, never deleted', async () => {
     await serve();
-    fakeDns([
+    const dns = fakeDns([
       {
         id: 'foreign1',
         type: 'CNAME',
@@ -1024,6 +1090,20 @@ describe('fastly: discovery answers the four outcomes', () => {
       .find((s) => s.kind === 'create_dns_record')!;
     const res = await fastlyProvider.discover(cfg, step, spec, serviceLedger, 1);
     expect(res).toMatchObject({ status: 'ambiguous' });
+    // Recorded for the operator as a candidate: a destroy of the parked edge
+    // (the operator's "destroy, the ledger is trusted") leaves it alone.
+    const candidates = (res as { candidates: ChildResource[] }).candidates;
+    expect(candidates[0]!.meta).toMatchObject({ candidate: true, role: 'traffic' });
+    const ledger = apply(serviceLedger, step, { status: 'done', resources: candidates });
+    expect(fastlyProvider.planDestroy(cfg, ledger).map((r) => r.kind)).not.toContain('dns_record');
+    const record = ledger.resources.find((r) => r.kind === 'dns_record')!;
+    expect(await fastlyProvider.runDestroy(cfg, record, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    expect(await fastlyProvider.confirmDestroyed!(cfg, record, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    expect(dns.deleted).toEqual([]);
   });
 
   test('our own DNS record is adopted by its comment marker', async () => {
@@ -1079,11 +1159,61 @@ describe('fastly: live views', () => {
     });
   });
 
+  test('a renewing subscription whose certificate expired serves nothing: not ready, not done', async () => {
+    const expired = {
+      data: { id: SUB, type: 'tls_subscription', attributes: { state: 'renewing' } },
+      included: [
+        {
+          id: 'C1',
+          type: 'tls_certificate',
+          attributes: { not_after: new Date(Date.now() - 3_600_000).toISOString() },
+        },
+      ],
+    };
+    let current: unknown = expired;
+    await serve((c) =>
+      c.path === `/tls/subscriptions/${SUB}` && c.query.include?.includes('tls_certificates')
+        ? { status: 200, body: current, contentType: 'application/vnd.api+json' }
+        : defaultReply(c),
+    );
+    const dns = fakeDns();
+    const ledger = await provision();
+    expect(await fastlyProvider.describe(cfg, ledger)).toMatchObject({
+      state: 'pending',
+      code: 'certificate_expiring',
+      readiness: { certificate: 'pending' },
+    });
+    const step = fastlyProvider.planProvision(cfg, spec, tpl).find((x) => x.kind === 'await_tls')!;
+    expect(dns.rows.length).toBeGreaterThan(0);
+    expect(await fastlyProvider.pollStep!(cfg, step, SUB, ledger)).toMatchObject({
+      status: 'requested',
+      code: 'certificate_expiring',
+    });
+    expect(await fastlyProvider.discover(cfg, step, spec, ledger, 1)).toEqual({
+      status: 'unresolved',
+    });
+    // Renewed: valid again, ready again.
+    current = {
+      ...expired,
+      included: [
+        {
+          id: 'C2',
+          type: 'tls_certificate',
+          attributes: { not_after: new Date(Date.now() + 20 * 86_400_000).toISOString() },
+        },
+      ],
+    };
+    expect(await fastlyProvider.describe(cfg, ledger)).toMatchObject({
+      readiness: { certificate: 'ready' },
+    });
+    expect(subscriptionServes(current)).toBe(true);
+  });
+
   test('a failed certificate is an error with a code', async () => {
     // Only the plain read reports failure; the challenge read still answers, so
     // provisioning gets as far as the DNS records.
     await serve((c) =>
-      c.path === `/tls/subscriptions/${SUB}` && !c.query.include
+      c.path === `/tls/subscriptions/${SUB}` && !c.query.include?.includes('tls_authorizations')
         ? api('tls-subscription-failed.json')
         : defaultReply(c),
     );
@@ -2004,7 +2134,36 @@ describe('fastly: the credential test checks the zone lets the CA issue', () => 
       ok: false,
       code: 'caa_forbids_ca',
     });
-    expect(asked).toEqual(['fronts.example.org', 'example.org']);
+    expect(asked).toEqual([
+      '_fcp-caa-check.fronts.example.org',
+      'fronts.example.org',
+      'example.org',
+    ]);
+  });
+
+  test('a zone wildcard that answers for a new front decides, as the CA would see it', async () => {
+    await serve();
+    // `*.example.org CNAME elsewhere`: the resolver follows it for any new
+    // name, so the probe label gets the CNAME target's CAA records.
+    const asked = caaZone({ '_fcp-caa-check.example.org': [issue('letsencrypt.org')] });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({
+      ok: false,
+      code: 'caa_forbids_ca',
+      observed: { caaAt: '_fcp-caa-check.example.org' },
+    });
+    expect(asked).toEqual(['_fcp-caa-check.example.org']);
+  });
+
+  test('a record naming the CA but binding an account, or another validation method, refuses', async () => {
+    await serve();
+    caaZone({
+      'example.org': [issue('certainly.com; accounturi=https://acme.example.net/acct/1')],
+    });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ code: 'caa_forbids_ca' });
+    caaZone({ 'example.org': [issue('certainly.com; validationmethods=http-01')] });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ code: 'caa_forbids_ca' });
+    caaZone({ 'example.org': [issue('certainly.com; validationmethods=http-01,dns-01')] });
+    expect(await fastlyProvider.testCredentials(cfg)).toMatchObject({ ok: true });
   });
 
   test('a wildcard account is checked against issuewild', async () => {
@@ -2111,7 +2270,7 @@ describe('fastly: a waiting certificate says what holds it up', () => {
       code: 'tls_caa_conflict',
     });
     expect(JSON.stringify(out)).not.toContain('example.org');
-    expect(rec!.calls[0].query).toEqual({ include: 'tls_authorizations' });
+    expect(rec!.calls[0].query).toEqual({ include: 'tls_authorizations,tls_certificates' });
   });
 
   test('a validation record that is missing, or holds another value, is reported', async () => {
@@ -2247,7 +2406,7 @@ describe('fastly: a new edge gets a versionless domain', () => {
           }
         : defaultReply(c),
     );
-    fakeDns();
+    const dns = fakeDns();
     const ledger = await provisionV();
     r.calls.length = 0;
     expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
@@ -2256,6 +2415,18 @@ describe('fastly: a new edge gets a versionless domain', () => {
       addresses: { hostname: HOST },
     });
     expect(r.calls.some((c) => c.path.endsWith('/check'))).toBe(false);
+    // The traffic record is read back: pointed elsewhere, or gone, is not ready.
+    const traffic = dns.rows.find((x) => x.name === HOST)!;
+    traffic.content = 'elsewhere.example.net';
+    expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
+      state: 'pending',
+      readiness: { dns: 'pending' },
+    });
+    dns.rows.splice(dns.rows.indexOf(traffic), 1);
+    expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
+      readiness: { dns: 'pending' },
+    });
+    dns.rows.push({ ...traffic, content: TRAFFIC_TARGET });
     linkedTo = 'OTHERSVC';
     expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
       state: 'pending',
@@ -2457,7 +2628,7 @@ describe('fastly: one wildcard certificate per account and zone', () => {
       wildcard: true,
     });
     expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toEqual([
-      expect.objectContaining({ content: WILD_ACME, comment: sharedAcmeMarker(WILD) }),
+      expect.objectContaining({ content: WILD_ACME, comment: sharedAcmeMarker(CUSTOMER, WILD) }),
     ]);
 
     // The second edge finds both and finishes the wait at its first look.
@@ -2579,6 +2750,254 @@ describe('fastly: one wildcard certificate per account and zone', () => {
     });
   });
 
+  test('a wildcard on another TLS configuration than the effective one is not reused', async () => {
+    const other = fixture('tls-subscriptions-wildcard-list.json') as {
+      data: Array<{ relationships: Record<string, unknown> }>;
+    };
+    // The account names no configuration, so its fronts use the DEFAULT one
+    // (TLSCONFIG01, whose CNAME the traffic record points at); this
+    // subscription is on the other one.
+    other.data[0]!.relationships.tls_configuration = {
+      data: { type: 'tls_configuration', id: 'TLSCONFIG02' },
+    };
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? { status: 200, body: other, contentType: 'application/vnd.api+json' }
+        : defaultReply(c),
+    );
+    fakeDns();
+    const step = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_tls_subscription')!;
+    expect(
+      await fastlyProvider.discover(cfgW, step, spec, { steps: [], resources: [] }, 1),
+    ).toMatchObject({ status: 'ambiguous' });
+    // Named explicitly, the same configuration is ours.
+    const named: FastlyConfig = { ...cfgW, tlsConfigurationId: 'TLSCONFIG02' };
+    expect(
+      await fastlyProvider.discover(named, step, spec, { steps: [], resources: [] }, 1),
+    ).toMatchObject({ status: 'found' });
+  });
+
+  /** The ledger right after the wildcard step found or ordered `subId`. */
+  function afterTls(subId: string): Ledger {
+    return {
+      steps: [],
+      resources: [
+        {
+          stepId: 'tls',
+          kind: 'tls_subscription',
+          resourceId: subId,
+          ownership: 'created',
+          deleteState: 'present',
+          meta: JSON.stringify({ hostname: '*.example.org', shared: true, wildcard: true }),
+        },
+      ],
+    };
+  }
+  const challengeRecord = (comment: string, id = 'old1'): DnsRecord => ({
+    id,
+    type: 'CNAME',
+    name: '_acme-challenge.example.org',
+    content: 'stale.fastly-validations.com',
+    proxied: false,
+    comment,
+  });
+
+  test('another customer’s record at the challenge name is a candidate that is never deleted', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    await serve(p.route);
+    const dns = fakeDns([challengeRecord('fcp-cert:SOMEONEELSE:THEIRSUB')]);
+    const acme = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_dns_acme')!;
+    const found = await fastlyProvider.discover(cfgW, acme, spec, afterTls(WILD), 1);
+    expect(found).toMatchObject({ status: 'ambiguous' });
+    const candidates = (found as { candidates: ChildResource[] }).candidates;
+    expect(candidates[0]!.meta).toMatchObject({ candidate: true, shared: true });
+    // The orchestrator records the candidate; an operator's destroy then
+    // never plans it, and a direct destroy leaves it in place.
+    const ledger = apply(afterTls(WILD), acme, { status: 'done', resources: candidates });
+    const record = ledger.resources.find((x) => x.kind === 'dns_record')!;
+    expect(fastlyProvider.planDestroy(cfgW, ledger)).not.toContainEqual(record);
+    expect(await fastlyProvider.runDestroy(cfgW, record, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    expect(dns.deleted).toEqual([]);
+  });
+
+  test('our own record for a subscription that is gone is replaced; one for a live subscription is not', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    let oldExists = false;
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions/OLDSUB'
+        ? oldExists
+          ? api('tls-subscription-failed.json')
+          : NOT_FOUND
+        : p.route(c, 0),
+    );
+    const dns = fakeDns([challengeRecord(sharedAcmeMarker(CUSTOMER, 'OLDSUB'))]);
+    const acme = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_dns_acme')!;
+    // The old subscription was deleted at the provider: discovery says absent,
+    // and the step swaps the record for one naming the new subscription.
+    expect(await fastlyProvider.discover(cfgW, acme, spec, afterTls(WILD), 1)).toEqual({
+      status: 'confirmed_absent',
+    });
+    const out = await fastlyProvider.runStep(cfgW, acme, spec, tpl, afterTls(WILD));
+    expect(out.status).toBe('done');
+    expect(dns.deleted).toEqual(['old1']);
+    expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toEqual([
+      expect.objectContaining({ content: WILD_ACME, comment: sharedAcmeMarker(CUSTOMER, WILD) }),
+    ]);
+    // While our older subscription still exists, its record is left alone.
+    oldExists = true;
+    const dns2 = fakeDns([challengeRecord(sharedAcmeMarker(CUSTOMER, 'OLDSUB'))]);
+    expect(await fastlyProvider.discover(cfgW, acme, spec, afterTls(WILD), 1)).toMatchObject({
+      status: 'ambiguous',
+    });
+    const err = (await fastlyProvider
+      .runStep(cfgW, acme, spec, tpl, afterTls(WILD))
+      .catch((e: unknown) => e)) as { meta?: { code?: string } };
+    expect(err.meta?.code).toBe('acme_name_in_use');
+    expect(dns2.deleted).toEqual([]);
+  });
+
+  test('our record pointing at another validation target is replaced with the current one', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    await serve(p.route);
+    const dns = fakeDns([
+      {
+        ...challengeRecord(sharedAcmeMarker(CUSTOMER, WILD), 'acme1'),
+        content: 'edited-by-hand.example.net',
+      },
+    ]);
+    const acme = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_dns_acme')!;
+    expect(await fastlyProvider.discover(cfgW, acme, spec, afterTls(WILD), 1)).toEqual({
+      status: 'confirmed_absent',
+    });
+    expect((await fastlyProvider.runStep(cfgW, acme, spec, tpl, afterTls(WILD))).status).toBe(
+      'done',
+    );
+    expect(dns.deleted).toEqual(['acme1']);
+    expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toEqual([
+      expect.objectContaining({ content: WILD_ACME, comment: sharedAcmeMarker(CUSTOMER, WILD) }),
+    ]);
+  });
+
+  test('an unused wildcard is removed with OUR records only; one ordered differently is refused', async () => {
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    p.state.issued = true;
+    const r = await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions/OLDSUB' ? NOT_FOUND : p.route(c, 0),
+    );
+    const dns = fakeDns([
+      { ...challengeRecord(sharedAcmeMarker(CUSTOMER, WILD), 'ours'), content: WILD_ACME },
+      challengeRecord(sharedAcmeMarker(CUSTOMER, 'OLDSUB'), 'stale'),
+      challengeRecord('fcp-cert:SOMEONEELSE:THEIRS', 'theirs'),
+    ]);
+    // A per-host account still sees the wildcard it left behind, to remove it.
+    expect(await fastlyProvider.sharedCertificate!(cfg)).toMatchObject({
+      name: '*.example.org',
+      state: 'issued',
+    });
+    // Only a wildcard an edge of this account ordered is deleted.
+    expect(await fastlyProvider.removeSharedCertificate!(cfg, { ordered: [] })).toEqual({
+      removed: false,
+      code: 'shared_certificate_not_ours',
+    });
+    expect(r.calls.some((c) => c.method === 'DELETE')).toBe(false);
+    expect(
+      await fastlyProvider.removeSharedCertificate!(cfg, {
+        ordered: [`tls_subscription:${WILD}`],
+      }),
+    ).toEqual({ removed: true });
+    expect(
+      r.calls.filter((c) => c.method === 'DELETE').map((c) => [c.path, c.query.force]),
+    ).toEqual([[`/tls/subscriptions/${WILD}`, 'true']]);
+    expect(dns.deleted.sort()).toEqual(['ours', 'stale']);
+    expect(dns.rows.map((x) => x.id)).toEqual(['theirs']);
+    // Nothing left to see on a per-host account.
+    p.state.ordered = false;
+    expect(await fastlyProvider.sharedCertificate!(cfg)).toBeNull();
+
+    // A wildcard another CA issued is not this account's to delete.
+    const other = fixture('tls-subscriptions-wildcard-list.json') as {
+      data: Array<{ attributes: Record<string, unknown> }>;
+    };
+    other.data[0]!.attributes.certificate_authority = 'lets-encrypt';
+    await serve((c) =>
+      c.method === 'GET' && c.path === '/tls/subscriptions'
+        ? { status: 200, body: other, contentType: 'application/vnd.api+json' }
+        : defaultReply(c),
+    );
+    expect(
+      await fastlyProvider.removeSharedCertificate!(cfgW, {
+        ordered: [`tls_subscription:${WILD}`],
+      }),
+    ).toEqual({
+      removed: false,
+      code: 'shared_certificate_ambiguous',
+    });
+  });
+
+  test('a renewal reports what holds it up, and one that is late is raised by itself', async () => {
+    const renewing = (extra: Record<string, unknown>) => {
+      const doc = fixture('tls-subscription-wildcard-issued.json') as {
+        data: { attributes: Record<string, unknown> };
+        included: Array<{ type: string; attributes: Record<string, unknown> }>;
+      };
+      doc.data.attributes.state = extra.state ?? 'renewing';
+      const auth = doc.included.find((x) => x.type === 'tls_authorization')!;
+      if (extra.warnings) auth.attributes.warnings = extra.warnings;
+      const cert = doc.included.find((x) => x.type === 'tls_certificate')!;
+      if (extra.notAfter) cert.attributes.not_after = extra.notAfter;
+      return doc;
+    };
+    let doc = renewing({ warnings: [{ type: 'caa', instructions: 'see example.org' }] });
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    await serve((c) =>
+      c.method === 'GET' && c.path === `/tls/subscriptions/${WILD}`
+        ? { status: 200, body: doc, contentType: 'application/vnd.api+json' }
+        : p.route(c, 0),
+    );
+    fakeDns([
+      {
+        id: 'acme1',
+        type: 'CNAME',
+        name: '_acme-challenge.example.org',
+        content: WILD_ACME,
+        proxied: false,
+        comment: sharedAcmeMarker(CUSTOMER, WILD),
+      },
+    ]);
+    const far = new Date(Date.now() + 20 * 86_400_000).toISOString();
+    const near = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    doc = renewing({ warnings: [{ type: 'caa' }], notAfter: far });
+    expect(await fastlyProvider.sharedCertificate!(cfgW)).toMatchObject({
+      state: 'renewing',
+      code: 'tls_caa_conflict',
+    });
+    // An ordinary renewal, far from expiry: nothing to raise.
+    doc = renewing({ notAfter: far });
+    expect(await fastlyProvider.sharedCertificate!(cfgW)).not.toHaveProperty('code');
+    // Issued but within a week of expiry: the renewal is late.
+    doc = renewing({ state: 'issued', notAfter: near });
+    expect(await fastlyProvider.sharedCertificate!(cfgW)).toMatchObject({
+      state: 'issued',
+      code: 'certificate_expiring',
+    });
+    expect(CERTIFICATE_EXPIRY_WARN_MS).toBe(7 * 86_400_000);
+  });
+
   test('the account reads its shared certificate: absent, waiting with a code, issued until a date', async () => {
     const p = wildcardProvider();
     await serve(p.route);
@@ -2603,7 +3022,93 @@ describe('fastly: one wildcard certificate per account and zone', () => {
       notAfter: '2026-11-19T10:12:00.000Z',
     });
     expect(rec!.calls.at(-1)!.query).toEqual({ include: 'tls_authorizations,tls_certificates' });
-    // A per-host account has no shared certificate at all.
+    // A per-host account sees the wildcard only while one exists (to remove
+    // it); with none at all it has no shared certificate.
+    expect(await fastlyProvider.sharedCertificate!(cfg)).toMatchObject({ state: 'issued' });
+    p.state.ordered = false;
     expect(await fastlyProvider.sharedCertificate!(cfg)).toBeNull();
+  });
+});
+
+// --- what the front dials ------------------------------------------------------------------
+
+describe('fastly: the front dials the origin on its own port', () => {
+  /**
+   * A provider that KEEPS the backend it was given, with the API's own
+   * defaults for what the request left out: `port` 80 (whatever `use_ssl`
+   * says) and no TLS name. The front then dials exactly what is stored.
+   */
+  function backendKeepingProvider() {
+    let stored: Record<string, unknown> | null = null;
+    const route: Route = (c) => {
+      if (c.method === 'POST' && /\/backend$/.test(c.path)) {
+        const b = c.body as Record<string, string>;
+        stored = {
+          name: b.name,
+          address: b.address,
+          hostname: b.address,
+          port: b.port !== undefined ? Number(b.port) : 80,
+          use_ssl: b.use_ssl === 'true',
+          ssl_cert_hostname: b.ssl_cert_hostname ?? null,
+          ssl_sni_hostname: b.ssl_sni_hostname ?? null,
+          override_host: b.override_host ?? null,
+          comment: b.comment ?? null,
+        };
+        return { status: 200, body: stored };
+      }
+      if (c.method === 'GET' && /\/backend$/.test(c.path))
+        return { status: 200, body: stored ? [stored] : [] };
+      if (c.method === 'GET' && /\/backend\/origin$/.test(c.path))
+        return stored ? { status: 200, body: stored } : NOT_FOUND;
+      return defaultReply(c);
+    };
+    return { route, stored: () => stored };
+  }
+
+  /** Where a front with this backend opens its connection, and how. */
+  function frontDials(b: Record<string, unknown>) {
+    return {
+      host: b.address,
+      port: b.port,
+      tls: b.use_ssl === true,
+      sni: b.use_ssl === true ? (b.ssl_sni_hostname ?? null) : null,
+    };
+  }
+
+  test('an https origin is dialled on 443 with TLS, presenting and verifying its own name', async () => {
+    const p = backendKeepingProvider();
+    await serve(p.route);
+    fakeDns();
+    const ledger = await provision();
+    expect(frontDials(p.stored()!)).toEqual({ host: ORIGIN, port: 443, tls: true, sni: ORIGIN });
+    expect(p.stored()!.ssl_cert_hostname).toBe(ORIGIN);
+    // What inspect reports is the port the provider holds, not one derived from TLS.
+    const seen = await fastlyProvider.inspect(cfg, ledger);
+    expect(seen.summary.members).toEqual([{ address: ORIGIN, port: 443 }]);
+  });
+
+  test('a backend created without its port is dialled on 80, which the inspect read shows', async () => {
+    // The regression this guards against: the body without `port` lands on 80.
+    const p = backendKeepingProvider();
+    const r = await serve(p.route);
+    const { port: _dropped, ...withoutPort } = fastlyBackendBody(spec, tpl);
+    await fastlyApiFor(cfg).createBackend(SVC, 1, withoutPort as never);
+    expect(frontDials(p.stored()!)).toMatchObject({ port: 80, tls: true });
+    const ledger: Ledger = {
+      steps: [],
+      resources: [
+        {
+          stepId: 'service',
+          kind: 'service',
+          resourceId: SVC,
+          ownership: 'created',
+          deleteState: 'present',
+          meta: JSON.stringify({ version: 1, name: spec.name }),
+        },
+      ],
+    };
+    const seen = await fastlyProvider.inspect(cfg, ledger);
+    expect(seen.summary.members).toEqual([{ address: ORIGIN, port: 80 }]);
+    expect(r.calls.length).toBeGreaterThan(0);
   });
 });

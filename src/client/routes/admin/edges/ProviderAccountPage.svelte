@@ -37,6 +37,7 @@
     providersQuery,
     providersUsageQuery,
     templatesQuery,
+    removeSharedCertificate,
     updateProvider,
   } from '../../../lib/edgesApi';
   import AdminListState from '../AdminListState.svelte';
@@ -161,6 +162,41 @@
         )
       : [],
   );
+  // A wildcard FCP ordered that no live front uses any more can be removed at
+  // the provider (and must be before the account is deleted): FCP never removes
+  // it by itself, and never removes one it only found there.
+  const REMOVABLE = ['pending', 'processing', 'issued', 'renewing', 'failed'];
+  const sharedRemovable = $derived(
+    !!a?.sharedCertificate &&
+      a.sharedCertificate.orderedByFcp &&
+      a.sharedCertificate.edges === 0 &&
+      REMOVABLE.includes(a.sharedCertificate.state),
+  );
+  let removeSharedOpen = $state(false);
+  async function removeShared() {
+    if (!a) return;
+    await removeSharedCertificate(a.id);
+    invalidateProviders(qc);
+    toast.success('Shared certificate removed');
+  }
+
+  // How a new front's name is attached to its service (absent = its own domain).
+  const domainsNow = $derived(
+    a && a.settings.domainModel === 'classic' ? 'classic' : 'versionless',
+  );
+  const DOMAIN_WORDS: Record<string, string> = {
+    versionless: 'Its own domain, linked to the service',
+    classic: 'A domain on the service version (classic)',
+  };
+  let domainsChoice = $state<string | null>(null);
+  let domainsOpen = $state(false);
+  async function saveDomains() {
+    if (!a || !domainsChoice) return;
+    await updateProvider(a.id, { settings: { ...a.settings, domainModel: domainsChoice } });
+    invalidateProviders(qc);
+    toast.success('Domains changed');
+    domainsChoice = null;
+  }
 
   // --- dialogs ---------------------------------------------------------------------------------------
   let qualifyOpen = $state(false);
@@ -398,6 +434,16 @@
                 <Badge variant={sharedWords.tone}>{sharedWords.label}</Badge>
               </div>
               <p class="text-xs text-muted-foreground">{sharedWords.detail}</p>
+              {#if sharedRemovable}
+                <Button size="sm" variant="outline" onclick={() => (removeSharedOpen = true)}>
+                  Remove shared certificate
+                </Button>
+              {:else if !a.sharedCertificate.orderedByFcp}
+                <p class="text-xs text-muted-foreground">
+                  FCP found this certificate at the provider and reuses it. It removes only
+                  certificates its own fronts ordered.
+                </p>
+              {/if}
             </div>
           {:else if sharesCertificates && a.optionDefaults.certificateScope === 'wildcard'}
             <p class="text-xs text-muted-foreground">
@@ -406,6 +452,46 @@
             </p>
           {/if}
         </OptionDefaultsCard>
+      {/if}
+
+      {#if sharesCertificates}
+        <Card>
+          <CardHeader>
+            <CardTitle class="text-base">Domains</CardTitle>
+            <CardDescription>
+              How a new front's name is attached to its service. Fronts that exist keep theirs.
+            </CardDescription>
+          </CardHeader>
+          <CardContent class="space-y-4">
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="max-w-md flex-1 space-y-1.5">
+                <Label for="acct-domains">A new front's name is</Label>
+                <Select.Root
+                  type="single"
+                  value={domainsChoice ?? domainsNow}
+                  onValueChange={(v) => (domainsChoice = v === domainsNow ? null : v)}
+                >
+                  <Select.Trigger id="acct-domains" class="w-full">
+                    {DOMAIN_WORDS[domainsChoice ?? domainsNow]}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Item value="versionless"
+                      >{DOMAIN_WORDS.versionless} (recommended)</Select.Item
+                    >
+                    <Select.Item value="classic">{DOMAIN_WORDS.classic}</Select.Item>
+                  </Select.Content>
+                </Select.Root>
+              </div>
+              <Button disabled={domainsChoice === null} onclick={() => (domainsOpen = true)}>
+                Change domains
+              </Button>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              Classic domains exist only on accounts created before September 2025. Pick them if the
+              provider refuses to link a front's own domain to its service.
+            </p>
+          </CardContent>
+        </Card>
       {/if}
 
       <LocationsCard account={a} />
@@ -537,6 +623,20 @@
     body="New edges of this account will get their DNS records through the account you picked. The account loses its qualification and must be tested and qualified again. Existing edges keep the records they have."
     confirmLabel="Change DNS account"
     onConfirm={saveDns}
+  />
+  <ConfirmDialog
+    bind:open={removeSharedOpen}
+    title="Remove the shared certificate?"
+    body="The wildcard certificate is deleted at the provider, with the validation record FCP wrote for it. No live front uses it now; a later front of this account on the wildcard orders a new one and waits for it to be issued."
+    confirmLabel="Remove certificate"
+    onConfirm={removeShared}
+  />
+  <ConfirmDialog
+    bind:open={domainsOpen}
+    title="Change how fronts get their names?"
+    body="New fronts of this account get their name the new way; fronts that exist keep theirs. Like any settings change, the account loses its trust: test it again, and its next proven front trusts it."
+    confirmLabel="Change domains"
+    onConfirm={saveDomains}
   />
   <DeleteDialog
     bind:open={deleteOpen}

@@ -574,6 +574,30 @@ const COPY = {
     explain: 'The listener does not declare how a CDN front should dial the origin.',
     fix: 'Edit the listener and turn on "A CDN front can reach this transport", or protect the node from Edges.',
   },
+  origin_cert_not_public: {
+    label: 'Origin certificate not public',
+    explain:
+      'A front that dials the origin over TLS needs the origin to present a publicly trusted certificate.',
+    fix: 'Give the origin a publicly trusted certificate, or let the front dial it over plain HTTP.',
+  },
+  origin_cert_name_uncovered: {
+    label: 'Origin name not on its certificate',
+    explain:
+      'Over TLS the front checks the origin by the address it dials, so that address must be a name the origin’s certificate covers. An IP address never is.',
+    fix: 'Address the origin by a name on its certificate, or add the name to the certificate.',
+  },
+  origin_port_unsupported: {
+    label: 'Origin port not supported',
+    explain:
+      'This front reaches the origin only on the scheme’s own port: 443 over TLS, 80 over plain HTTP.',
+    fix: 'Move the origin listener to that port.',
+  },
+  retest_required: {
+    label: 'Test again',
+    explain:
+      'A certificate setting of this account changed, and the last test checked the old one (the CAA records for one name say nothing about the shared wildcard).',
+    fix: 'Test the account again.',
+  },
   // --- an L7 front's certificate (L7_CERTIFICATE_CODES) ---------------------------------
   caa_forbids_ca: {
     label: 'CAA forbids the CA',
@@ -614,6 +638,18 @@ const COPY = {
     label: 'Certificate failed',
     explain: 'The provider gave up issuing the certificate.',
     fix: 'Fix what it waited on, then retry the certificate at the provider or replace the front.',
+  },
+  certificate_expiring: {
+    label: 'Certificate renewal late',
+    explain:
+      'The wildcard certificate the account’s fronts share expires within a week, or already has, and the provider has not renewed it.',
+    fix: 'Check what the account page says it waits on, such as the CAA records or the validation record. The provider renews it once that is fixed.',
+  },
+  shared_certificate_ambiguous: {
+    label: 'Wildcard not reusable',
+    explain:
+      'The zone’s wildcard is already covered by a certificate this account would not order (another certificate authority or TLS configuration, or several), so a new front cannot share it.',
+    fix: 'Remove that certificate at the provider, match the account’s settings to it, or switch the account to one certificate per front.',
   },
   shared_certificate_failed: {
     label: 'Shared certificate failed',
@@ -1332,6 +1368,23 @@ const REFUSAL_COPY = {
     explain: 'An address still lives in this location, or a protected node uses it.',
     fix: 'Remove or replace those addresses first.',
   },
+  shared_certificate_in_use: {
+    label: 'Certificate still in use',
+    explain: 'Live fronts of this account still use the shared certificate.',
+    fix: 'Replace or remove those fronts first.',
+  },
+  shared_certificate_present: {
+    label: 'Shared certificate still there',
+    explain:
+      'The account still has a shared certificate at the provider, which nothing could remove once the account is gone.',
+    fix: 'Remove it on the account page first, or delete it at the provider and test the account again.',
+  },
+  shared_certificate_not_ours: {
+    label: 'Certificate not ordered by FCP',
+    explain:
+      'FCP found this wildcard certificate already at the provider and reused it. It removes only certificates its own fronts ordered.',
+    fix: 'Remove it at the provider if nothing else uses it, then test the account again.',
+  },
   location_not_geographic: {
     label: 'No regions for this provider',
     explain: 'This provider is not tied to a region: its account has one location already.',
@@ -1805,6 +1858,11 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Shared certificate failed',
     explain: 'The wildcard certificate this account’s fronts share failed to issue.',
     fix: 'Open the account to see why, then retry the certificate.',
+  },
+  shared_certificate_ambiguous: {
+    label: 'Wildcard not reusable',
+    explain: 'The zone’s wildcard is covered by a certificate this account would not order.',
+    fix: 'Open the account to see it, or switch it to one certificate per front.',
   },
 };
 

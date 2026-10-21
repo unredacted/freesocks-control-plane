@@ -14,8 +14,17 @@
  *  - an issuer of `;` (an empty domain) allows no CA at all;
  *  - a property with the critical flag whose tag the CA does not know forbids
  *    issuance outright.
- * Tags and issuer domains compare case-insensitively; parameters after `;`
- * are ignored (FCP never sets an account URI or a validation method).
+ * Tags and issuer domains compare case-insensitively. A record's parameters
+ * (RFC 8657) must also be ones the issuance can meet: an `accounturi` names one
+ * ACME account, which FCP never knows (the provider orders the certificate),
+ * so such a record does not allow it; a `validationmethods` list must include
+ * `dns-01`, the managed DNS challenge every certificate FCP orders uses.
+ * Unknown parameters are ignored.
+ *
+ * CNAMEs: a CA's lookup of a name that is an alias follows it, as any DNS
+ * lookup does, and a name with no records of its own then climbs from its
+ * parent. The resolver the adapter uses does both, so a check of a name that
+ * a zone wildcard (`*.zone CNAME ...`) answers for sees what the CA would.
  */
 
 /** The issuer domain each certificate authority FCP orders from is named by in CAA. */
@@ -61,8 +70,12 @@ const KNOWN_TAGS = new Set([
   'contactphone',
 ]);
 
-/** Never more than this many names are looked up for one verdict. */
-const MAX_WALK = 10;
+/**
+ * Never more than this many names are looked up for one verdict. A name with
+ * more labels than this is `unchecked`, never `no_records`: the records that
+ * decide could sit above the cut.
+ */
+export const MAX_CAA_WALK = 16;
 
 function normalizeName(name: string): string {
   return name.trim().toLowerCase().replace(/\.$/, '');
@@ -71,15 +84,39 @@ function normalizeName(name: string): string {
 /** `a.b.example.org` -> `[a.b.example.org, b.example.org, example.org, org]` (the root is never asked). */
 export function caaWalkNames(name: string): string[] {
   const labels = normalizeName(name).split('.').filter(Boolean);
-  const out: string[] = [];
-  for (let i = 0; i < labels.length && out.length < MAX_WALK; i++)
-    out.push(labels.slice(i).join('.'));
-  return out;
+  return labels.map((_, i) => labels.slice(i).join('.'));
 }
 
 /** The issuer domain of an `issue` / `issuewild` value (`;` alone = none). */
 export function caaIssuerOf(value: string): string {
   return value.split(';')[0]!.trim().toLowerCase().replace(/\.$/, '');
+}
+
+/** The `key=value` parameters after the issuer domain, keys lowercased. */
+export function caaParamsOf(value: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const part of value.split(';').slice(1)) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    out.set(part.slice(0, eq).trim().toLowerCase(), part.slice(eq + 1).trim());
+  }
+  return out;
+}
+
+/**
+ * Whether a record that names the right issuer can be met by the issuance FCP
+ * asks for: no account binding (the provider's ACME account is not FCP's to
+ * name), and DNS validation among the methods it allows, when it lists any.
+ */
+export function caaParamsAllow(value: string): boolean {
+  const params = caaParamsOf(value);
+  if (params.has('accounturi')) return false;
+  const methods = params.get('validationmethods');
+  if (methods === undefined) return true;
+  return methods
+    .split(',')
+    .map((m) => m.trim().toLowerCase())
+    .includes('dns-01');
 }
 
 /**
@@ -98,7 +135,16 @@ export function caaSetAllows(
     wildcard && wild.length > 0 ? wild : records.filter((r) => tagOf(r) === 'issue');
   if (governing.length === 0) return true;
   const want = issuer.toLowerCase();
-  return governing.some((r) => caaIssuerOf(r.value) === want);
+  return governing.some((r) => caaIssuerOf(r.value) === want && caaParamsAllow(r.value));
+}
+
+/**
+ * The name a check for one front under `zone` starts at: a label no front and
+ * no service uses, so whatever answers for it (a zone wildcard, typically) is
+ * what will answer for a new front's name before FCP writes its own record.
+ */
+export function caaProbeName(zone: string): string {
+  return `_fcp-caa-check.${normalizeName(zone)}`;
 }
 
 /**
@@ -115,7 +161,10 @@ export async function checkCaa(a: {
   const base = wildcard ? a.name.trim().slice(2) : a.name;
   const issuer =
     CA_CAA_DOMAINS[a.certificateAuthority as CaaCertificateAuthority] ?? a.certificateAuthority;
-  for (const name of caaWalkNames(base)) {
+  const names = caaWalkNames(base);
+  // Too deep to walk to the top: an answer from part of the tree is no answer.
+  if (names.length > MAX_CAA_WALK) return { verdict: 'unchecked', issuer, wildcard };
+  for (const name of names) {
     let records: CaaRecord[];
     try {
       records = await a.lookup(name);

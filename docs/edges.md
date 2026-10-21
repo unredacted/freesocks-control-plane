@@ -319,19 +319,54 @@ account's `certificateScope` (an intent default, § "Fastly fronts"):
   name never reaches the Certificate Transparency logs (a per-name certificate publishes it
   there before any member uses it, so it can be listed and blocked), and only the first front
   waits for issuance: the wait step looks once and finishes when the certificate is issued.
-  The subscription and its ACME record (`_acme-challenge.<zone>`, commented `fcp-cert:<id>`)
-  are recorded on each edge as `shared`, so no edge's destroy deletes them, and FCP never
-  deletes them at all. The certificate and ACME steps hold the external lock
-  `fastly-certificate:<account>:<zone>`, so two rotations never both order it. A wildcard
-  covered by a subscription the account would not order (another certificate authority or TLS
-  configuration, or several) is never reused (`shared_certificate_ambiguous`), nor is a record
-  at the challenge name that FCP did not write (`acme_name_in_use`): an operator decides. The
-  subscription's state is kept on the account (`sharedCertificate`, read by the credential test
-  and by the reconcile cron, every pass while it is not issued and every 30 minutes once it is)
-  and shown on the account page with its expiry and how many fronts use it. A failed one
-  refuses new fronts of the account (`shared_certificate_failed`).
+  The subscription and its ACME record (`_acme-challenge.<zone>`, commented
+  `fcp-cert:<customer>:<subscription>`) are recorded on each edge as `shared`, so no edge's
+  destroy deletes them. Only an operator removes them, from the account page, and only a
+  subscription an edge of this account ORDERED: the settle that records a shared resource the
+  step created also keeps `<kind>:<id>` on the account (`orderedSharedResources`), and one
+  discovery found and reused is FCP's to use, never to delete (`shared_certificate_not_ours`).
+  The certificate and ACME steps hold the external lock `fastly-certificate:<account>:<zone>`,
+  so two rotations never both order it, and the removal (`POST
+providers/{id}/shared-certificate/remove`, audited) takes the same lock as the account
+  (`externalLocks.holderAccountId`) and recounts the live fronts under it
+  (`edge.shared_certificate_in_use` while one uses it, `edge.lock_busy` while a step holds the
+  lock), so no rotation starts reusing the certificate between the count and the delete. The
+  lock is released when the call ends; one a dead removal left is taken over by the next step
+  once it lapses. An account still holding a wildcard it ordered cannot be deleted
+  (`edge.shared_certificate_present`), so nothing is left at the provider with no credentials to
+  remove it.
+  A subscription is reused only when it matches the account's certificate authority and its
+  EFFECTIVE TLS configuration (the default one when the account names none, the same one the
+  traffic CNAME points at); one ordered another way, or several, is never reused
+  (`shared_certificate_ambiguous`). At the challenge name, a record with another customer's
+  marker or none is never reused, replaced or deleted (`acme_name_in_use`); our own customer's
+  marker for a subscription that no longer exists (a failed one deleted at the provider) is
+  stale, and the step replaces it with the new subscription's; so is our own record that no
+  longer holds the challenge's current value (edited by hand, or a target the provider moved).
+  The subscription's state is kept
+  on the account (`sharedCertificate`, read by the credential test and by the reconcile cron,
+  every pass while it is not issued, while it renews and within a week of expiry, every 30
+  minutes otherwise) and shown on the account page with its expiry and how many fronts use it.
+  A renewal reports what holds it up like a first issuance does, and one that is late (the
+  certificate expires within a week, or has: `certificate_expiring`) is raised by itself;
+  Certainly's 30-day certificates renew with about ten days left, so a week means days overdue.
+  A subscription serves only while it is issued or renewing AND its newest certificate's
+  `not_after` is still ahead: one renewing past expiry is pending (`certificate_expiring`) to
+  the wait step, discovery and describe alike, so no front is ready on an expired certificate.
+  Attention `certificate_waiting` on the account is critical once under three days remain. A
+  failed one refuses new fronts of the account (`shared_certificate_failed`), and so does one
+  the account would not order (`shared_certificate_ambiguous`), before anything is built for
+  the front. An account switched back to one certificate per front still shows the wildcard it
+  left behind, without raising it, until it is removed.
 - `per_host` (an account created before, until it is switched): one subscription per front
   hostname, deleted with the edge.
+
+**What discovery cannot prove is ours.** A resource discovery finds by name but cannot prove
+belongs to the edge (a record at the edge's name with another marker, a subscription ordered
+another way, a versionless domain on another service) is recorded as a candidate
+(`meta.candidate`) so the operator sees it, and it is never planned for destroy or deleted,
+also when the operator destroys the parked edge: deleting another account's ACME record would
+let its certificate lapse. The operator removes such a resource at the provider by hand.
 
 SNI and the zone still link the fronts of one account either way, so the zone choice matters
 more than the certificate. A zone carries the wildcard of one Fastly account only (a second
@@ -342,15 +377,27 @@ should keep one certificate per front.
 **CAA preflight.** The credential test of a Fastly account resolves the CAA records of the DNS
 account's zone over public DNS, walking up the tree the way the certificate authority does
 (RFC 8659: the first name with any CAA record decides; for the wildcard, `issuewild` when the
-set has one, else `issue`; a critical property with an unknown tag forbids). Records that exist
-and do not name the account's CA (`certainly.com` for Certainly, `letsencrypt.org` for Let's
-Encrypt, `globalsign.com` for GlobalSign) fail the test with `caa_forbids_ca`; no record at all,
-or a lookup that fails (`unchecked`), passes. The verdict is kept with the test
+set has one, else `issue`; a critical property with an unknown tag forbids). One certificate per
+front is checked from `_fcp-caa-check.<zone>`, a label nothing serves: a zone wildcard answers
+for it as it will for a new front's name, and the resolver follows that answer's CNAME as the
+CA does (a name with nothing of its own then climbs from its parent). Records that exist and do
+not name the account's CA (`certainly.com` for Certainly, `letsencrypt.org` for Let's Encrypt,
+`globalsign.com` for GlobalSign) fail the test with `caa_forbids_ca`, and so does a record that
+names it with parameters the issuance cannot meet (RFC 8657): an `accounturi` (the provider's
+ACME account is not FCP's to name) or a `validationmethods` list without `dns-01` (every
+certificate FCP orders uses the managed DNS challenge). No record at all, or a lookup that
+fails (`unchecked`), passes; so does a name too deep to walk to the top (more than
+`MAX_CAA_WALK` labels, also `unchecked`, never "no records"). The verdict is kept with the test
 (`observedSettings`: `caa`, `caaIssuer`, `caaCertificate`, `caaAt`). While the account's last test
 ended on it, the setup plan (`accounts[].reasons`), the setup run's first stage, the start guards
 of a rotation naming the account, the preflight and the selection all refuse it with that code
 before anything is allocated (`certificateRefusalOf`), and it does not count toward the
-account's API health. Fix the records or pick another CA, then test again. The lookups are DNS
+account's API health. Fix the records or pick another CA, then test again. Changing a setting
+the test's answers depend on (the DNS account, or the TLS configuration, which decides the
+wildcard reused: `EDGE_RETEST_SETTINGS`) or the account's default certificate authority or
+certificate scope (its option defaults, see Provider options) marks the account untested
+(`retest_required`) and drops the shared-certificate read: a per-name verdict says nothing
+about `issuewild`. The lookups are DNS
 queries from the backend (`node:dns`, 4 s, two tries); the offline test suite refuses them like
 `fetch`, and tests answer through `__setFastlyCaaLookup`.
 
@@ -371,12 +418,15 @@ account.
 
 **Domains.** A Fastly edge planned now attaches its hostname as a versionless (Domain
 Management) domain: its own resource, linked to the service by id, created and deleted without a
-service version (`domainModel: 'versionless'` in the intent, a fact of how FCP drives the
-provider rather than a setting: `EDGE_INTENT_FACTS`). An edge planned before keeps its
+service version. The account setting `domainModel` (an intent default: `versionless` for a new
+account, and for one that does not name it; `classic` allowed) decides it for new edges and is
+frozen into each intent, so an operator whose provider refuses a versionless domain can switch
+to classic without a code change (`EDGE_INTENT_FACTS`). An edge planned before keeps its
 version-scoped (classic) domain, read, renewed and destroyed as before; the adapter reads which
 one an edge has from its ledger (`versionless_domain` or `domain`). Discovery finds a versionless
 domain by its exact name and owns it only when it is linked to the edge's own service; DNS
-readiness is that link plus the traffic record FCP wrote (no version holds the domain, so there
+readiness is that link plus the traffic record as the zone holds it now, read back and still
+pointing at the CNAME of the front's TLS configuration (no version holds the domain, so there
 is no domain check to run); destroy deletes it by id after the certificate and before the
 service, on a shared service too (no version workflow). Fastly offers classic domains only to
 accounts created before 2025-09-16; its documentation names no service-type limit for
@@ -2167,9 +2217,12 @@ depend on it:
 - **Go-live.** For an enrolled node, `edgeSetupRuns.goLive` promotes the node's activation run
   inside its own mutation (`nodeActivation.promoteCandidate`): the edges it published are the
   run's candidate resources, filtered from members until then.
-- **The origin TLS contract.** Recorded per combination: Fastly with `overrideHost: 'origin'`
-  (SNI = Host = the origin name, a public certificate naming it) is supported; Fastly with
-  `'hostname'` only when the node's verified ingress accepts any Host header; Cloudflare `full`
+- **The origin TLS contract.** Recorded per combination: Fastly presents the backend's own
+  address as SNI and verifies against it, so that address must be a name the origin's
+  certificate covers (`origin_cert_name_uncovered` otherwise; also sent as `ssl_sni_hostname`
+  and `ssl_cert_hostname`, on port 443); with `overrideHost: 'origin'` (Host = the origin name too, a public certificate
+  naming it) it is supported, with `'hostname'` only when the node's verified ingress accepts
+  any Host header; Cloudflare `full`
   (SNI and Host = the edge hostname, served by Caddy's `fallback_sni` plus a catch-all site) is
   supported. Cloudflare `strict` is admitted only for an origin whose certificate is publicly
   trusted (`certPublic`), and it validates the EDGE hostname, which an enrolled node's
@@ -2474,24 +2527,47 @@ nothing about the region, so it stays.
 
 A Fastly account is an API token with the global scope (on an automation user, with the
 WebSockets product entitlement) plus settings: the DNS account whose zone holds its names
-(locating: locked while edges exist), the certificate authority, an optional TLS configuration
-and `certificateScope` (intent defaults: a change moves new edges only). One edge is ten steps:
-the VCL service, its one origin backend, the WebSocket upgrade snippet, the domain (versionless),
+(locating: locked while edges exist), the certificate authority, an optional TLS configuration,
+`certificateScope` and `domainModel` (intent defaults: a change moves new edges only). One edge
+is ten steps: the VCL service, its one origin backend, the WebSocket upgrade snippet, the domain
+(versionless, or classic when the account says so),
 the WebSockets product, the version activation, the certificate (the hostname's own or the
 account's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME
 (§ "L7 edges" for certificates, the CAA preflight, waiting codes and domains).
 
-- **Switching to the wildcard.** On the account page, Certificates, pick "One wildcard for every
-  front". Like any settings change it untrusts the account's location: test the account again
-  (the CAA preflight then checks `issuewild`), and its next proven front trusts it again. Fronts
-  that exist keep their own certificates until they are replaced.
+**The origin backend.** The origin must listen on its scheme's own port (443 over TLS, 80
+without; `origin_port_unsupported` at plan time otherwise), and the backend carries that `port`
+explicitly, with the origin's TLS name as `ssl_cert_hostname` and `ssl_sni_hostname`. The
+WebSocket path honours no TLS-name override, though: the front presents and verifies the
+backend's own address, so an https origin must be addressed by a name its certificate covers
+(never an IP address; `origin_cert_name_uncovered` at plan time otherwise), and that address is
+the TLS name sent. Fastly's
+WebSockets guide lists only name, address, TLS and Host override as supported, yet the front
+dials the backend's `port`, which the API defaults to 80 whatever `use_ssl` says: a backend
+without it spoke TLS to port 80 and every front failed its qualification. Inspect reports the
+port the provider holds.
+
+- **Switching domains.** On the account page, Domains, "A new front's name is": its own
+  domain linked to the service (versionless, the default) or a domain on the service version
+  (classic, only on accounts created before September 2025). Fronts that exist keep theirs;
+  like any settings change it untrusts the location until a test and a proven front.
+- **Switching to the wildcard.** On the account page, Certificates, set Certificate to "One
+  wildcard for every front" and save the defaults: nodes protected from then on start from it
+  (one node can also choose it alone, under its Options when it is protected). Like a settings
+  change it untrusts the account's location, and as a certificate default it marks the account
+  untested (`retest_required`): test the account again (the CAA preflight then checks
+  `issuewild`), and its next proven front trusts it again. Fronts that exist keep their own
+  certificates until they are replaced.
 - **CAA.** Allow the account's CA at the zone (or wherever its CAA records sit, up the tree) with
   `issue`, and with `issuewild` for the wildcard: `0 issue "certainly.com"` and
   `0 issuewild "certainly.com"` for Certainly.
 - **A failed shared certificate.** Fix what the account page says it waited on, retry the
   subscription at the provider, and the next reconcile pass reads it again.
-- **Retiring the wildcard.** FCP never deletes it. Switch the account to one certificate per
-  front, replace its fronts, then delete the subscription (and its ACME record) at the provider.
+- **Retiring the wildcard.** Switch the account's default to one certificate per front (and
+  any node that chose the wildcard, under its Options) and replace its fronts; once none uses the wildcard, the account page offers "Remove shared certificate"
+  (for one FCP ordered only), which deletes it and the ACME record FCP wrote (never another
+  customer's record). An account is deleted only after that. A wildcard FCP found and reused is
+  removed at the provider by hand, if nothing else uses it.
 
 ## Provider options
 
@@ -2579,8 +2655,9 @@ wildcard (`EDGE_NEW_ACCOUNT_OPTION_DEFAULTS`).
 
 - names, tags and comments FCP finds its resources by (load balancer and backend names,
   ownership tags and record comments): changing one orphans the resource;
-- values derived from the node (member address and port, the listener's port and scheme, the
-  linkage ids between resources);
+- values derived from the node (member address and port, the listener's port and scheme, a
+  Fastly backend's port and the origin's TLS name it presents and checks, the linkage ids
+  between resources);
 - the proxied flag of a DNS record: an unproxied front publishes the origin;
 - PROXY protocol, `X-Forwarded-*` insertion and access logs: they hand members' addresses to
   nodes or the provider, and a node not expecting a PROXY header breaks every connection;
@@ -2866,7 +2943,7 @@ lifecycle runs in that test and its rows appear here.
 | fastly     | GET    | `^/service/[^/]+/version/[^/]+/validate$`                                         | validate a version before activating it                                                                                                               | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | PUT    | `^/service/[^/]+/version/[^/]+/activate$`                                         | activate the version                                                                                                                                  | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | PUT    | `^/service/[^/]+/version/[^/]+/deactivate$`                                       | deactivate the active version before deleting the service                                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | POST   | `^/service/[^/]+/version/[^/]+/backend$`                                          | create the single origin backend (only fields the WebSocket path honours)                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | POST   | `^/service/[^/]+/version/[^/]+/backend$`                                          | create the single origin backend, its port always sent (the API defaults it to 80) with the TLS name for SNI and verification                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | GET    | `^/service/[^/]+/version/[^/]+/backend$`                                          | list backends: inspect and the import ownership check                                                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | GET    | `^/service/[^/]+/version/[^/]+/backend/[^/]+$`                                    | discover the backend by name; read it back after a destroy                                                                                            | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 | fastly     | POST   | `^/service/[^/]+/version/[^/]+/snippet$`                                          | install the VCL snippet that hands an Upgrade request to the WebSocket path                                                                           | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
@@ -2895,8 +2972,8 @@ lifecycle runs in that test and its rows appear here.
 ## Deploy notes
 
 **Fastly certificates and domains** add optional fields only (`edges.waiting`,
-`edgeProviderAccounts.sharedCertificate`, the Fastly setting `certificateScope`): one deploy, no
-migration, no freeze. Existing Fastly accounts keep one certificate per front and existing edges
+`edgeProviderAccounts.sharedCertificate`, the Fastly settings `certificateScope` and
+`domainModel`): one deploy, no migration, no freeze. Existing Fastly accounts keep one certificate per front and existing edges
 keep their classic domains; edges planned after the deploy get versionless domains. After it,
 test each Fastly account again (the CAA preflight runs only in the test) and switch an account
 to the wildcard on its page when wanted (that untrusts its location until a test and a proven

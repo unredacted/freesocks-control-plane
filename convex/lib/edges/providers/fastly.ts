@@ -24,10 +24,14 @@
  * an HTTP status plus a code from a fixed allowlist; `detail` is never read.
  * Nothing here adds a body, a URL or a credential to an error.
  *
- * WebSockets constraints that shape the model: for WS traffic a backend honours
- * only `name`, `address`, `use_ssl` and `override_host`, so the origin port is
- * fixed (443 with `use_ssl`, 80 without) and an https origin must present a
- * publicly trusted certificate. Those are plan-time refusals below.
+ * WebSockets constraints that shape the model: Fastly's WebSockets guide lists
+ * only `name`, `address`, `use_ssl` and `override_host` as the settings it
+ * supports, and an https origin must present a publicly trusted certificate.
+ * But the backend's `port` IS used, and defaults to 80 whatever `use_ssl` says
+ * (found on a beta walk: the front spoke TLS to the origin's port 80). So FCP
+ * keeps the origin on the scheme's own port (443 over TLS, 80 without, refused
+ * at plan time otherwise) and always SENDS that port, with the origin's TLS
+ * name for SNI and verification, instead of relying on any default.
  *
  * Domains. A new edge's hostname is a VERSIONLESS domain (Domain Management):
  * its own resource, linked to the service by id, created and deleted without a
@@ -72,7 +76,16 @@ import type {
 import { firstResource, metaOf, resourcesOfKind, stepOf } from './types';
 import { EdgeProviderError, credentialTestFailure, noteDiscoverError } from './http';
 import { acmeChallengeName, normalizeZoneName } from '../hostname';
-import { checkCaa, wildcardBase, wildcardNameFor, type CaaLookup, type CaaRecord } from '../caa';
+import { addressFamily } from '../ip';
+import { certCovers } from '../layers';
+import {
+  caaProbeName,
+  checkCaa,
+  wildcardBase,
+  wildcardNameFor,
+  type CaaLookup,
+  type CaaRecord,
+} from '../caa';
 import type { L7CertificateCode } from '../../../../src/shared/contracts/edgeCodes';
 import type { DnsClient, DnsCreateArgs, DnsRecord } from './dns/types';
 import {
@@ -185,18 +198,50 @@ function domainModelOf(cfg: FastlyConfig): 'classic' | 'versionless' {
   return cfg.domainModel === 'versionless' ? 'versionless' : 'classic';
 }
 
+/**
+ * The DNS zone this account's fronts live in, as the resolved config carries it
+ * (`edgeProviderOps.loadAdapter` fills `cfg.dns` from the frozen intent of an
+ * existing edge, or from the account when planning). The ONE place the adapter
+ * reads the zone outside a front's own hostname; undefined without a DNS account.
+ */
+export function fastlyZoneOf(cfg: FastlyConfig): string | undefined {
+  return cfg.dns?.zoneName ? normalizeZoneName(cfg.dns.zoneName) : undefined;
+}
+
 /** The name the edge's certificate is ordered for: its hostname, or the zone's wildcard. */
 function certificateNameOf(cfg: FastlyConfig, hostname: string): string {
   return certificateScopeOf(cfg) === 'wildcard' ? wildcardNameFor(hostname) : hostname;
 }
 
 /**
- * The ownership marker of the shared wildcard's ACME record: it names the
- * subscription it answers for, so a second FCP account (or an operator's own
- * client) at the same challenge name is never taken for ours.
+ * The ownership marker of the shared wildcard's ACME record: the Fastly
+ * customer and the subscription it answers for. A record at the challenge
+ * name with another customer's marker (a second FCP deployment or account on
+ * the same zone) or none at all is never taken for ours, never replaced and
+ * never deleted; one with OUR customer and a subscription that no longer
+ * exists is our own stale record, replaced when the wildcard is ordered again.
  */
-export function sharedAcmeMarker(subscriptionId: string): string {
-  return `fcp-cert:${subscriptionId}`;
+export function sharedAcmeMarker(customerId: string, subscriptionId: string): string {
+  return `fcp-cert:${customerId}:${subscriptionId}`;
+}
+
+/** The customer and subscription a shared ACME record's comment names (null: not a marker). */
+export function parseSharedAcmeMarker(
+  comment: string | undefined,
+): { customerId: string; subscriptionId: string } | null {
+  const m = /^fcp-cert:([^:\s]+):([^:\s]+)$/.exec(comment ?? '');
+  return m ? { customerId: m[1]!, subscriptionId: m[2]! } : null;
+}
+
+/**
+ * A resource discovery saw but cannot prove is this edge's (a record at our
+ * name with a foreign marker, a subscription ordered differently, a domain on
+ * another service). It is recorded so an operator can see it, and it is never
+ * planned for destroy or deleted: removing somebody else's certificate record
+ * could stop their certificate from renewing.
+ */
+function candidateOf(r: ChildResource): ChildResource {
+  return { ...r, ownership: 'adopted', meta: { ...(r.meta ?? {}), candidate: true } };
 }
 
 // --- small helpers -----------------------------------------------------------------
@@ -265,21 +310,29 @@ function originMember(spec: EdgeSpec, step: string): { address: string; port: nu
 }
 
 /**
- * The origin transport refusals the WebSockets data path forces. A backend used
- * for WS honours neither `port` nor certificate overrides, so the origin must
- * sit on the scheme's own port and, over TLS, present a publicly trusted
- * certificate.
+ * The origin transport refusals the WebSockets data path forces: the origin
+ * sits on the scheme's own port (the one place every Fastly setting agrees on)
+ * and, over TLS, presents a publicly trusted certificate.
  */
 export function assertFastlyOriginTransport(spec: EdgeSpec, step = 'plan'): void {
   const t = spec.originTransport;
   if (!t) throw refusal(step, 'origin_transport_missing', 'the slot declares no origin transport');
-  const { port } = originMember(spec, step);
+  const { address, port } = originMember(spec, step);
   if (t.scheme === 'https') {
     if (!t.certPublic)
       throw refusal(
         step,
         'origin_cert_not_public',
         'an https origin behind this front needs a publicly trusted certificate',
+      );
+    // The WebSocket path honours no TLS-name override: the front presents and
+    // verifies the backend's own address, so that address must be a name the
+    // origin's certificate covers.
+    if (addressFamily(address) !== null || !certCovers(address, t.certNames))
+      throw refusal(
+        step,
+        'origin_cert_name_uncovered',
+        'an https origin behind this front must be addressed by a name its certificate covers',
       );
     if (port !== 443)
       throw refusal(step, 'origin_port_unsupported', 'an https origin must listen on 443');
@@ -318,14 +371,32 @@ export function dnsRecordOptions(
   };
 }
 
+/**
+ * The name the front presents (SNI) and verifies the origin's certificate
+ * against: the origin address itself (plan time refuses an https origin whose
+ * address is not a name its certificate covers, since the WebSocket path
+ * honours no override). Sent explicitly anyway, so a plain HTTP request
+ * through the same backend agrees. None for a plaintext origin.
+ */
+export function fastlyOriginTlsName(spec: EdgeSpec): string | undefined {
+  if (spec.originTransport?.scheme !== 'https') return undefined;
+  const { address } = originMember(spec, 'backend');
+  return address.toLowerCase().replace(/\.$/, '');
+}
+
 export function fastlyBackendBody(spec: EdgeSpec, tpl: FastlyTemplateParams): FastlyBackendBody {
   const hostname = requireHostname(spec, 'backend');
-  const { address } = originMember(spec, 'backend');
+  const { address, port } = originMember(spec, 'backend');
   assertFastlyOriginTransport(spec, 'backend');
+  const tlsName = fastlyOriginTlsName(spec);
   return {
     name: BACKEND_NAME,
     address,
+    // Sent explicitly: Fastly defaults a backend's port to 80 even with
+    // `use_ssl`, and the WebSocket path dials it (443 / 80, checked above).
+    port,
     use_ssl: spec.originTransport?.scheme === 'https',
+    ...(tlsName ? { ssl_cert_hostname: tlsName, ssl_sni_hostname: tlsName } : {}),
     // The Host the front sends the node: the minted hostname, or the origin
     // address when the node only answers to its own name.
     override_host: tpl.overrideHost === 'hostname' ? hostname : address,
@@ -517,10 +588,24 @@ export function subscriptionConfigurationId(res: FastlyJsonApiResource): string 
 export function subscriptionMatchesIntent(
   res: FastlyJsonApiResource,
   want: { certificateAuthority: string; tlsConfigurationId?: string },
+  defaultConfigurationId?: string,
 ): boolean {
   if (subscriptionCertificateAuthority(res) !== want.certificateAuthority) return false;
-  if (!want.tlsConfigurationId) return true;
-  return subscriptionConfigurationId(res) === want.tlsConfigurationId;
+  // The EFFECTIVE configuration on both sides: an intent that names none gets
+  // the account's default one (and so does the traffic CNAME), and a
+  // subscription without the relationship is on the default one too.
+  const effective = want.tlsConfigurationId ?? defaultConfigurationId;
+  if (effective === undefined) return true;
+  return (subscriptionConfigurationId(res) ?? defaultConfigurationId) === effective;
+}
+
+/** The account's default TLS configuration (what an intent that names none fronts through). */
+export function defaultConfigurationIdOf(doc: FastlyJsonApiCollection): string | undefined {
+  const configs = doc.data.filter((c) => c.type === 'tls_configuration');
+  return (
+    configs.find((c) => (c.attributes as { default?: unknown } | undefined)?.default === true) ??
+    configs[0]
+  )?.id;
 }
 
 /** The subscriptions of a listing that cover exactly `name` (a hostname or a wildcard). */
@@ -552,17 +637,20 @@ function intentOfCfg(cfg: FastlyConfig): {
  * configuration), `absent` when none does, `ambiguous` otherwise (several, or
  * one ordered differently: another CA's certificate is not ours to reuse).
  */
-function sharedSubscriptionOf(
-  doc: FastlyJsonApiCollection,
+async function sharedSubscriptionOf(
+  api: FastlyApi,
   name: string,
   cfg: FastlyConfig,
-):
+): Promise<
   | { status: 'found'; resource: FastlyJsonApiResource }
   | { status: 'absent' }
-  | { status: 'ambiguous'; candidates: FastlyJsonApiResource[] } {
-  const covering = coveringSubscriptions(doc, name);
+  | { status: 'ambiguous'; candidates: FastlyJsonApiResource[] }
+> {
+  const covering = coveringSubscriptions(await api.listTlsSubscriptionsForDomain(name), name);
   if (covering.length === 0) return { status: 'absent' };
-  if (covering.length > 1 || !subscriptionMatchesIntent(covering[0]!, intentOfCfg(cfg)))
+  if (covering.length > 1) return { status: 'ambiguous', candidates: covering };
+  const defaultId = defaultConfigurationIdOf(await api.listTlsConfigurations());
+  if (!subscriptionMatchesIntent(covering[0]!, intentOfCfg(cfg), defaultId))
     return { status: 'ambiguous', candidates: covering };
   return { status: 'found', resource: covering[0]! };
 }
@@ -582,6 +670,14 @@ function sharedSubscriptionResource(
 }
 
 // --- what a waiting issuance reports -------------------------------------------------
+
+/**
+ * A shared certificate this close to expiry (or past it) is raised even when the
+ * provider names no reason: its renewal is late. Certainly's 30-day
+ * certificates renew with about ten days left, so a week left means the renewal
+ * is days overdue, never a renewal that is merely due.
+ */
+export const CERTIFICATE_EXPIRY_WARN_MS = 7 * 24 * 60 * 60_000;
 
 /** Unnamed warnings are reported only once issuance has waited this long (Certainly issues in minutes). */
 export const TLS_WARNING_GRACE_MS = 5 * 60_000;
@@ -676,9 +772,15 @@ async function awaitOutcome(
   ledger: Ledger,
   now: number = Date.now(),
 ): Promise<StepOutcome> {
-  const doc = await fastlyApiFor(cfg).getTlsSubscription(opRef, 'tls_authorizations');
+  const doc = await fastlyApiFor(cfg).getTlsSubscription(
+    opRef,
+    'tls_authorizations,tls_certificates',
+  );
   const state = subscriptionState(doc);
-  if (state === 'issued' || state === 'renewing') {
+  // Issued (or renewing) AND a certificate still valid: Fastly keeps a
+  // subscription `renewing` for days past the old certificate's expiry
+  // before it fails, and an expired certificate fronts nobody.
+  if (subscriptionServes(doc, now)) {
     const hostname = fastlyHostnameOf(ledger);
     return { status: 'done', resources: [], ...(hostname ? { addresses: { hostname } } : {}) };
   }
@@ -688,8 +790,22 @@ async function awaitOutcome(
   const startedAt = stepOf(ledger, step.id)?.startedAt;
   const longWait = startedAt !== undefined && now - startedAt >= TLS_WARNING_GRACE_MS;
   const code =
-    tlsAuthorizationCode(doc, { generic: longWait }) ?? (await challengeRecordProblem(cfg, doc));
+    tlsAuthorizationCode(doc, { generic: longWait }) ??
+    (await challengeRecordProblem(cfg, doc)) ??
+    (state === 'issued' || state === 'renewing' ? 'certificate_expiring' : undefined);
   return { status: 'requested', opRef, resources: [], ...(code ? { code } : {}) };
+}
+
+/**
+ * Whether a subscription document (with `tls_certificates` included) serves a
+ * certificate now: issued or renewing, and its latest certificate not past its
+ * `not_after`. A document without certificates is judged by its state alone.
+ */
+export function subscriptionServes(doc: unknown, now: number = Date.now()): boolean {
+  const state = subscriptionState(doc);
+  if (state !== 'issued' && state !== 'renewing') return false;
+  const notAfter = latestNotAfter(doc);
+  return notAfter === undefined || Date.parse(notAfter) > now;
 }
 
 /** The latest `not_after` of the certificates a `?include=tls_certificates` document carries. */
@@ -721,11 +837,13 @@ async function caaPreflight(cfg: FastlyConfig): Promise<
     }
   | undefined
 > {
-  if (!cfg.dns?.zoneName) return undefined;
-  const zone = normalizeZoneName(cfg.dns.zoneName);
+  const zone = fastlyZoneOf(cfg);
+  if (!zone) return undefined;
   const wildcard = certificateScopeOf(cfg) === 'wildcard';
+  // One front's name: a label under the zone that nothing serves, so a zone
+  // wildcard (CNAME or CAA) answers for it as it would for a new front.
   const v = await checkCaa({
-    name: wildcard ? `*.${zone}` : zone,
+    name: wildcard ? `*.${zone}` : caaProbeName(zone),
     certificateAuthority: cfg.certificateAuthority,
     lookup: caaLookup(),
   });
@@ -884,40 +1002,72 @@ function versionlessResource(
 
 /**
  * The ACME step of a WILDCARD edge, shared by the step and its discovery: the
- * record at `_acme-challenge.<zone>` carrying the subscription's marker is
- * ours (found); a record there without it is somebody else's (ambiguous).
+ * record at `_acme-challenge.<zone>` carrying this customer's marker for this
+ * subscription is ours (found). Our own marker for a subscription that no
+ * longer exists is stale: absent, and the step replaces it. Anything else
+ * there (another customer's marker, no marker, our marker for a subscription
+ * that still exists) is somebody else's: ambiguous, recorded as candidates
+ * that are never deleted.
  */
 async function sharedAcmeRecord(
   cfg: FastlyConfig,
+  api: FastlyApi,
   ledger: Ledger,
   hostname: string,
 ): Promise<
   | { status: 'found'; resource: ChildResource }
-  | { status: 'absent'; name: string; marker: string; dns: DnsClient }
+  | { status: 'absent'; marker: string; stale: DnsRecord[]; dns: DnsClient }
   | { status: 'ambiguous'; candidates: ChildResource[] }
 > {
   const sub = firstResource(ledger, 'tls_subscription');
   if (!sub) throw ledgerIncomplete('acme');
+  const customerId = (await api.getLoggedInCustomer()).id;
+  if (!customerId)
+    throw refusal('acme', 'customer_unknown', 'the provider did not name the customer');
   const name = acmeChallengeName(wildcardBase(wildcardNameFor(hostname)));
-  const marker = sharedAcmeMarker(sub.resourceId);
+  const marker = sharedAcmeMarker(customerId, sub.resourceId);
   const dns = await dnsClientFor(cfg);
   const records = await dns.findRecordsByName(name, 'CNAME');
   const ours = records.find((r) => r.comment === marker);
-  if (ours)
-    return {
-      status: 'found',
-      resource: { ...dnsResource('acme', ours, dns, true), ownership: 'adopted' },
-    };
-  if (records.length > 0)
+  const stale: DnsRecord[] = [];
+  if (ours) {
+    // Ours, but is it still what the provider validates with? A record edited
+    // by hand, or a challenge the provider moved for a renewal, is replaced
+    // like a stale one; with no challenge on offer there is nothing to check.
+    const challenge = managedDnsChallenge(
+      await api.getTlsSubscription(sub.resourceId, 'tls_authorizations'),
+    );
+    if (!challenge || sameDnsName(ours.content, challenge.values[0]!))
+      return {
+        status: 'found',
+        resource: { ...dnsResource('acme', ours, dns, true), ownership: 'adopted' },
+      };
+    stale.push(ours);
+  }
+  const foreign: DnsRecord[] = [];
+  for (const r of records) {
+    if (r === ours) continue;
+    const m = parseSharedAcmeMarker(r.comment);
+    if (!m || m.customerId !== customerId) {
+      foreign.push(r);
+      continue;
+    }
+    // Our own marker: stale only once its subscription is gone for good.
+    let gone = false;
+    try {
+      await api.getTlsSubscription(m.subscriptionId);
+    } catch (e) {
+      if (!isFastlyNotFound(e)) throw e;
+      gone = true;
+    }
+    (gone ? stale : foreign).push(r);
+  }
+  if (foreign.length > 0)
     return {
       status: 'ambiguous',
-      candidates: records.map((r) => ({
-        kind: 'dns_record',
-        resourceId: r.id,
-        ownership: 'adopted' as const,
-      })),
+      candidates: foreign.map((r) => candidateOf(dnsResource('acme', r, dns, true))),
     };
-  return { status: 'absent', name, marker, dns };
+  return { status: 'absent', marker, stale, dns };
 }
 
 /** Every domain a service serves: its version's classic domains and its versionless ones. */
@@ -1168,6 +1318,7 @@ function destroyRank(r: LedgerResource): number {
  */
 async function versionlessDnsReadiness(
   api: FastlyApi,
+  cfg: FastlyConfig,
   domain: LedgerResource,
   serviceId: string,
   ledger: Ledger,
@@ -1179,8 +1330,26 @@ async function versionlessDnsReadiness(
     return isFastlyNotFound(e) ? 'pending' : 'unknown';
   }
   if (d.service_id !== serviceId) return 'pending';
-  const traffic = resourcesOfKind(ledger, 'dns_record').some((r) => metaOf(r).role === 'traffic');
-  return traffic || d.activated === true ? 'ready' : 'pending';
+  const traffic = resourcesOfKind(ledger, 'dns_record').find(
+    (r) => metaOf(r).role === 'traffic' && metaOf(r).candidate !== true,
+  );
+  if (!traffic) return d.activated === true ? 'ready' : 'pending';
+  // The record as the zone holds it NOW: still there, and still pointing at
+  // the CNAME target of the TLS configuration the front uses.
+  try {
+    const meta = metaOf(traffic);
+    const record = await (
+      await dnsClientFor(cfg)
+    ).getRecord(typeof meta.recordId === 'string' ? meta.recordId : traffic.resourceId);
+    if (!record) return 'pending';
+    const target = parseTrafficCname(
+      await api.listTlsConfigurations('dns_records'),
+      cfg.tlsConfigurationId,
+    );
+    return target && sameDnsName(record.content, target) ? 'ready' : 'pending';
+  } catch {
+    return 'unknown';
+  }
 }
 
 // --- the adapter ---------------------------------------------------------------------
@@ -1227,33 +1396,87 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
    * without a DNS zone). Never orders anything.
    */
   async sharedCertificate(cfg): Promise<SharedCertificateStatus | null> {
-    if (certificateScopeOf(cfg) !== 'wildcard' || !cfg.dns?.zoneName) return null;
-    const name = `*.${normalizeZoneName(cfg.dns.zoneName)}`;
+    const zone = fastlyZoneOf(cfg);
+    if (!zone) return null;
+    const name = `*.${zone}`;
     const api = fastlyApiFor(cfg);
-    const found = sharedSubscriptionOf(await api.listTlsSubscriptionsForDomain(name), name, cfg);
-    if (found.status === 'absent') return { name, state: 'absent' };
-    if (found.status === 'ambiguous') return { name, state: 'ambiguous' };
+    const found = await sharedSubscriptionOf(api, name, cfg);
+    // An account switched back to one certificate per front still shows the
+    // wildcard it left behind, so it can be removed; it never shows "absent".
+    const wildcard = certificateScopeOf(cfg) === 'wildcard';
+    if (found.status === 'absent') return wildcard ? { name, state: 'absent' } : null;
+    if (found.status === 'ambiguous') return wildcard ? { name, state: 'ambiguous' } : null;
     const doc = await api.getTlsSubscription(
       found.resource.id,
       'tls_authorizations,tls_certificates',
     );
     const state = subscriptionState(doc) ?? 'unknown';
-    const waiting = state !== 'issued' && state !== 'renewing';
+    const notAfter = latestNotAfter(doc);
+    // A renewal is a wait too: what holds it up is reported while it lasts,
+    // and a certificate whose renewal is late (it expires within a week, or
+    // has) is raised even when the provider names no reason.
     const code: L7CertificateCode | undefined =
       state === 'failed'
         ? 'tls_failed'
-        : waiting
-          ? (tlsAuthorizationCode(doc, { generic: true }) ??
-            (await challengeRecordProblem(cfg, doc)))
-          : undefined;
-    const notAfter = latestNotAfter(doc);
+        : state === 'issued'
+          ? undefined
+          : (tlsAuthorizationCode(doc, { generic: true }) ??
+            (await challengeRecordProblem(cfg, doc)));
+    const late =
+      notAfter !== undefined && Date.parse(notAfter) - Date.now() < CERTIFICATE_EXPIRY_WARN_MS;
+    const reported = code ?? (late ? 'certificate_expiring' : undefined);
     return {
       name,
       subscriptionId: found.resource.id,
       state,
-      ...(code ? { code } : {}),
+      ...(reported ? { code: reported } : {}),
       ...(notAfter ? { notAfter } : {}),
     };
+  },
+
+  /**
+   * Remove the account's wildcard and OUR records at its challenge name, for
+   * an operator who no longer wants it (the caller refuses while a live edge
+   * fronts through it). A wildcard this account would not order is not ours to
+   * delete (`shared_certificate_ambiguous`); a record with another customer's
+   * marker, or none, is never touched.
+   */
+  async removeSharedCertificate(cfg, opts): Promise<{ removed: boolean; code?: string }> {
+    const zone = fastlyZoneOf(cfg);
+    if (!zone) return { removed: false, code: 'dns_zone_missing' };
+    const api = fastlyApiFor(cfg);
+    const found = await sharedSubscriptionOf(api, `*.${zone}`, cfg);
+    if (found.status === 'ambiguous')
+      return { removed: false, code: 'shared_certificate_ambiguous' };
+    // Only a wildcard an edge of this account ORDERED is ever deleted: one it
+    // found and reused may still serve somebody else's services.
+    if (found.status === 'found' && !opts.ordered.includes(`tls_subscription:${found.resource.id}`))
+      return { removed: false, code: 'shared_certificate_not_ours' };
+    if (found.status === 'found') {
+      try {
+        await api.deleteTlsSubscription(found.resource.id);
+      } catch (e) {
+        if (!isFastlyNotFound(e)) throw e;
+      }
+    }
+    const customerId = (await api.getLoggedInCustomer()).id;
+    if (customerId) {
+      const dns = await dnsClientFor(cfg);
+      for (const r of await dns.findRecordsByName(acmeChallengeName(zone), 'CNAME')) {
+        const m = parseSharedAcmeMarker(r.comment);
+        if (!m || m.customerId !== customerId) continue;
+        let gone = m.subscriptionId === (found.status === 'found' ? found.resource.id : null);
+        if (!gone)
+          try {
+            await api.getTlsSubscription(m.subscriptionId);
+          } catch (e) {
+            if (!isFastlyNotFound(e)) throw e;
+            gone = true;
+          }
+        if (gone) await dns.deleteRecord(r.id);
+      }
+    }
+    return { removed: found.status === 'found' };
   },
 
   /** The account form offers the TLS configurations this token can see. */
@@ -1390,11 +1613,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           // reused, ordered only when none exists (the step holds the
           // account's certificate lock, so two edges never both order it).
           const name = wildcardNameFor(hostname);
-          const found = sharedSubscriptionOf(
-            await api.listTlsSubscriptionsForDomain(name),
-            name,
-            cfg,
-          );
+          const found = await sharedSubscriptionOf(api, name, cfg);
           if (found.status === 'found')
             return {
               status: 'done',
@@ -1434,7 +1653,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         if (!sub) throw ledgerIncomplete(step.id);
         let shared: Awaited<ReturnType<typeof sharedAcmeRecord>> | null = null;
         if (certificateScopeOf(cfg) === 'wildcard') {
-          shared = await sharedAcmeRecord(cfg, ledger, hostname);
+          shared = await sharedAcmeRecord(cfg, api, ledger, hostname);
           if (shared.status === 'found') return { status: 'done', resources: [shared.resource] };
           if (shared.status === 'ambiguous')
             throw refusal(
@@ -1463,6 +1682,12 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           });
         }
         const dns = await dnsClientFor(cfg);
+        // Our own record for a wildcard subscription that is gone (it failed
+        // and was deleted at the provider): the name takes one CNAME, so it is
+        // replaced. Only a record carrying OUR customer's marker is ever
+        // removed here (`sharedAcmeRecord`).
+        if (shared?.status === 'absent')
+          for (const old of shared.stale) await dns.deleteRecord(old.id);
         const record = await dns.createRecord({
           type: 'CNAME',
           name:
@@ -1470,7 +1695,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
             acmeChallengeName(wildcardBase(certificateNameOf(cfg, hostname))),
           content: challenge.values[0],
           proxied: false,
-          comment: shared ? sharedAcmeMarker(sub.resourceId) : spec.name,
+          comment: shared?.status === 'absent' ? shared.marker : spec.name,
           ...dnsRecordOptions(tpl, false),
         });
         return { status: 'done', resources: [dnsResource('acme', record, dns, !!shared)] };
@@ -1592,7 +1817,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
             return { status: 'found', resources: [versionlessResource(named[0]!, 'adopted')] };
           return {
             status: 'ambiguous',
-            candidates: named.map((d) => versionlessResource(d, 'adopted')),
+            candidates: named.map((d) => candidateOf(versionlessResource(d, 'adopted'))),
           };
         }
         try {
@@ -1643,17 +1868,13 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           // The shared wildcard: the same rule as the step, so a lost order
           // response is recognised and never ordered twice.
           const name = wildcardNameFor(hostname);
-          const found = sharedSubscriptionOf(
-            await api.listTlsSubscriptionsForDomain(name),
-            name,
-            cfg,
-          );
+          const found = await sharedSubscriptionOf(api, name, cfg);
           if (found.status === 'absent') return { status: 'confirmed_absent' };
           if (found.status === 'ambiguous')
             return {
               status: 'ambiguous',
               candidates: found.candidates.map((d) =>
-                sharedSubscriptionResource(d.id, name, 'adopted'),
+                candidateOf(sharedSubscriptionResource(d.id, name, 'adopted')),
               ),
             };
           return {
@@ -1666,14 +1887,12 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         // one), and adopting whichever the API listed first would let a destroy
         // delete a certificate this edge never created. A subscription is this
         // step's only when it is the single one covering the hostname AND its
-        // certificate authority (plus the TLS configuration, when the frozen
-        // intent names one) is what this edge was planned with.
-        const doc = await api.listTlsSubscriptionsForDomain(hostname);
-        const wanted = hostname.trim().toLowerCase();
-        const covering = doc.data.filter(
-          (d) =>
-            d.type === 'tls_subscription' &&
-            subscriptionDomains(d).some((n) => n.trim().toLowerCase() === wanted),
+        // certificate authority and its EFFECTIVE TLS configuration (the
+        // account's default one when the intent names none) are what this
+        // edge was planned with.
+        const covering = coveringSubscriptions(
+          await api.listTlsSubscriptionsForDomain(hostname),
+          hostname,
         );
         if (covering.length === 0) return { status: 'confirmed_absent' };
         const candidates = covering.map((d) => ({
@@ -1682,19 +1901,22 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           ownership: 'adopted' as const,
           meta: { hostname },
         }));
-        const want = {
-          certificateAuthority: cfg.certificateAuthority,
-          ...(cfg.tlsConfigurationId ? { tlsConfigurationId: cfg.tlsConfigurationId } : {}),
-        };
-        if (covering.length > 1 || !subscriptionMatchesIntent(covering[0]!, want))
-          return { status: 'ambiguous', candidates };
+        const defaultId =
+          covering.length === 1
+            ? defaultConfigurationIdOf(await api.listTlsConfigurations())
+            : undefined;
+        if (
+          covering.length > 1 ||
+          !subscriptionMatchesIntent(covering[0]!, intentOfCfg(cfg), defaultId)
+        )
+          return { status: 'ambiguous', candidates: candidates.map(candidateOf) };
         return { status: 'found', resources: candidates };
       }
       case 'create_dns_acme':
       case 'create_dns_record': {
         if (!hostname) return { status: 'confirmed_absent' };
         if (step.kind === 'create_dns_acme' && certificateScopeOf(cfg) === 'wildcard') {
-          const shared = await sharedAcmeRecord(cfg, ledger, hostname);
+          const shared = await sharedAcmeRecord(cfg, api, ledger, hostname);
           if (shared.status === 'found') return { status: 'found', resources: [shared.resource] };
           if (shared.status === 'ambiguous')
             return { status: 'ambiguous', candidates: shared.candidates };
@@ -1711,11 +1933,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         if (ours.length === 0)
           return {
             status: 'ambiguous',
-            candidates: records.map((r) => ({
-              kind: 'dns_record',
-              resourceId: r.id,
-              ownership: 'adopted' as const,
-            })),
+            candidates: records.map((r) => candidateOf(dnsResource(role, r, dns))),
           };
         return {
           status: 'found',
@@ -1726,9 +1944,8 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       case 'await_tls': {
         const sub = firstResource(ledger, 'tls_subscription');
         if (!sub) return { status: 'confirmed_absent' };
-        const doc = await api.getTlsSubscription(sub.resourceId);
-        const state = subscriptionState(doc);
-        if (state === 'issued' || state === 'renewing')
+        const doc = await api.getTlsSubscription(sub.resourceId, 'tls_certificates');
+        if (subscriptionServes(doc))
           return {
             status: 'found',
             resources: [],
@@ -1761,7 +1978,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     const readiness: EdgeReadiness = { dns: 'unknown', certificate: 'unknown' };
     const versionless = firstResource(ledger, 'versionless_domain');
     if (versionless) {
-      readiness.dns = await versionlessDnsReadiness(api, versionless, svc.id, ledger);
+      readiness.dns = await versionlessDnsReadiness(api, cfg, versionless, svc.id, ledger);
     } else if (hostname) {
       try {
         const check = parseDomainCheck(await api.checkDomain(svc.id, svc.version, hostname));
@@ -1774,14 +1991,18 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     }
     const sub = firstResource(ledger, 'tls_subscription');
     let certState: string | undefined;
+    let expired = false;
     if (sub) {
       try {
-        certState = subscriptionState(await api.getTlsSubscription(sub.resourceId));
+        const doc = await api.getTlsSubscription(sub.resourceId, 'tls_certificates');
+        certState = subscriptionState(doc);
+        // Issued or renewing with a certificate past its expiry serves nothing.
+        expired = (certState === 'issued' || certState === 'renewing') && !subscriptionServes(doc);
       } catch (e) {
         if (!isFastlyNotFound(e)) throw e;
       }
     }
-    readiness.certificate = certificateReadiness(certState);
+    readiness.certificate = expired ? 'pending' : certificateReadiness(certState);
 
     const ready = readiness.dns === 'ready' && readiness.certificate === 'ready' && versionActive;
     const state: EdgeDescription['state'] =
@@ -1795,7 +2016,11 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       // DNS and certificate existence say nothing about the origin, so an L7
       // front never claims member health (capabilities: memberHealth false).
       health: 'unknown',
-      ...(readiness.certificate === 'failed' ? { code: 'tls_failed' } : {}),
+      ...(readiness.certificate === 'failed'
+        ? { code: 'tls_failed' }
+        : expired
+          ? { code: 'certificate_expiring' }
+          : {}),
       readiness,
     };
   },
@@ -1826,7 +2051,8 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         addresses: hostname ? { hostname } : {},
         members: backends.map((b) => ({
           address: b.address ?? b.hostname ?? '',
-          port: b.use_ssl ? 443 : 80,
+          // The port Fastly dials: its own field (80 when the API has none).
+          port: b.port ?? 80,
         })),
         listeners: [{ port: 443, protocol: 'https' }],
       },
@@ -2002,7 +2228,10 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
   planDestroy(_cfg, ledger) {
     const svc = firstResource(ledger, 'service');
     const shared = !!svc && metaOf(svc).shared === true;
-    const live = ledger.resources.filter((r) => r.deleteState !== 'confirmed_gone');
+    // A candidate discovery could not prove is this edge's is never destroyed.
+    const live = ledger.resources.filter(
+      (r) => r.deleteState !== 'confirmed_gone' && metaOf(r).candidate !== true,
+    );
     const owned = shared
       ? live.filter(
           (r) =>
@@ -2022,6 +2251,8 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     const svc = firstResource(ledger, 'service');
     const shared = !!svc && metaOf(svc).shared === true;
     const serviceGone = !svc || svc.deleteState === 'confirmed_gone';
+    // Never somebody else's: a candidate is left exactly as it was found.
+    if (metaOf(r).candidate === true) return { status: 'confirmed_gone' };
     try {
       switch (r.kind) {
         case 'dns_record': {
@@ -2089,6 +2320,7 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
   async confirmDestroyed(cfg, r, ledger) {
     const api = fastlyApiFor(cfg);
     const svc = firstResource(ledger, 'service');
+    if (metaOf(r).candidate === true) return { status: 'confirmed_gone' };
     try {
       switch (r.kind) {
         case 'dns_record': {

@@ -162,6 +162,10 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'providers' && b && c === 'rotate-credentials' && !d) {
     return 'admin.edges.provider-call';
   }
+  // Removing a shared certificate deletes it (and its ACME record) at the provider.
+  if (a === 'providers' && b && c === 'shared-certificate' && d === 'remove' && !parts[4]) {
+    return 'admin.edges.provider-call';
+  }
   // The test link fetches the credential body and lists the backend Hosts.
   if (a === 'edges' && b && c === 'test-link' && !d) return 'admin.edges.provider-call';
   if (a === 'relays' && b === 'node-candidates' && c === 'refresh') {
@@ -869,6 +873,15 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         );
       return notFound();
     }
+    if (c === 'shared-certificate' && d === 'remove' && !parts[4])
+      // A wildcard no live edge fronts through: deleted at the provider with
+      // the ACME record FCP wrote for it (refused while one is in use).
+      return json(
+        await ctx.runAction(internal.edgeProviderOps.removeSharedCertificate, {
+          accountId: id<'edgeProviderAccounts'>(b),
+          ...act,
+        }),
+      );
     if (c === 'rotate-credentials' && !d) {
       // New secret (+ its non-secret identifiers) → tested against the provider,
       // applied only on a pass, qualification kept. The body is sealed in transit

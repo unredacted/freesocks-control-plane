@@ -467,6 +467,15 @@ export interface EdgeProvider<
    * (null when the account does not use one). A read; never orders anything.
    */
   sharedCertificate?(cfg: Cfg): Promise<SharedCertificateStatus | null>;
+  /**
+   * Delete that shared certificate and the records FCP wrote for it (the
+   * caller refuses while a live edge uses it). `code` names why nothing was
+   * removed (a certificate the account would not have ordered is not its own).
+   */
+  removeSharedCertificate?(
+    cfg: Cfg,
+    opts: { ordered: readonly string[] },
+  ): Promise<{ removed: boolean; code?: string }>;
 
   /**
    * Ledger resources in destroy order, skipping gone ones. Ordered by KIND

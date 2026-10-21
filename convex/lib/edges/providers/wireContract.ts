@@ -556,8 +556,9 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'POST',
         path: '^/service/[^/]+/version/[^/]+/backend$',
-        purpose: 'create the single origin backend (only fields the WebSocket path honours)',
-        body: ['name', 'address', 'use_ssl', 'override_host'],
+        purpose:
+          'create the single origin backend, its port always sent (the API defaults it to 80) with the TLS name for SNI and verification',
+        body: ['name', 'address', 'port', 'use_ssl', 'override_host'],
       },
       {
         method: 'GET',

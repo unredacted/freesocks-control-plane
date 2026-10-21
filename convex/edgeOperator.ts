@@ -75,7 +75,8 @@ import {
   rotationListenerKey,
   selectionContext,
 } from './edgeRotations';
-import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
+import { accountTested, API_FAILING_AFTER, sharedCertificateUsers } from './edgeProviderAccounts';
+import { accountOptionDefaultsOf } from './lib/edges/choices';
 import {
   defaultLocationOf,
   effectiveTemplateOfLocation,
@@ -1523,11 +1524,20 @@ export const attention = internalQuery({
       // (a CAA record, the validation record) or failed: every new front of
       // the account waits on it too.
       const sc = a.sharedCertificate;
-      if (sc && (sc.code || sc.state === 'failed')) {
+      // Raised for a wildcard the account (its default for new nodes, or one
+      // of its live fronts) still uses; one nothing uses any more is only shown.
+      const usesShared =
+        !!sc &&
+        (accountOptionDefaultsOf(a).certificateScope === 'wildcard' ||
+          (await sharedCertificateUsers(ctx.db, a._id)) > 0);
+      if (sc && usesShared && (sc.code || sc.state === 'failed')) {
+        // Critical once the fronts are about to lose (or lost) their certificate.
+        const daysLeft = sc.notAfter ? (Date.parse(sc.notAfter) - now) / 86_400_000 : null;
         items.push({
           id: `certificate_waiting:account:${a._id}`,
           kind: 'certificate_waiting',
-          severity: sc.state === 'failed' ? 'critical' : 'warning',
+          severity:
+            sc.state === 'failed' || (daysLeft !== null && daysLeft < 3) ? 'critical' : 'warning',
           relaySlug: null,
           relayId: null,
           edgeId: null,
@@ -1535,7 +1545,13 @@ export const attention = internalQuery({
           accountId: a._id as string,
           rotationId: null,
           code: sc.code ?? 'tls_failed',
-          facts: { name: a.name, provider: a.provider, certificate: sc.name, state: sc.state },
+          facts: {
+            name: a.name,
+            provider: a.provider,
+            certificate: sc.name,
+            state: sc.state,
+            notAfter: sc.notAfter ?? null,
+          },
           action: 'open_account',
           since: iso(sc.checkedAt),
         });

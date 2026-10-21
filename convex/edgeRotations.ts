@@ -29,6 +29,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { appendRunEvent } from './lib/edges/setupRuns';
+import { fastlyCertificateLockKey } from './lib/edges/lockKeys';
 import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
 import {
   EDGE_PLUMBING,
@@ -690,13 +691,15 @@ export async function collectStartBlockers(
     const accountId = a.requestedAccountId ?? named?.accountId;
     const acct = accountId ? await ctx.db.get(accountId) : null;
     const certificate = acct ? certificateRefusalOf(acct) : null;
-    if (certificate === 'caa_forbids_ca')
+    if (certificate)
       push(
-        'edge.caa_forbids_ca',
-        'The zone’s CAA records do not let the account’s certificate authority issue',
+        `edge.${certificate}`,
+        certificate === 'caa_forbids_ca'
+          ? 'The zone’s CAA records do not let the account’s certificate authority issue'
+          : certificate === 'shared_certificate_failed'
+            ? 'The account’s shared certificate failed to issue'
+            : 'The zone’s wildcard is covered by a certificate this account would not order',
       );
-    else if (certificate)
-      push('edge.shared_certificate_failed', 'The account’s shared certificate failed to issue');
   }
   if (listenerId) {
     const listener = await ctx.db.get(listenerId);
@@ -3161,7 +3164,7 @@ export function stepLockKey(edge: Edge, stepKind: string): string | null {
     intent?.certificateScope === 'wildcard' &&
     edge.accountId
   )
-    return `fastly-certificate:${edge.accountId}:${intent.zoneId}`;
+    return fastlyCertificateLockKey(edge.accountId, intent.zoneId);
   if (stepKind !== 'create_origin_rule') return null;
   return intent?.zoneId ? `cloudflare-zone:${intent.zoneId}` : null;
 }

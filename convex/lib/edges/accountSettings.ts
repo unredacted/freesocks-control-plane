@@ -67,6 +67,12 @@ export const EDGE_SETTINGS_SCHEMAS = {
     type: z.literal('fastly'),
     dnsAccountId: z.string().min(1).max(64),
     tlsConfigurationId: z.string().min(1).max(64).optional(),
+    // How a new front's hostname is attached to its service: its own
+    // (versionless, Domain Management) domain, or a domain on the service
+    // version (classic; Fastly offers it only to accounts from before
+    // 2025-09-16). Absent = versionless for a new edge (EDGE_INTENT_FACTS).
+    // An account property, not a node's choice: it stays a setting.
+    domainModel: z.enum(['versionless', 'classic']).optional(),
   }),
 } as const;
 
@@ -156,14 +162,43 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
   scaleway: [],
   ovh: [],
   cloudflare: [],
-  fastly: ['tlsConfigurationId'],
+  fastly: ['tlsConfigurationId', 'domainModel'],
 };
 
 /**
- * Facts every NEW edge freezes into its intent that no operator chooses (how
- * the provider is driven now); an intent without one predates it and keeps
- * `legacy`. `edgeProviderOps.loadAdapter` gives the adapter `planned` when it
- * plans and the edge's own value (or `legacy`) afterwards.
+ * Settings whose change makes the account's last credential test answer for
+ * something else (the CAA verdict is for this CA, scope and zone; the shared
+ * certificate for this zone): changing one marks the account untested
+ * (`retest_required`) until a new test runs. The authority and the scope are
+ * provider options now: a change of their account defaults does the same
+ * (`edgeProviderAccounts.update`).
+ */
+export const EDGE_RETEST_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
+  gcore: [],
+  upcloud: [],
+  scaleway: [],
+  ovh: [],
+  cloudflare: [],
+  fastly: ['dnsAccountId', 'tlsConfigurationId'],
+};
+
+/**
+ * Settings a NEW account gets when its payload leaves them out, where the
+ * schema itself must not default them (an existing account without the key
+ * keeps its older behaviour until it is switched). Options a new account
+ * starts from are `EDGE_NEW_ACCOUNT_OPTION_DEFAULTS` (providers/templates.ts).
+ */
+export const EDGE_NEW_ACCOUNT_SETTINGS: Partial<Record<EdgeProviderId, Record<string, unknown>>> = {
+  fastly: { domainModel: 'versionless' },
+};
+
+/**
+ * How the provider is driven, frozen into every NEW edge's intent: `planned`
+ * unless the account's setting of the same name says otherwise (an intent
+ * default the operator may set, `domainModel`), while an intent without the
+ * key predates it and keeps `legacy`. `edgeProviderOps.loadAdapter` gives the
+ * adapter the account's choice (else `planned`) when it plans, and the edge's
+ * own value (else `legacy`) afterwards.
  */
 export const EDGE_INTENT_FACTS: Record<
   EdgeProviderId,

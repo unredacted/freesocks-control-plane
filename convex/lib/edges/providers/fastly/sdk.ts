@@ -98,6 +98,8 @@ const Backend = z.looseObject({
   hostname: z.string().nullish(),
   port: z.number().nullish(),
   use_ssl: z.boolean().nullish(),
+  ssl_cert_hostname: z.string().nullish(),
+  ssl_sni_hostname: z.string().nullish(),
   override_host: z.string().nullish(),
   comment: z.string().nullish(),
 });
@@ -453,7 +455,12 @@ export interface FastlyApi {
 export interface FastlyBackendBody {
   name: string;
   address: string;
+  /** Always sent: the API defaults it to 80, `use_ssl` or not. */
+  port: number;
   use_ssl: boolean;
+  /** The origin's TLS name, for certificate verification and for SNI (https origins). */
+  ssl_cert_hostname?: string;
+  ssl_sni_hostname?: string;
   override_host: string;
   comment: string;
   /** Provider options (templates.ts `FASTLY_TEMPLATE_FIELDS`), sent only when chosen. */

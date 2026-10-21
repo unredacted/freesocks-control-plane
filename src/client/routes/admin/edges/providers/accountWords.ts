@@ -58,6 +58,7 @@ const ACRONYMS: Record<string, string> = {
 /** Keys whose generated words would read badly. */
 const SETTING_LABELS: Record<string, string> = {
   certificateScope: 'Certificates',
+  domainModel: 'Domains',
   caa: 'CAA records',
   caaIssuer: 'CA as CAA names it',
   caaCertificate: 'Checked for',
@@ -67,6 +68,10 @@ const SETTING_LABELS: Record<string, string> = {
 /** Enumerated values in words, per key. */
 const SETTING_VALUE_WORDS: Record<string, Record<string, string>> = {
   certificateScope: { wildcard: 'One wildcard for every front', per_host: 'One per front' },
+  domainModel: {
+    versionless: 'Its own domain, linked to the service',
+    classic: 'A domain on the service version (classic)',
+  },
   caa: {
     allows: 'Allow the certificate authority',
     no_records: 'None, so any certificate authority may issue',
@@ -155,19 +160,33 @@ export function sharedCertificateWords(
       : `${c.edges} live front${c.edges === 1 ? '' : 's'} use${c.edges === 1 ? 's' : ''} it.`;
   const checked = `Checked ${relativeTime(c.checkedAt, now)}.`;
   const waitsOn = c.code ? ` ${codeLabel(c.code)}.` : '';
+  const expiry = c.notAfter ? new Date(c.notAfter).toISOString().slice(0, 10) : null;
+  // A renewal that is late (it expires within a week, or has) outranks the state.
+  if (c.code === 'certificate_expiring' && c.state !== 'failed')
+    return {
+      label: 'Renewal late',
+      tone: 'danger',
+      detail: `${expiry ? `Valid until ${expiry}, and not renewed yet. ` : 'Not renewed yet. '}${users} ${checked}`,
+    };
   switch (c.state) {
     case 'issued':
       return {
         label: 'Issued',
         tone: 'success',
-        detail: `${c.notAfter ? `Valid until ${new Date(c.notAfter).toISOString().slice(0, 10)}, renewed by the provider. ` : ''}${users} ${checked}`,
+        detail: `${expiry ? `Valid until ${expiry}, renewed by the provider. ` : ''}${users} ${checked}`,
       };
     case 'renewing':
-      return {
-        label: 'Renewing',
-        tone: 'info',
-        detail: `Still valid while it renews. ${users} ${checked}`,
-      };
+      return c.code
+        ? {
+            label: 'Renewal waiting',
+            tone: 'warning',
+            detail: `Still valid${expiry ? ` until ${expiry}` : ''}, its renewal waits on: ${codeLabel(c.code)}. ${users} ${checked}`,
+          }
+        : {
+            label: 'Renewing',
+            tone: 'info',
+            detail: `Still valid while it renews. ${users} ${checked}`,
+          };
     case 'failed':
       return {
         label: 'Failed',

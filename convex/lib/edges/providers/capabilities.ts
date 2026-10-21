@@ -172,8 +172,10 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
   },
   // A service + domain + backend + WebSockets product + TLS subscription, with
   // the DNS records written into a Cloudflare account. Certificate issuance is
-  // asynchronous (minutes). The WebSockets path honours only name/address/
-  // use_ssl/override_host on the backend, hence the fixed origin port.
+  // asynchronous (minutes). The origin port is fixed to the scheme's own (443
+  // over TLS, 80 without) and sent explicitly: Fastly's WebSockets guide lists
+  // only name/address/use_ssl/override_host, yet dials the backend's `port`,
+  // which defaults to 80.
   fastly: {
     layer: 'l7',
     role: 'edge',

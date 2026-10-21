@@ -253,6 +253,7 @@ describe('fastly sdk wrapper: errors never carry bodies', () => {
       .createBackend('svc', 1, {
         name: 'origin',
         address: ORIGIN,
+        port: 443,
         use_ssl: true,
         override_host: HOST,
         comment: 'c',

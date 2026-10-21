@@ -252,6 +252,20 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       help: "A DNS provider account whose zone holds this account's names and their certificate challenges. Add the DNS account first.",
     },
     {
+      key: 'domainModel',
+      label: 'Domains',
+      kind: 'select',
+      step: 'placement',
+      from: 'fixed',
+      options: [
+        { id: 'versionless', label: 'Its own domain, linked to the service (recommended)' },
+        { id: 'classic', label: 'A domain on the service version (classic)' },
+      ],
+      required: true,
+      advanced: true,
+      help: 'How a new front’s name is attached to its service. Classic domains exist only on accounts created before September 2025; pick them if the provider refuses the other kind.',
+    },
+    {
       key: 'tlsConfigurationId',
       label: 'TLS configuration',
       kind: 'select',
@@ -285,6 +299,7 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
 /** The few settings with a sensible value before the operator picks anything. */
 export const DEFAULT_SETTINGS: Partial<Record<EdgeProviderId, Record<string, string>>> = {
   ovh: { endpoint: 'ovh-eu' },
+  fastly: { domainModel: 'versionless' },
 };
 
 export function credentialLabel(name: string): string {

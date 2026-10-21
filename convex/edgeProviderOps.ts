@@ -410,11 +410,19 @@ async function loadAdapter(
       else delete mutable[key];
     }
   }
-  // How the provider is driven: planning gets today's way, an existing edge
-  // the way it was built (an intent from before a fact existed: `legacy`).
+  // How the provider is driven: planning gets the account's choice, else
+  // today's way; an existing edge the way it was built (an intent from before
+  // a fact existed: `legacy`).
   for (const [key, fact] of Object.entries(EDGE_INTENT_FACTS[acct.provider])) {
     const frozen = (intent as unknown as Record<string, unknown> | null)?.[key];
-    mutable[key] = edgeId ? (typeof frozen === 'string' ? frozen : fact.legacy) : fact.planned;
+    const chosen = mutable[key];
+    mutable[key] = edgeId
+      ? typeof frozen === 'string'
+        ? frozen
+        : fact.legacy
+      : typeof chosen === 'string'
+        ? chosen
+        : fact.planned;
   }
   if (EDGE_PROVIDER_CAPABILITIES[acct.provider].needsDnsAccount) {
     let dnsAccountId = (acct.settings as { dnsAccountId?: string }).dnsAccountId;
@@ -728,6 +736,58 @@ async function recordSharedCertificate(
  * recorded on the account (the reconcile cron, so a renewal or a failure shows
  * on the account page and in attention). Orders nothing.
  */
+/**
+ * Remove the account's shared certificate at the provider, with the ACME
+ * record FCP wrote for it: an operator's explicit action for a wildcard no
+ * live edge fronts through any more (an account switched back to one
+ * certificate per front, or about to be deleted, which refuses while one is
+ * held). Refused while a live edge still uses it.
+ */
+export const removeSharedCertificate = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: (ctx, { accountId, actorAdminId }): Promise<{ ok: true; removed: boolean }> =>
+    tracked(ctx, accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
+      if (!provider.removeSharedCertificate)
+        throw new ConvexError({
+          code: 'validation',
+          message: 'This provider shares no certificate',
+        });
+      // Under the account's certificate lock, with the users counted again in
+      // the same transaction: a front cannot order or adopt the wildcard while
+      // it is being deleted, nor be planned on it unseen.
+      const opId = `remove-${Math.random().toString(36).slice(2)}`;
+      const begun = await ctx.runMutation(
+        internal.edgeProviderAccounts.beginSharedCertificateRemoval,
+        { id: accountId, opId },
+      );
+      if (!begun.ok)
+        throw new ConvexError({
+          code: `edge.${begun.code}`,
+          message:
+            begun.code === 'shared_certificate_in_use'
+              ? 'Live edges still front through the shared certificate'
+              : 'The shared certificate cannot be removed now',
+        });
+      try {
+        const res = await provider.removeSharedCertificate(cfg, { ordered: begun.ordered });
+        if (res.code)
+          throw new ConvexError({
+            code: `edge.${res.code}`,
+            message: 'The shared certificate cannot be removed by FCP',
+          });
+        await ctx.runMutation(internal.edgeProviderAccounts.noteSharedCertificateRemoved, {
+          id: accountId,
+          removed: res.removed,
+          actorAdminId,
+        });
+        return { ok: true as const, removed: res.removed };
+      } finally {
+        await ctx.runMutation(internal.edges.settleExternalLock, { key: begun.key, opId });
+      }
+    }),
+});
+
 export const refreshSharedCertificate = internalAction({
   args: { accountId: v.id('edgeProviderAccounts') },
   handler: (ctx, { accountId }): Promise<SharedCertificateStatus | null> =>
@@ -1049,7 +1109,8 @@ export const inventory = internalAction({
       // which is the thing that was asked for.
       try {
         const res = await provider.testCredentials(cfg);
-        if (!res.ok) await noteTestFailure(ctx, accountId, seen);
+        if (!res.ok && !NOT_API_FAILURES.has(res.code ?? ''))
+          await noteTestFailure(ctx, accountId, seen);
         await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
           id: accountId,
           ok: res.ok,

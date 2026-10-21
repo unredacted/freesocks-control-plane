@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { __setEdgeProviderForTests, edgeProviderFor } from './lib/edges/providers/registry';
 import type { EdgeProviderOpsFailure } from './edgeProviderOps';
-import { certificateRefusalOf } from './edgeProviderAccounts';
+import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer, registerRelay, wsListener } from './lib/edges/testing/fixtures';
 
@@ -1120,6 +1120,45 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     expect(seen[0]).toMatchObject({ domainModel: 'versionless', certificateScope: 'wildcard' });
   });
 
+  test('the account chooses the domain kind of NEW fronts; an edge keeps the one it froze', async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect((row.settings as { domainModel?: string }).domainModel).toBe('versionless');
+    const seen = standIn();
+    const edgeId = await edgeWithIntent(t, accountId, dnsId, { domainModel: 'versionless' });
+    // The operator switches the account to classic domains.
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: accountId,
+      settings: { ...row.settings, domainModel: 'classic' },
+    });
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.describe, {
+      accountId,
+      ledger: { steps: [], resources: [] },
+    });
+    expect(seen[0]).toMatchObject({ domainModel: 'classic' });
+    await t.action(internal.edgeProviderOps.describe, {
+      accountId,
+      ledger: { steps: [], resources: [] },
+      edgeId,
+    });
+    expect(seen[1]).toMatchObject({ domainModel: 'versionless' });
+  });
+
+  test('an inventory refresh that ends on the CAA refusal does not count as the provider failing', async () => {
+    const t = newT();
+    const { id: accountId } = await fastlyAccount(t);
+    standIn({
+      testCredentials: async () => ({ ok: false, code: 'caa_forbids_ca' }),
+    });
+    mockFetch(() => jsonRes({}));
+    for (let i = 0; i < 4; i++) await t.action(internal.edgeProviderOps.inventory, { accountId });
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(row.lastTestError).toBe('caa_forbids_ca');
+    expect(row.apiFailures ?? 0).toBe(0);
+  });
+
   test('a CAA refusal is recorded as the test result, and does not count as the provider failing', async () => {
     const t = newT();
     const { id: accountId } = await fastlyAccount(t);
@@ -1143,6 +1182,185 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     expect(row.lastTestError).toBe('caa_forbids_ca');
     expect(row.apiFailures ?? 0).toBe(0);
     expect(JSON.parse(row.observedSettings!)).toMatchObject({ caa: 'forbids' });
+  });
+
+  test('an unused wildcard FCP ordered is removed under the certificate lock; one it found is not', async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    const removed: Array<readonly string[]> = [];
+    let lockHeldDuringRemoval: unknown = null;
+    standIn({
+      sharedCertificate: async () => ({
+        name: '*.example.org',
+        subscriptionId: 'WILD1',
+        state: 'issued',
+      }),
+      removeSharedCertificate: async (_cfg: unknown, opts: { ordered: readonly string[] }) => {
+        removed.push(opts.ordered);
+        lockHeldDuringRemoval = await t.run((ctx) =>
+          ctx.db
+            .query('externalLocks')
+            .withIndex('by_key', (q) =>
+              q.eq('key', `fastly-certificate:${accountId}:${'a'.repeat(32)}`),
+            )
+            .unique(),
+        );
+        return { removed: true };
+      },
+    });
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    // Found and reused, never ordered by an edge of this account: not FCP's to delete,
+    // and so it does not hold up the account's deletion either.
+    await expect(
+      t.action(internal.edgeProviderOps.removeSharedCertificate, { accountId }),
+    ).rejects.toThrow(/shared_certificate_not_ours/);
+    let admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
+    expect(admin.sharedCertificate).toMatchObject({ orderedByFcp: false });
+
+    // An edge's certificate step ORDERED it: the settle records that on the account.
+    const edgeId = await edgeWithIntent(t, accountId, dnsId, {
+      domainModel: 'versionless',
+      certificateScope: 'wildcard',
+    });
+    await t.run((ctx) =>
+      ctx.db.patch(edgeId, {
+        status: 'provisioning',
+        currentOp: {
+          opId: 'op-1',
+          kind: 'provision_step',
+          target: 'tls',
+          attempt: 0,
+          claimedAt: Date.now(),
+          expiresAt: Date.now() + 60_000,
+        },
+      }),
+    );
+    await t.mutation(internal.edges.settleOp, {
+      edgeId,
+      opId: 'op-1',
+      addResources: [
+        {
+          kind: 'tls_subscription',
+          resourceId: 'WILD1',
+          ownership: 'created',
+          meta: { hostname: '*.example.org', shared: true, wildcard: true },
+        },
+      ],
+    });
+    admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
+    expect(admin.sharedCertificate).toMatchObject({ orderedByFcp: true, edges: 1 });
+    // While a live front uses it, it stays.
+    await expect(
+      t.action(internal.edgeProviderOps.removeSharedCertificate, { accountId }),
+    ).rejects.toThrow(/shared_certificate_in_use/);
+    expect(removed).toEqual([]);
+    await t.run((ctx) => ctx.db.patch(edgeId, { status: 'destroyed', currentOp: undefined }));
+    // Deleting the account now would strand it at the provider.
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.remove, { id: accountId }),
+    ).rejects.toThrow(/shared_certificate_present/);
+    expect(await t.action(internal.edgeProviderOps.removeSharedCertificate, { accountId })).toEqual(
+      { ok: true, removed: true },
+    );
+    expect(removed).toEqual([['tls_subscription:WILD1']]);
+    // The provisioning steps' lock was held while the provider call ran, and released after.
+    expect(lockHeldDuringRemoval).toMatchObject({ holderAccountId: accountId });
+    expect(await t.run((ctx) => ctx.db.query('externalLocks').collect())).toEqual([]);
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(row.sharedCertificate).toBeUndefined();
+    expect(row.orderedSharedResources).toEqual([]);
+    const audit = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'edge.provider_account.shared_certificate_removed'))
+        .collect(),
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.payload).toMatchObject({ certificate: '*.example.org', removed: true });
+  });
+
+  test('an edge step waits for a removal holding the lock, and takes it over once it lapsed', async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t);
+    const edgeId = await edgeWithIntent(t, accountId, dnsId, { certificateScope: 'wildcard' });
+    const key = `fastly-certificate:${accountId}:${'a'.repeat(32)}`;
+    await t.run((ctx) =>
+      ctx.db.insert('externalLocks', {
+        key,
+        holderAccountId: accountId,
+        opId: 'remove-1',
+        claimedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    expect(
+      await t.mutation(internal.edges.claimExternalLock, {
+        key,
+        edgeId,
+        opId: 'op-2',
+        ttlMs: 60_000,
+      }),
+    ).toMatchObject({ ok: false, code: 'edge.lock_busy' });
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query('externalLocks').unique())!;
+      await ctx.db.patch(row._id, { expiresAt: Date.now() - 1 });
+    });
+    expect(
+      await t.mutation(internal.edges.claimExternalLock, {
+        key,
+        edgeId,
+        opId: 'op-2',
+        ttlMs: 60_000,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  test('changing a certificate setting makes the account untested until a new test', async () => {
+    const t = newT();
+    const { id: accountId, dnsId } = await fastlyAccount(t, { certificateScope: 'per_host' });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: accountId, ok: true });
+    expect(accountTested((await t.run((ctx) => ctx.db.get(accountId)))!)).toBe(true);
+    // The domain kind is not a certificate setting: the test still stands.
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: accountId,
+      settings: {
+        dnsAccountId: dnsId,
+        certificateAuthority: 'certainly',
+        certificateScope: 'per_host',
+        domainModel: 'classic',
+      },
+    });
+    expect(accountTested((await t.run((ctx) => ctx.db.get(accountId)))!)).toBe(true);
+    // The per-host CAA verdict says nothing about the wildcard (issuewild).
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: accountId,
+      settings: {
+        dnsAccountId: dnsId,
+        certificateAuthority: 'certainly',
+        certificateScope: 'wildcard',
+        domainModel: 'classic',
+      },
+    });
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(row.lastTestError).toBe('retest_required');
+    expect(accountTested(row)).toBe(false);
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: accountId, ok: true });
+    expect(accountTested((await t.run((ctx) => ctx.db.get(accountId)))!)).toBe(true);
+  });
+
+  test('a wildcard the account would not order refuses new fronts before anything is built', async () => {
+    const t = newT();
+    const { id: accountId } = await fastlyAccount(t);
+    standIn({ sharedCertificate: async () => ({ name: '*.example.org', state: 'ambiguous' }) });
+    mockFetch(() => jsonRes({}));
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
+    expect(certificateRefusalOf(row)).toBe('shared_certificate_ambiguous');
+    // Not ours to remove, so it does not hold up the account's deletion either.
+    expect((await t.mutation(internal.edgeProviderAccounts.remove, { id: accountId })).ok).toBe(
+      true,
+    );
   });
 
   test('the shared certificate is read at the provider and kept on the account, with its users', async () => {
@@ -1199,6 +1417,30 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
       await t.query(internal.edgeProviderAccounts.listForSharedCertificates, {
         now: Date.now() + 31 * 60_000,
       }),
+    ).toEqual([accountId]);
+    // A renewal, or one close to expiry, is read every pass again; close to
+    // expiry is critical in attention.
+    status = {
+      name: '*.example.org',
+      subscriptionId: 'WILD1',
+      state: 'issued',
+      code: 'certificate_expiring',
+      notAfter: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+    };
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    expect(
+      await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
+    ).toEqual([accountId]);
+    const late = await t.query(internal.edgeOperator.attention, {});
+    expect(late.items.find((i) => i.kind === 'certificate_waiting')).toMatchObject({
+      accountId,
+      code: 'certificate_expiring',
+      severity: 'critical',
+    });
+    status = { name: '*.example.org', subscriptionId: 'WILD1', state: 'renewing' };
+    await t.action(internal.edgeProviderOps.refreshSharedCertificate, { accountId });
+    expect(
+      await t.query(internal.edgeProviderAccounts.listForSharedCertificates, { now: Date.now() }),
     ).toEqual([accountId]);
     // A failed one refuses new fronts of the account.
     status = {
