@@ -104,7 +104,7 @@
   import SpareDialog from './SpareDialog.svelte';
   import StatusDot from './StatusDot.svelte';
   import { endNowWords } from './drainWords';
-  import { nodeAutomationWords } from './runWords';
+  import { nodeAutomationWords, spareInUseWords } from './runWords';
 
   interface Props {
     slug: string;
@@ -143,6 +143,10 @@
     config.data && relay
       ? nodeAutomationWords(config.data.config, { ...relay, runLive: !!runId })
       : null,
+  );
+  // "Keep as a spare" while the node wants more addresses in use: upkeep puts it in use.
+  const keepNote = $derived(
+    config.data && relay ? spareInUseWords(config.data.config, relay) : null,
   );
   // The oldest of what the panel shows, and one way to read it all again now.
   const updatedAt = $derived(
@@ -558,7 +562,9 @@
       <ActionConfirm
         open={true}
         title={`Keep ${addressOf(e)} as a spare?`}
-        body="It stops retiring and is not deleted. Members are not given it; it waits as a spare and can be put in use again later. Your provider keeps billing for it."
+        body={`It stops retiring and is not deleted. Members are not given it; it waits as a spare and can be put in use again later. Your provider keeps billing for it.${
+          keepNote ? ` ${keepNote}` : ''
+        }`}
         confirmLabel="Keep as a spare"
         onClose={() => (ending = null)}
         run={async () => {

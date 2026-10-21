@@ -376,6 +376,30 @@ describe('plain words (the simple screens)', () => {
       expect(text).not.toContain('/api/');
     }
   });
+  test('reads as English where a plain phrase lands next to an article or a noun', () => {
+    expect(plainWords('The detector suspects a censor is blocking a published edge.')).toBe(
+      'The detector suspects a censor is blocking an address in use.',
+    );
+    expect(plainWords('Published edge')).toBe('Address in use');
+    expect(plainWords('Every published edge is the template edge.')).toBe(
+      'Every address in use is the template address.',
+    );
+    expect(plainWords('An origin can carry it.')).toBe('A protected node can carry it.');
+    expect(plainWords('A rotation is in progress.')).toBe('An address replacement is in progress.');
+    expect(plainWords('Rotate the credentials.')).toBe('Replace the credentials.');
+    expect(plainWords('Nothing can provision an edge.')).toBe('Nothing can create an address.');
+    // Every worded code, as the simple screens show it (attention rows included).
+    const broken =
+      /\b(an? in use|an? paused for safety|(in use|paused for safety) (CDN front|front|protected node|address|spare|transport|slot)|an (protected|spare|retiring|replace|create|trusted|trust|paused|transport|resume|check)\b|a (address|addresses)\b|(replace|create) address (the|this|an?|its)\b|transport of this transport)/i;
+    const offenders: string[] = [];
+    for (const table of [EDGE_CODE_COPY, SETUP_ACCOUNT_REASON_COPY, SETUP_RUN_NEED_COPY] as Array<
+      Record<string, { label: string; explain: string; fix?: string }>
+    >)
+      for (const [code, c] of Object.entries(table))
+        for (const text of [c.label, c.explain, c.fix ?? ''])
+          if (broken.test(plainWords(text))) offenders.push(`${code}: ${plainWords(text)}`);
+    expect(offenders).toEqual([]);
+  });
   test('rewrites whole words only, keeping the leading capital', () => {
     expect(plainWords('Origin quarantined')).toBe('Protected node paused for safety');
     expect(plainWords('Edge published')).toBe('Address in use');

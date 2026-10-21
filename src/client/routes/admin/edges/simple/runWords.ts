@@ -219,6 +219,29 @@ type AutomationConfig = {
   probe: { enabled: boolean };
 };
 
+/**
+ * Whether a spare stays a spare: with automatic publishing on, a node that
+ * wants more addresses in use than it has gets a tested spare put in use by
+ * the next upkeep pass (every 5 minutes), so "keep" or "add" a spare can mean
+ * one more address in use. The sentence says so, or null when it stays a spare.
+ */
+export function spareInUseWords(
+  config: { enabled: boolean; autoPublishStandby: boolean },
+  node: {
+    enabled: boolean;
+    setupOwned: boolean;
+    desiredPublished: number;
+    publishedEdgeIds: ReadonlyArray<string | null>;
+  },
+): string | null {
+  if (!config.enabled || !config.autoPublishStandby || !node.enabled || node.setupOwned)
+    return null;
+  const published = node.publishedEdgeIds.filter(Boolean).length;
+  const wanted = node.desiredPublished;
+  if (wanted <= published) return null;
+  return `It may be put in use at once: this node wants ${wanted} ${wanted === 1 ? 'address' : 'addresses'} in use and has ${published}.`;
+}
+
 /** The four switches `POST automation {on}` sets, read back as one. */
 export function automationOn(config: AutomationConfig): boolean {
   return (

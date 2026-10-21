@@ -33,6 +33,7 @@
   import { codeLabel } from '@client/lib/edgeCodes';
   import {
     deleteEdge,
+    edgeConfigQuery,
     edgeKeys,
     invalidateRelay,
     preflightRelay,
@@ -48,6 +49,7 @@
   import AdminListState from '../../AdminListState.svelte';
   import ActionConfirm from '../relay/ActionConfirm.svelte';
   import { assertEdgeOk } from '../lib/edgeErrors';
+  import { spareInUseWords } from './runWords';
 
   interface Props {
     open: boolean;
@@ -68,6 +70,9 @@
 
   const qc = useQueryClient();
   const uid = $props.id();
+  // A node that wants more addresses in use takes a tested spare at once.
+  const config = edgeConfigQuery();
+  const inUseNote = $derived(config.data ? spareInUseWords(config.data.config, relay) : null);
   /** '' = Automatic; else a location of the node's set. */
   let where = $state('');
   const setQ = relayProvidersQuery({
@@ -183,9 +188,11 @@
 <ActionConfirm
   bind:open
   title={renew ? 'Replace this spare address?' : 'Add a spare address?'}
-  body={renew
-    ? 'FCP destroys this spare, then creates a new one for the same transport at your provider when nothing blocks it. The new spare is billed and stays unused until you test it.'
-    : 'FCP creates one more address for this node at your provider and keeps it as a spare. It is billed, and it is only put in use after you test it.'}
+  body={`${
+    renew
+      ? 'FCP destroys this spare, then creates a new one for the same transport at your provider when nothing blocks it. The new spare is billed and stays unused until you test it.'
+      : 'FCP creates one more address for this node at your provider and keeps it as a spare. It is billed, and it is only put in use after you test it.'
+  }${inUseNote ? ` Once tested: ${inUseNote[0]!.toLowerCase()}${inUseNote.slice(1)}` : ''}`}
   confirmLabel={renew ? 'Replace the spare' : 'Add a spare'}
   disabled={!renew &&
     (preflight.isPending || (where !== '' && named.isPending) || blockers.length > 0)}
