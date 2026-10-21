@@ -154,7 +154,10 @@ function defaultSettings(setup: Setup, slug: string): Intent['settings'] {
 }
 
 /** The origin hostname a front node presents, from its settings and the setup's zone. */
-export function originHostnameOf(intent: Intent, setup: Setup | null): string | undefined {
+export function originHostnameOf(
+  intent: Intent,
+  setup: Pick<Setup, 'originDns'> | null,
+): string | undefined {
   const s = intent.settings;
   if (s.originHostnameSource === 'managed' && setup?.originDns)
     return originHostname(intent.label, setup.originDns.zoneName);
@@ -223,7 +226,12 @@ export async function enrolledOriginOf(
 } | null> {
   const intent = await intentByName(ctx, sid, nodeName);
   if (!intent) return null;
-  const setup = await readySetup(ctx, sid);
+  // Whatever state the setup is in: while a change of it runs, edges keep
+  // dialing the same name (the zone a node has a name in never changes).
+  const setup = await ctx.db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .unique();
   const hostname = originHostnameOf(intent, setup);
   const originAddress = originAddressOf(intent, hostname);
   const ips = [intent.observed.publicIps.v4, intent.observed.publicIps.v6].filter(
@@ -302,6 +310,11 @@ export const enroll = internalMutation({
       refuse('validation', 'publicIps.v4 is not an IPv4 address');
     const now = Date.now();
     let intent = await intentByName(ctx, sid, a.name);
+    // A role run begins with this report. An attempt still holding the lease
+    // read the node before it, and may park it on a check of the machine this
+    // run is about to set up: when that check is due, an unchanged report
+    // fences the attempt too (a changed one already moves the generation).
+    let fenceAttempt = false;
     if (intent) {
       if (intent.state === 'retiring' || intent.state === 'retired')
         refuse('servers.node_retiring', 'This node is being retired. Enroll it under a new name');
@@ -312,6 +325,7 @@ export const enroll = internalMutation({
         );
       const desiredHash = await desiredHashOf({ observed: o, settings: intent.settings });
       const changed = desiredHash !== intent.desiredHash;
+      fenceAttempt = !changed && intent.appliedRevision === intent.machineRevision;
       await ctx.db.patch(intent._id, {
         observed: { ...o, at: now },
         contractVersion: a.contractVersion,
@@ -399,7 +413,9 @@ export const enroll = internalMutation({
         payload: { backendSlug: server?.slug ?? '', name: a.name, mode: a.mode },
       });
     }
-    await scheduleReconcile(ctx, intent);
+    if (fenceAttempt) await reconcileOrFence(ctx, intent);
+    else await scheduleReconcile(ctx, intent);
+    intent = (await ctx.db.get(intent._id))!;
     return { intentId: intent._id, generation: intent.generation };
   },
 });
@@ -550,23 +566,46 @@ export const reconcileNow = internalMutation({
   handler: async (ctx, { intentId, retries }) => {
     const intent = await ctx.db.get(intentId);
     if (!intent || intent.state === 'retiring' || intent.state === 'retired') return false;
-    if (await scheduleReconcile(ctx, intent)) return true;
-    // An attempt holds the lease and may have read the profile before the
-    // change: a new generation fences what it records, and its handover
-    // (`releaseOvertaken`) reconciles the node again with what is there now.
-    // A lease whose attempt died is not handed over: try again once it ran out.
-    await ctx.db.patch(intent._id, { generation: intent.generation + 1, updatedAt: Date.now() });
-    if ((retries ?? 0) < RECONCILE_NOW_RETRIES)
-      await ctx.scheduler.runAfter(CLAIM_LEASE_MS + 1_000, internal.nodeIntents.reconcileNow, {
-        intentId,
-        retries: (retries ?? 0) + 1,
-      });
-    return false;
+    return reconcileOrFence(ctx, intent, retries ?? 0);
   },
 });
 
 /** How often `reconcileNow` comes back for a lease that stays held (each a lease apart). */
 const RECONCILE_NOW_RETRIES = 3;
+
+/**
+ * Reconcile now. An attempt holding the lease may have read the node before
+ * what changed: a new generation fences what it records, and its handover
+ * (`releaseOvertaken`) reconciles the node again with what is there now. A
+ * lease whose attempt died is not handed over: tried again once it ran out.
+ */
+async function reconcileOrFence(ctx: MutationCtx, intent: Intent, retries = 0) {
+  if (await scheduleReconcile(ctx, intent)) return true;
+  await ctx.db.patch(intent._id, { generation: intent.generation + 1, updatedAt: Date.now() });
+  if (retries < RECONCILE_NOW_RETRIES)
+    await ctx.scheduler.runAfter(CLAIM_LEASE_MS + 1_000, internal.nodeIntents.reconcileNow, {
+      intentId: intent._id,
+      retries: retries + 1,
+    });
+  return false;
+}
+
+/**
+ * The end of a role run's window (`roleRunUnderWay`): a run that never
+ * reported applied is over, and its machine is looked at again. Nothing to do
+ * when the run reported (its report brought the check) or another run began.
+ * A ready node is not on the sweep, so this is what comes back for it.
+ */
+export const afterRoleRunWindow = internalMutation({
+  args: { intentId: v.id('panelNodeIntents'), observedAt: v.number() },
+  handler: async (ctx, { intentId, observedAt }) => {
+    const intent = await ctx.db.get(intentId);
+    if (!intent || intent.state === 'retiring' || intent.state === 'retired') return false;
+    if (intent.observed.at !== observedAt || (intent.appliedAt ?? 0) >= observedAt) return false;
+    // An attempt running now reads the clock after the window: it looks itself.
+    return scheduleReconcile(ctx, intent);
+  },
+});
 
 /** Take the lease and schedule the reconcile, unless an attempt already holds it. */
 async function scheduleReconcile(ctx: MutationCtx, intent: Intent) {
@@ -609,6 +648,46 @@ const settingsPatch = v.object({
   nodePort: v.optional(v.number()),
   countryCode: v.optional(v.union(v.string(), v.null())),
 });
+
+/**
+ * What a change of a node's machine settings writes besides them: a new
+ * machine revision (evidence kept only where it still holds, the review
+ * dropped), a new desired hash and generation, and no activation run of the
+ * old revisions left to commit.
+ */
+async function revisedForSettings(
+  ctx: MutationCtx,
+  intent: Intent,
+  settings: Intent['settings'],
+  now: number,
+): Promise<Partial<Intent>> {
+  const machineRevision = intent.machineRevision + 1;
+  const evidence = retainEvidence(intent.activation.evidence, {
+    ...revisionsOf(intent),
+    machineRevision,
+  });
+  // A revision moved: no activation run of the old revisions may commit.
+  for (const r of await ctx.db
+    .query('panelActivationRuns')
+    .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+    .collect())
+    if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
+      await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+  return {
+    settings,
+    machineRevision,
+    activation: {
+      ...intent.activation,
+      evidence,
+      stage: stageAfterChange(intent.activation.stage, evidence),
+      reviewHash: undefined,
+      currentRunId: undefined,
+    },
+    desiredHash: await desiredHashOf({ observed: intent.observed, settings }),
+    generation: intent.generation + 1,
+    updatedAt: now,
+  };
+}
 
 /**
  * Change FCP-owned machine settings. A change that rewrites the running path
@@ -678,23 +757,14 @@ export const patchSettings = internalMutation({
     const kind = classifyChange({ addsPath, rewritesPath });
     if (kind === 'none' && p.countryCode === undefined) refuse('validation', 'Nothing to change');
     const now = Date.now();
-    const patch: Partial<Intent> = { settings: next, updatedAt: now };
+    let patch: Partial<Intent> = { settings: next, updatedAt: now };
     if (kind !== 'none') {
       if (kind === 'in_place' && intent.delivery.disposition === 'live' && !a.maintenance)
         refuse(
           'servers.maintenance_required',
           'This change rewrites the running path. Start it as a maintenance transition',
         );
-      const machineRevision = intent.machineRevision + 1;
-      const revs = { ...revisionsOf(intent), machineRevision };
-      const evidence = retainEvidence(intent.activation.evidence, revs);
-      patch.machineRevision = machineRevision;
-      patch.activation = {
-        ...intent.activation,
-        evidence,
-        stage: stageAfterChange(intent.activation.stage, evidence),
-        reviewHash: undefined,
-      };
+      patch = await revisedForSettings(ctx, intent, next, now);
       if (kind === 'in_place' && intent.delivery.disposition === 'live') {
         patch.delivery = { ...intent.delivery, disposition: 'unavailable' };
         patch.maintenance = {
@@ -707,16 +777,6 @@ export const patchSettings = internalMutation({
         // Mirror objects are static: they follow a closed gate only when rewritten.
         await scheduleMirrorRefresh(ctx);
       }
-      patch.desiredHash = await desiredHashOf({ observed: intent.observed, settings: next });
-      patch.generation = intent.generation + 1;
-      // A revision moved: no activation run of the old revisions may commit.
-      for (const r of await ctx.db
-        .query('panelActivationRuns')
-        .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
-        .collect())
-        if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
-          await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
-      patch.activation = { ...patch.activation!, currentRunId: undefined };
     }
     await ctx.db.patch(intent._id, patch);
     const server = await ctx.db.get(intent.backendServerId);
@@ -731,6 +791,76 @@ export const patchSettings = internalMutation({
     const next2 = (await ctx.db.get(intent._id))!;
     if (kind !== 'none') await scheduleReconcile(ctx, next2);
     return { change: kind, machineRevision: next2.machineRevision };
+  },
+});
+
+/**
+ * The backend's setup is ready (a run of it finished, or a change of the
+ * zone was recorded in place; docs/servers.md "Changing a backend's setup").
+ * Nothing here runs while it is not: a node reconciled meanwhile could read
+ * nothing, so its attempt let the claim go and left it pending
+ * (`releaseOvertaken`).
+ *
+ * With a zone for origin names, each WebSocket node enrolled while there was
+ * none, blocked waiting for a name (`servers.origin_hostname_missing`), takes
+ * its managed name `<label>.<zone>` as if the zone had been there when it
+ * enrolled. Only those: a node with a hostname of its own keeps it, an adopted
+ * one keeps whatever fronts it, a retiring one is left alone, and one that was
+ * ever live is never renamed from here. None of them has served a member: the
+ * node gets a new machine revision for the role to apply.
+ *
+ * Then every pending node no attempt holds is reconciled, so neither waits for
+ * the sweep.
+ */
+export const afterSetupReady = internalMutation({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId: sid }) => {
+    const setup = await readySetup(ctx, sid);
+    if (!setup) return { named: 0, reconciled: 0 };
+    const wsModes = new Set(setup.modes.filter((m) => isWs(m.shape)).map((m) => m.slug));
+    const server = await ctx.db.get(sid);
+    const now = Date.now();
+    let named = 0;
+    let reconciled = 0;
+    for (const intent of await ctx.db
+      .query('panelNodeIntents')
+      .withIndex('by_server_name', (q) => q.eq('backendServerId', sid))
+      .collect()) {
+      const s = intent.settings;
+      if (
+        setup.originDns &&
+        wsModes.has(modeSlug(intent)) &&
+        s.originHostnameSource === 'explicit' &&
+        !s.explicitHostname &&
+        !intent.adopted &&
+        intent.state !== 'retiring' &&
+        intent.state !== 'retired' &&
+        !intent.delivery.exposure.everLive
+      ) {
+        await ctx.db.patch(intent._id, {
+          ...(await revisedForSettings(
+            ctx,
+            intent,
+            { ...s, originHostnameSource: 'managed' },
+            now,
+          )),
+          // No longer blocked for a name: pending until reconciled.
+          state: 'pending',
+          code: undefined,
+        });
+        await writeAuditLog(ctx, {
+          actorType: 'system',
+          action: 'servers.node.settings',
+          targetType: 'panel_node_intent',
+          targetId: intent._id,
+          payload: { backendSlug: server?.slug ?? '', name: intent.name, change: 'origin_name' },
+        });
+        named++;
+      }
+      const current = (await ctx.db.get(intent._id))!;
+      if (current.state === 'pending' && (await scheduleReconcile(ctx, current))) reconciled++;
+    }
+    return { named, reconciled };
   },
 });
 
@@ -1111,6 +1241,21 @@ const QUICK_RETRY_MS = 30_000;
 /** Only while the role is likely polling: within this long of its last enrollment or report. */
 const QUICK_RETRY_WINDOW_MS = 20 * 60_000;
 const lastRoleContact = (i: Intent): number => Math.max(i.observed.at, i.appliedAt ?? 0);
+/**
+ * A role run reported its observations and has not reported applied since:
+ * it is between its enrollment and its applied report. A run that never
+ * reports is over once the quick-retry window has passed.
+ */
+const roleRunUnderWay = (i: Intent): boolean =>
+  i.observed.at > (i.appliedAt ?? 0) && Date.now() - i.observed.at < QUICK_RETRY_WINDOW_MS;
+
+/** What a front node's origin name must resolve to: its public v4, and its v6 when published. */
+function originExpected(i: Intent): { v4: string | null; v6: string | null } {
+  return {
+    v4: i.observed.publicIps.v4 ?? null,
+    v6: i.settings.publishV6 ? (i.observed.publicIps.v6 ?? null) : null,
+  };
+}
 
 // --- the run: reconcile the backend row, the direct Host and the origin name ----------------------
 
@@ -1345,15 +1490,48 @@ export const reconcile = internalAction({
           await stop('pending', 'servers.obligation_unresolved');
           return null;
         }
+        // The role waits for `resolves` before it sets the machine up (ACME
+        // needs the name) and reports applied only after that: proved here,
+        // by DNS alone, never left to the machine check that follows the
+        // report. Proof once taken holds while the records stay (above).
+        if (dns.state === 'created' || dns.state === 'kept') {
+          c = await load();
+          if (c.intent.origin.dns !== 'resolves') {
+            const r = await ctx.runAction(internal.nodeIntentOps.checkOriginResolves, {
+              hostname: c.hostname!,
+              expected: originExpected(c.intent),
+            });
+            if (!r.resolves) {
+              await stop('pending', 'servers.origin_not_resolving');
+              return null;
+            }
+            await record({
+              origin: { hostname: c.hostname, address: c.originAddress, dns: 'resolves' },
+            });
+          }
+        }
       }
 
       // 5. Machine readiness, once the role has applied the current revision.
+      //    While a role run is under way (it reported its observations since
+      //    its last applied report), the role is setting the machine up now and
+      //    waits for this run's `ready` before it goes on: the machine is
+      //    looked at when that run reports, never held against it before; a
+      //    run that never reports, once its window is over.
       c = await load();
       if (c.intent.appliedRevision === c.intent.machineRevision) {
-        const ready = await verifyMachine(ctx, f, c);
-        if (!ready.ok) {
-          await stop('pending', ready.code);
-          return null;
+        if (roleRunUnderWay(c.intent)) {
+          await ctx.scheduler.runAfter(
+            Math.max(0, c.intent.observed.at + QUICK_RETRY_WINDOW_MS - Date.now()),
+            internal.nodeIntents.afterRoleRunWindow,
+            { intentId: f.intentId, observedAt: c.intent.observed.at },
+          );
+        } else {
+          const ready = await verifyMachine(ctx, f, c);
+          if (!ready.ok) {
+            await stop('pending', ready.code);
+            return null;
+          }
         }
       }
       await stop('ready', null);
@@ -1376,13 +1554,29 @@ export const reconcile = internalAction({
   },
 });
 
-/** Release the claim of an attempt a newer generation overtook, and reconcile the current one. */
+/**
+ * Release the claim of an attempt a newer generation overtook, and reconcile
+ * the current one. An attempt of the current generation still holding the
+ * claim here could read nothing: the backend's setup is not ready (a run of
+ * it, a change, is under way). Its claim goes now and the node waits pending,
+ * reconciled once the setup is ready (`afterSetupReady`), never left holding a
+ * lease that only runs out.
+ */
 export const releaseOvertaken = internalMutation({
   args: fence,
   handler: async (ctx, f) => {
     const intent = await ctx.db.get(f.intentId);
-    if (!intent || intent.claim?.attemptId !== f.attemptId || intent.generation === f.generation)
-      return { released: false };
+    if (!intent || intent.claim?.attemptId !== f.attemptId) return { released: false };
+    if (intent.generation === f.generation) {
+      if (intent.state === 'retiring' || intent.state === 'retired') return { released: false };
+      await ctx.db.patch(intent._id, {
+        claim: undefined,
+        state: 'pending',
+        code: 'servers.setup_running',
+        updatedAt: Date.now(),
+      });
+      return { released: true };
+    }
     await ctx.db.patch(intent._id, { claim: undefined, updatedAt: Date.now() });
     await scheduleReconcile(ctx, (await ctx.db.get(intent._id))!);
     return { released: true };
@@ -1420,10 +1614,7 @@ async function verifyMachine(
       hostname: c.hostname!,
       port: c.ingress!.external.port,
       path: c.ingress!.internal[0]!.path,
-      expected: {
-        v4: c.intent.observed.publicIps.v4 ?? null,
-        v6: c.intent.settings.publishV6 ? (c.intent.observed.publicIps.v6 ?? null) : null,
-      },
+      expected: originExpected(c.intent),
     });
     if (!check.resolves) return { ok: false, code: 'servers.origin_not_resolving' };
     await record({ origin: { hostname: c.hostname, address: c.originAddress, dns: 'resolves' } });

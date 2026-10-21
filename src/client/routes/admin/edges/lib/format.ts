@@ -62,10 +62,13 @@ export function protocolLine(p: ProtoLike): string {
   ].join(' · ');
 }
 
-export const LAYER_LABELS: Record<'l4' | 'l7', string> = { l4: 'L4', l7: 'L7' };
-export const LAYER_HINTS: Record<'l4' | 'l7', string> = {
+/** A provider account's chip: its layer, or `dns` for a DNS account (it fronts nothing). */
+export type LayerChip = 'l4' | 'l7' | 'dns';
+export const LAYER_LABELS: Record<LayerChip, string> = { l4: 'L4', l7: 'L7', dns: 'DNS' };
+export const LAYER_HINTS: Record<LayerChip, string> = {
   l4: 'Layer 4: a load balancer that forwards connections to the origin by address.',
   l7: 'Layer 7: a CDN front reached by hostname that carries HTTP transports only.',
+  dns: 'DNS account: it holds the records FCP writes for L7 fronts and carries no member traffic.',
 };
 
 export const PROVIDER_LABELS: Record<string, string> = {

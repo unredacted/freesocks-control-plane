@@ -13,6 +13,7 @@ import {
   type StandbyCandidate,
 } from './rotation';
 import type { ListenerProto } from './protocols';
+import { frontsAllowed } from './providers/capabilities';
 
 const WS: ListenerProto = { protocol: 'vless', streamTransport: 'ws', security: 'tls' };
 const GRPC: ListenerProto = { protocol: 'vless', streamTransport: 'grpc', security: 'tls' };
@@ -111,29 +112,79 @@ describe('accountsForSlot', () => {
     // A plaintext origin is L7-only: an L4 forwarder cannot add the TLS the
     // front terminated, so no L4 account may be picked for it.
     expect(
-      accountsForSlot(accounts, { layers: ['l7'], proto: WS, allowL7: true }).map((a) => a.id),
+      accountsForSlot(accounts, {
+        layers: ['l7'],
+        proto: WS,
+        allowL7: true,
+        dnsProvidersFront: true,
+      }).map((a) => a.id),
     ).toEqual(['cf', 'fastly']);
     expect(
-      accountsForSlot(accounts, { layers: ['l4'], proto: TLS, allowL7: true }).map((a) => a.id),
+      accountsForSlot(accounts, {
+        layers: ['l4'],
+        proto: TLS,
+        allowL7: true,
+        dnsProvidersFront: true,
+      }).map((a) => a.id),
     ).toEqual(['l4']);
   });
 
   test('an L7 provider that cannot carry the protocol is excluded', () => {
     // Fastly's WebSocket path is not a gRPC path.
     expect(
-      accountsForSlot(accounts, { layers: ['l7'], proto: GRPC, allowL7: true }).map((a) => a.id),
+      accountsForSlot(accounts, {
+        layers: ['l7'],
+        proto: GRPC,
+        allowL7: true,
+        dnsProvidersFront: true,
+      }).map((a) => a.id),
     ).toEqual(['cf']);
   });
 
   test('the L7 gate removes every L7 account from AUTOMATIC selection', () => {
     expect(
-      accountsForSlot(accounts, { layers: ['l4', 'l7'], proto: WS, allowL7: false }).map(
-        (a) => a.id,
-      ),
+      accountsForSlot(accounts, {
+        layers: ['l4', 'l7'],
+        proto: WS,
+        allowL7: false,
+        dnsProvidersFront: true,
+      }).map((a) => a.id),
     ).toEqual(['l4']);
     // An L7-only slot then has nothing to pick, which the caller reports as a
     // veto instead of silently routing it to an L4 account.
-    expect(accountsForSlot(accounts, { layers: ['l7'], proto: WS, allowL7: false })).toEqual([]);
+    expect(
+      accountsForSlot(accounts, {
+        layers: ['l7'],
+        proto: WS,
+        allowL7: false,
+        dnsProvidersFront: true,
+      }),
+    ).toEqual([]);
+  });
+
+  test('a DNS account fronts nothing while DNS providers may not front, whoever is choosing', () => {
+    // The default: the Cloudflare account holds DNS records for other fronts.
+    expect(
+      accountsForSlot(accounts, {
+        layers: ['l4', 'l7'],
+        proto: WS,
+        allowL7: true,
+        dnsProvidersFront: false,
+      }).map((a) => a.id),
+    ).toEqual(['l4', 'fastly']);
+    // gRPC is carried by no remaining L7 front.
+    expect(
+      accountsForSlot(accounts, {
+        layers: ['l7'],
+        proto: GRPC,
+        allowL7: true,
+        dnsProvidersFront: false,
+      }),
+    ).toEqual([]);
+    expect(frontsAllowed('cloudflare', false)).toBe(false);
+    expect(frontsAllowed('cloudflare', true)).toBe(true);
+    for (const id of ['upcloud', 'gcore', 'scaleway', 'ovh', 'fastly'])
+      expect(frontsAllowed(id, false)).toBe(true);
   });
 });
 
@@ -144,13 +195,23 @@ describe('accountsForSlot: transport carriage', () => {
       { id: 'g', provider: 'gcore' },
       { id: 'cf', provider: 'cloudflare' },
     ];
-    expect(accountsForSlot(accounts, { layers: ['l4', 'l7'], proto: HY2, allowL7: true })).toEqual(
-      [],
-    );
+    expect(
+      accountsForSlot(accounts, {
+        layers: ['l4', 'l7'],
+        proto: HY2,
+        allowL7: true,
+        dnsProvidersFront: true,
+      }),
+    ).toEqual([]);
     // A plain (Shadowsocks) or REALITY listener is carried by every L4 forwarder and no L7 front.
     for (const proto of [SS, REALITY]) {
       expect(
-        accountsForSlot(accounts, { layers: ['l4', 'l7'], proto, allowL7: true }).map((a) => a.id),
+        accountsForSlot(accounts, {
+          layers: ['l4', 'l7'],
+          proto,
+          allowL7: true,
+          dnsProvidersFront: true,
+        }).map((a) => a.id),
       ).toEqual(['l4', 'g']);
     }
   });

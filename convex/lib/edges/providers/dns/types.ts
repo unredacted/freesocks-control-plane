@@ -27,6 +27,12 @@ export interface DnsCreateArgs {
   proxied: boolean;
   /** Ownership marker (≤100 chars on every plan). */
   comment: string;
+  /** Seconds; absent or 1 = automatic (the only value a proxied record takes). */
+  ttl?: number;
+  /** Extra `name:value` labels (paid zones only). */
+  tags?: string[];
+  /** Per-record settings: CNAME flattening, one address family for a proxied name. */
+  settings?: { flatten_cname?: boolean; ipv4_only?: boolean; ipv6_only?: boolean };
 }
 
 export interface DnsClient {
@@ -43,4 +49,13 @@ export interface DnsClient {
   deleteRecord(id: string): Promise<void>;
   /** CAA records at the zone apex (issuance preflight); empty = unrestricted. */
   listCaa(): Promise<Array<{ flags: number; tag: string; value: string }>>;
+  /** The zone itself as these credentials read it (a location check, a rotation's reach check). */
+  readZone(): Promise<{
+    id: string;
+    name: string;
+    status: string;
+    paused: boolean;
+    /** The zone's plan (Cloudflare `legacy_id`, e.g. `free`): what its records may carry. */
+    plan?: string;
+  }>;
 }

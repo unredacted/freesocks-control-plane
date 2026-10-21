@@ -77,9 +77,11 @@ export const ensureOriginDns = internalAction({
       ownerKind: 'intent',
       ownerId: f.intentId,
     });
+    let withdrawn = false;
     for (const o of owned) {
       if (!ownsRecord(o) || desired.some((d) => `${d.type}:${d.name}` === o.identity)) continue;
       if ((await withdrawRecord(ctx, o)) === 'unresolved') return { state: 'unresolved' };
+      withdrawn = true;
     }
     if (desired.length === 0) return { state: 'none' };
 
@@ -200,9 +202,24 @@ export const ensureOriginDns = internalAction({
         return { state: 'unresolved' };
       }
     }
+    // Proof that the name resolves holds while FCP's records stay what they
+    // were when it was taken: every role run reconciles again, and a kept
+    // record never sends the node back to `created` (the role waits on
+    // `resolves`). A record written or withdrawn here asks for it again.
+    const proven =
+      !created &&
+      !withdrawn &&
+      c.intent.origin.dns === 'resolves' &&
+      c.intent.origin.hostname === c.hostname;
     await ctx.runMutation(internal.nodeIntents.progress, {
       ...f,
-      patch: { origin: { hostname: c.hostname, address: c.originAddress, dns: 'created' } },
+      patch: {
+        origin: {
+          hostname: c.hostname,
+          address: c.originAddress,
+          dns: proven ? 'resolves' : 'created',
+        },
+      },
     });
     return { state: created ? 'created' : 'kept' };
   },
@@ -278,6 +295,39 @@ async function resolveBoth(name: string): Promise<{ v4: string[]; v6: string[] }
   ]);
   return { v4, v6 };
 }
+
+/**
+ * The origin name as public resolvers answer it, against the addresses FCP's
+ * records hold: DNS only, nothing dialled. The role sets the machine up (an
+ * ACME certificate needs the name) only once FCP says the name resolves, and
+ * reports applied after that, so this is proved before the applied report;
+ * the full ingress check (`checkFrontIngress`) follows the report.
+ */
+export interface OriginResolution {
+  resolves: boolean;
+  answers: { v4: string[]; v6: string[] };
+}
+type OriginResolver = (a: {
+  hostname: string;
+  expected: { v4: string | null; v6: string | null };
+}) => Promise<OriginResolution>;
+let originResolver: OriginResolver | null = null;
+/** Test seam: answer the origin name's resolution without DNS (null = the real lookup). */
+export function __setOriginResolutionForTests(f: OriginResolver | null): void {
+  originResolver = f;
+}
+
+export const checkOriginResolves = internalAction({
+  args: {
+    hostname: v.string(),
+    expected: v.object({ v4: v.union(v.string(), v.null()), v6: v.union(v.string(), v.null()) }),
+  },
+  handler: async (_ctx, a): Promise<OriginResolution> => {
+    if (originResolver) return originResolver(a);
+    const answers = await resolveBoth(a.hostname);
+    return { resolves: verifyResolution(answers, a.expected), answers };
+  },
+});
 
 function tlsCheck(
   host: string,

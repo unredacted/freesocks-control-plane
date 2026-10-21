@@ -127,6 +127,8 @@ export async function planHashOf(input: {
   locationIds?: readonly string[];
   /** The operator's picks, in set order (a plan shown for a chosen set). */
   pickIds?: readonly string[];
+  /** Each pick's options (location id -> values), as the plan shows them. */
+  pickOptions?: Readonly<Record<string, unknown>>;
 }): Promise<string> {
   return sha256Hex(
     canonicalJson({
@@ -137,6 +139,9 @@ export async function planHashOf(input: {
       accounts: [...input.accountIds].sort(),
       ...(input.locationIds ? { locations: [...input.locationIds].sort() } : {}),
       ...(input.pickIds && input.pickIds.length > 0 ? { picks: [...input.pickIds] } : {}),
+      ...(input.pickOptions && Object.keys(input.pickOptions).length > 0
+        ? { pickOptions: input.pickOptions }
+        : {}),
     }),
   );
 }
@@ -154,6 +159,8 @@ export interface SetupPlanInbound {
   /** Why it is not frontable (an `INBOUND_UNSUPPORTED_CODES` reason or a layer exclusion). */
   reason?: string;
   detail?: string;
+  /** The origin probe got no answer for this HTTP transport (its short reason): L4-only for now. */
+  probeFailed?: string;
 }
 
 export interface SetupPlanDirectHost {
@@ -173,6 +180,11 @@ export interface SetupPlanLocation {
   qualified: boolean;
   compatible: boolean;
   reasons: string[];
+  /**
+   * Why a front on the account's default certificate gets none here (CAA, the
+   * zone's wildcard). It stays pickable: a node may choose another certificate.
+   */
+  certificateRefusal?: string | null;
 }
 
 export interface SetupPlanAccount {
@@ -196,6 +208,11 @@ export interface SetupPlanPick {
   /** `<provider>:<placeKey>` (admin-only). */
   locationKey: string;
   label: string;
+  /**
+   * The provider options this node gets here (lib/edges/providers/options.ts):
+   * what the operator chose, with the account's certificate defaults copied in.
+   */
+  options?: Record<string, unknown>;
 }
 
 /** What a chosen set of picks makes (docs/edges.md § "Provider sets"). */
@@ -209,8 +226,8 @@ export interface SetupPlanSet {
   uncovered: string[];
   /** More addresses than one origin publishes (`edge.set_too_large`). */
   tooLarge: boolean;
-  /** Per pick: what keeps it from being used (capacity, budget, not offered). */
-  problems: Array<{ locationId: string; reason: string }>;
+  /** Per pick: what keeps it from being used (capacity, budget, not offered, its options). */
+  problems: Array<{ locationId: string; reason: string; detail?: string }>;
 }
 
 /** The read-only plan `POST setup-runs/plan` returns and `POST setup-runs` persists (JSON on the run). */

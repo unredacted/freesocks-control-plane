@@ -123,9 +123,13 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
 );
-// Account settings: credential identifiers, the DNS zone / account and intent
-// defaults. WHERE an account's edges live is never here: it is a location
-// (`edgeLocations.placement`, frozen on each edge).
+// Account settings: credential identifiers and intent defaults. WHERE an
+// account's edges live is never here: it is a location
+// (`edgeLocations.placement`, frozen on each edge), including a CDN front's DNS
+// zone. The zone / DNS account / TLS configuration keys below are the legacy
+// shape the L7 locations migration (`edgeL7Locations.ts`) moves onto the
+// account's location; they are read only as its fallback and dropped by the
+// follow-up cleanup.
 const relayProviderSettings = v.union(
   v.object({ type: v.literal('gcore') }),
   v.object({ type: v.literal('upcloud') }),
@@ -138,30 +142,37 @@ const relayProviderSettings = v.union(
     applicationKey: v.string(), // public app identifier, not a secret
     endpoint: v.union(v.literal('ovh-eu'), v.literal('ovh-ca'), v.literal('ovh-us')),
   }),
-  // L7 (CDN front): the zone the account's hostnames live in. Both locate.
+  // L7 (CDN front): the token's Cloudflare account (account-owned tokens).
   v.object({
     type: v.literal('cloudflare'),
-    zoneId: v.string(),
-    zoneName: v.string(),
     accountId: v.optional(v.string()),
+    zoneId: v.optional(v.string()), // legacy (migrated onto the location)
+    zoneName: v.optional(v.string()), // legacy (migrated onto the location)
   }),
-  // L7: the DNS records of a Fastly edge live in a Cloudflare account FCP also
-  // manages (`dnsAccountId`); certificate authority + TLS configuration are
-  // defaults frozen into each edge's provisionIntent.
+  // L7: nothing of its own. `certificateAuthority` / `certificateScope` are the
+  // pre-options copies of the account's certificate options, moved into
+  // `optionDefaults` on deploy (edgeProviderAccounts.migrateOptionDefaults);
+  // `dnsAccountId` / `tlsConfigurationId` the pre-location copies of where its
+  // fronts live, moved onto its location (edgeL7Locations.migrate). Kept
+  // readable until a cleanup drops them.
   v.object({
     type: v.literal('fastly'),
-    dnsAccountId: v.string(),
-    certificateAuthority: v.union(
-      v.literal('certainly'),
-      v.literal('lets-encrypt'),
-      v.literal('globalsign'),
+    certificateAuthority: v.optional(
+      v.union(v.literal('certainly'), v.literal('lets-encrypt'), v.literal('globalsign')),
     ),
-    tlsConfigurationId: v.optional(v.string()),
+    // One wildcard certificate per account and zone, or one per front (absent).
+    certificateScope: v.optional(v.union(v.literal('per_host'), v.literal('wildcard'))),
+    dnsAccountId: v.optional(v.string()), // legacy (migrated onto the location)
+    tlsConfigurationId: v.optional(v.string()), // legacy (migrated onto the location)
+    // A new front's domain: versionless (Domain Management, absent) or classic.
+    domainModel: v.optional(v.union(v.literal('versionless'), v.literal('classic'))),
   }),
 );
-// Where an edge's resources live (lib/edges/accountSettings.ts
-// EDGE_PLACEMENT_SCHEMAS): what a location holds and each edge freezes. A CDN
-// provider has no place (an empty placement, one `anycast` location).
+// Where an edge's resources live (`lib/edges/accountSettings.ts`
+// EDGE_PLACEMENT_SCHEMAS validates every new one). A CDN front's keys are
+// optional here only because edges planned before L7 locations froze `{type}`
+// alone (their provisionIntent holds the zone) and a location the migration
+// could not complete keeps it.
 const relayEdgePlacement = v.union(
   v.object({
     type: v.literal('gcore'),
@@ -185,8 +196,18 @@ const relayEdgePlacement = v.union(
     subnetId: v.string(),
     gatewayId: v.optional(v.string()),
   }),
-  v.object({ type: v.literal('cloudflare') }),
-  v.object({ type: v.literal('fastly') }),
+  v.object({
+    type: v.literal('cloudflare'),
+    zoneId: v.optional(v.string()),
+    zoneName: v.optional(v.string()),
+  }),
+  v.object({
+    type: v.literal('fastly'),
+    dnsAccountId: v.optional(v.string()),
+    zoneId: v.optional(v.string()),
+    zoneName: v.optional(v.string()),
+    tlsConfigurationId: v.optional(v.string()),
+  }),
 );
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
 // front (address = hostname). Absent on rows written before L7 = l4.
@@ -1229,6 +1250,10 @@ export default defineSchema({
     // values only; frozen per edge into its provisionIntent.
     observedSettings: v.optional(v.string()),
     observedAt: v.optional(v.number()),
+    // The account's defaults for its provider's CERTIFICATE options (JSON,
+    // lib/edges/providers/options.ts): copied into a node's pick when it is
+    // protected, and used live by picks recorded before options existed.
+    optionDefaults: v.optional(v.string()),
     // Provider API health (edgeProviderOps `tracked`): consecutive calls that
     // failed for a reason on the provider's side (timeout, network, 5xx,
     // 401/403/429, an answer the adapter cannot read), reset by the first
@@ -1237,6 +1262,25 @@ export default defineSchema({
     apiFailures: v.optional(v.number()),
     apiFailingSince: v.optional(v.number()),
     lastApiError: v.optional(v.string()),
+    // Legacy: the shared wildcard certificate as it was recorded per account,
+    // before an account fronted in several zones. The L7 locations migration
+    // moves it onto the location of its zone (`edgeLocations.sharedCertificate`,
+    // where `state` is the provider's, or `absent` / `ambiguous`, and `code` a
+    // fixed one); a cleanup drops it.
+    // Shared provider objects an edge of this account CREATED (`<kind>:<id>`,
+    // most recent last, capped): proof that FCP ordered a zone's wildcard, so
+    // it alone may be removed from the account page.
+    orderedSharedResources: v.optional(v.array(v.string())),
+    sharedCertificate: v.optional(
+      v.object({
+        name: v.string(),
+        subscriptionId: v.optional(v.string()),
+        state: v.string(),
+        code: v.optional(v.string()),
+        notAfter: v.optional(v.string()),
+        checkedAt: v.number(),
+      }),
+    ),
     updatedAt: v.number(),
   })
     .index('by_name', ['name'])
@@ -1278,12 +1322,58 @@ export default defineSchema({
     // Last provider inventory pull here (LBs / IPs / flavors), JSON, admin-only.
     inventorySnapshot: v.optional(v.string()),
     inventoryAt: v.optional(v.number()),
+    // What the provider said about this place when it was last checked (a
+    // CDN zone: its encryption mode, WebSockets, status). JSON, string values
+    // only; the encryption mode is frozen into each new edge's intent.
+    observed: v.optional(v.string()),
+    observedAt: v.optional(v.number()),
+    // The last check refused the place (a paused zone, a zone the token can no
+    // longer read): no new edge is planned here until a check passes. A short
+    // code, plus the provider's redacted answer for the admin.
+    checkError: v.optional(v.string()),
+    checkErrorDetail: v.optional(v.string()),
+    // The wildcard certificate (`*.<zone>`) the account's fronts in this zone
+    // share, as the provider last showed it (a front provider that orders one
+    // per account and zone). Read by the credential test and the reconcile cron.
+    sharedCertificate: v.optional(
+      v.object({
+        name: v.string(),
+        subscriptionId: v.optional(v.string()),
+        state: v.string(),
+        code: v.optional(v.string()),
+        notAfter: v.optional(v.string()),
+        checkedAt: v.number(),
+      }),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_account', ['accountId', 'enabled'])
     .index('by_place', ['provider', 'placeKey'])
     .index('by_account_placement', ['accountId', 'placementHash']),
+
+  // What one account's credentials reach at its provider, as last listed
+  // (`edgeProviderCatalog.ts`): the zones, regions, projects or TLS
+  // configurations the pickers offer. A hint only: every write that takes one
+  // asks the provider again. One row per (account, kind); `items` is JSON
+  // `[{id, label, facts?}]`, admin-only.
+  edgeProviderCatalog: defineTable({
+    accountId: v.id('edgeProviderAccounts'),
+    kind: v.union(
+      v.literal('zones'),
+      v.literal('regions'),
+      v.literal('projects'),
+      v.literal('tlsConfigurations'),
+    ),
+    items: v.string(),
+    // The listing stopped at its cap (more exist than are listed).
+    truncated: v.optional(v.boolean()),
+    refreshedAt: v.number(),
+    // A failed listing keeps the previous items and says why.
+    error: v.optional(v.string()),
+    errorDetail: v.optional(v.string()),
+    errorAt: v.optional(v.number()),
+  }).index('by_account_kind', ['accountId', 'kind']),
 
   // Provisioning parameters for one provider (flavor/plan/type, health monitor,
   // timeouts, allowed CIDRs, tags, IP-family options). `params` is JSON validated
@@ -1322,8 +1412,18 @@ export default defineSchema({
     providerPreference: v.optional(relayProviderId),
     // The node's provider set: the (account, location) picks its addresses come
     // from. Absent = any trusted location (origins that are not a backend node).
+    // Each pick may carry the provider OPTIONS chosen for this node there (JSON:
+    // tuning values laid over the location's template, certificate values;
+    // lib/edges/providers/options.ts). Absent = a pick from before options:
+    // the template and the account's defaults.
     providerSet: v.optional(
-      v.array(v.object({ locationId: v.id('edgeLocations'), addedAt: v.number() })),
+      v.array(
+        v.object({
+          locationId: v.id('edgeLocations'),
+          addedAt: v.number(),
+          options: v.optional(v.string()),
+        }),
+      ),
     ),
     // Picks whose address the detector just burned here: no automatic work
     // allocates, provisions or publishes into them until `until`.
@@ -1647,7 +1747,20 @@ export default defineSchema({
     placeKey: v.optional(v.string()),
     placement: v.optional(relayEdgePlacement),
     templateId: v.optional(v.id('edgeTemplates')),
+    // The hash of what the edge was built with: the location's effective
+    // template, with the node's tuning choices laid over it when it had any.
     templateHash: v.optional(v.string()),
+    // With choices: the location's own effective template hash at plan time
+    // (what a template edit is detected against, and what trust evidence
+    // compares), and the node's choices themselves (JSON), frozen.
+    baseTemplateHash: v.optional(v.string()),
+    choices: v.optional(v.string()),
+    // An address family a describe reported after the endpoint was confirmed:
+    // held here, not served and not in the confirmation's hash, until a test
+    // of that address promotes it into `addresses` (edgeVerification.confirm).
+    learnedAddresses: v.optional(
+      v.object({ v4: v.optional(v.string()), v6: v.optional(v.string()) }),
+    ),
     provider: v.optional(relayProviderId),
     managed: v.boolean(), // false = adopted, observe-only, never destroyed
     name: v.string(), // provider-side resource name; the discovery key
@@ -1782,6 +1895,10 @@ export default defineSchema({
     failure: v.optional(
       v.object({ step: v.string(), code: v.optional(v.string()), status: v.optional(v.number()) }),
     ),
+    // What a requested step is held up by while it waits, when the provider
+    // says (L7: a CAA record, the validation record; `L7_CERTIFICATE_CODES`),
+    // since when. Cleared when the step settles any other way.
+    waiting: v.optional(v.object({ step: v.string(), code: v.string(), since: v.number() })),
     burnedAt: v.optional(v.number()),
     drainUntil: v.optional(v.number()),
     destroyedAt: v.optional(v.number()),
@@ -1838,6 +1955,9 @@ export default defineSchema({
     requestedLocationId: v.optional(v.id('edgeLocations')),
     // A replace's explicit spare (the operator named it).
     requestedSpareEdgeId: v.optional(v.id('edges')),
+    // Options for the one edge this run builds (JSON), instead of its pick's:
+    // an operator's "options for this address" on a spare or a replacement.
+    requestedOptions: v.optional(v.string()),
     // A DETECTOR start: the countries its evidence named for the target, taken
     // from the evaluation that started it. The L7 replacement gate and the
     // confirming re-check prove the new front against these, never against the
@@ -1933,7 +2053,12 @@ export default defineSchema({
     // The (account, location) picks the run creates addresses in.
     picks: v.optional(
       v.array(
-        v.object({ locationId: v.id('edgeLocations'), accountId: v.id('edgeProviderAccounts') }),
+        v.object({
+          locationId: v.id('edgeLocations'),
+          accountId: v.id('edgeProviderAccounts'),
+          // The options chosen for this pick (JSON), recorded on the set at go-live.
+          options: v.optional(v.string()),
+        }),
       ),
     ),
     // The plan snapshot (JSON, edgeSetupPlan.ts) + its hash and the consent revision.
@@ -2037,6 +2162,9 @@ export default defineSchema({
     stageEnteredAt: v.number(),
     stepStartedAt: v.optional(v.number()),
     nextStepAt: v.optional(v.number()),
+    // When the current attempt began (a retry starts a new one); absent = the
+    // first attempt, which began at `startedAt`.
+    attemptStartedAt: v.optional(v.number()),
     // Bounded live log for the progress view (display only).
     events: v.array(
       v.object({
@@ -2061,7 +2189,10 @@ export default defineSchema({
   // until the holder re-observes the outcome (same rule as `currentOp`).
   externalLocks: defineTable({
     key: v.string(), // e.g. "cloudflare-zone:<zoneId>", "fastly-service:<serviceId>"
-    holderEdgeId: v.id('edges'),
+    // An edge's step holds it, or an account-level action (removing an
+    // account's shared certificate) does: exactly one of the two.
+    holderEdgeId: v.optional(v.id('edges')),
+    holderAccountId: v.optional(v.id('edgeProviderAccounts')),
     opId: v.string(),
     claimedAt: v.number(),
     expiresAt: v.number(),
@@ -3021,6 +3152,10 @@ export default defineSchema({
     ),
     // Taken over with existing nodes or addresses (the operator's typed adopt).
     adopted: v.boolean(),
+    // When the setup first reached ready: from then on FCP is the backend's
+    // writer, and a new request is a change of its setup. Absent on a row that
+    // is ready but older than the field (its state says the same).
+    readyAt: v.optional(v.number()),
     // The delivery gate version of this backend: bumped on every disposition
     // or resource-set change of any of its nodes; part of every render's token.
     gateVersion: v.number(),

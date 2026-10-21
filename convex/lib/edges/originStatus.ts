@@ -49,7 +49,9 @@ export const ATTENTION_RANK = [
   'direct_host_reappeared',
   'node_awaiting_approval',
   'go_live_pending',
+  'setup_run_failed',
   'needs_test',
+  'certificate_waiting',
   'rotation_failed',
   'node_ready_to_protect',
   'node_mode_disabled',
@@ -219,6 +221,15 @@ export interface OriginStatusFacts {
   renderEnabled: boolean;
   /** The origin's guided setup run, if any; a terminal run is ignored. */
   run: StatusRunFacts | null;
+  /** The origin's newest guided setup run when it failed (no live run): its sheet has Try again. */
+  failedRun?: {
+    id: string;
+    kind?: string | null;
+    stage: SetupRunStage;
+    code: string | null;
+  } | null;
+  /** The enrolled node is fronted: its mode gives members no direct address. */
+  fronted?: boolean;
   /** The attention items that name this origin (any order, any severity). */
   attention: readonly StatusAttentionFacts[];
 }
@@ -275,9 +286,12 @@ export function originStatusOf(f: OriginStatusFacts): OriginStatus {
     layers: layersOf(f.pool),
     attention: f.attention.length > 0,
     delivery: deliveryOf(f),
+    failedRunId: null,
+    fronted: f.fronted ?? false,
   } satisfies Omit<OriginStatus, 'kind' | 'dot'>;
   const is = (kind: Kind, dot: StatusDot, code: string | null = null): OriginStatus => ({
     ...base,
+    failedRunId: f.deleting || f.restore ? null : (f.failedRun?.id ?? null),
     kind,
     dot,
     code,

@@ -52,6 +52,9 @@ import {
   EdgeIdResponse,
   EdgeInventoryResponse,
   EdgeLiveResponse,
+  EdgeCatalogRefreshResponse,
+  EdgeCatalogView,
+  EdgeLocationCheckResponse,
   EdgeLocationCreateResponse,
   EdgeLocationList,
   EdgeMaintenanceView,
@@ -65,6 +68,7 @@ import {
   EdgeProviderAccountsResponse,
   EdgeRenderPreviewResponse,
   EdgeRotateCredentialsResponse,
+  EdgeSharedCertificateRemoveResponse,
   EdgeRotationAdmin,
   EdgeRotationDetail,
   EdgeRotationStartedResponse,
@@ -145,10 +149,14 @@ export interface CreateProviderBody {
   dailyAllocationBudget?: number;
   priority?: number;
   defaultTemplateId?: string | null;
+  /** Defaults for the provider's certificate options. */
+  optionDefaults?: Record<string, unknown>;
 }
 export interface ProviderPatch {
   name?: string;
   settings?: Record<string, unknown>;
+  /** The account's certificate option defaults, whole. */
+  optionDefaults?: Record<string, unknown>;
   enabled?: boolean;
   priority?: number;
   dailyAllocationBudget?: number;
@@ -220,6 +228,11 @@ export interface ProvisionBody {
   publish?: boolean;
   /** An explicit location (needs `listenerId`); an untrusted one only with `publish: false`. */
   locationId?: string;
+  /**
+   * Provider options for this one address instead of its pick's (needs `locationId`).
+   * Automatic work never takes such an address afterwards: it was not built for its pick.
+   */
+  options?: Record<string, unknown>;
 }
 export interface PublishRelayEdgeBody {
   edgeId: string;
@@ -233,6 +246,8 @@ export interface RotateBody {
   spareEdgeId?: string;
   /** An explicit location for a new CDN front; Automatic otherwise. */
   locationId?: string;
+  /** Provider options for the new address instead of its pick's (needs `locationId`). */
+  options?: Record<string, unknown>;
 }
 export interface AdoptEdgeBody {
   accountId?: string;
@@ -323,6 +338,7 @@ export const planSetupRun = (
   nodeUuid: string,
   listenerKeys?: string[],
   picks?: string[],
+  pickOptions?: Record<string, Record<string, unknown>>,
 ) =>
   apiClient.post(
     `${BASE}/setup-runs/plan`,
@@ -331,6 +347,7 @@ export const planSetupRun = (
       nodeUuid,
       ...(listenerKeys ? { listenerKeys } : {}),
       ...(picks && picks.length > 0 ? { picks } : {}),
+      ...(pickOptions && Object.keys(pickOptions).length > 0 ? { pickOptions } : {}),
     },
     SetupPlanResponse,
   );
@@ -356,10 +373,14 @@ export const serveRelayDirect = (relayId: string) =>
  * candidate addresses, Try it, the approval when one is needed). Members keep
  * what they have until it goes live; cancelling drops only its candidates.
  */
-export const reprotectRelay = (relayId: string, mode?: 'replace_all' | 'add') =>
+export const reprotectRelay = (
+  relayId: string,
+  mode?: 'replace_all' | 'add',
+  pickOptions?: Record<string, Record<string, unknown>>,
+) =>
   apiClient.post(
     `${BASE}/relays/${enc(relayId)}/reprotect`,
-    mode ? { mode } : {},
+    { ...(mode ? { mode } : {}), ...(pickOptions ? { pickOptions } : {}) },
     SetupRunCreatedResponse,
   );
 /** The node's provider set: its picks, what they hold, what could be added. */
@@ -433,6 +454,23 @@ export const deleteProviderLocation = (accountId: string, locationId: string) =>
     `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}`,
     EdgeOkResponse,
   );
+/** Ask the provider about one place again (a CDN zone's encryption mode, a refused check). */
+export const checkProviderLocation = (accountId: string, locationId: string) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/check`,
+    {},
+    EdgeLocationCheckResponse,
+  );
+/** What the account's credentials reach (zones, regions, projects, TLS configurations), as last listed. */
+export const fetchProviderCatalog = (accountId: string) =>
+  apiClient.get(`${BASE}/providers/${enc(accountId)}/catalog`, EdgeCatalogView);
+/** List what the account reaches again (a no-op answer `{refreshed: false}` right after another). */
+export const refreshProviderCatalog = (accountId: string) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/catalog/refresh`,
+    {},
+    EdgeCatalogRefreshResponse,
+  );
 /** The trust override for one location (an untrust holds the automatic rules off). */
 export const qualifyProviderLocation = (
   accountId: string,
@@ -449,6 +487,12 @@ export const rotateProviderCredentials = (id: string, body: RotateCredentialsBod
     `${BASE}/providers/${enc(id)}/rotate-credentials`,
     body,
     EdgeRotateCredentialsResponse,
+  );
+export const removeSharedCertificate = (id: string, locationId: string) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(id)}/locations/${enc(locationId)}/shared-certificate/remove`,
+    {},
+    EdgeSharedCertificateRemoveResponse,
   );
 export const updateProvider = (id: string, patch: ProviderPatch) =>
   apiClient.patch(`${BASE}/providers/${enc(id)}`, patch, EdgeOkResponse);
@@ -692,6 +736,7 @@ export const edgeKeys = {
   providersUsage: [...ROOT, 'providers', 'usage'] as const,
   provider: (id: string) => [...ROOT, 'providers', 'account', id] as const,
   providerInventory: (id: string) => [...ROOT, 'providers', 'account', id, 'inventory'] as const,
+  providerCatalog: (id: string) => [...ROOT, 'providers', 'account', id, 'catalog'] as const,
   templates: [...ROOT, 'templates'] as const,
   relays: [...ROOT, 'relays'] as const,
   relayLookup: (slug: string) => [...ROOT, 'relay', slug, 'lookup'] as const,
@@ -873,6 +918,19 @@ export const providerQuery = (accountId: () => string | null) =>
   createQuery(() => ({
     queryKey: edgeKeys.provider(accountId() ?? ''),
     queryFn: () => fetchProvider(accountId()!),
+    enabled: accountId() !== null,
+    staleTime: 15_000,
+  }));
+
+/**
+ * What an account reaches, for the location pickers. A catalog older than its
+ * `staleAfterMs` (or never listed) is listed again once, in the background;
+ * the stored one shows meanwhile.
+ */
+export const providerCatalogQuery = (accountId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.providerCatalog(accountId() ?? ''),
+    queryFn: () => fetchProviderCatalog(accountId()!),
     enabled: accountId() !== null,
     staleTime: 15_000,
   }));

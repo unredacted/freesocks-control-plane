@@ -154,12 +154,32 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'providers' && b && c === 'inventory' && d === 'refresh') {
     return 'admin.edges.provider-call';
   }
-  // A location's choices and its creation ask the provider for its regions.
+  // A location's choices and its creation ask the provider for its regions;
+  // checking one again asks about its zone.
   if (a === 'providers' && b && c === 'locations' && (d === 'options' || !d)) {
+    return 'admin.edges.provider-call';
+  }
+  if (a === 'providers' && b && c === 'locations' && d && parts[4] === 'check' && !parts[5]) {
+    return 'admin.edges.provider-call';
+  }
+  // Listing what an account reaches (its zones, regions, TLS configurations).
+  if (a === 'providers' && b && c === 'catalog' && d === 'refresh' && !parts[4]) {
     return 'admin.edges.provider-call';
   }
   // Credential rotation tests the new secret against the provider first.
   if (a === 'providers' && b && c === 'rotate-credentials' && !d) {
+    return 'admin.edges.provider-call';
+  }
+  // Removing a zone's shared certificate deletes it (and its ACME record) at the provider.
+  if (
+    a === 'providers' &&
+    b &&
+    c === 'locations' &&
+    d &&
+    parts[4] === 'shared-certificate' &&
+    parts[5] === 'remove' &&
+    !parts[6]
+  ) {
     return 'admin.edges.provider-call';
   }
   // The test link fetches the credential body and lists the backend Hosts.
@@ -279,11 +299,12 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     if (b === 'usage' && !c)
       return json(await ctx.runQuery(internal.edgeOperator.providersUsage, {}));
     if (!b) {
-      const [accounts, credentialFields] = await Promise.all([
+      const [accounts, credentialFields, optionSchemas] = await Promise.all([
         ctx.runQuery(internal.edgeProviderAccounts.listForAdmin, {}),
         ctx.runQuery(internal.edgeAdmin.credentialFields, {}),
+        ctx.runQuery(internal.edgeAdmin.optionSchemas, {}),
       ]);
-      return json({ accounts, credentialFields });
+      return json({ accounts, credentialFields, optionSchemas });
     }
     if (c === 'inventory') {
       const location = query.get('location');
@@ -296,6 +317,13 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     if (c === 'locations' && !d)
       return json(
         await ctx.runQuery(internal.edgeLocations.listForAccount, {
+          accountId: id<'edgeProviderAccounts'>(b),
+        }),
+      );
+    // What the account's credentials reach, as last listed (the pickers' menu).
+    if (c === 'catalog' && !d)
+      return json(
+        await ctx.runQuery(internal.edgeProviderCatalog.view, {
           accountId: id<'edgeProviderAccounts'>(b),
         }),
       );
@@ -662,10 +690,22 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     const listenerKeys = Array.isArray(body.listenerKeys)
       ? { listenerKeys: body.listenerKeys.filter((x): x is string => typeof x === 'string') }
       : {};
-    // The provider set: the locations to protect the node from, in set order.
+    // The provider set: the locations to protect the node from, in set order;
+    // a pick may be `{locationId, options}` (or the options a `pickOptions` map).
     const picks = Array.isArray(body.picks)
-      ? body.picks.filter((x): x is string => typeof x === 'string' && x.length > 0)
+      ? body.picks
+          .map((x) =>
+            typeof x === 'string'
+              ? x
+              : x &&
+                  typeof x === 'object' &&
+                  typeof (x as { locationId?: unknown }).locationId === 'string'
+                ? (x as { locationId: string }).locationId
+                : '',
+          )
+          .filter((x) => x.length > 0)
       : null;
+    const setOptions = pickOptionsOf(body);
     if (b === 'plan' && !c) {
       return json(
         await ctx.runAction(internal.edgeSetupPlan.plan, {
@@ -673,6 +713,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           nodeUuid: String(body.nodeUuid ?? ''),
           ...listenerKeys,
           ...(picks && picks.length > 0 ? { picks } : {}),
+          ...setOptions,
         }),
       );
     }
@@ -686,6 +727,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           nodeUuid: String(body.nodeUuid ?? ''),
           ...listenerKeys,
           ...(picks && picks.length > 0 ? { picks: picks.map((p) => id<'edgeLocations'>(p)) } : {}),
+          ...setOptions,
           ...(typeof body.accountId === 'string' && body.accountId
             ? { accountId: id<'edgeProviderAccounts'>(body.accountId) }
             : {}),
@@ -852,8 +894,32 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      // Ask the provider about this place again (a zone's encryption mode).
+      if (d && parts[4] === 'check' && !parts[5])
+        return json(
+          await ctx.runAction(internal.edgeProviderOps.checkLocation, {
+            accountId,
+            locationId: id<'edgeLocations'>(d),
+          }),
+        );
+      // A zone's wildcard no live edge fronts through: deleted at the provider
+      // with the ACME record FCP wrote for it (refused while one is in use).
+      if (d && parts[4] === 'shared-certificate' && parts[5] === 'remove' && !parts[6])
+        return json(
+          await ctx.runAction(internal.edgeProviderOps.removeSharedCertificate, {
+            accountId,
+            locationId: id<'edgeLocations'>(d),
+            ...act,
+          }),
+        );
       return notFound();
     }
+    if (c === 'catalog' && d === 'refresh' && !parts[4])
+      return json(
+        await ctx.runAction(internal.edgeProviderOps.refreshCatalog, {
+          accountId: id<'edgeProviderAccounts'>(b),
+        }),
+      );
     if (c === 'rotate-credentials' && !d) {
       // New secret (+ its non-secret identifiers) → tested against the provider,
       // applied only on a pass, qualification kept. The body is sealed in transit
@@ -1080,6 +1146,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
                     .map((x) => id<'edgeLocations'>(x)),
                 }
               : {}),
+            ...pickOptionsOf(body),
             ...act,
           }),
         );
@@ -1171,6 +1238,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
                 : undefined,
             ...(locationId ? { requestedLocationId: locationId } : {}),
             ...(locationId && body.publish === false ? { allowUnqualified: true } : {}),
+            ...optionsOf(body),
             ...act,
           }),
         );
@@ -1195,6 +1263,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...(typeof body.locationId === 'string'
               ? { requestedLocationId: id<'edgeLocations'>(body.locationId) }
               : {}),
+            ...optionsOf(body),
             ...act,
           }),
         );
@@ -1468,6 +1537,30 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
 
 function triggerOf(v: unknown): 'manual' | 'detector' | 'api' | 'reconcile' | undefined {
   return v === 'manual' || v === 'detector' || v === 'api' || v === 'reconcile' ? v : undefined;
+}
+
+/** Provider options for one address (`options`, an object), as a start's `requestedOptions`. */
+function optionsOf(body: Record<string, unknown>): { requestedOptions?: unknown } {
+  const o = body.options;
+  return o && typeof o === 'object' && !Array.isArray(o) ? { requestedOptions: o } : {};
+}
+
+/**
+ * Provider options per pick: a `pickOptions` map (location id -> values) and
+ * any `{locationId, options}` entry of `picks`, the entry winning.
+ */
+function pickOptionsOf(body: Record<string, unknown>): { pickOptions?: Record<string, unknown> } {
+  const out: Record<string, unknown> = {};
+  const map = body.pickOptions;
+  if (map && typeof map === 'object' && !Array.isArray(map))
+    for (const [k, v] of Object.entries(map as Record<string, unknown>)) out[k] = v;
+  if (Array.isArray(body.picks))
+    for (const p of body.picks) {
+      if (!p || typeof p !== 'object') continue;
+      const { locationId, options } = p as { locationId?: unknown; options?: unknown };
+      if (typeof locationId === 'string' && options !== undefined) out[locationId] = options;
+    }
+  return Object.keys(out).length > 0 ? { pickOptions: out } : {};
 }
 
 function snis(body: Record<string, unknown>): string[] {

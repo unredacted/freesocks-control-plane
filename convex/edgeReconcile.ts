@@ -285,12 +285,18 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         await destroyStep(ctx, cfg, edge, report);
         continue;
       }
-      if (edge.status === 'draining' && edge.drainUntil !== undefined && edge.drainUntil <= now) {
+      // An edge that becomes `destroying` starts its walk in the same pass.
+      const destroyNow = async () => {
         await ctx.runMutation(internal.edges.patchEdge, {
           edgeId: edge._id,
           status: 'destroying',
         });
         report.destroying++;
+        const fresh = await ctx.runQuery(internal.edges.get, { id: edge._id });
+        if (fresh?.status === 'destroying') await destroyStep(ctx, cfg, fresh, report);
+      };
+      if (edge.status === 'draining' && edge.drainUntil !== undefined && edge.drainUntil <= now) {
+        await destroyNow();
         continue;
       }
       if ((edge.status === 'failed' || edge.status === 'cancelled') && !inRotation) {
@@ -300,13 +306,8 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           !edge.steps.some((s) =>
             ['requested', 'unresolved', 'ambiguous', 'needs_operator'].includes(s.state),
           )
-        ) {
-          await ctx.runMutation(internal.edges.patchEdge, {
-            edgeId: edge._id,
-            status: 'destroying',
-          });
-          report.destroying++;
-        }
+        )
+          await destroyNow();
         continue;
       }
       // 3. Health refresh for live edges (non-destructive).
@@ -374,6 +375,29 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   } catch (err) {
     report.errors++;
     console.warn(`[edge-reconcile] test credential sweep: ${errText(err)}`);
+  }
+
+  // 4e. Shared certificates (one wildcard per account and zone, docs/edges.md
+  // § "L7 edges"): its state on the zone's location, so a renewal or a
+  // failure is visible (and raised) without a rotation having to wait on it.
+  try {
+    const zones = await ctx.runQuery(internal.edgeProviderAccounts.listForSharedCertificates, {
+      now,
+    });
+    for (const { accountId, locationId } of zones) {
+      try {
+        await ctx.runAction(internal.edgeProviderOps.refreshSharedCertificate, {
+          accountId,
+          locationId,
+        });
+      } catch (err) {
+        report.errors++;
+        console.warn(`[edge-reconcile] shared certificate ${locationId}: ${errText(err)}`);
+      }
+    }
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] shared certificates: ${errText(err)}`);
   }
 
   // 5. Pool upkeep + 6. origin deletes. While the maintenance switch is on,
@@ -783,48 +807,86 @@ async function sharedTeardownPass(
 }
 
 /**
- * One destroy pass: confirm requested deletes (re-issuing the delete where
- * confirmation cannot make progress), then request the next present resource
- * (reverse order). Every pass — a throw, an `unresolved` answer (adapters give
- * it for a resource kind they do not know, never `confirmed_gone`), a
- * `still_present` read-back — counts toward `destroyAttempts`, so an edge whose
- * children never confirm parks as `needs_operator` at the cap.
+ * One destroy pass: walk the plan in the provider's kind order, confirming
+ * requested deletes (re-issuing the delete where confirmation cannot make
+ * progress) and requesting present ones, and move on to the next resource in
+ * the SAME pass as soon as this one is confirmed gone (an async-delete
+ * provider's delete is read back at once). The walk stops at the first
+ * resource still going away: a later kind may need it gone first (a
+ * certificate before its validation record, a version before its service),
+ * so the next pass picks up there. At most `maxDestroyStepsPerPass` resources.
+ * Every pass, however many resources it walked, counts ONE toward
+ * `destroyAttempts` (a throw, an `unresolved` answer: adapters give it for a
+ * resource kind they do not know, never `confirmed_gone`; a `still_present`
+ * read-back), so an edge whose children never confirm parks as
+ * `needs_operator` at the cap.
  */
 async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: ReconcileReport) {
-  const accountId = edge.accountId!;
   if (edge.destroyAttempts >= EDGE_PLUMBING.maxDestroyAttempts) {
     await ctx.runMutation(internal.edgeReconcileMutations.destroyExhausted, { edgeId: edge._id });
     return;
   }
-  const ledger = ledgerOf(edge);
-  const plan =
-    edge.resources.length > 0
-      ? ((await ctx.runAction(internal.edgeProviderOps.planDestroy, {
-          accountId,
-          ledger,
-          edgeId: edge._id,
-        })) as Edge['resources'])
-      : [];
-  const remaining = plan.filter((r) => r.deleteState !== 'confirmed_gone');
-  if (remaining.length === 0) {
-    await ctx.runMutation(internal.edgeReconcileMutations.markDestroyed, { edgeId: edge._id });
-    report.destroyed++;
-    return;
+  let current = edge;
+  for (let walked = 0; walked < EDGE_PLUMBING.maxDestroyStepsPerPass; walked++) {
+    const ledger = ledgerOf(current);
+    const plan =
+      current.resources.length > 0
+        ? ((await ctx.runAction(internal.edgeProviderOps.planDestroy, {
+            accountId: current.accountId!,
+            ledger,
+            edgeId: current._id,
+          })) as Edge['resources'])
+        : [];
+    const remaining = plan.filter((r) => r.deleteState !== 'confirmed_gone');
+    if (remaining.length === 0) {
+      await ctx.runMutation(internal.edgeReconcileMutations.markDestroyed, {
+        edgeId: current._id,
+      });
+      report.destroyed++;
+      return;
+    }
+    // A SHARED external resource cannot be deleted at all: removing ONE hostname
+    // from it is a persisted, serialised version workflow the adapter drives. When
+    // the ledger describes such a resource, that workflow IS this edge's destroy
+    // until it reports `done` (which marks the children FCP owns gone and lets the
+    // ordinary walk below finish) or `needs_operator`. One phase per pass.
+    if (await sharedTeardownPass(ctx, cfg, current, ledger)) return;
+    const gone = await destroyResource(ctx, current, remaining[0], ledger, walked === 0);
+    if (!gone) return;
+    if (remaining.length === 1) {
+      await ctx.runMutation(internal.edgeReconcileMutations.markDestroyed, {
+        edgeId: current._id,
+      });
+      report.destroyed++;
+      return;
+    }
+    const fresh = await ctx.runQuery(internal.edges.get, { id: current._id });
+    if (!fresh || fresh.status !== 'destroying') return;
+    current = fresh;
   }
-  // A SHARED external resource cannot be deleted at all: removing ONE hostname
-  // from it is a persisted, serialised version workflow the adapter drives. When
-  // the ledger describes such a resource, that workflow IS this edge's destroy
-  // until it reports `done` (which marks the children FCP owns gone and lets the
-  // ordinary walk below finish) or `needs_operator`.
-  if (await sharedTeardownPass(ctx, cfg, edge, ledger)) return;
-  const target = remaining[0];
+}
+
+/**
+ * Delete or confirm ONE resource of a destroying edge under its op claim.
+ * Returns whether it is now confirmed gone (the walk may go on). `counted`:
+ * this is the pass's first resource, the one `destroyAttempts` counts.
+ */
+async function destroyResource(
+  ctx: ActionCtx,
+  edge: Edge,
+  target: Edge['resources'][number],
+  ledger: { steps: Edge['steps']; resources: Edge['resources'] },
+  counted: boolean,
+): Promise<boolean> {
+  const accountId = edge.accountId!;
+  const attemptsDelta = counted ? 1 : 0;
   const cl = await ctx.runMutation(internal.edges.claimOp, {
     edgeId: edge._id,
     kind: 'destroy_step',
     target: target.resourceId,
     claimMs: EDGE_PLUMBING.opClaimMs,
   });
-  if (!cl.ok) return;
+  if (!cl.ok) return false;
   // A SHARED-service teardown (an adopted domain on a service FCP does not own)
   // rewrites that service's version chain, which other adopted domains on the
   // same service also rewrite. The per-edge claim cannot serialise that, so the
@@ -840,7 +902,7 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     });
     if (!lk.ok) {
       await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
-      return;
+      return false;
     }
   }
   const releaseShared = async () => {
@@ -880,12 +942,29 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     });
     await ctx.runMutation(internal.edges.patchEdge, {
       edgeId: edge._id,
-      destroyAttemptsDelta: 1,
+      destroyAttemptsDelta: attemptsDelta,
       destroyConfirm: confirming
         ? { resourceId: target.resourceId, attempts: priorConfirms + 1 }
         : { resourceId: target.resourceId, attempts: 0 },
     });
     throw err;
+  }
+  // Most deletes land in the call itself: an async-delete provider's is read
+  // back at once, so the walk can go on to the next kind in this pass. Only a
+  // read-back that says gone counts; anything else (or a throw) leaves the
+  // delete requested for the next pass to confirm, as before.
+  if (!confirming && out.status === 'delete_requested' && asyncDeleteOf(edge)) {
+    try {
+      const back: DestroyOutcome = await ctx.runAction(internal.edgeProviderOps.confirmDestroyed, {
+        accountId,
+        resource: { ...target, deleteState: 'delete_requested' },
+        ledger,
+        edgeId: edge._id,
+      });
+      if (back.status === 'confirmed_gone') out = back;
+    } catch {
+      // The next pass confirms.
+    }
   }
   await releaseShared();
   await ctx.runMutation(internal.edges.settleOp, {
@@ -903,7 +982,7 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
   });
   await ctx.runMutation(internal.edges.patchEdge, {
     edgeId: edge._id,
-    destroyAttemptsDelta: 1,
+    destroyAttemptsDelta: attemptsDelta,
     // A confirm that could not resolve counts; a (re-)issued delete, a gone
     // resource or a `still_present` read-back (re-issued next pass) resets the
     // counter for whatever the walk targets next.
@@ -912,8 +991,11 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
         ? { resourceId: target.resourceId, attempts: priorConfirms + 1 }
         : null,
   });
-  if (out.status === 'confirmed_gone' && remaining.length === 1) {
-    await ctx.runMutation(internal.edgeReconcileMutations.markDestroyed, { edgeId: edge._id });
-    report.destroyed++;
-  }
+  return out.status === 'confirmed_gone';
+}
+
+/** Whether the edge's provider confirms deletes by reading them back (`confirmDestroyed`). */
+function asyncDeleteOf(edge: Pick<Edge, 'provider'>): boolean {
+  const caps = edge.provider ? EDGE_PROVIDER_CAPABILITIES[edge.provider] : undefined;
+  return !!caps?.asyncDelete;
 }

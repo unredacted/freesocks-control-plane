@@ -572,6 +572,8 @@ describe('autoRotateDecision', () => {
     });
     // An origin a guided setup owns is never replaced automatically, whatever the evidence.
     expect(decide({ origin: { ...origin, setupOwned: true } })).toEqual({ veto: 'setup_owned' });
+    // Nor is the leftover of a cancelled or failed one: it never went live.
+    expect(decide({ origin: { ...origin, notLive: true } })).toEqual({ veto: 'not_live' });
     expect(decide({ evaluation: evaluate(input()) })).toEqual({ veto: 'not_suspected' });
     // Evidence + outage gates come BEFORE the operational ones: a quarantined
     // origin without evidence reports the missing evidence, not the quarantine.

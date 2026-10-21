@@ -199,7 +199,12 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
       case 'allocate_ipv6': {
         const isIpv6 = step.kind === 'allocate_ipv6';
         const ip = await sdk(cfg, step.id, () =>
-          api.createIp({ projectId: cfg.projectId, isIpv6, tags: [spec.name] }),
+          api.createIp({
+            projectId: cfg.projectId,
+            isIpv6,
+            tags: [spec.name],
+            ...(tpl.reverse ? { reverse: tpl.reverse } : {}),
+          }),
         );
         return {
           status: 'done',
@@ -221,7 +226,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         const lb = await sdk(cfg, step.id, () =>
           api.createLb({
             name: spec.name,
-            description: 'origin edge',
+            description: tpl.description ?? 'origin edge',
             type: tpl.type,
             projectId: cfg.projectId,
             ipIds,
@@ -252,6 +257,9 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
               checkDelay: tpl.healthCheck.checkDelay,
               checkTimeout: tpl.healthCheck.checkTimeout,
               checkMaxRetries: tpl.healthCheck.checkMaxRetries,
+              ...(tpl.healthCheck.transientCheckDelay
+                ? { transientCheckDelay: tpl.healthCheck.transientCheckDelay }
+                : {}),
               tcpConfig: {},
               checkSendProxy: false,
             },
@@ -260,7 +268,12 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             timeoutConnect: tpl.timeoutConnect,
             timeoutTunnel: tpl.timeoutTunnel,
             proxyProtocol: 'proxy_protocol_none',
-            onMarkedDownAction: 'on_marked_down_action_none',
+            onMarkedDownAction: tpl.closeOnFailure
+              ? 'shutdown_sessions'
+              : 'on_marked_down_action_none',
+            ...(tpl.maxConnections !== undefined ? { maxConnections: tpl.maxConnections } : {}),
+            ...(tpl.timeoutQueue ? { timeoutQueue: tpl.timeoutQueue } : {}),
+            ...(tpl.maxRetries !== undefined ? { maxRetries: tpl.maxRetries } : {}),
           }),
         );
         return {
@@ -281,6 +294,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             timeoutClient: tpl.timeoutClient,
             enableHttp3: false,
             enableAccessLogs: false,
+            ...(tpl.connectionRateLimit ? { connectionRateLimit: tpl.connectionRateLimit } : {}),
           }),
         );
         return {
@@ -469,7 +483,11 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         createdAt: l.createdAt?.toISOString(),
       })),
       ips: ips.map((ip) => ({ id: ip.id, address: ip.ipAddress, attachedTo: ip.lbId ?? null })),
-      flavors: types.map((t) => ({ id: t.name, label: t.name })),
+      // Only a multi-cloud offer accepts a node outside Scaleway: the label says which.
+      flavors: types.map((t) => ({
+        id: t.name,
+        label: t.multicloud ? `${t.name} (multi-cloud)` : t.name,
+      })),
     };
   },
 

@@ -162,6 +162,84 @@ describe('scaleway: plan + steps', () => {
   });
 });
 
+describe('scaleway: options', () => {
+  const ledgerWith = (...kinds: Array<[string, string]>): Ledger => ({
+    steps: [],
+    resources: kinds.map(([kind, resourceId]) => ({
+      stepId: kind,
+      kind,
+      resourceId,
+      ownership: 'created' as const,
+      deleteState: 'present' as const,
+    })),
+  });
+
+  test('options left unset send what FCP sent before options existed', async () => {
+    const api = fakeApi();
+    const steps = scalewayProvider.planProvision(cfg, spec, tpl);
+    await scalewayProvider.runStep(cfg, steps[3], spec, tpl, ledgerWith(['lb', 'lb-1']));
+    const backend = api.createBackend.mock.calls[0]![0] as Record<string, unknown>;
+    expect(backend.onMarkedDownAction).toBe('on_marked_down_action_none');
+    for (const k of ['maxConnections', 'timeoutQueue', 'maxRetries'])
+      expect(backend).not.toHaveProperty(k);
+    expect(backend.healthCheck).not.toHaveProperty('transientCheckDelay');
+    await scalewayProvider.runStep(
+      cfg,
+      steps[4],
+      spec,
+      tpl,
+      ledgerWith(['lb', 'lb-1'], ['backend', 'be-1']),
+    );
+    expect(api.createFrontend.mock.calls[0]![0]).not.toHaveProperty('connectionRateLimit');
+  });
+
+  test('each option reaches its API field', async () => {
+    const api = fakeApi();
+    const t = ScalewayTemplate.parse({
+      reverse: 'edge.example.org',
+      description: 'spare',
+      maxConnections: 5000,
+      timeoutQueue: '2.5s',
+      maxRetries: 2,
+      closeOnFailure: true,
+      connectionRateLimit: 100,
+      healthCheck: {
+        checkDelay: '5s',
+        checkTimeout: '3s',
+        checkMaxRetries: 3,
+        transientCheckDelay: '0.5s',
+      },
+    });
+    const steps = scalewayProvider.planProvision(cfg, spec, t);
+    await scalewayProvider.runStep(cfg, steps[0], spec, t, ledgerWith());
+    expect(api.createIp).toHaveBeenCalledWith(
+      expect.objectContaining({ reverse: 'edge.example.org' }),
+    );
+    await scalewayProvider.runStep(cfg, steps[2], spec, t, ledgerWith(['ip', 'ip4-1']));
+    expect(api.createLb).toHaveBeenCalledWith(expect.objectContaining({ description: 'spare' }));
+    await scalewayProvider.runStep(cfg, steps[3], spec, t, ledgerWith(['lb', 'lb-1']));
+    expect(api.createBackend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxConnections: 5000,
+        timeoutQueue: '2.5s',
+        maxRetries: 2,
+        onMarkedDownAction: 'shutdown_sessions',
+        healthCheck: expect.objectContaining({ transientCheckDelay: '0.5s' }),
+      }),
+    );
+    await scalewayProvider.runStep(
+      cfg,
+      steps[4],
+      spec,
+      t,
+      ledgerWith(['lb', 'lb-1'], ['backend', 'be-1']),
+    );
+    expect(api.createFrontend).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionRateLimit: 100 }),
+    );
+  });
+});
+
 describe('scaleway: discovery / describe / destroy', () => {
   const steps = scalewayProvider.planProvision(cfg, spec, tpl);
 

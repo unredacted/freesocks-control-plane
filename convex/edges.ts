@@ -14,6 +14,7 @@
  * The reconcile cron itself lives in edgeReconcile.ts (it needs the Node
  * provider actions and the rotation machine).
  */
+import { parseOptionValues } from './lib/edges/providers/options';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
@@ -25,6 +26,7 @@ import { dropEdgeFromPool, liveEdgesOfAccount } from './relays';
 import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
 import { parseIntent, type ProvisionIntent } from './lib/edges/intent';
 import {
+  holdLearnedAddresses,
   needsEndpointVerification,
   verificationCurrent,
   verificationStale,
@@ -95,6 +97,24 @@ export function edgeProgress(edge: Edge): { done: number; total: number; percent
 }
 
 /**
+ * What an L7 edge froze about its front when it was planned: the zone, the DNS
+ * account writing its records, the TLS configuration and the certificate
+ * authority (lib/edges/intent.ts). Null for an L4 edge, or an intent that
+ * cannot be read: never the location's or the account's CURRENT values.
+ */
+export function frozenFrontOf(e: Pick<Edge, 'layer' | 'provisionIntent'>) {
+  if ((e.layer ?? 'l4') !== 'l7') return null;
+  const intent = parseIntent(e.provisionIntent);
+  if (!intent || typeof intent.zoneName !== 'string') return null;
+  return {
+    zoneName: intent.zoneName,
+    dnsAccountId: intent.dnsAccountId ?? null,
+    tlsConfigurationId: intent.tlsConfigurationId ?? null,
+    certificateAuthority: intent.certificateAuthority ?? null,
+  };
+}
+
+/**
  * The admin projection of an edge. `listener` (the edge's own listener row)
  * lets the L4 verification view say whether the confirmation is CURRENT; a
  * caller without it gets `current: null` (unknown), never a guess.
@@ -106,6 +126,7 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     required,
     current: !required ? true : listener ? verificationCurrent(e, listener) : null,
     stale: !required ? false : listener ? verificationStale(e, listener) : null,
+    learnedAddress: e.learnedAddresses?.v6 ?? e.learnedAddresses?.v4 ?? null,
     record: rec
       ? {
           rung: rec.rung,
@@ -127,6 +148,8 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     placeKey: e.placeKey ?? null,
     templateId: (e.templateId as string | undefined) ?? null,
     templateHash: e.templateHash ?? null,
+    // The node's options this edge was built with, frozen (null: built before options).
+    choices: e.choices !== undefined ? parseOptionValues(e.choices) : null,
     provider: e.provider ?? null,
     managed: e.managed,
     name: e.name,
@@ -162,6 +185,7 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
       hostname: e.addresses.hostname ?? null,
     },
     layer: e.layer ?? 'l4',
+    front: frozenFrontOf(e),
     readiness: e.readiness
       ? {
           dns: e.readiness.dns,
@@ -301,6 +325,9 @@ export interface PlannedEdgeInput {
   locationId?: Id<'edgeLocations'> | null;
   templateId?: Id<'edgeTemplates'> | null;
   templateHash: string;
+  /** With a node's choices: the location's own template hash and the choices (JSON), frozen. */
+  baseTemplateHash?: string;
+  choices?: string;
   listeners: Array<{
     edgePort: number;
     originAddress: string;
@@ -370,6 +397,9 @@ export async function insertPlannedEdge(
     placement: location.placement,
     templateId: a.templateId ?? undefined,
     templateHash: a.templateHash,
+    ...(a.choices !== undefined
+      ? { choices: a.choices, baseTemplateHash: a.baseTemplateHash ?? a.templateHash }
+      : {}),
     provider: account.provider,
     managed: true,
     name,
@@ -481,6 +511,8 @@ export const settleOp = internalMutation({
     resourceDeleteState: v.optional(
       v.array(v.object({ resourceId: v.string(), deleteState: v.string() })),
     ),
+    /** What the step waits on (a code), or null: it no longer waits on anything known. */
+    waiting: v.optional(v.union(v.null(), v.object({ step: v.string(), code: v.string() }))),
   },
   handler: async (ctx, a) => {
     const edge = await ctx.db.get(a.edgeId);
@@ -508,6 +540,24 @@ export const settleOp = internalMutation({
       );
     }
     if (a.addResources && a.addResources.length > 0) {
+      // A shared object this edge CREATED (the account's wildcard and its ACME
+      // record) is remembered on the account: the proof that FCP ordered it,
+      // which its removal requires (another edge's destroy never deletes it).
+      const ordered = a.addResources
+        .filter(
+          (r) =>
+            r.ownership === 'created' &&
+            (r.meta as { shared?: unknown } | undefined)?.shared === true,
+        )
+        .map((r) => `${r.kind}:${r.resourceId}`);
+      if (ordered.length > 0 && edge.accountId) {
+        const acct = await ctx.db.get(edge.accountId);
+        if (acct) {
+          const was = acct.orderedSharedResources ?? [];
+          const next = [...was.filter((x) => !ordered.includes(x)), ...ordered].slice(-50);
+          await ctx.db.patch(acct._id, { orderedSharedResources: next });
+        }
+      }
       const known = new Set(edge.resources.map((r) => `${r.kind}:${r.resourceId}`));
       const stepId = a.stepPatch?.stepId ?? 'describe';
       const added: Resource[] = [];
@@ -542,6 +592,18 @@ export const settleOp = internalMutation({
       patch.lastHealthAt = now;
     }
     if (a.failure) patch.failure = a.failure;
+    // A step that settles any way but `requested` (done by discovery, a
+    // thrown poll) no longer waits on what it was held up by.
+    const settledOtherwise =
+      a.stepPatch !== undefined &&
+      a.stepPatch.state !== 'requested' &&
+      edge.waiting?.step === a.stepPatch.stepId;
+    if (a.waiting === null || (a.waiting === undefined && settledOtherwise))
+      patch.waiting = undefined;
+    else if (a.waiting) {
+      const same = edge.waiting?.step === a.waiting.step && edge.waiting.code === a.waiting.code;
+      patch.waiting = { ...a.waiting, since: same ? edge.waiting!.since : now };
+    }
     if (a.resourceDeleteState) {
       const map = new Map(
         a.resourceDeleteState.map((r) => [r.resourceId, r.deleteState as Resource['deleteState']]),
@@ -683,7 +745,7 @@ export const recordDescribe = internalMutation({
     const addressLossObservations = losesAddress ? (edge.addressLossObservations ?? 0) + 1 : 0;
     const applyLoss = addressLossObservations >= ADDRESS_LOSS_OBSERVATIONS_REQUIRED;
     const keepKnown = losesAddress && !applyLoss;
-    const addressesNext =
+    const reported =
       a.state === 'active' && !keepKnown
         ? { v4: a.addresses.v4, v6: a.addresses.v6, hostname: a.addresses.hostname }
         : {
@@ -691,6 +753,14 @@ export const recordDescribe = internalMutation({
             v6: a.addresses.v6 ?? known6,
             hostname: a.addresses.hostname ?? knownName,
           };
+    // A family a confirmed L4 edge did not have is held apart until it is
+    // tested (lib/edges/verification.ts `holdLearnedAddresses`); only an
+    // active describe decides what is held, the others keep it.
+    const held =
+      a.state === 'active'
+        ? holdLearnedAddresses(edge, reported)
+        : { addresses: reported, learned: edge.learnedAddresses ?? undefined };
+    const addressesNext = held.addresses;
     let resources = added.length > 0 ? [...edge.resources, ...added] : edge.resources;
     let transition: Partial<Edge> = {};
     const gone = a.state === 'gone' && edge.status !== 'destroyed';
@@ -727,6 +797,7 @@ export const recordDescribe = internalMutation({
     }
     await ctx.db.patch(a.edgeId, {
       addresses: addressesNext,
+      learnedAddresses: held.learned,
       health: a.health as Edge['health'],
       lastHealthAt: now,
       ...(resources !== edge.resources ? { resources } : {}),
@@ -790,6 +861,19 @@ export const claimExternalLock = internalMutation({
         return { ok: true as const, opId };
       }
       if (existing.expiresAt > now) return { ok: false as const, code: 'edge.lock_busy' as const };
+      // An account-level holder that never released (its action died): what it
+      // did is re-read by the step that takes over, which finds the object or
+      // orders it again, so an expired one is simply taken.
+      if (!existing.holderEdgeId) {
+        await ctx.db.patch(existing._id, {
+          holderEdgeId: edgeId,
+          holderAccountId: undefined,
+          opId,
+          claimedAt: now,
+          expiresAt: now + ttlMs,
+        });
+        return { ok: true as const, opId };
+      }
       // Expired and never settled: the previous holder's outcome is UNKNOWN.
       // Blocking here is the whole point: its discovery pass settles the lock.
       return { ok: false as const, code: LOCK_UNSETTLED };

@@ -39,6 +39,7 @@ import { applyEdgeRender } from './lib/edges/renderPipeline';
 import { effectiveRule } from './lib/edges/render';
 import { publishedCount } from './lib/edges/pool';
 import { isTerminalPhase, progressPercent } from './lib/edges/rotation';
+import { isTerminalRunState } from './lib/edges/setupRuns';
 import {
   assertNoRotationOrQuarantine,
   dropEdgeFromPool,
@@ -51,6 +52,9 @@ import { protocolLabel } from './lib/edges/protocols';
 import { destroyedPatch, mapEdgeAdmin } from './edges';
 import { deliveryStyleOf, publishedEdgesOf } from './edgeRender';
 import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
+import { EDGE_NEW_ACCOUNT_OPTION_DEFAULTS, optionFieldsOf } from './lib/edges/providers/templates';
+import { defaultsOf } from './lib/edges/providers/options';
+import { EDGE_PROVIDER_IDS } from './lib/edgeProviderIds';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 
@@ -859,6 +863,8 @@ export const publishedEdgeIdsOf = internalQuery({
  * Nodes the backend currently lists (the healthcheck cron's inventory cache, or a
  * fresh pull via backendNodes.refreshNodeInventory), with whether an origin is
  * already registered for each: the "New origin" picker pre-fills from these.
+ * `leftover`: that origin is one an earlier guided setup left half set up (it
+ * still owns it, no run is working on it): a new protect picks it up.
  */
 export const nodeCandidates = internalQuery({
   args: { backendServerId: v.id('backendServers') },
@@ -872,6 +878,21 @@ export const nodeCandidates = internalQuery({
       .withIndex('by_backend_server', (q) => q.eq('backendServerId', backendServerId))
       .collect();
     const bound = new Map(relays.filter((r) => r.nodeName).map((r) => [r.nodeName!, r.slug]));
+    const runs = await ctx.db
+      .query('edgeSetupRuns')
+      .withIndex('by_origin', (q) => q.eq('backendServerId', backendServerId))
+      .collect();
+    const working = new Set(
+      runs.filter((r) => !isTerminalRunState(r.state)).map((r) => r.nodeName),
+    );
+    const leftovers = new Set(
+      relays
+        .filter(
+          (r) =>
+            r.nodeName && r.setupOwned && !r.deleting && !r.restore && !working.has(r.nodeName),
+        )
+        .map((r) => r.nodeName!),
+    );
     return {
       fetchedAt: rows.length
         ? new Date(Math.max(...rows.map((r) => r.lastStatsAt))).toISOString()
@@ -887,6 +908,7 @@ export const nodeCandidates = internalQuery({
           online: r.online,
           usersOnline: r.usersOnline,
           relaySlug: bound.get(r.name) ?? null,
+          leftover: leftovers.has(r.name),
         })),
     };
   },
@@ -895,4 +917,27 @@ export const nodeCandidates = internalQuery({
 export const credentialFields = internalQuery({
   args: {},
   handler: async () => EDGE_CREDENTIAL_FIELDS,
+});
+
+/**
+ * Every provider's options as the forms render them: the tuning ones a
+ * template holds and the certificate ones an account defaults, with the value
+ * each takes when nothing sets one (lib/edges/providers/templates.ts).
+ */
+export const optionSchemas = internalQuery({
+  args: {},
+  handler: async () =>
+    Object.fromEntries(
+      EDGE_PROVIDER_IDS.map((p) => {
+        const fields = optionFieldsOf(p).filter((f) => !f.hidden);
+        return [
+          p,
+          {
+            fields,
+            defaults: defaultsOf(fields),
+            newAccountDefaults: EDGE_NEW_ACCOUNT_OPTION_DEFAULTS[p] ?? {},
+          },
+        ];
+      }),
+    ),
 });

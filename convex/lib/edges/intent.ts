@@ -2,17 +2,19 @@
  * The FROZEN provisioning intent of an L7 (CDN) edge, and the binding a front
  * qualification is valid for.
  *
- * An L7 edge depends on things that live OUTSIDE its own row: the account's
- * zone, the referenced DNS account, a TLS configuration, a certificate
- * authority, the listener's origin transport, the rendered template. All of them
- * may be edited while the edge exists. If a later step, a discovery, a describe
- * or a destroy re-read them, an operator's edit mid-rotation would make FCP
- * create one resource and then look for (or delete) a different one.
+ * An L7 edge depends on things that live OUTSIDE its own row: its location's
+ * zone, DNS account and TLS configuration, the account's certificate
+ * authority, the listener's origin transport, the rendered template. Some of
+ * them may be edited while the edge exists. If a later step, a discovery, a
+ * describe or a destroy re-read them, an operator's edit mid-rotation would make
+ * FCP create one resource and then look for (or delete) a different one.
  *
  * So the intent is computed ONCE, when the edge is planned, stored as JSON on
- * the edge, and read by everything afterwards. Account settings and templates
- * are read only when planning a NEW edge. L4 edges have no intent (their whole
- * configuration is the listener list, which is already frozen on the row).
+ * the edge, and read by everything afterwards (`edgeProviderOps.loadAdapter`
+ * lays every value it froze over the account's settings). Locations, account
+ * settings and templates are read only when planning a NEW edge. L4 edges have
+ * no intent (their whole configuration is the listener list, which is already
+ * frozen on the row).
  *
  * The same reasoning gives the qualification BINDING: an authenticated test
  * session proves one exact configuration, so the publishing mutation re-derives
@@ -21,9 +23,15 @@
  */
 import { canonicalJson } from './providers/template';
 import { edgeHostnameFor } from './hostname';
-import { edgeLayerOf, zoneModeGovernsOrigin } from './providers/capabilities';
+import {
+  EDGE_PROVIDER_CAPABILITIES,
+  edgeLayerOf,
+  zoneModeGovernsOrigin,
+} from './providers/capabilities';
 import type { ListenerProto } from './protocols';
 import { zoneModeCarriesOrigin, type OriginTransport } from './layers';
+import { EDGE_INTENT_FACTS } from './accountSettings';
+import type { EdgeProviderId } from '../edgeProviderIds';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto; same function the template hash uses). */
 export function intentFnv1a64Hex(input: string): string {
@@ -49,10 +57,14 @@ export interface ProvisionIntent {
   hostname: string;
   zoneId: string;
   zoneName: string;
-  /** The Cloudflare account whose credentials write this edge's DNS (Fastly edges). */
+  /** The DNS account whose credentials write this edge's records (Fastly edges). */
   dnsAccountId?: string;
   tlsConfigurationId?: string;
   certificateAuthority?: string;
+  /** Fastly: `wildcard` = the account's shared `*.<zone>` certificate; absent = one per front. */
+  certificateScope?: string;
+  /** Fastly: `versionless` for every edge planned now; absent = a version-scoped (classic) domain. */
+  domainModel?: string;
   originTransport: FrozenOriginTransport;
   originPort: number;
   /**
@@ -70,16 +82,25 @@ export interface ProvisionIntent {
 export interface IntentAccountLike {
   id: string;
   provider: string;
+  /** The account's settings: the intent defaults (certificate authority) come from here. */
   settings: Record<string, unknown>;
-  /**
-   * What the credential test OBSERVED at the provider (`edgeProviderAccounts
-   * .observedSettings`): facts planning needs that the operator never enters,
-   * above all the zone's encryption mode.
-   */
-  observedSettings?: Record<string, string>;
 }
 
-/** Read an account's stored `observedSettings` blob; anything unusable is `{}`. */
+/**
+ * Where an L7 edge lives: its location's zone, the DNS account writing it (a
+ * provider whose records FCP writes elsewhere) and the TLS configuration, plus
+ * what the provider said about the zone when it was last checked (above all its
+ * encryption mode, which planning needs but the operator never enters).
+ */
+export interface IntentPlace {
+  zoneId?: string;
+  zoneName?: string;
+  dnsAccountId?: string;
+  tlsConfigurationId?: string;
+  observed?: Record<string, string>;
+}
+
+/** Read a stored `observed` / `observedSettings` blob; anything unusable is `{}`. */
 export function parseObservedSettings(json: string | null | undefined): Record<string, string> {
   if (!json) return {};
   let raw: unknown;
@@ -95,6 +116,21 @@ export function parseObservedSettings(json: string | null | undefined): Record<s
   return out;
 }
 
+/** The place a location's placement describes (keys it lacks stay absent), with its observed zone facts. */
+export function intentPlaceOf(
+  placement: Record<string, unknown> | null | undefined,
+  observedJson?: string | null,
+): IntentPlace {
+  const p = placement ?? {};
+  return {
+    ...(str(p.zoneId) ? { zoneId: str(p.zoneId) } : {}),
+    ...(str(p.zoneName) ? { zoneName: str(p.zoneName) } : {}),
+    ...(str(p.dnsAccountId) ? { dnsAccountId: str(p.dnsAccountId) } : {}),
+    ...(str(p.tlsConfigurationId) ? { tlsConfigurationId: str(p.tlsConfigurationId) } : {}),
+    observed: parseObservedSettings(observedJson),
+  };
+}
+
 export interface IntentListenerLike {
   originPort: number;
   originTransport?: OriginTransport | null;
@@ -102,13 +138,19 @@ export interface IntentListenerLike {
 
 export interface BuildIntentArgs {
   account: IntentAccountLike;
-  /** The referenced Cloudflare DNS account, for a provider that needs one (Fastly). */
-  dnsAccount?: IntentAccountLike | null;
+  /** The edge's location: its zone (and DNS account, TLS configuration). */
+  place: IntentPlace;
   /** The provider-side resource name (`edges.name`); the hostname label is derived from it. */
   specName: string;
   /** The effective, already rendered template params. */
   templateParams: Record<string, unknown>;
   templateHash: string;
+  /**
+   * The certificate options the edge gets (lib/edges/choices.ts
+   * `certificateValuesFor`): frozen like the zone. Absent = the account's
+   * stored settings, the way intents were built before options.
+   */
+  certificate?: Record<string, unknown>;
   listener: IntentListenerLike;
   /**
    * Overrides the observed zone mode (tests, an operator-forced re-plan).
@@ -142,12 +184,17 @@ function str(v: unknown): string | undefined {
  */
 export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null {
   if (edgeLayerOf(a.account.provider) !== 'l7') return null;
-  // The zone lives on the account itself (a provider that hosts its own DNS) or
-  // on the referenced DNS account (a provider whose records FCP writes elsewhere).
-  const zoneSource = a.dnsAccount ?? a.account;
-  const zoneId = str(zoneSource.settings.zoneId);
-  const zoneName = str(zoneSource.settings.zoneName);
+  // The zone is the location's: one of the zones the account reaches (a
+  // provider that hosts its own DNS), or one of its DNS account's.
+  const zoneId = str(a.place.zoneId);
+  const zoneName = str(a.place.zoneName);
   if (!zoneId || !zoneName) throw new IntentError('dns_zone_missing');
+  const dnsAccountId = str(a.place.dnsAccountId);
+  const caps =
+    a.account.provider in EDGE_PROVIDER_CAPABILITIES
+      ? EDGE_PROVIDER_CAPABILITIES[a.account.provider as keyof typeof EDGE_PROVIDER_CAPABILITIES]
+      : null;
+  if (caps?.needsDnsAccount && !dnsAccountId) throw new IntentError('dns_account_missing');
   const originTransport = a.listener.originTransport ?? null;
   if (!originTransport) throw new IntentError('origin_transport_missing');
   const tpl = a.templateParams;
@@ -159,32 +206,40 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
     });
   // The zone's encryption mode decides how the front dials the origin ONLY
   // when the CDN fronting this edge is the zone's own proxy (`providesDns`).
-  // It is OBSERVED at the provider (the credential test), never entered, so
-  // such an account nobody has tested cannot be planned against: guessing a
+  // It is OBSERVED at the provider (the location's zone check), never entered,
+  // so such a zone nobody has checked cannot be planned against: guessing a
   // mode would silently front a plaintext origin over HTTPS, or the other way
   // round. For a front whose records are only unproxied CNAMEs in someone
   // else's zone the mode is irrelevant: it is neither required nor frozen, and
   // it never refuses the origin transport.
   const zoneModeApplies = zoneModeGovernsOrigin(a.account.provider);
   const zoneSslMode = zoneModeApplies
-    ? (a.zoneSslMode ?? zoneSource.observedSettings?.zoneSslMode)
+    ? (a.zoneSslMode ?? a.place.observed?.zoneSslMode)
     : undefined;
   if (zoneModeApplies) {
     if (!zoneSslMode) throw new IntentError('zone_mode_unknown');
     if (!zoneModeCarriesOrigin(zoneSslMode, originTransport))
       throw new IntentError('origin_tls_mismatch');
   }
+  const tlsConfigurationId = str(a.place.tlsConfigurationId);
+  const certificate = a.certificate ?? a.account.settings;
+  const certificateAuthority = str(certificate.certificateAuthority);
+  const certificateScope = str(certificate.certificateScope);
   return {
     hostname,
     zoneId,
     zoneName,
-    ...(a.dnsAccount ? { dnsAccountId: a.dnsAccount.id } : {}),
-    ...(str(a.account.settings.tlsConfigurationId)
-      ? { tlsConfigurationId: str(a.account.settings.tlsConfigurationId) }
-      : {}),
-    ...(str(a.account.settings.certificateAuthority)
-      ? { certificateAuthority: str(a.account.settings.certificateAuthority) }
-      : {}),
+    ...(dnsAccountId ? { dnsAccountId } : {}),
+    ...(tlsConfigurationId ? { tlsConfigurationId } : {}),
+    ...(certificateAuthority ? { certificateAuthority } : {}),
+    ...(certificateScope ? { certificateScope } : {}),
+    // How the provider is driven: the account's choice, else today's way; an
+    // older intent without these keeps the way it was built (`EDGE_INTENT_FACTS`).
+    ...Object.fromEntries(
+      Object.entries(EDGE_INTENT_FACTS[a.account.provider as EdgeProviderId] ?? {}).map(
+        ([k, f]) => [k, str(a.account.settings[k]) ?? f.planned],
+      ),
+    ),
     originTransport: {
       scheme: originTransport.scheme,
       certPublic: originTransport.certPublic,
@@ -195,6 +250,21 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
     ...(zoneSslMode ? { zoneSslMode } : {}),
     templateHash: a.templateHash,
     templateParams: tpl,
+  };
+}
+
+/**
+ * The settings an EXISTING L7 edge's calls take from its intent instead of
+ * the account or its location: where its records live and the TLS
+ * configuration its certificate was issued on (the certificate options are
+ * laid over by `edgeProviderOps.loadAdapter` from the intent the same way),
+ * so an edit after planning never moves a live edge.
+ */
+export function frozenSettingsOf(intent: ProvisionIntent): Record<string, string> {
+  return {
+    zoneId: intent.zoneId,
+    zoneName: intent.zoneName,
+    ...(intent.tlsConfigurationId ? { tlsConfigurationId: intent.tlsConfigurationId } : {}),
   };
 }
 

@@ -249,18 +249,17 @@ describe('edgeReconcile', () => {
       publication: 'draining',
       drainUntil: Date.now() - 1,
     });
+    // The pass that ends the drain starts the walk too. DELETE 2xx = requested,
+    // never assumed gone; the next pass re-issues the idempotent DELETE and the
+    // 404 confirms it.
     const r1 = await run(s.t);
     expect(r1.destroying).toBe(1);
-    expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('destroying');
-    // DELETE 2xx = requested, never assumed gone; the next pass re-issues the
-    // idempotent DELETE and the 404 confirms it.
-    const r2 = await run(s.t);
-    expect(r2.destroyed).toBe(0);
+    expect(r1.destroyed).toBe(0);
     let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroying');
     expect(edge.resources[0].deleteState).toBe('delete_requested');
-    const r3 = await run(s.t);
-    expect(r3.destroyed).toBe(1);
+    const r2 = await run(s.t);
+    expect(r2.destroyed).toBe(1);
     expect(world.deletes).toEqual(['lb-1', 'lb-1']);
     edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroyed');
@@ -415,10 +414,10 @@ describe('edgeReconcile', () => {
         .filter((c) => c.path.startsWith('/1.3/'))
         .map((c) => `${c.method} ${c.path}`),
     ).toEqual(['GET /1.3/load-balancer']);
+    // Nothing to delete: destroying and destroyed in the same pass.
     const r2 = await run(s.t);
     expect(r2.destroying).toBe(1);
-    const r3 = await run(s.t);
-    expect(r3.destroyed).toBe(1);
+    expect(r2.destroyed).toBe(1);
     edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroyed');
     expect(world.deletes).toEqual([]);
@@ -459,8 +458,7 @@ describe('edgeReconcile', () => {
         deleteState: 'present',
       }),
     ]);
-    await run(s.t); // → destroying
-    await run(s.t); // → DELETE requested
+    await run(s.t); // → destroying, DELETE requested
     await run(s.t); // → re-issued DELETE answers 404: confirmed gone
     edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroyed');
@@ -863,21 +861,20 @@ describe('edgeReconcile', () => {
       publication: 'draining',
       drainUntil: Date.now() - 1,
     });
-    await run(s.t); // → destroying
-    const r2 = await run(s.t); // DELETE throws → delete_requested
-    expect(r2.errors).toBe(1);
+    const r1 = await run(s.t); // → destroying; its DELETE throws → delete_requested
+    expect(r1.errors).toBe(1);
     let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.resources[0].deleteState).toBe('delete_requested');
     expect(edge.status).toBe('destroying');
     // Confirmation re-runs the idempotent DELETE: this one lands (2xx = requested,
     // the LB is really gone only now) and the NEXT re-issue's 404 confirms it.
-    const r3 = await run(s.t);
-    expect(r3.destroyed).toBe(0);
+    const r2 = await run(s.t);
+    expect(r2.destroyed).toBe(0);
     expect(lbs.size).toBe(0);
     edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.resources[0].deleteState).toBe('delete_requested');
-    const r4 = await run(s.t);
-    expect(r4.destroyed).toBe(1);
+    const r3 = await run(s.t);
+    expect(r3.destroyed).toBe(1);
     edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroyed');
     expect(deletes).toEqual(['lb-1', 'lb-1', 'lb-1']);
@@ -931,9 +928,10 @@ describe('edgeReconcile', () => {
       expect(e.resources[0].deleteState).toBe('delete_requested');
     }
     expect(calls).toEqual(Array(MAX_CONFIRM_ATTEMPTS).fill('GET'));
-    // Past the cap: the idempotent DELETE is re-issued and the counter resets.
+    // Past the cap: the idempotent DELETE is re-issued (and read back at once:
+    // still deleting, so the next pass confirms) and the counter resets.
     await run(s.t);
-    expect(calls[calls.length - 1]).toBe('DELETE');
+    expect(calls.slice(-2)).toEqual(['DELETE', 'GET']);
     const e = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(e.destroyConfirm).toBeUndefined();
     expect(e.resources[0].deleteState).toBe('delete_requested');
@@ -962,9 +960,9 @@ describe('edgeReconcile', () => {
     expect(e.destroyConfirm).toBeUndefined();
     expect(e.destroyAttempts).toBe(1);
     expect(e.status).toBe('destroying');
-    await run(s.t); // present → runDestroy re-issued
+    await run(s.t); // present → runDestroy re-issued, read back at once (not gone yet)
     e = (await s.t.query(internal.edges.get, { id: edgeId }))!;
-    expect(calls).toEqual(['GET', 'DELETE']);
+    expect(calls).toEqual(['GET', 'DELETE', 'GET']);
     expect(e.resources[0].deleteState).toBe('delete_requested');
     expect(e.destroyAttempts).toBe(2);
   });
@@ -1181,6 +1179,127 @@ describe('edgeReconcile: observe-only edges', () => {
     });
     await run(s.t);
     expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('draining');
+  });
+});
+
+describe('edgeReconcile: one destroy pass walks the plan in kind order', () => {
+  afterEach(() => __setEdgeProviderForTests('gcore', null));
+
+  /**
+   * An async-delete provider (its deletes are read back) with four resources
+   * in kind order a, b, c, d. A delete is requested; the read-back answers
+   * gone unless the resource is `slow` (still going away).
+   */
+  function fakeWalkProvider(slow: Set<string>) {
+    const calls: string[] = [];
+    __setEdgeProviderForTests('gcore', {
+      id: 'gcore',
+      templateSchema: z.object({}).passthrough(),
+      templateFields: [],
+      defaultTemplate: {},
+      testCredentials: async () => ({ ok: true }),
+      planProvision: () => [],
+      runStep: async () => ({ status: 'done', resources: [] }),
+      discover: async () => ({ status: 'unresolved' }),
+      describe: async () => ({ state: 'active', addresses: {}, health: 'unknown' }),
+      inspect: async () => ({ summary: { addresses: [], members: [], listeners: [] }, raw: {} }),
+      inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
+      planDestroy: (_cfg: unknown, ledger: { resources: Array<{ deleteState: string }> }) =>
+        ledger.resources.filter((r) => r.deleteState !== 'confirmed_gone'),
+      runDestroy: async (_cfg: unknown, r: { resourceId: string }) => {
+        calls.push(`delete:${r.resourceId}`);
+        return { status: 'delete_requested' };
+      },
+      confirmDestroyed: async (_cfg: unknown, r: { resourceId: string }) => {
+        calls.push(`confirm:${r.resourceId}`);
+        return slow.has(r.resourceId) ? { status: 'unresolved' } : { status: 'confirmed_gone' };
+      },
+    } as never);
+    return calls;
+  }
+
+  async function walkEdge() {
+    mockFetch((c) => {
+      if (new URL(c.url).hostname === 'panel.example') return jsonRes({ response: [] });
+      throw new Error(`unexpected ${c.method} ${c.url}`);
+    });
+    const s = await seed();
+    const edgeId = await gcoreDestroyingEdge(s, 'present');
+    await s.t.run(async (ctx) => {
+      await ctx.db.patch(edgeId, {
+        resources: ['a', 'b', 'c', 'd'].map((id) => ({
+          stepId: 'lb',
+          kind: id,
+          resourceId: id,
+          ownership: 'created' as const,
+          deleteState: 'present' as const,
+        })),
+      });
+    });
+    const edge = async () => (await s.t.query(internal.edges.get, { id: edgeId }))!;
+    return { s, edge };
+  }
+
+  test('every delete that reads back gone lets the walk go on: one pass destroys the edge, counted once', async () => {
+    const calls = fakeWalkProvider(new Set());
+    const { s, edge } = await walkEdge();
+    const r = await run(s.t);
+    expect(r.destroyed).toBe(1);
+    expect(calls).toEqual([
+      'delete:a',
+      'confirm:a',
+      'delete:b',
+      'confirm:b',
+      'delete:c',
+      'confirm:c',
+      'delete:d',
+      'confirm:d',
+    ]);
+    const e = await edge();
+    expect(e.status).toBe('destroyed');
+    expect(e.destroyAttempts).toBe(1);
+    expect(e.currentOp).toBeUndefined();
+  });
+
+  test('the walk stops at a resource still going away; the later kinds wait for it', async () => {
+    const slow = new Set(['b']);
+    const calls = fakeWalkProvider(slow);
+    const { s, edge } = await walkEdge();
+    await run(s.t);
+    expect(calls).toEqual(['delete:a', 'confirm:a', 'delete:b', 'confirm:b']);
+    let e = await edge();
+    expect(e.resources.map((r) => `${r.resourceId}:${r.deleteState}`)).toEqual([
+      'a:confirmed_gone',
+      'b:delete_requested',
+      'c:present',
+      'd:present',
+    ]);
+    // Still deleting: the next pass confirms b only.
+    calls.length = 0;
+    await run(s.t);
+    expect(calls).toEqual(['confirm:b']);
+    e = await edge();
+    expect(e.destroyConfirm).toEqual({ resourceId: 'b', attempts: 1 });
+    // Gone now: the same pass goes on through c and d.
+    slow.clear();
+    calls.length = 0;
+    const r = await run(s.t);
+    expect(calls).toEqual(['confirm:b', 'delete:c', 'confirm:c', 'delete:d', 'confirm:d']);
+    expect(r.destroyed).toBe(1);
+    e = await edge();
+    expect(e.destroyAttempts).toBe(3);
+    expect(e.destroyConfirm).toBeUndefined();
+  });
+
+  test('one pass walks at most maxDestroyStepsPerPass resources', async () => {
+    __setEdgePlumbingForTests({ maxDestroyStepsPerPass: 2 });
+    const calls = fakeWalkProvider(new Set());
+    const { s, edge } = await walkEdge();
+    await run(s.t);
+    expect(calls).toEqual(['delete:a', 'confirm:a', 'delete:b', 'confirm:b']);
+    expect((await edge()).status).toBe('destroying');
+    const r = await run(s.t);
+    expect(r.destroyed).toBe(1);
   });
 });
 

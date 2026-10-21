@@ -4,6 +4,7 @@ import {
   ATTENTION_KINDS,
   DELIVERY_UNAVAILABLE_CODES,
   INBOUND_UNSUPPORTED_CODES,
+  L7_CERTIFICATE_CODES,
   LAYER_EXCLUSION_CODES,
   POOL_CODES,
   PREFLIGHT_BLOCKER_CODES,
@@ -59,6 +60,7 @@ const EVERY_CODE = [
   ...WORKFLOW_CODES,
   ...VERIFICATION_STALE_REASONS,
   ...SETTINGS_WARNING_CODES,
+  ...L7_CERTIFICATE_CODES,
 ];
 
 const EM_DASH = '—';
@@ -123,13 +125,15 @@ describe('EDGE_REFUSAL_COPY', () => {
     'location_not_offered',
     'location_unchecked',
     'location_in_use',
-    'location_not_geographic',
     'placement_on_location',
     'template_value_required',
     'pick_switch_late',
     'set_uncovered_listener',
     'set_too_large',
     'set_would_uncover',
+    'location_unusable',
+    'dns_account_unusable',
+    'hostname_not_in_zone',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {
@@ -140,6 +144,12 @@ describe('EDGE_REFUSAL_COPY', () => {
     }
     expect(codeLabel('needs_rotation')).toBe('Needs a rotation');
     expect(codeFix('host_adopt_required')).toContain('Adopt a Host');
+    // Only a refusal whose server message names the reason lets it replace the fix.
+    const fromServer = Object.entries(EDGE_REFUSAL_COPY)
+      .filter(([, e]) => e.reasonFromServer)
+      .map(([code]) => code);
+    expect(fromServer.sort()).toEqual(['dns_account_unusable', 'location_unusable']);
+    for (const code of fromServer) expect(codeFix(code)).toBeTruthy();
   });
 
   test('no refusal copy contains an em-dash or an API path, and every part is a sentence', () => {
@@ -199,6 +209,14 @@ describe('guided setup run vocabularies', () => {
     for (const code of SETUP_RUN_NEEDS) check(code, SETUP_RUN_NEED_COPY[code]);
     for (const code of SETUP_ACCOUNT_REASONS) check(code, SETUP_ACCOUNT_REASON_COPY[code]);
     expect(offenders).toEqual([]);
+    // A CDN location is a DNS zone: the words name the location, never account settings.
+    for (const e of [
+      SETUP_ACCOUNT_REASON_COPY.dns_zone_missing,
+      EDGE_CODE_COPY.dns_zone_missing!,
+    ]) {
+      expect(e.explain).toBe('This location names no DNS zone.');
+      expect(e.fix).toBe('Add a location in one of the zones the account reaches.');
+    }
   });
 
   test('every need has exactly one button and an unknown need is humanised', () => {
@@ -218,11 +236,29 @@ describe('guided setup run vocabularies', () => {
 });
 
 describe('code helpers', () => {
+  test('the CDN zone and DNS account answers are worded', () => {
+    for (const code of [
+      'location_check_failed',
+      'dns_account_disabled',
+      'no_zones',
+      'zone_name_mismatch',
+      'tls_configuration_missing',
+      'zone_unreadable',
+    ]) {
+      expect(EDGE_CODE_COPY[code]?.label.trim()).toBeTruthy();
+      expect(codeExplain(code)).not.toMatch(/^The server reported/);
+    }
+  });
+
   test('known codes resolve through the table', () => {
     expect(codeLabel('pool_empty')).toBe('Pool empty');
     expect(codeExplain('pool_empty')).toMatch(/published/);
     expect(codeFix('pool_empty')).toBe('Publish an edge.');
     expect(codeFix('not_found')).toBeUndefined();
+    // A rejected Cloudflare token says which token kinds FCP accepts, not a bare "1000".
+    expect(codeLabel('token_rejected')).toBe('Token rejected');
+    expect(codeExplain('token_rejected')).toMatch(/^Cloudflare rejected this token/);
+    expect(codeFix('token_rejected')).toMatch(/user API tokens and account API tokens/);
   });
 
   test('unknown codes are humanised, never returned bare', () => {
@@ -230,6 +266,9 @@ describe('code helpers', () => {
     expect(codeLabel('edge.needs_rotation')).toBe('Edge needs rotation');
     expect(codeExplain('some_new_server_code')).toBe('The server reported Some new server code.');
     expect(codeFix('some_new_server_code')).toBeUndefined();
+    // A provider's own number (or an HTTP status) is named as one, never shown bare.
+    expect(codeLabel('1000')).toBe('Provider error 1000');
+    expect(codeExplain('9109')).toMatch(/its own error code 9109/);
     expect(codeLabel(null)).toBe('');
     expect(codeLabel(undefined)).toBe('');
   });
@@ -336,6 +375,30 @@ describe('plain words (the simple screens)', () => {
       expect(text).not.toContain(EM_DASH);
       expect(text).not.toContain('/api/');
     }
+  });
+  test('reads as English where a plain phrase lands next to an article or a noun', () => {
+    expect(plainWords('The detector suspects a censor is blocking a published edge.')).toBe(
+      'The detector suspects a censor is blocking an address in use.',
+    );
+    expect(plainWords('Published edge')).toBe('Address in use');
+    expect(plainWords('Every published edge is the template edge.')).toBe(
+      'Every address in use is the template address.',
+    );
+    expect(plainWords('An origin can carry it.')).toBe('A protected node can carry it.');
+    expect(plainWords('A rotation is in progress.')).toBe('An address replacement is in progress.');
+    expect(plainWords('Rotate the credentials.')).toBe('Replace the credentials.');
+    expect(plainWords('Nothing can provision an edge.')).toBe('Nothing can create an address.');
+    // Every worded code, as the simple screens show it (attention rows included).
+    const broken =
+      /\b(an? in use|an? paused for safety|(in use|paused for safety) (CDN front|front|protected node|address|spare|transport|slot)|an (protected|spare|retiring|replace|create|trusted|trust|paused|transport|resume|check)\b|a (address|addresses)\b|(replace|create) address (the|this|an?|its)\b|transport of this transport)/i;
+    const offenders: string[] = [];
+    for (const table of [EDGE_CODE_COPY, SETUP_ACCOUNT_REASON_COPY, SETUP_RUN_NEED_COPY] as Array<
+      Record<string, { label: string; explain: string; fix?: string }>
+    >)
+      for (const [code, c] of Object.entries(table))
+        for (const text of [c.label, c.explain, c.fix ?? ''])
+          if (broken.test(plainWords(text))) offenders.push(`${code}: ${plainWords(text)}`);
+    expect(offenders).toEqual([]);
   });
   test('rewrites whole words only, keeping the leading capital', () => {
     expect(plainWords('Origin quarantined')).toBe('Protected node paused for safety');

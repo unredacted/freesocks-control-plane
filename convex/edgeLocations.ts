@@ -11,8 +11,12 @@
  * passing L7 proof), bound to the effective template it was taken with. An
  * account's credential or settings edit untrusts all of its locations.
  *
- * A CDN account (L7) has exactly one location, `anycast` with an empty
- * placement, created with the account. Rows are operator-scale.
+ * A CDN account (L7) has one location per DNS zone it fronts in (a Fastly
+ * front also names the DNS account writing its records and its TLS
+ * configuration); every one keeps the place key `anycast`, since a CDN's zones
+ * share its address ranges. A zone location is checked with the provider when
+ * it is created and whenever the account is tested (`recordCheck`). Rows are
+ * operator-scale.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -21,7 +25,6 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { EDGE_LIVE_STATUSES, LIVE_EDGE_SCAN_LIMIT } from './lib/edges/pool';
 import {
-  EDGE_PLACEMENT_SETTINGS,
   placementKeysOf,
   validatePlacement,
   type EdgePlacement,
@@ -37,10 +40,15 @@ import {
 import { resolveTemplateFor, type TemplateLocation } from './edgeTemplates';
 import { EDGE_TEMPLATES } from './lib/edges/providers/templates';
 import { assertAdmission } from './lib/edges/maintenance';
-import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQualify';
 import { verificationEndpoint } from './lib/edges/verification';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
+import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
+import {
+  removableSharedCertificate,
+  sharedCertificateOrderedByFcp,
+} from './lib/edges/sharedCertificate';
+import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 
 export type Location = Doc<'edgeLocations'>;
 type Account = Doc<'edgeProviderAccounts'>;
@@ -128,6 +136,33 @@ export async function effectiveTemplateOfLocation(
   );
 }
 
+/**
+ * A front location of a provider that writes its records through a DNS
+ * account must name one that exists, hosts DNS and is switched on: a dangling
+ * or wrong-kind reference would only surface at provision time, with a
+ * paid-for front half-created.
+ */
+export async function assertDnsAccountOfPlacement(
+  db: DatabaseReader,
+  provider: EdgeProviderId,
+  placement: unknown,
+): Promise<void> {
+  if (!EDGE_PROVIDER_CAPABILITIES[provider].needsDnsAccount) return;
+  const ref = (placement as { dnsAccountId?: unknown } | null)?.dnsAccountId;
+  const id = typeof ref === 'string' ? db.normalizeId('edgeProviderAccounts', ref) : null;
+  const row = id ? await db.get(id) : null;
+  if (!row || !EDGE_PROVIDER_CAPABILITIES[row.provider].providesDns)
+    throw new ConvexError({
+      code: 'edge.dns_account_unusable',
+      message: 'Pick a DNS account that can host DNS records',
+    });
+  if (!row.enabled)
+    throw new ConvexError({
+      code: 'edge.dns_account_unusable',
+      message: 'That DNS account is switched off',
+    });
+}
+
 // --- writes (helpers) --------------------------------------------------------------------
 
 export interface LocationExtras {
@@ -135,6 +170,21 @@ export interface LocationExtras {
   regionalParams?: Record<string, string>;
   maxLiveEdges?: number;
   costNote?: string;
+  /** What the provider said about the place when it was checked (a zone's encryption mode). */
+  observed?: Record<string, string>;
+}
+
+/** The name a location gets when nobody gave one: a CDN place's zone, else the region id. */
+function defaultLabelOf(placement: EdgePlacement, placeKey: string): string {
+  const zoneName = (placement as { zoneName?: string }).zoneName;
+  if (zoneName) return zoneName;
+  return placeKey === ANYCAST_PLACE ? 'Anycast' : placeKey;
+}
+
+function observedJson(observed: Record<string, string> | undefined): string | undefined {
+  return observed && Object.keys(observed).length > 0
+    ? JSON.stringify(observed).slice(0, 4_000)
+    : undefined;
 }
 
 function cleanLabel(raw: string | undefined, fallback: string): string {
@@ -186,12 +236,15 @@ export async function upsertLocation(
     placeKey,
     placement: placement as never,
     placementHash,
-    label: cleanLabel(extras.label, placeKey === ANYCAST_PLACE ? 'Anycast' : placeKey),
+    label: cleanLabel(extras.label, defaultLabelOf(placement, placeKey)),
     enabled: true,
     qualified: false,
     ...(Object.keys(regional).length > 0 ? { regionalParams: JSON.stringify(regional) } : {}),
     ...(extras.maxLiveEdges !== undefined ? { maxLiveEdges: extras.maxLiveEdges } : {}),
     ...(cleanCostNote(extras.costNote) ? { costNote: cleanCostNote(extras.costNote) } : {}),
+    ...(observedJson(extras.observed)
+      ? { observed: observedJson(extras.observed), observedAt: now }
+      : {}),
     createdAt: now,
     updatedAt: now,
   });
@@ -209,18 +262,26 @@ export async function upsertLocation(
 }
 
 /**
- * The location an account created with its old single-location shape (or a
- * CDN account) gets at once: the placement keys its settings carried, or the
- * empty placement of a provider without places. Null when the payload names
- * no place for a provider that has them (the operator adds one later).
+ * The location an account created with its old single-location shape gets at
+ * once: the placement keys its settings carried (a region, or a CDN's zone).
+ * Null when the payload names no place (the operator adds one later, or picks
+ * one when a node is protected).
  */
 export function initialPlacementOf(
   provider: EdgeProviderId,
   rawSettings: Record<string, unknown> | undefined,
 ): Record<string, unknown> | null {
-  if (EDGE_PLACEMENT_SETTINGS[provider].length === 0) return { type: provider };
   const keys = placementKeysOf(provider, rawSettings);
-  return keys ? { ...keys, type: provider } : null;
+  if (!keys) return null;
+  // A CDN place starts at its zone (or a front's DNS account): a leftover zone
+  // name or TLS configuration alone names no place.
+  if (
+    edgeLayerOf(provider) === 'l7' &&
+    keys.zoneId === undefined &&
+    keys.dnsAccountId === undefined
+  )
+    return null;
+  return { ...keys, type: provider };
 }
 
 // --- trust ---------------------------------------------------------------------------------
@@ -374,7 +435,8 @@ export async function evaluateAutoQualificationForLocation(
       id: e._id as string,
       status: e.status,
       layer: e.layer ?? edgeLayerOf(e.provider),
-      templateHash: e.templateHash ?? null,
+      // The location's own template for an edge built with a node's choices.
+      templateHash: e.baseTemplateHash ?? e.templateHash ?? null,
       listenerId: e.listenerId as string,
       listenerRevision: listener.revision,
       endpoint: verificationEndpoint(e),
@@ -416,7 +478,10 @@ export async function evaluateAutoQualificationForLocation(
 // --- admin view ------------------------------------------------------------------------------
 
 /** Admin-safe view of one location (the placement is admin data: region / project / network ids). */
-export function mapLocationAdmin(r: Location, extras: { liveEdges: number; isDefault: boolean }) {
+export function mapLocationAdmin(
+  r: Location,
+  extras: { liveEdges: number; isDefault: boolean; sharedUsers?: number; orderedByFcp?: boolean },
+) {
   const { type: _t, ...placement } = r.placement as { type: string } & Record<string, unknown>;
   return {
     id: r._id as string,
@@ -447,6 +512,24 @@ export function mapLocationAdmin(r: Location, extras: { liveEdges: number; isDef
     liveEdges: extras.liveEdges,
     costNote: r.costNote ?? null,
     inventoryAt: r.inventoryAt ? new Date(r.inventoryAt).toISOString() : null,
+    observed: r.observed ? parseObservedSettings(r.observed) : null,
+    observedAt: r.observedAt ? new Date(r.observedAt).toISOString() : null,
+    checkError: r.checkError ?? null,
+    checkErrorDetail: r.checkErrorDetail ?? null,
+    // The wildcard certificate the fronts in this zone share, as last read at
+    // the provider, and how many live edges front through it (null: none).
+    sharedCertificate: r.sharedCertificate
+      ? {
+          name: r.sharedCertificate.name,
+          state: r.sharedCertificate.state,
+          code: r.sharedCertificate.code ?? null,
+          notAfter: r.sharedCertificate.notAfter ?? null,
+          checkedAt: new Date(r.sharedCertificate.checkedAt).toISOString(),
+          edges: extras.sharedUsers ?? 0,
+          // FCP ordered it (only then can it be removed from the account page).
+          orderedByFcp: extras.orderedByFcp === true,
+        }
+      : null,
     createdAt: new Date(r.createdAt).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
   };
@@ -457,7 +540,7 @@ export type LocationAdmin = ReturnType<typeof mapLocationAdmin>;
 /** Every location of an account in its admin shape (default first, then oldest first). */
 export async function locationsAdminOf(
   db: DatabaseReader,
-  account: Pick<Account, '_id' | 'defaultLocationId'>,
+  account: Pick<Account, '_id' | 'defaultLocationId' | 'orderedSharedResources'>,
 ): Promise<LocationAdmin[]> {
   const dflt = await defaultLocationOf(db, account);
   const out: LocationAdmin[] = [];
@@ -466,6 +549,12 @@ export async function locationsAdminOf(
       mapLocationAdmin(r, {
         liveEdges: await liveCountForLocation(db, r),
         isDefault: !!dflt && dflt._id === r._id,
+        sharedUsers: r.sharedCertificate ? await sharedCertificateUsers(db, r) : 0,
+        // An edge of the account created it (lib/edges/sharedCertificate.ts).
+        orderedByFcp: sharedCertificateOrderedByFcp(
+          account.orderedSharedResources,
+          r.sharedCertificate,
+        ),
       }),
     );
   }
@@ -620,17 +709,14 @@ export const create = internalMutation({
     regionalParams: v.optional(v.any()),
     maxLiveEdges: v.optional(v.number()),
     costNote: v.optional(v.string()),
+    observed: v.optional(v.record(v.string(), v.string())),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     await assertAdmission(ctx.db, 'provider.write');
     const account = await ctx.db.get(a.accountId);
     if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
-    if (EDGE_PLACEMENT_SETTINGS[account.provider].length === 0)
-      throw new ConvexError({
-        code: 'edge.location_not_geographic',
-        message: 'This provider has one location per account',
-      });
+    await assertDnsAccountOfPlacement(ctx.db, account.provider, a.placement);
     const regionalParams = regionalParamsOf(account.provider, a.regionalParams);
     refuseMissingRegional(
       await missingRegionalValues(ctx.db, account, {
@@ -647,6 +733,7 @@ export const create = internalMutation({
         regionalParams,
         maxLiveEdges: a.maxLiveEdges,
         costNote: a.costNote,
+        observed: a.observed,
       },
       { actorAdminId: a.actorAdminId },
     );
@@ -831,10 +918,12 @@ export const remove = internalMutation({
         code: 'edge.location_in_use',
         message: 'A node is being protected in this location; finish or cancel that first',
       });
-    if (account && EDGE_PLACEMENT_SETTINGS[account.provider].length === 0)
+    // Nor one whose wildcard FCP ordered is still at the provider: this row is
+    // the only record of it, and the account's delete guard reads its zones.
+    if (removableSharedCertificate(account?.orderedSharedResources, row.sharedCertificate))
       throw new ConvexError({
-        code: 'edge.location_not_geographic',
-        message: 'This provider has one location per account',
+        code: 'edge.shared_certificate_present',
+        message: 'This zone still has a shared certificate; remove it first',
       });
     await ctx.db.delete(id);
     if (account && account.defaultLocationId === id) {
@@ -885,6 +974,171 @@ export const recordInventory = internalMutation({
       inventoryAt: Date.now(),
       updatedAt: Date.now(),
     });
+    return null;
+  },
+});
+
+/**
+ * What a location check found (`edgeProviderOps.checkLocation`, a credential
+ * test or rotation): the facts it observed replace the last ones (a check that
+ * observed nothing leaves them alone), a refusal is recorded as `checkError`
+ * (no new edge is planned there meanwhile), a pass clears it.
+ */
+export const recordCheck = internalMutation({
+  args: {
+    id: v.id('edgeLocations'),
+    ok: v.boolean(),
+    code: v.optional(v.string()),
+    detail: v.optional(v.string()),
+    observed: v.optional(v.record(v.string(), v.string())),
+  },
+  handler: async (ctx, a) => {
+    const row = await ctx.db.get(a.id);
+    if (!row) return null;
+    const now = Date.now();
+    const observed = observedJson(a.observed);
+    await ctx.db.patch(a.id, {
+      ...(observed ? { observed, observedAt: now } : {}),
+      ...(a.ok
+        ? { checkError: undefined, checkErrorDetail: undefined }
+        : {
+            checkError: (a.code ?? 'error').slice(0, 64),
+            checkErrorDetail: a.detail ? a.detail.slice(0, 700) : undefined,
+          }),
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
+/**
+ * The zones OTHER accounts write through this DNS account: the zones of the
+ * front locations naming it, of live fronts whose intent names it, and the
+ * origin-name zones of backend setups. A credential rotation reads each with
+ * the new token before it is applied. `inUse`: a location there is switched on
+ * or holds edges, a live front names it, or an origin name lives there (the
+ * rotation must reach it); otherwise only switched-off fronts with nothing in
+ * them name it (`locationIds`: they record a zone the new token cannot read).
+ */
+export const zonesWrittenThrough = internalQuery({
+  args: { accountId: v.id('edgeProviderAccounts') },
+  handler: async (ctx, { accountId }) => {
+    const zones = new Map<
+      string,
+      { zoneId: string; zoneName: string; inUse: boolean; locationIds: string[] }
+    >();
+    const add = (
+      zoneId: string | undefined,
+      zoneName: string | undefined,
+      inUse: boolean,
+      locationId?: string,
+    ) => {
+      if (!zoneId) return;
+      const z = zones.get(zoneId) ?? { zoneId, zoneName: zoneName ?? '', inUse, locationIds: [] };
+      z.inUse ||= inUse;
+      if (locationId && !z.locationIds.includes(locationId)) z.locationIds.push(locationId);
+      zones.set(zoneId, z);
+    };
+    for (const provider of ['fastly'] as const) {
+      const rows = await ctx.db
+        .query('edgeLocations')
+        .withIndex('by_place', (q) => q.eq('provider', provider))
+        .collect();
+      for (const r of rows) {
+        const p = r.placement as { dnsAccountId?: string; zoneId?: string; zoneName?: string };
+        if (p.dnsAccountId !== (accountId as string)) continue;
+        const live = await liveEdgesOfLocation(ctx.db, r);
+        add(p.zoneId, p.zoneName, r.enabled || live.length > 0, r._id as string);
+        for (const e of live) {
+          const intent = parseIntent(e.provisionIntent);
+          if (intent?.dnsAccountId === (accountId as string))
+            add(intent.zoneId, intent.zoneName, true);
+        }
+      }
+    }
+    for (const setup of await ctx.db.query('panelSetups').collect())
+      if (setup.originDns?.accountId === accountId)
+        add(setup.originDns.zoneId, setup.originDns.zoneName, true);
+    return [...zones.values()];
+  },
+});
+
+/** The live edges in this location that front through its shared wildcard (their intent says so). */
+export async function sharedCertificateUsers(
+  db: DatabaseReader,
+  location: Pick<Location, '_id'>,
+): Promise<number> {
+  return (await liveEdgesOfLocation(db, location)).filter(
+    (e) => parseIntent(e.provisionIntent)?.certificateScope === 'wildcard',
+  ).length;
+}
+
+/**
+ * The certificate a live front in this location froze when it shares the
+ * zone's wildcard (its intent's authority and scope), or null. A node may
+ * choose the wildcard where the account's default is one per front: reading
+ * the shared certificate must then follow that front, not the default.
+ */
+export const sharedCertificateChoice = internalQuery({
+  args: { locationId: v.id('edgeLocations') },
+  handler: async (ctx, { locationId }) => {
+    const location = await ctx.db.get(locationId);
+    if (!location) return null;
+    for (const e of await liveEdgesOfLocation(ctx.db, location)) {
+      const intent = parseIntent(e.provisionIntent);
+      if (intent?.certificateScope !== 'wildcard') continue;
+      return {
+        certificateScope: 'wildcard',
+        ...(intent.certificateAuthority
+          ? { certificateAuthority: intent.certificateAuthority }
+          : {}),
+      };
+    }
+    return null;
+  },
+});
+
+/**
+ * The zone's shared certificate as the provider last showed it
+ * (edgeProviderOps.refreshSharedCertificate). `null` clears it: no front here
+ * uses one. Writes only when something but the check time moved.
+ */
+export const recordSharedCertificate = internalMutation({
+  args: {
+    id: v.id('edgeLocations'),
+    status: v.union(
+      v.null(),
+      v.object({
+        name: v.string(),
+        subscriptionId: v.optional(v.string()),
+        state: v.string(),
+        code: v.optional(v.string()),
+        notAfter: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, { id, status }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    if (status === null) {
+      if (row.sharedCertificate) await ctx.db.patch(id, { sharedCertificate: undefined });
+      return null;
+    }
+    const { checkedAt: _at, ...was } = row.sharedCertificate ?? { checkedAt: 0 };
+    const next = {
+      name: status.name.slice(0, 253),
+      ...(status.subscriptionId ? { subscriptionId: status.subscriptionId.slice(0, 64) } : {}),
+      state: status.state.slice(0, 32),
+      ...(status.code ? { code: status.code.slice(0, 64) } : {}),
+      ...(status.notAfter ? { notAfter: status.notAfter.slice(0, 40) } : {}),
+    };
+    if (JSON.stringify(was) === JSON.stringify(next) && row.sharedCertificate) {
+      await ctx.db.patch(id, {
+        sharedCertificate: { ...row.sharedCertificate, checkedAt: Date.now() },
+      });
+      return null;
+    }
+    await ctx.db.patch(id, { sharedCertificate: { ...next, checkedAt: Date.now() } });
     return null;
   },
 });

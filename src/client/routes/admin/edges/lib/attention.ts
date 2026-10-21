@@ -105,6 +105,8 @@ export const ATTENTION_ACTION_PLAN = {
   open_node: { type: 'navigate' },
   open_modes: { type: 'navigate' },
   open_probes: { type: 'navigate' },
+  // A guided setup run's sheet (Try again, when it failed).
+  open_run: { type: 'navigate' },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
 
 /**
@@ -195,6 +197,11 @@ export function attentionTarget(item: AttentionItem): string {
       return '/admin/connection-modes';
     case 'open_probes':
       return edgesPaths.probes();
+    case 'open_run': {
+      const run = factString(item, 'runId');
+      if (run) return edgesPaths.home({ run });
+      return slug ? edgesPaths.node(slug) : edgesPaths.home();
+    }
   }
 }
 

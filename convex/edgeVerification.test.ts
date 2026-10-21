@@ -14,6 +14,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { defaultLocationOf } from './edgeLocations';
+import { publishedEdgesOf } from './edgeRender';
 import { resolveTemplateFor } from './edgeTemplates';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import {
@@ -394,6 +395,105 @@ describe('case 24: configuration-bound evidence', () => {
     await expect(
       t.mutation(internal.relays.publishEdge, { relayId, edgeId: spare, poolIndex: 1 }),
     ).rejects.toThrow(/unverified_endpoint/);
+  });
+});
+
+describe('an address the provider reports after the tick', () => {
+  test('a gained IPv6 is held: the IPv4 keeps rendering, the new one serves only once tested', async () => {
+    const { t, relayId, publishedEdgeId: edge } = await seed();
+    const V6 = '2001:db8::1';
+    const rendered = async () =>
+      (
+        await t.run(async (ctx) =>
+          publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { kind: 'member' }),
+        )
+      ).published.map((p) => [p.edgeId, p.addresses.v4 ?? null, p.addresses.v6 ?? null]);
+    expect(await rendered()).toEqual([[edge, PUBLISHED, null]]);
+    const before = (await t.query(internal.edges.get, { id: edge }))!.verification!;
+    // What a deploy that reads a second VIP does: the first describe reports both families.
+    await t.mutation(internal.edges.recordDescribe, {
+      edgeId: edge,
+      state: 'active',
+      addresses: { v4: PUBLISHED, v6: V6 },
+      health: 'online',
+    });
+    let row = (await t.query(internal.edges.get, { id: edge }))!;
+    expect(row.addresses).toEqual({ v4: PUBLISHED });
+    expect(row.learnedAddresses).toEqual({ v6: V6 });
+    expect(row.verification).toEqual(before);
+    // The tick stands and the IPv4 still renders; the IPv6 does not render yet.
+    expect(
+      (await t.query(internal.edgeAdmin.edgeDetail, { edgeId: edge }))!.edge.verification,
+    ).toMatchObject({ current: true, stale: false, learnedAddress: V6 });
+    expect(await rendered()).toEqual([[edge, PUBLISHED, null]]);
+    // Another describe keeps holding it (it is not served by being seen twice).
+    await t.mutation(internal.edges.recordDescribe, {
+      edgeId: edge,
+      state: 'active',
+      addresses: { v4: PUBLISHED, v6: V6 },
+      health: 'online',
+    });
+    expect((await t.query(internal.edges.get, { id: edge }))!.addresses).toEqual({ v4: PUBLISHED });
+    // What there is to test is the new address, with the configuration that serves it.
+    const binding = (await t.query(internal.edgeVerification.binding, { edgeId: edge }))!;
+    expect(binding.endpoint).toBe(`[${V6}]:443`);
+    // The served address's own binding is not a test of the new one: it changes nothing.
+    await t.mutation(internal.edgeVerification.confirm, {
+      edgeId: edge,
+      endpoint: before.endpoint,
+      listenerRevision: before.listenerRevision,
+      configHash: before.configHash,
+      method: 'test_link',
+    });
+    expect((await t.query(internal.edges.get, { id: edge }))!.learnedAddresses).toEqual({ v6: V6 });
+    // The new address's tick serves it.
+    await t.mutation(internal.edgeVerification.confirm, {
+      edgeId: edge,
+      endpoint: binding.endpoint,
+      listenerRevision: binding.listenerRevision,
+      configHash: binding.configHash,
+      method: 'test_link',
+    });
+    row = (await t.query(internal.edges.get, { id: edge }))!;
+    expect(row.addresses).toEqual({ v4: PUBLISHED, v6: V6 });
+    expect(row.learnedAddresses).toBeUndefined();
+    expect(row.verification).toMatchObject({ endpoint: `${PUBLISHED}:443` });
+    expect(
+      (await t.query(internal.edgeAdmin.edgeDetail, { edgeId: edge }))!.edge.verification,
+    ).toMatchObject({ current: true, learnedAddress: null });
+    expect(await rendered()).toEqual([[edge, PUBLISHED, V6]]);
+  });
+
+  test('a gained address the provider stops reporting is dropped; an unconfirmed edge takes it at once', async () => {
+    const { t, relayId, listenerId, accountId, publishedEdgeId: edge } = await seed();
+    await t.mutation(internal.edges.recordDescribe, {
+      edgeId: edge,
+      state: 'active',
+      addresses: { v4: PUBLISHED, v6: '2001:db8::1' },
+      health: 'online',
+    });
+    await t.mutation(internal.edges.recordDescribe, {
+      edgeId: edge,
+      state: 'active',
+      addresses: { v4: PUBLISHED },
+      health: 'online',
+    });
+    expect((await t.query(internal.edges.get, { id: edge }))!.learnedAddresses).toBeUndefined();
+    // Nothing confirmed, nothing to protect: the address applies as it always did.
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, {
+      ipv4: SPARE,
+      accountId,
+      verified: false,
+    });
+    await t.mutation(internal.edges.recordDescribe, {
+      edgeId: edgeId as Id<'edges'>,
+      state: 'active',
+      addresses: { v4: SPARE, v6: '2001:db8::2' },
+      health: 'online',
+    });
+    const spare = (await t.query(internal.edges.get, { id: edgeId as Id<'edges'> }))!;
+    expect(spare.addresses).toEqual({ v4: SPARE, v6: '2001:db8::2' });
+    expect(spare.learnedAddresses).toBeUndefined();
   });
 });
 

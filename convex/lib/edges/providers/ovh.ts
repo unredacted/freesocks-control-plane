@@ -252,6 +252,31 @@ async function hasInFlightLbOperation(
   }
 }
 
+/** One pool's health monitor: TCP unless the template chose another check. */
+function ovhHealthMonitor(name: string, hm: OvhTemplateParams['healthMonitor']) {
+  const type = hm.type ?? 'tcp';
+  const http = type === 'http' || type === 'https';
+  return {
+    name,
+    monitorType: type,
+    delay: hm.delay,
+    timeout: hm.timeout,
+    maxRetries: hm.maxRetries,
+    ...(hm.maxRetriesDown !== undefined ? { maxRetriesDown: hm.maxRetriesDown } : {}),
+    ...(http
+      ? {
+          httpConfiguration: {
+            httpMethod: hm.httpMethod ?? 'GET',
+            urlPath: hm.urlPath ?? '/',
+            expectedCodes: hm.expectedCodes ?? '200',
+            httpVersion: hm.httpVersion ?? '1.0',
+            ...(hm.domainName ? { domainName: hm.domainName } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 /** The create-LB request body (exported for tests). */
 export function ovhLbBody(cfg: OvhConfig, spec: EdgeSpec, tpl: OvhTemplateParams) {
   if (!tpl.flavorId) {
@@ -281,17 +306,15 @@ export function ovhLbBody(cfg: OvhConfig, spec: EdgeSpec, tpl: OvhTemplateParams
       protocol: 'tcp',
       ...(tpl.allowedCidrs.length > 0 ? { allowedCidrs: tpl.allowedCidrs } : {}),
       timeoutClientData: tpl.timeoutClientDataMs,
+      // Only when chosen: unset, the provider's own default applies, as it
+      // always did (`timeoutMemberDataMs` was shown but never sent).
+      ...(tpl.nodeIdleTimeoutMs !== undefined ? { timeoutMemberData: tpl.nodeIdleTimeoutMs } : {}),
       pool: {
         name: `${spec.name}-p${l.edgePort}`,
-        algorithm: tpl.algorithm,
+        // The API spells it `sourceIP`.
+        algorithm: tpl.algorithm === 'sourceIp' ? 'sourceIP' : tpl.algorithm,
         protocol: 'tcp',
-        healthMonitor: {
-          name: `${spec.name}-hm${l.edgePort}`,
-          monitorType: 'tcp',
-          delay: tpl.healthMonitor.delay,
-          timeout: tpl.healthMonitor.timeout,
-          maxRetries: tpl.healthMonitor.maxRetries,
-        },
+        healthMonitor: ovhHealthMonitor(`${spec.name}-hm${l.edgePort}`, tpl.healthMonitor),
         members: l.members.map((m, j) => ({
           name: `${spec.name}-m${j}`,
           address: m.address,

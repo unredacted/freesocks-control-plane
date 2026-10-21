@@ -3,6 +3,11 @@ import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { remnawaveIssueUser } from '../../convex/lib/backends/remnawave';
 import { addressRemark } from '../../convex/lib/backend/hostRemark';
+import {
+  SUBSCRIPTION_TEMPLATES,
+  desiredTemplateBody,
+  type TemplateFamily,
+} from '../../convex/lib/backend/subscriptionTemplates';
 import { compose } from './compose';
 
 /** The seeded node's name: it must never reach a member body. */
@@ -10,6 +15,48 @@ export const COMPAT_NODE = 'compat-node';
 export const COMPAT_REMARK = addressRemark(COMPAT_NODE, 'compat-origin');
 /** The selector group's name in the backend's own subscription templates. */
 export const COMPAT_TEMPLATE_GROUP = '→ Remnawave';
+
+type PanelApi = (path: string, method?: string, body?: unknown) => Promise<any>;
+
+/**
+ * Install one set of subscription templates on the test panel:
+ *  - `fixture`: minimal, test-owned ones (a SOCKS listener, the selector
+ *    group, a final rule to it) for the transport checks, with the group named
+ *    as the backend's own templates name it: members receive it renamed
+ *    (convex/lib/memberEntryNames.ts), and the real clients must accept that;
+ *  - `shipped`: the templates FCP ships, byte for byte what backend setup and
+ *    its re-sync write (convex/backendSetup.ts `reconcileTemplates`), so an
+ *    engine runs what a member's client receives.
+ */
+export async function useTemplates(api: PanelApi, set: 'fixture' | 'shipped') {
+  const templates = await api('subscription-templates');
+  for (const template of templates.subscriptionTemplates ?? templates.templates ?? templates) {
+    const family = template.templateType as TemplateFamily;
+    if (set === 'shipped') {
+      if (family in SUBSCRIPTION_TEMPLATES)
+        await api('subscription-templates', 'PATCH', {
+          uuid: template.uuid,
+          ...desiredTemplateBody(SUBSCRIPTION_TEMPLATES[family]),
+        });
+    } else if (family === 'SINGBOX') {
+      await api('subscription-templates', 'PATCH', {
+        uuid: template.uuid,
+        templateJson: {
+          log: { level: 'error' },
+          inbounds: [{ type: 'mixed', tag: 'in', listen: '127.0.0.1', listen_port: 1080 }],
+          outbounds: [{ type: 'selector', tag: COMPAT_TEMPLATE_GROUP, outbounds: [] }],
+          route: { final: COMPAT_TEMPLATE_GROUP },
+        },
+      });
+    } else if (family === 'MIHOMO' || family === 'CLASH') {
+      const yaml = `mixed-port: 1080\nallow-lan: false\nmode: rule\nlog-level: error\nproxies: []\nproxy-groups:\n  - name: '${COMPAT_TEMPLATE_GROUP}'\n    type: select\n    proxies: []\nrules:\n  - MATCH,${COMPAT_TEMPLATE_GROUP}\n`;
+      await api('subscription-templates', 'PATCH', {
+        uuid: template.uuid,
+        encodedTemplateYaml: Buffer.from(yaml).toString('base64'),
+      });
+    }
+  }
+}
 
 export function docker(...args: string[]) {
   return execFileSync('docker', [...compose, ...args], {
@@ -90,29 +137,7 @@ export async function seedPanel() {
     sni: 'compat-origin',
     fingerprint: 'chrome',
   });
-  const templates = await api('subscription-templates');
-  // Minimal templates, with the group named as the backend's own templates name
-  // it (convex/lib/backend/subscriptionTemplates): members receive it renamed
-  // (convex/lib/memberEntryNames.ts), and the real clients must accept that.
-  for (const template of templates.subscriptionTemplates ?? templates.templates ?? templates) {
-    if (template.templateType === 'SINGBOX') {
-      await api('subscription-templates', 'PATCH', {
-        uuid: template.uuid,
-        templateJson: {
-          log: { level: 'error' },
-          inbounds: [{ type: 'mixed', tag: 'in', listen: '127.0.0.1', listen_port: 1080 }],
-          outbounds: [{ type: 'selector', tag: COMPAT_TEMPLATE_GROUP, outbounds: [] }],
-          route: { final: COMPAT_TEMPLATE_GROUP },
-        },
-      });
-    } else if (['MIHOMO', 'CLASH'].includes(template.templateType)) {
-      const yaml = `mixed-port: 1080\nallow-lan: false\nmode: rule\nlog-level: error\nproxies: []\nproxy-groups:\n  - name: '${COMPAT_TEMPLATE_GROUP}'\n    type: select\n    proxies: []\nrules:\n  - MATCH,${COMPAT_TEMPLATE_GROUP}\n`;
-      await api('subscription-templates', 'PATCH', {
-        uuid: template.uuid,
-        encodedTemplateYaml: Buffer.from(yaml).toString('base64'),
-      });
-    }
-  }
+  await useTemplates(api, 'fixture');
   const issued = await remnawaveIssueUser(cfg, {
     username: `compat_${randomUUID().slice(0, 8)}`,
     placement: squad.uuid,

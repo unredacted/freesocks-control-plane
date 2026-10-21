@@ -158,7 +158,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         method: 'POST',
         path: '^/1\\.3/load-balancer/[^/]+/ip-addresses$',
         purpose: 'delegate the floating IP to the service',
-        body: ['ip_addresses'],
+        body: ['address', 'network_name'],
       },
       {
         method: 'POST',
@@ -400,20 +400,31 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         purpose: 'credential test: the token is active',
       },
       {
+        // An account-owned token is unknown to the user endpoint (1000); it
+        // verifies here. Source: developers.cloudflare.com/api/resources/accounts/
+        // subresources/tokens/methods/verify/ via cloudflare@7.1.0, 2026-10-20.
+        method: 'GET',
+        path: '^/client/v4/accounts/[^/]+/tokens/verify$',
+        purpose: 'credential test: an account-owned token is active',
+      },
+      {
         method: 'GET',
         path: '^/client/v4/zones$',
-        purpose: 'account form: the zones the token can see',
-        query: ['per_page'],
+        purpose:
+          'credential test (one page) and the account catalog (paged, up to 1,000): the zones the token reaches',
+        query: ['page', 'per_page'],
       },
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+$',
-        purpose: 'credential test: the zone is active and not paused',
+        purpose:
+          "location check: the zone is readable, active and not paused (also a DNS account's zone read)",
       },
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+/settings/(ssl|websockets)$',
-        purpose: 'zone encryption mode and WebSockets setting (recorded, not required)',
+        purpose:
+          'location check: zone encryption mode and WebSockets setting (recorded, not required)',
       },
       {
         method: 'POST',
@@ -479,7 +490,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
   // --- L7: Fastly (service + domain + TLS subscription) ---------------------------------
   fastly: {
     source:
-      'https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare`',
+      'https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare`',
     calls: [
       {
         method: 'POST',
@@ -548,8 +559,9 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'POST',
         path: '^/service/[^/]+/version/[^/]+/backend$',
-        purpose: 'create the single origin backend (only fields the WebSocket path honours)',
-        body: ['name', 'address', 'use_ssl', 'override_host'],
+        purpose:
+          'create the single origin backend, its port always sent (the API defaults it to 80) with the TLS name for SNI and verification',
+        body: ['name', 'address', 'port', 'use_ssl', 'override_host'],
       },
       {
         method: 'GET',
@@ -575,7 +587,8 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'POST',
         path: '^/service/[^/]+/version/[^/]+/domain$',
-        purpose: 'add the fronted hostname to the draft version',
+        purpose:
+          'add the fronted hostname to the draft version (an edge planned before versionless domains)',
         body: ['name'],
       },
       {
@@ -600,6 +613,34 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         purpose: 'remove only our hostname from a shared service',
       },
       {
+        method: 'POST',
+        path: '^/domain-management/v1/domains$',
+        purpose: 'create the fronted hostname as a versionless domain linked to the service',
+        body: ['fqdn', 'service_id'],
+      },
+      {
+        method: 'GET',
+        path: '^/domain-management/v1/domains$',
+        purpose: 'discover the versionless domain by its exact name',
+        query: ['fqdn', 'fqdn_match'],
+      },
+      {
+        method: 'GET',
+        path: '^/domain-management/v1/domains$',
+        purpose: 'the versionless domains linked to a service: inspect, inventory, import',
+        query: ['service_id'],
+      },
+      {
+        method: 'GET',
+        path: '^/domain-management/v1/domains/[^/]+$',
+        purpose: 'DNS readiness (still linked to the service); read it back after a destroy',
+      },
+      {
+        method: 'DELETE',
+        path: '^/domain-management/v1/domains/[^/]+$',
+        purpose: 'delete the versionless domain, after its certificate',
+      },
+      {
         method: 'PUT',
         path: '^/enabled-products/v1/websockets/services/[^/]+$',
         purpose: 'enable the WebSockets product on the service (idempotent)',
@@ -617,20 +658,22 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'POST',
         path: '^/tls/subscriptions$',
-        purpose: 'order the certificate for the fronted hostname (JSON:API)',
+        purpose:
+          "order the certificate for the fronted hostname, or once the account's shared wildcard (JSON:API)",
         body: ['data'],
       },
       {
         method: 'GET',
         path: '^/tls/subscriptions$',
         purpose:
-          'discover the subscription by domain, and the certificate an imported hostname already has; confirm its removal',
+          "discover the subscription by domain (the hostname, or the zone's wildcard), and the certificate an imported hostname already has; confirm its removal",
         query: ['filter[tls_domains.id]'],
       },
       {
         method: 'GET',
         path: '^/tls/subscriptions/[^/]+$',
-        purpose: 'issuance state and (with the include) the managed-DNS challenge',
+        purpose:
+          'issuance state, what holds it up (the authorizations), the managed-DNS challenge, and when the shared certificate expires',
       },
       {
         method: 'DELETE',

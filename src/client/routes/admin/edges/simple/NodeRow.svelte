@@ -3,7 +3,8 @@
    * One protected node on the home: name, country, one plain sentence, a dot.
    * The sentence and the dot are the server's status of the origin (worded by
    * lib/statusWords.ts). The row links to the node's page; a live run shows
-   * "Setting up, step N of 4" and opens the progress sheet instead.
+   * "Setting up, step N of 4" and opens the progress sheet instead, and so does
+   * a first protection that stopped (its sheet has Try again).
    *
    * Props:
    *   row: OriginRow                       one EdgeSummary origin row
@@ -29,7 +30,12 @@
   let { row, status, href, onOpenRun }: Props = $props();
 
   const relay = $derived(row.relay);
-  const runId = $derived(status?.runId ?? null);
+  const runId = $derived(
+    status?.runId ??
+      (status?.kind === 'needs-you' && status.code === 'setup_run_failed'
+        ? status.failedRunId
+        : null),
+  );
   const name = $derived(
     relay.label ?? (relay.origin.kind === 'panel-node' ? relay.origin.nodeName : relay.slug),
   );

@@ -5,7 +5,9 @@
 import { describe, expect, test } from 'vitest';
 import {
   buildProvisionIntent,
+  frozenSettingsOf,
   intentHash,
+  intentPlaceOf,
   IntentError,
   parseIntent,
   qualificationBinding,
@@ -21,21 +23,22 @@ const originTransport = {
   acceptsHostHeader: 'any' as const,
 };
 
-const cloudflare = {
-  id: 'acct-cf',
-  provider: 'cloudflare',
-  settings: { zoneId: 'z'.repeat(32), zoneName: 'example.org' },
-  // The zone's encryption mode is OBSERVED by the credential test, never typed.
-  observedSettings: { zoneSslMode: 'full' },
-};
+const cloudflare = { id: 'acct-cf', provider: 'cloudflare', settings: {} };
+// A Cloudflare zone location: its encryption mode is OBSERVED by the zone
+// check, never typed.
+const zone = { zoneId: 'z'.repeat(32), zoneName: 'example.org', observed: { zoneSslMode: 'full' } };
 const fastly = {
   id: 'acct-fastly',
   provider: 'fastly',
-  settings: {
-    dnsAccountId: 'acct-cf',
-    certificateAuthority: 'certainly',
-    tlsConfigurationId: 'tls-1',
-  },
+  settings: { certificateAuthority: 'certainly' },
+};
+// A Fastly front location: the DNS account writing its records, a zone of
+// that account, the TLS configuration.
+const front = {
+  dnsAccountId: 'acct-cf',
+  zoneId: 'z'.repeat(32),
+  zoneName: 'example.org',
+  tlsConfigurationId: 'tls-1',
 };
 
 const args = {
@@ -50,13 +53,14 @@ describe('buildProvisionIntent', () => {
     expect(
       buildProvisionIntent({
         ...args,
-        account: { id: 'a', provider: 'upcloud', settings: { zone: 'zone-1' } },
+        account: { id: 'a', provider: 'upcloud', settings: {} },
+        place: {},
       }),
     ).toBeNull();
   });
 
-  test('a Cloudflare edge freezes its own zone, the hostname and the origin transport', () => {
-    const intent = buildProvisionIntent({ ...args, account: cloudflare })!;
+  test("a Cloudflare edge freezes its location's zone, the hostname and the origin transport", () => {
+    const intent = buildProvisionIntent({ ...args, account: cloudflare, place: zone })!;
     expect(intent.zoneId).toBe('z'.repeat(32));
     expect(intent.zoneName).toBe('example.org');
     expect(intent.hostname.endsWith('.example.org')).toBe(true);
@@ -68,32 +72,74 @@ describe('buildProvisionIntent', () => {
     expect(intent.dnsAccountId).toBeUndefined();
   });
 
-  test('a Fastly edge freezes the REFERENCED zone plus the CA and TLS configuration', () => {
-    const intent = buildProvisionIntent({ ...args, account: fastly, dnsAccount: cloudflare })!;
+  test('two zones of one account mint names under each zone', () => {
+    const other = { zoneId: 'y'.repeat(32), zoneName: 'example.net', observed: zone.observed };
+    const a = buildProvisionIntent({ ...args, account: cloudflare, place: zone })!;
+    const b = buildProvisionIntent({ ...args, account: cloudflare, place: other })!;
+    expect(a.hostname.endsWith('.example.org')).toBe(true);
+    expect(b.hostname.endsWith('.example.net')).toBe(true);
+    expect(b.zoneId).toBe('y'.repeat(32));
+  });
+
+  test("a Fastly edge freezes its location's DNS account, zone and TLS configuration, and the account's CA", () => {
+    const intent = buildProvisionIntent({ ...args, account: fastly, place: front })!;
     expect(intent.dnsAccountId).toBe('acct-cf');
     expect(intent.zoneName).toBe('example.org');
     expect(intent.certificateAuthority).toBe('certainly');
     expect(intent.tlsConfigurationId).toBe('tls-1');
+    // How the provider is driven now: a versionless domain. The certificate
+    // scope is frozen only when the account names one (absent = one per front).
+    expect(intent.domainModel).toBe('versionless');
+    expect(intent).not.toHaveProperty('certificateScope');
+    const wild = buildProvisionIntent({
+      ...args,
+      account: { ...fastly, settings: { ...fastly.settings, certificateScope: 'wildcard' } },
+      place: front,
+    })!;
+    expect(wild.certificateScope).toBe('wildcard');
+    // The account may choose classic domains for its new fronts.
+    const classic = buildProvisionIntent({
+      ...args,
+      account: { ...fastly, settings: { ...fastly.settings, domainModel: 'classic' } },
+      place: front,
+    })!;
+    expect(classic.domainModel).toBe('classic');
+    // Cloudflare is driven the same way it always was: no facts of its own.
+    expect(buildProvisionIntent({ ...args, account: cloudflare, place: zone })).not.toHaveProperty(
+      'domainModel',
+    );
+    const { tlsConfigurationId: _t, ...noTls } = front;
+    expect(
+      buildProvisionIntent({ ...args, account: fastly, place: noTls })!.tlsConfigurationId,
+    ).toBeUndefined();
+  });
+
+  test('a Fastly location without a DNS account is a coded refusal', () => {
+    const { dnsAccountId: _d, ...noDns } = front;
+    try {
+      buildProvisionIntent({ ...args, account: fastly, place: noDns });
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect((err as IntentError).code).toBe('dns_account_missing');
+    }
   });
 
   test('the hostname is deterministic for one (name, zone, template)', () => {
-    const a = buildProvisionIntent({ ...args, account: cloudflare })!;
-    const b = buildProvisionIntent({ ...args, account: cloudflare })!;
+    const a = buildProvisionIntent({ ...args, account: cloudflare, place: zone })!;
+    const b = buildProvisionIntent({ ...args, account: cloudflare, place: zone })!;
     expect(a.hostname).toBe(b.hostname);
     const other = buildProvisionIntent({
       ...args,
       specName: 'fcp-relay-node-one-deadbeef',
       account: cloudflare,
+      place: zone,
     })!;
     expect(other.hostname).not.toBe(a.hostname);
   });
 
-  test('an untested account cannot be planned against: the zone mode is unknown', () => {
+  test('an unchecked zone cannot be planned against: the zone mode is unknown', () => {
     try {
-      buildProvisionIntent({
-        ...args,
-        account: { ...cloudflare, observedSettings: {} },
-      });
+      buildProvisionIntent({ ...args, account: cloudflare, place: { ...zone, observed: {} } });
       throw new Error('expected a refusal');
     } catch (err) {
       expect((err as IntentError).code).toBe('zone_mode_unknown');
@@ -105,7 +151,8 @@ describe('buildProvisionIntent', () => {
     try {
       buildProvisionIntent({
         ...args,
-        account: { ...cloudflare, observedSettings: { zoneSslMode: 'flexible' } },
+        account: cloudflare,
+        place: { ...zone, observed: { zoneSslMode: 'flexible' } },
       });
       throw new Error('expected a refusal');
     } catch (err) {
@@ -115,7 +162,8 @@ describe('buildProvisionIntent', () => {
     try {
       buildProvisionIntent({
         ...args,
-        account: { ...cloudflare, observedSettings: { zoneSslMode: 'strict' } },
+        account: cloudflare,
+        place: { ...zone, observed: { zoneSslMode: 'strict' } },
         listener: { originPort: 443, originTransport: { ...originTransport, certPublic: false } },
       });
       throw new Error('expected a refusal');
@@ -132,11 +180,11 @@ describe('buildProvisionIntent', () => {
       originPort: 80,
       originTransport: { ...originTransport, scheme: 'http' as const },
     };
-    const strictZone = { ...cloudflare, observedSettings: { zoneSslMode: 'strict' } };
+    const strict = { zoneSslMode: 'strict' };
     const intent = buildProvisionIntent({
       ...args,
       account: fastly,
-      dnsAccount: strictZone,
+      place: { ...front, observed: strict },
       listener: plaintext,
     })!;
     expect(intent.zoneSslMode).toBeUndefined();
@@ -146,28 +194,29 @@ describe('buildProvisionIntent', () => {
       buildProvisionIntent({
         ...args,
         account: fastly,
-        dnsAccount: strictZone,
+        place: { ...front, observed: strict },
         listener: plaintext,
         zoneSslMode: 'strict',
       })!.zoneSslMode,
     ).toBeUndefined();
     // The same zone in front of ITS OWN proxy still refuses the plaintext origin.
     try {
-      buildProvisionIntent({ ...args, account: strictZone, listener: plaintext });
+      buildProvisionIntent({
+        ...args,
+        account: cloudflare,
+        place: { ...zone, observed: strict },
+        listener: plaintext,
+      });
       throw new Error('expected a refusal');
     } catch (err) {
       expect((err as IntentError).code).toBe('origin_tls_mismatch');
     }
   });
 
-  test('a front the zone does not proxy plans against an UNTESTED DNS account', () => {
+  test('a front the zone does not proxy plans against an UNCHECKED zone', () => {
     // `zone_mode_unknown` is a Cloudflare-proxy refusal: a Fastly edge only
-    // needs the zone's name and id from that account, not its encryption mode.
-    const intent = buildProvisionIntent({
-      ...args,
-      account: fastly,
-      dnsAccount: { ...cloudflare, observedSettings: {} },
-    })!;
+    // needs the zone's name and id, not its encryption mode.
+    const intent = buildProvisionIntent({ ...args, account: fastly, place: front })!;
     expect(intent.zoneSslMode).toBeUndefined();
     expect(intent.zoneName).toBe('example.org');
   });
@@ -176,24 +225,53 @@ describe('buildProvisionIntent', () => {
     const intent = buildProvisionIntent({
       ...args,
       account: cloudflare,
+      place: zone,
       hostnameOverride: 'already.example.org',
     })!;
     expect(intent.hostname).toBe('already.example.org');
   });
 
   test('a missing zone or origin transport is a coded refusal, never a guess', () => {
-    expect(() =>
+    try {
+      buildProvisionIntent({ ...args, account: cloudflare, place: { zoneId: 'z'.repeat(32) } });
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect((err as IntentError).code).toBe('dns_zone_missing');
+    }
+    try {
       buildProvisionIntent({
         ...args,
-        account: { ...cloudflare, settings: { zoneId: 'z'.repeat(32) } },
-      }),
-    ).toThrow(IntentError);
-    try {
-      buildProvisionIntent({ ...args, account: cloudflare, listener: { originPort: 443 } });
+        account: cloudflare,
+        place: zone,
+        listener: { originPort: 443 },
+      });
       throw new Error('expected a refusal');
     } catch (err) {
       expect((err as IntentError).code).toBe('origin_transport_missing');
     }
+  });
+});
+
+describe('intentPlaceOf / frozenSettingsOf', () => {
+  test("a location's placement and observed facts become the intent's place", () => {
+    expect(
+      intentPlaceOf(
+        { type: 'fastly', ...front },
+        JSON.stringify({ zoneStatus: 'active', ignored: 1 }),
+      ),
+    ).toEqual({ ...front, observed: { zoneStatus: 'active' } });
+    // An L4 placement (or none) names no zone.
+    expect(intentPlaceOf({ type: 'upcloud', zone: 'de-fra1' })).toEqual({ observed: {} });
+    expect(intentPlaceOf(null, 'not json')).toEqual({ observed: {} });
+  });
+
+  test('an existing edge keeps the zone and TLS configuration it froze', () => {
+    const intent = buildProvisionIntent({ ...args, account: fastly, place: front })!;
+    expect(frozenSettingsOf(intent)).toEqual({
+      zoneId: 'z'.repeat(32),
+      zoneName: 'example.org',
+      tlsConfigurationId: 'tls-1',
+    });
   });
 });
 
@@ -205,14 +283,14 @@ describe('parseIntent', () => {
   });
 
   test('a round trip preserves the hash', () => {
-    const intent = buildProvisionIntent({ ...args, account: cloudflare })!;
+    const intent = buildProvisionIntent({ ...args, account: cloudflare, place: zone })!;
     const back = parseIntent(JSON.stringify(intent))!;
     expect(intentHash(back)).toBe(intentHash(intent));
   });
 });
 
 describe('qualification binding', () => {
-  const intent = buildProvisionIntent({ ...args, account: cloudflare })!;
+  const intent = buildProvisionIntent({ ...args, account: cloudflare, place: zone })!;
   const listener = {
     _id: 'l1',
     revision: 3,

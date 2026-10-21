@@ -21,6 +21,10 @@
  * its templates are not what FCP ships, and hourly to catch a change made on
  * the backend (`resyncTemplates`): a release that changes a template reaches
  * every backend without a new setup.
+ *
+ * A backend FCP has set up (or adopted) is CHANGED, never set up afresh
+ * (`checkChange`): what its nodes and members rely on stays, the origin-name
+ * zone changes in place, and an added mode runs the setup again.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -57,6 +61,9 @@ import {
 } from './lib/backend/subscriptionTemplates';
 import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
+import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
+import { catalogOf } from './edgeProviderCatalog';
+import { locationsOfAccount } from './edgeLocations';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -77,7 +84,7 @@ const modeInput = v.object({
 export const setupInput = v.object({
   profileName: v.string(),
   modes: v.array(modeInput),
-  originDns: v.union(v.object({ accountId: v.string() }), v.null()),
+  originDns: v.union(v.object({ accountId: v.string(), zoneId: v.optional(v.string()) }), v.null()),
   adopt: v.boolean(),
 });
 type ModeInput = {
@@ -91,7 +98,7 @@ type ModeInput = {
 type SetupInput = {
   profileName: string;
   modes: ModeInput[];
-  originDns: { accountId: string } | null;
+  originDns: { accountId: string; zoneId?: string } | null;
   adopt: boolean;
 };
 
@@ -132,10 +139,34 @@ export function modeOf(setup: Setup, slug: string): SetupMode | undefined {
   return setup.modes.find((m) => m.slug === slug);
 }
 
-/** The mode entries a fresh row starts with: definitions only, nothing found yet. */
+/** What a mode is set up as: everything a node of it and its members rely on. */
+const definitionOf = (m: {
+  name: string;
+  shape: ModeShape;
+  familySlug?: string;
+  acceptProxyProtocol: boolean;
+  ws?: { path: string; port: number };
+}) =>
+  JSON.stringify([
+    m.name,
+    m.shape.transport,
+    m.shape.fronting,
+    m.familySlug ?? null,
+    m.acceptProxyProtocol,
+    m.ws?.path ?? null,
+    m.ws?.port ?? null,
+  ]);
+
+/**
+ * The mode entries a new generation starts with. A mode already set up as it
+ * is keeps what was found for it (its transport, group, placement and
+ * family) while the run looks again, so its nodes are read the same
+ * meanwhile; any other mode starts from its definition only.
+ */
 function freshModes(input: SetupInput, prev: readonly SetupMode[] = []): SetupMode[] {
   return input.modes.map((m) => {
     const before = prev.find((p) => p.slug === m.slug);
+    const kept = before && definitionOf(before) === definitionOf(m) ? before : null;
     return {
       slug: m.slug,
       name: m.name,
@@ -146,11 +177,190 @@ function freshModes(input: SetupInput, prev: readonly SetupMode[] = []): SetupMo
       tag: before?.tag ?? transportTagOf(m.name),
       groupUuid: before?.groupUuid,
       renamedFrom: before?.renamedFrom,
-      placement: 'pending',
-      transport: undefined,
-      family: isReality(m.shape) ? 'unbound' : 'none',
+      placement: kept?.placement ?? 'pending',
+      transport: kept?.transport,
+      family: kept?.family ?? (isReality(m.shape) ? 'unbound' : 'none'),
     };
   });
+}
+
+/**
+ * Whether FCP is this backend's writer: it set the backend up (the row has
+ * been ready) or an admin adopted it. The nodes and addresses such a backend
+ * has are FCP's own (enrolled, added from here) or are handled one node at a
+ * time (Adopt as an enrolled node, holds), and no setup step touches a node or
+ * an address, so a change of its setup asks for no adoption. A row that never
+ * got to ready proves nothing: what is on the backend may be anybody's.
+ */
+export function fcpWrites(row: SetupRow | null): boolean {
+  return !!row && (row.adopted || row.state === 'ready' || row.readyAt !== undefined);
+}
+
+/** A cached profile in the shape the compatibility check reads. */
+function observedProfile(p: Doc<'panelProfiles'>) {
+  return {
+    profileUuid: p.profileUuid,
+    name: p.name,
+    inbounds: p.inbounds.map((i) => ({
+      ...i,
+      configProfileUuid: p.profileUuid,
+      configProfileInboundUuid: i.inboundUuid,
+      reality: i.reality,
+      ws:
+        i.network === 'ws' && i.path !== undefined
+          ? { path: i.path ?? null, host: null }
+          : undefined,
+      xhttp: i.network === 'xhttp' ? { path: i.path ?? null, host: null, mode: null } : undefined,
+    })),
+  };
+}
+
+type OriginDns = Setup['originDns'];
+type Change = { kind: 'none' } | { kind: 'origin' } | { kind: 'modes'; added: ModeInput[] };
+
+/**
+ * What a new setup request changes on a backend FCP writes (docs/servers.md
+ * "Changing a backend's setup"), refused when it would move something a node
+ * or a member relies on. Nodes run the profile, and members hold each mode's
+ * transport, group and family, so the profile name and every mode already set
+ * up (its group name, shape, family, PROXY protocol, WebSocket path and port)
+ * stay exactly as they are; such a mode is never removed. A mode that never
+ * got its transport and group (a run that added it stopped) is not set up:
+ * it may be changed or taken out again. The origin-name zone may change while
+ * no node has a name in it (another account holding the same zone is always
+ * fine). A mode may be added once the profile has a usable transport for it
+ * (Add a transport), checked here against the last look at the backend, and
+ * again by the run.
+ */
+async function checkChange(
+  ctx: { db: QueryCtx['db'] },
+  row: SetupRow,
+  input: SetupInput,
+  originDns: OriginDns,
+): Promise<Change> {
+  const prev = JSON.parse(row.desired) as SetupInput;
+  if (input.profileName !== prev.profileName)
+    refuse(
+      'servers.setup_profile_kept',
+      `This backend keeps its profile ${prev.profileName}: its nodes run it`,
+    );
+  const setUp = new Set(row.modes.filter((m) => m.transport && m.groupUuid).map((m) => m.slug));
+  for (const p of prev.modes) {
+    if (!setUp.has(p.slug)) continue;
+    const next = input.modes.find((m) => m.slug === p.slug);
+    if (!next || definitionOf(next) !== definitionOf(p))
+      refuse(
+        `servers.setup_mode_kept:${p.slug}`,
+        `Mode ${p.name} stays as it is set up: nodes and members rely on it. Add a new mode instead`,
+      );
+  }
+  const before = row.originDns ?? null;
+  if (before && before.zoneId !== originDns?.zoneId) {
+    const named = (
+      await ctx.db
+        .query('panelNodeIntents')
+        .withIndex('by_server_name', (q) => q.eq('backendServerId', row.backendServerId))
+        .collect()
+    ).some((i) => i.state !== 'retired' && i.settings.originHostnameSource === 'managed');
+    if (named)
+      refuse(
+        'servers.origin_zone_in_use',
+        `WebSocket nodes have origin names under ${before.zoneName}. Keep that zone, or retire them first`,
+      );
+  }
+  // The modes as a set (another order changes nothing).
+  const modesKey = (ms: readonly ModeInput[]) =>
+    JSON.stringify(
+      [...ms].sort((x, y) => x.slug.localeCompare(y.slug)).map((m) => [m.slug, definitionOf(m)]),
+    );
+  const added = input.modes.filter((m) => !setUp.has(m.slug));
+  if (modesKey(input.modes) !== modesKey(prev.modes)) {
+    // A run would find every set-up mode as it is, and stops at one whose
+    // group drifted on the backend: said now, from the last look.
+    const groups = await ctx.db
+      .query('panelSquads')
+      .withIndex('by_server', (q) => q.eq('backendServerId', row.backendServerId))
+      .collect();
+    for (const m of row.modes) {
+      if (!setUp.has(m.slug)) continue;
+      const g = groups.find((x) => x.squadUuid === m.groupUuid);
+      if (!g || g.inboundUuids.join() !== m.transport!.uuid)
+        refuse(
+          `servers.setup_mode_drifted:${m.slug}`,
+          `The group of mode ${m.name} changed on the backend. Look at it under Mode groups first`,
+        );
+    }
+    const cached = row.profileUuid
+      ? await ctx.db
+          .query('panelProfiles')
+          .withIndex('by_server_uuid', (q) =>
+            q.eq('backendServerId', row.backendServerId).eq('profileUuid', row.profileUuid!),
+          )
+          .unique()
+      : null;
+    if (cached) {
+      const compat = checkProfileCompatibility(observedProfile(cached), added);
+      if (!compat.ok)
+        refuse(
+          `servers.setup_transport_missing:${compat.issue.tag}:${compat.issue.field}`,
+          `The profile has no usable transport ${compat.issue.tag} for the new mode yet. Add it first`,
+        );
+    }
+    return { kind: 'modes', added };
+  }
+  const zoneKey = (z: OriginDns) => (z ? `${z.accountId}|${z.zoneId}|${z.zoneName}` : null);
+  return zoneKey(before) !== zoneKey(originDns) ? { kind: 'origin' } : { kind: 'none' };
+}
+
+/**
+ * The DNS account and zone a backend's origin names go into. The account must
+ * host DNS, and be switched on for a new pick (the zone the setup already has
+ * is kept even while it is off); the zone must be one it reaches: listed (and
+ * active) in its catalog, or the zone of one of its own locations (checked with
+ * the provider when that location was created), or the one the setup already
+ * uses. A request naming only the account (the shape before zones were
+ * picked) gets the zone the setup already has with that account, else the
+ * account's only known zone.
+ */
+async function originZoneOf(
+  db: QueryCtx['db'],
+  pick: { accountId: string; zoneId?: string },
+  current: Promise<Setup | null>,
+): Promise<NonNullable<Setup['originDns']>> {
+  const accountId = db.normalizeId('edgeProviderAccounts', pick.accountId);
+  const acct = accountId ? await db.get(accountId) : null;
+  if (!acct || !EDGE_PROVIDER_CAPABILITIES[acct.provider].providesDns)
+    return refuse('servers.origin_account_unusable', 'Origin names need a switched-on DNS account');
+  const kept = (await current)?.originDns ?? null;
+  const known = new Map<string, { zoneName: string; status?: string }>();
+  for (const z of (await catalogOf(db, acct._id, 'zones')).items)
+    known.set(z.id, { zoneName: z.label, status: z.facts?.status });
+  for (const l of await locationsOfAccount(db, acct._id)) {
+    const p = l.placement as { zoneId?: string; zoneName?: string };
+    if (p.zoneId && p.zoneName && !known.has(p.zoneId))
+      known.set(p.zoneId, { zoneName: p.zoneName });
+  }
+  let zoneId = pick.zoneId;
+  if (!zoneId) {
+    if (kept && kept.accountId === acct._id) zoneId = kept.zoneId;
+    else if (known.size === 1) zoneId = [...known.keys()][0];
+    else return refuse('servers.origin_zone_required', 'Pick the zone the origin names go into');
+  }
+  // The zone the setup already has is kept as it is, even while its account is
+  // switched off (another part of the setup may still change meanwhile).
+  if (kept && kept.accountId === acct._id && kept.zoneId === zoneId)
+    return { accountId: acct._id, zoneId: kept.zoneId, zoneName: kept.zoneName };
+  if (!acct.enabled)
+    return refuse('servers.origin_account_unusable', 'Origin names need a switched-on DNS account');
+  const zone = known.get(zoneId);
+  if (!zone)
+    return refuse(
+      'servers.origin_zone_unknown',
+      "That zone is not one this account reaches: refresh the account's zones",
+    );
+  if (zone.status && zone.status !== 'active')
+    return refuse('servers.origin_zone_inactive', 'That zone is not active at its provider');
+  return { accountId: acct._id, zoneId, zoneName: zone.zoneName };
 }
 
 // --- start ----------------------------------------------------------------------------------------
@@ -188,19 +398,11 @@ export const start = internalMutation({
       if (!family || !family.enabled)
         refuse('servers.family_missing', `Mode ${m.name} names a family that does not exist`);
     }
-    let originDns: Setup['originDns'] = null;
-    if (input.originDns) {
-      const acct = await ctx.db.get(input.originDns.accountId as Id<'edgeProviderAccounts'>);
-      const settings = acct?.settings as { zoneId?: string; zoneName?: string } | undefined;
-      if (!acct || acct.provider !== 'cloudflare' || !settings?.zoneId || !settings.zoneName)
-        refuse('validation', 'Origin names need a Cloudflare account with a zone');
-      originDns = {
-        accountId: acct!._id,
-        zoneId: settings!.zoneId!,
-        zoneName: settings!.zoneName!,
-      };
-    }
-    // A backend with nodes or addresses on it is adopted, never quietly set up.
+    const originDns: Setup['originDns'] = input.originDns
+      ? await originZoneOf(ctx.db, input.originDns, setupRow(ctx, sid))
+      : null;
+    // A backend with nodes or addresses on it is adopted, never quietly set
+    // up; one FCP already writes has nothing left to adopt (`fcpWrites`).
     const [nodes, addresses] = await Promise.all([
       ctx.db
         .query('panelNodes')
@@ -213,7 +415,8 @@ export const start = internalMutation({
     ]);
     const existing = !!nodes || !!addresses;
     let row = await setupRow(ctx, sid);
-    if (existing && !input.adopt && !row?.adopted)
+    const writer = fcpWrites(row);
+    if (existing && !input.adopt && !writer)
       refuse(
         'servers.adopt_required',
         'This backend already has nodes or addresses. Adopt it (typed) to make FCP its writer',
@@ -222,6 +425,48 @@ export const start = internalMutation({
     const now = Date.now();
     if (row && !claimAvailable(row, now))
       refuse('servers.setup_running', 'The backend is being set up right now');
+    // A backend FCP writes is changed, never set up afresh.
+    const change =
+      row && writer && row.desiredHash !== desiredHash
+        ? await checkChange(ctx, row, input, originDns)
+        : null;
+    if (row && change && change.kind !== 'none')
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: a.actorAdminId ?? undefined,
+        action: 'servers.setup.changed',
+        targetType: 'backend_server',
+        targetId: sid,
+        payload: {
+          backendSlug: server.slug,
+          generation: row.generation + 1,
+          change: change.kind,
+          originZone: originDns?.zoneName ?? null,
+          addedModes: change.kind === 'modes' ? change.added.map((m) => m.slug).join(',') : '',
+        },
+      });
+    if (row && change?.kind === 'origin' && row.state === 'ready') {
+      // Only the origin-name zone: no step of the setup reads it, so nothing on
+      // the backend is looked at or written and the row stays ready. Nodes
+      // read it when they are next reconciled.
+      await ctx.db.patch(row._id, {
+        desired: JSON.stringify(input),
+        desiredHash,
+        generation: row.generation + 1,
+        originDns,
+        readyAt: row.readyAt ?? now,
+        updatedAt: now,
+      });
+      await ctx.scheduler.runAfter(0, internal.nodeIntents.afterSetupReady, {
+        backendServerId: sid,
+      });
+      return {
+        setupId: row._id,
+        generation: row.generation + 1,
+        state: 'ready' as const,
+        started: false,
+      };
+    }
     if (!row) {
       const id = await ctx.db.insert('panelSetups', {
         backendServerId: sid,
@@ -239,7 +484,7 @@ export const start = internalMutation({
         updatedAt: now,
       });
       row = (await ctx.db.get(id))!;
-    } else if (row.desiredHash !== desiredHash) {
+    } else if (row.desiredHash !== desiredHash && change?.kind !== 'none') {
       await ctx.db.patch(row._id, {
         desired: JSON.stringify(input),
         desiredHash,
@@ -250,11 +495,14 @@ export const start = internalMutation({
         profileName: input.profileName,
         modes: freshModes(input, row.modes),
         originDns,
-        adopted: row.adopted || existing,
+        // Nodes FCP enrolled on a backend it writes do not make it adopted.
+        adopted: row.adopted || (existing && !writer),
+        readyAt: row.readyAt ?? (row.state === 'ready' ? now : undefined),
         updatedAt: now,
       });
       row = (await ctx.db.get(row._id))!;
     } else if (row.state === 'ready' && !setupNeedsRefresh(row)) {
+      // The same setup, or a change that changes nothing (the modes in another order).
       return { setupId: row._id, generation: row.generation, state: row.state, started: false };
     }
     const attemptId = crypto.randomUUID();
@@ -262,6 +510,7 @@ export const start = internalMutation({
       claim: { attemptId, expiresAt: now + CLAIM_LEASE_MS },
       state: 'pending',
       code: undefined,
+      readyAt: row.readyAt ?? (row.state === 'ready' ? now : undefined),
       updatedAt: now,
     });
     await ctx.scheduler.runAfter(0, internal.backendSetup.run, {
@@ -367,22 +616,7 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
       slug: server.slug,
     },
     snapshot: {
-      profiles: profiles.map((p) => ({
-        profileUuid: p.profileUuid,
-        name: p.name,
-        inbounds: p.inbounds.map((i) => ({
-          ...i,
-          configProfileUuid: p.profileUuid,
-          configProfileInboundUuid: i.inboundUuid,
-          reality: i.reality,
-          ws:
-            i.network === 'ws' && i.path !== undefined
-              ? { path: i.path ?? null, host: null }
-              : undefined,
-          xhttp:
-            i.network === 'xhttp' ? { path: i.path ?? null, host: null, mode: null } : undefined,
-        })),
-      })),
+      profiles: profiles.map(observedProfile),
       groups: groups.map((s) => ({
         groupUuid: s.squadUuid,
         name: s.name,
@@ -434,13 +668,22 @@ export const finish = internalMutation({
   handler: async (ctx, { state, code, step, ...f }) => {
     const row = await ctx.db.get(f.setupId);
     if (!row || !fenceHolds(row, f)) return { ok: false as const };
+    const now = Date.now();
     await ctx.db.patch(f.setupId, {
       state,
       code,
       ...(step !== undefined ? { step } : {}),
+      // From the first ready on, FCP is this backend's writer (`fcpWrites`).
+      ...(state === 'ready' && row.readyAt === undefined ? { readyAt: now } : {}),
       claim: undefined,
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
+    // Nodes kept waiting while the setup ran (and, with a zone, WebSocket
+    // nodes waiting for an origin name) go on now, never before.
+    if (state === 'ready')
+      await ctx.scheduler.runAfter(0, internal.nodeIntents.afterSetupReady, {
+        backendServerId: row.backendServerId,
+      });
     const server = await ctx.db.get(row.backendServerId);
     await writeAuditLog(ctx, {
       actorType: 'system',
@@ -544,6 +787,17 @@ export const run = internalAction({
     const input = c.input;
     let modes: SetupMode[] = c.row.modes.map((m) => ({ ...m }));
     const save = () => record({ modes });
+    // On a backend FCP writes, the modes already set up are only looked at:
+    // nodes and members rely on their groups and placements, so this run never
+    // writes them (a group that drifted stops it instead). Everything else
+    // (a first setup, an adoption, a mode added) is made or repaired.
+    const established = new Set(
+      c.row.readyAt !== undefined
+        ? c.row.modes
+            .filter((m) => m.transport && m.groupUuid && m.placement === 'bound')
+            .map((m) => m.slug)
+        : [],
+    );
     try {
       // 1. A fresh look at the backend: everything below reads the cache.
       await record({ step: 'observe' });
@@ -717,6 +971,15 @@ export const run = internalAction({
       await record({ step: 'groups' });
       for (const m of modes) {
         const transportUuid = m.transport!.uuid;
+        if (established.has(m.slug)) {
+          const kept = c.snapshot.groups.find((g) => g.groupUuid === m.groupUuid);
+          if (!kept || kept.transportUuids.join() !== transportUuid) {
+            await save();
+            await finish('failed', `servers.setup_mode_drifted:${m.slug}`, 'groups');
+            return null;
+          }
+          continue;
+        }
         let group =
           c.snapshot.groups.find((g) => g.name === m.name) ??
           (m.groupUuid ? c.snapshot.groups.find((g) => g.groupUuid === m.groupUuid) : undefined) ??
@@ -788,6 +1051,7 @@ export const run = internalAction({
       await record({ step: 'placements' });
       const patch: Record<string, { addSquadUuids: string[] }> = {};
       for (const m of modes) {
+        if (established.has(m.slug)) continue;
         if (c.snapshot.knownModes.includes(m.slug)) {
           patch[m.slug] = { addSquadUuids: [m.groupUuid!] };
           m.placement = 'bound';
@@ -1089,6 +1353,7 @@ export const view = internalQuery({
         privacy: null,
         originDns: null,
         adopted: false,
+        established: false,
         updatedAt: null,
       };
     return {
@@ -1104,6 +1369,8 @@ export const view = internalQuery({
         name: m.name,
         shape: m.shape,
         familySlug: m.familySlug ?? null,
+        acceptProxyProtocol: m.acceptProxyProtocol,
+        ws: m.ws ?? null,
         tag: m.tag,
         group: { uuid: m.groupUuid ?? null, renamedFrom: m.renamedFrom ?? null },
         placement: m.placement,
@@ -1122,9 +1389,14 @@ export const view = internalQuery({
       templates: row.templates.map((t) => ({ family: t.family, state: t.state })),
       privacy: row.privacy ?? null,
       originDns: row.originDns
-        ? { accountId: row.originDns.accountId, zoneName: row.originDns.zoneName }
+        ? {
+            accountId: row.originDns.accountId,
+            zoneId: row.originDns.zoneId,
+            zoneName: row.originDns.zoneName,
+          }
         : null,
       adopted: row.adopted,
+      established: fcpWrites(row),
       updatedAt: new Date(row.updatedAt).toISOString(),
     };
   },

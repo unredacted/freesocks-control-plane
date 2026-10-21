@@ -283,6 +283,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // or adopting a backend, an enrolled node's ladder, its retirement. Names
   // and stages only.
   'servers.setup.started': ['backendSlug', 'generation', 'adopt'],
+  'servers.setup.changed': ['backendSlug', 'generation', 'change', 'originZone', 'addedModes'],
   'servers.setup.finished': ['backendSlug', 'state', 'code', 'step'],
   'servers.setup.group_renamed': ['backendSlug', 'from', 'to'],
   'servers.setup.templates_installed': ['backendSlug', 'templates', 'written'],
@@ -333,6 +334,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // handle, template body, probe token or provider credential.
   'edge.provider_account.create': ['name', 'provider'],
   'edge.provider_account.update': ['name', 'provider'],
+  // The account's certificate option defaults changed: which keys, with the
+  // values of choices, numbers and switches only (lib/edges/providers/options.ts).
+  'edge.provider_account.options_changed': ['name', 'provider', 'changes'],
+  // A deploy moved option defaults kept under settings into `optionDefaults`.
+  'edge.provider_account.options_migrated': ['name', 'provider', 'keys'],
   'edge.provider_account.delete': ['name', 'provider'],
   'edge.provider_account.upsert': ['name', 'provider', 'created'],
   // Trust is per location: `placeKey` names it (the provider's region id).
@@ -359,11 +365,20 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.location.removed': ['name', 'provider', 'placeKey'],
   // The one-time move of accounts' fixed locations into locations: counts only.
   'edge.locations.migrated': ['accounts', 'edges', 'runs', 'reviews', 'relays'],
+  // A CDN account's zone moved from its settings onto its location: counts only.
+  'edge.locations.l7_migrated': ['moved', 'created', 'incomplete', 'edgesDiffer'],
   // An operator confirmed an L4 endpoint (lib/edges/verification.ts): never the address.
   'edge.verified': ['relaySlug', 'edgeId', 'listenerKey', 'method'],
   // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
   'edge.verification.rung': ['relaySlug', 'edgeId', 'listenerKey', 'rung'],
   // Rotation keeps the qualification: booleans only, never a key or identifier.
+  'edge.provider_account.shared_certificate_removed': [
+    'name',
+    'provider',
+    'locationId',
+    'certificate',
+    'removed',
+  ],
   'edge.provider_account.credentials_rotated': [
     'name',
     'provider',
@@ -535,9 +550,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.edge.probe.change': ['changedKeys'],
   // `forceGeoEvidence` records that an operator waived the affected-country
   // evidence gate for this run (a boolean; the transport proof is never waived).
-  'admin.edge.rotate': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId'],
-  'admin.edge.burn': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId'],
-  'admin.edge.provision': ['slug', 'trigger', 'forceGeoEvidence', 'rotationId'],
+  'admin.edge.rotate': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId', 'optionKeys'],
+  'admin.edge.burn': ['slug', 'trigger', 'force', 'forceGeoEvidence', 'rotationId', 'optionKeys'],
+  'admin.edge.provision': ['slug', 'trigger', 'forceGeoEvidence', 'rotationId', 'optionKeys'],
   'admin.edge.publish': ['slug', 'trigger', 'forceGeoEvidence', 'rotationId', 'edgeId'],
   'admin.edge.cancel': ['slug', 'rotationId', 'deferred'],
 };

@@ -8,6 +8,7 @@ import {
   moreDirectWords,
   needButtons,
   nodeAutomationWords,
+  spareInUseWords,
   planWords,
   setWords,
   providerPickWords,
@@ -110,6 +111,10 @@ describe('automation state and words', () => {
       /Automatic rotation is off for every node/,
     );
     expect(nodeAutomationWords(on, { ...node, setupOwned: true }).line).toMatch(/setup run/);
+    // A cancelled or failed setup left it owned, but no run works on it.
+    expect(nodeAutomationWords(on, { ...node, setupOwned: true, runLive: false }).line).toMatch(
+      /not live yet/,
+    );
     expect(nodeAutomationWords(on, { ...node, autoRotate: false }).line).toMatch(
       /Off for this node/,
     );
@@ -371,6 +376,7 @@ describe('providerPickWords', () => {
             spare: 1,
             coolingUntil: '2026-10-18T12:30:00Z',
             addedAt: '2026-10-01T00:00:00Z',
+            options: null,
           },
         ],
         reduced: [{ listenerKey: 'main', reason: 'one_group' }],
@@ -390,5 +396,30 @@ describe('providerPickWords', () => {
       'Members on REALITY have no backup at another provider.',
       '1 address is still missing; automatic upkeep adds it.',
     ]);
+  });
+});
+
+describe('spareInUseWords', () => {
+  const on = { enabled: true, autoPublishStandby: true };
+  const node = {
+    enabled: true,
+    setupOwned: false,
+    desiredPublished: 2,
+    publishedEdgeIds: ['e1', null],
+  };
+  it('a node that wants more addresses in use takes a kept or added spare at once', () => {
+    expect(spareInUseWords(on, node)).toBe(
+      'It may be put in use at once: this node wants 2 addresses in use and has 1.',
+    );
+    expect(spareInUseWords(on, { ...node, desiredPublished: 1, publishedEdgeIds: [] })).toBe(
+      'It may be put in use at once: this node wants 1 address in use and has 0.',
+    );
+  });
+  it('it stays a spare when the pool is full or nothing publishes on its own', () => {
+    expect(spareInUseWords(on, { ...node, publishedEdgeIds: ['e1', 'e2'] })).toBeNull();
+    expect(spareInUseWords({ ...on, autoPublishStandby: false }, node)).toBeNull();
+    expect(spareInUseWords({ ...on, enabled: false }, node)).toBeNull();
+    expect(spareInUseWords(on, { ...node, setupOwned: true })).toBeNull();
+    expect(spareInUseWords(on, { ...node, enabled: false })).toBeNull();
   });
 });

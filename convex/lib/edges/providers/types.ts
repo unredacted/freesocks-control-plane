@@ -72,6 +72,17 @@ export interface FastlyConfig {
   apiToken: string;
   certificateAuthority: 'certainly' | 'lets-encrypt' | 'globalsign';
   tlsConfigurationId?: string;
+  /**
+   * One certificate per front hostname (absent, the older default) or the
+   * account's one shared wildcard (`*.<zone>`). Frozen per edge in its intent.
+   */
+  certificateScope?: 'per_host' | 'wildcard';
+  /**
+   * How the edge's hostname is attached to its service: a versionless (Domain
+   * Management) domain for every edge planned now, a version-scoped domain
+   * (absent, `classic`) for one planned before. Frozen per edge; not a setting.
+   */
+  domainModel?: 'classic' | 'versionless';
   /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
   dns?: CloudflareDnsConfig;
 }
@@ -209,10 +220,19 @@ export interface EdgeReadiness {
 export type StepOutcome =
   /** The call completed; every child it created is listed. */
   | { status: 'done'; resources: ChildResource[]; addresses?: Addresses }
-  /** The call failed after creating some children (all listed). */
-  | { status: 'partial'; resources: ChildResource[]; code?: string }
-  /** Async provider: an operation/task to poll; children known so far listed. */
-  | { status: 'requested'; opRef: string; resources: ChildResource[] };
+  /**
+   * The call failed after creating some children (all listed). `refused`: the
+   * provider answered and refused what FCP built (a configuration that does
+   * not compile), so the same call would be refused again; the run stops on
+   * `code` at once and keeps what was built for the operator to read.
+   */
+  | { status: 'partial'; resources: ChildResource[]; code?: string; refused?: true }
+  /**
+   * Async provider: an operation/task to poll; children known so far listed.
+   * `code`: what the wait is held up by, when the provider says (a code from a
+   * fixed list, `L7_CERTIFICATE_CODES`; never the provider's own words).
+   */
+  | { status: 'requested'; opRef: string; resources: ChildResource[]; code?: string };
 
 export type Discovery =
   | { status: 'found'; resources: ChildResource[]; addresses?: Addresses }
@@ -292,30 +312,39 @@ export interface Inventory {
 
 // --- templates ---------------------------------------------------------------------------
 
-export type TemplateFieldType = 'string' | 'number' | 'boolean' | 'select' | 'string-list';
-
-/** A form-descriptor for one template field (the CMS renders a form from these). */
-export interface TemplateFieldDescriptor {
-  key: string; // dotted path into the template params
-  label: string;
-  type: TemplateFieldType;
-  help?: string;
-  options?: Array<{ value: string; label: string }>;
-  required?: boolean;
-  /** The value differs per region (a flavor id): each location can set its own (`regionalParams`). */
-  regional?: boolean;
-}
+export type { OptionField, OptionType } from './options';
+/** The template fields are provider options (`./options`); the old names stay for the adapters. */
+export type TemplateFieldType = import('./options').OptionType;
+export type TemplateFieldDescriptor = import('./options').OptionField;
 
 export interface CredentialTestResult {
   ok: boolean;
   code?: string;
   detail?: string;
   /**
-   * Facts the test observed at the provider that planning needs but the
-   * operator does not enter (e.g. a zone's encryption mode). Stored on the
-   * account as `observedSettings` and frozen into each new edge's intent.
+   * Facts the test observed at the provider that the account keeps (stored as
+   * `observedSettings`). A place's own facts (a zone's encryption mode) come
+   * from `checkLocation`, never from the credential test.
    */
   observed?: Record<string, string>;
+}
+
+/** What checking one location found (`EdgeProvider.checkLocation`). */
+export interface LocationCheckResult {
+  ok: boolean;
+  /** A short code when the location cannot be used (`zone_ssl_off`, `zone_unreadable`...). */
+  code?: string;
+  detail?: string;
+  /**
+   * Facts planning needs that the operator never enters (a zone's encryption
+   * mode, WebSockets): stored on the location as `observed` and frozen into
+   * each new edge's intent.
+   */
+  observed?: Record<string, string>;
+  /** The place's readable name as the provider lists it (a zone name). */
+  label?: string;
+  /** A CDN place's zone name as the provider reads it (a location picked by zone id alone takes it). */
+  zoneName?: string;
 }
 
 /**
@@ -354,9 +383,27 @@ export interface SharedTeardownDriver<Cfg> {
   step(cfg: Cfg, state: SharedTeardownState): Promise<SharedTeardownState>;
 }
 
+/**
+ * An account-wide certificate several edges share (Fastly's wildcard), as the
+ * provider sees it now. `state` is the provider's (`pending`, `processing`,
+ * `issued`, `renewing`, `failed`), or `absent` (none ordered yet) / `ambiguous`
+ * (several, or one ordered differently, which no edge will reuse).
+ */
+export interface SharedCertificateStatus {
+  name: string;
+  subscriptionId?: string;
+  state: string;
+  /** What it waits on or why it failed (`L7_CERTIFICATE_CODES`). */
+  code?: string;
+  /** When the current certificate expires (ISO), when the provider says. */
+  notAfter?: string;
+}
+
 export interface DiscoverOption {
   id: string;
   label: string;
+  /** Short facts the pickers show next to the choice (a zone's status). */
+  facts?: Record<string, string>;
 }
 /** Choice lists for the account form; a missing key = not applicable or not yet discoverable. */
 export interface DiscoverResult {
@@ -368,6 +415,8 @@ export interface DiscoverResult {
   /** L7: DNS zones (Cloudflare) / TLS configurations (Fastly). */
   zones?: DiscoverOption[];
   tlsConfigurations?: DiscoverOption[];
+  /** Lists that stopped at their cap (more exist than are listed). */
+  truncated?: string[];
   /** Per-list failure codes: the form shows the field as free text instead. */
   errors?: Record<string, string>;
   /** Per failed list, the provider's redacted answer (`EdgeProviderError.meta.detail`). */
@@ -387,6 +436,15 @@ export interface EdgeProvider<
   defaultTemplate: Tpl;
 
   testCredentials(cfg: Cfg): Promise<CredentialTestResult>;
+  /**
+   * Whether the certificate options on `cfg` can be issued at all (a CDN
+   * front's CAA preflight at the zone on `cfg`), for a node that chose other
+   * certificate options than the ones the location's check covered. Absent =
+   * nothing to check.
+   */
+  certificatePreflight?(
+    cfg: Cfg,
+  ): Promise<{ ok: true } | { ok: false; code: string; detail?: string }>;
   listRegions?(cfg: Cfg): Promise<Array<{ id: string; label: string }>>;
   /**
    * What the account form can offer as choices, given the credentials and any
@@ -395,6 +453,15 @@ export interface EdgeProvider<
    * for a missing dependency; a failing call surfaces as `errors`.
    */
   discoverOptions?(partial: Partial<Cfg> & Record<string, unknown>): Promise<DiscoverResult>;
+  /**
+   * L7 adapters: check ONE location with the account's credentials (`cfg`
+   * carries the location's placement, and a Fastly front's resolved DNS
+   * account): whether new edges can be created there, the facts planning
+   * freezes from it and its readable name. Never throws for a refusal the
+   * provider answered; an unreachable provider throws. A location of an L4
+   * provider is read through `inventory` instead.
+   */
+  checkLocation?(cfg: Cfg): Promise<LocationCheckResult>;
 
   /** The ordered steps for one edge; each is a single provider call. */
   planProvision(cfg: Cfg, spec: EdgeSpec, tpl: Tpl): ResourceStep[];
@@ -432,6 +499,24 @@ export interface EdgeProvider<
   inspectForAdoption?(cfg: Cfg, resourceId: string, hostname: string): Promise<AdoptionInspection>;
   /** Adapters whose adopted edges can sit on a shared resource (see SharedTeardownDriver). */
   sharedTeardown?: SharedTeardownDriver<Cfg>;
+  /**
+   * Adapters whose edges can share one account-wide certificate: its state now
+   * (null when the account does not use one). A read; never orders anything.
+   */
+  sharedCertificate?(
+    cfg: Cfg,
+    /** What edges of the account ordered (`orderedSharedResources`): theirs to name, whatever its authority. */
+    opts?: { ordered?: readonly string[] },
+  ): Promise<SharedCertificateStatus | null>;
+  /**
+   * Delete that shared certificate and the records FCP wrote for it (the
+   * caller refuses while a live edge uses it). `code` names why nothing was
+   * removed (a certificate the account would not have ordered is not its own).
+   */
+  removeSharedCertificate?(
+    cfg: Cfg,
+    opts: { ordered: readonly string[] },
+  ): Promise<{ removed: boolean; code?: string }>;
 
   /**
    * Ledger resources in destroy order, skipping gone ones. Ordered by KIND

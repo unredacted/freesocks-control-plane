@@ -29,6 +29,7 @@ import { listenersOf } from './relayListeners';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { resolveMemberCountryConfig } from './memberCountry';
 import { todayKey } from './relays';
+import { isTerminalRunState } from './lib/edges/setupRuns';
 import { familyKeyOf } from './probes';
 import {
   fleetBrakeEngages,
@@ -256,6 +257,19 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
   const rotationActive =
     !!rotation &&
     !['done', 'failed', 'rolled_back', 'quarantined', 'cancelled'].includes(rotation.phase);
+  // A guided setup owns the origin only while one of its runs is live; the
+  // leftover of a cancelled or failed one has simply not gone live.
+  let setupRunLive = false;
+  if (origin.setupOwned && origin.backendServerId && origin.nodeName) {
+    const runs = await ctx.db
+      .query('edgeSetupRuns')
+      .withIndex('by_origin', (q) =>
+        q.eq('backendServerId', origin.backendServerId!).eq('nodeName', origin.nodeName!),
+      )
+      .order('desc')
+      .take(5);
+    setupRunLive = runs.some((r) => !isTerminalRunState(r.state));
+  }
   return {
     origin,
     cfg,
@@ -268,6 +282,7 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
     edges,
     published,
     rotationActive,
+    setupRunLive,
   };
 }
 
@@ -648,7 +663,8 @@ export const run = internalAction({
             cfg: w.cfg,
             origin: {
               autoRotate: w.origin.autoRotate,
-              setupOwned: w.origin.setupOwned === true,
+              setupOwned: w.origin.setupOwned === true && w.setupRunLive,
+              notLive: w.origin.setupOwned === true && !w.setupRunLive,
               quarantined: !!w.origin.quarantine,
               rotationActive: w.rotationActive,
               cooldownUntil: w.origin.cooldownUntil ?? null,

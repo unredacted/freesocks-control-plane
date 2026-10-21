@@ -279,7 +279,12 @@ XHTTP; `http/1.1` otherwise), `certPublic` = the chain verifies against the syst
 foreign Host header still answers 2xx (`any`; never sent to a gRPC origin). Like the internal
 reachability probe it dials public literals only (a name is resolved first, every answer must be
 public, the literal is dialled). Without a successful probe the candidate stays L4-only and
-carries the probe's reason. For an **enrolled** node the plan reads the node from its intent
+carries the probe's reason. The setup plan asks a target that got no answer again
+(`ORIGIN_PROBE_ATTEMPTS`, 3, half a second apart; an address the probe refuses outright is not
+asked again), and when it never answers the plan says so: the inbound carries `probeFailed` and
+an L7 account that would carry it reads `origin_unreachable` ("Couldn't reach the origin. Try
+again", which plans again) instead of `layer_mismatch`, or `origin_not_public` when the probe
+refused the address outright (private or none: checking again gives the same answer). For an **enrolled** node the plan reads the node from its intent
 (`nodeIntents.enrolledOriginOf`: the origin name plus the ingress), and the Host-header answer
 comes from the node's verified ingress, not the probe: the `ingress_verified` evidence recorded at
 `machine_ready` with `settings.ingress.hostHeader: 'any'` gives `acceptsHostHeader: any`
@@ -311,6 +316,136 @@ provider-side name (`convex/lib/edges/hostname.ts`). Everything a step, discover
 destroy needs is **frozen** into `edges.provisionIntent` when the edge is planned. Readiness
 has three dimensions: `dns`, `certificate` and `front` (the end-to-end qualification below).
 
+**Certificates.** A Fastly front's certificate comes one of two ways, frozen per edge from the
+account's `certificateScope` (an intent default, § "Fastly fronts"):
+
+- `wildcard` (the default for a new account): ONE subscription for `*.<zone>` per account and
+  zone, ordered by the first edge that needs it and reused by every later one. A front's own
+  name never reaches the Certificate Transparency logs (a per-name certificate publishes it
+  there before any member uses it, so it can be listed and blocked), and only the first front
+  waits for issuance: the wait step looks once and finishes when the certificate is issued.
+  The subscription and its ACME record (`_acme-challenge.<zone>`, commented
+  `fcp-cert:<customer>:<subscription>`) are recorded on each edge as `shared`, so no edge's
+  destroy deletes them. Only an operator removes them, with the zone on the account page, and
+  only a subscription an edge of this account ORDERED: the settle that records a shared
+  resource the step created also keeps `<kind>:<id>` on the account
+  (`orderedSharedResources`), and one discovery found and reused is FCP's to use, never to
+  delete (`shared_certificate_not_ours`). The certificate and ACME steps hold the external lock
+  `fastly-certificate:<account>:<zone>`, so two rotations never both order it, and the removal
+  (`POST providers/{id}/locations/{loc}/shared-certificate/remove`, audited) takes the same lock
+  as the account (`externalLocks.holderAccountId`) and recounts the zone's live fronts under it
+  (`edge.shared_certificate_in_use` while one uses it, `edge.lock_busy` while a step holds the
+  lock), so no rotation starts reusing the certificate between the count and the delete. The
+  lock is released when the call ends; one a dead removal left is taken over by the next step
+  once it lapses. An account still holding a wildcard it ordered, in any zone, cannot be
+  deleted (`edge.shared_certificate_present`), nor can that zone's location (the only record of
+  it), so nothing is left at the provider with no credentials to remove it.
+  A subscription is reused only when it matches the account's certificate authority and its
+  EFFECTIVE TLS configuration (the location's, else the default one, the same one the traffic
+  CNAME points at); one ordered another way, or several, is never reused
+  (`shared_certificate_ambiguous`). At the challenge name, a record with another customer's
+  marker or none is never reused, replaced or deleted (`acme_name_in_use`); our own customer's
+  marker for a subscription that no longer exists (a failed one deleted at the provider) is
+  stale, and the step replaces it with the new subscription's; so is our own record that no
+  longer holds the challenge's current value (edited by hand, or a target the provider moved).
+  The subscription's state is kept on the zone's front location
+  (`edgeLocations.sharedCertificate`, read by the location checks a credential test runs and by
+  the reconcile cron, every pass while it is not issued, while it renews and within a week of
+  expiry, every 30 minutes otherwise) and shown with that zone on the account page with its
+  expiry and how many fronts use it. A renewal reports what holds it up like a first issuance
+  does, and one that is late (the certificate expires within a week, or has:
+  `certificate_expiring`) is raised by itself; Certainly's 30-day certificates renew with about
+  ten days left, so a week means days overdue. A subscription serves only while it is issued or
+  renewing AND its newest certificate's `not_after` is still ahead: one renewing past expiry is
+  pending (`certificate_expiring`) to the wait step, discovery and describe alike, so no front
+  is ready on an expired certificate. Attention `certificate_waiting` (one per zone) is critical
+  once under three days remain. A failed one refuses new fronts in that zone
+  (`shared_certificate_failed`), and so does one the account would not order
+  (`shared_certificate_ambiguous`), before anything is built for the front; the account's other
+  zones are not held back. An account switched back to one certificate per front still shows
+  each wildcard it left behind, without raising it, until it is removed.
+- `per_host` (an account created before, until it is switched): one subscription per front
+  hostname, deleted with the edge.
+
+**What discovery cannot prove is ours.** A resource discovery finds by name but cannot prove
+belongs to the edge (a record at the edge's name with another marker, a subscription ordered
+another way, a versionless domain on another service) is recorded as a candidate
+(`meta.candidate`) so the operator sees it, and it is never planned for destroy or deleted,
+also when the operator destroys the parked edge: deleting another account's ACME record would
+let its certificate lapse. The operator removes such a resource at the provider by hand.
+
+SNI and the zone still link the fronts of one account either way, so the zone choice matters
+more than the certificate. A zone carries the wildcard of one Fastly account only (a second
+one finds the first one's ACME record and stops at `acme_name_in_use`), and the challenge name
+sits at the zone apex: a zone whose own certificate is validated there by another ACME client
+should keep one certificate per front.
+
+**CAA preflight.** The check of a Fastly front location (run by the credential test for every
+location, by "Check again" and when a zone is added) resolves the CAA records of that location's
+zone over public DNS, walking up the tree the way the certificate authority does
+(RFC 8659: the first name with any CAA record decides; for the wildcard, `issuewild` when the
+set has one, else `issue`; a critical property with an unknown tag forbids). One certificate per
+front is checked from `_fcp-caa-check.<zone>`, a label nothing serves: a zone wildcard answers
+for it as it will for a new front's name, and the resolver follows that answer's CNAME as the
+CA does (a name with nothing of its own then climbs from its parent). Records that exist and do
+not name the account's CA (`certainly.com` for Certainly, `letsencrypt.org` for Let's Encrypt,
+`globalsign.com` for GlobalSign) fail the check with `caa_forbids_ca`, and so does a record that
+names it with parameters the issuance cannot meet (RFC 8657): an `accounturi` (the provider's
+ACME account is not FCP's to name) or a `validationmethods` list without `dns-01` (every
+certificate FCP orders uses the managed DNS challenge). No record at all, or a lookup that
+fails (`unchecked`), passes; so does a name too deep to walk to the top (more than
+`MAX_CAA_WALK` labels, also `unchecked`, never "no records"). The verdict is kept with the
+location's check (`edgeLocations.observed`: `caa`, `caaIssuer`, `caaCertificate`, `caaAt`; the
+refusal as its `checkError`). The verdict answers for the account's default certificate: while a
+zone's last check ended on it, the setup plan (the location's `certificateRefusal`, which keeps
+the zone pickable), every pick check, the setup run's first stage, the start guards of a
+rotation naming the location, the preflight and the selection refuse that zone with that code
+for a front on that certificate, before anything is allocated (`certificateRefusalFor(account,
+location, choices)`). A node that chose another certificate there is judged by its own
+preflight instead (below, Certificates a node chooses), and only the zone's wildcard refuses it,
+when it chose the wildcard. The account's other zones stay usable, and the refusal does not
+count toward the account's API health. Fix the records or pick another
+CA, then check the zone again. Changing the account's default certificate authority or
+certificate scope (its option defaults, see Provider options) marks the account untested
+(`retest_required`): a per-name verdict says nothing about `issuewild`. Each zone's
+shared-certificate record stays (it proves a wildcard FCP ordered is still at the provider, for
+its removal and the delete guards) until the next test reads it again. (The DNS account and the TLS configuration are a location's
+placement, never edited: another one is another location, checked on its own.) The lookups are DNS
+queries from the backend (`node:dns`, 4 s, two tries); the offline test suite refuses them like
+`fetch`, and tests answer through `__setFastlyCaaLookup`.
+
+**What a waiting certificate reports.** The wait step (`await_tls`) reads the subscription with
+its authorizations on every look. Fastly's authorization warnings carry a type and free text
+that names the records; the text is never read or kept, and the type is mapped by keyword to a
+fixed code (`L7_CERTIFICATE_CODES`): a CAA problem is `tls_caa_conflict`, conflicting records at
+the challenge name `tls_challenge_conflict`, a failed authorization `tls_authorization_failed`,
+any other warning `tls_authorization_warning`, reported only once the wait passed five minutes
+(`TLS_WARNING_GRACE_MS`). Fastly documents no vocabulary for the types. FCP also reads the
+validation record itself: a zone without the managed-DNS challenge's CNAME, or with another
+value there, is `tls_challenge_missing` (a DNS API that does not answer says nothing). The code
+is kept on the edge while it lasts (`edges.waiting`), logged once per change on the rotation and
+on the guided run waiting on it (its progress line names it), raised as attention
+`certificate_waiting`, and a provision that times out while held up ends with that code instead
+of `provision_timeout`. A zone's shared certificate is judged the same way and raised on its
+location.
+
+**Domains.** A Fastly edge planned now attaches its hostname as a versionless (Domain
+Management) domain: its own resource, linked to the service by id, created and deleted without a
+service version. The account setting `domainModel` (an intent default: `versionless` for a new
+account, and for one that does not name it; `classic` allowed) decides it for new edges and is
+frozen into each intent, so an operator whose provider refuses a versionless domain can switch
+to classic without a code change (`EDGE_INTENT_FACTS`). An edge planned before keeps its
+version-scoped (classic) domain, read, renewed and destroyed as before; the adapter reads which
+one an edge has from its ledger (`versionless_domain` or `domain`). Discovery finds a versionless
+domain by its exact name and owns it only when it is linked to the edge's own service; DNS
+readiness is that link plus the traffic record as the zone holds it now, read back and still
+pointing at the CNAME of the front's TLS configuration (no version holds the domain, so there
+is no domain check to run); destroy deletes it by id after the certificate and before the
+service, on a shared service too (no version workflow). Fastly offers classic domains only to
+accounts created before 2025-09-16; its documentation names no service-type limit for
+versionless ones (the domain page creates a CDN or a Compute service for one), and the WebSockets
+product is enabled per service either way.
+
 **Front qualification.** Before an L7 edge is published or selected as a standby, FCP opens a
 short **authenticated test session** through it (TLS to `hostname:443`, the listener's
 transport exactly as deployed, then a VLESS or Trojan request for the origin's qualification
@@ -337,6 +472,17 @@ listener and publishes it only with a current proof (`front_unqualified` otherwi
 without a provider set; manual provisioning, a guided setup run's chosen account, publishing
 and a pick of the node's provider set (the operator chose it, § "Provider sets") work
 regardless.
+
+`edge.l7.dnsProvidersFront` (default off) decides whether a **DNS provider's** account
+(capability `role: 'dns'`, Cloudflare today) may itself front member traffic. Off, such an
+account only holds the records FCP writes for L7 fronts (a Fastly edge's certificate challenge
+and traffic name, a front node's origin name) and is never a candidate, whoever chooses: the
+setup plan does not offer it, a rotation naming it fails `dns_account_not_fronting`, automatic
+selection skips it, and a provider-set pick of it is not usable (`setPicksOf`). Nor does a
+spare of it go live: `checkPublishable` refuses it (`dns_account_not_fronting`) and standby
+selection passes it over. Nor does attention ask to trust it (no `account_unqualified`: it
+carries no traffic). Published edges are left as they are. It is deliberately separate from `l7.autoSelect`: letting automation
+pick L7 fronts must not turn a DNS account into one (§ "Adding a DNS provider").
 
 ### Publication
 
@@ -782,7 +928,20 @@ landed. `relays.setupOwned` is set at stage 1 and cleared ONLY by stage 8 (or re
 failed, cancelled or unbound run leaves the origin owned. Cancel before stage 5 deletes the origin
 `restore-direct` (nothing was published; the delete cancels the live rotation, drains the
 standbys for the reconcile destroy and removes the credential); at stages 5-7 the published edges
-stay and `edgeRestore.start` runs with purpose `cancel_setup`; after go-live there is no cancel.
+stay and `edgeRestore.start` runs with purpose `cancel_setup`, unless the origin never reached
+members (`edgeSetupRuns.originEverServed`: no edge ever published, no hide row, no binding
+naming it), which is deleted like an earlier cancel so the node is free to protect again;
+after go-live there is no cancel. An origin a failed or cancelled run left owned (no run live
+on it) is a **leftover**: the protect sheet offers its node again (`nodeCandidates.leftover`,
+"Half set up") and the new run resumes it (`plan.existingRelay`) at its recorded stage, at
+publish at the latest: the new run's listeners hold no edge until publish (through provision)
+takes the origin's own back, so a later stage would wait on addresses it never attached; the
+node page offers
+**Continue setup** when nothing of it is in use. The node's newest run, when it failed, is
+named by the origin status (`failedRunId`, "Open the run" on the node page; the Edges home row
+opens its sheet) and by attention `setup_run_failed` (warning; info for a re-protect, whose
+members keep what they had; action `open_run`). The sheet's clock counts from the current
+attempt (`attemptStartedAt`, set by a retry).
 A **re-protect** run (`kind: 'reprotect'`, `POST relays/{id}/reprotect`, "Protect again" on the
 node page) is its own kind for a LIVE node: an enrolled node whose members are already served
 through this origin (refused otherwise: `edge.reprotect_not_bound` for an origin not bound yet,
@@ -1023,12 +1182,15 @@ of every bound origin with hide rows: a covered or previously approved one is **
 none). Both are suppressed while a restore workflow runs.
 
 **The restore workflow** (`relays.restore {purpose, phase, ...}`, `convex/edgeRestore.ts`;
-one phase per `edge-reconcile` tick, `edgeRestore.step`) is the only way a guided origin stops
+`edgeRestore.step` advances one phase, and each `edge-reconcile` tick chains steps until a phase
+must wait: a running rotation, hides still settling, a raw body not there yet, the panel
+unreachable) is the only way a guided origin stops
 depending on its edges, with an explicit purpose: `cancel_setup` (a run cancelled after
 publication), `release_requirement` (edge-required delivery switched off, everything kept:
 "Serve this node directly again", `POST relays/{id}/serve-direct`) or
 `delete_relay` (a `restore-direct` deletion). Phases: (1) `freeze`: no new disable writes; waits
-for a running rotation; (2) `settle`: every outstanding hide row confirmed or released by
+for a running rotation; an origin never bound that never hid a Host has nothing to restore and
+goes straight to (7); (2) `settle`: every outstanding hide row confirmed or released by
 observation; (3) `verify_fcp_raw` (bound origins only): the RAW backend body of each non-dark
 cohort (one representative key per placement pinned to the node, `convex/lib/edges/cohorts.ts`:
 the first key of each distinct placement over `subscriptions.by_backend_server_pinned`, a page
@@ -1044,7 +1206,8 @@ re-enabled through a `restore` row, read-back confirmed; changed or removed by a
 the origin entry again; (7) finish by purpose: `cancel_setup` retains the origin (`setupOwned` +
 `bindingDeferred`, edges published, attention `go_live_pending`); `release_requirement` retains
 everything and sets `bindingDeferred` so `require-edges` can re-apply the activation policy;
-`delete_relay` runs the deletion body only now (drain, destroy, remove). An origin with a restore
+`delete_relay` runs the deletion body only now (drain, destroy, remove; an edge that was never
+published served no member and is not drained). An origin with a restore
 in progress refuses a second workflow, a new hide and every pool / listener write
 (`edge.restore_in_progress`); attention lists it as `restore_in_progress` (info) with its phase
 and last error. Audited `edge.relay.restore_started` / `edge.relay.restore_finished`.
@@ -1091,7 +1254,12 @@ any point, and never writes twice what it cannot prove:
   `ambiguous_resource`. `unresolved`: keep looking for 30 minutes after the step started, then
   `discovery_timeout`. A provision has its own 20-minute cap (`provision_timeout`). Shared
   external locks use the same lease and are held on a thrown or partial write until discovery
-  answers.
+  answers. A step the provider REFUSED (`StepOutcome` partial with `refused`: what FCP built
+  does not compile, Fastly's `version_invalid`) is never retried, since the same draft is
+  refused the same way: the run fails on that code at once, the edge (not only the step) needs
+  an operator, so its `needs_operator` attention stays raised while its billed resources
+  exist, and what was built stays so the operator can read the provider's reason at the
+  provider (FCP keeps only the code).
 - **Hosts.** The Host plan is captured **per listener** from the live listing; when FCP owns the
   Hosts and none exists for the listener yet, the flip CREATES it through the Host state
   machine. The forward write is claimed before it is sent (`forwardWriteAttempted`), so a write
@@ -1126,10 +1294,12 @@ changed listener no probe has settled on since); settles edges with unknown outc
 discovery; refreshes provider health; renews L7 proofs; re-observes unresolved Host operations
 and deletes the FCP-owned Hosts of retired listeners and deleting origins (read-back confirmed);
 settles the direct-Host hide ledger and re-observes the direct Hosts of bound guided origins;
-drives one phase of each restore workflow; removes expired or released temporary test keys
-(`edgeTestCredentials.sweep`, bounded retries, then attention `test_key_cleanup`); turns
-drained / failed /
-cancelled edges into destroy runs; pool upkeep while `edge.enabled` is on and the maintenance
+advances each restore workflow until a phase must wait; removes expired or released temporary
+test keys (`edgeTestCredentials.sweep`, bounded retries, then attention `test_key_cleanup`);
+turns drained / failed / cancelled edges into destroy runs and starts their walk in the same
+pass: in the provider's kind order, the next resource as soon as the last is confirmed gone (an
+async-delete provider's delete is read back at once), stopping at the first still going away,
+at most `maxDestroyStepsPerPass` (12) per pass, each pass one destroy attempt; pool upkeep while `edge.enabled` is on and the maintenance
 switch is off (a `setupOwned` origin and an origin in a restore workflow are skipped): first `ensureCapacity` (raise / expand
 `desiredPublished` for the deployed listeners), then **listener-aware** upkeep, one listener per
 tick: every deployed, enabled listener without a template edge gets its OWN standby published
@@ -1945,7 +2115,7 @@ every control a key (pinned by `settings.test.ts`).
 and claim intervals and per-pass caps are `EDGE_PLUMBING` in `convex/lib/edgeConfig.ts`, not
 settings: provision timeout 20 min, discovery timeout 30 min, a rotation's wall clock 2 h, poll
 20 s, operation claim 60 s, 8 verification attempts, 6 publish and 6 rollback attempts, 48
-destroy attempts, one automatic reconcile start per pass, 2,000 report rows per detector
+destroy passes of at most 12 resources each, one automatic reconcile start per pass, 2,000 report rows per detector
 evaluation, the L7 proof's step timeout 10 s, lifetime 60 min and six re-proofs per pass, the
 L7 evidence wait 15 min, and 1.5 s between probe runs on one source. Tests and the
 edge-connection gate shorten them through `__setEdgePlumbingForTests`.
@@ -2085,9 +2255,12 @@ depend on it:
 - **Go-live.** For an enrolled node, `edgeSetupRuns.goLive` promotes the node's activation run
   inside its own mutation (`nodeActivation.promoteCandidate`): the edges it published are the
   run's candidate resources, filtered from members until then.
-- **The origin TLS contract.** Recorded per combination: Fastly with `overrideHost: 'origin'`
-  (SNI = Host = the origin name, a public certificate naming it) is supported; Fastly with
-  `'hostname'` only when the node's verified ingress accepts any Host header; Cloudflare `full`
+- **The origin TLS contract.** Recorded per combination: Fastly presents the backend's own
+  address as SNI and verifies against it, so that address must be a name the origin's
+  certificate covers (`origin_cert_name_uncovered` otherwise; also sent as `ssl_sni_hostname`
+  and `ssl_cert_hostname`, on port 443); with `overrideHost: 'origin'` (Host = the origin name too, a public certificate
+  naming it) it is supported, with `'hostname'` only when the node's verified ingress accepts
+  any Host header; Cloudflare `full`
   (SNI and Host = the edge hostname, served by Caddy's `fallback_sni` plus a catch-all site) is
   supported. Cloudflare `strict` is admitted only for an origin whose certificate is publicly
   trusted (`certPublic`), and it validates the EDGE hostname, which an enrolled node's
@@ -2218,15 +2391,43 @@ is missing, and it never appears in the provider id lists or the wire contracts.
 
 ## Provider accounts and locations
 
-An account is a provider plus its credentials; where its edges are created is a **location**
-(`edgeLocations`, `convex/edgeLocations.ts`). `convex/lib/edges/accountSettings.ts` splits every
-provider's settings into the account's (`EDGE_SETTINGS_SCHEMAS`) and the placement
+An account is the **whole provider account**: its credentials and what they reach. Where its
+edges are created is a **location** (`edgeLocations`, `convex/edgeLocations.ts`), chosen when a
+node is protected, an address is added or one is replaced, and frozen on each edge.
+`convex/lib/edges/accountSettings.ts` splits every provider's settings into the account's
+(`EDGE_SETTINGS_SCHEMAS`: credential identifiers and intent defaults) and the placement
 (`EDGE_PLACEMENT_SCHEMAS`); `accountSettings.test.ts` pins that every key sits in exactly one
 classification list. A location holds its frozen placement, `placeKey` (the provider's own
 region or zone id) and `placementHash`; `locationKeyOf` (`lib/edges/locations.ts`) is
 `<provider>:<placeKey>`, account-agnostic, because two accounts in one region share address
-ranges. A CDN account gets exactly one location, `anycast`, created with the account; adding
-another is `edge.location_not_geographic`.
+ranges. Only an OVH key's API endpoint still locates every resource of its account (locked
+while edges exist); nothing else on an account is locked.
+
+**A CDN's place is a DNS zone.** A Cloudflare location's placement is `{zoneId, zoneName}`, one
+of the zones its token reaches; a Fastly location's is `{dnsAccountId, zoneId, zoneName,
+tlsConfigurationId?}`: the DNS account its records are written through, one of that account's
+zones, and the TLS configuration (absent = the Fastly account's default), which decides which
+addresses members reach. Every CDN location keeps `placeKey: anycast`: the zones of one CDN share
+its address ranges, so per-country grades, the renderer's backup tier and the provider-set
+groups treat them as one place. A zone location is checked with the provider when it is created
+(`checkLocation`: readable with the credentials that will use it, active, not paused, its name
+unchanged; the encryption mode `off` is refused), on **Check again**, on an inventory pull, and
+for every location in use whenever the account is tested or its credentials rotate. What the
+check saw (`edgeLocations.observed`: the zone's encryption mode, WebSockets, status) is frozen
+into each new edge's intent; a refusal is `edgeLocations.checkError`, and no new edge is planned
+there (`location_check_failed`) until a check passes. Each zone is its own pick, so a node may
+use several zones of one account, trust is taken per zone, and a detector burn cools only the
+burned zone.
+
+**What an account reaches** is its catalog (`edgeProviderCatalog`, one row per account and kind:
+zones, regions, projects, TLS configurations), listed by `edgeProviderOps.refreshCatalog`
+after a passing credential test or rotation, on `POST providers/{id}/catalog/refresh`
+(throttled), and when a picker finds it older than 12 hours (`GET providers/{id}/catalog`).
+Cloudflare zones are listed page by page up to 1,000 (`truncated` past that). A failed listing
+keeps the last items and records why. The catalog is a menu, never an authority: creating a
+location asks the provider again. An account may be created with credentials alone; the old
+single-place shape (a zone, or a DNS account, among the settings) still makes its first
+location, and a Fastly payload naming only its DNS account takes that account's zone.
 
 **Adding one.** `POST providers/{id}/locations/options {placement?}` lists what the stored
 credentials can use (regions, projects, networks, subnets, the load balancer flavors of a
@@ -2241,14 +2442,23 @@ names it, or an open setup run picked it before creating its first edge (`edge.l
 A create, or a change to the location's template or regional values, refuses
 (`edge.template_value_required`) when a regional value the provider requires (the OVH flavor id)
 would be empty in both the template the location resolves and its own values. An account PATCH that names a placement key is
-`edge.placement_on_location`. Both kinds of call go through the `admin.edges.provider-call`
+`edge.placement_on_location` (a zone included: another zone is another location). A CDN
+location `POST providers/{id}/locations {placement: {zoneId}}` takes the zone's name from the
+catalog; the provider check refuses with `edge.location_not_offered` (the key cannot read the
+zone), `edge.location_unusable` (paused, not active, encryption off, renamed, an unknown TLS
+configuration) or `edge.location_unchecked`, and a front naming a DNS account that is missing,
+switched off or no DNS provider is `edge.dns_account_unusable`. Both kinds of call go through the `admin.edges.provider-call`
 throttle when they reach the provider.
 
 **Frozen per edge.** Each edge records `locationId`, `placeKey` and `placement` when it is
 planned (`edges.ts insertPlannedEdge`, `relays.ts` adopt). `edgeProviderOps.loadAdapter` builds
 the adapter's settings from the account, then the edge's own placement for a call about that
 edge (step, poll, discover, describe, inspect including the live refresh, destroy), or the location's for planning
-(`planProvision`, `effectiveTemplate`, `inventory`, adoption). A credential test takes no
+(`planProvision`, `effectiveTemplate`, `inventory`, adoption); a CDN account's call naming no
+place acts in its default location. For an existing L7 edge every value its intent froze wins
+(`frozenSettingsOf`: zone, DNS account, TLS configuration, certificate authority), so no edit of
+a location or an account moves a live front. An imported front's hostname must sit in the picked
+location's zone (`edge.hostname_not_in_zone`). A credential test takes no
 placement: Gcore and OVH list projects, Scaleway reads its first zone, UpCloud reads the
 account. So a describe or a destroy always reaches the region the resource is in, even when the
 account has others.
@@ -2259,8 +2469,14 @@ any switched-on location is trusted. A new location is trusted by its first test
 Try it tick or a passing L7 proof) or by the Trust override. Editing an account's settings
 untrusts every location; a credential rotation that passes its test keeps trust. Because that
 test needs no location, a rotation first reads every location still in use (switched on, or with
-edges) with the new key, through the adapter's inventory call; a location it cannot read refuses
-the rotation (`location_unreachable`, naming the location) and nothing is stored. Moving an
+edges) with the new key, through the adapter's inventory call (a CDN zone: its location check); a
+location it cannot read refuses the rotation (`location_unreachable`, naming the location) and
+nothing is stored. A zone's own state (paused, not active, encryption off, a renamed zone, CAA)
+is recorded and does not hold the rotation up; anything the key itself cannot do there (a TLS
+configuration it does not see) refuses it. A CDN zone switched off with no edges is checked
+too, and what the new key cannot do there is only recorded on it (no new edge is planned there
+until a check passes); the same holds for a DNS account's rotation and the zones only such
+fronts write through it. Moving an
 account's default template untrusts the locations that fall back to it.
 
 **Regional template values.** A template field whose value differs per region is flagged
@@ -2388,6 +2604,428 @@ its load balancers (the credential test's own call, 8 at a time). A region that 
 a definite refusal (a 4xx other than 401 and 429) is not offered; a timeout or a 5xx says
 nothing about the region, so it stays.
 
+## Fastly fronts
+
+A Fastly account is an API token with the global scope (on an automation user, with the
+WebSockets product entitlement). Each of its front locations names a DNS account and one of
+its zones, with an optional TLS configuration, all frozen on each edge planned there; the
+certificate authority and `certificateScope` are certificate option defaults, and
+`domainModel` an account setting (intent defaults: a change moves new edges only). One edge
+is ten steps: the VCL service, its one origin backend, the WebSocket upgrade snippet, the domain
+(versionless, or classic when the account says so),
+the WebSockets product, the version activation, the certificate (the hostname's own or the
+zone's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME
+(§ "L7 edges" for certificates, the CAA preflight, waiting codes and domains).
+
+**The origin backend.** The origin must listen on its scheme's own port (443 over TLS, 80
+without; `origin_port_unsupported` at plan time otherwise), and the backend carries that `port`
+explicitly, with the origin's TLS name as `ssl_cert_hostname` and `ssl_sni_hostname`. The
+WebSocket path honours no TLS-name override, though: the front presents and verifies the
+backend's own address, so an https origin must be addressed by a name its certificate covers
+(never an IP address; `origin_cert_name_uncovered` at plan time otherwise), and that address is
+the TLS name sent. Fastly's
+WebSockets guide lists only name, address, TLS and Host override as supported, yet the front
+dials the backend's `port`, which the API defaults to 80 whatever `use_ssl` says: a backend
+without it spoke TLS to port 80 and every front failed its qualification. Inspect reports the
+port the provider holds.
+
+**Teardown.** In `FASTLY_DESTROY_ORDER`: traffic record, certificate, ACME record, versionless
+domain, version deactivation, service, then the version-scoped children (backend, snippets, a
+classic domain) and the WebSockets product. The children are never deleted on their own: with
+the edge's own service gone (`ownServiceOf`, never a candidate discovery could not prove) they
+are confirmed gone without a call, and otherwise read back on the service's version (a 404 is
+gone), so a service deleted under a ledger that never recorded it cannot leave them waiting.
+
+- **Switching domains.** On the account page, Domains, "A new front's name is": its own
+  domain linked to the service (versionless, the default) or a domain on the service version
+  (classic, only on accounts created before September 2025). Fronts that exist keep theirs;
+  like any settings change it untrusts the locations until a test and a proven front.
+- **Switching to the wildcard.** On the account page, Certificates, set Certificate to "One
+  wildcard for every front" and save the defaults: nodes protected from then on start from it
+  (one node can also choose it alone, under its Options when it is protected). Like a settings
+  change it untrusts the account's locations, and as a certificate default it marks the account
+  untested (`retest_required`): test the account again (each zone's CAA preflight then checks
+  `issuewild`), and its next proven front trusts it again. Fronts that exist keep their own
+  certificates until they are replaced.
+- **CAA.** Allow the account's CA at the zone (or wherever its CAA records sit, up the tree) with
+  `issue`, and with `issuewild` for the wildcard: `0 issue "certainly.com"` and
+  `0 issuewild "certainly.com"` for Certainly.
+- **A failed shared certificate.** Fix what the account page says it waited on, retry the
+  subscription at the provider, and the next reconcile pass reads it again.
+- **Retiring the wildcard.** Switch the account's default to one certificate per front (and
+  any node that chose the wildcard, under its Options) and replace its fronts; once none uses the wildcard, the account page offers "Remove shared certificate"
+  (for one FCP ordered only), which deletes it and the ACME record FCP wrote (never another
+  customer's record). An account is deleted only after that. A wildcard FCP found and reused is
+  removed at the provider by hand, if nothing else uses it. Removal reads the wildcard with the
+  account's default certificate authority: one a node ordered under another authority reads as
+  `shared_certificate_ambiguous` until the default names that authority again.
+
+## Provider options
+
+Every settable field of every resource FCP creates at a provider is an OPTION, declared once
+per provider in `convex/lib/edges/providers/templates.ts` (a zod leaf, plus a descriptor:
+label, help in plain words, group, unit, default, the API field it fills, whether it is
+shown first for a node, a `when` condition). `providers/options.ts` holds the generic half:
+`describeFields` completes a descriptor's bounds, choices and default from the schema,
+`wireBody` writes a resource's chosen fields into its request body, and the hash helper. The
+admin forms render from the same descriptors (`optionSchemas` on `GET providers`, `schemas`
+on `GET templates`) through one component, `OptionFields.svelte`.
+
+**Two kinds, one home each.**
+
+- **Tuning** options configure the resources an edge is built from (a size, a timeout, a
+  health check, an IPv6 preference). Their defaults live in **templates**, in the template
+  hash as before. The Templates tab edits them.
+- **Certificate** options decide a CDN front's certificate (the authority, one wildcard or one
+  per front). Their defaults live on the **account** (`edgeProviderAccounts.optionDefaults`),
+  outside the template hash, frozen in each front's intent and proven per edge by its front
+  proof. An account's defaults only PREFILL: a node protected from it copies them into its
+  pick.
+
+**Per node.** Any option can be chosen for one node at one location: the protect sheet's
+Options fold on each pick, `relays.providerSet[i].options` once the run goes live
+(`edgeSetupRuns.picks[i].options` while it runs). A pick stores only what differs from what
+the location builds with anyway, plus the certificate values copied from the account. The
+deploy copies the account's certificate defaults into every pick from before options too
+(`migrateOptionDefaults`), so a later change of an account's defaults reaches nodes
+protected after it, never one that exists (what the account page says). Changing a live node's options is a re-protect (`reprotect {pickOptions}`,
+every address replaced, members move at go-live), never an edit of a live edge. A manual
+spare or replacement may carry options for that one address (`options` with `locationId`);
+automatic work never takes such an address.
+
+**Frozen per edge.** When an edge is planned, `resolveBuildFor` lays the pick's tuning
+choices over the template the location resolves (and checks the result against the
+provider's rules). The edge records `choices` (the pick's whole set, JSON) and
+`baseTemplateHash` (the location's own hash); its `templateHash` is the base hash when the
+pick chose no tuning value, else the hash of the template with the tuning choices laid over
+it. The certificate is the approval shape's own part instead (`certificateDigest`,
+`lib/edges/choices.ts`: the authority and scope, defaults filled in): a review line and a
+publication carry it for a provider whose certificate is a node's option, so a re-protect or
+a replacement that changes only the authority or the scope returns to `node_not_approved`,
+while a pick that merely copied the account's defaults builds under the template's own hash.
+A review line approved before options names no certificate and takes the one the node is
+built with. So the node's approval shape covers its choices, a tick on such an edge is
+still trust evidence for its location (trust compares the location's own hash), and a
+template edit is still detected mid-provision against the base hash. Certificate values go
+into the L7 intent like the authority always did; `loadAdapter` lays the account's defaults
+under them for a new edge and the intent's values over them for an existing one (an intent
+without a value reads as what its absence meant: one certificate per front, the default
+authority).
+
+**Spares follow their pick.** Selection's standby candidates and `verifiedSpareFor` skip an
+edge whose frozen choices (tuning) or frozen certificate differ from what its pick asks for
+now (`builtForChoices`, `lib/edges/choices.ts`). A template edit is not a choice: it keeps
+the existing rule (it untrusts the locations that fall back to the template).
+
+**Certificates a node chooses.** A pick whose certificate differs from what its location's
+check covered (the account's defaults: another authority, the wildcard) is checked against
+that zone's CAA records when its plan is made (`edgeProviderOps.certificatePreflight` with
+the pick's location, the adapter's `certificatePreflight`): a refusal is a problem of that
+pick, before anything is ordered. A zone whose CAA refuses the account's own default stays
+refused (the location's `checkError`) until the default or the zone's records change and the
+zone is checked again; the account's other zones are not held back. A zone's shared wildcard
+is read as a front there that chose it froze it, even where the account defaults to one
+certificate per front.
+
+The zone holds ONE shared wildcard, issued by the account's default authority (the account
+reads, renews and removes it under that one). A node takes it, or one certificate per front
+from any authority; a pick asking for the wildcard from another authority is refused
+(`edge.option_invalid`, in words), and so is a wildcard pick while the zone's wildcard is
+one the account would not order (`edge.shared_certificate_ambiguous`). A wildcard an edge of
+the account ORDERED stays the account's to remove whatever authority it was ordered under
+(the default may have changed since): the reconcile read names it (`ambiguous` with its
+subscription, shown even on an account that now defaults to one per front) and "Remove shared
+certificate" deletes it. One the account did not order, or several, never.
+
+**What a place cannot do.** Some values are valid for a provider but not where an edge is
+about to be built (`contextProblems`, `providers/templates.ts`), refused with
+`edge.option_invalid` and words when a pick is planned (protect, re-protect, a spare's
+options) and again when the edge is built (the rotation fails `option_invalid` before it
+allocates anything):
+
+- an HTTP or HTTPS health check (Gcore, OVH) on a node that serves a REALITY transport: a
+  REALITY port answers no plain HTTP request, so every member would be marked down;
+- record tags (Cloudflare `recordTags`, Fastly `dnsTags`) or a flattened traffic record
+  (Fastly `dnsFlatten`) on a Cloudflare zone on the Free plan: Cloudflare offers tags from
+  Pro up and per-record flattening on paid zones only. The plan comes from the zone's last
+  credential test (`observedSettings.zonePlan`); a zone never tested since is not refused here.
+
+Write rules (on a template or a pick, `WRITE_CHECKS`) also cover Fastly: the lowest backend TLS
+version may not be above the highest, and keepalive timings need keepalive on.
+
+**The member's address at a Fastly front.** Fastly sets `Fastly-Client-IP` and adds the
+member's address to `X-Forwarded-For` on the incoming request, before any VCL runs (its header
+reference). By default (`forwardClientAddress` off, for every account, template and front,
+including fronts planned before the option, whose frozen params do not name it) the front's
+service version gets three snippets: in `vcl_recv`, on every request, `unset` of every header
+in `FASTLY_CLIENT_ADDRESS_HEADERS` (`providers/fastly.ts`), then the WebSocket handoff; in
+`vcl_miss` and `vcl_pass`, the same headers removed from the backend request, for a request
+that is not handed off. The list, by name:
+
+- Fastly's own: `Fastly-Client-IP` and `X-Forwarded-For`;
+- what a client, or a proxy on its side, may send: `True-Client-IP`, `X-Real-IP` and
+  `Forwarded`.
+
+The generated VCL is pinned whole by `fastly.test.ts`. On passes them all through (the upgrade
+snippet only, as before the option).
+
+**`Fastly-WAF-Client-IP` reaches the node.** Fastly also sends `Fastly-WAF-Client-IP`, with the
+member's address, on every request through a front (a capture on a beta node showed it on
+every WebSocket upgrade). Fastly documents that header nowhere (its header reference, special
+and protected headers, WebSockets passthrough, Fanout and Next-Gen WAF client address pages,
+re-read 2026-10-21), and it is protected: VCL that unsets it does not compile (`Variable
+req.http.Fastly-WAF-Client-IP cannot be unset`), so no snippet can remove it, on any front.
+What keeps it from the node's software is the node: the role's Caddyfile (in
+`ansible-role-freesocks`) can drop it in each `reverse_proxy` with
+`header_up -Fastly-WAF-Client-IP`, which keeps it from Xray, though Caddy, which keeps no access
+log, still receives it. Fastly support is the place to ask for a service-level way to stop it.
+Until either is in place, a node behind a Fastly front receives each member's address.
+
+**A list only of names that compiled.** Fastly protects headers it does not document, and one
+protected name in a snippet fails the whole version: activation answers `version_invalid` and
+no front builds at all. Lists are no proof (Fastly's own and the one the VCL linter Falco
+models both leave `Fastly-WAF-Client-IP` out), so a name joins `FASTLY_CLIENT_ADDRESS_HEADERS`
+only once it has compiled in an activated version, `unset` on `req` and on `bereq`; every name
+above has. `fastly.test.ts` refuses any name on a hard-coded denylist (Fastly's documented
+protected headers, `Fastly-FF` among them, plus `Fastly-WAF-Client-IP`) in the list or anywhere
+in a generated snippet.
+
+**`version_invalid`.** The draft version did not compile. The run fails on that code at once
+(the same draft would be refused again) and keeps what it built: open the front's service at
+the provider, where the draft version shows the compile error, then delete the front. FCP keeps
+the code only, never the provider's words.
+
+**What VCL cannot reach.** `return(upgrade)` ends VCL in `vcl_recv`, so no later VCL puts a
+removed header back on the upgrade path. Fastly's WebSocket path adds headers after the handoff
+(`CDN-Loop: Fanout` arrives at the node, and no VCL wrote it), and a protected header such as
+`Fastly-WAF-Client-IP` cannot be removed at all: only a capture on the node shows what arrives.
+
+**Fronts built before a change to the list.** FCP never edits a live or spare front's service
+(an option's `live` is informational only): a front behaves as its version was built until it
+is replaced. Its `ws-upgrade` snippet shows which list it has
+(`GET /service/{id}/version/{n}/snippet/ws-upgrade`). To replace one, spares first, so no
+replace puts an old spare in use:
+
+- a spare: "Doesn't work" on its test card destroys it and builds a new spare in its place
+  (the spare dialog's renew);
+- a front still waiting in a go-live run: "Doesn't work" on its line retries that line with a
+  new front, or cancel the run (only its new addresses go) and protect again;
+- a front in use: Replace address, Where naming its location, so a new front is built; the old
+  one drains and is deleted as any replaced address is.
+
+**To verify it on a live front.** The active version's snippets
+(`GET /service/{id}/version/{n}/snippet`) list `client-address-miss`, `client-address-pass` and
+`ws-upgrade` with the unsets above. Then capture on the node itself, since beta and prod nodes
+run Xray with logging off and nothing logs a header: on the node's loopback, where Caddy hands
+the decrypted request to the transport's loopback port (8443 here; use the node's),
+
+```
+tcpdump -i lo -A 'tcp dst port 8443'
+```
+
+while a WebSocket upgrade goes through the front (a member's app, or a tester's). Expect no
+header that contains the client's address. Expect `Fastly-SSL`, `Fastly-Edge-Service-Id`,
+`CDN-Loop: Fanout`, `Via: 1.1 Caddy` and Caddy's own `X-Forwarded-*`. Two limits:
+
+- Caddy passes every request header through unchanged EXCEPT `X-Forwarded-For`,
+  `X-Forwarded-Proto` and `X-Forwarded-Host`, which it sets itself (the role's Caddyfile names
+  no `trusted_proxies`): on loopback `X-Forwarded-For` is always the Fastly server Caddy talked
+  to. The capture proves every other header; what the front itself sent in `X-Forwarded-For`
+  never reaches Xray, and Caddy keeps no access log, but it cannot be read on the node (TLS on
+  the wire, replaced on loopback).
+- Through a plaintext origin (port 80) the front's request crosses the wire unencrypted:
+  `tcpdump -A -s0 -i any 'tcp port 80'` shows what the front sent, `X-Forwarded-For` included.
+
+**A second address after the tick.** A provider may report an address family an L4 edge did
+not have when its endpoint was confirmed (a dual-stack load balancer whose IPv6 is only read
+from `additional_vips`, as Gcore's is now). `recordDescribe` holds it apart
+(`edges.learnedAddresses`): it is not served, not in the confirmation's hash, and the
+confirmation of what IS served stands, so the IPv4 keeps rendering. The edge's addresses
+line says "new address ... not served until tested" with Test it; the test link carries that
+address only, its binding is the configuration that serves it, and its tick moves it into
+`addresses` (`edgeVerification.confirm`). A family the provider stops reporting is dropped
+from the hold; an edge without a confirmation takes a new address at once, as before.
+
+**The hash rule.** An option added after a provider's first schema is `.optional()`, with
+its default declared on the descriptor and applied where it is sent, and an option a
+template never set stays UNSENT (the provider's own default), so an existing node's next
+replacement sends exactly what it sent before. Two fields that predate options keep their
+old wire: Gcore's node timeouts are sent on the listener as they always were (not added to
+the pool), and OVH's `timeoutMemberDataMs`, shown before but never sent, stays hidden and
+unsent (`nodeIdleTimeoutMs` sends `timeoutMemberData` when chosen). Two UpCloud changes are
+corrections, checked against UpCloud's own Go SDK (`upcloud/request/load_balancer.go`,
+v8.42.0): attaching a floating IP posts `{address, network_name}`
+(`AttachLoadBalancerIPAddressRequest`), and backend properties have no
+`health_check_timeout`, so it is no longer sent. A stored template then
+parses to exactly the object it did before, so no template hash, location trust or
+in-flight provision moves on deploy. `templates.test.ts` pins every provider's empty
+template hash. Rules across fields (a check timeout below its interval, IPv4 ranges only)
+apply to WRITES only (`validateTemplateWrite`; for a pick, `checkBuiltParams` on the pick
+laid over the template its location builds with, never against the compiled defaults, since a
+pick may lean on its template's interval or keepalive switch): on the read schema a stored
+template that broke one would stop parsing and `resolveTemplateFor` would silently fall back
+to another template. A location joining a node by re-protect is refused at once when what it
+inherits cannot be built there; options sent with the old single-location selector (no
+`picks`) are refused, never dropped.
+
+**Refusals and audit.** `edge.option_unknown` (not an option of the provider),
+`edge.option_invalid` (a value or a rule, in words), `edge.option_not_here` (a tuning option
+on the account, a certificate one in a template). The plan reports them per pick
+(`set.problems[].detail`). `edge.provider_account.options_changed` records which keys
+changed, with values for choices, numbers and switches only;
+`edge.provider_account.options_migrated` the deploy move; rotation starts carry `optionKeys`.
+A change of an account's certificate defaults untrusts its locations like a settings change.
+
+**Migration.** One deploy, optional fields only. `seedCutover` runs
+`edgeProviderAccounts.migrateOptionDefaults` (idempotent): a Fastly account's
+`certificateAuthority` and `certificateScope` are copied into `optionDefaults` without
+touching `credentialsChangedAt` or trust, and every pick from before options gets its
+account's certificate copied in. The copy under `settings` STAYS, and every settings write
+keeps it in step with `optionDefaults` (`settingsWithOptionCopy`), so a build from before
+options still validates and reads the account's certificate. An older client still sending
+them under `settings` is translated, and is never a settings change. A new Fastly account
+starts from a wildcard (`EDGE_NEW_ACCOUNT_OPTION_DEFAULTS`).
+
+**Rollback.** Before deploying a build from before options, run
+`edgeProviderAccounts:purgeOptionsForRollback` with no arguments (it schedules itself
+through accounts, relays, edges, rotations and runs, page by page): it removes
+`optionDefaults`, pick and run `options`, the edges' `choices`, `baseTemplateHash` and
+`learnedAddresses`, and rotations' `requestedOptions`, which the older schema refuses, while
+accounts keep the settings copy it reads.
+
+**Kept fixed on purpose.** Each with its reason:
+
+- names, tags and comments FCP finds its resources by (load balancer and backend names,
+  ownership tags and record comments): changing one orphans the resource;
+- values derived from the node (member address and port, the listener's port and scheme, a
+  Fastly backend's port and the origin's TLS name it presents and checks, the linkage ids
+  between resources);
+- the proxied flag of a DNS record: an unproxied front publishes the origin;
+- PROXY protocol, `X-Forwarded-*` insertion at an L4 balancer and access logs: they hand
+  members' addresses to nodes or the provider, and a node not expecting a PROXY header breaks
+  every connection (a Fastly front strips the member's address by default, see above; passing
+  those headers on is its one option here);
+- TLS termination, HTTP modes, certificates and HTTP/3 at an L4 balancer: they break the
+  end-to-end passthrough;
+- balancing methods, stickiness, weights and backup members: one origin per edge, so they
+  change nothing (the existing algorithm fields stay, with that said in their help);
+- Fastly shielding, caching, request settings, health checks, `between_bytes_timeout`,
+  keepalive reuse: the WebSocket path gains nothing from them or ignores them;
+- Cloudflare zone-wide settings (encryption mode, minimum TLS, HTTP/3, WebSockets, IPv6, edge
+  certificates): they change the operator's other sites, so FCP observes them only;
+- resources FCP does not create (Cloudflare Configuration Rules and per-hostname TLS, UpCloud
+  frontend rules, a Scaleway ACL, OVH's v2-only listener fields): a new resource, not a field;
+- polling, request timeouts and page sizes: internal safety, deliberately not settings.
+
+Fastly documents only name, address, TLS and Host as WebSocket backend settings, so the help
+of its other backend options says their effect is not proven until a beta walk shows it.
+
+### Every provider option
+
+Generated from the option registry and pinned by `providers/optionTable.test.ts`. "Chosen":
+where a value can be set (a template or a location's regional value, an account default),
+and per node always. "Live change": what the provider's API would take to change it on a
+live resource; FCP never applies one (a new edge is built instead).
+
+| provider   | group             | option                                | API field                                        | default        | chosen                         | live change at the provider |
+| ---------- | ----------------- | ------------------------------------- | ------------------------------------------------ | -------------- | ------------------------------ | --------------------------- |
+| gcore      | Load balancer     | Size                                  | `loadbalancer.flavor`                            | lb1-1-2        | template or location, per node | in place                    |
+| gcore      | Load balancer     | IP versions                           | `loadbalancer.vip_ip_family`                     | IPv4 and IPv6  | template, per node             | rebuild                     |
+| gcore      | Load balancer     | Address type                          | `loadbalancer.vip_network_id`                    | Public address | template, per node             | rebuild                     |
+| gcore      | Load balancer     | Extra tags                            | `loadbalancer.tags`                              | none           | template, per node             | in place                    |
+| gcore      | Listener          | Most connections at once              | `listener.connection_limit`                      | 0              | template, per node             | in place                    |
+| gcore      | Listener          | Client idle timeout                   | `listener.timeout_client_data`                   | 300000 ms      | template, per node             | in place                    |
+| gcore      | Listener          | Allowed client ranges                 | `listener.allowed_cidrs`                         | none           | template, per node             | in place                    |
+| gcore      | Listener          | Node connect timeout                  | `listener.timeout_member_connect`                | 5000 ms        | template, per node             | in place                    |
+| gcore      | Listener          | Node idle timeout                     | `listener.timeout_member_data`                   | 300000 ms      | template, per node             | in place                    |
+| gcore      | Pool              | Balancing method                      | `pool.lb_algorithm`                              | Round robin    | template, per node             | in place                    |
+| gcore      | Health check      | Check type                            | `health_monitor.type`                            | TCP            | template, per node             | rebuild                     |
+| gcore      | Health check      | Check interval                        | `health_monitor.delay`                           | 10 s           | template, per node             | in place                    |
+| gcore      | Health check      | Check timeout                         | `health_monitor.timeout`                         | 5 s            | template, per node             | in place                    |
+| gcore      | Health check      | Healthy after                         | `health_monitor.max_retries`                     | 3              | template, per node             | in place                    |
+| gcore      | Health check      | Unhealthy after                       | `health_monitor.max_retries_down`                | 3              | template, per node             | in place                    |
+| gcore      | Health check      | Check port                            | `member.monitor_port`                            | provider's own | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check method                     | `health_monitor.http_method`                     | GET            | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check path                       | `health_monitor.url_path`                        | /              | template, per node             | in place                    |
+| gcore      | Health check      | Healthy status codes                  | `health_monitor.expected_codes`                  | 200            | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check version                    | `health_monitor.http_version`                    | 1.0            | template, per node             | in place                    |
+| gcore      | Health check      | HTTP check host name                  | `health_monitor.domain_name`                     | provider's own | template, per node             | in place                    |
+| upcloud    | Load balancer     | Plan                                  | `loadbalancer.plan`                              | development    | template, per node             | in place                    |
+| upcloud    | Load balancer     | Maintenance day                       | `loadbalancer.maintenance_dow`                   | provider's own | template, per node             | in place                    |
+| upcloud    | Load balancer     | Maintenance time (UTC)                | `loadbalancer.maintenance_time`                  | provider's own | template, per node             | in place                    |
+| upcloud    | Load balancer     | Labels                                | `loadbalancer.labels`                            | none           | template, per node             | in place                    |
+| upcloud    | Frontend          | Client idle timeout                   | `frontend.properties.timeout_client`             | 300 s          | template, per node             | in place                    |
+| upcloud    | Backend           | Node idle timeout                     | `backend.properties.timeout_server`              | 300 s          | template, per node             | in place                    |
+| upcloud    | Backend           | Tunnel timeout                        | `backend.properties.timeout_tunnel`              | 3600 s         | template, per node             | in place                    |
+| upcloud    | Health check      | Check interval                        | `backend.properties.health_check_interval`       | 10 s           | template, per node             | in place                    |
+| upcloud    | Health check      | Unhealthy after                       | `backend.properties.health_check_fall`           | 3              | template, per node             | in place                    |
+| upcloud    | Health check      | Healthy after                         | `backend.properties.health_check_rise`           | 3              | template, per node             | in place                    |
+| upcloud    | Health check      | Close connections on failure          | `backend.properties.health_check_on_down`        | off            | template, per node             | in place                    |
+| upcloud    | Member            | Most connections at once              | `member.max_sessions`                            | 1000           | template, per node             | in place                    |
+| upcloud    | Address           | Delegate a floating IPv4              | `ip_address.floating`                            | on             | template, per node             | rebuild                     |
+| scaleway   | Load balancer     | Size                                  | `loadbalancer.type`                              | LB-S           | template or location, per node | in place                    |
+| scaleway   | Load balancer     | Description                           | `loadbalancer.description`                       | origin edge    | template, per node             | in place                    |
+| scaleway   | Load balancer     | Extra tags                            | `loadbalancer.tags`                              | none           | template, per node             | in place                    |
+| scaleway   | Address           | Also an IPv6 address                  | `ip.is_ipv6`                                     | on             | template, per node             | rebuild                     |
+| scaleway   | Address           | Reverse DNS name                      | `ip.reverse`                                     | provider's own | template, per node             | in place                    |
+| scaleway   | Frontend          | Client idle timeout                   | `frontend.timeout_client`                        | 600s           | template, per node             | in place                    |
+| scaleway   | Frontend          | New connections per second            | `frontend.connection_rate_limit`                 | 0              | template, per node             | in place                    |
+| scaleway   | Backend           | Node idle timeout                     | `backend.timeout_server`                         | 600s           | template, per node             | in place                    |
+| scaleway   | Backend           | Node connect timeout                  | `backend.timeout_connect`                        | 5s             | template, per node             | in place                    |
+| scaleway   | Backend           | Tunnel timeout                        | `backend.timeout_tunnel`                         | 3600s          | template, per node             | in place                    |
+| scaleway   | Backend           | Most connections at once              | `backend.max_connections`                        | provider's own | template, per node             | in place                    |
+| scaleway   | Backend           | Queue wait limit                      | `backend.timeout_queue`                          | provider's own | template, per node             | in place                    |
+| scaleway   | Backend           | Node connect retries                  | `backend.max_retries`                            | provider's own | template, per node             | in place                    |
+| scaleway   | Backend           | Balancing method                      | `backend.forward_port_algorithm`                 | Round robin    | template, per node             | in place                    |
+| scaleway   | Health check      | Close connections on failure          | `backend.on_marked_down_action`                  | off            | template, per node             | in place                    |
+| scaleway   | Health check      | Check interval                        | `backend.health_check.check_delay`               | 5s             | template, per node             | in place                    |
+| scaleway   | Health check      | Check timeout                         | `backend.health_check.check_timeout`             | 3s             | template, per node             | in place                    |
+| scaleway   | Health check      | Unhealthy after                       | `backend.health_check.check_max_retries`         | 3              | template, per node             | in place                    |
+| scaleway   | Health check      | Recheck interval while changing state | `backend.health_check.transient_check_delay`     | 0.5s           | template, per node             | in place                    |
+| ovh        | Load balancer     | Size                                  | `loadbalancer.flavorId`                          | provider's own | template or location, per node | in place                    |
+| ovh        | Gateway           | Gateway size                          | `gateway.model`                                  | S (200 Mbps)   | template, per node             | in place                    |
+| ovh        | Listener          | Client idle timeout                   | `listener.timeoutClientData`                     | 300000 ms      | template, per node             | rebuild                     |
+| ovh        | Listener          | Node idle timeout                     | `listener.timeoutMemberData`                     | provider's own | template, per node             | rebuild                     |
+| ovh        | Listener          | Allowed client ranges                 | `listener.allowedCidrs`                          | none           | template, per node             | in place                    |
+| ovh        | Pool              | Balancing method                      | `pool.algorithm`                                 | Round robin    | template, per node             | in place                    |
+| ovh        | Health check      | Check type                            | `health_monitor.monitorType`                     | TCP            | template, per node             | rebuild                     |
+| ovh        | Health check      | Check interval                        | `health_monitor.delay`                           | 5 s            | template, per node             | in place                    |
+| ovh        | Health check      | Check timeout                         | `health_monitor.timeout`                         | 3 s            | template, per node             | in place                    |
+| ovh        | Health check      | Healthy after                         | `health_monitor.maxRetries`                      | 3              | template, per node             | in place                    |
+| ovh        | Health check      | Unhealthy after                       | `health_monitor.maxRetriesDown`                  | 3              | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check method                     | `health_monitor.httpConfiguration.httpMethod`    | GET            | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check path                       | `health_monitor.httpConfiguration.urlPath`       | /              | template, per node             | in place                    |
+| ovh        | Health check      | Healthy status codes                  | `health_monitor.httpConfiguration.expectedCodes` | 200            | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check version                    | `health_monitor.httpConfiguration.httpVersion`   | 1.0            | template, per node             | in place                    |
+| ovh        | Health check      | HTTP check host name                  | `health_monitor.httpConfiguration.domainName`    | provider's own | template, per node             | in place                    |
+| cloudflare | Names             | Name length                           |                                                  | 12             | template, per node             | rebuild                     |
+| cloudflare | Names             | Name prefix                           |                                                  | provider's own | template, per node             | rebuild                     |
+| cloudflare | DNS record        | Record comment prefix                 | `dns_record.comment`                             | fcp            | template, per node             | in place                    |
+| cloudflare | DNS record        | Answer addresses                      | `dns_record.settings.ipv4_only`                  | IPv4 and IPv6  | template, per node             | in place                    |
+| cloudflare | DNS record        | Record tags                           | `dns_record.tags`                                | provider's own | template, per node             | in place                    |
+| cloudflare | Origin rule       | Allow a node port override            | `origin_rule.action_parameters.origin.port`      | on             | template, per node             | in place                    |
+| fastly     | Names             | Name length                           |                                                  | 12             | template, per node             | rebuild                     |
+| fastly     | Names             | Name prefix                           |                                                  | provider's own | template, per node             | rebuild                     |
+| fastly     | Service           | Service note                          | `service.comment`                                | origin edge    | template, per node             | new service version         |
+| fastly     | Backend           | Host sent to the node                 | `backend.override_host`                          | The front name | template, per node             | new service version         |
+| fastly     | Backend           | Prefer IPv6 to the node               | `backend.prefer_ipv6`                            | off            | template, per node             | new service version         |
+| fastly     | Backend           | Node connect timeout                  | `backend.connect_timeout`                        | 1000 ms        | template, per node             | new service version         |
+| fastly     | Backend           | Upgrade answer timeout                | `backend.first_byte_timeout`                     | 15000 ms       | template, per node             | new service version         |
+| fastly     | Backend           | Most connections per Fastly server    | `backend.max_conn`                               | 200            | template, per node             | new service version         |
+| fastly     | Backend TLS       | Lowest TLS version to the node        | `backend.min_tls_version`                        | provider's own | template, per node             | new service version         |
+| fastly     | Backend TLS       | Highest TLS version to the node       | `backend.max_tls_version`                        | provider's own | template, per node             | new service version         |
+| fastly     | Backend TLS       | Ciphers to the node                   | `backend.ssl_ciphers`                            | provider's own | template, per node             | new service version         |
+| fastly     | Backend keepalive | TCP keepalive to the node             | `backend.tcp_keepalive_enable`                   | provider's own | template, per node             | new service version         |
+| fastly     | Backend keepalive | Keepalive idle time                   | `backend.tcp_keepalive_time`                     | 300 s          | template, per node             | new service version         |
+| fastly     | Backend keepalive | Keepalive interval                    | `backend.tcp_keepalive_interval`                 | 10 s           | template, per node             | new service version         |
+| fastly     | Backend keepalive | Keepalive probes                      | `backend.tcp_keepalive_probes`                   | 3              | template, per node             | new service version         |
+| fastly     | Request           | Pass the member's address to the node | `snippet.content`                                | off            | template, per node             | new service version         |
+| fastly     | DNS records       | Record TTL                            | `dns_record.ttl`                                 | 1 s            | template, per node             | in place                    |
+| fastly     | DNS records       | Record tags                           | `dns_record.tags`                                | provider's own | template, per node             | in place                    |
+| fastly     | DNS records       | Flatten the front name                | `dns_record.settings.flatten_cname`              | off            | template, per node             | in place                    |
+| fastly     | Certificate       | Certificate authority                 | `tls_subscription.certificate_authority`         | Certainly      | account default, per node      | rebuild                     |
+| fastly     | Certificate       | Certificate                           | `tls_subscription.tls_domains`                   | One per front  | account default, per node      | rebuild                     |
+
 ## Adding an edge provider
 
 Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts`; every
@@ -2400,7 +3038,8 @@ Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts
    `convex/schema.ts`: the credentials, settings and `relayEdgePlacement` union variants. The
    credential test must work without a placement.
 3. `convex/lib/edges/providers/templates.ts`: the template schema, field descriptors and
-   defaults; `providers/capabilities.ts`: the capability row (layer, address kind, transports,
+   defaults (every settable field of every resource the adapter creates is an option,
+   § "Provider options"; options added later follow its hash rule); `providers/capabilities.ts`: the capability row (layer, role, address kind, transports,
    DNS roles, origin-port mode, `udp`, async and health flags, settle floor).
 4. `convex/lib/edges/providers/<id>.ts`: the `EdgeProvider` adapter, registered in
    `providers/registry.ts`, with `<id>.test.ts` on the recording transport.
@@ -2408,6 +3047,45 @@ Everything derives from the id tuple in `src/shared/contracts/edgeProviderIds.ts
    below is generated from it. `.github/workflows/edge-providers.yml`: add the id to the matrix.
 6. `scripts/node-floor.mjs` when the adapter imports an npm dependency, and `'use node';` as
    the adapter's first statement; `src/client/lib/edgeProviderMeta.ts` for the account form.
+
+## Adding a DNS provider
+
+A **DNS provider** holds the records FCP writes for L7 fronts and fronts no member traffic
+itself (capability `role: 'dns'`, mirrored in `src/client/lib/edgeProviderMeta.ts`; the admin
+console lists it under "DNS providers" and the Fastly form asks for one first). Cloudflare is
+the only one today. The seam is the `DnsClient` interface in
+`convex/lib/edges/providers/dns/types.ts`, which the Fastly adapter uses (through its
+`dnsClientFor` factory) instead of any vendor SDK, and which the origin names of front nodes
+(`nodeIntentOps.ts`) are written through:
+
+- `createRecord`, `findRecordsByName`, `getRecord`, `deleteRecord` over A, AAAA and CNAME
+  records in ONE zone. Every record carries the ownership `comment` marker (at most 100
+  characters) that discovery proves ownership with; `findRecordsByName` is one request;
+  `deleteRecord` is idempotent (a missing record is a success).
+- `listCaa`, the apex CAA records as the zone itself holds them (a front location's CAA
+  preflight reads CAA over public DNS instead, since records above the zone decide too).
+- `readZone`, the zone as the credentials read it: a front location's check, and the reach
+  check a credential rotation runs on every zone other accounts write through this one.
+- `zoneId`, `zoneName` and `accountId` (the FCP account the credentials came from), recorded in
+  every DNS ledger resource so cleanup acts on the zone the records were written into.
+
+A new DNS provider needs: the id with its credentials and settings schemas (§ "Adding an edge
+provider", steps 1 and 2; its placement names the zone, its catalog lists the zones its token
+reaches), a `DnsClient` beside `cloudflareDns.ts`
+(no transport retries, logging off, errors reduced to an HTTP status and a short code, never a
+response body), a credential test that accepts every token kind the provider issues,
+`role: 'dns'` and `providesDns: true` in its capability row, and `dnsClientFor` / the origin-name
+writer choosing the client by the DNS account's provider instead of assuming Cloudflare. A
+provider that can never front would also need the `EdgeProvider` front lifecycle made optional
+for it; that split has not been needed yet.
+
+**Cloudflare tokens.** FCP accepts both kinds Cloudflare issues. A user API token verifies at
+`/user/tokens/verify`; an account-owned token is unknown there (`1000 Invalid API Token`) and
+verifies at `/accounts/{account_id}/tokens/verify`, with the account id taken from the zone the
+token reads, else from the account settings (`verifyCloudflareToken` in `cloudflareDns.ts`). A
+token both endpoints reject is `token_rejected`; a retryable answer (429, 5xx, a timeout) is
+never taken for a rejection. The zone reads, DNS writes and option discovery accept either kind
+unchanged.
 
 ## Provider wire contracts
 
@@ -2421,118 +3099,174 @@ keys a call must carry. The Cloudflare rows cover both the Cloudflare edges and 
 Fastly edge writes into a referenced Cloudflare account. A new provider is not finished until its
 lifecycle runs in that test and its rows appear here.
 
-| provider   | method | path                                                                              | purpose                                                                                                           | source                                                                                                                                                                            |
-| ---------- | ------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| gcore      | GET    | `^/cloud/v1/loadbalancers/[^/]+/[^/]+$`                                           | list load balancers: credential test, region check, discovery by name, inventory                                  | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | POST   | `^/cloud/v1/loadbalancers/[^/]+/[^/]+$`                                           | create the load balancer with its TCP listener, pool and health monitor                                           | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | GET    | `^/cloud/v1/loadbalancers/[^/]+/[^/]+/[^/]+$`                                     | read one load balancer: describe, inspect, delete confirmation                                                    | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | DELETE | `^/cloud/v1/loadbalancers/[^/]+/[^/]+/[^/]+$`                                     | delete the load balancer (answers with a task)                                                                    | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | GET    | `^/cloud/v1/tasks/[^/]+$`                                                         | poll the create or delete task and read the resources it created                                                  | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | GET    | `^/cloud/v1/floatingips/[^/]+/[^/]+$`                                             | list floating IPs (inventory)                                                                                     | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | GET    | `^/cloud/v1/floatingips/[^/]+/[^/]+/[^/]+$`                                       | read a floating IP back after its delete                                                                          | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | DELETE | `^/cloud/v1/floatingips/[^/]+/[^/]+/[^/]+$`                                       | release the floating IP the load balancer held                                                                    | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | GET    | `^/cloud/v1/lbflavors/[^/]+/[^/]+$`                                               | list load balancer flavors (inventory, the location form)                                                         | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | GET    | `^/cloud/v1/projects$`                                                            | credential test without a location; the projects the key can see (location form)                                  | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | GET    | `^/cloud/v1/regions$`                                                             | location form: the regions the key can see                                                                        | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | GET    | `^/cloud/v1/networks/[^/]+/[^/]+$`                                                | location form: private networks for a private VIP                                                                 | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| gcore      | GET    | `^/cloud/v1/subnets/[^/]+/[^/]+$`                                                 | location form: the subnets of those networks                                                                      | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                       |
-| upcloud    | GET    | `^/1\.3/account$`                                                                 | credential test                                                                                                   | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | GET    | `^/1\.3/zone$`                                                                    | location form: the zones                                                                                          | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | POST   | `^/1\.3/load-balancer$`                                                           | create the service with its TCP frontend and backend inline                                                       | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | GET    | `^/1\.3/load-balancer$`                                                           | list services: discovery by name and inventory                                                                    | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | GET    | `^/1\.3/load-balancer/plans$`                                                     | list the service plans (inventory)                                                                                | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | GET    | `^/1\.3/load-balancer/(?!plans$)[^/]+$`                                           | read one service: describe, inspect, attachment check                                                             | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | DELETE | `^/1\.3/load-balancer/(?!plans$)[^/]+$`                                           | delete the service (idempotent; re-issued until it answers 404)                                                   | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | POST   | `^/1\.3/load-balancer/[^/]+/ip-addresses$`                                        | delegate the floating IP to the service                                                                           | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | POST   | `^/1\.3/ip_address$`                                                              | allocate the floating IPv4 that is published                                                                      | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | GET    | `^/1\.3/ip_address$`                                                              | list IP addresses: unknown-outcome discovery and inventory                                                        | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| upcloud    | DELETE | `^/1\.3/ip_address/[^/]+$`                                                        | release the floating IP                                                                                           | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs$`                                                        | list load balancers: credential test, discovery by name, inventory                                                | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | POST   | `^/lb/v1/zones/[^/]+/lbs$`                                                        | create the load balancer over the already allocated IPs                                                           | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs/[^/]+$`                                                  | read one load balancer: describe, inspect, delete confirmation                                                    | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | DELETE | `^/lb/v1/zones/[^/]+/lbs/[^/]+$ ?release_ip`                                      | delete the load balancer without releasing its IPs                                                                | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | POST   | `^/lb/v1/zones/[^/]+/ips$`                                                        | allocate a flexible IP (v4, and v6 when the template asks)                                                        | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/ips$`                                                        | list flexible IPs: discovery by tag and inventory                                                                 | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/ips/[^/]+$`                                                  | read a flexible IP back after its release                                                                         | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | DELETE | `^/lb/v1/zones/[^/]+/ips/[^/]+$`                                                  | release a flexible IP                                                                                             | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | POST   | `^/lb/v1/zones/[^/]+/lbs/[^/]+/backends$`                                         | create the TCP backend pointing at the origin                                                                     | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs/[^/]+/backends$`                                         | list backends: discovery by name and inspect                                                                      | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/backends/[^/]+$`                                             | read a backend back after its delete                                                                              | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | DELETE | `^/lb/v1/zones/[^/]+/backends/[^/]+$`                                             | delete the backend                                                                                                | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | POST   | `^/lb/v1/zones/[^/]+/lbs/[^/]+/frontends$`                                        | create the frontend on the edge port                                                                              | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs/[^/]+/frontends$`                                        | list frontends: discovery by name and inspect                                                                     | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/frontends/[^/]+$`                                            | read a frontend back after its delete                                                                             | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | DELETE | `^/lb/v1/zones/[^/]+/frontends/[^/]+$`                                            | delete the frontend                                                                                               | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs/[^/]+/stats$`                                            | backend health for describe and inspect                                                                           | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lb-types$`                                                   | list load balancer types (inventory)                                                                              | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                           |
-| ovh        | GET    | `^/1\.0/auth/time$`                                                               | server clock for the request signature (cached, unsigned)                                                         | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project$`                                                           | credential test without a location; the project ids (location form)                                               | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+$`                                                     | credential test in a location and the project label in the location form                                          | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region$`                                              | location form: the regions of the project                                                                         | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/network/private$`                                     | location form: the private networks                                                                               | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/network/private/[^/]+/subnet$`                        | location form: the subnets of a private network                                                                   | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/operation$`                                           | in-flight balancer operations: absence is never confirmed during one                                              | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/operation/[^/]+$`                                     | poll the compound create operation                                                                                | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | POST   | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer$`             | create the balancer with its network, floating IP and listener inline                                             | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer$`             | list balancers: discovery by name and inventory                                                                   | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer/[^/]+$`       | read one balancer: describe, inspect, delete confirmation                                                         | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | DELETE | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer/[^/]+$`       | delete the balancer                                                                                               | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer/[^/]+/stats$` | balancer statistics (inspect)                                                                                     | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/flavor$`                   | list balancer flavors (inventory, the location form)                                                              | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/floatingip$`                             | find the floating IP the compound create minted, by its description marker                                        | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/floatingip/[^/]+$`                       | read a floating IP back after its delete                                                                          | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | DELETE | `^/1\.0/cloud/project/[^/]+/region/[^/]+/floatingip/[^/]+$`                       | release the floating IP                                                                                           | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/gateway$`                                | find the gateway the compound create minted, by its FCP name                                                      | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/gateway/[^/]+$`                          | read a gateway back after its delete                                                                              | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| ovh        | DELETE | `^/1\.0/cloud/project/[^/]+/region/[^/]+/gateway/[^/]+$`                          | delete the gateway the compound create minted                                                                     | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                           |
-| cloudflare | GET    | `^/client/v4/user/tokens/verify$`                                                 | credential test: the token is active                                                                              | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | GET    | `^/client/v4/zones$ ?per_page`                                                    | account form: the zones the token can see                                                                         | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | GET    | `^/client/v4/zones/[^/]+$`                                                        | credential test: the zone is active and not paused                                                                | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | GET    | `^/client/v4/zones/[^/]+/settings/(ssl\|websockets)$`                             | zone encryption mode and WebSockets setting (recorded, not required)                                              | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | POST   | `^/client/v4/zones/[^/]+/dns_records$`                                            | create the proxied record that IS the edge; also the ACME and traffic records a Fastly edge writes into this zone | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | GET    | `^/client/v4/zones/[^/]+/dns_records$ ?name.exact&per_page`                       | look one name up (unknown-outcome discovery, CAA preflight), including for a Fastly edge                          | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | GET    | `^/client/v4/zones/[^/]+/dns_records$ ?page&per_page&proxied`                     | paged sweep of proxied records for the import inventory                                                           | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | GET    | `^/client/v4/zones/[^/]+/dns_records/[^/]+$`                                      | read the record back: describe, inspect, import inspection, delete confirmation                                   | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | DELETE | `^/client/v4/zones/[^/]+/dns_records/[^/]+$`                                      | delete the record (a Fastly edge deletes its records here too)                                                    | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | GET    | `^/client/v4/zones/[^/]+/rulesets/phases/http_request_origin/entrypoint$`         | read the origin-rules entry point (404 = none yet), and the rule an imported hostname already carries             | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | PUT    | `^/client/v4/zones/[^/]+/rulesets/phases/http_request_origin/entrypoint$`         | bootstrap the entry point with our one origin rule, under the zone lock                                           | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | POST   | `^/client/v4/zones/[^/]+/rulesets/[^/]+/rules$`                                   | add the destination-port origin rule, recovered by its ref                                                        | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | DELETE | `^/client/v4/zones/[^/]+/rulesets/[^/]+/rules/[^/]+$`                             | delete the origin rule                                                                                            | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| cloudflare | GET    | `^/client/v4/zones/[^/]+/ssl/certificate_packs$`                                  | certificate readiness for the minted hostname                                                                     | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                           |
-| fastly     | POST   | `^/service$`                                                                      | create the VCL service (form encoded)                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service$ ?page&per_page`                                                       | paged service sweep for the import inventory                                                                      | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/search$ ?name`                                                         | discover the service by its deterministic name (404 = absent)                                                     | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/details$`                                                        | active version: activation discovery, describe, import inspection, drift check                                    | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/domain$`                                                         | every domain a service serves (the import ownership boundary)                                                     | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | DELETE | `^/service/[^/]+$`                                                                | delete an exclusively owned service                                                                               | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/version$`                                                        | the version list: pick the draft, recognise a lost clone by its marker                                            | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | PUT    | `^/service/[^/]+/version/[^/]+$`                                                  | stamp the clone marker comment on the work version                                                                | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | PUT    | `^/service/[^/]+/version/[^/]+/clone$`                                            | clone the active version for a shared teardown                                                                    | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/version/[^/]+/validate$`                                         | validate a version before activating it                                                                           | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | PUT    | `^/service/[^/]+/version/[^/]+/activate$`                                         | activate the version                                                                                              | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | PUT    | `^/service/[^/]+/version/[^/]+/deactivate$`                                       | deactivate the active version before deleting the service                                                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | POST   | `^/service/[^/]+/version/[^/]+/backend$`                                          | create the single origin backend (only fields the WebSocket path honours)                                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/version/[^/]+/backend$`                                          | list backends: inspect and the import ownership check                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/version/[^/]+/backend/[^/]+$`                                    | discover the backend by name; read it back after a destroy                                                        | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | POST   | `^/service/[^/]+/version/[^/]+/snippet$`                                          | install the VCL snippet that hands an Upgrade request to the WebSocket path                                       | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/version/[^/]+/snippet/[^/]+$`                                    | discover the snippet by name; read it back after a destroy                                                        | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | POST   | `^/service/[^/]+/version/[^/]+/domain$`                                           | add the fronted hostname to the draft version                                                                     | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/version/[^/]+/domain$`                                           | list the version domains: inspect, the import ownership boundary, shared-teardown confirmation                    | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/version/[^/]+/domain/[^/]+$`                                     | discover the domain by name; read it back after a destroy                                                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/service/[^/]+/version/[^/]+/domain/[^/]+/check$`                               | DNS readiness of the fronted hostname                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | DELETE | `^/service/[^/]+/version/[^/]+/domain/[^/]+$`                                     | remove only our hostname from a shared service                                                                    | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | PUT    | `^/enabled-products/v1/websockets/services/[^/]+$`                                | enable the WebSockets product on the service (idempotent)                                                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/enabled-products/v1/websockets/services/[^/]+$`                                | discover the product state, on import too; read it back after a destroy                                           | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | DELETE | `^/enabled-products/v1/websockets/services/[^/]+$`                                | disable the product last, after the service is gone                                                               | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | POST   | `^/tls/subscriptions$`                                                            | order the certificate for the fronted hostname (JSON:API)                                                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/tls/subscriptions$ ?filter[tls_domains.id]`                                    | discover the subscription by domain, and the certificate an imported hostname already has; confirm its removal    | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/tls/subscriptions/[^/]+$`                                                      | issuance state and (with the include) the managed-DNS challenge                                                   | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | DELETE | `^/tls/subscriptions/[^/]+$ ?force`                                               | delete the subscription (force, since its domain is enabled)                                                      | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/tls/configurations$`                                                           | account form choices, and the CNAME target every fronted hostname points at                                       | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/tokens/self$`                                                                  | credential test: the token scope                                                                                  | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
-| fastly     | GET    | `^/current_customer$`                                                             | credential test: the pricing plan (informational)                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| provider   | method | path                                                                              | purpose                                                                                                                                               | source                                                                                                                                                                                                                                                               |
+| ---------- | ------ | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| gcore      | GET    | `^/cloud/v1/loadbalancers/[^/]+/[^/]+$`                                           | list load balancers: credential test, region check, discovery by name, inventory                                                                      | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | POST   | `^/cloud/v1/loadbalancers/[^/]+/[^/]+$`                                           | create the load balancer with its TCP listener, pool and health monitor                                                                               | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | GET    | `^/cloud/v1/loadbalancers/[^/]+/[^/]+/[^/]+$`                                     | read one load balancer: describe, inspect, delete confirmation                                                                                        | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | DELETE | `^/cloud/v1/loadbalancers/[^/]+/[^/]+/[^/]+$`                                     | delete the load balancer (answers with a task)                                                                                                        | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | GET    | `^/cloud/v1/tasks/[^/]+$`                                                         | poll the create or delete task and read the resources it created                                                                                      | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | GET    | `^/cloud/v1/floatingips/[^/]+/[^/]+$`                                             | list floating IPs (inventory)                                                                                                                         | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | GET    | `^/cloud/v1/floatingips/[^/]+/[^/]+/[^/]+$`                                       | read a floating IP back after its delete                                                                                                              | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | DELETE | `^/cloud/v1/floatingips/[^/]+/[^/]+/[^/]+$`                                       | release the floating IP the load balancer held                                                                                                        | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | GET    | `^/cloud/v1/lbflavors/[^/]+/[^/]+$`                                               | list load balancer flavors (inventory, the location form)                                                                                             | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | GET    | `^/cloud/v1/projects$`                                                            | credential test without a location; the projects the key can see (location form)                                                                      | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | GET    | `^/cloud/v1/regions$`                                                             | location form: the regions the key can see                                                                                                            | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | GET    | `^/cloud/v1/networks/[^/]+/[^/]+$`                                                | location form: private networks for a private VIP                                                                                                     | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| gcore      | GET    | `^/cloud/v1/subnets/[^/]+/[^/]+$`                                                 | location form: the subnets of those networks                                                                                                          | https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16                                                                                                                                                                                                          |
+| upcloud    | GET    | `^/1\.3/account$`                                                                 | credential test                                                                                                                                       | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | GET    | `^/1\.3/zone$`                                                                    | location form: the zones                                                                                                                              | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | POST   | `^/1\.3/load-balancer$`                                                           | create the service with its TCP frontend and backend inline                                                                                           | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | GET    | `^/1\.3/load-balancer$`                                                           | list services: discovery by name and inventory                                                                                                        | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | GET    | `^/1\.3/load-balancer/plans$`                                                     | list the service plans (inventory)                                                                                                                    | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | GET    | `^/1\.3/load-balancer/(?!plans$)[^/]+$`                                           | read one service: describe, inspect, attachment check                                                                                                 | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | DELETE | `^/1\.3/load-balancer/(?!plans$)[^/]+$`                                           | delete the service (idempotent; re-issued until it answers 404)                                                                                       | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | POST   | `^/1\.3/load-balancer/[^/]+/ip-addresses$`                                        | delegate the floating IP to the service                                                                                                               | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | POST   | `^/1\.3/ip_address$`                                                              | allocate the floating IPv4 that is published                                                                                                          | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | GET    | `^/1\.3/ip_address$`                                                              | list IP addresses: unknown-outcome discovery and inventory                                                                                            | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| upcloud    | DELETE | `^/1\.3/ip_address/[^/]+$`                                                        | release the floating IP                                                                                                                               | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs$`                                                        | list load balancers: credential test, discovery by name, inventory                                                                                    | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | POST   | `^/lb/v1/zones/[^/]+/lbs$`                                                        | create the load balancer over the already allocated IPs                                                                                               | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs/[^/]+$`                                                  | read one load balancer: describe, inspect, delete confirmation                                                                                        | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | DELETE | `^/lb/v1/zones/[^/]+/lbs/[^/]+$ ?release_ip`                                      | delete the load balancer without releasing its IPs                                                                                                    | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | POST   | `^/lb/v1/zones/[^/]+/ips$`                                                        | allocate a flexible IP (v4, and v6 when the template asks)                                                                                            | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/ips$`                                                        | list flexible IPs: discovery by tag and inventory                                                                                                     | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/ips/[^/]+$`                                                  | read a flexible IP back after its release                                                                                                             | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | DELETE | `^/lb/v1/zones/[^/]+/ips/[^/]+$`                                                  | release a flexible IP                                                                                                                                 | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | POST   | `^/lb/v1/zones/[^/]+/lbs/[^/]+/backends$`                                         | create the TCP backend pointing at the origin                                                                                                         | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs/[^/]+/backends$`                                         | list backends: discovery by name and inspect                                                                                                          | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/backends/[^/]+$`                                             | read a backend back after its delete                                                                                                                  | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | DELETE | `^/lb/v1/zones/[^/]+/backends/[^/]+$`                                             | delete the backend                                                                                                                                    | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | POST   | `^/lb/v1/zones/[^/]+/lbs/[^/]+/frontends$`                                        | create the frontend on the edge port                                                                                                                  | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs/[^/]+/frontends$`                                        | list frontends: discovery by name and inspect                                                                                                         | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/frontends/[^/]+$`                                            | read a frontend back after its delete                                                                                                                 | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | DELETE | `^/lb/v1/zones/[^/]+/frontends/[^/]+$`                                            | delete the frontend                                                                                                                                   | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lbs/[^/]+/stats$`                                            | backend health for describe and inspect                                                                                                               | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| scaleway   | GET    | `^/lb/v1/zones/[^/]+/lb-types$`                                                   | list load balancer types (inventory)                                                                                                                  | https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/auth/time$`                                                               | server clock for the request signature (cached, unsigned)                                                                                             | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project$`                                                           | credential test without a location; the project ids (location form)                                                                                   | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+$`                                                     | credential test in a location and the project label in the location form                                                                              | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region$`                                              | location form: the regions of the project                                                                                                             | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/network/private$`                                     | location form: the private networks                                                                                                                   | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/network/private/[^/]+/subnet$`                        | location form: the subnets of a private network                                                                                                       | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/operation$`                                           | in-flight balancer operations: absence is never confirmed during one                                                                                  | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/operation/[^/]+$`                                     | poll the compound create operation                                                                                                                    | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | POST   | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer$`             | create the balancer with its network, floating IP and listener inline                                                                                 | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer$`             | list balancers: discovery by name and inventory                                                                                                       | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer/[^/]+$`       | read one balancer: describe, inspect, delete confirmation                                                                                             | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | DELETE | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer/[^/]+$`       | delete the balancer                                                                                                                                   | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/loadbalancer/[^/]+/stats$` | balancer statistics (inspect)                                                                                                                         | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/flavor$`                   | list balancer flavors (inventory, the location form)                                                                                                  | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/floatingip$`                             | find the floating IP the compound create minted, by its description marker                                                                            | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/floatingip/[^/]+$`                       | read a floating IP back after its delete                                                                                                              | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | DELETE | `^/1\.0/cloud/project/[^/]+/region/[^/]+/floatingip/[^/]+$`                       | release the floating IP                                                                                                                               | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/gateway$`                                | find the gateway the compound create minted, by its FCP name                                                                                          | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | GET    | `^/1\.0/cloud/project/[^/]+/region/[^/]+/gateway/[^/]+$`                          | read a gateway back after its delete                                                                                                                  | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| ovh        | DELETE | `^/1\.0/cloud/project/[^/]+/region/[^/]+/gateway/[^/]+$`                          | delete the gateway the compound create minted                                                                                                         | https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/user/tokens/verify$`                                                 | credential test: the token is active                                                                                                                  | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/accounts/[^/]+/tokens/verify$`                                       | credential test: an account-owned token is active                                                                                                     | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones$ ?page&per_page`                                               | credential test (one page) and the account catalog (paged, up to 1,000): the zones the token reaches                                                  | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones/[^/]+$`                                                        | location check: the zone is readable, active and not paused (also a DNS account's zone read)                                                          | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones/[^/]+/settings/(ssl\|websockets)$`                             | location check: zone encryption mode and WebSockets setting (recorded, not required)                                                                  | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | POST   | `^/client/v4/zones/[^/]+/dns_records$`                                            | create the proxied record that IS the edge; also the ACME and traffic records a Fastly edge writes into this zone                                     | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones/[^/]+/dns_records$ ?name.exact&per_page`                       | look one name up (unknown-outcome discovery, CAA preflight), including for a Fastly edge                                                              | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones/[^/]+/dns_records$ ?page&per_page&proxied`                     | paged sweep of proxied records for the import inventory                                                                                               | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones/[^/]+/dns_records/[^/]+$`                                      | read the record back: describe, inspect, import inspection, delete confirmation                                                                       | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | DELETE | `^/client/v4/zones/[^/]+/dns_records/[^/]+$`                                      | delete the record (a Fastly edge deletes its records here too)                                                                                        | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones/[^/]+/rulesets/phases/http_request_origin/entrypoint$`         | read the origin-rules entry point (404 = none yet), and the rule an imported hostname already carries                                                 | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | PUT    | `^/client/v4/zones/[^/]+/rulesets/phases/http_request_origin/entrypoint$`         | bootstrap the entry point with our one origin rule, under the zone lock                                                                               | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | POST   | `^/client/v4/zones/[^/]+/rulesets/[^/]+/rules$`                                   | add the destination-port origin rule, recovered by its ref                                                                                            | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | DELETE | `^/client/v4/zones/[^/]+/rulesets/[^/]+/rules/[^/]+$`                             | delete the origin rule                                                                                                                                | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| cloudflare | GET    | `^/client/v4/zones/[^/]+/ssl/certificate_packs$`                                  | certificate readiness for the minted hostname                                                                                                         | https://developers.cloudflare.com/api/ via cloudflare@7.1.0, 2026-09-16                                                                                                                                                                                              |
+| fastly     | POST   | `^/service$`                                                                      | create the VCL service (form encoded)                                                                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service$ ?page&per_page`                                                       | paged service sweep for the import inventory                                                                                                          | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/search$ ?name`                                                         | discover the service by its deterministic name (404 = absent)                                                                                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/details$`                                                        | active version: activation discovery, describe, import inspection, drift check                                                                        | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/domain$`                                                         | every domain a service serves (the import ownership boundary)                                                                                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | DELETE | `^/service/[^/]+$`                                                                | delete an exclusively owned service                                                                                                                   | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/version$`                                                        | the version list: pick the draft, recognise a lost clone by its marker                                                                                | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | PUT    | `^/service/[^/]+/version/[^/]+$`                                                  | stamp the clone marker comment on the work version                                                                                                    | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | PUT    | `^/service/[^/]+/version/[^/]+/clone$`                                            | clone the active version for a shared teardown                                                                                                        | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/version/[^/]+/validate$`                                         | validate a version before activating it                                                                                                               | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | PUT    | `^/service/[^/]+/version/[^/]+/activate$`                                         | activate the version                                                                                                                                  | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | PUT    | `^/service/[^/]+/version/[^/]+/deactivate$`                                       | deactivate the active version before deleting the service                                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | POST   | `^/service/[^/]+/version/[^/]+/backend$`                                          | create the single origin backend, its port always sent (the API defaults it to 80) with the TLS name for SNI and verification                         | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/version/[^/]+/backend$`                                          | list backends: inspect and the import ownership check                                                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/version/[^/]+/backend/[^/]+$`                                    | discover the backend by name; read it back after a destroy                                                                                            | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | POST   | `^/service/[^/]+/version/[^/]+/snippet$`                                          | install the VCL snippet that hands an Upgrade request to the WebSocket path                                                                           | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/version/[^/]+/snippet/[^/]+$`                                    | discover the snippet by name; read it back after a destroy                                                                                            | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | POST   | `^/service/[^/]+/version/[^/]+/domain$`                                           | add the fronted hostname to the draft version (an edge planned before versionless domains)                                                            | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/version/[^/]+/domain$`                                           | list the version domains: inspect, the import ownership boundary, shared-teardown confirmation                                                        | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/version/[^/]+/domain/[^/]+$`                                     | discover the domain by name; read it back after a destroy                                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/service/[^/]+/version/[^/]+/domain/[^/]+/check$`                               | DNS readiness of the fronted hostname                                                                                                                 | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | DELETE | `^/service/[^/]+/version/[^/]+/domain/[^/]+$`                                     | remove only our hostname from a shared service                                                                                                        | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | POST   | `^/domain-management/v1/domains$`                                                 | create the fronted hostname as a versionless domain linked to the service                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/domain-management/v1/domains$ ?fqdn&fqdn_match`                                | discover the versionless domain by its exact name                                                                                                     | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/domain-management/v1/domains$ ?service_id`                                     | the versionless domains linked to a service: inspect, inventory, import                                                                               | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/domain-management/v1/domains/[^/]+$`                                           | DNS readiness (still linked to the service); read it back after a destroy                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | DELETE | `^/domain-management/v1/domains/[^/]+$`                                           | delete the versionless domain, after its certificate                                                                                                  | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | PUT    | `^/enabled-products/v1/websockets/services/[^/]+$`                                | enable the WebSockets product on the service (idempotent)                                                                                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/enabled-products/v1/websockets/services/[^/]+$`                                | discover the product state, on import too; read it back after a destroy                                                                               | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | DELETE | `^/enabled-products/v1/websockets/services/[^/]+$`                                | disable the product last, after the service is gone                                                                                                   | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | POST   | `^/tls/subscriptions$`                                                            | order the certificate for the fronted hostname, or once the account's shared wildcard (JSON:API)                                                      | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/tls/subscriptions$ ?filter[tls_domains.id]`                                    | discover the subscription by domain (the hostname, or the zone's wildcard), and the certificate an imported hostname already has; confirm its removal | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/tls/subscriptions/[^/]+$`                                                      | issuance state, what holds it up (the authorizations), the managed-DNS challenge, and when the shared certificate expires                             | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | DELETE | `^/tls/subscriptions/[^/]+$ ?force`                                               | delete the subscription (force, since its domain is enabled)                                                                                          | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/tls/configurations$`                                                           | account form choices, and the CNAME target every fronted hostname points at                                                                           | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/tokens/self$`                                                                  | credential test: the token scope                                                                                                                      | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
+| fastly     | GET    | `^/current_customer$`                                                             | credential test: the pricing plan (informational)                                                                                                     | https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Provider accounts** (CDN zones as locations) widen the schema only: an L7 account's zone
+keys (Cloudflare `zoneId` / `zoneName`, a Fastly account's `dnsAccountId` and
+`tlsConfigurationId`) become optional in its settings and appear on its location's
+placement, locations gain `observed`, `observedAt`, `checkError`, `checkErrorDetail` and
+`sharedCertificate`, and the `edgeProviderCatalog` table is new. `seedCutover` runs
+`edgeL7Locations:migrate`: ONE transaction, idempotent, location ids unchanged. It moves each
+L7 account's zone onto its `anycast` location (with the zone facts its last test read), moves
+a Fastly account's `*.<zone>` shared certificate onto that location, and strips the legacy
+keys; live edges are untouched (their intent froze their zone). Until it has run, a read
+fallback serves the legacy keys (`lib/edges/l7Place.ts`), so no maintenance freeze is needed.
+Check `edgeL7Locations:status` afterwards: `legacyAccounts` and `locationsWithoutZone` are 0
+(`openRuns` is for information). Then test each CDN account again, so every zone records its
+own check (the CAA verdict included). To roll back, run
+`edgeL7Locations:unmigrate {"confirm":"restore-single-zone-settings"}` first: it puts each
+single-zone account's keys, zone facts and shared certificate back on the account and drops
+what an older schema refuses (the location check fields, the catalog); an account with a
+second zone is reported, and must be cut back to one zone before the older build is deployed.
+A rollback past provider options then runs `edgeProviderAccounts:purgeOptionsForRollback`. A
+later release drops the legacy keys and the fallback.
+
+**Fastly front VCL back to what compiles.** The previous deploy added `Fastly-WAF-Client-IP`
+(with `Fastly-Temp-XFF`, `X-Client-IP`, `Client-IP` and `X-Cluster-Client-IP`) to the headers a
+Fastly front removes. Fastly protects `Fastly-WAF-Client-IP`, so every front planned under it
+failed to activate (`version_invalid`, after every retry, as `step_retries_exhausted`). This
+deploy puts the list back to the five headers fronts activated with before, and a refused step
+now fails the run on its own code at once: no schema change, no migration, one deploy. Fronts
+built before that deploy carry exactly this list and need no replacing. Delete each front left
+by a failed run under it (the run's attention names it), then build again. The member's address
+still reaches the node in `Fastly-WAF-Client-IP` (§ "Provider options"): drop it in the node
+role's Caddyfile, and ask Fastly support for a service-level way to stop it.
+
+**Provider options** add optional fields only (`edgeProviderAccounts.optionDefaults`, pick and
+run `options`, the edges' `choices`, `baseTemplateHash` and `learnedAddresses`, rotations'
+`requestedOptions`): one deploy, no freeze. `seedCutover` copies each Fastly account's
+certificate into `optionDefaults` and into its nodes' picks, keeping the copy under `settings`
+(§ "Provider options", Migration); no template hash moves. Fronts planned after the deploy
+keep the member's address from their node (`forwardClientAddress` off); a front activated
+before keeps forwarding it until it is replaced: replace such fronts once, and check one as
+§ "Provider options" describes. An activation run open across the deploy whose review
+has a Fastly line reads as changed once (its line now names the certificate): read the
+review again. To roll back, run `edgeProviderAccounts:purgeOptionsForRollback` first.
+
+**Fastly certificates and domains** add optional fields only (`edges.waiting`,
+`edgeProviderAccounts.sharedCertificate`, the Fastly settings `certificateScope` and
+`domainModel`): one deploy, no migration, no freeze. Existing Fastly accounts keep one certificate per front and existing edges
+keep their classic domains; edges planned after the deploy get versionless domains. After it,
+test each Fastly account again (the CAA preflight runs only in the test) and switch an account
+to the wildcard on its page when wanted (that untrusts its location until a test and a proven
+front). The backend's resolver must reach public DNS for the CAA lookups.
 
 **Locations cleanup** narrows what the locations release left optional: account settings hold
 no placement keys any more, the moved account fields (`qualified`, `qualifiedTemplateHash`,

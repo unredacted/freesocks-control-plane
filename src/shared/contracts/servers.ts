@@ -442,8 +442,15 @@ export const DEFAULT_MODE_SETUP: readonly ModeSetupInput[] = [
 export const BackendSetupInput = z.object({
   profileName: z.string().min(1).max(60).default('FreeSocks-Config'),
   modes: z.array(ModeSetupInput).min(1).max(12),
-  /** The Cloudflare account whose zone WebSocket nodes get their origin names in; null = explicit hostnames per node. */
-  originDns: z.object({ accountId: z.string() }).nullable().default(null),
+  /**
+   * The DNS account and the one of its zones WebSocket nodes get their origin
+   * names in; null = explicit hostnames per node. A request without `zoneId`
+   * keeps the zone the setup has with that account, else the account's only one.
+   */
+  originDns: z
+    .object({ accountId: z.string(), zoneId: z.string().min(1).max(64).optional() })
+    .nullable()
+    .default(null),
   /** A backend that already has nodes or addresses is taken over only when the operator says so (typed). */
   adopt: z.boolean().default(false),
 });
@@ -456,6 +463,9 @@ export const ModeSetupView = z.object({
   name: z.string(),
   shape: ModeShape,
   familySlug: z.string().nullable(),
+  /** As the mode was asked for (a change of the setup sends them back unchanged). */
+  acceptProxyProtocol: z.boolean(),
+  ws: z.object({ path: z.string(), port: z.number() }).nullable(),
   tag: z.string(),
   group: z.object({ uuid: z.string().nullable(), renamedFrom: z.string().nullable() }),
   placement: z.enum(['pending', 'bound', 'skipped']),
@@ -484,9 +494,16 @@ export const BackendSetupView = z.object({
     z.object({ family: z.string(), state: z.enum(['matched', 'drifted', 'refused']) }),
   ),
   privacy: z.enum(['ok', 'drifted']).nullable(),
-  originDns: z.object({ accountId: z.string(), zoneName: z.string() }).nullable(),
+  originDns: z
+    .object({ accountId: z.string(), zoneId: z.string(), zoneName: z.string() })
+    .nullable(),
   /** Whether this backend was taken over with existing nodes or addresses. */
   adopted: z.boolean(),
+  /**
+   * Whether FCP writes this backend (set up, or adopted): a new request is a
+   * CHANGE of its setup, which keeps the profile and every mode as they are.
+   */
+  established: z.boolean(),
   updatedAt: z.string().nullable(),
 });
 export type BackendSetupView = z.infer<typeof BackendSetupView>;

@@ -30,6 +30,7 @@ import { isTerminalPhase } from './lib/edges/rotation';
 import { accountsForSlot } from './lib/edges/rotation';
 import {
   edgeLayerOf,
+  frontsAllowed,
   zoneModeGovernsOrigin,
   EDGE_PROVIDER_CAPABILITIES,
 } from './lib/edges/providers/capabilities';
@@ -41,7 +42,7 @@ import {
   protocolIsHttpTransport,
 } from './lib/edges/protocols';
 import { isValidListenerCombo } from '../src/shared/contracts/edgeProtocolIds';
-import { parseIntent, parseObservedSettings } from './lib/edges/intent';
+import { parseIntent } from './lib/edges/intent';
 import { sameAddress } from './lib/edges/hosts';
 import {
   needsEndpointVerification,
@@ -76,12 +77,15 @@ import {
   selectionContext,
 } from './edgeRotations';
 import { accountTested, API_FAILING_AFTER } from './edgeProviderAccounts';
+import { accountOptionDefaultsOf } from './lib/edges/choices';
 import {
   defaultLocationOf,
   effectiveTemplateOfLocation,
   liveCountForLocation,
   locationsOfAccount,
+  sharedCertificateUsers as zoneSharedCertificateUsers,
 } from './edgeLocations';
+import { l7PlaceOf } from './lib/edges/l7Place';
 import { readRefusals, REFUSAL_WINDOW_MS, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
 import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { modeRefOf } from './nodeIntents';
@@ -195,6 +199,7 @@ async function accountFacts(
   ctx: { db: Db },
   accounts: Account[],
   listeners: ListenerLike[],
+  dnsProvidersFront: boolean,
 ): Promise<SetupInput['accounts']> {
   const out: SetupInput['accounts'] = [];
   const udp = udpProviderAvailable();
@@ -209,21 +214,48 @@ async function accountFacts(
       };
       const layers = listenerLayers(like, { udpProviderAvailable: udp }).layers;
       const originPort = l.row?.originPort ?? l.draft?.originPort;
-      if (accountsForSlot([a], { layers, proto: l.proto, originPort, allowL7: true }).length > 0)
+      if (
+        accountsForSlot([a], {
+          layers,
+          proto: l.proto,
+          originPort,
+          allowL7: true,
+          dnsProvidersFront,
+        }).length > 0
+      )
         fronts.push(l.key);
     }
-    const settings = a.settings as { dnsAccountId?: string };
-    let dnsAccountMissing = false;
-    if (settings.dnsAccountId) {
-      const dns = await ctx.db.get(settings.dnsAccountId as Id<'edgeProviderAccounts'>);
-      dnsAccountMissing = !dns || !dns.enabled;
-    }
-    const observed = parseObservedSettings(a.observedSettings);
     const layer = edgeLayerOf(a.provider);
+    const locations = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
+    // A CDN account's zone facts are its places': it is as ready as its best
+    // one, so each fact holds only when every switched-on location has it
+    // (one healthy zone is enough to front). With none switched on, the
+    // default location's facts stand for it.
+    let dnsAccountMissing = false;
+    let zoneModeUnknown = false;
+    let zoneWebsocketsOff = false;
+    if (layer === 'l7') {
+      const dflt = await defaultLocationOf(ctx.db, a);
+      const rows = locations.length > 0 ? locations : dflt ? [dflt] : [null];
+      const facts = [];
+      for (const loc of rows) {
+        const place = await l7PlaceOf(ctx.db, a, loc);
+        const dns = place.dnsAccountId
+          ? await ctx.db.get(place.dnsAccountId as Id<'edgeProviderAccounts'>)
+          : undefined;
+        facts.push({
+          dnsMissing: dns !== undefined && (!dns || !dns.enabled),
+          modeUnknown: zoneModeGovernsOrigin(a.provider) && !place.observed?.zoneSslMode,
+          websocketsOff: place.observed?.websockets === 'off',
+        });
+      }
+      dnsAccountMissing = facts.every((f) => f.dnsMissing);
+      zoneModeUnknown = facts.every((f) => f.modeUnknown);
+      zoneWebsocketsOff = facts.every((f) => f.websocketsOff);
+    }
     // Trust is per location: the account counts as trusted when one of its
     // enabled locations is, and current when that trust was taken with what
     // the location provisions with now.
-    const locations = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
     let qualified = false;
     let qualificationCurrent = false;
     for (const loc of locations) {
@@ -263,8 +295,8 @@ async function accountFacts(
       qualificationCurrent,
       frontsListeners: fronts,
       dnsAccountMissing,
-      zoneModeUnknown: layer === 'l7' && zoneModeGovernsOrigin(a.provider) && !observed.zoneSslMode,
-      zoneWebsocketsOff: observed.zoneWebsockets === 'off',
+      zoneModeUnknown,
+      zoneWebsocketsOff,
       templateOk: !templateInvalid && !!(effective.id || EDGE_TEMPLATES[a.provider]),
       templateInvalid,
       defaultTemplateId: (effective.id as string | null) ?? null,
@@ -498,7 +530,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: await originFacts(ctx.db, relay.origin),
         listeners: f.listeners.map(listenerFacts),
-        accounts: await accountFacts(ctx, accounts, f.listeners),
+        accounts: await accountFacts(ctx, accounts, f.listeners, cfg.l7.dnsProvidersFront),
         relay: f.relay,
         render: f.render,
         config: configFacts(cfg),
@@ -589,7 +621,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: originF,
         listeners: listeners.map(listenerFacts),
-        accounts: await accountFacts(ctx, accounts, listeners),
+        accounts: await accountFacts(ctx, accounts, listeners, cfg.l7.dnsProvidersFront),
         relay: null,
         render: { enabled: cfg.render.enabled, preview: null },
         config: configFacts(cfg),
@@ -622,7 +654,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: await originFacts(ctx.db, relay.origin),
         listeners: f.listeners.map(listenerFacts),
-        accounts: await accountFacts(ctx, accounts, f.listeners),
+        accounts: await accountFacts(ctx, accounts, f.listeners, cfg.l7.dnsProvidersFront),
         relay: f.relay,
         render: f.render,
         config: configFacts(cfg),
@@ -635,7 +667,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: null,
         listeners: [],
-        accounts: await accountFacts(ctx, accounts, []),
+        accounts: await accountFacts(ctx, accounts, [], cfg.l7.dnsProvidersFront),
         relay: null,
         render: { enabled: cfg.render.enabled, preview: null },
         config: configFacts(cfg),
@@ -730,7 +762,8 @@ interface AttentionItem {
     | 'protect_node'
     | 'open_node'
     | 'open_modes'
-    | 'open_probes';
+    | 'open_probes'
+    | 'open_run';
   since: string | null;
 }
 
@@ -869,29 +902,52 @@ async function bindingStateOf(
 }
 
 /**
- * The live (non-terminal) guided setup run of an origin, through the run's
- * node (`by_origin`): a node has at most one live run, always its newest. A
- * manual origin, or a backend server without a node name, has none.
+ * The guided setup runs of an origin that its status names, through the run's
+ * node (`by_origin`): the live (non-terminal) one (a node has at most one,
+ * always its newest), else the newest run when it FAILED (its sheet has Try
+ * again; a later run of any outcome supersedes it). A manual origin, or a
+ * backend server without a node name, has neither.
  */
-async function liveSetupRunOf(db: Db, relay: Relay): Promise<Doc<'edgeSetupRuns'> | null> {
+async function setupRunsOf(
+  db: Db,
+  relay: Relay,
+): Promise<{ live: Doc<'edgeSetupRuns'> | null; failed: Doc<'edgeSetupRuns'> | null }> {
   const serverId = relay.origin.kind === 'manual' ? undefined : relay.origin.backendServerId;
   const nodeName = relay.origin.kind === 'panel-node' ? relay.origin.nodeName : relay.nodeName;
-  if (!serverId || !nodeName) return null;
-  const rows = await db
-    .query('edgeSetupRuns')
-    .withIndex('by_origin', (q) => q.eq('backendServerId', serverId).eq('nodeName', nodeName))
-    .order('desc')
-    .take(5);
-  return (
-    rows.find(
-      (r) => !isTerminalRunState(r.state) && (r.relayId === undefined || r.relayId === relay._id),
-    ) ?? null
-  );
+  if (!serverId || !nodeName) return { live: null, failed: null };
+  const rows = (
+    await db
+      .query('edgeSetupRuns')
+      .withIndex('by_origin', (q) => q.eq('backendServerId', serverId).eq('nodeName', nodeName))
+      .order('desc')
+      .take(5)
+  ).filter((r) => r.relayId === undefined || r.relayId === relay._id);
+  const live = rows.find((r) => !isTerminalRunState(r.state)) ?? null;
+  const newest = rows[0];
+  return { live, failed: !live && newest?.state === 'failed' ? newest : null };
+}
+
+/**
+ * Whether the origin's enrolled node is fronted (its connection mode has no
+ * direct address for members). A node FCP does not enroll, or whose mode is
+ * unknown, reads as direct.
+ */
+async function frontedNodeOf(ctx: QueryCtx, relay: Relay): Promise<boolean> {
+  if (relay.origin.kind !== 'panel-node' || !relay.backendServerId) return false;
+  const nodeName = relay.origin.nodeName;
+  const intent = await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server_name', (q) =>
+      q.eq('backendServerId', relay.backendServerId!).eq('name', nodeName),
+    )
+    .first();
+  if (!intent) return false;
+  return (await modeRefOf(ctx, intent)).shape.fronting !== 'direct';
 }
 
 /** The facts one origin's status is judged on (lib/edges/originStatus.ts), but its attention items. */
 async function statusFactsOf(
-  db: Db,
+  ctx: QueryCtx,
   relay: Relay,
   edges: Edge[],
   bindingState: { bound: boolean; foreign: boolean },
@@ -902,7 +958,7 @@ async function statusFactsOf(
     const e = id ? edges.find((x) => x._id === id) : undefined;
     if (e) pool.push({ health: e.health, layer: e.layer ?? 'l4' });
   }
-  const run = await liveSetupRunOf(db, relay);
+  const { live: run, failed } = await setupRunsOf(ctx.db, relay);
   const runFacts: StatusRunFacts | null = run
     ? {
         id: run._id as string,
@@ -927,6 +983,15 @@ async function statusFactsOf(
     foreignBinding: bindingState.foreign,
     renderEnabled,
     run: runFacts,
+    failedRun: failed
+      ? {
+          id: failed._id as string,
+          kind: failed.kind ?? null,
+          stage: failed.stage,
+          code: failed.need?.code ?? null,
+        }
+      : null,
+    fronted: await frontedNodeOf(ctx, relay),
   };
 }
 
@@ -966,7 +1031,7 @@ export const attention = internalQuery({
         const edges = await liveEdgesOfRelay(ctx.db, relay._id);
         statusFacts.set(
           relay._id as string,
-          await statusFactsOf(ctx.db, relay, edges, state, cfg.render.enabled),
+          await statusFactsOf(ctx, relay, edges, state, cfg.render.enabled),
         );
         continue;
       }
@@ -998,6 +1063,21 @@ export const attention = internalQuery({
         });
       }
       for (const e of edges) {
+        // A new front whose certificate waits on something FCP cannot fix.
+        if (e.waiting && e.status === 'provisioning') {
+          items.push({
+            ...base(relay),
+            id: `certificate_waiting:${e._id}`,
+            kind: 'certificate_waiting',
+            severity: 'warning',
+            edgeId: e._id as string,
+            rotationId: (relay.activeRotationId as string | undefined) ?? null,
+            code: e.waiting.code,
+            facts: { provider: e.provider ?? null, step: e.waiting.step },
+            action: 'open_relay',
+            since: iso(e.waiting.since),
+          });
+        }
         if (e.status === 'needs_operator') {
           items.push({
             ...base(relay),
@@ -1056,10 +1136,26 @@ export const attention = internalQuery({
           since: isoN(binding?.updatedAt),
         });
       }
-      statusFacts.set(
-        relay._id as string,
-        await statusFactsOf(ctx.db, relay, edges, bindingState, cfg.render.enabled),
-      );
+      const facts = await statusFactsOf(ctx, relay, edges, bindingState, cfg.render.enabled);
+      statusFacts.set(relay._id as string, facts);
+      // The newest guided setup run of the node failed and nothing replaced it:
+      // its sheet (with Try again) is where the operator picks it up. A failed
+      // re-protect leaves members on what they had, so it only informs.
+      if (facts.failedRun)
+        items.push({
+          ...base(relay),
+          id: `setup_run_failed:${facts.failedRun.id}`,
+          kind: 'setup_run_failed',
+          severity: facts.failedRun.kind === 'reprotect' ? 'info' : 'warning',
+          code: facts.failedRun.code,
+          facts: {
+            runId: facts.failedRun.id,
+            stage: facts.failedRun.stage,
+            ...(facts.failedRun.kind === 'reprotect' ? { reprotect: true } : {}),
+          },
+          action: 'open_run',
+          since: null,
+        });
       // A direct Host reappeared on a bound guided node and could not be
       // re-hidden: delivery is fail-closed (`leak_detected`) until it is hidden.
       if (relay.directHostAlert && relay.directHostAlert.hosts.length > 0) {
@@ -1495,6 +1591,64 @@ export const attention = internalQuery({
           since: null,
         });
       }
+      // A zone's shared certificate waits on something FCP cannot fix (a CAA
+      // record, the validation record) or failed: every new front of the
+      // account in that zone waits on it too. (An account the L7 locations
+      // migration has not moved yet still holds its own.) Raised for a
+      // wildcard the account (its default for new nodes, or a live front in
+      // the zone) still uses; one nothing uses any more is only shown.
+      const wildcardDefault = accountOptionDefaultsOf(a).certificateScope === 'wildcard';
+      const accountLocations = await locationsOfAccount(ctx.db, a._id);
+      const zoneCertificates: Array<{
+        key: string;
+        sc: NonNullable<typeof a.sharedCertificate>;
+        users: () => Promise<number>;
+      }> = [];
+      for (const loc of accountLocations)
+        if (loc.sharedCertificate)
+          zoneCertificates.push({
+            key: loc._id as string,
+            sc: loc.sharedCertificate,
+            users: () => zoneSharedCertificateUsers(ctx.db, loc),
+          });
+      if (zoneCertificates.length === 0 && a.sharedCertificate)
+        zoneCertificates.push({
+          key: a._id as string,
+          sc: a.sharedCertificate,
+          users: async () => {
+            let n = 0;
+            for (const loc of accountLocations) n += await zoneSharedCertificateUsers(ctx.db, loc);
+            return n;
+          },
+        });
+      for (const { key, sc, users } of zoneCertificates) {
+        if (!sc.code && sc.state !== 'failed') continue;
+        if (!wildcardDefault && (await users()) === 0) continue;
+        // Critical once the fronts are about to lose (or lost) their certificate.
+        const daysLeft = sc.notAfter ? (Date.parse(sc.notAfter) - now) / 86_400_000 : null;
+        items.push({
+          id: `certificate_waiting:account:${key}`,
+          kind: 'certificate_waiting',
+          severity:
+            sc.state === 'failed' || (daysLeft !== null && daysLeft < 3) ? 'critical' : 'warning',
+          relaySlug: null,
+          relayId: null,
+          edgeId: null,
+          listenerKey: null,
+          accountId: a._id as string,
+          rotationId: null,
+          code: sc.code ?? 'tls_failed',
+          facts: {
+            name: a.name,
+            provider: a.provider,
+            certificate: sc.name,
+            state: sc.state,
+            notAfter: sc.notAfter ?? null,
+          },
+          action: 'open_account',
+          since: iso(sc.checkedAt),
+        });
+      }
       if (!a.enabled) continue;
       if (!accountTested(a)) {
         items.push({
@@ -1512,9 +1666,11 @@ export const attention = internalQuery({
           action: 'test_credentials',
           since: null,
         });
-      } else {
+      } else if (frontsAllowed(a.provider, cfg.l7.dnsProvidersFront)) {
         // Trust is per location: one item per enabled location not trusted yet,
-        // naming the location when the account has more than one.
+        // naming the location when the account has more than one. A DNS-only
+        // account (its provider may not front here) carries no traffic, so it
+        // has nothing to be trusted for.
         const locs = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
         for (const loc of locs) {
           if (loc.qualified) continue;
@@ -1828,7 +1984,10 @@ export const preflight = internalQuery({
           templateId: null,
         };
       } else if (!sel.account || !sel.template) {
-        blockers.push({ code: sel.accountFailure ?? 'no_account', detail: null });
+        // The start guards may have named the same refusal already (a named
+        // account whose certificate cannot be had): once is enough.
+        const code = sel.accountFailure ?? 'no_account';
+        if (!blockers.some((b) => b.code === code)) blockers.push({ code, detail: null });
       } else {
         const acct = await ctx.db.get(sel.account.id);
         const loc = await ctx.db.get(sel.account.locationId);
