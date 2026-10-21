@@ -43,6 +43,14 @@ describe('edge provider meta', () => {
     expect(EDGE_PROVIDER_META.fastly.providesDns).toBe(false);
   });
 
+  it('offers a shared wildcard certificate only where fronts can share one', () => {
+    expect(
+      Object.entries(EDGE_PROVIDER_META)
+        .filter(([, m]) => m.sharedCertificates)
+        .map(([id]) => id),
+    ).toEqual(['fastly']);
+  });
+
   it('groups providers by what an account is for: L4, L7, then DNS', () => {
     const groups = providerGroups(EDGE_PROVIDER_IDS);
     expect(groups.map((g) => [g.id, g.title])).toEqual([

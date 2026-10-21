@@ -59,7 +59,13 @@
   import QualifyDialog from './providers/QualifyDialog.svelte';
   import RenameDialog from './providers/RenameDialog.svelte';
   import RotateCredentialsDialog from './providers/RotateCredentialsDialog.svelte';
-  import { isTested, settingLabel, settingRows, testWords } from './providers/accountWords';
+  import {
+    isTested,
+    observedRows as observedRowsOf,
+    settingRows,
+    sharedCertificateWords,
+    testWords,
+  } from './providers/accountWords';
   import { useAccountActions } from './providers/useAccountActions.svelte';
   import { asParams, changedKeys, effectiveTemplate, qualificationState } from './templates/params';
 
@@ -106,9 +112,7 @@
   );
   const settingsRows = $derived<KeyValueRow[]>(a ? settingRows(a.settings, accountNames) : []);
   const observedRows = $derived<KeyValueRow[]>(
-    a?.observedSettings
-      ? Object.entries(a.observedSettings).map(([k, v]) => ({ label: settingLabel(k), value: v }))
-      : [],
+    a?.observedSettings ? observedRowsOf(a.observedSettings) : [],
   );
   const credentialRows = $derived<KeyValueRow[]>(
     a
@@ -139,6 +143,30 @@
     invalidateProviders(qc);
     toast.success('DNS account changed');
     dnsChoice = null;
+  }
+
+  // --- certificates (a provider whose fronts can share one wildcard) ---------------------------------
+  const sharesCertificates = $derived(
+    a ? EDGE_PROVIDER_META[a.provider].sharedCertificates : false,
+  );
+  const scopeNow = $derived(
+    a && a.settings.certificateScope === 'wildcard' ? 'wildcard' : 'per_host',
+  );
+  const SCOPE_WORDS: Record<string, string> = {
+    wildcard: 'One wildcard for every front',
+    per_host: 'One certificate per front',
+  };
+  let scopeChoice = $state<string | null>(null);
+  let scopeOpen = $state(false);
+  const sharedWords = $derived(
+    a?.sharedCertificate ? sharedCertificateWords(a.sharedCertificate) : null,
+  );
+  async function saveScope() {
+    if (!a || !scopeChoice) return;
+    await updateProvider(a.id, { settings: { ...a.settings, certificateScope: scopeChoice } });
+    invalidateProviders(qc);
+    toast.success('Certificates changed');
+    scopeChoice = null;
   }
 
   // --- dialogs ---------------------------------------------------------------------------------------
@@ -367,6 +395,57 @@
         </Card>
       {/if}
 
+      {#if sharesCertificates}
+        <Card>
+          <CardHeader>
+            <CardTitle class="text-base">Certificates</CardTitle>
+            <CardDescription>
+              How this account's fronts get their certificate. One wildcard is issued once and
+              shared: a new front does not wait for a certificate, and its name never appears in
+              public certificate logs before members use it.
+            </CardDescription>
+          </CardHeader>
+          <CardContent class="space-y-4">
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="max-w-md flex-1 space-y-1.5">
+                <Label for="acct-cert-scope">New fronts get</Label>
+                <Select.Root
+                  type="single"
+                  value={scopeChoice ?? scopeNow}
+                  onValueChange={(v) => (scopeChoice = v === scopeNow ? null : v)}
+                >
+                  <Select.Trigger id="acct-cert-scope" class="w-full">
+                    {SCOPE_WORDS[scopeChoice ?? scopeNow]}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Item value="wildcard">{SCOPE_WORDS.wildcard} (recommended)</Select.Item>
+                    <Select.Item value="per_host">{SCOPE_WORDS.per_host}</Select.Item>
+                  </Select.Content>
+                </Select.Root>
+              </div>
+              <Button disabled={scopeChoice === null} onclick={() => (scopeOpen = true)}>
+                Change certificates
+              </Button>
+            </div>
+            {#if a.sharedCertificate && sharedWords}
+              <div class="space-y-1">
+                <div class="text-xs text-muted-foreground">Shared certificate</div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-mono text-sm">{a.sharedCertificate.name}</span>
+                  <Badge variant={sharedWords.tone}>{sharedWords.label}</Badge>
+                </div>
+                <p class="text-xs text-muted-foreground">{sharedWords.detail}</p>
+              </div>
+            {:else if scopeNow === 'wildcard'}
+              <p class="text-xs text-muted-foreground">
+                The shared certificate is read at the provider when the account is tested, and
+                ordered by the first new front.
+              </p>
+            {/if}
+          </CardContent>
+        </Card>
+      {/if}
+
       <LocationsCard account={a} />
 
       <CountriesCard account={a} />
@@ -496,6 +575,13 @@
     body="New edges of this account will get their DNS records through the account you picked. The account loses its qualification and must be tested and qualified again. Existing edges keep the records they have."
     confirmLabel="Change DNS account"
     onConfirm={saveDns}
+  />
+  <ConfirmDialog
+    bind:open={scopeOpen}
+    title="Change how fronts get certificates?"
+    body="New fronts of this account get their certificate the new way; fronts that exist keep theirs. Like any settings change, the account loses its trust: test it again, and its next proven front trusts it."
+    confirmLabel="Change certificates"
+    onConfirm={saveScope}
   />
   <DeleteDialog
     bind:open={deleteOpen}

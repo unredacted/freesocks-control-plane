@@ -265,6 +265,19 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       required: true,
     },
     {
+      key: 'certificateScope',
+      label: 'Certificates',
+      kind: 'select',
+      step: 'placement',
+      from: 'fixed',
+      options: [
+        { id: 'wildcard', label: 'One wildcard for every front (recommended)' },
+        { id: 'per_host', label: 'One per front' },
+      ],
+      required: true,
+      help: 'A wildcard is issued once and shared: a new front never waits for a certificate, and its name never appears in public certificate logs before members use it.',
+    },
+    {
       key: 'tlsConfigurationId',
       label: 'TLS configuration',
       kind: 'select',
@@ -298,7 +311,7 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
 /** The few settings with a sensible value before the operator picks anything. */
 export const DEFAULT_SETTINGS: Partial<Record<EdgeProviderId, Record<string, string>>> = {
   ovh: { endpoint: 'ovh-eu' },
-  fastly: { certificateAuthority: 'certainly' },
+  fastly: { certificateAuthority: 'certainly', certificateScope: 'wildcard' },
 };
 
 export function credentialLabel(name: string): string {

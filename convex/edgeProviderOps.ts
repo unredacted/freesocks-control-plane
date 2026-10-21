@@ -48,6 +48,7 @@ import {
   validateSettings,
   withoutPlacementKeys,
   EDGE_INTENT_DEFAULT_SETTINGS,
+  EDGE_INTENT_FACTS,
   EDGE_PLACEMENT_SETTINGS,
 } from './lib/edges/accountSettings';
 import { placeKeyOf } from './lib/edges/locations';
@@ -65,6 +66,7 @@ import type {
   EdgeProvider,
   EdgeProviderConfig,
   ResourceStep,
+  SharedCertificateStatus,
   SharedTeardownState,
   StepOutcome,
 } from './lib/edges/providers/types';
@@ -379,11 +381,22 @@ async function loadAdapter(
   // which certificate a describe or a destroy acts on. A settings edit after
   // planning must not move a live edge's certificate to another subscription.
   const intent = edgeId ? await ctx.runQuery(internal.edges.intentOf, { edgeId }) : null;
+  const mutable = cfg as unknown as Record<string, unknown>;
   if (intent) {
+    // The intent's ABSENCE of a default is frozen too: an edge planned before
+    // the account named a TLS configuration (or a certificate scope) keeps
+    // the provider's default, not whatever the account says now.
     const frozen = intent as unknown as Record<string, unknown>;
     for (const key of EDGE_INTENT_DEFAULT_SETTINGS[acct.provider]) {
-      if (frozen[key] !== undefined) (cfg as unknown as Record<string, unknown>)[key] = frozen[key];
+      if (frozen[key] !== undefined) mutable[key] = frozen[key];
+      else delete mutable[key];
     }
+  }
+  // How the provider is driven: planning gets today's way, an existing edge
+  // the way it was built (an intent from before a fact existed: `legacy`).
+  for (const [key, fact] of Object.entries(EDGE_INTENT_FACTS[acct.provider])) {
+    const frozen = (intent as unknown as Record<string, unknown> | null)?.[key];
+    mutable[key] = edgeId ? (typeof frozen === 'string' ? frozen : fact.legacy) : fact.planned;
   }
   if (EDGE_PROVIDER_CAPABILITIES[acct.provider].needsDnsAccount) {
     let dnsAccountId = (acct.settings as { dnsAccountId?: string }).dnsAccountId;
@@ -621,7 +634,10 @@ export const testCredentials = internalAction({
     tracked(ctx, accountId, async (seen) => {
       const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
       const res = await provider.testCredentials(cfg);
-      if (!res.ok) await noteTestFailure(ctx, accountId, seen);
+      // A zone whose CAA records refuse the CA is the zone's answer, not the
+      // provider's: the API answered, so it does not count toward its health.
+      if (!res.ok && !NOT_API_FAILURES.has(res.code ?? ''))
+        await noteTestFailure(ctx, accountId, seen);
       // A passing test's `detail` is adapter prose about the zone, not a refusal.
       const detail = res.ok ? undefined : res.detail;
       await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
@@ -631,7 +647,43 @@ export const testCredentials = internalAction({
         detail,
         observed: res.observed,
       });
+      // The account page shows the shared certificate as of this test (best
+      // effort: the reconcile cron reads it again, and the test stands).
+      if (res.ok && provider.sharedCertificate)
+        await recordSharedCertificate(ctx, accountId, provider, cfg).catch(() => null);
       return { ok: res.ok, code: res.code, detail };
+    }),
+});
+
+/** Test refusals that are not the provider failing (they never raise `account_api_failing`). */
+const NOT_API_FAILURES: ReadonlySet<string> = new Set(['caa_forbids_ca']);
+
+/** Read and record the account's shared certificate; a read that fails leaves the last one. */
+async function recordSharedCertificate(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  provider: EdgeProvider,
+  cfg: EdgeProviderConfig,
+): Promise<SharedCertificateStatus | null> {
+  const status = provider.sharedCertificate ? await provider.sharedCertificate(cfg) : null;
+  await ctx.runMutation(internal.edgeProviderAccounts.recordSharedCertificate, {
+    id: accountId,
+    status,
+  });
+  return status;
+}
+
+/**
+ * The account-wide certificate its edges share, read at the provider and
+ * recorded on the account (the reconcile cron, so a renewal or a failure shows
+ * on the account page and in attention). Orders nothing.
+ */
+export const refreshSharedCertificate = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts') },
+  handler: (ctx, { accountId }): Promise<SharedCertificateStatus | null> =>
+    tracked(ctx, accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
+      return recordSharedCertificate(ctx, accountId, provider, cfg);
     }),
 });
 

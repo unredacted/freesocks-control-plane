@@ -166,6 +166,9 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'dns_zone_missing',
   'origin_transport_missing',
   'zone_mode_unknown',
+  // an L7 front's certificate cannot be had (L7_CERTIFICATE_CODES)
+  'caa_forbids_ca',
+  'shared_certificate_failed',
   // the fleet guards on an automatic rotation (lib/edges/fleet.ts)
   'fleet_brake',
   'fleet_daily_cap',
@@ -173,6 +176,25 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'outside_approved_shape',
 ] as const;
 export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
+
+/**
+ * Why an L7 front's certificate cannot be had, or what its issuance waits on
+ * (docs/edges.md § "L7 edges"): the CAA preflight's refusal (the credential
+ * test and planning), the codes a waiting issuance reports, mapped from the
+ * provider's own authorization warnings, whose text is never kept, and an
+ * account's shared certificate that failed to issue.
+ */
+export const L7_CERTIFICATE_CODES = [
+  'caa_forbids_ca',
+  'tls_caa_conflict',
+  'tls_challenge_conflict',
+  'tls_challenge_missing',
+  'tls_authorization_failed',
+  'tls_authorization_warning',
+  'tls_failed',
+  'shared_certificate_failed',
+] as const;
+export type L7CertificateCode = (typeof L7_CERTIFICATE_CODES)[number];
 
 /** Things that will not stop the operation but the operator should know. */
 export const PREFLIGHT_WARNING_CODES = [
@@ -239,6 +261,9 @@ export const ATTENTION_KINDS = [
   // before it was ever in use.
   'country_wide_failure',
   'new_edge_blocked_in',
+  // An L7 front's certificate waits on something FCP cannot fix (a CAA record,
+  // the validation record), or an account's shared certificate failed.
+  'certificate_waiting',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -489,6 +514,10 @@ export const SETUP_ACCOUNT_REASONS = [
   'no_location',
   'location_disabled',
   'location_capacity_reached',
+  // The zone's CAA records do not let the account's certificate authority issue;
+  // the account's shared wildcard certificate failed to issue.
+  'caa_forbids_ca',
+  'shared_certificate_failed',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 

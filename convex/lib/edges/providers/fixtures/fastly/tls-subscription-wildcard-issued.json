@@ -1,0 +1,36 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/tls/subs/#get-tls-sub (include=tls_authorizations,tls_certificates, a wildcard domain, read 2026-10-20)",
+  "data": {
+    "id": "WILDsub0example0org01",
+    "type": "tls_subscription",
+    "attributes": {
+      "state": "issued",
+      "certificate_authority": "certainly"
+    }
+  },
+  "included": [
+    {
+      "id": "AUTHW1",
+      "type": "tls_authorization",
+      "attributes": {
+        "state": "valid",
+        "challenges": [
+          {
+            "type": "managed-dns",
+            "record_type": "CNAME",
+            "record_name": "_acme-challenge.example.org",
+            "values": ["w1ld9mtt5uzzsw2q.fastly-validations.com"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "CERTW1",
+      "type": "tls_certificate",
+      "attributes": {
+        "not_before": "2026-10-20T10:12:00Z",
+        "not_after": "2026-11-19T10:12:00Z"
+      }
+    }
+  ]
+}

@@ -74,6 +74,20 @@ describe('buildProvisionIntent', () => {
     expect(intent.zoneName).toBe('example.org');
     expect(intent.certificateAuthority).toBe('certainly');
     expect(intent.tlsConfigurationId).toBe('tls-1');
+    // How the provider is driven now: a versionless domain. The certificate
+    // scope is frozen only when the account names one (absent = one per front).
+    expect(intent.domainModel).toBe('versionless');
+    expect(intent).not.toHaveProperty('certificateScope');
+    const wild = buildProvisionIntent({
+      ...args,
+      account: { ...fastly, settings: { ...fastly.settings, certificateScope: 'wildcard' } },
+      dnsAccount: cloudflare,
+    })!;
+    expect(wild.certificateScope).toBe('wildcard');
+    // Cloudflare is driven the same way it always was: no facts of its own.
+    expect(buildProvisionIntent({ ...args, account: cloudflare })).not.toHaveProperty(
+      'domainModel',
+    );
   });
 
   test('the hostname is deterministic for one (name, zone, template)', () => {

@@ -1,0 +1,8 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/domain-management/domains/#list-dm-domains via fastly@16.1.0 InlineResponse20014 (read 2026-10-20)",
+  "data": [],
+  "meta": {
+    "limit": 20,
+    "next_cursor": null
+  }
+}

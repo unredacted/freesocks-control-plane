@@ -157,6 +157,8 @@ const relayProviderSettings = v.union(
       v.literal('globalsign'),
     ),
     tlsConfigurationId: v.optional(v.string()),
+    // One wildcard certificate per account and zone, or one per front (absent).
+    certificateScope: v.optional(v.union(v.literal('per_host'), v.literal('wildcard'))),
   }),
 );
 // Where an edge's resources live (lib/edges/accountSettings.ts
@@ -1237,6 +1239,20 @@ export default defineSchema({
     apiFailures: v.optional(v.number()),
     apiFailingSince: v.optional(v.number()),
     lastApiError: v.optional(v.string()),
+    // The account-wide certificate its edges share (Fastly's `*.<zone>`
+    // wildcard), as last read at the provider (edgeProviderOps
+    // `refreshSharedCertificate`: the credential test and the reconcile cron).
+    // `state` is the provider's, or `absent` / `ambiguous`; `code` a fixed one.
+    sharedCertificate: v.optional(
+      v.object({
+        name: v.string(),
+        subscriptionId: v.optional(v.string()),
+        state: v.string(),
+        code: v.optional(v.string()),
+        notAfter: v.optional(v.string()),
+        checkedAt: v.number(),
+      }),
+    ),
     updatedAt: v.number(),
   })
     .index('by_name', ['name'])
@@ -1782,6 +1798,10 @@ export default defineSchema({
     failure: v.optional(
       v.object({ step: v.string(), code: v.optional(v.string()), status: v.optional(v.number()) }),
     ),
+    // What a requested step is held up by while it waits, when the provider
+    // says (L7: a CAA record, the validation record; `L7_CERTIFICATE_CODES`),
+    // since when. Cleared when the step settles any other way.
+    waiting: v.optional(v.object({ step: v.string(), code: v.string(), since: v.number() })),
     burnedAt: v.optional(v.number()),
     drainUntil: v.optional(v.number()),
     destroyedAt: v.optional(v.number()),

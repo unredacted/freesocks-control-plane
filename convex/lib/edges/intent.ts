@@ -24,6 +24,8 @@ import { edgeHostnameFor } from './hostname';
 import { edgeLayerOf, zoneModeGovernsOrigin } from './providers/capabilities';
 import type { ListenerProto } from './protocols';
 import { zoneModeCarriesOrigin, type OriginTransport } from './layers';
+import { EDGE_INTENT_FACTS } from './accountSettings';
+import type { EdgeProviderId } from '../edgeProviderIds';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto; same function the template hash uses). */
 export function intentFnv1a64Hex(input: string): string {
@@ -53,6 +55,10 @@ export interface ProvisionIntent {
   dnsAccountId?: string;
   tlsConfigurationId?: string;
   certificateAuthority?: string;
+  /** Fastly: `wildcard` = the account's shared `*.<zone>` certificate; absent = one per front. */
+  certificateScope?: string;
+  /** Fastly: `versionless` for every edge planned now; absent = a version-scoped (classic) domain. */
+  domainModel?: string;
   originTransport: FrozenOriginTransport;
   originPort: number;
   /**
@@ -185,6 +191,16 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
     ...(str(a.account.settings.certificateAuthority)
       ? { certificateAuthority: str(a.account.settings.certificateAuthority) }
       : {}),
+    ...(str(a.account.settings.certificateScope)
+      ? { certificateScope: str(a.account.settings.certificateScope) }
+      : {}),
+    // How the provider is driven now (no operator choice); an older intent
+    // without these keeps the way it was built (`EDGE_INTENT_FACTS`).
+    ...Object.fromEntries(
+      Object.entries(EDGE_INTENT_FACTS[a.account.provider as EdgeProviderId] ?? {}).map(
+        ([k, f]) => [k, f.planned],
+      ),
+    ),
     originTransport: {
       scheme: originTransport.scheme,
       certPublic: originTransport.certPublic,

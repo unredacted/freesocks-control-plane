@@ -168,6 +168,8 @@ describe('origin capability record ⇔ adapters', () => {
     const p = EDGE_PROVIDERS[id];
     expect(caps.asyncOps).toBe(!!p.pollStep);
     expect(caps.asyncDelete).toBe(!!p.confirmDestroyed);
+    // A provider whose fronts can share one certificate reports it to the account.
+    expect(caps.sharedCertificates).toBe(!!p.sharedCertificate);
   });
 
   test.each([...EDGE_PROVIDER_IDS])(

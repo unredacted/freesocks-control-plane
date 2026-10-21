@@ -12,9 +12,10 @@
  *  - credential IDENTIFIERS (the public half of a key pair: Scaleway access
  *    key, OVH application key). They rotate with the secret and locate nothing,
  *    so they stay editable while edges exist.
- *  - INTENT DEFAULTS (L7: certificate authority, TLS configuration). They are
- *    frozen into each edge's `provisionIntent` when the edge is planned, so a
- *    change only affects NEW edges and they stay editable at any time.
+ *  - INTENT DEFAULTS (L7: certificate authority, TLS configuration, the
+ *    certificate scope). They are frozen into each edge's `provisionIntent`
+ *    when the edge is planned, so a change only affects NEW edges and they
+ *    stay editable at any time.
  * `accountSettings.test.ts` pins that the three lists cover every schema key.
  */
 import { z } from 'zod';
@@ -63,6 +64,10 @@ export const EDGE_SETTINGS_SCHEMAS = {
     dnsAccountId: z.string().min(1).max(64),
     certificateAuthority: z.enum(['certainly', 'lets-encrypt', 'globalsign']).default('certainly'),
     tlsConfigurationId: z.string().min(1).max(64).optional(),
+    // One wildcard certificate for every front of the account, or one per
+    // front. No default HERE (an existing account keeps per-host until it is
+    // switched): `create` sets `wildcard` for a new account (FASTLY_NEW_ACCOUNT_SETTINGS).
+    certificateScope: z.enum(['per_host', 'wildcard']).optional(),
   }),
 } as const;
 
@@ -152,7 +157,35 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
   scaleway: [],
   ovh: [],
   cloudflare: [],
-  fastly: ['certificateAuthority', 'tlsConfigurationId'],
+  fastly: ['certificateAuthority', 'tlsConfigurationId', 'certificateScope'],
+};
+
+/**
+ * Settings a NEW account gets when its payload leaves them out, where the
+ * schema itself must not default them (an existing account without the key
+ * keeps its older behaviour until it is switched).
+ */
+export const EDGE_NEW_ACCOUNT_SETTINGS: Partial<Record<EdgeProviderId, Record<string, unknown>>> = {
+  fastly: { certificateScope: 'wildcard' },
+};
+
+/**
+ * Facts every NEW edge freezes into its intent that no operator chooses (how
+ * the provider is driven now); an intent without one predates it and keeps
+ * `legacy`. `edgeProviderOps.loadAdapter` gives the adapter `planned` when it
+ * plans and the edge's own value (or `legacy`) afterwards.
+ */
+export const EDGE_INTENT_FACTS: Record<
+  EdgeProviderId,
+  Readonly<Record<string, { planned: string; legacy: string }>>
+> = {
+  gcore: {},
+  upcloud: {},
+  scaleway: {},
+  ovh: {},
+  cloudflare: {},
+  // A versionless (Domain Management) domain instead of a version's domain.
+  fastly: { domainModel: { planned: 'versionless', legacy: 'classic' } },
 };
 
 /** Non-secret credential identifiers kept in `settings`: rotate with the secret, locate nothing. */
