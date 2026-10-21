@@ -333,8 +333,8 @@ account's `certificateScope` (an intent default, § "Fastly fronts"):
   lock), so no rotation starts reusing the certificate between the count and the delete. The
   lock is released when the call ends; one a dead removal left is taken over by the next step
   once it lapses. An account still holding a wildcard it ordered, in any zone, cannot be
-  deleted (`edge.shared_certificate_present`), so nothing is left at the provider with no
-  credentials to remove it.
+  deleted (`edge.shared_certificate_present`), nor can that zone's location (the only record of
+  it), so nothing is left at the provider with no credentials to remove it.
   A subscription is reused only when it matches the account's certificate authority and its
   EFFECTIVE TLS configuration (the location's, else the default one, the same one the traffic
   CNAME points at); one ordered another way, or several, is never reused
@@ -391,15 +391,20 @@ certificate FCP orders uses the managed DNS challenge). No record at all, or a l
 fails (`unchecked`), passes; so does a name too deep to walk to the top (more than
 `MAX_CAA_WALK` labels, also `unchecked`, never "no records"). The verdict is kept with the
 location's check (`edgeLocations.observed`: `caa`, `caaIssuer`, `caaCertificate`, `caaAt`; the
-refusal as its `checkError`). While a zone's last check ended on it, the setup plan (the
-location's reasons), the setup run's first stage, the start guards of a rotation naming the
-location, the preflight and the selection all refuse that zone with that code before anything
-is allocated (`certificateRefusalOf(account, location)`), the account's other zones stay
-usable, and it does not count toward the account's API health. Fix the records or pick another
+refusal as its `checkError`). The verdict answers for the account's default certificate: while a
+zone's last check ended on it, the setup plan (the location's `certificateRefusal`, which keeps
+the zone pickable), every pick check, the setup run's first stage, the start guards of a
+rotation naming the location, the preflight and the selection refuse that zone with that code
+for a front on that certificate, before anything is allocated (`certificateRefusalFor(account,
+location, choices)`). A node that chose another certificate there is judged by its own
+preflight instead (below, Certificates a node chooses), and only the zone's wildcard refuses it,
+when it chose the wildcard. The account's other zones stay usable, and the refusal does not
+count toward the account's API health. Fix the records or pick another
 CA, then check the zone again. Changing the account's default certificate authority or
 certificate scope (its option defaults, see Provider options) marks the account untested
-(`retest_required`) and drops each zone's shared-certificate read: a per-name verdict says
-nothing about `issuewild`. (The DNS account and the TLS configuration are a location's
+(`retest_required`): a per-name verdict says nothing about `issuewild`. Each zone's
+shared-certificate record stays (it proves a wildcard FCP ordered is still at the provider, for
+its removal and the delete guards) until the next test reads it again. (The DNS account and the TLS configuration are a location's
 placement, never edited: another one is another location, checked on its own.) The lookups are DNS
 queries from the backend (`node:dns`, 4 s, two tries); the offline test suite refuses them like
 `fetch`, and tests answer through `__setFastlyCaaLookup`.
@@ -2434,8 +2439,14 @@ any switched-on location is trusted. A new location is trusted by its first test
 Try it tick or a passing L7 proof) or by the Trust override. Editing an account's settings
 untrusts every location; a credential rotation that passes its test keeps trust. Because that
 test needs no location, a rotation first reads every location still in use (switched on, or with
-edges) with the new key, through the adapter's inventory call; a location it cannot read refuses
-the rotation (`location_unreachable`, naming the location) and nothing is stored. Moving an
+edges) with the new key, through the adapter's inventory call (a CDN zone: its location check); a
+location it cannot read refuses the rotation (`location_unreachable`, naming the location) and
+nothing is stored. A zone's own state (paused, not active, encryption off, a renamed zone, CAA)
+is recorded and does not hold the rotation up; anything the key itself cannot do there (a TLS
+configuration it does not see) refuses it. A CDN zone switched off with no edges is checked
+too, and what the new key cannot do there is only recorded on it (no new edge is planned there
+until a check passes); the same holds for a DNS account's rotation and the zones only such
+fronts write through it. Moving an
 account's default template untrusts the locations that fall back to it.
 
 **Regional template values.** A template field whose value differs per region is flagged

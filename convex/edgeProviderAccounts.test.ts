@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import { l7PlaceProblemOf } from './lib/edges/l7Place';
 import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
@@ -1246,9 +1247,16 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
     });
     expect(refused).toMatchObject({ ok: false, code: 'edge.option_invalid' });
     expect((refused as { issues: string[] }).issues[0]).toMatch(/one certificate per front/);
-    // A zone wildcard the account would not order: no node takes it.
+    // A zone wildcard the account would not order (kept on the zone's
+    // location): no node takes it there; its own certificate still goes.
+    const zoneId = (await t.run((ctx) =>
+      ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', fastlyId))
+        .first(),
+    ))!._id;
     await t.run((ctx) =>
-      ctx.db.patch(fastlyId, {
+      ctx.db.patch(zoneId, {
         sharedCertificate: { name: '*.example.org', state: 'ambiguous', checkedAt: 1 },
       }),
     );
@@ -1256,6 +1264,24 @@ describe('edgeProviderAccounts: the DNS-account reference', () => {
       ok: false,
       code: 'edge.shared_certificate_ambiguous',
     });
+    expect(await check({})).toMatchObject({ ok: true });
+    // The zone's CAA records refuse the account's own authority: a node on it
+    // is refused there, one that chose another authority is not (its own
+    // records are read when its plan is made).
+    await t.run((ctx) =>
+      ctx.db.patch(zoneId, { sharedCertificate: undefined, checkError: 'caa_forbids_ca' }),
+    );
+    expect(await check({})).toMatchObject({ ok: false, code: 'edge.caa_forbids_ca' });
+    expect(await check({ certificateAuthority: 'lets-encrypt' })).toMatchObject({
+      ok: true,
+      certificateToCheck: { certificateAuthority: 'lets-encrypt' },
+    });
+    // And the zone itself stays plannable (the refusal is the certificate's).
+    expect(
+      await t.run(async (ctx) =>
+        l7PlaceProblemOf(ctx.db, (await ctx.db.get(fastlyId))!, (await ctx.db.get(zoneId))!),
+      ),
+    ).toBeNull();
   });
 
   test('the rollback purge leaves what a build from before options accepts and reads', async () => {

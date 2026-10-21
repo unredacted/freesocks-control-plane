@@ -60,8 +60,8 @@ export async function l7PlaceOf(
 
 /**
  * Why no new L7 edge can be planned in this location, or null: it names no
- * zone (`dns_zone_missing`), its last check refused the zone
- * (`location_check_failed`), the DNS account its records go through is gone or
+ * zone (`dns_zone_missing`), its last check refused the zone for anything but
+ * the default certificate's CAA records (`location_check_failed`), the DNS account its records go through is gone or
  * switched off, or the zone's encryption mode was never observed for a front
  * that is the zone's own proxy (`zone_mode_unknown`). An L4 location has none.
  */
@@ -73,7 +73,10 @@ export async function l7PlaceProblemOf(
   if (edgeLayerOf(account.provider) !== 'l7') return null;
   const place = await l7PlaceOf(db, account, location);
   if (!place.zoneId || !place.zoneName) return 'dns_zone_missing';
-  if (location.checkError) return 'location_check_failed';
+  // A CAA refusal answered for the account's default certificate only: it is
+  // a certificate refusal of the picks on that one (certificateRefusalFor).
+  if (location.checkError && location.checkError !== 'caa_forbids_ca')
+    return 'location_check_failed';
   if (EDGE_PROVIDER_CAPABILITIES[account.provider].needsDnsAccount) {
     const dns = place.dnsAccountId
       ? await db.get(place.dnsAccountId as Id<'edgeProviderAccounts'>)

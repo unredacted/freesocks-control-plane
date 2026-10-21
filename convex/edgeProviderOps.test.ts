@@ -6,6 +6,7 @@
  * before any provider call, and credential rotation keeps the qualification
  * only after the NEW credentials pass the provider test.
  */
+import { l7PlaceProblemOf } from './lib/edges/l7Place';
 import { convexTest } from 'convex-test';
 import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -983,6 +984,115 @@ describe('edgeProviderOps: the inventory pull refreshes what was observed', () =
   });
 });
 
+describe('edgeProviderOps: what a rotated key must still reach', () => {
+  afterEach(() => __setEdgeProviderForTests('cloudflare', null));
+
+  test('a key that cannot do what a zone in use needs refuses; a switched-off zone records it and the key goes', async () => {
+    const t = newT();
+    const { id: cfId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    const idle = await t.mutation(internal.edgeLocations.create, {
+      accountId: cfId,
+      placement: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+    });
+    await t.mutation(internal.edgeLocations.update, {
+      id: idle.id as Id<'edgeLocations'>,
+      enabled: false,
+    });
+    // What the key itself cannot do there (not the zone's own state).
+    let refusedIn = '';
+    __setEdgeProviderForTests('cloudflare', {
+      ...edgeProviderFor('cloudflare'),
+      testCredentials: async () => ({ ok: true }),
+      discoverOptions: async () => ({ zones: [] }),
+      checkLocation: async (cfg: { zoneId: string }) =>
+        cfg.zoneId === refusedIn
+          ? { ok: false, code: 'tls_configuration_missing' }
+          : { ok: true, observed: { zoneSslMode: 'full' } },
+    } as never);
+    refusedIn = 'a'.repeat(32);
+    expect(
+      await t.action(internal.edgeProviderOps.rotateCredentials, {
+        accountId: cfId,
+        credentials: { apiToken: 'cf2' },
+      }),
+    ).toMatchObject({ ok: false, code: 'location_unreachable' });
+    // The switched-off zone with nothing in it: recorded on it, the key replaced.
+    refusedIn = 'b'.repeat(32);
+    expect(
+      await t.action(internal.edgeProviderOps.rotateCredentials, {
+        accountId: cfId,
+        credentials: { apiToken: 'cf3' },
+      }),
+    ).toMatchObject({ ok: true, credentialsChanged: true });
+    const idleNow = (await t.run((ctx) => ctx.db.get(idle.id as Id<'edgeLocations'>)))!;
+    expect(idleNow.checkError).toBe('tls_configuration_missing');
+    // Switched on again, it is still refused until a check passes.
+    await t.mutation(internal.edgeLocations.update, {
+      id: idle.id as Id<'edgeLocations'>,
+      enabled: true,
+    });
+    const account = (await t.run((ctx) => ctx.db.get(cfId)))!;
+    const relocated = (await t.run((ctx) => ctx.db.get(idle.id as Id<'edgeLocations'>)))!;
+    expect(await t.run((ctx) => l7PlaceProblemOf(ctx.db, account, relocated))).toBe(
+      'location_check_failed',
+    );
+  });
+
+  test('a DNS key that cannot read a zone only switched-off fronts name records it on them, and goes', async () => {
+    const t = newT();
+    const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-dns',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: { dnsAccountId: dnsId },
+      credentials: { apiToken: 'f' },
+    });
+    const front = (await t.query(internal.edgeLocations.listForAccount, { accountId }))[0];
+    await t.mutation(internal.edgeLocations.update, {
+      id: front.id as Id<'edgeLocations'>,
+      enabled: false,
+    });
+    __setEdgeProviderForTests('cloudflare', {
+      ...edgeProviderFor('cloudflare'),
+      testCredentials: async () => ({ ok: true }),
+      discoverOptions: async () => ({ zones: [] }),
+      checkLocation: async () => ({ ok: true, observed: { zoneSslMode: 'full' } }),
+    } as never);
+    // The zone read with the new token fails (the token no longer reaches it).
+    mockFetch(() => jsonRes({ success: false, errors: [{ code: 9109 }] }, 403));
+    expect(
+      await t.action(internal.edgeProviderOps.rotateCredentials, {
+        accountId: dnsId as Id<'edgeProviderAccounts'>,
+        credentials: { apiToken: 'cf2' },
+      }),
+    ).toMatchObject({ ok: true });
+    expect((await t.run((ctx) => ctx.db.get(front.id as Id<'edgeLocations'>)))!.checkError).toBe(
+      'location_unreachable',
+    );
+    // Switched on, the same failure refuses the rotation: its edges would need the token.
+    await t.mutation(internal.edgeLocations.update, {
+      id: front.id as Id<'edgeLocations'>,
+      enabled: true,
+    });
+    expect(
+      await t.action(internal.edgeProviderOps.rotateCredentials, {
+        accountId: dnsId as Id<'edgeProviderAccounts'>,
+        credentials: { apiToken: 'cf3' },
+      }),
+    ).toMatchObject({ ok: false, code: 'location_unreachable' });
+  });
+});
+
 describe('edgeProviderOps: an existing edge acts only where it was placed', () => {
   test("a describe reaches the edge's own region; a placed edge without a placement is refused before any call", async () => {
     const t = newT();
@@ -1346,9 +1456,13 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     );
     expect(removed).toEqual([]);
     await t.run((ctx) => ctx.db.patch(edgeId, { status: 'destroyed', currentOp: undefined }));
-    // Deleting the account now would strand it at the provider.
+    // Deleting the account now would strand it at the provider, and so would
+    // deleting the zone's location (the only record of it).
     await expect(
       t.mutation(internal.edgeProviderAccounts.remove, { id: accountId }),
+    ).rejects.toThrow(/shared_certificate_present/);
+    await expect(
+      t.mutation(internal.edgeLocations.remove, { id: zone.locationId }),
     ).rejects.toThrow(/shared_certificate_present/);
     expect(await t.action(internal.edgeProviderOps.removeSharedCertificate, zone)).toEqual({
       ok: true,
@@ -1439,8 +1553,11 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     const row = (await t.run((ctx) => ctx.db.get(accountId)))!;
     expect(row.lastTestError).toBe('retest_required');
     expect(accountTested(row)).toBe(false);
-    // Each zone's shared certificate is read again by that test.
-    expect((await t.run((ctx) => ctx.db.get(locationId)))!.sharedCertificate).toBeUndefined();
+    // Each zone's shared certificate record stays (the proof a wildcard is
+    // there); the test that comes next reads it again.
+    expect((await t.run((ctx) => ctx.db.get(locationId)))!.sharedCertificate).toMatchObject({
+      name: '*.example.org',
+    });
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: accountId, ok: true });
     expect(accountTested((await t.run((ctx) => ctx.db.get(accountId)))!)).toBe(true);
   });

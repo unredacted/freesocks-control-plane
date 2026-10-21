@@ -1041,8 +1041,15 @@ export const rotateCredentials = internalAction({
       // its zone (or DNS account) in its settings: the location falls back to it.
       const legacy = legacySettingsOf(acct.provider, acct.settings as Record<string, unknown>);
       for (const loc of locations) {
-        if (!loc.enabled && loc.liveEdges === 0) continue;
+        // A place in use (switched on, or holding edges) must stay reachable.
+        // One switched off with nothing in it is checked too, when it can be:
+        // what the new key cannot do there is recorded on it (no new edge is
+        // planned there until a check passes), and it never holds the
+        // rotation back.
+        const inUse = loc.enabled || loc.liveEdges > 0;
+        if (!inUse && !provider.checkLocation) continue;
         const where = { ...cfg, ...legacy, ...loc.placement } as EdgeProviderConfig;
+        const id = loc.id as Id<'edgeLocations'>;
         try {
           if (provider.checkLocation) {
             const p = where as { dnsAccountId?: string; zoneId?: string; zoneName?: string };
@@ -1052,24 +1059,31 @@ export const rotateCredentials = internalAction({
             if (needsDns)
               (where as { dns?: unknown }).dns = await dnsConfigFor(ctx, p.dnsAccountId!, p);
             const res = await provider.checkLocation(where);
-            // Only a zone the new key cannot reach refuses the rotation; a zone
-            // it reaches in a state that refuses new edges (paused, encryption
-            // off) is recorded like any check, and the leaked key still goes.
-            if (!res.ok && !LOCATION_REFUSALS[res.code ?? ''])
+            // Only a zone's own state may refuse a place the new key still
+            // reaches in full (paused, encryption off, CAA): that is recorded
+            // like any check, and the leaked key still goes. Anything the key
+            // itself cannot do there (a TLS configuration it does not see) is
+            // the key's, and the edges there need it.
+            if (!res.ok && !ZONE_STATE_REFUSALS.has(res.code ?? '') && inUse)
               return {
                 ok: false,
                 code: 'location_unreachable',
                 detail: `${loc.label} (${res.code})`,
               };
-            checked.push({ id: loc.id as Id<'edgeLocations'>, res });
+            checked.push({ id, res });
           } else {
             await provider.inventory(where);
           }
         } catch (err) {
+          const code = toOpsFailure(err).data.code;
+          if (!inUse) {
+            checked.push({ id, res: { ok: false, code: 'location_unreachable', detail: code } });
+            continue;
+          }
           return {
             ok: false,
             code: 'location_unreachable',
-            detail: `${loc.label} (${toOpsFailure(err).data.code})`,
+            detail: `${loc.label} (${code})`,
           };
         }
       }
@@ -1087,10 +1101,21 @@ export const rotateCredentials = internalAction({
               accountId: a.accountId,
             }).readZone();
           } catch (err) {
+            const code = toOpsFailure(err).data.code;
+            // A zone only switched-off fronts with nothing in them name: they
+            // record it, and the rotation goes on.
+            if (!z.inUse) {
+              for (const locationId of z.locationIds)
+                checked.push({
+                  id: locationId as Id<'edgeLocations'>,
+                  res: { ok: false, code: 'location_unreachable', detail: code },
+                });
+              continue;
+            }
             return {
               ok: false,
               code: 'location_unreachable',
-              detail: `${z.zoneName} (${toOpsFailure(err).data.code})`,
+              detail: `${z.zoneName} (${code})`,
             };
           }
         }
@@ -1195,6 +1220,18 @@ export const locationOptions = internalAction({
       return provider.discoverOptions({ ...cfg, ...chosen } as never);
     }),
 });
+
+/**
+ * A CDN place's own state, which a check reports while the key still reaches
+ * it in full: a credential rotation records these and goes on.
+ */
+const ZONE_STATE_REFUSALS: ReadonlySet<string> = new Set([
+  'zone_ssl_off',
+  'zone_paused',
+  'zone_not_active',
+  'zone_name_mismatch',
+  'caa_forbids_ca',
+]);
 
 /** A CDN place the provider reached but refused, in words for the admin (`edge.location_unusable`). */
 const LOCATION_REFUSALS: Record<string, string> = {

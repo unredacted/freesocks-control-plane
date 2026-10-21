@@ -225,20 +225,36 @@ async function accountFacts(
         fronts.push(l.key);
     }
     const layer = edgeLayerOf(a.provider);
-    // A CDN account's zone facts are its places': the default location is
-    // the one account-level calls (and these readiness facts) look at.
-    const place =
-      layer === 'l7' ? await l7PlaceOf(ctx.db, a, await defaultLocationOf(ctx.db, a)) : null;
+    const locations = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
+    // A CDN account's zone facts are its places': it is as ready as its best
+    // one, so each fact holds only when every switched-on location has it
+    // (one healthy zone is enough to front). With none switched on, the
+    // default location's facts stand for it.
     let dnsAccountMissing = false;
-    if (place?.dnsAccountId) {
-      const dns = await ctx.db.get(place.dnsAccountId as Id<'edgeProviderAccounts'>);
-      dnsAccountMissing = !dns || !dns.enabled;
+    let zoneModeUnknown = false;
+    let zoneWebsocketsOff = false;
+    if (layer === 'l7') {
+      const dflt = await defaultLocationOf(ctx.db, a);
+      const rows = locations.length > 0 ? locations : dflt ? [dflt] : [null];
+      const facts = [];
+      for (const loc of rows) {
+        const place = await l7PlaceOf(ctx.db, a, loc);
+        const dns = place.dnsAccountId
+          ? await ctx.db.get(place.dnsAccountId as Id<'edgeProviderAccounts'>)
+          : undefined;
+        facts.push({
+          dnsMissing: dns !== undefined && (!dns || !dns.enabled),
+          modeUnknown: zoneModeGovernsOrigin(a.provider) && !place.observed?.zoneSslMode,
+          websocketsOff: place.observed?.websockets === 'off',
+        });
+      }
+      dnsAccountMissing = facts.every((f) => f.dnsMissing);
+      zoneModeUnknown = facts.every((f) => f.modeUnknown);
+      zoneWebsocketsOff = facts.every((f) => f.websocketsOff);
     }
-    const observed = place?.observed ?? {};
     // Trust is per location: the account counts as trusted when one of its
     // enabled locations is, and current when that trust was taken with what
     // the location provisions with now.
-    const locations = (await locationsOfAccount(ctx.db, a._id)).filter((l) => l.enabled);
     let qualified = false;
     let qualificationCurrent = false;
     for (const loc of locations) {
@@ -278,8 +294,8 @@ async function accountFacts(
       qualificationCurrent,
       frontsListeners: fronts,
       dnsAccountMissing,
-      zoneModeUnknown: layer === 'l7' && zoneModeGovernsOrigin(a.provider) && !observed.zoneSslMode,
-      zoneWebsocketsOff: observed.websockets === 'off',
+      zoneModeUnknown,
+      zoneWebsocketsOff,
       templateOk: !templateInvalid && !!(effective.id || EDGE_TEMPLATES[a.provider]),
       templateInvalid,
       defaultTemplateId: (effective.id as string | null) ?? null,

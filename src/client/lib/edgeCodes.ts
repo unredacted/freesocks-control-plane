@@ -1914,11 +1914,11 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
   caa_forbids_ca: {
     label: 'CAA forbids its CA',
     explain: 'The zone’s CAA records do not let this account’s certificate authority issue.',
-    fix: 'Allow it in the CAA records, then test the account again.',
+    fix: 'Allow it in the CAA records and check the zone again, or choose another authority for this node.',
   },
   shared_certificate_failed: {
     label: 'Shared certificate failed',
-    explain: 'The wildcard certificate this account’s fronts share failed to issue.',
+    explain: 'The wildcard certificate this account’s fronts share in this zone failed to issue.',
     fix: 'Open the account to see why, then retry the certificate.',
   },
   shared_certificate_ambiguous: {

@@ -35,6 +35,7 @@ import {
 } from './lib/edges/providers/options';
 import { canonicalJson } from './lib/edges/providers/template';
 import { l7PlaceOf } from './lib/edges/l7Place';
+import { certificateRefusalFor, type CertificateRefusal } from './lib/edges/certificateRefusal';
 import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { assertAdmission } from './lib/edges/maintenance';
 import { parseRegionalParams, withRegionalOverlay } from './lib/edges/locations';
@@ -226,6 +227,16 @@ export async function zonePlanOf(
   return (await l7PlaceOf(db, account, location)).observed?.zonePlan ?? null;
 }
 
+/** A pick's certificate refusal, in words for the protect sheet. */
+const CERTIFICATE_REFUSAL_WORDS: Record<CertificateRefusal, string> = {
+  caa_forbids_ca:
+    "Certificate: the zone's CAA records do not let the account's certificate authority issue; choose another authority for this node, or allow it in the zone",
+  shared_certificate_failed:
+    "Certificate: the zone's shared wildcard failed to issue; choose one certificate per front, or fix it at the provider",
+  shared_certificate_ambiguous:
+    "Certificate: the zone's wildcard is covered by a certificate this account would not order (another authority, or several); remove it or choose one certificate per front",
+};
+
 /** Whether a node serves a REALITY transport (an L4 front's HTTP check would fail on it). */
 export async function relayHasReality(
   db: import('./_generated/server').DatabaseReader,
@@ -296,15 +307,12 @@ export async function checkPickOptions(
           `Certificate authority: the shared wildcard is issued by the account's authority (${String(tested.certificateAuthority)}); to use another, choose one certificate per front`,
         ],
       };
-    if (account.sharedCertificate?.state === 'ambiguous')
-      return {
-        ok: false,
-        code: 'edge.shared_certificate_ambiguous',
-        issues: [
-          "Certificate: the zone's wildcard is covered by a certificate this account would not order (another authority, or several); remove it or choose one certificate per front",
-        ],
-      };
   }
+  // What the zone says about this pick's certificate (the zone's check for the
+  // account's default one, the zone's wildcard for a node that chose it).
+  const refusal = certificateRefusalFor(account, location, options);
+  if (refusal)
+    return { ok: false, code: `edge.${refusal}`, issues: [CERTIFICATE_REFUSAL_WORDS[refusal]] };
   return {
     ok: true,
     options,

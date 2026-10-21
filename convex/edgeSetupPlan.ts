@@ -134,6 +134,8 @@ async function planContextOf(
         maxLiveEdges: number | null;
         /** Why an L7 place cannot front yet (no zone, a refused check, its DNS account off). */
         placeProblem: string | null;
+        /** Why a front on the account's default certificate gets none there (CAA, its wildcard). */
+        certificateRefusal: string | null;
       }>
     > = {};
     for (const a of accounts) {
@@ -152,9 +154,12 @@ async function planContextOf(
           isDefault: !!dflt && dflt._id === loc._id,
           live: await liveCountForLocation(ctx.db, loc),
           maxLiveEdges: loc.maxLiveEdges ?? null,
-          // Why no new front can be planned in this place: a certificate it
-          // could not get (CAA, a failed shared wildcard), else the zone itself.
-          placeProblem: certificateRefusalOf(a, loc) ?? (await l7PlaceProblemOf(ctx.db, a, loc)),
+          // Why no new front can be planned in this place (the zone itself).
+          placeProblem: await l7PlaceProblemOf(ctx.db, a, loc),
+          // The certificate the account's DEFAULT could not get there (CAA, a
+          // failed or foreign wildcard): a pick with its own certificate may
+          // still go, so it is shown, and its pick check judges it.
+          certificateRefusal: certificateRefusalOf(a, loc),
         });
       accountLocations[a._id as string] = rows;
     }
@@ -340,6 +345,7 @@ function accountCompatibility(
       qualified: loc.qualified,
       compatible: why.length === 0,
       reasons: why,
+      certificateRefusal: loc.certificateRefusal,
     };
   });
   if (!locations.some((l) => l.compatible)) reasons.push('no_location');

@@ -62,7 +62,7 @@ import { isCandidateEdge } from './lib/backend/deliveryGate';
 import { assertNoRelayPanelClaim, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { confirmEndpoint, internalRunsOf } from './edgeVerification';
 import { listenersOf } from './relayListeners';
-import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
+import { accountTested, certificateRefusalFor } from './edgeProviderAccounts';
 import { isTerminalPhase } from './lib/edges/rotation';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
 import { defaultLocationOf } from './edgeLocations';
@@ -1852,7 +1852,15 @@ export const prepareContext = internalQuery({
         account: account ? { provider: account.provider, name: account.name } : null,
         location: location && location.enabled ? { id: location._id, label: location.label } : null,
         accountTested: !!account && accountTested(account),
-        certificateRefusal: account ? certificateRefusalOf(account, location) : null,
+        // With the pick's own certificate (a pick from before options: the
+        // account's defaults, live).
+        certificateRefusal: account
+          ? certificateRefusalFor(
+              account,
+              location,
+              pick.options !== undefined ? parseOptionValues(pick.options) : null,
+            )
+          : null,
         accountEnabled: !!account && account.enabled,
       });
     }

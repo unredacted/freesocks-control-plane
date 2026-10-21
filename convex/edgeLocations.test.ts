@@ -12,7 +12,13 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
-import { createAccount, seedEdgeFixture } from './lib/edges/testing/fixtures';
+import {
+  createAccount,
+  insertPanelServer,
+  registerRelay,
+  seedEdgeFixture,
+  wsListener,
+} from './lib/edges/testing/fixtures';
 import { defaultLocationRow, insertPlanned } from './lib/edges/testing/reads';
 import { resolveTemplateFor } from './edgeTemplates';
 
@@ -547,5 +553,57 @@ describe('a location named after its bare region id', () => {
     expect((await defaultLocationRow(t, accountId))!.label).toBe('Region Two');
     // Asked again, nothing is left to name.
     expect(await t.action(internal.edgeProviderOps.relabelLocations, {})).toEqual({ named: 0 });
+  });
+});
+
+describe('edgeLocations: a CDN account is as ready as its best zone', () => {
+  test('a default zone whose DNS account is off does not block an account another zone carries', async () => {
+    const t = convexTest(schema, modules);
+    const dnsOn = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-dns-a',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf-a' },
+    });
+    const dnsOff = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-dns-b',
+      settings: { zoneId: 'b'.repeat(32), zoneName: 'example.net' },
+      credentials: { apiToken: 'cf-b' },
+    });
+    // Its first (default) zone goes through the DNS account switched off below.
+    const front = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-front',
+      settings: { dnsAccountId: dnsOff.id },
+      credentials: { apiToken: 'f' },
+    });
+    const second = await t.mutation(internal.edgeLocations.create, {
+      accountId: front.id,
+      placement: { dnsAccountId: dnsOn.id, zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+    });
+    await t.run((ctx) => ctx.db.patch(dnsOff.id, { enabled: false }));
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: front.id, ok: true });
+    // An origin with a WebSocket transport the CDN account can front.
+    await insertPanelServer(t);
+    await registerRelay(t, {
+      slug: 'o1',
+      nodeName: 'o1',
+      originAddress: '198.51.100.7',
+      listeners: [wsListener({ tlsNames: ['ws.example'] })],
+    });
+    const dnsBlockers = async () =>
+      (await t.query(internal.edgeOperator.setupStatus, { relaySlug: 'o1' })).steps
+        .flatMap((s) => s.blockers)
+        .filter((b) => b.code === 'dns_account_missing');
+    expect(await dnsBlockers()).toEqual([]);
+    // With the healthy zone switched off, nothing carries the account.
+    await t.mutation(internal.edgeLocations.update, {
+      id: second.id as Id<'edgeLocations'>,
+      enabled: false,
+    });
+    expect(await dnsBlockers()).toEqual([
+      expect.objectContaining({ code: 'dns_account_missing', subject: 'acct-front' }),
+    ]);
   });
 });

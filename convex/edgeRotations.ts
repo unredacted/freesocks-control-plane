@@ -48,7 +48,7 @@ import {
   todayKey,
 } from './relays';
 import { insertPlannedEdge } from './edges';
-import { accountTested, certificateRefusalOf, dayKey } from './edgeProviderAccounts';
+import { accountTested, certificateRefusalFor, dayKey } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
 import {
   matchSlotHosts,
@@ -702,9 +702,23 @@ export async function collectStartBlockers(
     const named = a.requestedLocationId ? await ctx.db.get(a.requestedLocationId) : null;
     const accountId = a.requestedAccountId ?? named?.accountId;
     const acct = accountId ? await ctx.db.get(accountId) : null;
-    // The zone it would be planned in: the named one, else the account's default.
+    // The zone it would be planned in: the named one, else the account's
+    // default, with the certificate this front would ask for there.
     const zone = named ?? (acct ? await defaultLocationOf(ctx.db, acct) : null);
-    const certificate = acct ? certificateRefusalOf(acct, zone) : null;
+    const choices =
+      zone && origin
+        ? await choicesFor(
+            ctx,
+            {
+              setupRun: a.setupRun,
+              requestedOptions:
+                a.requestedOptions !== undefined ? JSON.stringify(a.requestedOptions) : undefined,
+            },
+            origin,
+            zone._id,
+          )
+        : null;
+    const certificate = acct ? certificateRefusalFor(acct, zone, choices) : null;
     if (certificate)
       push(
         `edge.${certificate}`,
@@ -2928,7 +2942,11 @@ export async function selectionContext(
     // A certificate that cannot be had (CAA forbids the CA, the shared
     // wildcard failed) is named as such, before the generic untested.
     const zone = named ?? (await defaultLocationOf(ctx.db, a));
-    const certificate = certificateRefusalOf(a, zone);
+    const certificate = certificateRefusalFor(
+      a,
+      zone,
+      zone ? await choicesFor(ctx, rotation, origin, zone._id) : null,
+    );
     if (certificate) return failure(certificate);
     if (!accountTested(a)) return failure('account_untested');
     // A DNS account named on purpose still fronts nothing while the switch is off.
@@ -2993,8 +3011,12 @@ export async function selectionContext(
     // provisioned by FCP and never consume its allocation.
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
     for (const loc of await locationsOfAccount(ctx.db, a._id)) {
-      // A zone whose fronts could not get a certificate is never picked.
-      const certificate = certificateRefusalOf(a, loc);
+      // A zone where this front could not get its certificate is never picked.
+      const certificate = certificateRefusalFor(
+        a,
+        loc,
+        await choicesFor(ctx, rotation, origin, loc._id),
+      );
       if (certificate) {
         certificateRefused = certificateRefused ?? certificate;
         continue;

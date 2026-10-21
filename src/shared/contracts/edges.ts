@@ -2176,6 +2176,12 @@ export const SetupPlanLocation = z.object({
   compatible: z.boolean(),
   /** `SETUP_ACCOUNT_REASONS` codes. */
   reasons: z.array(z.string()),
+  /**
+   * Why a front on the account's default certificate gets none here (a
+   * `SETUP_ACCOUNT_REASONS` code: CAA, the zone's wildcard). The location stays
+   * pickable: a node may choose another certificate under its Options.
+   */
+  certificateRefusal: z.string().nullable().default(null),
 });
 export type SetupPlanLocation = z.infer<typeof SetupPlanLocation>;
 export const SetupPlanAccount = z.object({

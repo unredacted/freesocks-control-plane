@@ -1747,8 +1747,22 @@ describe('edgeSetupRuns: a zone whose fronts could get no certificate', () => {
     });
     const plan = await planFor(t, serverId);
     const offered = plan.accounts.find((a) => a.id === accountId)!;
-    expect(offered).toMatchObject({ compatible: false, reasons: ['no_location'] });
-    expect((offered.locations ?? []).every((l) => l.reasons.includes('caa_forbids_ca'))).toBe(true);
+    // Named on the zone, which stays pickable: a node may choose another
+    // certificate there under its Options (its pick check judges it).
+    expect(offered).toMatchObject({ compatible: true });
+    expect((offered.locations ?? []).every((l) => l.certificateRefusal === 'caa_forbids_ca')).toBe(
+      true,
+    );
+    // A pick on the account's own certificate is refused by the plan.
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const picked = await t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id as string],
+    });
+    expect(picked.set?.problems).toEqual([
+      expect.objectContaining({ locationId: loc._id, reason: 'edge.caa_forbids_ca' }),
+    ]);
     const r = await pump(t, runId, settled);
     expect(r.need).toMatchObject({ code: 'account_incompatible', detail: 'caa_forbids_ca' });
     const relay = r.relayId ? await t.run((ctx) => ctx.db.get(r.relayId!)) : null;

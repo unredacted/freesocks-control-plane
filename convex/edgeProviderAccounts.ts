@@ -57,6 +57,11 @@ import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { liveEdgesOfAccount } from './relays';
 import { fastlyCertificateLockKey } from './lib/edges/lockKeys';
 import { l7PlaceOf } from './lib/edges/l7Place';
+import {
+  removableSharedCertificate,
+  sharedCertificateOrderedByFcp as orderedByFcp,
+  type SharedCertificateRecord,
+} from './lib/edges/sharedCertificate';
 import { assertAdmission } from './lib/edges/maintenance';
 import { type AutoQualifyEvidence } from './lib/edges/autoQualify';
 import {
@@ -481,63 +486,13 @@ export function accountTested(
   return !!a.lastTestOkAt && !a.lastTestError;
 }
 
-/**
- * Why no new front can be planned in this place of the account, though it may
- * be tested: the zone's CAA records forbid the account's certificate authority
- * (`caa_forbids_ca`: the location's check says so, or, for an account checked
- * before its zone was a location, its own credential test), or the wildcard
- * certificate the zone's fronts share failed (`shared_certificate_failed`).
- * Null when nothing certificate-shaped stands in the way. One rule for the
- * selection, the preflight, the start guards, the setup plan and the run.
- * Without a location only the account's own (pre-location) record is read.
- */
-export function certificateRefusalOf(
-  a: Pick<
-    Doc<'edgeProviderAccounts'>,
-    'provider' | 'lastTestError' | 'settings' | 'optionDefaults' | 'sharedCertificate'
-  >,
-  location: Pick<Doc<'edgeLocations'>, 'checkError' | 'sharedCertificate'> | null = null,
-): 'caa_forbids_ca' | 'shared_certificate_failed' | 'shared_certificate_ambiguous' | null {
-  if (location?.checkError === 'caa_forbids_ca' || a.lastTestError === 'caa_forbids_ca')
-    return 'caa_forbids_ca';
-  // The account's default scope (a node may choose its own; its front waits on
-  // the certificate step instead).
-  const wildcard = accountOptionDefaultsOf(a).certificateScope === 'wildcard';
-  const shared = location ? location.sharedCertificate : a.sharedCertificate;
-  if (wildcard && shared?.state === 'failed') return 'shared_certificate_failed';
-  // A wildcard the account would not order (another CA or configuration, or
-  // several): its certificate step refuses every time, so nothing is built
-  // for it first.
-  if (wildcard && shared?.state === 'ambiguous') return 'shared_certificate_ambiguous';
-  return null;
-}
+// One rule for every caller (lib/edges/certificateRefusal.ts).
+export { certificateRefusalFor, certificateRefusalOf } from './lib/edges/certificateRefusal';
 
 function pick(obj: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of keys) if (obj[k] !== undefined) out[k] = obj[k];
   return out;
-}
-
-/** Shared-certificate states that are FCP's to remove (a record of another account's is not). */
-// `ambiguous` with a subscription named: one this account ordered under an
-// authority it no longer defaults to (still FCP's to remove).
-const REMOVABLE_SHARED_STATES = new Set([
-  'pending',
-  'processing',
-  'issued',
-  'renewing',
-  'failed',
-  'ambiguous',
-]);
-
-type SharedCertificateRecord = { state: string; subscriptionId?: string } | null | undefined;
-
-/** Whether this recorded shared certificate is one FCP can remove (it ordered it, it is there). */
-function removableSharedCertificate(
-  a: Pick<Doc<'edgeProviderAccounts'>, 'orderedSharedResources'>,
-  sc: SharedCertificateRecord,
-): boolean {
-  return !!sc && REMOVABLE_SHARED_STATES.has(sc.state) && sharedCertificateOrderedByFcp(a, sc);
 }
 
 /**
@@ -550,24 +505,22 @@ export async function holdsSharedCertificate(
   db: QueryCtx['db'],
   a: Pick<Doc<'edgeProviderAccounts'>, '_id' | 'sharedCertificate' | 'orderedSharedResources'>,
 ): Promise<boolean> {
-  if (removableSharedCertificate(a, a.sharedCertificate)) return true;
+  const ordered = a.orderedSharedResources;
+  if (removableSharedCertificate(ordered, a.sharedCertificate)) return true;
   for (const loc of await locationsOfAccount(db, a._id))
-    if (removableSharedCertificate(a, loc.sharedCertificate)) return true;
+    if (removableSharedCertificate(ordered, loc.sharedCertificate)) return true;
   return false;
 }
 
 /**
  * Whether an edge of this account ORDERED a recorded shared certificate (a
- * zone's, `orderedSharedResources`, written when its step created it): a
- * wildcard the account merely found and reused may serve somebody else's
- * services, so FCP never removes it.
+ * zone's): only then is it FCP's to remove (lib/edges/sharedCertificate.ts).
  */
 export function sharedCertificateOrderedByFcp(
   a: Pick<Doc<'edgeProviderAccounts'>, 'orderedSharedResources'>,
   sc: SharedCertificateRecord,
 ): boolean {
-  const id = sc?.subscriptionId;
-  return !!id && (a.orderedSharedResources ?? []).includes(`tls_subscription:${id}`);
+  return orderedByFcp(a.orderedSharedResources, sc);
 }
 
 /** A removal's hold on the zone's certificate lock (the provisioning steps wait on it). */
@@ -941,12 +894,11 @@ export const update = internalMutation({
       // A certificate option's account default (the authority, the scope).
       optionChangeList.some((c) => certificateKeysOf(row.provider).includes(c.key))
     ) {
+      // Each zone's shared certificate record stays: it is the proof a
+      // wildcard FCP ordered is still at the provider (its removal and the
+      // delete guards read it); the test that comes next reads it again.
       patch.lastTestError = 'retest_required';
       patch.lastTestErrorDetail = undefined;
-      patch.sharedCertificate = undefined;
-      // Each zone's shared certificate too: the test reads them again.
-      for (const loc of await locationsOfAccount(ctx.db, row._id))
-        if (loc.sharedCertificate) await ctx.db.patch(loc._id, { sharedCertificate: undefined });
     }
     await ctx.db.patch(a.id, patch);
     const fresh = (await ctx.db.get(a.id))!;

@@ -315,8 +315,12 @@
     [...(plan?.accounts ?? [])].sort((a, b) => Number(b.compatible) - Number(a.compatible)),
   );
   const compatible = $derived(accounts.filter((a) => a.compatible));
+  // A zone where the account's own certificate cannot be had is offered, never
+  // picked for you: it goes only with another certificate chosen under Options.
   const offered = $derived(
-    compatible.flatMap((a) => a.locations.filter((l) => l.compatible).map((l) => l.id)),
+    compatible.flatMap((a) =>
+      a.locations.filter((l) => l.compatible && !l.certificateRefusal).map((l) => l.id),
+    ),
   );
   function setPicks(next: string[]) {
     picks = next;
@@ -803,6 +807,9 @@
                               <span class="text-muted-foreground block text-xs">
                                 {#if !l.compatible}
                                   {l.reasons.map(reasonLabel).join('. ')}.
+                                {:else if l.certificateRefusal}
+                                  {reasonLabel(l.certificateRefusal)} (the account's own certificate).
+                                  Another can be chosen under Options.
                                 {:else if l.qualified}
                                   Trusted.
                                 {:else}

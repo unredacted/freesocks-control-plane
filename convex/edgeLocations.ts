@@ -44,6 +44,10 @@ import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQ
 import { verificationEndpoint } from './lib/edges/verification';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
+import {
+  removableSharedCertificate,
+  sharedCertificateOrderedByFcp,
+} from './lib/edges/sharedCertificate';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 
 export type Location = Doc<'edgeLocations'>;
@@ -539,17 +543,18 @@ export async function locationsAdminOf(
   account: Pick<Account, '_id' | 'defaultLocationId' | 'orderedSharedResources'>,
 ): Promise<LocationAdmin[]> {
   const dflt = await defaultLocationOf(db, account);
-  const ordered = new Set(account.orderedSharedResources ?? []);
   const out: LocationAdmin[] = [];
   for (const r of await locationsOfAccount(db, account._id)) {
-    const subscription = r.sharedCertificate?.subscriptionId;
     out.push(
       mapLocationAdmin(r, {
         liveEdges: await liveCountForLocation(db, r),
         isDefault: !!dflt && dflt._id === r._id,
         sharedUsers: r.sharedCertificate ? await sharedCertificateUsers(db, r) : 0,
-        // An edge of the account created it (edgeProviderAccounts.sharedCertificateOrderedByFcp).
-        orderedByFcp: !!subscription && ordered.has(`tls_subscription:${subscription}`),
+        // An edge of the account created it (lib/edges/sharedCertificate.ts).
+        orderedByFcp: sharedCertificateOrderedByFcp(
+          account.orderedSharedResources,
+          r.sharedCertificate,
+        ),
       }),
     );
   }
@@ -913,6 +918,13 @@ export const remove = internalMutation({
         code: 'edge.location_in_use',
         message: 'A node is being protected in this location; finish or cancel that first',
       });
+    // Nor one whose wildcard FCP ordered is still at the provider: this row is
+    // the only record of it, and the account's delete guard reads its zones.
+    if (removableSharedCertificate(account?.orderedSharedResources, row.sharedCertificate))
+      throw new ConvexError({
+        code: 'edge.shared_certificate_present',
+        message: 'This zone still has a shared certificate; remove it first',
+      });
     await ctx.db.delete(id);
     if (account && account.defaultLocationId === id) {
       const next = (await locationsOfAccount(ctx.db, account._id))[0];
@@ -1001,16 +1013,31 @@ export const recordCheck = internalMutation({
 
 /**
  * The zones OTHER accounts write through this DNS account: the zones of the
- * front locations naming it (switched on, or with edges), of live fronts whose
- * intent names it, and the origin-name zones of backend setups. A credential
- * rotation reads each with the new token before it is applied.
+ * front locations naming it, of live fronts whose intent names it, and the
+ * origin-name zones of backend setups. A credential rotation reads each with
+ * the new token before it is applied. `inUse`: a location there is switched on
+ * or holds edges, a live front names it, or an origin name lives there (the
+ * rotation must reach it); otherwise only switched-off fronts with nothing in
+ * them name it (`locationIds`: they record a zone the new token cannot read).
  */
 export const zonesWrittenThrough = internalQuery({
   args: { accountId: v.id('edgeProviderAccounts') },
   handler: async (ctx, { accountId }) => {
-    const zones = new Map<string, { zoneId: string; zoneName: string }>();
-    const add = (zoneId?: string, zoneName?: string) => {
-      if (zoneId && !zones.has(zoneId)) zones.set(zoneId, { zoneId, zoneName: zoneName ?? '' });
+    const zones = new Map<
+      string,
+      { zoneId: string; zoneName: string; inUse: boolean; locationIds: string[] }
+    >();
+    const add = (
+      zoneId: string | undefined,
+      zoneName: string | undefined,
+      inUse: boolean,
+      locationId?: string,
+    ) => {
+      if (!zoneId) return;
+      const z = zones.get(zoneId) ?? { zoneId, zoneName: zoneName ?? '', inUse, locationIds: [] };
+      z.inUse ||= inUse;
+      if (locationId && !z.locationIds.includes(locationId)) z.locationIds.push(locationId);
+      zones.set(zoneId, z);
     };
     for (const provider of ['fastly'] as const) {
       const rows = await ctx.db
@@ -1020,17 +1047,18 @@ export const zonesWrittenThrough = internalQuery({
       for (const r of rows) {
         const p = r.placement as { dnsAccountId?: string; zoneId?: string; zoneName?: string };
         if (p.dnsAccountId !== (accountId as string)) continue;
-        if (r.enabled || (await liveEdgesOfLocation(ctx.db, r)).length > 0)
-          add(p.zoneId, p.zoneName);
-        for (const e of await liveEdgesOfLocation(ctx.db, r)) {
+        const live = await liveEdgesOfLocation(ctx.db, r);
+        add(p.zoneId, p.zoneName, r.enabled || live.length > 0, r._id as string);
+        for (const e of live) {
           const intent = parseIntent(e.provisionIntent);
-          if (intent?.dnsAccountId === (accountId as string)) add(intent.zoneId, intent.zoneName);
+          if (intent?.dnsAccountId === (accountId as string))
+            add(intent.zoneId, intent.zoneName, true);
         }
       }
     }
     for (const setup of await ctx.db.query('panelSetups').collect())
       if (setup.originDns?.accountId === accountId)
-        add(setup.originDns.zoneId, setup.originDns.zoneName);
+        add(setup.originDns.zoneId, setup.originDns.zoneName, true);
     return [...zones.values()];
   },
 });
