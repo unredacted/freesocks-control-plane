@@ -28,6 +28,7 @@ import type { DnsClient, DnsCreateArgs, DnsRecord, DnsRecordType } from './dns/t
 import { __setFastlyBasePath, fastlyApiFor } from './fastly/sdk';
 import type { CaaRecord } from '../caa';
 import {
+  FASTLY_CLIENT_ADDRESS_HEADERS,
   FASTLY_DESTROY_ORDER,
   FASTLY_WS_UPGRADE_VCL,
   fastlySnippetBodies,
@@ -524,9 +525,14 @@ describe('fastly: request bodies', () => {
       [
         `unset ${obj}.http.Fastly-Client-IP;`,
         `unset ${obj}.http.X-Forwarded-For;`,
+        `unset ${obj}.http.Fastly-Temp-XFF;`,
+        `unset ${obj}.http.Fastly-WAF-Client-IP;`,
         `unset ${obj}.http.True-Client-IP;`,
         `unset ${obj}.http.X-Real-IP;`,
         `unset ${obj}.http.Forwarded;`,
+        `unset ${obj}.http.X-Client-IP;`,
+        `unset ${obj}.http.Client-IP;`,
+        `unset ${obj}.http.X-Cluster-Client-IP;`,
       ].join(' ');
     // The generated VCL, pinned whole: every request loses the headers in
     // vcl_recv BEFORE the handoff (nothing runs after return(upgrade)), and a
@@ -566,6 +572,25 @@ describe('fastly: request bodies', () => {
       fastlySnippetBody({ forwardClientAddress: true }),
     ]);
     expect(fastlySnippetBody({ forwardClientAddress: true }).content).toBe(FASTLY_WS_UPGRADE_VCL);
+  });
+
+  test('Fastly-WAF-Client-IP, seen on a node behind a front, goes before the handoff too', () => {
+    // A capture on a node's loopback showed it, with the member's address, on
+    // every WebSocket request through a front whose VCL removed only the
+    // other headers. It goes in vcl_recv (the upgrade path runs nothing
+    // later) and from the backend request of one that is not handed off.
+    const [miss, pass, recv] = fastlySnippetBodies().map((s) => s.content);
+    const waf = (obj: string) => `unset ${obj}.http.Fastly-WAF-Client-IP;`;
+    expect(recv).toContain(waf('req'));
+    expect(recv!.indexOf(waf('req'))).toBeLessThan(recv!.indexOf('return(upgrade)'));
+    expect(miss).toContain(waf('bereq'));
+    expect(pass).toContain(waf('bereq'));
+    // Every named header is removed on every path, each exactly once.
+    for (const h of FASTLY_CLIENT_ADDRESS_HEADERS) {
+      expect(recv!.split(`unset req.http.${h};`)).toHaveLength(2);
+      expect(miss!.split(`unset bereq.http.${h};`)).toHaveLength(2);
+      expect(pass!.split(`unset bereq.http.${h};`)).toHaveLength(2);
+    }
   });
 
   test('a retried snippet step takes the snippets a partial run already made', async () => {
