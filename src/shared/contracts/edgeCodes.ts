@@ -519,8 +519,10 @@ export const SETUP_ACCOUNT_REASONS = [
   'account_untested',
   'account_disabled',
   'layer_mismatch',
-  // The account could carry a transport whose origin did not answer the probe.
+  // The account could carry a transport whose origin did not answer the probe,
+  // or whose address the probe refuses outright (private, or none at all).
   'origin_unreachable',
+  'origin_not_public',
   'origin_port_not_carried',
   'account_capacity_reached',
   'account_budget_exhausted',

@@ -283,7 +283,8 @@ carries the probe's reason. The setup plan asks a target that got no answer agai
 (`ORIGIN_PROBE_ATTEMPTS`, 3, half a second apart; an address the probe refuses outright is not
 asked again), and when it never answers the plan says so: the inbound carries `probeFailed` and
 an L7 account that would carry it reads `origin_unreachable` ("Couldn't reach the origin. Try
-again", which plans again) instead of `layer_mismatch`. For an **enrolled** node the plan reads the node from its intent
+again", which plans again) instead of `layer_mismatch`, or `origin_not_public` when the probe
+refused the address outright (private or none: checking again gives the same answer). For an **enrolled** node the plan reads the node from its intent
 (`nodeIntents.enrolledOriginOf`: the origin name plus the ingress), and the Host-header answer
 comes from the node's verified ingress, not the probe: the `ingress_verified` evidence recorded at
 `machine_ready` with `settings.ingress.hostHeader: 'any'` gives `acceptsHostHeader: any`
@@ -932,7 +933,10 @@ members (`edgeSetupRuns.originEverServed`: no edge ever published, no hide row, 
 naming it), which is deleted like an earlier cancel so the node is free to protect again;
 after go-live there is no cancel. An origin a failed or cancelled run left owned (no run live
 on it) is a **leftover**: the protect sheet offers its node again (`nodeCandidates.leftover`,
-"Half set up") and the new run resumes it (`plan.existingRelay`); the node page offers
+"Half set up") and the new run resumes it (`plan.existingRelay`) at its recorded stage, at
+publish at the latest: the new run's listeners hold no edge until publish (through provision)
+takes the origin's own back, so a later stage would wait on addresses it never attached; the
+node page offers
 **Continue setup** when nothing of it is in use. The node's newest run, when it failed, is
 named by the origin status (`failedRunId`, "Open the run" on the node page; the Edges home row
 opens its sheet) and by attention `setup_run_failed` (warning; info for a re-protect, whose

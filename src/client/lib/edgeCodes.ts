@@ -1897,6 +1897,12 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
       'The node did not answer the check of its WebSocket or HTTP transport, so no CDN account can carry it yet. This is usually a passing network fault.',
     fix: 'Check again in a moment.',
   },
+  origin_not_public: {
+    label: 'Origin address is not public',
+    explain:
+      'The node’s address or name leads to no public address, so no CDN can reach its WebSocket or HTTP transport. Checking again gives the same answer.',
+    fix: 'Give the node a public address or point its name at one, then plan again.',
+  },
   origin_port_not_carried: {
     label: 'Wrong port for gRPC',
     explain: 'A CDN passes gRPC only to a node listening on port 443.',

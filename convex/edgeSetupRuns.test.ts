@@ -1501,6 +1501,20 @@ describe('edgeSetupRuns: cancel', () => {
     expect(relay.deleting).toBeUndefined();
     expect(relay.publishedEdgeIds.filter(Boolean)).toHaveLength(1);
     expect(await audits(t, 'edge.setup_run.cancelled')).toHaveLength(2);
+    // Protecting the leftover again resumes at publish, not at the rehearsal it
+    // was cancelled in: the new run's listeners hold no edge until publish
+    // (through provision) takes the origin's own back.
+    await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { render: { clients: { mihomo: { enabled: true } } } },
+    });
+    const { runId: run3 } = await startRun(t, serverId, accountId);
+    const r3start = await run(t, run3);
+    expect(r3start.relayId).toBe(relay._id);
+    expect(r3start.stage).toBe('publish');
+    const r3 = await pump(t, run3, settled);
+    // It takes the origin's own edges back and goes live (no card without links).
+    expect([r3.stage, r3.state]).toEqual(['done', 'done']);
+    expect(r3.listeners.every((l) => !!l.edgeId)).toBe(true);
   });
 });
 

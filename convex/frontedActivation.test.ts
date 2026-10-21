@@ -802,6 +802,7 @@ describe('a fronted node goes from enrollment to members', () => {
       ).find((n) => n.name === NODE_W)!;
       let looks = 0;
       let answerFrom = 2;
+      let failure = 'timeout';
       __setPlanOpsForTests({
         pause: async () => {},
         probeOrigins: async (_ctx, a) => {
@@ -817,7 +818,7 @@ describe('a fronted node goes from enrollment to members', () => {
                     acceptsHostHeader: 'names' as const,
                   },
                 }
-              : { originTransport: null, reason: 'timeout' }),
+              : { originTransport: null, reason: failure }),
           }));
         },
       });
@@ -843,6 +844,15 @@ describe('a fronted node goes from enrollment to members', () => {
       expect(acct.compatible).toBe(false);
       expect(acct.reasons).toContain('origin_unreachable');
       expect(acct.reasons).not.toContain('layer_mismatch');
+      // An address the probe refuses outright is not asked again, and says so:
+      // another look would give the same answer.
+      looks = 0;
+      failure = 'private_address';
+      p = await plan();
+      expect(looks).toBe(1);
+      const refused = p.accounts.find((a) => a.id === (l7 as string))!;
+      expect(refused.reasons).toContain('origin_not_public');
+      expect(refused.reasons).not.toContain('origin_unreachable');
     } finally {
       l7Fake.uninstall();
     }

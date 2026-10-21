@@ -325,8 +325,10 @@ function accountCompatibility(
   const carries: string[] = [];
   let portOnly = false;
   let scoped = false;
-  // A transport the account WOULD carry had the origin answered its probe.
-  let unanswered = false;
+  // A transport the account WOULD carry had the origin answered its probe:
+  // `retry` when another look may answer, `final` when the address itself
+  // rules it out (private or none).
+  let unanswered: 'retry' | 'final' | null = null;
   for (const inb of required) {
     const spec = inb.listenerSpec as ListenerSpecInput;
     const proto = {
@@ -361,7 +363,8 @@ function accountCompatibility(
         dnsProvidersFront,
       }).length > 0
     )
-      unanswered = true;
+      unanswered =
+        unanswered === 'retry' || !PROBE_FINAL_REASONS.has(inb.probeFailed) ? 'retry' : 'final';
     // The layer and the transport fit, the port does not (gRPC behind a CDN
     // is proxied to 443 only): say so, the operator moves the transport.
     if (
@@ -375,11 +378,13 @@ function accountCompatibility(
     reasons.push(
       scoped
         ? 'provider_mismatch'
-        : unanswered
+        : unanswered === 'retry'
           ? 'origin_unreachable'
-          : portOnly
-            ? 'origin_port_not_carried'
-            : 'layer_mismatch',
+          : unanswered === 'final'
+            ? 'origin_not_public'
+            : portOnly
+              ? 'origin_port_not_carried'
+              : 'layer_mismatch',
     );
   // Room for one address: what a pick really gets is the set's cover, summed
   // per account and location over its targets (`setOfPicks`).

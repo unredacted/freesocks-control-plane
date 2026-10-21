@@ -953,8 +953,11 @@ export const insert = internalMutation({
           recorded && (SETUP_RUN_STAGES as readonly string[]).includes(recorded)
             ? recorded
             : 'credential';
-        // A recorded terminal stage resumes at go_live (the origin is still owned).
-        if (stage === 'done') stage = 'go_live';
+        // The new run's listeners hold no edge yet, and only publish (through
+        // provision, which takes the origin's own edges back) can give them
+        // one: a stage past it (hiding, the rehearsal, go-live, or a finished
+        // run) would wait on addresses it never attached. It resumes at publish.
+        if (STAGE_INDEX[stage] > STAGE_INDEX.publish) stage = 'publish';
       }
     }
     const layerOf = (locationId: Id<'edgeLocations'>) =>
