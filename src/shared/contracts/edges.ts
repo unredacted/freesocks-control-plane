@@ -2713,6 +2713,8 @@ export const SetupRunRetryRequest = z.object({
   tryAnotherAddress: z.boolean().optional(),
   /** With `tryAnotherAddress` at `try_it`: the one line that does not work (only it is replaced). */
   edgeId: z.string().optional(),
+  /** At `address_unreachable` / `blocked_in`: check the same address again (fresh evidence only). */
+  checkAgain: z.boolean().optional(),
   acceptPartial: z.boolean().optional(),
   accountId: z.string().optional(),
   /** Another location (of `accountId`, or of the run's account). */

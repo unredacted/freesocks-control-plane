@@ -779,6 +779,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         await ctx.runMutation(internal.edgeSetupRuns.retry, {
           runId,
           ...(body.tryAnotherAddress === true ? { tryAnotherAddress: true } : {}),
+          ...(body.checkAgain === true ? { checkAgain: true } : {}),
           ...(body.acceptPartial === true ? { acceptPartial: true } : {}),
           ...(typeof body.edgeId === 'string' && body.edgeId
             ? { edgeId: id<'edges'>(body.edgeId) }

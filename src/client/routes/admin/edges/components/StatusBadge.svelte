@@ -3,6 +3,7 @@
   export type StatusKind =
     | 'status'
     | 'health'
+    | 'reach'
     | 'publication'
     | 'phase'
     | 'readiness'
@@ -16,7 +17,8 @@
    * A status chip in words with a tone.
    *
    * Props:
-   *   kind: StatusKind        'status' (edge status) | 'health' | 'publication' | 'phase' (rotation)
+   *   kind: StatusKind        'status' (edge status) | 'health' (the provider's own check)
+   *                           | 'reach' (from outside: an `outsideReachOf` word) | 'publication' | 'phase' (rotation)
    *                           | 'readiness' (dns/certificate/front) | 'host' (backend Host state)
    *                           | 'setup' (setup step status) | 'severity' (attention)
    *   value: string           the raw server value
@@ -30,6 +32,7 @@
   import {
     EDGE_HEALTH_LABELS,
     HOST_STATE_LABELS,
+    OUTSIDE_REACH_LABELS,
     READINESS_LABELS,
     SETUP_STATUS_LABELS,
     edgeStatusLabel,
@@ -37,6 +40,7 @@
     healthTone,
     hostStateTone,
     humanizeCode,
+    outsideReachTone,
     phaseLabel,
     phaseTone,
     publicationLabel,
@@ -70,6 +74,12 @@
         return { label: edgeStatusLabel(value), tone: edgeStatusTone(value) };
       case 'health':
         return { label: EDGE_HEALTH_LABELS[value] ?? humanizeCode(value), tone: healthTone(value) };
+      case 'reach':
+        return {
+          label:
+            OUTSIDE_REACH_LABELS[value as keyof typeof OUTSIDE_REACH_LABELS] ?? humanizeCode(value),
+          tone: outsideReachTone(value),
+        };
       case 'publication':
         return { label: publicationLabel(value), tone: publicationTone(value) };
       case 'phase':

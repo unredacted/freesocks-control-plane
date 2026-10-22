@@ -88,6 +88,7 @@ import type {
   LocationCheckResult,
   EdgeProvider,
   EdgeProviderConfig,
+  ReapplyOutcome,
   ResourceStep,
   SharedCertificateStatus,
   SharedTeardownState,
@@ -1959,6 +1960,21 @@ export const describe = internalAction({
     tracked(ctx, a.accountId, async (seen) => {
       const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
       return jsonSafe(await provider.describe(cfg, a.ledger as Ledger)) as EdgeDescription;
+    }),
+});
+
+/**
+ * Save an edge's configuration again, unchanged (`EdgeProvider.reapply`): a
+ * guided run's one retry when its outside check finds a new address
+ * unreachable. `not_offered` when the adapter has nothing to save again.
+ */
+export const reapply = internalAction({
+  args: { accountId: v.id('edgeProviderAccounts'), ledger, edgeId: v.optional(v.id('edges')) },
+  handler: (ctx, a): Promise<ReapplyOutcome | { status: 'skipped'; code: 'not_offered' }> =>
+    tracked(ctx, a.accountId, async (seen) => {
+      const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
+      if (!provider.reapply) return { status: 'skipped' as const, code: 'not_offered' as const };
+      return provider.reapply(cfg, a.ledger as Ledger);
     }),
 });
 
