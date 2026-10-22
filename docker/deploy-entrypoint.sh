@@ -137,7 +137,13 @@ if [ "${DEPLOY_SKIP_NODE_FLOOR:-false}" != "true" ]; then
 fi
 
 echo "[deploy] pushing functions to ${CONVEX_SELF_HOSTED_URL}"
-bunx convex deploy -y
+# --skip-large-indexes-check: from convex 1.47.0 a push that adds an index on a
+# table of 100k+ documents asks for confirmation, and with no TTY (this
+# container) the CLI exits 1 instead, leaving the backend on the old code.
+# Deleting such an index already failed that way. The flag lets both through:
+# an added index blocks the deploy until it is backfilled, as before 1.47. To
+# not block, mark the index `staged: true` and drop that in a later push.
+bunx convex deploy -y --skip-large-indexes-check
 
 if [ "${DEPLOY_SKIP_NODE_FLOOR:-false}" != "true" ]; then
   echo "[deploy] checking the backend's Node runtime for \"use node\" actions"
