@@ -37,7 +37,13 @@
     refreshEdgeLive,
     setEdgeLiveSnapshot,
   } from '@client/lib/edgesApi';
-  import { codeLabel, humanizeCode, readinessTone, READINESS_LABELS } from '@client/lib/edgeCodes';
+  import {
+    codeLabel,
+    humanizeCode,
+    outsideReachOf,
+    readinessTone,
+    READINESS_LABELS,
+  } from '@client/lib/edgeCodes';
   import { EDGE_PROVIDER_META } from '@client/lib/edgeProviderMeta';
   import { countryName } from '@client/lib/countries';
   import AdminListState from '../../AdminListState.svelte';
@@ -186,7 +192,7 @@
       { label: 'Created', value: when(edge.createdAt) },
       { label: 'Status changed', value: when(edge.statusChangedAt) },
       { label: 'Published', value: when(edge.publishedAt) },
-      { label: 'Last health check', value: when(edge.lastHealthAt) },
+      { label: 'Last provider check', value: when(edge.lastHealthAt) },
       { label: 'Draining until', value: when(edge.drainUntil) },
       { label: 'Burned', value: when(edge.burnedAt) },
       { label: 'Destroyed', value: when(edge.destroyedAt) },
@@ -254,6 +260,7 @@
           <StatusBadge kind="status" value={edge.status} />
           <StatusBadge kind="publication" value={edge.publication} />
           <StatusBadge kind="health" value={edge.health} />
+          <StatusBadge kind="reach" value={outsideReachOf(edge.reachability)} />
         </div>
       {/if}
     </Sheet.Header>

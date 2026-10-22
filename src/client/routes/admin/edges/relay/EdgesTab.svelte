@@ -18,7 +18,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Switch } from '@client/components/ui/switch';
   import { Label } from '@client/components/ui/label';
-  import { codeLabel } from '@client/lib/edgeCodes';
+  import { codeLabel, outsideReachOf } from '@client/lib/edgeCodes';
   import { relaySimulationsQuery } from '@client/lib/edgesApi';
   import AdminListState from '../../AdminListState.svelte';
   import LayerBadge from '../components/LayerBadge.svelte';
@@ -192,6 +192,7 @@
                 <div class="flex flex-wrap gap-1">
                   <StatusBadge kind="status" value={e.status} />
                   <StatusBadge kind="health" value={e.health} />
+                  <StatusBadge kind="reach" value={outsideReachOf(e.reachability)} />
                   <StatusBadge kind="publication" value={e.publication} />
                   {#if testBlocked.has(e.id)}
                     <Badge
