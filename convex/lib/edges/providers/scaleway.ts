@@ -50,6 +50,7 @@ import { addressFamily } from '../ip';
 import {
   ScalewayTemplate,
   SCALEWAY_TEMPLATE_FIELDS,
+  durationMs,
   type ScalewayTemplateParams,
 } from './templates';
 
@@ -186,6 +187,56 @@ function addressesOf(ips: Array<{ ipAddress: string }>): Addresses {
   return out;
 }
 
+/** A template duration as whole milliseconds; a value that is none refuses the run. */
+function msOf(value: string, key: string, step: string): number {
+  const ms = durationMs(value);
+  if (ms !== null) return ms;
+  throw new EdgeProviderError(`scaleway: ${key} is not a whole number of milliseconds`, {
+    provider: 'scaleway',
+    step,
+    code: 'template_invalid',
+    retryable: false,
+    timedOut: false,
+  });
+}
+
+/**
+ * The eight timing fields as the API reads them; a backend or frontend create
+ * and its update take the same. The template keeps `600s`-style values.
+ *
+ * - `check_delay`, `check_timeout`, `timeout_server`, `timeout_connect`,
+ *   `timeout_tunnel` and `timeout_client` are int64 MILLISECONDS (Scaleway's Go
+ *   SDK sends them as `marshaler.Duration`, a JSON integer). The JS SDK types
+ *   them as strings and marshals them unchanged, so a `5s` reached the API as is
+ *   and was refused (`invalid value for int64 field milliseconds`): the number
+ *   goes in the string's place and the body carries a JSON integer.
+ * - `transient_check_delay` and `timeout_queue` are protobuf durations (the Go
+ *   SDK's `scw.Duration`, `"0.500000000s"`): they stay strings, in seconds.
+ */
+export function scalewayTimings(tpl: ScalewayTemplateParams, step: string) {
+  const ms = (value: string, key: string) => msOf(value, key, step) as unknown as string;
+  const seconds = (value: string, key: string) => `${msOf(value, key, step) / 1000}s`;
+  const hc = tpl.healthCheck;
+  return {
+    backend: {
+      timeoutServer: ms(tpl.timeoutServer, 'timeoutServer'),
+      timeoutConnect: ms(tpl.timeoutConnect, 'timeoutConnect'),
+      timeoutTunnel: ms(tpl.timeoutTunnel, 'timeoutTunnel'),
+      ...(tpl.timeoutQueue ? { timeoutQueue: seconds(tpl.timeoutQueue, 'timeoutQueue') } : {}),
+    },
+    healthCheck: {
+      checkDelay: ms(hc.checkDelay, 'healthCheck.checkDelay'),
+      checkTimeout: ms(hc.checkTimeout, 'healthCheck.checkTimeout'),
+      ...(hc.transientCheckDelay
+        ? {
+            transientCheckDelay: seconds(hc.transientCheckDelay, 'healthCheck.transientCheckDelay'),
+          }
+        : {}),
+    },
+    frontend: { timeoutClient: ms(tpl.timeoutClient, 'timeoutClient') },
+  };
+}
+
 function lbState(status: string): EdgeDescription['state'] {
   switch (status) {
     case 'ready':
@@ -237,6 +288,8 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
   },
 
   planProvision(_cfg, spec, tpl) {
+    // A timing the API cannot take refuses the run before anything is billed.
+    scalewayTimings(tpl, 'plan');
     const steps: ResourceStep[] = [
       { id: 'ip4', kind: 'allocate_ip', resourceName: spec.name, discoverability: 'by_tag' },
     ];
@@ -349,6 +402,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
       case 'create_backend': {
         const lb = firstResource(ledger, 'lb');
         if (!lb) throw ledgerIncomplete(step);
+        const timings = scalewayTimings(tpl, step.id);
         const backend = await sdk(cfg, step.id, () =>
           api.createBackend({
             lbId: lb.resourceId,
@@ -360,25 +414,18 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             stickySessionsCookieName: '',
             healthCheck: {
               port: listener.members[0]?.port ?? 443,
-              checkDelay: tpl.healthCheck.checkDelay,
-              checkTimeout: tpl.healthCheck.checkTimeout,
+              ...timings.healthCheck,
               checkMaxRetries: tpl.healthCheck.checkMaxRetries,
-              ...(tpl.healthCheck.transientCheckDelay
-                ? { transientCheckDelay: tpl.healthCheck.transientCheckDelay }
-                : {}),
               tcpConfig: {},
               checkSendProxy: false,
             },
             serverIp: listener.members.map((m) => m.address),
-            timeoutServer: tpl.timeoutServer,
-            timeoutConnect: tpl.timeoutConnect,
-            timeoutTunnel: tpl.timeoutTunnel,
+            ...timings.backend,
             proxyProtocol: 'proxy_protocol_none',
             onMarkedDownAction: tpl.closeOnFailure
               ? 'shutdown_sessions'
               : 'on_marked_down_action_none',
             ...(tpl.maxConnections !== undefined ? { maxConnections: tpl.maxConnections } : {}),
-            ...(tpl.timeoutQueue ? { timeoutQueue: tpl.timeoutQueue } : {}),
             ...(tpl.maxRetries !== undefined ? { maxRetries: tpl.maxRetries } : {}),
           }),
         );
@@ -391,13 +438,14 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         const lb = firstResource(ledger, 'lb');
         const backend = firstResource(ledger, 'backend');
         if (!lb || !backend) throw ledgerIncomplete(step);
+        const { frontend: timings } = scalewayTimings(tpl, step.id);
         const frontend = await sdk(cfg, step.id, () =>
           api.createFrontend({
             lbId: lb.resourceId,
             name: step.resourceName,
             inboundPort: listener.edgePort,
             backendId: backend.resourceId,
-            timeoutClient: tpl.timeoutClient,
+            ...timings,
             enableHttp3: false,
             enableAccessLogs: false,
             ...(tpl.connectionRateLimit ? { connectionRateLimit: tpl.connectionRateLimit } : {}),

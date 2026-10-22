@@ -2643,6 +2643,20 @@ or a size its list does not name, falls back to the documented LB-GP-L and LB-GP
 anything else is refused. The default template keeps LB-S: set the location's size (or the
 node's) to a multi-cloud one.
 
+**Scaleway timings on the wire** (`scalewayTimings`, `convex/lib/edges/providers/scaleway.ts`).
+The template and its options keep `600s`-style values; only the encoding sent differs by field.
+Six are int64 milliseconds and go out as JSON integers (`5s` is `5000`, converted on the digits
+by `durationMs` in `templates.ts`): the health check's `check_delay` and `check_timeout`, the
+backend's `timeout_server`, `timeout_connect` and `timeout_tunnel`, and the frontend's
+`timeout_client`. The other two, the health check's `transient_check_delay` and the backend's
+`timeout_queue`, are protobuf durations and go out as strings in seconds (`0.5s`). The source is
+Scaleway's Go SDK (`api/lb/v1/lb_sdk.go`: `marshaler.Duration`, "in milliseconds", against
+`scw.Duration`), read 2026-10-22, for the create and update calls alike. `@scaleway/sdk-lb`
+types all eight as strings and passes them through unchanged, so a template's `5s` reached the
+API as is and the backend create was refused (`invalid value for int64 field milliseconds`)
+after the addresses and the load balancer were built. A stored value that is not a whole number
+of milliseconds (`1.5ms`) refuses the plan as `template_invalid` before anything is created.
+
 **Trust is per location.** `qualified`, `qualification`, `qualifiedTemplateHash` and
 `autoQualifyHold` live on the location; the account's `qualified` in the admin projection means
 any switched-on location is trusted. A new location is trusted by its first tested address (a
