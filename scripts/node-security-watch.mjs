@@ -12,7 +12,9 @@
 //   bun scripts/node-security-watch.mjs            report only
 //   bun scripts/node-security-watch.mjs --apply    also rewrite the stale pins
 //     --index <file>           read the release index from a file, not nodejs.org
+//     --schedule <file>        read the release schedule from a file, not GitHub
 //     --summary <file>         write a markdown summary (job summary, PR body)
+//     --eol <file>             write the majors near or past end of life (JSON)
 //     --github-output <file>   append changed=, branch=, title= for the workflow
 //
 // A pin is stale when nodejs.org lists a release with `security: true` on the
@@ -20,12 +22,24 @@
 // that major (never a new major: that is a person's call), and only once Docker
 // Hub serves it under the pin's variant. Until then the pin is reported as
 // waiting, and the next run tries again.
+//
+// Why the release index and not a vulnerability database: the `security` flag is
+// set the moment the release ships. The Node Security WG's database (behind
+// nodejs/is-my-node-vulnerable) and NVD-fed image scanners follow days to weeks
+// later; the WG database took four weeks to list the July 2026 CVEs.
+//
+// The flag says nothing once a major reaches end of life: an EOL line gets no
+// security releases, so its pins would look current forever. The Release WG's
+// schedule closes that gap: a pinned major within EOL_WARN_DAYS of its end is
+// written to --eol, and the workflow keeps one issue open per such major.
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const INDEX_URL = 'https://nodejs.org/dist/index.json';
+const SCHEDULE_URL = 'https://raw.githubusercontent.com/nodejs/Release/main/schedule.json';
+export const EOL_WARN_DAYS = 90;
 
 const PIN =
   /^(FROM\s+)node:(\d+)\.(\d+)\.(\d+)-([a-z0-9][a-z0-9.-]*)@(sha256:[0-9a-f]{64})((?:\s.*)?)$/i;
@@ -79,6 +93,17 @@ export function assess(version, index) {
   return { security, latest };
 }
 
+/**
+ * Days until a major's end of life per the Release WG schedule (negative once
+ * past), or null when the schedule does not list the major.
+ */
+export function endOfLife(major, schedule, now) {
+  const end = schedule?.[`v${major}`]?.end;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(end ?? '')) return null;
+  const days = Math.floor((Date.parse(`${end}T00:00:00Z`) - now.getTime()) / 86_400_000);
+  return { end, days };
+}
+
 export function renderPin(pin, version, digest) {
   return `${pin.prefix}node:${fmt(version)}-${pin.variant}@${digest}${pin.rest}`;
 }
@@ -118,16 +143,26 @@ async function main() {
   const apply = args.includes('--apply');
   const root = fileURLToPath(new URL('..', import.meta.url));
 
-  const indexFile = opt('--index');
-  const index = indexFile
-    ? JSON.parse(readFileSync(indexFile, 'utf8'))
-    : await fetch(INDEX_URL).then((r) => {
-        if (!r.ok) throw new Error(`${INDEX_URL} answered ${r.status}`);
-        return r.json();
-      });
+  const load = async (file, url) =>
+    file
+      ? JSON.parse(readFileSync(file, 'utf8'))
+      : fetch(url).then((r) => {
+          if (!r.ok) throw new Error(`${url} answered ${r.status}`);
+          return r.json();
+        });
+  const index = await load(opt('--index'), INDEX_URL);
+  // The schedule only feeds the end-of-life warning; never let it block a re-pin.
+  let schedule = null;
+  try {
+    schedule = await load(opt('--schedule'), SCHEDULE_URL);
+  } catch (e) {
+    console.error(`node-security-watch: release schedule unavailable (${e.message})`);
+  }
+  const now = new Date();
 
   const rows = [];
   const targets = new Set();
+  const eol = new Map(); // major -> { end, days, pins }
   let changed = false;
   for (const file of dockerfiles(root)) {
     const abs = path.join(root, file);
@@ -145,6 +180,12 @@ async function main() {
       }
       const { security, latest } = assess(pin.version, index);
       const row = { file, line, pinned: fmt(pin.version), latest: fmt(latest) };
+      const life = endOfLife(pin.version[0], schedule, now);
+      if (life && life.days <= EOL_WARN_DAYS) {
+        const entry = eol.get(pin.version[0]) ?? { ...life, pins: [] };
+        entry.pins.push(`${file}:${line}`);
+        eol.set(pin.version[0], entry);
+      }
       if (security.length === 0) {
         rows.push({ ...row, status: 'current' });
         continue;
@@ -190,11 +231,39 @@ async function main() {
     '',
     'Advisories: https://nodejs.org/en/blog/vulnerability',
     '',
+    ...[...eol].map(
+      ([major, e]) =>
+        `**Node ${major} ${e.days < 0 ? 'reached' : 'reaches'} end of life on ${e.end}**: no security releases after that, so this watcher cannot see its fixes. Pinned at ${e.pins.map((p) => `\`${p}\``).join(', ')}.\n`,
+    ),
   ].join('\n');
   process.stdout.write(summary);
 
   const summaryFile = opt('--summary');
   if (summaryFile) writeFileSync(summaryFile, summary);
+  const eolFile = opt('--eol');
+  if (eolFile) {
+    const issues = [...eol].map(([major, e]) => ({
+      major,
+      title: `Node ${major} reaches end of life on ${e.end}`,
+      body: [
+        e.days < 0
+          ? `Node ${major} reached end of life on **${e.end}** and gets no more security releases.`
+          : `Node ${major} reaches end of life on **${e.end}** (in ${e.days} days). After that it gets no security releases, and \`node-security-watch.yml\` can no longer see the fixes it misses.`,
+        '',
+        'Move these pins to a supported major:',
+        '',
+        ...e.pins.map((p) => `- \`${p}\``),
+        '',
+        e.pins.some((p) => p.startsWith('docker/convex-node.Dockerfile'))
+          ? 'The Convex images run the `docker/convex-node.Dockerfile` pin, so its new major must be one Convex builds against: check `.nvmrc` in [convex/convex-backend](https://github.com/convex/convex-backend) at the pinned release, and re-pin Convex first if it is still on this major.\n'
+          : '',
+        'Schedule: https://github.com/nodejs/Release#release-schedule',
+        '',
+        '_Filed automatically by `.github/workflows/node-security-watch.yml`; it closes this issue once no pin is on this major._',
+      ].join('\n'),
+    }));
+    writeFileSync(eolFile, JSON.stringify(issues, null, 2));
+  }
   const outFile = opt('--github-output');
   if (outFile) {
     appendFileSync(

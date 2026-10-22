@@ -14,6 +14,11 @@
 # a newer SECURITY release on the same major has left a pin behind and Docker Hub
 # serves the newest release on that major, it re-pins and opens a PR. Ordinary
 # releases ride the weekly Dependabot run; a new major is always a person's call.
+#
+# An end-of-life major gets no security releases, so the flag above would call
+# its pins current forever. Within 90 days of a pinned major's end (nodejs/Release
+# schedule) this keeps one issue open for it, closed once nothing pins that major.
+# Node 22, the Convex images' major, ends 2027-04-30.
 name: Node security watch
 
 on:
@@ -26,6 +31,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 concurrency:
   group: node-security-watch
@@ -44,7 +50,7 @@ jobs:
 
       - name: Compare every Node pin with nodejs.org's security releases
         id: check
-        run: bun scripts/node-security-watch.mjs --apply --summary summary.md --github-output "$GITHUB_OUTPUT"
+        run: bun scripts/node-security-watch.mjs --apply --summary summary.md --eol eol.json --github-output "$GITHUB_OUTPUT"
 
       - name: Job summary
         if: always()
@@ -130,3 +136,27 @@ jobs:
                 gh pr close "$n" --delete-branch --comment "Superseded by $url."
                 echo "closed superseded PR #$n"
               done
+
+      - name: Keep one issue open per pinned major near its end of life
+        if: always() && steps.check.outcome == 'success'
+        run: |
+          set -euo pipefail
+          jq -c '.[]' eol.json | while read -r e; do
+            title="$(jq -r .title <<< "$e")"
+            jq -r .body <<< "$e" > eol-body.md
+            n="$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+              --jq "[.[] | select(.title == \"$title\")][0].number // empty")"
+            if [ -n "$n" ]; then
+              gh issue edit "$n" --body-file eol-body.md
+            else
+              gh issue create --title "$title" --body-file eol-body.md
+            fi
+          done
+          # Close the issues of majors that no pin uses any more.
+          gh issue list --state open --search '"reaches end of life on" in:title' --json number,title \
+            --jq '.[] | select(.title | test("^Node [0-9]+ reaches end of life on ")) | "\(.number)\t\(.title)"' |
+            while IFS=$'\t' read -r n title; do
+              if ! jq -e --arg t "$title" 'any(.[]; .title == $t)' eol.json > /dev/null; then
+                gh issue close "$n" --comment "No pin is on this major any more. Closing automatically."
+              fi
+            done

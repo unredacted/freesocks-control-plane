@@ -312,13 +312,18 @@ jobs:
 
           prod_date="$(date -u -d '+3 days' +%Y-%m-%d)"
 
-          # The images' own Node is replaced by docker/convex-node.Dockerfile's;
-          # its major must stay the one upstream builds and tests against.
+          # The images' own Node is replaced by docker/convex-node.Dockerfile's.
+          # It must stay on the major upstream builds and tests against, and never
+          # run older than upstream's own (the overlay would quietly downgrade it).
           upstream_node="$(gh api "/repos/$UPSTREAM/contents/.nvmrc?ref=$NEW" --jq .content | base64 -d | tr -d 'v \n' || true)"
           overlay_node="$(grep -oE '^FROM node:[0-9]+\.[0-9]+\.[0-9]+' docker/convex-node.Dockerfile | cut -d: -f2)"
           node_note="Node: upstream \`.nvmrc\` at the new pin is \`${upstream_node:-unknown}\`; the images run \`$overlay_node\` from \`docker/convex-node.Dockerfile\`."
-          if [ "${upstream_node%%.*}" != "${overlay_node%%.*}" ]; then
+          if ! [[ "$upstream_node" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            node_note="⚠️ $node_note Could not read upstream's \`.nvmrc\`: check it by hand before merging."
+          elif [ "${upstream_node%%.*}" != "${overlay_node%%.*}" ]; then
             node_note="⚠️ $node_note **Different majors**: move the overlay to Node ${upstream_node%%.*} in this PR before merging."
+          elif [ "$(printf '%s\n%s\n' "$overlay_node" "$upstream_node" | sort -V | tail -n1)" != "$overlay_node" ]; then
+            node_note="⚠️ $node_note **The overlay is older than upstream's**: move it to at least \`$upstream_node\` in this PR before merging."
           fi
 
           cat > body.md <<EOF

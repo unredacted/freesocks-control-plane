@@ -173,8 +173,12 @@ not follow Node security releases (22.22.2 from March 2026 was still current ups
 Convex image with the official binary from a pinned `node:<x.y.z>-bookworm-slim` image copied
 over it. The dashboard, a Node server, gets the same overlay; `keygen` runs no Node and stays
 on the plain image. The overlay pin stays on the major in upstream's `.nvmrc` (the re-pin PR
-says when that major moves). `.github/workflows/node-security-watch.yml` re-pins it within
-hours of a Node security release, and Dependabot brings ordinary releases weekly. The deploy
+says when that major moves or passes the overlay). `.github/workflows/node-security-watch.yml`
+re-pins it within hours of a Node security release, and Dependabot brings ordinary releases
+weekly. The watcher reads the `security` flag in nodejs.org's release index, which is set at
+release; vulnerability databases (the Node Security WG's, NVD) follow days to weeks later. An
+end-of-life major gets no security releases, so 90 days before a pinned major's end the watcher
+opens an issue instead (Node 22, the Convex major, ends 2027-04-30). The deploy
 entrypoint runs
 `bunx convex run relayProviderOps:runtimeInfo` before `convex deploy` (when the running
 deployment already has it) and again after, and fails when the runtime is below the highest

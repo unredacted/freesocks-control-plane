@@ -2,13 +2,21 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
-import { assess, fmt, nodeFromLines, renderPin } from '../scripts/node-security-watch.mjs';
+import {
+  assess,
+  endOfLife,
+  EOL_WARN_DAYS,
+  fmt,
+  nodeFromLines,
+  renderPin,
+} from '../scripts/node-security-watch.mjs';
 
 /**
  * scripts/node-security-watch.mjs (run every few hours by
  * .github/workflows/node-security-watch.yml) re-pins `FROM node:` lines when
- * nodejs.org flags a newer security release on the same major. These pin the
- * two decisions it makes, plus the repo shape it relies on.
+ * nodejs.org flags a newer security release on the same major, and warns
+ * before a pinned major's end of life. These pin those decisions, plus the repo
+ * shape the watcher relies on.
  */
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -41,6 +49,19 @@ describe('node security watch', () => {
     const r = assess([24, 23, 0], INDEX);
     expect(r.security).toEqual([]);
     expect(fmt(r.latest)).toBe('24.23.0');
+  });
+
+  test('end of life: days left from the Release WG schedule, negative once past', () => {
+    // An EOL major gets no security releases, so the index alone would call
+    // its pins current forever; the schedule is what flags them.
+    const schedule = { v22: { end: '2027-04-30' }, v24: { end: '2028-04-30' } };
+    const now = new Date('2027-02-01T12:00:00Z');
+    expect(endOfLife(22, schedule, now)).toEqual({ end: '2027-04-30', days: 87 });
+    expect(endOfLife(22, schedule, now)!.days).toBeLessThanOrEqual(EOL_WARN_DAYS);
+    expect(endOfLife(24, schedule, now)!.days).toBeGreaterThan(EOL_WARN_DAYS);
+    expect(endOfLife(22, schedule, new Date('2027-05-02T00:00:00Z'))!.days).toBeLessThan(0);
+    expect(endOfLife(30, schedule, now)).toBeNull();
+    expect(endOfLife(22, null, now)).toBeNull();
   });
 
   test('parses a pin and rewrites only the version and digest', () => {
