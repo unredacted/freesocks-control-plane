@@ -19,7 +19,13 @@ import {
   checkhostTakes,
   type FetchLike,
 } from './checkhost';
-import { fetchAtlasProbeAsns, parseRipeAtlasResults, ripeAtlasBody } from './ripeatlas';
+import {
+  answeredCount,
+  fetchAtlasProbeAsns,
+  parseRipeAtlasResults,
+  ripeAtlasBody,
+  ripeAtlasPoll,
+} from './ripeatlas';
 import { classifyInternalError, internalProbe, pickDialAddress, resolvePublic } from './internal';
 import {
   countryVerdict,
@@ -820,6 +826,22 @@ describe('could not test: dropped, never a failure', () => {
     expect(atlas).toEqual([
       expect.objectContaining({ ok: false, error: 'connect: Connection refused' }),
     ]);
+  });
+
+  test('a dropped RIPE Atlas answer still settles the poll', async () => {
+    const body = [
+      { prb_id: 1, err: 'connect: Network is unreachable' },
+      { prb_id: 2, err: 'connect: Network is unreachable' },
+    ];
+    expect(answeredCount(body)).toBe(2);
+    expect(answeredCount([{ prb_id: 3 }])).toBe(0);
+    const fetchFn: FetchLike = async (url) =>
+      new Response(JSON.stringify(url.includes('/probes/') ? { results: [] } : body), {
+        status: 200,
+      });
+    const p = await ripeAtlasPoll(fetchFn, 'key', { measurements: { IR: 7 }, af: 6 }, 2);
+    // Both probes answered without a route of their own: settled, no evidence.
+    expect(p).toEqual({ status: 'finished', results: [] });
   });
 });
 

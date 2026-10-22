@@ -53,6 +53,8 @@ export interface RungReachabilityRow {
   addressKind?: 'ip' | 'name';
   /** Vantages that connected (one alone leaves the source verdict `unknown`, still a reach). */
   okCount?: number;
+  /** When the row last took a run's results (a guided run's own round is read by it). */
+  updatedAt?: number;
 }
 
 export interface RungProbeRun {
@@ -76,6 +78,19 @@ export function shapeProtocolFor(listener: RungListenerLike): ProbeProtocol {
 function familyOf(r: { ipVersion?: 4 | 6; addressKind?: 'ip' | 'name' }): AddressFamily | null {
   if (r.ipVersion !== undefined) return r.ipVersion;
   return r.addressKind === 'name' ? null : 4;
+}
+
+/**
+ * Evidence about the edge's CURRENT listener ports only: a port the edge no
+ * longer listens on (a port change) says nothing about it, failure or not. A
+ * row or run without a port is a legacy one and stays.
+ */
+function onPorts<T extends { port?: number }>(
+  xs: ReadonlyArray<T>,
+  ports: ReadonlyArray<number> | undefined,
+): ReadonlyArray<T> {
+  if (!ports) return xs;
+  return xs.filter((x) => x.port === undefined || ports.includes(x.port));
 }
 
 /**
@@ -157,10 +172,14 @@ export function partialRungFor(
     reachability: ReadonlyArray<RungReachabilityRow>;
     probeRuns: ReadonlyArray<RungProbeRun>;
     agreementVantages: number;
+    /** The edge's current listener ports (absent: every port on record counts). */
+    ports?: ReadonlyArray<number>;
   },
 ): PartialRung {
-  const evidence = familiesIn(input.reachability, input.probeRuns).map((f) =>
-    evidenceOf(listener, f, input.reachability, input.probeRuns, input.agreementVantages),
+  const rows = onPorts(input.reachability, input.ports);
+  const runs = onPorts(input.probeRuns, input.ports);
+  const evidence = familiesIn(rows, runs).map((f) =>
+    evidenceOf(listener, f, rows, runs, input.agreementVantages),
   );
   // A refusal over any family settles it: the address is not usable from
   // somewhere it should be, whatever else says. A shape check that fails is an
@@ -185,9 +204,10 @@ export interface OutsideCheck {
  *
  * Before the stage asked for its own round (`roundSince` absent), only the
  * rung's strong evidence on record passes a family (a reused spare). After,
- * a family waits while a run of that round over it is in flight (until
- * `final`: the stage's wait is over), then reads `reached` or `unknown`.
- * Any refusal answers `unreachable` at once. The address passes when no
+ * only that round's evidence counts (an older success must not stand in for a
+ * round that could not test): a family waits while a run of the round over it
+ * is in flight (until `final`: the stage's wait is over), then reads `reached`
+ * or `unknown`. Any refusal answers `unreachable` at once. The address passes when no
  * family is refused or pending, the provider's health allows it, and it does
  * so even with families nobody could test: the operator's own test link
  * (stage 4b) still comes before anything is published.
@@ -202,30 +222,28 @@ export function outsideCheckFor(
     /** Runs of EVERY source (the in-flight ones too). */
     probeRuns: ReadonlyArray<RungProbeRun>;
     agreementVantages: number;
+    /** The edge's current listener ports (absent: every port on record counts). */
+    ports?: ReadonlyArray<number>;
     /** When the stage asked for its own round. */
     roundSince?: number;
     final?: boolean;
   },
 ): OutsideCheck {
+  const since = input.roundSince;
+  const rows = onPorts(input.reachability, input.ports).filter(
+    (r) => since === undefined || (r.updatedAt ?? 0) >= since,
+  );
+  const runs = onPorts(input.probeRuns, input.ports).filter(
+    (r) => since === undefined || (r.requestedAt ?? 0) >= since,
+  );
   const families = input.families.map((family) => {
-    const ev = evidenceOf(
-      listener,
-      family,
-      input.reachability,
-      input.probeRuns,
-      input.agreementVantages,
-    );
+    const ev = evidenceOf(listener, family, rows, runs, input.agreementVantages);
     let check: FamilyCheck;
     if (ev.refused) check = 'refused';
-    else if (input.roundSince === undefined) check = ev.strong ? 'reached' : 'pending';
+    else if (since === undefined) check = ev.strong ? 'reached' : 'pending';
     else if (
       !input.final &&
-      input.probeRuns.some(
-        (r) =>
-          familyOf(r) === family &&
-          (r.requestedAt ?? 0) >= input.roundSince! &&
-          runOutcome(r) === 'in_flight',
-      )
+      runs.some((r) => familyOf(r) === family && runOutcome(r) === 'in_flight')
     )
       check = 'pending';
     else check = ev.reached ? 'reached' : 'unknown';

@@ -160,6 +160,22 @@ export function parseRipeAtlasResults(
   return out;
 }
 
+/**
+ * Probes that answered in a results body, evidence or not: a probe whose own
+ * route was missing (dropped by the parser) has still settled, so the poll
+ * counts it before deciding whether to wait for more.
+ */
+export function answeredCount(body: unknown): number {
+  if (!Array.isArray(body)) return 0;
+  return (body as Array<Record<string, unknown>>).filter(
+    (raw) =>
+      raw.err !== undefined ||
+      raw.alert !== undefined ||
+      raw.rt !== undefined ||
+      Array.isArray(raw.cert),
+  ).length;
+}
+
 /** Probe ids seen in a results body (for the registry lookup). */
 export function probeIdsOf(body: unknown): number[] {
   if (!Array.isArray(body)) return [];
@@ -237,7 +253,7 @@ export async function ripeAtlasPoll(
       asnByProbe: cache,
       protocol: started.protocol,
     });
-    if (parsed.length < Math.max(1, expectedPerCountry)) running = true;
+    if (answeredCount(body) < Math.max(1, expectedPerCountry)) running = true;
     results.push(...parsed);
   }
   return { status: running ? 'running' : 'finished', results };

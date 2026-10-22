@@ -498,8 +498,17 @@ async function planTarget(
   }
   const cfg = await resolveEdgeConfig(ctx.db);
   const secrets = await resolveEdgeSecrets(ctx.db);
-  const use = sources ?? enabledSources(cfg, secrets);
   const families = familiesOf(resolved, cfg);
+  const asked = sources ?? enabledSources(cfg, secrets);
+  // A source that takes none of the target's families sits the round out
+  // (check-host and an IPv6-only literal); with none left, nothing can check it.
+  const use = asked.filter((s) => sourceFamilies(s, families).length > 0);
+  if (asked.length > 0 && use.length === 0) {
+    throw new ConvexError({
+      code: 'probe.no_source',
+      message: 'No probe source in use can check this address family',
+    });
+  }
   const runsPerSource = families.length * resolved.ports.length;
   const controls =
     cfg.country.enabled && target.kind === 'edge'
@@ -1104,6 +1113,12 @@ function internalVerdict(perSource: SourceSummary[]): Verdict {
 
 /** The newest runs per source a source's health is judged on (one indexed read each). */
 const SOURCE_HEALTH_RUNS = 50;
+/**
+ * How far back that read looks for them: `no_route` runs (a family FCP's host
+ * lacks) say nothing about the source and are skipped before the bound, or a
+ * host probing many IPv6 targets would push every run that counts out of it.
+ */
+const SOURCE_HEALTH_SCAN = SOURCE_HEALTH_RUNS * 4;
 
 /**
  * Whether each ENABLED source is giving evidence (lib/edges/country/sourceHealth.ts):
@@ -1117,11 +1132,15 @@ export async function probeSourceHealth(db: QueryCtx['db'], now: number): Promis
   if (!cfg.probe.enabled || sources.length === 0) return [];
   const runs = [];
   for (const source of sources)
-    for (const r of await db
-      .query('probeRuns')
-      .withIndex('by_source_requested', (q) => q.eq('source', source))
-      .order('desc')
-      .take(SOURCE_HEALTH_RUNS))
+    for (const r of (
+      await db
+        .query('probeRuns')
+        .withIndex('by_source_requested', (q) => q.eq('source', source))
+        .order('desc')
+        .take(SOURCE_HEALTH_SCAN)
+    )
+      .filter((x) => x.error !== 'no_route')
+      .slice(0, SOURCE_HEALTH_RUNS))
       runs.push({
         source: r.source,
         status: r.status,
@@ -1530,7 +1549,8 @@ export const due = internalQuery({
       if (!resolved || !hasAddress(resolved) || resolved.ports.length === 0) return;
       const families = familiesOf(resolved, cfg);
       const runsPerSource = families.length * resolved.ports.length;
-      if (runsPerSource === 0) return;
+      // No family any enabled source takes (an IPv6-only literal and check-host alone).
+      if (runsPerSource === 0 || costOf(sources, families, resolved.ports.length) === 0) return;
       seen.add(key);
       dueTargets.push({
         target,

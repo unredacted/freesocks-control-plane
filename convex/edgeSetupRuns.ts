@@ -65,7 +65,13 @@ import {
 import { releaseTestCredentialsOf } from './edgeTestCredentials';
 import { isCandidateEdge } from './lib/backend/deliveryGate';
 import { assertNoRelayPanelClaim, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
-import { confirmEndpoint, internalRunsOf, rungRowOf, rungRunOf } from './edgeVerification';
+import {
+  confirmEndpoint,
+  edgePortsOf,
+  internalRunsOf,
+  rungRowOf,
+  rungRunOf,
+} from './edgeVerification';
 import { listenersOf } from './relayListeners';
 import { accountTested, certificateRefusalFor } from './edgeProviderAccounts';
 import { isTerminalPhase, withProviderAnswer } from './lib/edges/rotation';
@@ -772,6 +778,7 @@ export const outsideCheck = internalQuery({
       reachability: reach.filter((r) => fresh(r.updatedAt)).map(rungRowOf),
       probeRuns: [...runs.values()].filter((r) => fresh(r.requestedAt)).map(rungRunOf),
       agreementVantages: cfg.probe.agreementVantages,
+      ports: edgePortsOf(edge),
       ...(roundSince !== undefined ? { roundSince } : {}),
       final: final === true,
     });

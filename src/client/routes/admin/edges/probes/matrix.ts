@@ -215,6 +215,7 @@ export const PROBE_SKIP_COPY: Record<string, string> = {
   'probe.udp_unsupported': 'not probed (UDP)',
   'probe.budget_exhausted': 'not probed (the hourly probe budget is used up)',
   'probe.no_listeners': 'not probed (no listener port yet)',
+  'probe.no_source': 'not probed (no source in use can check that address family)',
   'edge.no_address': 'not probed (no address yet)',
   not_found: 'not probed (the target no longer exists)',
 };

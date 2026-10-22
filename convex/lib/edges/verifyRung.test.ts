@@ -48,6 +48,7 @@ const row = (
   family: 4 | 6,
   verdict: RungReachabilityRow['verdict'],
   okCount = verdict === 'unreachable' ? 0 : 1,
+  updatedAt = 10,
 ): RungReachabilityRow => ({
   country,
   source,
@@ -56,6 +57,7 @@ const row = (
   addressKind: 'ip',
   port: 443,
   okCount,
+  updatedAt,
 });
 
 /** What stage 4 passes once its own round (requested at 10) is in. */
@@ -326,6 +328,44 @@ describe('outsideCheckFor (a guided run, stage 4)', () => {
     expect(
       check([], { ...before, reachability: [row('IR', 'globalping', 4, 'unreachable')] }).verdict,
     ).toBe('unreachable');
+  });
+
+  test('once its own round is asked for, an older success never stands in for it', () => {
+    const r = check(
+      [
+        // A reused address reached long ago, by FCP and from outside...
+        runOf('internal', 4, 'finished', [{ ok: true }], 1),
+        // ...and nothing of this round could test it.
+        runOf('internal', 4, 'failed', [], 10),
+        runOf('globalping', 4, 'failed', [], 10),
+      ],
+      { families: [4], reachability: [row('DE', 'checkhost', 4, 'reachable', 1, 1)] },
+    );
+    expect(r).toMatchObject({ verdict: 'passed', notChecked: [4] });
+  });
+
+  test('a port the edge no longer listens on says nothing about it', () => {
+    const moved = { families: [4] as Array<4 | 6>, ports: [8443] };
+    const old = { ...runOf('internal', 4, 'finished', [{ ok: false }], 12), port: 443 };
+    const now = { ...runOf('internal', 4, 'finished', [{ ok: true }], 11), port: 8443 };
+    expect(check([old, now], moved).verdict).toBe('passed');
+    expect(
+      check([now], { ...moved, reachability: [row('IR', 'globalping', 4, 'unreachable')] }).verdict,
+    ).toBe('passed');
+    // Without the port list every port on record counts.
+    expect(check([old, now], { families: [4] }).verdict).toBe('unreachable');
+    expect(
+      partialRungFor(reality, {
+        providerHealthy: true,
+        reachability: [
+          { ...reachable('DE', 'globalping'), port: 8443 },
+          { ...reachable('NL', 'checkhost'), port: 8443 },
+        ],
+        probeRuns: [old, now],
+        agreementVantages: 2,
+        ports: [8443],
+      }),
+    ).toBe('partial');
   });
 
   test("the provider's own health still holds it; an address with no family never passes", () => {

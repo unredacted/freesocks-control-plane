@@ -298,7 +298,13 @@ export function rungRowOf(r: Doc<'probeReachability'>): RungReachabilityRow {
     ipVersion: r.ipVersion,
     addressKind: r.addressKind,
     okCount: r.okCount,
+    updatedAt: r.updatedAt,
   };
+}
+
+/** The listener ports an edge serves now (the probes aim at these). */
+export function edgePortsOf(edge: Pick<Doc<'edges'>, 'listeners'>): number[] {
+  return [...new Set(edge.listeners.map((l) => l.edgePort))];
 }
 
 /** A probe run as the rung reads it. */
@@ -370,6 +376,7 @@ export async function refreshPartialRung(
     reachability: reachability.map(rungRowOf),
     probeRuns: runs.map(rungRunOf),
     agreementVantages: cfg.probe.agreementVantages,
+    ports: edgePortsOf(edge),
   });
   const rec = edge.verification;
   if (rung === 'partial') {

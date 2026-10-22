@@ -2055,9 +2055,19 @@ can tell the two apart.
   first.
 
 Before its own round, an address passes only on the rung's strong evidence on record (a reused
-spare: `partial` over a family). The stage waits 15 minutes for its round; past that, runs
-still in flight are not waited for, and only the provider's own health (`requireProviderHealth`)
-can still hold the address (`address_unreachable`, detail `<listener>:provider_health`).
+spare: `partial` over a family). Once the round is asked for, only its evidence counts (rows
+updated and runs requested since): an older success never stands in for a round that could not
+test. The stage waits 15 minutes for its round; past that, runs still in flight are not waited
+for, and only the provider's own health (`requireProviderHealth`) can still hold the address
+(`address_unreachable`, detail `<listener>:provider_health`). Both readings (this one and the
+rung) count only the edge's current listener ports: a port it no longer listens on says nothing
+about it.
+
+A source sits out a family it cannot take (check-host and an IPv6 literal), and the budget is
+charged for the runs actually made. A target no source in use can check at all (an IPv6-only
+address with check-host the only source) is refused `probe.no_source` and never kept due by the
+cron. A RIPE Atlas probe dropped for its own missing route still counts as answered, so the poll
+settles instead of waiting out its deadline.
 
 ### Simulating a block on a test deployment
 
