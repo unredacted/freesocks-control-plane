@@ -98,15 +98,19 @@ services:
       - POSTGRES_URL=postgresql://convex:${POSTGRES_PASSWORD}@postgres:5432
       # Don't echo internal error detail to API clients in prod.
       - REDACT_LOGS_TO_CLIENT=${REDACT_LOGS_TO_CLIENT:-true}
-      # Privacy default: silence the per-request HTTP access log
-      # (convex-cloud-http logs the immediate peer's socket + request line) while
-      # keeping warnings/errors. FCP never persists client IPs, so the request
-      # log is pure noise here — and the peer is Caddy's container, but quiet-by-
-      # default is the posture. Verify after deploy:
-      #   docker compose -f docker-compose.beta.yml logs backend | grep 'GET /api'  # → empty
-      # If a Convex version renames that target, fall back to RUST_LOG=warn.
-      # See docs/privacy.md.
-      - RUST_LOG=${RUST_LOG:-info,convex-cloud-http=warn}
+      # Privacy default: no request URIs in the log, warnings/errors kept. Two
+      # INFO targets print them:
+      #   convex-cloud-http  the access line: peer socket + `"GET /api/... HTTP/1.1"`
+      #   common::http       `stats_middleware: matched_path is None, uri: /api/...`,
+      #                      once per HTTP action request (the site proxy's router
+      #                      is fallback-only), path AND query string
+      # The second one carries member subscription tokens (/api/v1/sub/<token>).
+      # Verify after deploy (docs/privacy.md section 4 has the full check):
+      #   docker compose -f docker-compose.stack.yml --env-file .env.beta logs backend \
+      #     | grep -cE 'uri: /|"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) /'   # -> 0
+      # If a Convex version renames either target, fall back to RUST_LOG=warn.
+      # convex/deployPins.test.ts holds both directives in place.
+      - RUST_LOG=${RUST_LOG:-info,convex-cloud-http=warn,common::http=warn}
     healthcheck:
       test: curl -f http://localhost:3210/version
       interval: 10s

@@ -202,6 +202,16 @@ Always confirm the deployer log ends with `[deploy] OK`. Everything it does
 `Failed to resolve http.js:/api/...` and `Module not in functions: …` lines in
 the backend log during a push are benign analyzer chatter, not errors.
 
+The recipe names only `web deployer`, so don't count on it to apply a change to
+the `backend` service itself (its `environment:` in the compose file, such as
+the `RUST_LOG` default). Recreate the backend explicitly; this also drops its old
+container log, which is the point when the change is a logging one
+([`docs/privacy.md`](privacy.md) §4):
+
+```sh
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --force-recreate --no-deps backend
+```
+
 Header-only Caddyfile tweaks need no rebuild:
 
 ```sh
@@ -614,7 +624,9 @@ Caveat to keep in mind while reviewing the PR: the npm release notes describe
 the CLI/client surface. The PR's release-to-release compare link is the
 **only** changelog for backend internals — skim it for renamed or
 newly-required backend env vars (the `backend` service sets a specific list in
-the compose file; `RUST_LOG=info,convex-cloud-http=warn` is the fragile one),
+the compose file; `RUST_LOG=info,convex-cloud-http=warn,common::http=warn` is
+the fragile one: both are log target names, and a rename puts request URIs,
+member subscription tokens included, back in the log),
 Postgres schema changes, and changes to `generate_admin_key.sh` (the `keygen`
 one-shot parses its output).
 
@@ -683,6 +695,9 @@ docker compose -f docker-compose.stack.yml --env-file .env.beta logs backend | g
 # jump may run several and take a while — do NOT restart the backend mid-migration.
 docker compose -f docker-compose.stack.yml --env-file .env.beta logs --tail=40 deployer   # [deploy] OK
 curl -fsS https://beta.freesocks.org/readyz
+# no request URIs in the new binary's log (a renamed log target shows up here; docs/privacy.md §4)
+docker compose -f docker-compose.stack.yml --env-file .env.beta logs --no-log-prefix backend \
+  | grep -cE 'uri: /|"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) /'   # 0
 docker compose -f docker-compose.stack.yml --env-file .env.beta ps   # nothing unhealthy/restarting
 ```
 
