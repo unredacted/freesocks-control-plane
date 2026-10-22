@@ -49,7 +49,7 @@ import { generateRealityKey } from './lib/backend/realityKeys';
 import { patchOp } from './lib/backend/patchOpArgs';
 import { currentNodeName } from './lib/backend/nodeAliases';
 import { PROFILE_DEFAULTS } from './lib/backend/profileTemplate';
-import { addressesOf, closeForSharedChange } from './nodeIntents';
+import { addressTransportsOf, addressesOf, closeForSharedChange } from './nodeIntents';
 import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
 import { assertClaimable, claimOp } from './backendLedger';
 import { observeInstance } from './backendObserve';
@@ -1460,7 +1460,10 @@ export const portPreview = internalQuery({
         .withIndex('by_server', (q) => q.eq('backendServerId', sid))
         .collect(),
     ]);
-    const owned = new Set(intents.flatMap((i) => addressesOf(i, hosts).map((h) => h.hostUuid)));
+    const transportOf = await addressTransportsOf(ctx, sid);
+    const owned = new Set(
+      intents.flatMap((i) => addressesOf(i, hosts, transportOf(i)).map((h) => h.hostUuid)),
+    );
     return {
       firewall: {
         port: a.port,

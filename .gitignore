@@ -30,6 +30,16 @@ wrangler.toml
 wrangler.beta.toml
 # Backups (may contain secrets). Never commit
 *.bak
+# Database exports, dumps and env captures (member data, live subscription
+# tokens, the account pepper). docs/beta-deploy.md writes them outside the
+# checkout; these stop one left in it from being committed. .dockerignore keeps
+# the same list out of the images.
+snapshots/
+*.zip
+*.sql
+*.sql.gz*
+*.age
+convex-env-*
 
 # Drizzle
 drizzle/

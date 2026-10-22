@@ -56,8 +56,10 @@ accidentally regress it).
     seen) **only when it is on the censored-country list**; anything else stores nothing and
     reads "elsewhere". A newer listed reading replaces it; an unlisted one leaves it (a member
     whose app sometimes refreshes from elsewhere keeps it), and it is forgotten
-    `delivery.country.stickyDays` (30) after it was last seen, by a daily sweep. It is read on
-    the subscription route, the raw-config view and the account view only.
+    `delivery.country.stickyDays` (30) after it was last seen, by a daily sweep. Switching
+    detection off forgets every stored guess at the next daily sweep, however many there are
+    (the sweep runs page after page until none is left). It is read on the subscription route,
+    the raw-config view and the account view only.
   - **Our own exits.** An app that refreshes its subscription through the tunnel reaches FCP
     from one of FCP's own addresses, and the CDN country is then the node's. Such a reading
     never sets or changes the guess (it only keeps an existing one alive). The client address
@@ -67,7 +69,11 @@ accidentally regress it).
     address is stored.
   - **On the subscription row only**, and deleted with the key (the choice, the guess, and the
     cached bodies shaped for it, at deletion rather than when the row is swept), on a switch to
-    a mode that is not freedom-family, and when the country leaves the list. Every stored copy
+    a mode that is not freedom-family, and when the country leaves the list. Every deploy also
+    walks the keys that hold one (`memberCountry.cleanStoredCountries`, scheduled by
+    `seedCutover`, page after page in transactions of their own) and clears a choice that left
+    the list and any country on a key that is no longer freedom-family (an admin change to a
+    mode, its family or the default can turn many keys at once). Every stored copy
     of the country on a row (a cached body's region, the render snapshot's country) equals the
     row's choice or guess (`setStoredCountry`); a request
     that read an older one cannot write it back. It follows the member to a re-issued key of a
@@ -140,21 +146,73 @@ Client-IP _resolution_ (for those hash buckets) is fail-closed and topology-awar
 ## 4. Backend container logging (Convex)
 
 The self-hosted Convex backend logs at `RUST_LOG`. The compose default is
-`info,convex-cloud-http=warn`, which **silences the per-request HTTP access line**
-(that line logs the immediate peer's socket + request line) while keeping
-warnings and errors. Over the compose network the peer is Caddy's container, not
-the real client — but quiet-by-default is the posture, and it also cuts log
-volume against the rotation cap.
+`info,convex-cloud-http=warn,common::http=warn`: warnings and errors stay, and
+**no request URI reaches the log**. Two INFO targets would otherwise print one
+for every request:
 
-Verify after a deploy:
+| Target              | Line                                                                          | What it carries                                                                                                                                                |
+| ------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `convex-cloud-http` | `[site] <peer> "GET /api/v1/... HTTP/1.1" 200 ...` (the access line)          | The immediate peer's socket (Caddy's container over the compose network, not the real client) and the request line.                                            |
+| `common::http`      | `INFO common::http: stats_middleware: matched_path is None, uri: /api/v1/...` | The full URI, path **and** query string, of every HTTP action request (the site proxy routes everything through a fallback, so no request has a matched path). |
+
+The second line is the serious one. A member's proxy app fetches
+`/api/v1/sub/<subToken>`, and a subscription token is a bearer secret: whoever
+reads it can fetch that member's proxy configuration. Before `common::http=warn`
+was added, every one of those fetches wrote the token to the log. The other
+member routes (`/api/v1/account/...`, `/hpke`, `/me`, `/telemetry`) carry no
+secret in the URI, but each line still records which route was hit and when,
+and some admin and billing paths name a record id (`/api/v1/admin/users/<id>`,
+`/api/v1/billing/order/<id>`). EnvFilter matches targets by prefix, so
+`common::http=warn` also covers anything under `common::http::`; the only other
+INFO lines in that module are the two `listening on <addr>` startup notices.
+
+What stays at INFO on purpose: `Fetch to origin: <origin>, success: ...`
+(target `isolate::environment::action::fetch`), one per outbound `fetch` from a
+V8 action. Convex logs only the origin there (scheme, host, port; no path, no
+query, no credentials), and FCP's outbound origins are operator infrastructure
+(the panel, payment and edge provider APIs, Cap, Umami), not member data.
+
+Verify after a deploy, once the site has served a few requests. Use the beta or
+prod env file as appropriate:
 
 ```sh
-docker compose -f docker-compose.stack.yml logs backend | grep 'GET /api'   # → empty
+docker compose -f docker-compose.stack.yml --env-file .env.beta logs --no-log-prefix backend \
+  | awk '/uri: \/|"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) \// { n++ } END { print n+0, "request URIs"; exit (n > 0) }'
+# → "0 request URIs", exit status 0
 ```
 
-If a future Convex version renames that log target, the request lines will
-reappear; fall back to `RUST_LOG=warn` (loses info-level operational detail but
-guarantees no request lines).
+It prints only a count, never a matching line, and exits 0 only on a clean log
+(1 when any line matches), so it is safe in a script, after `&&`, or under
+`set -e`/`set -o pipefail`; `grep -c` would invert that, exiting 1 on the clean
+result. The pattern matches both line shapes above and nothing else (the
+`Failed to resolve http.js:/api/...` analyzer chatter during a push is not a
+request and does not match). Do **not** check with `grep 'GET /api'`: that only
+matches the access line, so it reads empty while the `uri:` lines are still being
+written.
+
+**Old lines survive until the container is recreated.** `docker compose logs`
+reads the container's own json-file log (5 x 10 MB, see `x-logging` in the
+compose file), so a host that ran an earlier default keeps those lines, tokens
+included, until the backend container is removed. A plain `up -d` recreates a
+container whose compose config changed, but the redeploy recipe in
+`docs/beta-deploy.md` (§6) names only `web deployer`, so recreate the backend
+explicitly after pulling this default:
+
+```sh
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --force-recreate --no-deps backend
+```
+
+`--no-deps` keeps the restart to the backend alone (a short API gap; announce it
+on prod). An image re-pin (docs/beta-deploy.md § Upgrading the Convex backend)
+recreates the backend too, so on a host with a re-pin pending, the re-pin deploy
+does this for free. The log file lives on the host only and the database already
+holds the same tokens, so the exposure is any copy of the log that left the host:
+treat those as containing live member tokens.
+
+If a future Convex version renames either target, the request lines will
+reappear and the check above stops reading 0; fall back to `RUST_LOG=warn`
+(loses info-level operational detail but guarantees no request lines).
+`convex/deployPins.test.ts` fails if the compose default drops either directive.
 
 ## 5. Proxy data plane (Remnawave backend + Xray nodes)
 
@@ -211,7 +269,9 @@ and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
 - **Edge-required delivery never leaks an origin.** A subscription whose node or backend
   server is covered by an origin is served a rendered body (edge addresses only) or a 503,
   never the origin body; every outgoing entry is checked against the origin address; the
-  account view and the issuance responses hand out only the fronted token URL; stored S3
+  account view and the issuance responses hand out only the fronted token URL (never the
+  raw URL or its short id, also for a key not pinned to a node yet on a backend where any node is
+  covered); stored S3
   mirrors are re-rendered or replaced by an unavailable stub. `docs/edges.md` § "Rendering".
 - **No member data in the edges area.** Probes measure FCP's own addresses; report
   attribution uses a peppered per-member dedupe mark and the member's own render snapshot
@@ -470,7 +530,8 @@ If you deploy or fork FCP, keep the posture:
 - [ ] `IP_HASH_SALT` set (the deployer auto-generates it; never blank it).
 - [ ] Caddy keeps `log default { output discard }` (don't add a site `log` that
       writes to a file/stdout unless you truly intend to log client IPs).
-- [ ] `RUST_LOG` leaves `convex-cloud-http` at `warn` (or use `warn`).
+- [ ] `RUST_LOG` leaves both `convex-cloud-http` and `common::http` at `warn` (or
+      use `warn`), and the §4 check reads 0.
 - [ ] Cap: `RATELIMIT_IP_HEADER` unset; IP geolocation off; `CAP_DISABLE_ERROR_LOGGING=true`.
 - [ ] Don't add a reverse-proxy access log at any fronting layer (Pangolin / CDN)
       that persists client IPs beyond what you need for abuse handling.

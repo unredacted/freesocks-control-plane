@@ -13,7 +13,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
-import { resolveModeCatalog } from './connectionModes';
+import { resolveModeCatalog, type ModeCatalog } from './connectionModes';
 import type { MemberFamily } from './memberCountry';
 import { effectiveDefaultFor, resolveCatalogWithAvailability } from './placement';
 import { poolFromConfig } from './remnawavePlacement';
@@ -23,13 +23,33 @@ type SubLike = Pick<
   'backend' | 'backendPlacement' | 'backendServerId' | 'pinnedNode' | 'userId'
 >;
 
+/**
+ * What judging a key reads that is the same for every key: the catalog, the
+ * bound pools, the effective default and an enrolled node's mode. A caller
+ * judging many keys in one transaction (a page of the deploy clean-up) passes
+ * one `familyReads()`, so each is read once instead of once per key.
+ */
+export interface FamilyReads {
+  catalog?: Promise<ModeCatalog>;
+  placements?: Promise<Doc<'modePlacements'>[]>;
+  defaultSlug?: Promise<string | null>;
+  nodeModes: Map<string, Promise<string | null>>;
+}
+export const familyReads = (): FamilyReads => ({ nodeModes: new Map() });
+
 /** The mode slugs whose bound pool holds this placement. */
-export async function modesOfPlacement(db: DatabaseReader, placement: string): Promise<string[]> {
+export async function modesOfPlacement(
+  db: DatabaseReader,
+  placement: string,
+  reads?: FamilyReads,
+): Promise<string[]> {
   // One row per mode on this backend: a small set.
-  const rows = await db
-    .query('modePlacements')
-    .withIndex('by_backend', (q) => q.eq('backend', 'remnawave'))
-    .collect();
+  const read = () =>
+    db
+      .query('modePlacements')
+      .withIndex('by_backend', (q) => q.eq('backend', 'remnawave'))
+      .collect();
+  const rows = await (reads ? (reads.placements ??= read()) : read());
   return rows.filter((r) => poolFromConfig(r.config).includes(placement)).map((r) => r.modeSlug);
 }
 
@@ -37,31 +57,43 @@ export async function memberFamilyOf(
   db: DatabaseReader,
   sub: SubLike,
   user?: Pick<Doc<'users'>, 'connectionModeId'> | null,
+  reads: FamilyReads = familyReads(),
 ): Promise<MemberFamily> {
   if (sub.backend !== 'remnawave') return 'none';
-  const catalog = await resolveModeCatalog(db);
+  const catalog = await (reads.catalog ??= resolveModeCatalog(db));
   const familyOf = (slug: string | null | undefined) =>
     slug ? (catalog.modes.find((m) => m.id === slug)?.family ?? null) : null;
   const signals: (string | null)[] = [];
   if (sub.backendPlacement)
-    for (const slug of await modesOfPlacement(db, sub.backendPlacement))
+    for (const slug of await modesOfPlacement(db, sub.backendPlacement, reads))
       signals.push(familyOf(slug));
   if (sub.backendServerId && sub.pinnedNode) {
-    const intent = await db
-      .query('panelNodeIntents')
-      .withIndex('by_server_name', (q) =>
-        q.eq('backendServerId', sub.backendServerId!).eq('name', sub.pinnedNode!),
-      )
-      .first();
-    if (intent) signals.push(familyOf(intent.mode));
+    const key = `${sub.backendServerId}|${sub.pinnedNode}`;
+    let mode = reads.nodeModes.get(key);
+    if (!mode) {
+      mode = db
+        .query('panelNodeIntents')
+        .withIndex('by_server_name', (q) =>
+          q.eq('backendServerId', sub.backendServerId!).eq('name', sub.pinnedNode!),
+        )
+        .first()
+        .then((intent) => intent?.mode ?? null);
+      reads.nodeModes.set(key, mode);
+    }
+    const nodeMode = await mode;
+    if (nodeMode !== null) signals.push(familyOf(nodeMode));
   }
   const member = user === undefined ? await db.get(sub.userId) : user;
   const stored = member?.connectionModeId ?? null;
   if (stored) signals.push(familyOf(stored));
-  else {
-    const withAvailability = await resolveCatalogWithAvailability(db);
-    signals.push(familyOf(effectiveDefaultFor(withAvailability, 'remnawave')));
-  }
+  else
+    signals.push(
+      familyOf(
+        await (reads.defaultSlug ??= resolveCatalogWithAvailability(db).then((c) =>
+          effectiveDefaultFor(c, 'remnawave'),
+        )),
+      ),
+    );
   if (signals.includes('privacy')) return 'privacy';
   return signals.includes('freedom') ? 'freedom' : 'none';
 }

@@ -227,6 +227,16 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Prune finished port changes past the retention window',
   },
   {
+    name: 'retention-maintenance-holds',
+    everyMs: DAY,
+    description: 'Prune released maintenance holds past the retention window',
+  },
+  {
+    name: 'retention-obligations',
+    everyMs: DAY,
+    description: 'Prune settled backend obligations past the retention window',
+  },
+  {
     name: 'own-exits-refresh',
     everyMs: HOUR,
     description: "Rebuild FCP's own exit addresses (a member's app refreshing through the tunnel)",

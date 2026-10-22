@@ -4,8 +4,10 @@
  * `x-fcp-delivery: <reason>`) bumps a counter per reason. The route is hot,
  * so the counter is SHARDED: a refusal writes one of REFUSAL_SHARDS `appState`
  * rows (`edge:refusals:<n>`), picked at random, and concurrent refusals rarely
- * touch the same row. Each shard keeps ten-minute buckets for the last hour;
- * the attention list sums the shards (`delivery_refusals`).
+ * touch the same row. The route schedules the write instead of awaiting it, so
+ * a burst (a fleet-wide gate close) never slows the 503s down; a write that
+ * conflicts is retried by the scheduler. Each shard keeps ten-minute buckets
+ * for the last hour; the attention list sums the shards (`delivery_refusals`).
  *
  * A row holds reason codes and counts only: never a token, a member, a node
  * or an address.
@@ -39,7 +41,7 @@ export function refusalReason(reason: string): string {
   return KNOWN.has(reason) ? reason : 'other';
 }
 
-/** Count one refusal (the subscription route calls this; never throws into the route). */
+/** Count one refusal (the subscription route schedules this; it never reaches the answer). */
 export const record = internalMutation({
   args: { reason: v.string() },
   handler: async (ctx, { reason }) => {
