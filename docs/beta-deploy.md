@@ -712,8 +712,8 @@ backend and dashboard on the Node overlay, with the stack's own build args) and
 the pulled ones (postgres, cap, valkey, keygen). It reads the service list and
 every ref from the stack file, so a new service or a re-pin needs no edit
 there. It runs Mondays after Dependabot, on pull requests and pushes to main
-that touch `docker/**` or the stack file, and on demand
-(`gh workflow run image-scan.yml`). Findings land in the Security tab under
+that touch `docker/**`, the stack file, `package.json` or `bun.lock` (the
+deployer image installs them), and on demand (`gh workflow run image-scan.yml`). Findings land in the Security tab under
 code scanning, one `image/<service>` category per service; the run's summary
 has the counts.
 

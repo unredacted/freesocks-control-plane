@@ -38,11 +38,14 @@ on:
     # Mondays, after Dependabot's 09:00 UTC run and the Convex release watch.
     - cron: '30 9 * * 1'
   workflow_dispatch:
-  # A re-pin or Dockerfile change shows its findings before it merges...
+  # A re-pin, Dockerfile or dependency change shows its findings before it
+  # merges (the deployer image is `bun install` from package.json + bun.lock)...
   pull_request:
     paths:
       - 'docker/**'
       - 'docker-compose.stack.yml'
+      - 'package.json'
+      - 'bun.lock'
       - '.github/workflows/image-scan.yml'
   # ...and main's alerts close when the fixing change merges, not next Monday.
   push:
@@ -50,12 +53,14 @@ on:
     paths:
       - 'docker/**'
       - 'docker-compose.stack.yml'
+      - 'package.json'
+      - 'bun.lock'
       - '.github/workflows/image-scan.yml'
 
 permissions:
   contents: read
-  # SARIF upload. Dependabot's pull requests need it asked for here: their token
-  # is read-only otherwise.
+  # SARIF upload. A pull_request run may upload with a read-only token too
+  # (forks, Dependabot): code scanning always accepts results from that event.
   security-events: write
 
 concurrency:
@@ -140,10 +145,7 @@ jobs:
             | join(", ")' "$RUNNER_TEMP/grype/grype.json")"
           echo "- **$SERVICE** \`$REF\`: ${counts:-no fixable CVEs}" >> "$GITHUB_STEP_SUMMARY"
 
-      # A fork's pull request gets a read-only token whatever this file asks
-      # for, so its findings stay in the log and summary above.
       - name: Upload to code scanning
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ${{ runner.temp }}/grype/grype.sarif
