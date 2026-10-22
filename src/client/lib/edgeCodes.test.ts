@@ -93,6 +93,32 @@ describe('EDGE_CODE_COPY', () => {
   });
 });
 
+describe('a WebSocket node and load balancers', () => {
+  test('the refusal and the plan reason say why and point at a CDN, in plain sentences', () => {
+    expect(codeExplain('l4_not_for_websocket')).toContain(
+      'A load balancer cannot front a WebSocket node',
+    );
+    expect(codeFix('l4_not_for_websocket')).toBe('Use a CDN.');
+    expect(SETUP_ACCOUNT_REASON_COPY.l4_not_for_websocket.explain).toContain('WebSocket node');
+    expect(SETUP_ACCOUNT_REASON_COPY.l4_not_for_websocket.fix).toBe('Use a CDN account.');
+  });
+
+  test('"No backup elsewhere": a second CDN for a WebSocket node, another load balancer elsewhere', () => {
+    // The attention row shows the kind's words, then the reason's label and fix.
+    expect(codeExplain('reduced_resilience')).toContain('no backup at another provider');
+    expect(codeLabel('second_cdn_needed')).toBe('Needs a second CDN');
+    expect(codeFix('second_cdn_needed')).toContain('second CDN account');
+    expect(codeFix('second_cdn_needed')).toContain('other than the one in use');
+    // Not every transport only a CDN can front is a WebSocket node's (a plaintext origin's too).
+    expect(codeExplain('second_cdn_needed')).toContain('Only a CDN can front these transports');
+    expect(codeExplain('second_cdn_needed')).not.toContain('WebSocket');
+    expect(codeFix('one_group')).toContain("another provider's load balancer works");
+    for (const code of ['one_group', 'second_cdn_needed', 'l4_not_for_websocket'])
+      for (const text of [codeLabel(code), codeExplain(code), codeFix(code) ?? ''])
+        expect(text.includes(EM_DASH) || text.includes('/api/')).toBe(false);
+  });
+});
+
 describe('EDGE_REFUSAL_COPY', () => {
   const REFUSALS = [
     'host_adopt_required',

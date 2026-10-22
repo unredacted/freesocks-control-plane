@@ -38,7 +38,8 @@ import {
 import { sameAddress } from './lib/edges/hosts';
 import { isValidHostname } from './lib/edges/hostname';
 import { l7HostHeaderFor, listenerAllowsLayer, zoneModeCarriesOrigin } from './lib/edges/layers';
-import { protocolTransport, protocolUsesSni } from './lib/edges/protocols';
+import { protocolIsHttpTransport, protocolTransport, protocolUsesSni } from './lib/edges/protocols';
+import { websocketNodeOf } from './lib/edges/websocketNode';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeAddressKindOf,
@@ -1690,7 +1691,8 @@ function udpProviderAvailable(): boolean {
  * this configuration and has not expired. An edge of a DNS account (role `dns`)
  * goes live only while `edge.l7.dnsProvidersFront` is on: a spare made earlier
  * must not start carrying members once the switch is off (a published one is
- * left as it is).
+ * left as it is). Nor does a load balancer in front of a WebSocket node's
+ * transport (`l4_not_for_websocket`, lib/edges/websocketNode.ts).
  *
  * `skipVerification` takes ONLY the L4 endpoint-verification rule out (the
  * verification-binding view asks "what else blocks this edge once tested?");
@@ -1717,6 +1719,14 @@ export async function checkPublishable(
     return { ok: false, code: 'listener_no_active_name' };
   if (edge.provider && listener.providerScope && listener.providerScope.provider !== edge.provider)
     return { ok: false, code: 'provider_mismatch' };
+  // A load balancer a WebSocket node already had stays as it is, but never goes
+  // live (lib/edges/websocketNode.ts).
+  if (
+    layer === 'l4' &&
+    protocolIsHttpTransport(listener) &&
+    (await ctx.db.get(edge.relayId).then((r) => !!r && websocketNodeOf(ctx.db, r.origin)))
+  )
+    return { ok: false, code: 'l4_not_for_websocket' };
   if (protocolTransport(listener) === 'udp' && !udpProviderAvailable())
     return { ok: false, code: 'transport_not_carried' };
   const l7Host = l7HostHeaderFor(

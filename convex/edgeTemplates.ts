@@ -38,6 +38,7 @@ import { l7PlaceOf } from './lib/edges/l7Place';
 import { certificateRefusalFor, type CertificateRefusal } from './lib/edges/certificateRefusal';
 import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { assertAdmission } from './lib/edges/maintenance';
+import { L4_NOT_FOR_WEBSOCKET } from './lib/edges/websocketNode';
 import { parseRegionalParams, withRegionalOverlay } from './lib/edges/locations';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto needed). */
@@ -260,8 +261,12 @@ export async function checkPickOptions(
   location: Doc<'edgeLocations'>,
   account: Doc<'edgeProviderAccounts'>,
   raw: unknown,
-  /** The node being protected: a REALITY transport refuses an HTTP health check. */
-  context: { realityL4?: boolean } = {},
+  /**
+   * The node being protected: a REALITY transport refuses an HTTP health
+   * check; when no transport of it may be fronted by a load balancer (a
+   * WebSocket node's, `l4BarredForAll`), a load-balancer pick is refused.
+   */
+  context: { realityL4?: boolean; l4Barred?: boolean } = {},
 ): Promise<
   | {
       ok: true;
@@ -271,6 +276,8 @@ export async function checkPickOptions(
     }
   | { ok: false; code: string; issues: string[] }
 > {
+  if (context.l4Barred && edgeLayerOf(account.provider) === 'l4')
+    return { ok: false, code: 'edge.l4_not_for_websocket', issues: [L4_NOT_FOR_WEBSOCKET] };
   const res = validatePickOptions(account.provider, raw);
   if (!res.ok) return { ok: false, code: res.code, issues: res.issues };
   const options = {

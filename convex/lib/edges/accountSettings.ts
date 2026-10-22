@@ -157,6 +157,26 @@ export const EDGE_PLACEMENT_SETTINGS: Record<EdgeProviderId, readonly string[]> 
   fastly: ['dnsAccountId', 'zoneId', 'zoneName', 'tlsConfigurationId'],
 };
 
+/**
+ * Placement values a location may leave empty because the provider has a
+ * default of its own that the credential test reads and the account keeps as
+ * an observed fact (`observedSettings`, never a secret): the adapter config
+ * takes the fact in the value's place, and a location with neither is not
+ * offered (`missing`, `placeProblemOf`), so a create never goes out without it.
+ */
+export const EDGE_OBSERVED_PLACEMENT: Record<
+  EdgeProviderId,
+  Readonly<Record<string, { fact: string; missing: string }>>
+> = {
+  gcore: {},
+  upcloud: {},
+  // The API key's default project (IAM), for a location with no Project id.
+  scaleway: { projectId: { fact: 'defaultProjectId', missing: 'project_unresolved' } },
+  ovh: {},
+  cloudflare: {},
+  fastly: {},
+};
+
 /** Account settings that still LOCATE every edge of the account: locked while any non-destroyed edge references it. */
 export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   gcore: [],

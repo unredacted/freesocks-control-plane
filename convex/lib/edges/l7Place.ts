@@ -4,11 +4,13 @@
  * location's zone, the DNS account its records go through and its TLS
  * configuration, with the zone facts its last check observed. Shared by the
  * setup plan, selection and the provider-set reads, so all three judge a
- * zone the same way. Reads the database, no provider call.
+ * zone the same way (`placeProblemOf` adds what an L4 place can lack: a
+ * Scaleway project). Reads the database, no provider call.
  */
 import type { Doc, Id } from '../../_generated/dataModel';
 import type { DatabaseReader } from '../../_generated/server';
 import { intentPlaceOf, parseObservedSettings, type IntentPlace } from './intent';
+import { EDGE_OBSERVED_PLACEMENT } from './accountSettings';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeLayerOf,
@@ -87,4 +89,26 @@ export async function l7PlaceProblemOf(
   if (zoneModeGovernsOrigin(account.provider) && !place.observed?.zoneSslMode)
     return 'zone_mode_unknown';
   return null;
+}
+
+/**
+ * Why no new edge can be planned in this location, or null: a placement value
+ * the location left empty that the account's credential test could not observe
+ * either (`EDGE_OBSERVED_PLACEMENT`: a Scaleway location with no Project id
+ * whose API key's default project is unknown reads `project_unresolved`), then
+ * an L7 place's own problems (`l7PlaceProblemOf`).
+ */
+export async function placeProblemOf(
+  db: DatabaseReader,
+  account: Pick<Account, 'provider' | 'settings' | 'observedSettings'>,
+  location: Pick<Location, 'placement' | 'observed' | 'checkError'>,
+): Promise<string | null> {
+  const defaults = Object.entries(EDGE_OBSERVED_PLACEMENT[account.provider]);
+  if (defaults.length > 0) {
+    const placed = (location.placement ?? {}) as Record<string, unknown>;
+    const observed = parseObservedSettings(account.observedSettings);
+    for (const [key, { fact, missing }] of defaults)
+      if (!placed[key] && !observed[fact]) return missing;
+  }
+  return l7PlaceProblemOf(db, account, location);
 }

@@ -5,7 +5,9 @@
  *  - Add: on a node live behind this origin and enrolled, an `add` re-protect
  *    run (new addresses in the added locations, a review when they are a new
  *    shape, nothing retired); on any other origin the set is saved, and the
- *    operator adds a spare there and puts it in use.
+ *    operator adds a spare there and puts it in use. A WebSocket node none of
+ *    whose transports a load balancer may front takes none
+ *    (`edge.l4_not_for_websocket`, lib/edges/websocketNode.ts).
  *  - Remove: allowed only when what SURVIVES still serves every transport and
  *    meets the requirement the remaining picks make (`edge.set_would_uncover`
  *    otherwise, naming the transports). A survivor is a published, active,
@@ -22,7 +24,8 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { MAX_DESIRED_PUBLISHED, dnsProvidersFrontOf } from './lib/edgeConfig';
-import { frontsAllowed } from './lib/edges/providers/capabilities';
+import { edgeLayerOf, frontsAllowed } from './lib/edges/providers/capabilities';
+import { L4_NOT_FOR_WEBSOCKET, l4BarredForAll, websocketNodeOf } from './lib/edges/websocketNode';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRunningSetup, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { coverTargets, MAX_PROVIDER_PICKS, requirementOf } from './lib/edges/providerSet';
@@ -57,7 +60,8 @@ const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
  * unpublished) on this origin, whether it cools and until when; the
  * transports with no backup elsewhere; and the locations that could be added
  * (switched on, of an enabled and tested account, carrying at least one of
- * the node's transports). Names are admin-only.
+ * the node's transports: never a load balancer for a WebSocket node). Names
+ * are admin-only.
  */
 export const view = internalQuery({
   args: { relayId: v.id('relays') },
@@ -107,7 +111,9 @@ export const view = internalQuery({
       for (const location of await locationsOfAccount(ctx.db, account._id)) {
         if (!location.enabled || picks.some((p) => p.locationId === location._id)) continue;
         const row = { account, location };
-        const carried = state.listeners.filter((l) => carries(row, l)).map((l) => l.listenerKey);
+        const carried = state.listeners
+          .filter((l) => carries(row, l, { websocketNode: state.websocketNode }))
+          .map((l) => l.listenerKey);
         if (carried.length === 0) continue;
         available.push({
           locationId: location._id as string,
@@ -122,6 +128,7 @@ export const view = internalQuery({
     }
     return {
       hasSet: !!relay.providerSet,
+      websocketNode: state.websocketNode,
       picks,
       reduced: state.requirement.reduced,
       coolingOnly: state.requirement.coolingOnly,
@@ -162,6 +169,11 @@ export const change = internalMutation({
         message: 'A location is both added and removed',
       });
     const before = relay.providerSet ?? (await impliedSetOf(ctx, relay));
+    // No load balancer for a node none of whose transports one may front.
+    const l4Barred = l4BarredForAll(
+      (await listenersOf(ctx, relay._id)).filter((l) => !l.retired && l.deployed && l.enabled),
+      await websocketNodeOf(ctx.db, relay.origin),
+    );
     for (const id of add) {
       const loc = await ctx.db.get(id);
       const account = loc ? await ctx.db.get(loc.accountId) : null;
@@ -174,6 +186,11 @@ export const change = internalMutation({
         });
       if (before.some((p) => p.locationId === id))
         throw new ConvexError({ code: 'validation', message: 'That location is already picked' });
+      if (l4Barred && edgeLayerOf(account.provider) === 'l4')
+        throw new ConvexError({
+          code: 'edge.l4_not_for_websocket',
+          message: L4_NOT_FOR_WEBSOCKET,
+        });
     }
     for (const id of remove)
       if (!before.some((p) => p.locationId === id))
@@ -302,10 +319,13 @@ async function removePicks(
   }
   // The requirement the remaining picks make, met by the survivors alone.
   const picks = (await setPicksOf(ctx.db, { providerSet: remaining })) ?? [];
+  const websocketNode = await websocketNodeOf(ctx.db, relay.origin);
   const req = requirementOf(
     listeners.map((l) => ({
       listenerKey: l.listenerKey,
-      carriers: picks.filter((p) => p.usable && carries(p, l)).map((p) => p.pick.locationId),
+      carriers: picks
+        .filter((p) => p.usable && carries(p, l, { websocketNode }))
+        .map((p) => p.pick.locationId),
     })),
     picks.map((p) => p.pick),
   );

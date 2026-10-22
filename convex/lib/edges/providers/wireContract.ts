@@ -182,8 +182,14 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
   // --- L4: Scaleway load balancers (official SDK, zoned API) ---------------------------
   scaleway: {
     source:
-      'https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16',
+      'https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16; https://www.scaleway.com/en/developers/api/iam/ (api-keys), 2026-10-22',
     calls: [
+      {
+        method: 'GET',
+        path: '^/iam/v1alpha1/api-keys/[^/]+$',
+        purpose:
+          "credential test: the API key's default project (a location with no Project id creates there)",
+      },
       {
         method: 'GET',
         path: '^/lb/v1/zones/[^/]+/lbs$',

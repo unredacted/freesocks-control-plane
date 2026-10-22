@@ -6,6 +6,7 @@ import {
   addressLine,
   defaultProviderFor,
   dnsProviderNames,
+  frontsNode,
   providerGroupOf,
   providerGroups,
 } from './edgeProviderMeta';
@@ -94,6 +95,15 @@ describe('edge provider meta', () => {
       if (m.role === 'dns') expect(m.providesDns).toBe(true);
       if (m.needsDnsAccount) expect(m.role).toBe('edge');
     }
+  });
+
+  it('a WebSocket node is offered no load balancer; any other node is offered every provider', () => {
+    for (const id of EDGE_PROVIDER_IDS) {
+      expect(frontsNode(id, true)).toBe(EDGE_PROVIDER_META[id].layer === 'l7');
+      expect(frontsNode(id, false)).toBe(true);
+    }
+    // An id the console does not know is left to the server.
+    expect(frontsNode('unknown', true)).toBe(true);
   });
 
   it('prefers the hostname over IP literals in one address line', () => {

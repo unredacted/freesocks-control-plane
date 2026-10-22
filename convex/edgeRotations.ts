@@ -108,6 +108,7 @@ import {
   type ListenerProto,
 } from './lib/edges/protocols';
 import { hostTargetFor, listenerLayers, zoneModeCarriesOrigin } from './lib/edges/layers';
+import { L4_NOT_FOR_WEBSOCKET, l4BarredFor, websocketNodeOf } from './lib/edges/websocketNode';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
 // The freshness window the DETECTOR scores on is the one this gate accepts
 // evidence on: one rule, imported, never a second copy of "two intervals".
@@ -145,7 +146,7 @@ import {
 } from './nodeActivation';
 import type { PublicationShape } from './lib/backend/activation';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
-import { l7PlaceOf, l7PlaceProblemOf } from './lib/edges/l7Place';
+import { l7PlaceOf, placeProblemOf } from './lib/edges/l7Place';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -576,6 +577,8 @@ export async function collectStartBlockers(
   const cfg = await resolveEdgeConfig(ctx.db);
   const now = opts.now ?? Date.now();
   const force = a.force ?? false;
+  // A WebSocket node: no load balancer fronts its transports (lib/edges/websocketNode.ts).
+  const websocketNode = await websocketNodeOf(ctx.db, origin.origin);
   // Admission gate: a start of ANY kind is new work; completion paths (step,
   // rekick, rollback, cancel, unpublish, destroy) never route through here.
   if (!(await admitted(ctx.db))) push('edge.maintenance', 'Edges are in maintenance');
@@ -656,7 +659,7 @@ export async function collectStartBlockers(
       const targetListener = await ctx.db.get(targetEdge.listenerId);
       const couldGoL7 =
         !!targetListener &&
-        listenerLayers(targetListener).layers.includes('l7') &&
+        listenerLayers(targetListener, { websocketNode }).layers.includes('l7') &&
         (a.trigger === 'manual' || l7SelectionAllowed(cfg) || (await setHasL7Pick(ctx.db, origin)));
       const automatic = a.trigger === 'detector' || a.trigger === 'reconcile';
       if (!couldGoL7 && !(await verifiedSpareFor(ctx, origin, targetEdge, cfg, automatic))) {
@@ -752,12 +755,25 @@ export async function collectStartBlockers(
           'The listener is not deployed, is disabled, or has no server name',
         );
       }
+      // A load balancer named for a WebSocket node's transport (an account, a
+      // location, a spare) is refused here, never paid for and then refused.
+      if (l4BarredFor(listener, websocketNode)) {
+        const named = a.requestedLocationId ? await ctx.db.get(a.requestedLocationId) : null;
+        const accountId = a.requestedAccountId ?? named?.accountId;
+        const acct = accountId ? await ctx.db.get(accountId) : null;
+        const spare = a.requestedSpareEdgeId ? await ctx.db.get(a.requestedSpareEdgeId) : null;
+        if (
+          (acct && edgeLayerOf(acct.provider) === 'l4') ||
+          (spare && (spare.layer ?? edgeLayerOf(spare.provider)) === 'l4')
+        )
+          push('edge.l4_not_for_websocket', L4_NOT_FOR_WEBSOCKET);
+      }
       // An L7-ONLY listener cannot be answered automatically while the L7 gate
       // is off: the run would have nothing compatible to pick, and silently
       // routing it to an L4 account would front a plaintext origin with a raw
       // forwarder. The veto is explicit so the operator sees why nothing happened.
       if (a.trigger === 'detector') {
-        const layers = listenerLayers(listener).layers;
+        const layers = listenerLayers(listener, { websocketNode }).layers;
         if (
           layers.length === 1 &&
           layers[0] === 'l7' &&
@@ -952,8 +968,12 @@ export async function startRotation(
         code: 'validation',
         message: 'Options for one address need the location it is built in',
       });
+    // The one edge's transport: a load balancer only where it may front it.
+    const forListener = listenerId ? await ctx.db.get(listenerId) : null;
     const checked = await checkPickOptions(ctx, where, owner, a.requestedOptions, {
       realityL4: await relayHasReality(ctx.db, a.relayId),
+      l4Barred:
+        !!forListener && l4BarredFor(forListener, await websocketNodeOf(ctx.db, origin.origin)),
     });
     if (!checked.ok)
       throw new ConvexError({
@@ -2764,6 +2784,10 @@ export async function selectionContext(
       template: null,
     };
   const listener = slot;
+  // A WebSocket node's transport takes no load balancer: none is offered,
+  // named or reused as a spare (lib/edges/websocketNode.ts).
+  const websocketNode = await websocketNodeOf(ctx.db, origin.origin);
+  const barred = l4BarredFor(listener, websocketNode);
   const fitsApproval = async (
     accountId: string | null,
     locationId: string | null,
@@ -2827,6 +2851,8 @@ export async function selectionContext(
       hasAddress:
         hasPublishableAddress(e) &&
         standbyEligible(e, slotOfEdge) &&
+        // A load balancer the node already had is left as it is, never reused.
+        !(barred && (e.layer ?? edgeLayerOf(e.provider)) === 'l4') &&
         frontsAllowed(e.provider, cfg.l7.dnsProvidersFront) &&
         // Built with what its pick asks for now (the operator's named spare excepted).
         (e._id === rotation.requestedSpareEdgeId ||
@@ -2895,7 +2921,7 @@ export async function selectionContext(
   // cannot front the slot is not a candidate: picking it would provision an edge
   // that `checkPublishable` would then refuse (`layer_mismatch` /
   // `protocol_not_carried`) after the provider had already been paid.
-  const layers = listenerLayers(listener).layers;
+  const layers = listenerLayers(listener, { websocketNode }).layers;
   // Every trigger except an operator's own request is "automatic" for the L7
   // gate: an unproven front must not reach members because a cron or the
   // detector chose it. A guided setup run's account IS the operator's own
@@ -2938,6 +2964,7 @@ export async function selectionContext(
       return failure('location_not_found');
     const a = await ctx.db.get((rotation.requestedAccountId ?? named!.accountId)!);
     if (!a) return failure('account_not_found');
+    if (barred && edgeLayerOf(a.provider) === 'l4') return failure('l4_not_for_websocket');
     if (!a.enabled) return failure('account_disabled');
     // A certificate that cannot be had (CAA forbids the CA, the shared
     // wildcard failed) is named as such, before the generic untested.
@@ -2956,9 +2983,10 @@ export async function selectionContext(
     const where = named ?? (await defaultLocationOf(ctx.db, a));
     if (!where) return failure('no_location');
     if (!where.enabled) return failure('location_disabled');
-    // A CDN place a new edge cannot be planned in (no zone, a refused check,
-    // its DNS account gone or off, its encryption mode never read).
-    const placeProblem = await l7PlaceProblemOf(ctx.db, a, where);
+    // A place a new edge cannot be planned in (a CDN place with no zone, a
+    // refused check, its DNS account gone or off, its encryption mode never
+    // read; a Scaleway location with no project to create in).
+    const placeProblem = await placeProblemOf(ctx.db, a, where);
     if (placeProblem) return failure(placeProblem);
     if (!where.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)
@@ -3023,8 +3051,9 @@ export async function selectionContext(
       }
       // A place whose last check refused it (a paused zone) gets no new edge.
       // A place no new edge can be planned in (a CDN zone with no zone, a
-      // refused check, its DNS account off, an unread encryption mode).
-      if (!loc.enabled || (await l7PlaceProblemOf(ctx.db, a, loc))) continue;
+      // refused check, its DNS account off, an unread encryption mode; a
+      // Scaleway location with no project to create in).
+      if (!loc.enabled || (await placeProblemOf(ctx.db, a, loc))) continue;
       keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
       if (underApproval) {
         const tpl = await resolveBuildFor(

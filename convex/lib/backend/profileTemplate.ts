@@ -83,6 +83,8 @@ export const SHAPES: readonly ModeShape[] = [
 export const shapeAllowed = (s: ModeShape): boolean =>
   SHAPES.some((m) => m.transport === s.transport && m.fronting === s.fronting);
 export const isReality = (s: ModeShape): boolean => s.transport !== 'ws';
+/** Whether a node of this shape is fronted by CDNs only (its WebSocket transport behind Caddy). */
+export const isCdnFronted = (s: Pick<ModeShape, 'fronting'>): boolean => s.fronting === 'edge-l7';
 
 /** What a mode definition carries before its family is resolved. */
 export interface ModeDefinition {

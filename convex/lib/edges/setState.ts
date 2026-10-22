@@ -7,7 +7,7 @@
  * Exports:
  *   coolingOf(relay, now)           the location ids cooling on this origin
  *   isCooling(relay, locationId, now)
- *   carries(pick, listener)         whether a pick can front a listener
+ *   carries(pick, listener, opts)   whether a pick can front a listener
  *   setPicksOf(db, relay)           the set's rows (null = no set)
  *   setStateOf(db, relay)           requirement + published + deficit + targets
  *   publishedRefOf(edge, listenerKey)
@@ -20,7 +20,8 @@ import { locationKeyOf } from './locations';
 import { accountsForSlot } from './rotation';
 import { dnsProvidersFrontOf } from '../edgeConfig';
 import { edgeRoleOf } from './providers/capabilities';
-import { l7PlaceProblemOf } from './l7Place';
+import { placeProblemOf } from './l7Place';
+import { websocketNodeOf } from './websocketNode';
 import {
   coverTargets,
   coverageDeficit,
@@ -77,6 +78,8 @@ export interface SetPickRow {
  * Whether a pick can front a listener: its provider carries the listener's
  * layer, protocol and port, and the listener's provider or account scope (if
  * any) names it. A set pick is the operator's choice, so L7 is allowed (D4).
+ * A load balancer never carries a WebSocket node's HTTP transport
+ * (`websocketNode`, lib/edges/websocketNode.ts).
  */
 export function carries(
   row: Pick<SetPickRow, 'account'>,
@@ -90,6 +93,7 @@ export function carries(
     | 'providerScope'
     | 'tlsNames'
   >,
+  opts: { websocketNode?: boolean } = {},
 ): boolean {
   const scope = listener.providerScope;
   if (scope?.provider && scope.provider !== row.account.provider) return false;
@@ -101,7 +105,7 @@ export function carries(
   };
   return (
     accountsForSlot([row.account], {
-      layers: listenerLayers(listener).layers,
+      layers: listenerLayers(listener, { websocketNode: opts.websocketNode }).layers,
       proto,
       originPort: listener.originPort,
       allowL7: true,
@@ -128,9 +132,10 @@ export async function setPicksOf(
     if (!account) continue;
     const fronts =
       edgeRoleOf(account.provider) !== 'dns' || (dnsFront ??= await dnsProvidersFrontOf(db));
-    // A CDN place no new edge can be planned in carries nothing (no zone, a
-    // refused check, its DNS account gone or off, an unread encryption mode).
-    const placeOk = location.enabled && !(await l7PlaceProblemOf(db, account, location));
+    // A place no new edge can be planned in carries nothing (a CDN place with
+    // no zone, a refused check, its DNS account gone or off, an unread
+    // encryption mode; a Scaleway location with no project to create in).
+    const placeOk = location.enabled && !(await placeProblemOf(db, account, location));
     out.push({
       pick: {
         locationId: location._id as string,
@@ -161,6 +166,8 @@ export function publishedRefOf(
 
 export interface SetState {
   picks: SetPickRow[] | null;
+  /** The node is a WebSocket node: no load balancer carries its HTTP transports. */
+  websocketNode: boolean;
   /** Deployed, enabled, not retired. */
   listeners: Listener[];
   requirement: Requirement;
@@ -187,9 +194,12 @@ export async function setStateOf(
     .collect();
   const listeners = rows.filter((l) => l.deployed && l.enabled && !l.retired);
   const picks = await setPicksOf(db, relay);
+  const websocketNode = await websocketNodeOf(db, relay.origin);
   const setListeners: SetListener[] = listeners.map((l) => ({
     listenerKey: l.listenerKey,
-    carriers: (picks ?? []).filter((p) => p.usable && carries(p, l)).map((p) => p.pick.locationId),
+    carriers: (picks ?? [])
+      .filter((p) => p.usable && carries(p, l, { websocketNode }))
+      .map((p) => p.pick.locationId),
   }));
   const requirement = requirementOf(
     setListeners,
@@ -208,7 +218,15 @@ export async function setStateOf(
     if (key) published.push({ ...publishedRefOf(e, key), edgeId: e._id });
   }
   const targets = coverTargets(requirement, published);
-  return { picks, listeners, requirement, published, deficit: targets.length, targets };
+  return {
+    picks,
+    websocketNode,
+    listeners,
+    requirement,
+    published,
+    deficit: targets.length,
+    targets,
+  };
 }
 
 /** What publishing one more edge does: whether it lowers the deficit, and the deficit now. */

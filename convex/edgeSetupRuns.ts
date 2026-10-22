@@ -115,6 +115,7 @@ import { MAX_PROVIDER_PICKS, coverTargets, requirementOf } from './lib/edges/pro
 import { checkPickOptions, relayHasReality } from './edgeTemplates';
 import { parseOptionValues } from './lib/edges/providers/options';
 import { carries, setStateOf } from './lib/edges/setState';
+import { L4_NOT_FOR_WEBSOCKET, l4BarredForAll, websocketNodeOf } from './lib/edges/websocketNode';
 import { locationKeyOf } from './lib/edges/locations';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 
@@ -2887,12 +2888,27 @@ export const retry = internalMutation({
       const accountId =
         a.accountId ?? named?.accountId ?? current.find((p) => p.locationId === from)!.accountId;
       const offered = plan.accounts.find((x) => x.id === (accountId as string | null));
+      const account = accountId ? await ctx.db.get(accountId) : null;
+      // A WebSocket node switches to no load balancer when none of its
+      // transports may be fronted by one (lib/edges/websocketNode.ts): the plan
+      // said so, or (a re-protect run's set) the node's listeners do.
+      const relay = r.relayId ? await ctx.db.get(r.relayId) : null;
+      if (
+        offered?.reasons.includes('l4_not_for_websocket') ||
+        (account &&
+          edgeLayerOf(account.provider) === 'l4' &&
+          relay &&
+          l4BarredForAll(
+            (await listenersOf(ctx, relay._id)).filter((l) => !l.retired),
+            await websocketNodeOf(ctx.db, relay.origin),
+          ))
+      )
+        throw new ConvexError({ code: 'edge.l4_not_for_websocket', message: L4_NOT_FOR_WEBSOCKET });
       if (!offered?.compatible)
         throw new ConvexError({
           code: 'edge.account_incompatible',
           message: 'Not a compatible account',
         });
-      const account = accountId ? await ctx.db.get(accountId) : null;
       if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
       const location = await pickLocationOf(ctx.db, account, toId);
       const offeredLocation = location
@@ -3927,9 +3943,19 @@ export async function startReprotect(
       account: Doc<'edgeProviderAccounts'>;
     }> = [];
     const dnsFront = await dnsProvidersFrontOf(ctx.db);
+    // A WebSocket node takes no new load balancer when none of its served
+    // transports may be fronted by one (lib/edges/websocketNode.ts); one it
+    // already has is left as it is and carries nothing new.
+    const websocketNode = await websocketNodeOf(ctx.db, relay.origin);
+    const l4Barred = l4BarredForAll(
+      served.map((x) => x.listener),
+      websocketNode,
+    );
     for (const id of pickIds) {
       const location = await ctx.db.get(id);
       const account = location ? await ctx.db.get(location.accountId) : null;
+      if (account && l4Barred && !base.includes(id) && edgeLayerOf(account.provider) === 'l4')
+        throw new ConvexError({ code: 'edge.l4_not_for_websocket', message: L4_NOT_FOR_WEBSOCKET });
       if (!location || !account || !account.enabled || !accountTested(account) || !location.enabled)
         throw new ConvexError({
           code: 'edge.account_incompatible',
@@ -3956,8 +3982,14 @@ export async function startReprotect(
     for (const p of pickRows) {
       const key = p.location._id as string;
       const given = pickOptions?.[key];
+      // A load balancer a WebSocket node already had: given nothing new (new
+      // options for it are refused below).
+      const kept = l4Barred && edgeLayerOf(p.account.provider) === 'l4';
       if (given !== undefined) {
-        const r = await checkPickOptions(ctx, p.location, p.account, given, { realityL4 });
+        const r = await checkPickOptions(ctx, p.location, p.account, given, {
+          realityL4,
+          l4Barred,
+        });
         if (!r.ok) throw new ConvexError({ code: r.code, message: r.issues.join('; ') || r.code });
         optionsOfPick.set(key, JSON.stringify(r.options));
         continue;
@@ -3969,10 +4001,11 @@ export async function startReprotect(
         if (entry.options !== undefined) optionsOfPick.set(key, entry.options);
         continue;
       }
+      if (kept) continue;
       // A pick joining now starts from the account's defaults, copied in, and
       // is refused now (as given options are) when what it inherits cannot be
       // built there, rather than failing later in the rotation.
-      const r = await checkPickOptions(ctx, p.location, p.account, {}, { realityL4 });
+      const r = await checkPickOptions(ctx, p.location, p.account, {}, { realityL4, l4Barred });
       if (!r.ok) throw new ConvexError({ code: r.code, message: r.issues.join('; ') || r.code });
       optionsOfPick.set(key, JSON.stringify(r.options));
     }
@@ -3986,7 +4019,7 @@ export async function startReprotect(
       locationKey: locationKeyOf(p.account.provider, p.location.placeKey),
     }));
     const carriersOf = (l: Listener) =>
-      pickRows.filter((p) => carries(p, l)).map((p) => p.location._id as string);
+      pickRows.filter((p) => carries(p, l, { websocketNode })).map((p) => p.location._id as string);
     const req = requirementOf(
       served.map((x) => ({
         listenerKey: x.listener.listenerKey,
@@ -4029,7 +4062,9 @@ export async function startReprotect(
         compatible: true,
         reasons: [],
         locations: [],
-        carries: served.filter((x) => carries(p, x.listener)).map((x) => x.listener.listenerKey),
+        carries: served
+          .filter((x) => carries(p, x.listener, { websocketNode }))
+          .map((x) => x.listener.listenerKey),
       };
       row.locations = [...(row.locations ?? []), planLocationOf(p.location)];
       accounts.set(row.id, row);

@@ -2210,6 +2210,8 @@ export const SetupPlanAccount = z.object({
 export const ProviderSetView = z.object({
   /** False: no set recorded (any trusted location; the picks shown are implied). */
   hasSet: z.boolean(),
+  /** A WebSocket node: CDN locations only, a load balancer never fronts it (an older one is left unused). */
+  websocketNode: z.boolean().default(false),
   picks: z.array(
     z.object({
       locationId: z.string(),

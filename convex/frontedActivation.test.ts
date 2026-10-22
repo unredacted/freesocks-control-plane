@@ -785,7 +785,7 @@ describe('a fronted node goes from enrollment to members', () => {
     installSeams(w);
     const l7Fake = installFakeL7();
     try {
-      const { l7 } = await accounts(t);
+      const { l4, l7 } = await accounts(t);
       await enrollReady(w, {
         name: NODE_W,
         mode: 'freedom-ws',
@@ -830,20 +830,30 @@ describe('a fronted node goes from enrollment to members', () => {
       // One dropped look: the second answers and the CDN account is offered.
       let p = await plan();
       expect(looks).toBe(2);
-      expect(p.inbounds.find((i) => i.frontable)?.layers).toContain('l7');
+      expect(p.inbounds.find((i) => i.frontable)?.layers).toEqual(['l7']);
       expect(p.accounts.find((a) => a.id === (l7 as string))?.compatible).toBe(true);
+      // A load balancer is never offered for a WebSocket node: one reason, for it and each location.
+      const lb = p.accounts.find((a) => a.id === (l4 as string))!;
+      expect([lb.compatible, lb.reasons]).toEqual([false, ['l4_not_for_websocket']]);
+      expect(lb.locations?.map((l) => [l.compatible, l.reasons])).toEqual([
+        [false, ['l4_not_for_websocket']],
+      ]);
       // No answer at all: asked ORIGIN_PROBE_ATTEMPTS times, then said so.
       looks = 0;
       answerFrom = Infinity;
       p = await plan();
       expect(looks).toBe(ORIGIN_PROBE_ATTEMPTS);
+      // Still the transport to protect, with no layer yet: never L4-only.
       const ws = p.inbounds.find((i) => i.frontable)!;
-      expect(ws.layers).toEqual(['l4']);
+      expect(ws.layers).toEqual([]);
       expect(ws.probeFailed).toBe('timeout');
       const acct = p.accounts.find((a) => a.id === (l7 as string))!;
       expect(acct.compatible).toBe(false);
       expect(acct.reasons).toContain('origin_unreachable');
       expect(acct.reasons).not.toContain('layer_mismatch');
+      expect(p.accounts.find((a) => a.id === (l4 as string))?.reasons).toEqual([
+        'l4_not_for_websocket',
+      ]);
       // An address the probe refuses outright is not asked again, and says so:
       // another look would give the same answer.
       looks = 0;
@@ -864,7 +874,7 @@ describe('a fronted node goes from enrollment to members', () => {
     installSeams(w);
     const l7Fake = installFakeL7();
     try {
-      const { l7 } = await accounts(t);
+      const { l4, l7 } = await accounts(t);
       const intentId = await enrollReady(w, {
         name: NODE_W,
         mode: 'freedom-ws',
@@ -890,10 +900,43 @@ describe('a fronted node goes from enrollment to members', () => {
       expect(plan.enrolled).toBe(true);
       const ws = plan.inbounds.filter((i) => i.frontable);
       expect(ws).toHaveLength(1);
-      expect(ws[0]!.layers).toContain('l7');
+      expect(ws[0]!.layers).toEqual(['l7']);
       expect(plan.accounts.find((a) => a.id === (l7 as string))?.compatible).toBe(true);
 
+      // A load balancer is refused for it, however it is named: the members'
+      // server name would be the node's own (docs/edges.md § Layers).
+      const l4Location = (await defaultLocationRow(t, l4))!._id;
+      const planWith = (picks?: Id<'edgeLocations'>[]) =>
+        t.action(internal.edgeSetupPlan.plan, {
+          backendServerId: serverId,
+          nodeUuid: node.nodeUuid,
+          ...(picks ? { picks } : {}),
+        });
+      expect((await planWith([l4Location])).set?.problems.map((x) => x.reason)).toEqual([
+        'l4_not_for_websocket',
+      ]);
+      for (const named of [
+        { picks: [l4Location] },
+        { accountId: l4 },
+        { locationId: l4Location },
+      ]) {
+        const shown = await planWith('picks' in named ? named.picks : undefined);
+        await expect(
+          t.action(internal.edgeSetupPlan.create, {
+            backendServerId: serverId,
+            nodeUuid: node.nodeUuid,
+            ...named,
+            planHash: shown.planHash,
+            approvedHideUuids: [],
+          }),
+        ).rejects.toThrow(/edge\.l4_not_for_websocket/);
+      }
+
       const runId = await protectToPark(w, { nodeName: NODE_W, accountId: l7 });
+      // Nor can the run switch to one before its address is published.
+      await expect(
+        t.mutation(internal.edgeSetupRuns.retry, { runId, locationId: l4Location }),
+      ).rejects.toThrow(/edge\.l4_not_for_websocket/);
       const parkedRun = await setupRun(t, runId);
       // A WebSocket front node has no direct address: its status says so.
       const att = await t.query(internal.edgeOperator.attention, {});
@@ -926,6 +969,24 @@ describe('a fronted node goes from enrollment to members', () => {
       const body = await res.text();
       expect(body).toContain(front);
       expect(body).not.toContain(ORIGIN_W_V4);
+
+      // Live: Protect again from a load balancer, or one added to its set, is refused.
+      const relayId = parkedRun.relayId as Id<'relays'>;
+      await expect(
+        t.mutation(internal.edgeSetupRuns.reprotect, {
+          relayId,
+          mode: 'add',
+          addPicks: [l4Location],
+        }),
+      ).rejects.toThrow(/edge\.l4_not_for_websocket/);
+      await expect(
+        t.mutation(internal.edgeProviderSets.change, { relayId, add: [l4Location] }),
+      ).rejects.toThrow(/edge\.l4_not_for_websocket/);
+      // One CDN: no backup at another provider, and only a second CDN gives one.
+      const reduced = (await t.query(internal.edgeOperator.attention, {})).items.find(
+        (i) => i.kind === 'reduced_resilience' && i.relayId === (relayId as string),
+      );
+      expect(reduced?.code).toBe('second_cdn_needed');
     } finally {
       l7Fake.uninstall();
     }

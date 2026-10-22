@@ -143,7 +143,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       location: true,
       required: false,
       advanced: true,
-      help: 'Leave empty to use the default project of the API key.',
+      help: "Leave empty to use the API key's default project: FCP reads it when it tests the account. A key that may not read it needs the Project id here.",
     },
   ],
   ovh: [

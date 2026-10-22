@@ -1,8 +1,27 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { ScalewayTemplate, __setScalewayApiFactory, scalewayProvider } from './scaleway';
+import {
+  ScalewayTemplate,
+  __setScalewayApiFactory,
+  __setScalewayKeysFactory,
+  scalewayProvider,
+} from './scaleway';
 import type { Ledger, ScalewayConfig } from './types';
 
-afterEach(() => __setScalewayApiFactory(null));
+afterEach(() => {
+  __setScalewayApiFactory(null);
+  __setScalewayKeysFactory(null);
+});
+
+/** The IAM read of the key's default project: a project, or a throw (an SDK-shaped error). */
+function fakeKeys(answer: string | null | { status: number; name: string }) {
+  const defaultProjectOf = vi.fn(async () => {
+    if (answer && typeof answer === 'object')
+      throw Object.assign(new Error('refused'), { status: answer.status, name: answer.name });
+    return answer;
+  });
+  __setScalewayKeysFactory(() => ({ defaultProjectOf }));
+  return defaultProjectOf;
+}
 
 const cfg: ScalewayConfig = {
   type: 'scaleway',
@@ -395,6 +414,40 @@ describe('scaleway: discovery / describe / destroy', () => {
     });
   });
 
+  test('a 400 on an address allocation ends the run on a known code; a create with no project is never sent', async () => {
+    const api = fakeApi({
+      createIp: vi.fn(async () => {
+        throw Object.assign(new Error('invalid argument(s): project_id is required'), {
+          status: 400,
+          name: 'InvalidArgumentsError',
+        });
+      }),
+    });
+    const steps = scalewayProvider.planProvision(cfg, spec, tpl);
+    const empty: Ledger = { steps: [], resources: [] };
+    expect(await scalewayProvider.runStep(cfg, steps[0], spec, tpl, empty)).toEqual({
+      status: 'partial',
+      resources: [],
+      code: 'ip_allocation_refused',
+      refused: true,
+    });
+    // A provider fault is not a refusal: it is thrown, and the step is looked for again.
+    api.createIp = vi.fn(async () => {
+      throw Object.assign(new Error('busy'), { status: 503, name: 'ScalewayError' });
+    });
+    await expect(scalewayProvider.runStep(cfg, steps[0], spec, tpl, empty)).rejects.toThrow(/503/);
+    // No project from the location nor from the key: the run stops on it, nothing sent.
+    api.createIp = vi.fn();
+    const noProject = { ...cfg, projectId: undefined };
+    expect(await scalewayProvider.runStep(noProject, steps[0], spec, tpl, empty)).toEqual({
+      status: 'partial',
+      resources: [],
+      code: 'project_unresolved',
+      refused: true,
+    });
+    expect(api.createIp).not.toHaveBeenCalled();
+  });
+
   test('errors carry no secret or host', async () => {
     const api = fakeApi();
     const lb = res('lb', 'lb', 'lb-1');
@@ -415,5 +468,34 @@ describe('scaleway: discovery / describe / destroy', () => {
     expect(blob).not.toContain('SECRET_SCW');
     expect(blob).not.toContain('api.scaleway.com');
     expect(blob).toContain('403');
+  });
+});
+
+describe('scaleway: credential test and the default project', () => {
+  const account: ScalewayConfig = { ...cfg, projectId: undefined, zone: '' };
+
+  test("reads the key's default project as an observed fact, listing in no project", async () => {
+    const api = fakeApi();
+    const keys = fakeKeys('66666666-7777-4888-8999-000000000000');
+    // A project an earlier test observed (now in the config) is not where the key is tested.
+    expect(await scalewayProvider.testCredentials({ ...account, projectId: 'old' })).toEqual({
+      ok: true,
+      observed: { defaultProjectId: '66666666-7777-4888-8999-000000000000' },
+    });
+    expect(api.listLbs).toHaveBeenCalledWith({ pageSize: 1 });
+    expect(keys).toHaveBeenCalledWith(cfg.accessKey);
+  });
+
+  test('a key that may not read it still passes (its locations need a Project id); a provider fault fails the test', async () => {
+    fakeApi();
+    for (const status of [401, 403, 404]) {
+      fakeKeys({ status, name: 'PermissionsDeniedError' });
+      expect(await scalewayProvider.testCredentials(account)).toEqual({ ok: true });
+    }
+    // A key with no default project at all.
+    fakeKeys(null);
+    expect(await scalewayProvider.testCredentials(account)).toEqual({ ok: true });
+    fakeKeys({ status: 500, name: 'ScalewayError' });
+    expect(await scalewayProvider.testCredentials(account)).toMatchObject({ ok: false });
   });
 });

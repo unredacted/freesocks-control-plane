@@ -14,6 +14,8 @@
  *    accepts those names as Host.
  *  - A listener without `originTransport` keeps the L4-only rules.
  *  - A UDP listener needs a provider that declares `udp`; none does today.
+ *  - A WebSocket node's HTTP transport is never L4-frontable, whatever its
+ *    certificate covers (`websocketNode`, lib/edges/websocketNode.ts).
  *
  * `hostTargetFor` is the single source of the Host tuple written to the backend
  * and emitted by assignment, so a flip and a render never disagree.
@@ -129,6 +131,8 @@ export interface ListenerLayerOpts {
   l7Host?: L7HostHeader;
   /** Some enabled provider declares `udp` (none does today). */
   udpProviderAvailable?: boolean;
+  /** The listener's node is a WebSocket node (`websocketNodeOf`): no load balancer fronts its HTTP transports. */
+  websocketNode?: boolean;
 }
 
 /** The layers that can front `listener`. */
@@ -146,9 +150,16 @@ export function listenerLayers(
   }
   const ot = listener.originTransport ?? null;
   const http = protocolIsHttpTransport(listener);
+  // A member's TLS behind a load balancer would reach the node's Caddy with the
+  // origin name as its server name (lib/edges/websocketNode.ts).
+  const websocket = !!opts.websocketNode && http;
   if (!ot) {
     // Raw TCP to the transport; nothing an L7 front could dial.
     excluded.l7 = 'protocol_not_http_transport';
+    if (websocket) {
+      excluded.l4 = 'l4_not_for_websocket';
+      return { layers: [], excluded };
+    }
     return { layers: ['l4'], excluded };
   }
   const layers: EdgeLayer[] = [];
@@ -161,6 +172,7 @@ export function listenerLayers(
   else if (!l7HostAccepted(ot, opts.l7Host)) excluded.l7 = 'host_header_rejected';
   else layers.push('l7');
   if (ot.scheme === 'http') excluded.l4 = 'origin_plaintext';
+  else if (websocket) excluded.l4 = 'l4_not_for_websocket';
   else if (protocolUsesSni(listener)) {
     const active = (listener.tlsNames ?? [])
       .filter((s) => s.status === 'active')

@@ -36,6 +36,7 @@
   import PreflightPanel from '../components/PreflightPanel.svelte';
   import ActionConfirm from './ActionConfirm.svelte';
   import { edgeAddress } from './relayLogic';
+  import { frontsNode } from '@client/lib/edgeProviderMeta';
   import { drainLength, replaceDrainMinutes } from '../simple/drainWords';
 
   interface Props {
@@ -70,6 +71,8 @@
     poll: false,
   });
   const picks = $derived(setQ.data?.picks ?? []);
+  // A WebSocket node takes no load balancer: none is offered for its replacement.
+  const websocketNode = $derived(setQ.data?.websocketNode ?? false);
   const labelOf = (locationId: string | null) =>
     picks.find((p) => p.locationId === locationId)?.label ?? null;
   // An address: a TESTED spare of the same transport. A CDN front: a new one in a pick.
@@ -80,7 +83,8 @@
         e.listenerId === edge.listenerId &&
         e.publication === 'unpublished' &&
         e.status === 'active' &&
-        e.verification.current !== false,
+        e.verification.current !== false &&
+        !(websocketNode && e.layer === 'l4'),
     ),
   );
   const l7 = $derived(edge.layer === 'l7');
@@ -201,7 +205,7 @@
             </Select.Item>
           {/each}
           {#if l7}
-            {#each picks.filter((p) => p.usable) as p (p.locationId)}
+            {#each picks.filter((p) => p.usable && frontsNode(p.provider, websocketNode)) as p (p.locationId)}
               <Select.Item value={`loc:${p.locationId}`} label={p.label}>
                 A new address in {p.label} ({p.accountName})
               </Select.Item>
