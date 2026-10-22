@@ -1822,3 +1822,154 @@ describe('edgeProviderAccounts: what the credential test OBSERVED', () => {
     ).toEqual({ zoneSslMode: 'full', websockets: 'on' });
   });
 });
+
+describe('edgeProviderAccounts: a DNS account chooses whether it fronts', () => {
+  const cf = {
+    provider: 'cloudflare' as const,
+    settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+    credentials: { apiToken: 'cf' },
+  };
+  const audits = (t: T, action: string) =>
+    t.run(async (ctx) =>
+      (await ctx.db.query('auditLog').collect())
+        .filter((r) => r.action === action)
+        .map((r) => r.payload as Record<string, unknown>),
+    );
+
+  test('a new DNS account is DNS only unless chosen; an edge provider has no such choice', async () => {
+    const t = convexTest(schema, modules);
+    const { id: dnsOnly } = await t.mutation(internal.edgeProviderAccounts.create, {
+      ...cf,
+      name: 'dns-only',
+    });
+    const { id: fronts } = await t.mutation(internal.edgeProviderAccounts.create, {
+      ...cf,
+      name: 'dns-front',
+      frontsTraffic: true,
+    });
+    const rows = await t.run(async (ctx) => [await ctx.db.get(dnsOnly), await ctx.db.get(fronts)]);
+    // Always stored for a DNS account, so the deploy step never reads it as unset.
+    expect(rows.map((r) => r!.frontsTraffic)).toEqual([false, true]);
+    const views = await t.query(internal.edgeProviderAccounts.listForAdmin, {});
+    expect(views.map((v) => [v.name, v.frontsTraffic])).toEqual([
+      ['dns-front', true],
+      ['dns-only', false],
+    ]);
+    expect((await audits(t, 'edge.provider_account.create')).map((p) => p.frontsTraffic)).toEqual([
+      false,
+      true,
+    ]);
+    const { id: lb } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'lb',
+      settings: gcoreSettings,
+      credentials: { apiKey: 'k' },
+    });
+    expect((await t.run((ctx) => ctx.db.get(lb)))!.frontsTraffic).toBeUndefined();
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: lb }))!.frontsTraffic,
+    ).toBe(true);
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, { id: lb, frontsTraffic: false }),
+    ).rejects.toThrow(/Only a DNS provider/);
+  });
+
+  test('switching it on untrusts its locations and asks for a test after it; off keeps its edges', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, { ...cf, name: 'cf' });
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
+    const before = (await t.run((ctx) => ctx.db.get(id)))!.credentialsChangedAt ?? 0;
+    const on = await t.mutation(internal.edgeProviderAccounts.update, { id, frontsTraffic: true });
+    expect(on.requalify).toBe(1);
+    const row = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(row.frontsTraffic).toBe(true);
+    expect(row.credentialsChangedAt ?? 0).toBeGreaterThan(before);
+    // Starting to front is not a token change: the account stays tested.
+    expect(row.lastTestError).toBeUndefined();
+    expect((await defaultLocationRow(t, id))!.qualified).toBe(false);
+    // The same choice again changes nothing and audits nothing more.
+    await t.mutation(internal.edgeProviderAccounts.update, { id, frontsTraffic: true });
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
+    const off = await t.mutation(internal.edgeProviderAccounts.update, {
+      id,
+      frontsTraffic: false,
+    });
+    expect(off.requalify).toBe(0);
+    expect((await defaultLocationRow(t, id))!.qualified).toBe(true);
+    expect(await audits(t, 'edge.provider_account.fronting_changed')).toEqual([
+      { name: 'cf', provider: 'cloudflare', frontsTraffic: true, liveEdges: 0 },
+      { name: 'cf', provider: 'cloudflare', frontsTraffic: false, liveEdges: 0 },
+    ]);
+  });
+
+  test('the deploy step turns the retired switch into each DNS account choice, once', async () => {
+    const t = convexTest(schema, modules);
+    const { id: a } = await t.mutation(internal.edgeProviderAccounts.create, { ...cf, name: 'a' });
+    const { id: b } = await t.mutation(internal.edgeProviderAccounts.create, { ...cf, name: 'b' });
+    // Rows from before the choice, with the switch on.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(a, { frontsTraffic: undefined });
+      await ctx.db.patch(b, { frontsTraffic: undefined });
+      await ctx.db.insert('appSettings', {
+        key: 'edge.l7.dnsProvidersFront',
+        value: 'true',
+        updatedAt: Date.now(),
+      });
+    });
+    expect(await t.mutation(internal.edgeProviderAccounts.migrateDnsFronting, {})).toEqual({
+      migrated: 2,
+      switchWas: true,
+    });
+    const rows = await t.run(async (ctx) => [await ctx.db.get(a), await ctx.db.get(b)]);
+    expect(rows.map((r) => r!.frontsTraffic)).toEqual([true, true]);
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query('appSettings')
+          .withIndex('by_key', (q) => q.eq('key', 'edge.l7.dnsProvidersFront'))
+          .unique(),
+      ),
+    ).toBeNull();
+    expect(await audits(t, 'edge.provider_account.fronting_migrated')).toHaveLength(2);
+    // A later run (every deploy) and an account created since change nothing.
+    await t.mutation(internal.edgeProviderAccounts.update, { id: b, frontsTraffic: false });
+    expect(await t.mutation(internal.edgeProviderAccounts.migrateDnsFronting, {})).toEqual({
+      migrated: 0,
+      switchWas: null,
+    });
+    expect((await t.run((ctx) => ctx.db.get(b)))!.frontsTraffic).toBe(false);
+  });
+
+  test('with the switch off (or never set) every DNS account stays DNS only', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, { ...cf, name: 'a' });
+    await t.run((ctx) => ctx.db.patch(id, { frontsTraffic: undefined }));
+    expect(await t.mutation(internal.edgeProviderAccounts.migrateDnsFronting, {})).toEqual({
+      migrated: 1,
+      switchWas: null,
+    });
+    expect((await t.run((ctx) => ctx.db.get(id)))!.frontsTraffic).toBe(false);
+  });
+
+  test('the rollback helper strips the field and writes the switch back', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.edgeProviderAccounts.create, { ...cf, name: 'a' });
+    await t.mutation(internal.edgeProviderAccounts.create, {
+      ...cf,
+      name: 'b',
+      frontsTraffic: true,
+    });
+    expect(
+      await t.mutation(internal.edgeProviderAccounts.restoreDnsFrontingForRollback, {}),
+    ).toEqual({ cleared: 2, switchOn: true });
+    const rows = await t.run((ctx) => ctx.db.query('edgeProviderAccounts').collect());
+    expect(rows.every((r) => r.frontsTraffic === undefined)).toBe(true);
+    const row = await t.run((ctx) =>
+      ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'edge.l7.dnsProvidersFront'))
+        .unique(),
+    );
+    expect(JSON.parse(row!.value)).toBe(true);
+  });
+});

@@ -145,14 +145,23 @@ export async function forwarderConnections(
  * Route one hostname of the fake CDN to an origin, as a proxied record does:
  * TLS to `dial` (verified against the per-run CA, `serverName` as the SNI),
  * the front's hostname as the Host. Replaces the hostname's route when it has
- * one (a record's Origin Rule changes the port of an existing record).
+ * one (a record's Origin Rule changes the port of an existing record, its
+ * header rule what it sends).
+ *
+ * What it sends the origin is what Cloudflare sends: the client's address in
+ * `CF-Connecting-IP` unless a Transform Rule for the hostname removes it
+ * (`clientAddress: false`), and in `X-Forwarded-For` always (Caddy adds it, as
+ * Cloudflare's proxy adds it back after every rule).
  */
 export async function routeFront(
   hostname: string,
   dial: { host: string; port: number },
   serverName: string,
+  opts: { clientAddress?: boolean } = {},
 ): Promise<void> {
   const id = `ec-route-${hostname.replace(/[^a-z0-9]/gi, '-')}`;
+  const set: Record<string, string[]> = { Host: ['{http.request.host}'] };
+  if (opts.clientAddress !== false) set['Cf-Connecting-Ip'] = ['{http.request.remote.host}'];
   const route = {
     '@id': id,
     match: [{ host: [hostname] }],
@@ -160,7 +169,7 @@ export async function routeFront(
       {
         handler: 'reverse_proxy',
         upstreams: [{ dial: `${dial.host}:${dial.port}` }],
-        headers: { request: { set: { Host: ['{http.request.host}'] } } },
+        headers: { request: { set } },
         // A CDN streams: an XHTTP download or a gRPC stream is never buffered.
         flush_interval: -1,
         transport: {
@@ -191,6 +200,8 @@ interface AccessEntry {
   uri: string;
   status: number;
   remoteIp: string;
+  /** The request's headers as Caddy logs them (canonical names; credentials redacted). */
+  headers: Record<string, string[]>;
 }
 
 /** The front's (or the ingress's) access log: one JSON object per finished request. */
@@ -209,6 +220,7 @@ export function accessLog(which: 'front' | 'ingress'): AccessEntry[] {
       uri: String(e.request.uri ?? ''),
       status: Number(e.status ?? 0),
       remoteIp: String(e.request.remote_ip ?? ''),
+      headers: (e.request.headers ?? {}) as Record<string, string[]>,
     }));
 }
 

@@ -48,7 +48,7 @@
   import OptionFields from '../templates/OptionFields.svelte';
   import { asParams, type Params } from '../templates/params';
   import { optionSummary, overrides, pickBase } from '../lib/options';
-  import { EDGE_PROVIDER_META, frontsNode } from '@client/lib/edgeProviderMeta';
+  import { EDGE_PROVIDER_META, accountFronts, frontsNode } from '@client/lib/edgeProviderMeta';
   import { codeExplain } from '@client/lib/edgeCodes';
   import LocationPicker from '../forms/LocationPicker.svelte';
   import RegionPicks from '../forms/RegionPicks.svelte';
@@ -87,7 +87,7 @@
   const websocketNode = $derived(view?.websocketNode ?? false);
   const accounts = $derived(
     (providers.data?.accounts ?? []).filter(
-      (a) => a.enabled && frontsNode(a.provider, websocketNode),
+      (a) => a.enabled && accountFronts(a) && frontsNode(a.provider, websocketNode),
     ),
   );
   const newAccount = $derived(accounts.find((a) => a.id === newIn) ?? null);

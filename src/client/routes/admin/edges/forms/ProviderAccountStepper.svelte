@@ -51,7 +51,6 @@
   import {
     createProvider,
     discoverProviderOptions,
-    edgeConfigQuery,
     invalidateProviders,
     providerCatalogQuery,
     providersQuery,
@@ -59,6 +58,7 @@
   } from '@client/lib/edgesApi';
   import {
     DNS_ACCOUNT_BLURB,
+    DNS_ACCOUNT_USES,
     EDGE_PROVIDER_META,
     defaultProviderFor,
     dnsProviderNames,
@@ -109,12 +109,6 @@
   const uid = $props.id();
   const qc = useQueryClient();
   const providers = providersQuery();
-  const edgeConfig = edgeConfigQuery();
-  /** Settings lets a DNS account front traffic too (`edge.l7.dnsProvidersFront`, off by default). */
-  const dnsMayFront = $derived(
-    (edgeConfig.data?.config as { l7?: { dnsProvidersFront?: boolean } } | undefined)?.l7
-      ?.dnsProvidersFront === true,
-  );
   const groups = providerGroups(EDGE_PROVIDER_IDS);
   const dnsProviders = groups.find((g) => g.id === 'dns')!.providers;
 
@@ -143,6 +137,8 @@
     ...(DEFAULT_SETTINGS[initialProvider] ?? {}),
   });
   let discovered = $state<EdgeDiscoverResponse | null>(null);
+  /** A DNS provider's account: DNS only (the default) or DNS and fronting. */
+  let dnsUse = $state<'dns' | 'front'>('dns');
   let showAdvanced = $state(false);
   let maxLiveEdges = $state(4);
   let dailyAllocationBudget = $state(6);
@@ -182,6 +178,7 @@
     credentials = {};
     values = { ...(DEFAULT_SETTINGS[next] ?? {}) };
     optionValues = {};
+    dnsUse = 'dns';
     discovered = null;
     discover.reset();
     triedNext = false;
@@ -314,6 +311,7 @@
         ...(Object.keys(optionValues).length > 0
           ? { optionDefaults: $state.snapshot(optionValues) }
           : {}),
+        ...(meta.role === 'dns' ? { frontsTraffic: dnsUse === 'front' } : {}),
       });
       createdId = id;
       // The account exists from here on: a failed test is reported, never thrown away.
@@ -502,12 +500,7 @@
               <div class="text-muted-foreground space-y-1 text-xs">
                 <p class="flex items-start gap-1.5">
                   <LayerBadge layer="dns" />
-                  <span>
-                    {DNS_ACCOUNT_BLURB}
-                    {#if dnsMayFront}
-                      Settings currently lets DNS accounts front traffic as well.
-                    {/if}
-                  </span>
+                  <span>{DNS_ACCOUNT_BLURB}</span>
                 </p>
                 <p>
                   DNS providers FCP supports: {dnsProviderNames(EDGE_PROVIDER_IDS).join(', ')}. More
@@ -534,6 +527,29 @@
             <p class="text-muted-foreground text-xs">Only shown to admins.</p>
           </div>
         </div>
+        {#if meta.role === 'dns'}
+          <div class="max-w-md space-y-1.5">
+            <Label for={`${uid}-dns-use`}>What this account does</Label>
+            <Select.Root
+              type="single"
+              value={dnsUse}
+              onValueChange={(v) => (dnsUse = v === 'front' ? 'front' : 'dns')}
+            >
+              <Select.Trigger id={`${uid}-dns-use`} class="w-full">
+                {DNS_ACCOUNT_USES[dnsUse].label}
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="dns" label={DNS_ACCOUNT_USES.dns.label}>
+                  {DNS_ACCOUNT_USES.dns.label}
+                </Select.Item>
+                <Select.Item value="front" label={DNS_ACCOUNT_USES.front.label}>
+                  {DNS_ACCOUNT_USES.front.label}
+                </Select.Item>
+              </Select.Content>
+            </Select.Root>
+            <p class="text-muted-foreground text-xs">{DNS_ACCOUNT_USES[dnsUse].detail}</p>
+          </div>
+        {/if}
         {#if meta.needsDnsAccount}
           <div
             class="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"

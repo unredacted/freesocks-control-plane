@@ -18,8 +18,7 @@ import type { DatabaseReader } from '../../_generated/server';
 import { listenerLayers } from './layers';
 import { locationKeyOf } from './locations';
 import { accountsForSlot } from './rotation';
-import { dnsProvidersFrontOf } from '../edgeConfig';
-import { edgeRoleOf } from './providers/capabilities';
+import { frontsAllowed } from './providers/capabilities';
 import { placeProblemOf } from './l7Place';
 import { websocketNodeOf } from './websocketNode';
 import {
@@ -104,13 +103,12 @@ export function carries(
     security: listener.security,
   };
   return (
-    accountsForSlot([row.account], {
+    // Whether a DNS account fronts is applied to a pick as `usable` (setPicksOf).
+    accountsForSlot([{ provider: row.account.provider, frontsTraffic: true }], {
       layers: listenerLayers(listener, { websocketNode: opts.websocketNode }).layers,
       proto,
       originPort: listener.originPort,
       allowL7: true,
-      // The DNS-account switch is applied to a pick as `usable` (setPicksOf).
-      dnsProvidersFront: true,
     }).length > 0
   );
 }
@@ -122,16 +120,14 @@ export async function setPicksOf(
 ): Promise<SetPickRow[] | null> {
   if (!relay.providerSet) return null;
   const out: SetPickRow[] = [];
-  // A DNS account picked while `edge.l7.dnsProvidersFront` was on is not usable
-  // once it is off: nothing new is placed there (its edges are kept).
-  let dnsFront: boolean | undefined;
   for (const p of relay.providerSet) {
     const location = await db.get(p.locationId);
     if (!location) continue;
     const account = await db.get(location.accountId);
     if (!account) continue;
-    const fronts =
-      edgeRoleOf(account.provider) !== 'dns' || (dnsFront ??= await dnsProvidersFrontOf(db));
+    // A DNS account picked while it was set to DNS and fronting is not usable
+    // once it is DNS only: nothing new is placed there (its edges are kept).
+    const fronts = frontsAllowed(account);
     // A place no new edge can be planned in carries nothing (a CDN place with
     // no zone, a refused check, its DNS account gone or off, an unread
     // encryption mode; a Scaleway location with no project to create in).

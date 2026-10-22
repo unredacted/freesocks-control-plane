@@ -207,7 +207,6 @@ async function accountFacts(
   ctx: { db: Db },
   accounts: Account[],
   listeners: ListenerLike[],
-  dnsProvidersFront: boolean,
 ): Promise<SetupInput['accounts']> {
   const out: SetupInput['accounts'] = [];
   const udp = udpProviderAvailable();
@@ -231,7 +230,6 @@ async function accountFacts(
           proto: l.proto,
           originPort,
           allowL7: true,
-          dnsProvidersFront,
         }).length > 0
       )
         fronts.push(l.key);
@@ -543,7 +541,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: await originFacts(ctx.db, relay.origin),
         listeners: f.listeners.map(listenerFacts),
-        accounts: await accountFacts(ctx, accounts, f.listeners, cfg.l7.dnsProvidersFront),
+        accounts: await accountFacts(ctx, accounts, f.listeners),
         relay: f.relay,
         render: f.render,
         config: configFacts(cfg),
@@ -634,7 +632,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: originF,
         listeners: listeners.map(listenerFacts),
-        accounts: await accountFacts(ctx, accounts, listeners, cfg.l7.dnsProvidersFront),
+        accounts: await accountFacts(ctx, accounts, listeners),
         relay: null,
         render: { enabled: cfg.render.enabled, preview: null },
         config: configFacts(cfg),
@@ -667,7 +665,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: await originFacts(ctx.db, relay.origin),
         listeners: f.listeners.map(listenerFacts),
-        accounts: await accountFacts(ctx, accounts, f.listeners, cfg.l7.dnsProvidersFront),
+        accounts: await accountFacts(ctx, accounts, f.listeners),
         relay: f.relay,
         render: f.render,
         config: configFacts(cfg),
@@ -680,7 +678,7 @@ export const setupStatus = internalQuery({
       const input: SetupInput = {
         origin: null,
         listeners: [],
-        accounts: await accountFacts(ctx, accounts, [], cfg.l7.dnsProvidersFront),
+        accounts: await accountFacts(ctx, accounts, []),
         relay: null,
         render: { enabled: cfg.render.enabled, preview: null },
         config: configFacts(cfg),
@@ -1695,7 +1693,7 @@ export const attention = internalQuery({
           action: 'test_credentials',
           since: null,
         });
-      } else if (frontsAllowed(a.provider, cfg.l7.dnsProvidersFront)) {
+      } else if (frontsAllowed(a)) {
         // Trust is per location: one item per enabled location not trusted yet,
         // naming the location when the account has more than one. A DNS-only
         // account (its provider may not front here) carries no traffic, so it

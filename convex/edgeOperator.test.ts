@@ -13,7 +13,6 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
-import { upsertSettingRow } from './appSettings';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { isCancellable } from './edgeRotations';
@@ -26,6 +25,7 @@ import {
   insertPanelServer,
   registerRelay,
   seedEdgeFixture,
+  setFrontsTraffic,
   verifyL4Edge,
 } from './lib/edges/testing/fixtures';
 import {
@@ -394,7 +394,7 @@ describe('test-provision and preflight', () => {
 });
 
 describe('attention, timeline, usage, lookups, maintenance', () => {
-  test('a DNS-only account (its provider may not front) asks for no trust; it does once fronting is allowed', async () => {
+  test('a DNS-only account asks for no trust; it does once set to DNS and fronting', async () => {
     const { t, get } = await seed();
     const dnsId = await createAccount(t, { provider: 'cloudflare', name: 'dns-only' });
     await markTested(t, dnsId);
@@ -403,7 +403,7 @@ describe('attention, timeline, usage, lookups, maintenance', () => {
         (i) => i.kind === 'account_unqualified' && i.accountId === (dnsId as string),
       );
     expect(await trustItems()).toEqual([]);
-    await t.run((ctx) => upsertSettingRow(ctx, 'edge.l7.dnsProvidersFront', 'true'));
+    await setFrontsTraffic(t, dnsId, true);
     expect(await trustItems()).toHaveLength(1);
   });
 

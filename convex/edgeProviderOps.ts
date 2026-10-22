@@ -36,6 +36,7 @@ import { EdgeProviderError, refusalOf, scrubNames } from './lib/edges/providers/
 import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeLayerOf,
+  edgeRoleOf,
   protocolCarriedBy,
   unsupportedTransport,
   zoneModeGovernsOrigin,
@@ -448,6 +449,10 @@ async function loadAdapter(
     acct.credentials as Record<string, unknown> & { type: typeof acct.provider },
     acct.settings as Record<string, unknown> & { type: typeof acct.provider },
   );
+  // A DNS account set to DNS and fronting: its location checks also check
+  // what a front needs of the zone.
+  if (edgeRoleOf(acct.provider) === 'dns' && acct.frontsTraffic)
+    (cfg as { frontsTraffic?: boolean }).frontsTraffic = true;
   // A CDN account's call about no edge and no named place (an account-level
   // describe, a plan without a location) acts in its default location: its
   // zone is where such a call's records would live.
@@ -1136,6 +1141,8 @@ export const rotateCredentials = internalAction({
         creds.credentials as Record<string, unknown> & { type: typeof acct.provider },
         settings.settings as Record<string, unknown> & { type: typeof acct.provider },
       );
+      if (edgeRoleOf(acct.provider) === 'dns' && acct.frontsTraffic)
+        (cfg as { frontsTraffic?: boolean }).frontsTraffic = true;
       const res = await edgeProviderFor(acct.provider).testCredentials(cfg);
       // The stored (still valid) credentials are untouched on a failed test.
       if (!res.ok) return { ok: false, code: res.code ?? 'error', detail: res.detail };
@@ -1418,6 +1425,8 @@ const ZONE_STATE_REFUSALS: ReadonlySet<string> = new Set([
   'zone_not_active',
   'zone_name_mismatch',
   'caa_forbids_ca',
+  // What a front needs of a fronting DNS account's zone.
+  'edge_certificate_missing',
 ]);
 
 /** A CDN place the provider reached but refused, in words for the admin (`edge.location_unusable`). */
@@ -1430,6 +1439,8 @@ const LOCATION_REFUSALS: Record<string, string> = {
   tls_configuration_missing: 'This Fastly key does not see that TLS configuration',
   caa_forbids_ca:
     "That zone's CAA records do not let the account's certificate authority issue: allow it, or pick another authority",
+  edge_certificate_missing:
+    'That zone has no edge certificate for its first-level names: turn Universal SSL on, or order one',
 };
 
 /**

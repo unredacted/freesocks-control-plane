@@ -90,6 +90,22 @@
       parts.push('encryption mode not read');
     if (o.websockets) parts.push(`WebSockets ${o.websockets}`);
     if (o.zoneStatus && o.zoneStatus !== 'active') parts.push(`zone ${o.zoneStatus}`);
+    // What a fronting DNS account's zone check also read (lib/edges/providers/cloudflare.ts).
+    if (o.edgeCertificate)
+      parts.push(
+        o.edgeCertificate === 'active'
+          ? 'certificate for its names active'
+          : o.edgeCertificate === 'pending'
+            ? 'certificate for its names on its way'
+            : o.edgeCertificate === 'none'
+              ? 'no certificate for its names'
+              : 'certificate not read',
+      );
+    if (o.minTlsVersion) parts.push(`lowest TLS version ${o.minTlsVersion}`);
+    if (o.pseudoIpv4 && o.pseudoIpv4 !== 'off')
+      parts.push("Pseudo IPv4 on (the member's address reaches the node in CF-Connecting-IPv6)");
+    if (o.ipGeolocation === 'on')
+      parts.push("IP geolocation on (the member's country reaches the node in CF-IPCountry)");
     return parts.length > 0 ? `${parts.join(', ')}.` : '';
   }
   /** The DNS account a front location writes through, by name. */

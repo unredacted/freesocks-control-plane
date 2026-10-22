@@ -1210,14 +1210,15 @@ describe('origins: delete lifecycle', () => {
 describe('origins: layers, adoption by hostname and the L7 publish gates', () => {
   /**
    * The fixture + a Cloudflare account + an L7-capable ws listener (https
-   * origin). Cloudflare is a DNS provider, so it fronts only with the switch on.
+   * origin). Cloudflare is a DNS provider, so it fronts only when set to DNS and fronting.
    */
   async function l7Seed() {
     const s = await seed();
-    await s.t.mutation(internal.edgeAdmin.patchConfig, {
-      patch: { l7: { dnsProvidersFront: true } },
+    const cfAccount = await createAccount(s.t, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      frontsTraffic: true,
     });
-    const cfAccount = await createAccount(s.t, { provider: 'cloudflare', name: 'acct-cf' });
     const { listenerIds } = await registerRelay(s.t, {
       listeners: [
         realityListener(),

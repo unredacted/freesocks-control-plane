@@ -59,7 +59,9 @@
       <span class="font-medium">{a.name}</span>
       <span class="text-muted-foreground text-xs">
         {providerLabel(a.provider)}, {EDGE_PROVIDER_META[a.provider].role === 'dns'
-          ? 'DNS account'
+          ? a.frontsTraffic
+            ? 'DNS account and CDN front'
+            : 'DNS account'
           : layer === 'l7'
             ? 'CDN front'
             : 'load balancer'}

@@ -43,7 +43,6 @@ import {
   EDGE_KEYS,
   RENDER_CLIENT_FAMILIES,
   EDGE_PLUMBING,
-  dnsProvidersFrontOf,
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
@@ -3959,7 +3958,6 @@ export async function startReprotect(
       location: Doc<'edgeLocations'>;
       account: Doc<'edgeProviderAccounts'>;
     }> = [];
-    const dnsFront = await dnsProvidersFrontOf(ctx.db);
     // A WebSocket node takes no new load balancer when none of its served
     // transports may be fronted by one (lib/edges/websocketNode.ts); one it
     // already has is left as it is and carries nothing new.
@@ -3979,11 +3977,11 @@ export async function startReprotect(
           message:
             'A location this node is protected from is missing, switched off, or its account is disabled or untested',
         });
-      if (!frontsAllowed(account.provider, dnsFront))
+      if (!frontsAllowed(account))
         throw new ConvexError({
           code: 'edge.account_incompatible',
           message:
-            'A location this node is protected from belongs to a DNS account, which fronts no traffic while DNS accounts may not front',
+            'A location this node is protected from belongs to a DNS account set to DNS only, which fronts no traffic',
         });
       pickRows.push({ location, account });
     }
