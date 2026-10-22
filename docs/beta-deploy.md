@@ -697,7 +697,7 @@ docker compose -f docker-compose.stack.yml --env-file .env.beta logs --tail=40 d
 curl -fsS https://beta.freesocks.org/readyz
 # no request URIs in the new binary's log (a renamed log target shows up here; docs/privacy.md §4)
 docker compose -f docker-compose.stack.yml --env-file .env.beta logs --no-log-prefix backend \
-  | grep -cE 'uri: /|"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) /'   # 0
+  | awk '/uri: \/|"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) \// { n++ } END { print n+0, "request URIs"; exit (n > 0) }'   # 0, exit 0
 docker compose -f docker-compose.stack.yml --env-file .env.beta ps   # nothing unhealthy/restarting
 ```
 

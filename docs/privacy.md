@@ -171,10 +171,14 @@ prod env file as appropriate:
 
 ```sh
 docker compose -f docker-compose.stack.yml --env-file .env.beta logs --no-log-prefix backend \
-  | grep -cE 'uri: /|"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) /'   # → 0
+  | awk '/uri: \/|"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) \// { n++ } END { print n+0, "request URIs"; exit (n > 0) }'
+# → "0 request URIs", exit status 0
 ```
 
-The pattern matches both line shapes above and nothing else (the
+It prints only a count, never a matching line, and exits 0 only on a clean log
+(1 when any line matches), so it is safe in a script, after `&&`, or under
+`set -e`/`set -o pipefail`; `grep -c` would invert that, exiting 1 on the clean
+result. The pattern matches both line shapes above and nothing else (the
 `Failed to resolve http.js:/api/...` analyzer chatter during a push is not a
 request and does not match). Do **not** check with `grep 'GET /api'`: that only
 matches the access line, so it reads empty while the `uri:` lines are still being

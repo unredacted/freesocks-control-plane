@@ -68,7 +68,8 @@ const URI_LOG_TARGETS = ['convex-cloud-http', 'common::http'];
  * The level a `RUST_LOG` value gives one target, the way tracing-subscriber's
  * EnvFilter resolves it: the longest directive whose target is a prefix of it
  * (a plain string prefix, so `common=warn` covers `common::http`), else the
- * bare default level.
+ * bare default level. A repeated target keeps its LAST value: EnvFilter's
+ * directive set replaces an equal directive rather than keeping the first.
  */
 function rustLogLevel(rustLog: string, target: string): string {
   let level = 'error'; // EnvFilter's default when no bare level is given
@@ -77,7 +78,7 @@ function rustLogLevel(rustLog: string, target: string): string {
     const eq = directive.lastIndexOf('=');
     const [prefix, value] =
       eq < 0 ? ['', directive] : [directive.slice(0, eq), directive.slice(eq + 1)];
-    if (target.startsWith(prefix) && prefix.length > matched) {
+    if (target.startsWith(prefix) && prefix.length >= matched) {
       level = value.toLowerCase();
       matched = prefix.length;
     }
@@ -97,6 +98,7 @@ const RUST_LOG_CASES = {
     'warn',
     'error,convex-cloud-http=error',
     'info,common=warn,convex-cloud-http=off', // a parent prefix covers common::http
+    'warn,common::http=info,common::http=warn', // the later duplicate wins
   ],
   leaky: [
     'info,convex-cloud-http=warn', // the default until Oct 2026: common::http logged every URI
@@ -104,6 +106,8 @@ const RUST_LOG_CASES = {
     'warn,common::http=info',
     'info,common::http::fetch=warn', // a child module does not cover its parent
     'info',
+    'warn,common::http=warn,common::http=info', // the later duplicate wins
+    'warn,info', // so does a later bare level
   ],
 };
 

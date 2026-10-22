@@ -106,8 +106,9 @@ services:
       #                      is fallback-only), path AND query string
       # The second one carries member subscription tokens (/api/v1/sub/<token>).
       # Verify after deploy (docs/privacy.md section 4 has the full check):
-      #   docker compose -f docker-compose.stack.yml --env-file .env.beta logs backend \
-      #     | grep -cE 'uri: /|"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) /'   # -> 0
+      #   docker compose -f docker-compose.stack.yml --env-file .env.beta logs --no-log-prefix backend \
+      #     | awk '/uri: \/|"(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS) \// { n++ } END { print n+0, "request URIs"; exit (n > 0) }'
+      #   -> "0 request URIs", exit status 0 (1 if any request line is logged)
       # If a Convex version renames either target, fall back to RUST_LOG=warn.
       # convex/deployPins.test.ts holds both directives in place.
       - RUST_LOG=${RUST_LOG:-info,convex-cloud-http=warn,common::http=warn}
