@@ -62,6 +62,7 @@ import {
 import { placeKeyOf } from './lib/edges/locations';
 import {
   PROJECT_KEYS,
+  REGION_KEYS,
   completePlacement,
   needsNetwork,
   needsProject,
@@ -73,6 +74,7 @@ import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choic
 import { EDGE_CERTIFICATE_OPTIONS, certificateKeysOf } from './lib/edges/providers/templates';
 import { defaultsOf } from './lib/edges/providers/options';
 import { CATALOG_KINDS, CATALOG_REFRESH_FLOOR_MS, type CatalogKind } from './lib/edges/catalog';
+import { PLANS_REFRESH_FLOOR_MS, type ProviderPlan } from './lib/edges/pricing';
 import { l7HostAccepted, l7HostHeaderFor, zoneModeCarriesOrigin } from './lib/edges/layers';
 import type {
   AdoptionInspection,
@@ -1095,6 +1097,15 @@ export const refreshCatalog = internalAction({
         });
       }
       await ctx.runMutation(internal.edgeProviderCatalog.record, { accountId, lists, errors });
+      // The plans of its locations go stale like its regions do: read again,
+      // in the background, where they are a day old (a CDN has none).
+      if (provider.plans)
+        for (const due of await ctx.runQuery(internal.edgePlans.staleForRefresh, {
+          now: Date.now(),
+          limit: 50,
+          accountId,
+        }))
+          await ctx.scheduler.runAfter(0, internal.edgeProviderOps.refreshPlans, due);
       return { refreshed: true };
     }),
 });
@@ -1355,7 +1366,13 @@ export const locationOptions = internalAction({
   handler: (
     ctx,
     a,
-  ): Promise<DiscoverResult & { defaults?: Record<string, unknown>; missing?: string[] }> =>
+  ): Promise<
+    DiscoverResult & {
+      defaults?: Record<string, unknown>;
+      missing?: string[];
+      plans?: ProviderPlan[];
+    }
+  > =>
     tracked(ctx, a.accountId, async (seen) => {
       const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, undefined, seen);
       if (!provider.discoverOptions) return {};
@@ -1364,11 +1381,27 @@ export const locationOptions = internalAction({
           ([k, v]) => k !== 'type' && v !== undefined && v !== null && v !== '',
         ),
       );
-      if (!a.defaults) return provider.discoverOptions({ ...cfg, ...chosen } as never);
+      // The plans of the region chosen so far (its sizes, priced): the plan
+      // picker of a location that does not exist yet.
+      const plansAt = async (where: Record<string, unknown>) => {
+        const regionKey = REGION_KEYS[providerId];
+        if (!provider.plans || !regionKey || !where[regionKey]) return {};
+        const plans = await plansOfPlacement(ctx, a.accountId, { ...where, type: providerId });
+        return plans.length > 0 ? { plans } : {};
+      };
+      if (!a.defaults) {
+        const lists = await provider.discoverOptions({ ...cfg, ...chosen } as never);
+        return { ...lists, ...(await plansAt(chosen)) };
+      }
       const filled = await completeRegionPick(ctx, a.accountId, providerId, provider, cfg, chosen);
       const lists =
         filled.found ?? (await provider.discoverOptions({ ...cfg, ...filled.placement } as never));
-      return { ...lists, defaults: filled.placement, missing: filled.missing };
+      return {
+        ...lists,
+        defaults: filled.placement,
+        missing: filled.missing,
+        ...(await plansAt(filled.placement)),
+      };
     }),
 });
 
@@ -1671,6 +1704,9 @@ export const inventory = internalAction({
         locationId,
         inventory: JSON.stringify(inv),
       });
+      // Its plans and prices are read with it (fail-soft: a price list that
+      // cannot be read keeps the last one and never fails the pull).
+      if (provider.plans) await readPlans(ctx, locationId, provider, cfg);
       // The place's observed facts (a zone's encryption mode) go stale exactly
       // like the inventory does, and planning refuses without them. Check the
       // location again on the same operator action; a failing check never fails
@@ -1692,6 +1728,87 @@ export const inventory = internalAction({
       return inv;
     }),
 });
+
+/**
+ * Read one location's plans and prices (lib/edges/pricing.ts) and store them;
+ * a read that fails records its code and keeps the last plans. Returns what
+ * was read (null on a failure).
+ */
+async function readPlans(
+  ctx: ActionCtx,
+  locationId: Id<'edgeLocations'>,
+  provider: EdgeProvider,
+  cfg: EdgeProviderConfig,
+): Promise<ProviderPlan[] | null> {
+  try {
+    const plans = await provider.plans!(cfg);
+    await ctx.runMutation(internal.edgePlans.record, { locationId, plans });
+    return plans;
+  } catch (err) {
+    await ctx.runMutation(internal.edgePlans.record, {
+      locationId,
+      error: toOpsFailure(err).data.code,
+    });
+    return null;
+  }
+}
+
+/**
+ * One location's plans and prices, read at the provider now (the admin's
+ * Refresh prices, the reconcile cron once they are a day old). A read within
+ * `PLANS_REFRESH_FLOOR_MS` of the last one does nothing unless `force`d. A CDN
+ * account has no plans (it is never priced on its own).
+ */
+export const refreshPlans = internalAction({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    locationId: v.id('edgeLocations'),
+    force: v.optional(v.boolean()),
+  },
+  handler: (ctx, a): Promise<{ refreshed: boolean; error: string | null }> =>
+    tracked(ctx, a.accountId, async (seen) => {
+      const last = await ctx.runQuery(internal.edgePlans.plansAtOf, { locationId: a.locationId });
+      if (!a.force && last !== null && Date.now() - last < PLANS_REFRESH_FLOOR_MS)
+        return { refreshed: false, error: null };
+      const { provider, cfg } = await loadAdapter(ctx, a.accountId, undefined, seen, a.locationId);
+      if (!provider.plans) return { refreshed: false, error: null };
+      const plans = await provider.plans(cfg);
+      await ctx.runMutation(internal.edgePlans.record, { locationId: a.locationId, plans });
+      return { refreshed: true, error: null };
+    }).catch(async (err: unknown) => {
+      const code =
+        err instanceof ConvexError
+          ? String((err.data as { code?: string }).code ?? 'error')
+          : 'error';
+      await ctx.runMutation(internal.edgePlans.record, { locationId: a.locationId, error: code });
+      return { refreshed: false, error: code };
+    }),
+});
+
+/**
+ * The plans of a place no location holds yet (a region picked when a node is
+ * protected, the location form): read live with the placement chosen so far,
+ * stored nowhere. Empty when the provider prices nothing or the read fails.
+ */
+async function plansOfPlacement(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  placement: Record<string, unknown>,
+): Promise<ProviderPlan[]> {
+  try {
+    const { provider, cfg } = await loadAdapter(
+      ctx,
+      accountId,
+      undefined,
+      undefined,
+      undefined,
+      placement,
+    );
+    return provider.plans ? await provider.plans(cfg) : [];
+  } catch {
+    return [];
+  }
+}
 
 // --- provisioning steps ------------------------------------------------------------
 

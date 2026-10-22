@@ -11,7 +11,7 @@
    *   values: Params                     what this level sets (absent = inherited)
    *   base: Params                       what applies without it
    *   baseWord?: string                  what `base` is, in words ("default", "template")
-   *   offered?: { id, label }[]          the location's sizes (for `from: 'flavors'`)
+   *   offered?: { id, label, plan? }[]   the location's sizes (for `from: 'flavors'`), priced
    *   prominentFirst?: boolean           show the main choices; the rest under "All options"
    *   disabled?: boolean
    *   onchange(values: Params)
@@ -29,13 +29,14 @@
     type Params,
   } from './params';
   import { groupsOf, visibleFields } from '../lib/options';
+  import type { PlanLike } from '../lib/planWords';
 
   interface Props {
     fields: readonly EdgeTemplateField[];
     values: Params;
     base: Params;
     baseWord?: string;
-    offered?: ReadonlyArray<{ id: string; label: string }>;
+    offered?: ReadonlyArray<{ id: string; label: string; plan?: PlanLike }>;
     prominentFirst?: boolean;
     disabled?: boolean;
     onchange: (values: Params) => void;

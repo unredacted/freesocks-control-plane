@@ -1008,6 +1008,8 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `POST relays/{id}/reprotect`                                        | "Protect again" for a live, bound, enrolled node: a re-protect run (`kind: 'reprotect'`, `mode` `replace_all` or `add`) that keeps the committed delivery until go-live and drops only its candidates on cancel. Refuses `edge.reprotect_not_bound`, `edge.reprotect_not_enrolled`, `edge.reprotect_no_room` and the usual run refusals. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `GET relays/{id}/providers`                                         | The node's provider set (§ "Provider sets"): each pick with its addresses in use and spare, whether it cools and until when, the locations outside the set that hold one of its addresses (`outside`), the transports with no backup at another provider, the deficit, the locations that could be added, and the regions a load balancer account reaches that are no location yet (`regions`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `POST relays/{id}/providers {add?, remove?}`                        | Edit the set: adding a location to a live enrolled node starts an `add` re-protect run (the response names it); elsewhere the set is saved. Removing one drains its addresses, refused (`edge.set_would_uncover`) unless the tested survivors elsewhere still serve every transport and meet the remaining requirement. Refused under a setup run, a rotation, quarantine, a restore or the freeze; at most 6 picks (`edge.set_too_large`). Audited `edge.relay.providers_changed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `POST providers/{id}/cost {cost}`                                   | What the account costs (§ "Plans and prices"): `{paid, perEdgeMonthly?, currency?, note?, monthlyCap?}` with `paid` one of `list`, `free`, `amount`; `null` for the default. Audited as `edge.provider_account.cost_changed` (amounts, never the note).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `POST providers/{id}/locations/{locationId}/plans/refresh`          | Read the location's plans and prices again at the provider (throttled): `{refreshed, error}`; a failure keeps the last plans.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `POST edges/{id}/test-link`                                         | The isolated test link for an L4 candidate (throttled: fetches the test credential's body and the backend Hosts): the candidate connection only, plus the binding the confirmation must echo. See § "Publication".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `GET relays/inbound-candidates?backendServerId=&nodeUuid=`          | Discovery with the origin probe applied (throttled): the node's transports as listener candidates, `originTransport` filled where probed, `unsupported` with reasons. Registers nothing. See § "Listener catalogue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
@@ -1453,6 +1455,7 @@ and deletes the FCP-owned Hosts of retired listeners and deleting origins (read-
 settles the direct-Host hide ledger and re-observes the direct Hosts of bound guided origins;
 advances each restore workflow until a phase must wait; removes expired or released temporary
 test keys (`edgeTestCredentials.sweep`, bounded retries, then attention `test_key_cleanup`);
+reads the plans and prices of up to two locations a day old (§ "Plans and prices");
 turns drained / failed / cancelled edges into destroy runs and starts their walk in the same
 pass: in the provider's kind order, the next resource as soon as the last is confirmed gone (an
 async-delete provider's delete is read back at once), stopping at the first still going away,
@@ -2784,6 +2787,77 @@ allows otherwise); a provision run may name `requestedLocationId`, and `requeste
 means that account's default location. A run that cannot use the one it names fails with
 `location_not_found`, `no_location`, `location_disabled` or `location_capacity_reached`.
 
+## Plans and prices
+
+What an edge costs is part of choosing where it goes (`convex/edgePlans.ts`,
+`convex/lib/edges/pricing.ts`). Every load balancer location keeps its **plans**: one row per
+size the provider offers there (`edgePlans`, per account, location and size), with its list
+price an hour and a month and the currency, its traffic terms (`unlimited`, `included` GB a
+month then charged, `per_gb`, or `unknown`), its bandwidth, whether it takes a node outside
+the provider (Scaleway's multi-cloud flag), where the price came from (`api`: the provider's
+own price list; `catalog`: FCP's dated table, "list price as of" its date) and when it was
+read. A month is the provider's own monthly figure, else its hourly price times 730 (the hours
+of an average month). A CDN account has no plans: FCP never prices one on its own.
+
+**Where the prices come from** (each checked against the provider's documentation on
+2026-10-22):
+
+| adapter  | plans and prices                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| gcore    | `GET /cloud/v1/lbflavors/{project_id}/{region_id}?include_prices=true`: `price_per_hour`, `price_per_month`, `currency_code`, used when `price_status` is `show` (a trial account reads every price as 0, as documented). A flavor the list does not price is asked the v2 preview, `POST /cloud/v2/pricing/{project_id}/{region_id}/loadbalancers {flavor}` (`per_hour.flavor`, `per_month.flavor`), a few at most. The flavor's own price: an address Gcore bills apart is not in it. Neither says anything about traffic: `unknown`.                                                                                                                                                                                                                                                                                          |
+| upcloud  | `GET /1.3/load-balancer/plans` for the plans (nodes, sessions per node) and the account's price list, `GET /1.3/price`, for the location's zone (cents an hour in the account's billing currency, which the list does not name: it is read from the account's details, `GET /1.3/account` then `GET /1.3/account/details/{username}`; a list whose currency cannot be read is not used). UpCloud does not document the price list's key for a load balancer plan, so it is matched by the plan's name; a plan it does not name takes the pricing page's monthly figure (`UPCLOUD_LB_PRICES`). The plan's own price: the floating IP FCP delegates is not in it. No data transfer charge: `unlimited`.                                                                                                                            |
+| ovh      | The region's flavors (`GET /cloud/project/{serviceName}/region/{regionName}/loadbalancing/flavor`) joined by name (`small` is `loadbalancer-s`) to the public cloud catalog, `GET /order/catalog/public/cloud?ovhSubsidiary=` (no authentication; prices in micro-cents; `octavia-loadbalancer.loadbalancer-<x>.hour.consumption` an hour, `...month.consumption` a month, `blobs.technical.bandwidth.level`), with the floating IP every balancer gets (`floatingip.floatingip.*`) added. The subsidiary is the account's (`/me`), else its endpoint's (FR, CA, US). The catalog is several megabytes: read with its own cap and kept an hour. Traffic is included, except in the Asia-Pacific regions, where a project gets 1 TB a month and pays past it. A gateway FCP creates when the location names none is billed apart. |
+| scaleway | The public product catalog, `GET https://api.scaleway.com/product-catalog/v2alpha1/public-catalog/products?product_types=load_balancer&zone=` (no authentication; an alpha API): `price.retail_price` per node an hour, `properties.load_balancer.node.bandwidth` (bits a second) and `multi_cloud_provider`, with the IPv4 each edge allocates added (the catalog's "Load Balancer IP", billed per IP an hour). When it does not answer, the zone's size list (`ListLbTypes`, which carries no price) priced from the pricing page (`SCALEWAY_LB_PRICES`: LB-S 0.023, LB-GP-M 0.054, LB-GP-L 0.094, LB-GP-XL 0.941 EUR an hour, plus 0.005 for the IPv4; 200 Mbps, 500 Mbps, 1 Gbps, 4 Gbps). Traffic is not charged.                                                                                                           |
+
+Sources: https://gcore.com/docs/api-reference/cloud/load-balancers/list-load-balancer-flavors.md,
+https://gcore.com/docs/api-reference/cloud/load-balancers/preview-load-balancer-price.md,
+https://developers.upcloud.com/1.3/4-pricing/, https://developers.upcloud.com/1.3/17-managed-loadbalancer/,
+https://upcloud.com/pricing/, https://eu.api.ovh.com/1.0/order.json,
+https://www.ovhcloud.com/en/public-cloud/prices/,
+https://www.scaleway.com/en/developers/api/product-catalog/public-catalog/v2alpha1/,
+https://www.scaleway.com/en/pricing/network/.
+
+**When they are read.** With every inventory pull of a location (a new location's first one
+included; the pull never fails on prices), by the reconcile cron once a location's plans are a
+day old (two locations a pass; a failed read is tried again an hour later), and by **Refresh
+prices** on the account page. The location form reads the plans of the region it is choosing
+live (stored nowhere). A read replaces the location's plans whole; one that fails keeps the last
+ones and says why (`plansError`).
+
+**The plan picker.** A location's plan is its size value (the template's flavor, plan or type
+for that location: every load balancer provider's size is set per location). The location
+form, **Change plan** on the account page and a node's own Options at a pick offer each size
+with its price, traffic terms, bandwidth and what it accepts. A size that cannot carry an FCP
+node (a Scaleway size that takes Scaleway's own servers only, `size_not_multicloud`) cannot be
+picked, and choosing one for a location is refused.
+
+**What you pay** (`edgeProviderAccounts.cost`, the account page's Cost card): the list price (a
+load balancer account's default), free or credits, or your own amount per edge a month in a
+currency, with an optional note. It is shown beside the list price wherever a cost is. A CDN
+account reads "No price set" until you say it is free or what it costs.
+
+**Before anything billable is created**, the protect sheet's "FCP creates" box lists what each
+pick's addresses cost a month at the size they build (the node's options included) and the total
+per currency; the review repeats the total. A spare, a replacement that creates a new address,
+and "Add a location" on a node say what one address there costs. A plan whose traffic is charged
+on top says "plus traffic"; FCP does not estimate it. Amounts in different currencies are never
+added together.
+
+**The budget guard** (optional, off by default): a monthly cap on an account, in its currency.
+The estimate is every live edge FCP manages there, at the size it was built with (frozen on the
+edge as `planSize`; an edge from before at what its location builds now), priced as above; an
+edge whose price is not known, or is in another currency, counts for nothing. Once the estimate
+plus the new edges would pass the cap, no new edge is created there: the protect plan refuses
+the account (`account_spend_cap_reached`), selection passes over it (named or automatic),
+preflight says so, and the edge insert refuses it last. An account at its cap raises attention
+`account_spend_cap`.
+
+**Selection** keeps its priorities (the lower number is tried first); between accounts of the
+same priority it prefers the cheaper edge among those priced in the same currency (each account
+ranks by cost within its currency; one whose price is not known ranks with the cheapest, so
+prices in different currencies are never compared), then the fewest live edges as before. A
+node's provider set keeps its own order.
+
 ## Provider sets
 
 A node is protected by a SET of picks: locations (§ "Provider accounts and locations") its
@@ -3618,7 +3692,7 @@ live resource; FCP never applies one (a new edge is built instead).
 | gcore      | Health check      | Healthy status codes                  | `health_monitor.expected_codes`                         | 200                          | template, per node             | in place                    |
 | gcore      | Health check      | HTTP check version                    | `health_monitor.http_version`                           | 1.0                          | template, per node             | in place                    |
 | gcore      | Health check      | HTTP check host name                  | `health_monitor.domain_name`                            | provider's own               | template, per node             | in place                    |
-| upcloud    | Load balancer     | Plan                                  | `loadbalancer.plan`                                     | development                  | template, per node             | in place                    |
+| upcloud    | Load balancer     | Plan                                  | `loadbalancer.plan`                                     | development                  | template or location, per node | in place                    |
 | upcloud    | Load balancer     | Maintenance day                       | `loadbalancer.maintenance_dow`                          | provider's own               | template, per node             | in place                    |
 | upcloud    | Load balancer     | Maintenance time (UTC)                | `loadbalancer.maintenance_time`                         | provider's own               | template, per node             | in place                    |
 | upcloud    | Load balancer     | Labels                                | `loadbalancer.labels`                                   | none                         | template, per node             | in place                    |
@@ -3924,6 +3998,16 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                 | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Plans and prices** add one table (`edgePlans`) and optional fields only
+(`edgeProviderAccounts.cost`, `edgeLocations.plansAt` / `plansTriedAt` / `plansError`,
+`edges.planSize`): one deploy, no migration, no env change. Prices appear with each location's
+next inventory pull, or within the reconcile cron's passes (two locations every five minutes);
+**Refresh prices** reads one at once. No account has a cap until one is set, so nothing new is
+refused. To roll back, run `edgePlans:clearForRollback` before deploying the older build: it
+deletes the plans page by page, clears the account and location fields, then walks the edges in
+bounded pages to clear `planSize`, scheduling itself until the edges are done (watch the
+scheduled runs finish before deploying).
 
 **Per-account Cloudflare fronting** adds one optional field (`edgeProviderAccounts.frontsTraffic`):
 one deploy, no freeze, no env change. `seedCutover` runs `edgeProviderAccounts:migrateDnsFronting`

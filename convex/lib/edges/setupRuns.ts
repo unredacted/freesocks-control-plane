@@ -235,6 +235,40 @@ export interface SetupPlanSet {
   tooLarge: boolean;
   /** Per pick: what keeps it from being used (capacity, budget, not offered, its options). */
   problems: Array<{ locationId: string; reason: string; detail?: string }>;
+  /**
+   * What the run creates costs a month before anything exists (docs/edges.md
+   * § "Plans and prices"): per pick, its addresses at the size they build,
+   * priced; the total per currency. Absent on runs from before.
+   */
+  cost?: SetupPlanCost;
+}
+
+/** One pick's monthly cost in a protect plan (`edgePlans.costOfPicks`). */
+export interface SetupPlanCostLine {
+  locationId: string;
+  /** The addresses (edges) the run creates at this pick. */
+  count: number;
+  size: string | null;
+  label: string | null;
+  cost: {
+    monthly: number | null;
+    currency: string | null;
+    basis: 'list' | 'free' | 'amount' | 'unset';
+    plusTraffic: boolean;
+    listMonthly: number | null;
+    listCurrency: string | null;
+  };
+  source: 'api' | 'catalog' | null;
+  catalogAsOf: string | null;
+  pricedAt: string | null;
+}
+export interface SetupPlanCost {
+  lines: SetupPlanCostLine[];
+  total: {
+    totals: Array<{ currency: string; monthly: number }>;
+    unpriced: number;
+    plusTraffic: boolean;
+  };
 }
 
 /** The read-only plan `POST setup-runs/plan` returns and `POST setup-runs` persists (JSON on the run). */
