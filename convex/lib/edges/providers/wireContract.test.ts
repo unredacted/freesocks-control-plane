@@ -56,7 +56,12 @@ import { gcoreProvider } from './gcore';
 import { upcloudProvider } from './upcloud';
 import { createAdvancedClient, withHTTPClient, withProfile } from '@scaleway/sdk-client';
 import { Lbv1 } from '@scaleway/sdk-lb';
-import { scalewayProvider, __setScalewayApiFactory } from './scaleway';
+import {
+  scalewayKeys,
+  scalewayProvider,
+  __setScalewayApiFactory,
+  __setScalewayKeysFactory,
+} from './scaleway';
 import { ovhProvider, __resetOvhSkewCache } from './ovh';
 import { cloudflareProvider, __setCloudflareApiFactory } from './cloudflare';
 import { cloudflareApi } from './dns/cloudflareDns';
@@ -483,9 +488,11 @@ describe('wire contract: upcloud', () => {
 describe('wire contract: scaleway', () => {
   afterEach(() => {
     __setScalewayApiFactory(null);
+    __setScalewayKeysFactory(null);
     vi.unstubAllGlobals();
   });
 
+  const DEFAULT_PROJECT = '66666666-7777-4888-8999-000000000000';
   const cfg: ScalewayConfig = {
     type: 'scaleway',
     accessKey: 'SCWXXXXXXXXXXXXXXXXX',
@@ -549,6 +556,7 @@ describe('wire contract: scaleway', () => {
       );
       return new Lbv1.ZonedAPI(client);
     });
+    __setScalewayKeysFactory((c) => scalewayKeys(c, globalThis.fetch as typeof fetch));
   }
 
   const route = (c: Captured): Response => {
@@ -583,6 +591,8 @@ describe('wire contract: scaleway', () => {
     if (p === `${ZONE}/ips/ip6-1`) return jsonRes(c.method === 'DELETE' ? {} : IP6);
     if (p === `${ZONE}/lb-types`)
       return jsonRes({ lb_types: [{ name: 'LB-S', stock_status: 'available' }], total_count: 1 });
+    if (p === `/iam/v1alpha1/api-keys/${cfg.accessKey}`)
+      return jsonRes({ access_key: cfg.accessKey, default_project_id: DEFAULT_PROJECT });
     return jsonRes({ message: 'not found', type: 'not_found' }, 404);
   };
 
@@ -661,6 +671,47 @@ describe('wire contract: scaleway', () => {
     );
     expect(errorBlob(err)).not.toContain(cfg.secretKey);
     expect(errorBlob(err)).not.toContain(ORIGIN_IP);
+  });
+
+  test("a location with no Project id creates in the key's default project: the createIp body carries it", async () => {
+    const stub = mockFetch(route);
+    useStub();
+    // The credential test (account-level: no project) reads the key's default project.
+    const account = { ...cfg, projectId: undefined };
+    const tested = await scalewayProvider.testCredentials(account);
+    expect(tested).toEqual({ ok: true, observed: { defaultProjectId: DEFAULT_PROJECT } });
+    // The adapter config takes the observed project for a location that names none.
+    const located = { ...account, projectId: tested.observed!.defaultProjectId };
+    const steps = scalewayProvider.planProvision(located, spec, tpl);
+    await scalewayProvider.runStep(located, steps[0], spec, tpl, { steps: [], resources: [] });
+    const create = stub.calls.find((c) => c.method === 'POST' && c.path === `${ZONE}/ips`)!;
+    expect(create.body).toMatchObject({ project_id: DEFAULT_PROJECT, tags: [spec.name] });
+    expectDeclared('scaleway', fromCaptured(stub.calls));
+    // With no project at all, nothing is sent.
+    stub.calls.length = 0;
+    expect(
+      await scalewayProvider.runStep(account, steps[0]!, spec, tpl, { steps: [], resources: [] }),
+    ).toMatchObject({ status: 'partial', code: 'project_unresolved', refused: true });
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  test("Scaleway's 400 on an address allocation is a known refusal, not a step to retry", async () => {
+    const stub = mockFetch(() =>
+      jsonRes(
+        {
+          type: 'invalid_arguments',
+          message: 'invalid argument(s)',
+          details: [{ argument_name: 'project_id', reason: 'required', help_message: 'required' }],
+        },
+        400,
+      ),
+    );
+    useStub();
+    const [step] = scalewayProvider.planProvision(cfg, spec, tpl);
+    expect(
+      await scalewayProvider.runStep(cfg, step!, spec, tpl, { steps: [], resources: [] }),
+    ).toEqual({ status: 'partial', resources: [], code: 'ip_allocation_refused', refused: true });
+    expect(stub.calls).toHaveLength(1);
   });
 });
 

@@ -900,6 +900,12 @@ const COPY = {
     explain: 'An active server name is not covered by the origin certificate.',
     fix: 'Add the name to the certificate or retire it on the listener.',
   },
+  project_unresolved: {
+    label: 'No project to create in',
+    explain:
+      "This Scaleway location names no Project id, and the API key's default project could not be read, so nothing can be created there.",
+    fix: 'Set the Project id on the location, or let the key read its own details in IAM and test the account again.',
+  },
   l4_not_for_websocket: {
     label: 'No load balancer for WebSocket',
     explain:
@@ -967,6 +973,13 @@ const COPY = {
   no_load_signal: {
     label: 'No load signal',
     explain: 'This origin kind reports no user load, so the detector uses reports and probes only.',
+  },
+  // A provider refused the arguments of an address allocation (a 400): retrying cannot help.
+  ip_allocation_refused: {
+    label: 'Address allocation refused',
+    explain:
+      'The provider refused the request for a new address, so trying again would be refused the same way.',
+    fix: "Check the location's Project id, and that the API key may create addresses in that project, then try again.",
   },
   // Why a node's transports have no backup at another provider (`reduced_resilience`).
   one_group: {
@@ -1994,6 +2007,12 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Zone mode not read',
     explain: "The zone's encryption mode was never read.",
     fix: 'Check the zone again from the provider page.',
+  },
+  project_unresolved: {
+    label: 'No project',
+    explain:
+      "This location names no Project id and the API key's default project could not be read.",
+    fix: 'Set the Project id on this location.',
   },
   l4_not_for_websocket: {
     label: 'Not for a WebSocket node',

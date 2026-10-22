@@ -6,7 +6,7 @@
  * edge's own region; trust is taken per location; a region-specific template
  * value is the location's own.
  */
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
@@ -21,6 +21,7 @@ import {
 } from './lib/edges/testing/fixtures';
 import { defaultLocationRow, insertPlanned } from './lib/edges/testing/reads';
 import { resolveTemplateFor } from './edgeTemplates';
+import { placeProblemOf } from './lib/edges/l7Place';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -518,7 +519,12 @@ describe('a credential test needs no location', () => {
         ? jsonRes({ count: 0, results: [] })
         : c.path.startsWith('/lb/v1/zones/')
           ? jsonRes({ lbs: [], total_count: 0 })
-          : jsonRes({}, 404),
+          : c.path === '/iam/v1alpha1/api-keys/SCWXXXXXXXXXXXXXXXXX'
+            ? jsonRes({
+                access_key: 'SCWXXXXXXXXXXXXXXXXX',
+                default_project_id: '66666666-7777-4888-8999-000000000000',
+              })
+            : jsonRes({}, 404),
     );
     expect(await t.action(internal.edgeProviderOps.testCredentials, { accountId: gcore })).toEqual({
       ok: true,
@@ -530,7 +536,88 @@ describe('a credential test needs no location', () => {
     expect((await t.action(internal.edgeProviderOps.testCredentials, { accountId: scw })).ok).toBe(
       true,
     );
-    expect(stub.calls.map((c) => c.path)).toEqual(['/lb/v1/zones/fr-par-1/lbs']);
+    // In no project, then the key's default project read from IAM.
+    expect(stub.calls.map((c) => c.path)).toEqual([
+      '/lb/v1/zones/fr-par-1/lbs',
+      '/iam/v1alpha1/api-keys/SCWXXXXXXXXXXXXXXXXX',
+    ]);
+    expect(stub.calls[0]!.query).not.toContain('project_id');
+  });
+});
+
+describe('a Scaleway location with no Project id', () => {
+  const DEFAULT_PROJECT = '66666666-7777-4888-8999-000000000000';
+  const scaleway = (t: TestConvex<typeof schema>) =>
+    createAccount(t, {
+      provider: 'scaleway',
+      name: 's',
+      settings: { accessKey: 'SCWXXXXXXXXXXXXXXXXX', zone: 'fr-par-1' },
+      credentials: { secretKey: '11111111-2222-4333-8444-555555555555' },
+    });
+  const problemOf = (t: TestConvex<typeof schema>, id: Id<'edgeProviderAccounts'>) =>
+    t.run(async (ctx) =>
+      placeProblemOf(
+        ctx.db,
+        (await ctx.db.get(id))!,
+        (await ctx.db
+          .query('edgeLocations')
+          .withIndex('by_account', (q) => q.eq('accountId', id))
+          .first())!,
+      ),
+    );
+
+  test("creates in the API key's default project, read by the credential test and kept on the account", async () => {
+    const t = convexTest(schema, modules);
+    const id = await scaleway(t);
+    // Not tested yet: nothing says where it would create, so it is not offered.
+    expect(await problemOf(t, id)).toBe('project_unresolved');
+    const stub = mockFetch((c) =>
+      c.path === '/iam/v1alpha1/api-keys/SCWXXXXXXXXXXXXXXXXX'
+        ? jsonRes({ access_key: 'SCWXXXXXXXXXXXXXXXXX', default_project_id: DEFAULT_PROJECT })
+        : c.path.startsWith('/lb/v1/zones/')
+          ? jsonRes(
+              c.path.endsWith('/ips') ? { ips: [], total_count: 0 } : { lbs: [], total_count: 0 },
+            )
+          : jsonRes({ lb_types: [], total_count: 0 }),
+    );
+    expect((await t.action(internal.edgeProviderOps.testCredentials, { accountId: id })).ok).toBe(
+      true,
+    );
+    const row = (await t.run((c) => c.db.get(id)))!;
+    expect(JSON.parse(row.observedSettings!)).toEqual({ defaultProjectId: DEFAULT_PROJECT });
+    expect(await problemOf(t, id)).toBeNull();
+    // Every project-scoped call of the location now names that project.
+    stub.calls.length = 0;
+    await t.action(internal.edgeProviderOps.inventory, { accountId: id });
+    const lists = stub.calls.filter((c) => /\/lb\/v1\/zones\/[^/]+\/(lbs|ips)$/.test(c.path));
+    expect(lists.length).toBeGreaterThan(0);
+    for (const c of lists) expect(c.query).toContain(`project_id=${DEFAULT_PROJECT}`);
+  });
+
+  test('a key that may not read its default project passes its test, and the location asks for a Project id', async () => {
+    const t = convexTest(schema, modules);
+    const id = await scaleway(t);
+    mockFetch((c) =>
+      c.path.startsWith('/iam/')
+        ? jsonRes({ type: 'permissions_denied', message: 'insufficient permissions' }, 403)
+        : jsonRes({ lbs: [], total_count: 0 }),
+    );
+    expect((await t.action(internal.edgeProviderOps.testCredentials, { accountId: id })).ok).toBe(
+      true,
+    );
+    expect((await t.run((c) => c.db.get(id)))!.observedSettings).toBeUndefined();
+    expect(await problemOf(t, id)).toBe('project_unresolved');
+    // Naming the project on the location is the fix.
+    await t.run(async (ctx) => {
+      const loc = (await ctx.db
+        .query('edgeLocations')
+        .withIndex('by_account', (q) => q.eq('accountId', id))
+        .first())!;
+      await ctx.db.patch(loc._id, {
+        placement: { ...(loc.placement as object), projectId: DEFAULT_PROJECT } as never,
+      });
+    });
+    expect(await problemOf(t, id)).toBeNull();
   });
 });
 

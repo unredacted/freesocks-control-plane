@@ -14,9 +14,19 @@
  * Destroy order is by kind: frontend → backend → LB → flexible IPs (an IP
  * cannot be released while an LB holds it). Every kind is read back after its
  * delete: an LB still `ready` means the delete never landed (`still_present`).
+ *
+ * Project: every created resource names one. A location may leave its Project
+ * id empty; the API key's default project is then used, read from IAM by the
+ * credential test (`GET /iam/v1alpha1/api-keys/{access_key}`) and kept on the
+ * account as the observed `defaultProjectId` (never a secret), which the
+ * adapter config takes as `projectId` (`EDGE_OBSERVED_PLACEMENT`). A create with
+ * no project at all is never sent: the run stops on `project_unresolved`.
  */
 import {
+  API,
   createAdvancedClient,
+  isJSONObject,
+  validatePathParam,
   withHTTPClient,
   withProfile,
   withUserAgent,
@@ -69,8 +79,8 @@ type FetchLike = typeof fetch;
  * `withHTTPClient` is the documented way to substitute the transport, and the
  * production path resolves `fetch` lazily per call so a runtime polyfill applies.
  */
-export function scalewayApi(cfg: ScalewayConfig, fetchImpl?: FetchLike): ZonedApi {
-  const client = createAdvancedClient(
+function scalewayClient(cfg: ScalewayConfig, fetchImpl?: FetchLike) {
+  return createAdvancedClient(
     withProfile({
       accessKey: cfg.accessKey,
       secretKey: cfg.secretKey,
@@ -80,13 +90,78 @@ export function scalewayApi(cfg: ScalewayConfig, fetchImpl?: FetchLike): ZonedAp
     withHTTPClient(fetchImpl ?? ((input, init) => fetch(input, init))),
     withUserAgent('fcp-relay/1'),
   );
-  return new Lbv1.ZonedAPI(client);
+}
+
+export function scalewayApi(cfg: ScalewayConfig, fetchImpl?: FetchLike): ZonedApi {
+  return new Lbv1.ZonedAPI(scalewayClient(cfg, fetchImpl));
+}
+
+/**
+ * The one IAM read FCP makes, on the same client (auth, transport) as the
+ * load-balancer API: the project an API key's resources go to when a call
+ * names none (`default_project_id`; null when the key has none).
+ */
+export interface ScalewayKeysApi {
+  defaultProjectOf(accessKey: string): Promise<string | null>;
+}
+
+class IamApiKeys extends API implements ScalewayKeysApi {
+  defaultProjectOf = (accessKey: string): Promise<string | null> =>
+    this.client.fetch(
+      {
+        method: 'GET',
+        path: `/iam/v1alpha1/api-keys/${validatePathParam('accessKey', accessKey)}`,
+      },
+      (raw: unknown) => {
+        const id = isJSONObject(raw) ? raw.default_project_id : null;
+        return typeof id === 'string' && id ? id : null;
+      },
+    );
+}
+
+export function scalewayKeys(cfg: ScalewayConfig, fetchImpl?: FetchLike): ScalewayKeysApi {
+  return new IamApiKeys(scalewayClient(cfg, fetchImpl));
 }
 
 let apiFactory: (cfg: ScalewayConfig) => ZonedApi = (cfg) => scalewayApi(cfg);
 /** Test seam: replace the SDK client factory. */
 export function __setScalewayApiFactory(f: ((cfg: ScalewayConfig) => ZonedApi) | null): void {
   apiFactory = f ?? ((cfg) => scalewayApi(cfg));
+}
+
+let keysFactory: (cfg: ScalewayConfig) => ScalewayKeysApi = (cfg) => scalewayKeys(cfg);
+/** Test seam: replace the IAM client factory. */
+export function __setScalewayKeysFactory(
+  f: ((cfg: ScalewayConfig) => ScalewayKeysApi) | null,
+): void {
+  keysFactory = f ?? ((cfg) => scalewayKeys(cfg));
+}
+
+/**
+ * The API key's default project, or null when the key may not read it (a
+ * refused or unknown key answer: a location must then name its Project id).
+ * Any other failure (the network, the provider) is thrown as usual.
+ */
+async function defaultProjectOf(cfg: ScalewayConfig): Promise<string | null> {
+  try {
+    return await sdk(cfg, 'test', () => keysFactory(cfg).defaultProjectOf(cfg.accessKey));
+  } catch (e) {
+    const status = e instanceof EdgeProviderError ? e.meta.status : undefined;
+    if (status === 401 || status === 403 || status === 404) return null;
+    throw e;
+  }
+}
+
+/** The project a create names: the location's, else the key's default (filled in by the config). */
+function projectFor(cfg: ScalewayConfig, step: string): string {
+  if (cfg.projectId) return cfg.projectId;
+  throw new EdgeProviderError('scaleway: no project for a create', {
+    provider: 'scaleway',
+    step,
+    code: 'project_unresolved',
+    retryable: false,
+    timedOut: false,
+  });
 }
 
 async function sdk<T>(cfg: ScalewayConfig, step: string, fn: () => Promise<T>): Promise<T> {
@@ -133,10 +208,20 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
   async testCredentials(cfg) {
     try {
       // An account is credentials only: without a location the key is tested
-      // in the first offered zone (a key is valid in every zone).
-      const at = cfg.zone ? cfg : { ...cfg, zone: SCALEWAY_ZONES[0] };
-      await sdk(at, 'test', () => apiFactory(at).listLbs({ pageSize: 1, projectId: at.projectId }));
-      return { ok: true };
+      // in the first offered zone (a key is valid in every zone), and in no
+      // project (one an earlier test observed may be another key's).
+      const at: ScalewayConfig = {
+        ...cfg,
+        zone: cfg.zone || SCALEWAY_ZONES[0]!,
+        projectId: undefined,
+      };
+      await sdk(at, 'test', () => apiFactory(at).listLbs({ pageSize: 1 }));
+      // Where a location with no Project id creates its resources: the key's
+      // default project, kept as an observed fact. A key that may not read it
+      // still passes; such a location is then not offered (`project_unresolved`)
+      // until it names a Project id, so nothing fails later at provisioning.
+      const defaultProjectId = await defaultProjectOf(at);
+      return defaultProjectId ? { ok: true, observed: { defaultProjectId } } : { ok: true };
     } catch (e) {
       return credentialTestFailure(e);
     }
@@ -198,14 +283,34 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
       case 'allocate_ip':
       case 'allocate_ipv6': {
         const isIpv6 = step.kind === 'allocate_ipv6';
-        const ip = await sdk(cfg, step.id, () =>
-          api.createIp({
-            projectId: cfg.projectId,
-            isIpv6,
-            tags: [spec.name],
-            ...(tpl.reverse ? { reverse: tpl.reverse } : {}),
-          }),
-        );
+        // No project from the location nor from the key: the run stops on it
+        // at once (planning never offers such a location; this is the guard).
+        if (!cfg.projectId)
+          return { status: 'partial', resources: [], code: 'project_unresolved', refused: true };
+        const projectId = cfg.projectId;
+        let ip;
+        try {
+          ip = await sdk(cfg, step.id, () =>
+            api.createIp({
+              projectId,
+              isIpv6,
+              tags: [spec.name],
+              ...(tpl.reverse ? { reverse: tpl.reverse } : {}),
+            }),
+          );
+        } catch (e) {
+          // Scaleway refused the arguments (400): the same call would be
+          // refused again, so the run stops on a known code at once instead
+          // of retrying the step until it gives up.
+          if (e instanceof EdgeProviderError && e.meta.status === 400)
+            return {
+              status: 'partial',
+              resources: [],
+              code: 'ip_allocation_refused',
+              refused: true,
+            };
+          throw e;
+        }
         return {
           status: 'done',
           resources: [
@@ -228,7 +333,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             name: spec.name,
             description: tpl.description ?? 'origin edge',
             type: tpl.type,
-            projectId: cfg.projectId,
+            projectId: projectFor(cfg, step.id),
             ipIds,
             assignFlexibleIp: false,
             tags: [spec.name, ...tpl.tags],

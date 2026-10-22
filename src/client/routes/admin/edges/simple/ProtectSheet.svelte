@@ -363,6 +363,7 @@
       case 'dns_zone_missing':
       case 'location_disabled':
       case 'location_capacity_reached':
+      case 'project_unresolved':
         return edgesPaths.provider(id);
       case 'provider_mismatch':
         return plan?.existingRelay

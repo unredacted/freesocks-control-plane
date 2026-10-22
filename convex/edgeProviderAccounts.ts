@@ -187,6 +187,8 @@ export interface RelayAccountWithSecret {
   updatedAt: number;
   /** Consecutive provider-side API failures (a success resets them). */
   apiFailures: number;
+  /** What the last passing credential test observed (JSON; `parseObservedSettings` reads it). */
+  observedSettings?: string;
 }
 
 function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
@@ -201,6 +203,7 @@ function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
     defaultTemplateId: r.defaultTemplateId ?? null,
     updatedAt: r.updatedAt,
     apiFailures: r.apiFailures ?? 0,
+    ...(r.observedSettings !== undefined ? { observedSettings: r.observedSettings } : {}),
   };
 }
 

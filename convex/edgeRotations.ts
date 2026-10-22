@@ -146,7 +146,7 @@ import {
 } from './nodeActivation';
 import type { PublicationShape } from './lib/backend/activation';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
-import { l7PlaceOf, l7PlaceProblemOf } from './lib/edges/l7Place';
+import { l7PlaceOf, placeProblemOf } from './lib/edges/l7Place';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -2980,9 +2980,10 @@ export async function selectionContext(
     const where = named ?? (await defaultLocationOf(ctx.db, a));
     if (!where) return failure('no_location');
     if (!where.enabled) return failure('location_disabled');
-    // A CDN place a new edge cannot be planned in (no zone, a refused check,
-    // its DNS account gone or off, its encryption mode never read).
-    const placeProblem = await l7PlaceProblemOf(ctx.db, a, where);
+    // A place a new edge cannot be planned in (a CDN place with no zone, a
+    // refused check, its DNS account gone or off, its encryption mode never
+    // read; a Scaleway location with no project to create in).
+    const placeProblem = await placeProblemOf(ctx.db, a, where);
     if (placeProblem) return failure(placeProblem);
     if (!where.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)
@@ -3047,8 +3048,9 @@ export async function selectionContext(
       }
       // A place whose last check refused it (a paused zone) gets no new edge.
       // A place no new edge can be planned in (a CDN zone with no zone, a
-      // refused check, its DNS account off, an unread encryption mode).
-      if (!loc.enabled || (await l7PlaceProblemOf(ctx.db, a, loc))) continue;
+      // refused check, its DNS account off, an unread encryption mode; a
+      // Scaleway location with no project to create in).
+      if (!loc.enabled || (await placeProblemOf(ctx.db, a, loc))) continue;
       keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
       if (underApproval) {
         const tpl = await resolveBuildFor(

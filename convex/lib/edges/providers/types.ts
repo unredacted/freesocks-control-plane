@@ -37,7 +37,8 @@ export interface ScalewayConfig {
   type: 'scaleway';
   accessKey: string;
   secretKey: string;
-  projectId: string;
+  /** The location's, else the API key's default project (observed); absent for an account-level call. */
+  projectId?: string;
   zone: string;
 }
 export interface OvhConfig {

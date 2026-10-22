@@ -41,7 +41,7 @@ import {
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
-import { l7PlaceProblemOf } from './lib/edges/l7Place';
+import { placeProblemOf } from './lib/edges/l7Place';
 import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
@@ -191,8 +191,9 @@ async function planContextOf(
           isDefault: !!dflt && dflt._id === loc._id,
           live: await liveCountForLocation(ctx.db, loc),
           maxLiveEdges: loc.maxLiveEdges ?? null,
-          // Why no new front can be planned in this place (the zone itself).
-          placeProblem: await l7PlaceProblemOf(ctx.db, a, loc),
+          // Why no new edge can be planned in this place (the zone itself, a
+          // Scaleway location with no project to create in).
+          placeProblem: await placeProblemOf(ctx.db, a, loc),
           // The certificate the account's DEFAULT could not get there (CAA, a
           // failed or foreign wildcard): a pick with its own certificate may
           // still go, so it is shown, and its pick check judges it.

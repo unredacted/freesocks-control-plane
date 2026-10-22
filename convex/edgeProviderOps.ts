@@ -40,7 +40,7 @@ import {
 } from './lib/edges/providers/capabilities';
 import { renderTemplateValue } from './lib/edges/providers/template';
 import { isRelayProviderId, type EdgeProviderId } from './lib/edgeProviderIds';
-import { frozenSettingsOf, type ProvisionIntent } from './lib/edges/intent';
+import { frozenSettingsOf, parseObservedSettings, type ProvisionIntent } from './lib/edges/intent';
 import type { ListenerProto } from './lib/edges/protocols';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import {
@@ -51,6 +51,7 @@ import {
   validateSettings,
   withoutPlacementKeys,
   EDGE_INTENT_FACTS,
+  EDGE_OBSERVED_PLACEMENT,
   EDGE_PLACEMENT_SETTINGS,
 } from './lib/edges/accountSettings';
 import { placeKeyOf } from './lib/edges/locations';
@@ -392,6 +393,14 @@ async function loadAdapter(
       retryable: false,
       timedOut: false,
     });
+  }
+  // A placement value the location left empty takes the provider's own
+  // default as the credential test observed it (Scaleway: the API key's
+  // default project), for a new edge and an existing one alike.
+  const observed = parseObservedSettings(acct.observedSettings);
+  for (const [key, { fact }] of Object.entries(EDGE_OBSERVED_PLACEMENT[acct.provider])) {
+    const into = cfg as unknown as Record<string, unknown>;
+    if ((into[key] === undefined || into[key] === '') && observed[fact]) into[key] = observed[fact];
   }
   // The account's certificate option defaults (planning a NEW edge reads
   // them; a node's own choices reach a new edge through its intent).

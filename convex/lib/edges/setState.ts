@@ -20,7 +20,7 @@ import { locationKeyOf } from './locations';
 import { accountsForSlot } from './rotation';
 import { dnsProvidersFrontOf } from '../edgeConfig';
 import { edgeRoleOf } from './providers/capabilities';
-import { l7PlaceProblemOf } from './l7Place';
+import { placeProblemOf } from './l7Place';
 import { websocketNodeOf } from './websocketNode';
 import {
   coverTargets,
@@ -132,9 +132,10 @@ export async function setPicksOf(
     if (!account) continue;
     const fronts =
       edgeRoleOf(account.provider) !== 'dns' || (dnsFront ??= await dnsProvidersFrontOf(db));
-    // A CDN place no new edge can be planned in carries nothing (no zone, a
-    // refused check, its DNS account gone or off, an unread encryption mode).
-    const placeOk = location.enabled && !(await l7PlaceProblemOf(db, account, location));
+    // A place no new edge can be planned in carries nothing (a CDN place with
+    // no zone, a refused check, its DNS account gone or off, an unread
+    // encryption mode; a Scaleway location with no project to create in).
+    const placeOk = location.enabled && !(await placeProblemOf(db, account, location));
     out.push({
       pick: {
         locationId: location._id as string,
