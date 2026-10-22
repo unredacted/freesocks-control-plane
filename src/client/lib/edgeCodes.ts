@@ -185,6 +185,12 @@ const COPY = {
     explain: 'The zone is not active at the provider yet.',
     fix: 'Finish setting up the zone at the provider, then check the location again.',
   },
+  zone_flattens_cnames: {
+    label: 'Zone flattens every CNAME',
+    explain:
+      'The zone answers every CNAME with its target’s addresses (CNAME flattening set to all records), so the certificate authority never sees the validation record a front’s certificate needs.',
+    fix: 'Set CNAME flattening to the zone apex only at the DNS provider, then check the location again.',
+  },
   tls_configuration_missing: {
     label: 'TLS configuration not found',
     explain: 'The Fastly key does not see that TLS configuration.',

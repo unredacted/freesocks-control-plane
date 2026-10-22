@@ -66,6 +66,10 @@ export interface FakeCertificate {
   failureReason?: string;
   renewalStatus?: string;
   record: { name: string; value: string };
+  /** Names beside the domain name (ACM lists the domain name among them too). */
+  extraNames?: string[];
+  /** Resources outside FCP's distributions that use it (ARNs). */
+  otherUsers?: string[];
 }
 
 export interface FakeDistribution {
@@ -165,8 +169,17 @@ export class FakeCloudFrontAccount {
     };
   }
 
+  private users(arn: string): string[] {
+    return [
+      ...this.distributions
+        .filter((d) => d.config.ViewerCertificate?.ACMCertificateArn === arn)
+        .map((d) => d.arn),
+      ...(this.certificate(arn)?.otherUsers ?? []),
+    ];
+  }
+
   private inUse(arn: string): boolean {
-    return this.distributions.some((d) => d.config.ViewerCertificate?.ACMCertificateArn === arn);
+    return this.users(arn).length > 0;
   }
 
   private view(d: FakeDistribution, withEtag: boolean): CloudFrontDistribution {
@@ -216,6 +229,12 @@ export class FakeCloudFrontAccount {
         ? { headerBehavior: p.config.HeadersConfig.HeaderBehavior }
         : {}),
       headers: [...(p.config.HeadersConfig?.Headers?.Items ?? [])],
+      ...(p.config.CookiesConfig?.CookieBehavior
+        ? { cookieBehavior: p.config.CookiesConfig.CookieBehavior }
+        : {}),
+      ...(p.config.QueryStringsConfig?.QueryStringBehavior
+        ? { queryStringBehavior: p.config.QueryStringsConfig.QueryStringBehavior }
+        : {}),
     };
   }
 
@@ -262,9 +281,8 @@ export class FakeCloudFrontAccount {
             ...this.summaryOf(c),
             ...(c.failureReason ? { failureReason: c.failureReason } : {}),
             ...(c.renewalStatus ? { renewalStatus: c.renewalStatus } : {}),
-            inUseBy: this.distributions
-              .filter((d) => d.config.ViewerCertificate?.ACMCertificateArn === arn)
-              .map((d) => d.arn),
+            subjectAlternativeNames: [c.domainName, ...(c.extraNames ?? [])],
+            inUseBy: this.users(arn),
             validationRecords: [{ ...c.record, type: 'CNAME' }],
           };
         }),
@@ -373,6 +391,10 @@ export class FakeCloudFrontAccount {
 export interface FakeDnsZone extends DnsClient {
   rows: DnsRecord[];
   deleted: string[];
+  /** The zone's `cname_flattening` as `flattensAllCnames` answers it (null: unreadable). */
+  flattenAll: boolean | null;
+  /** Fail the next `deleteRecord` (a DNS API that does not answer). */
+  failNextDelete: boolean;
 }
 
 export function fakeDnsZone(dns: CloudflareDnsConfig, seed: DnsRecord[] = []): FakeDnsZone {
@@ -380,9 +402,11 @@ export function fakeDnsZone(dns: CloudflareDnsConfig, seed: DnsRecord[] = []): F
   const deleted: string[] = [];
   let next = seed.length + 1;
   const norm = (n: string) => n.trim().toLowerCase().replace(/\.$/, '');
-  return {
+  const zone: FakeDnsZone = {
     rows,
     deleted,
+    flattenAll: false,
+    failNextDelete: false,
     zoneId: dns.zoneId,
     zoneName: dns.zoneName,
     accountId: dns.accountId,
@@ -400,6 +424,10 @@ export function fakeDnsZone(dns: CloudflareDnsConfig, seed: DnsRecord[] = []): F
       return rows.find((r) => r.id === id) ?? null;
     },
     async deleteRecord(id: string) {
+      if (zone.failNextDelete) {
+        zone.failNextDelete = false;
+        throw new Error('fake dns: the API did not answer');
+      }
       deleted.push(id);
       const i = rows.findIndex((r) => r.id === id);
       if (i >= 0) rows.splice(i, 1);
@@ -407,8 +435,12 @@ export function fakeDnsZone(dns: CloudflareDnsConfig, seed: DnsRecord[] = []): F
     async listCaa() {
       return [];
     },
+    async flattensAllCnames() {
+      return zone.flattenAll;
+    },
     async readZone() {
       return { id: dns.zoneId, name: dns.zoneName, status: 'active', paused: false, plan: 'free' };
     },
   };
+  return zone;
 }

@@ -49,6 +49,14 @@ export interface DnsClient {
   deleteRecord(id: string): Promise<void>;
   /** CAA records at the zone apex (issuance preflight); empty = unrestricted. */
   listCaa(): Promise<Array<{ flags: number; tag: string; value: string }>>;
+  /**
+   * Whether the zone answers EVERY CNAME flattened (Cloudflare's zone setting
+   * `cname_flattening: flatten_all`): a certificate authority looking up a
+   * validation CNAME then finds the target's addresses (none) instead, and
+   * issuance never completes. `null` when the credentials may not read it.
+   * Optional: a client without the setting has nothing to say.
+   */
+  flattensAllCnames?(): Promise<boolean | null>;
   /** The zone itself as these credentials read it (a location check, a rotation's reach check). */
   readZone(): Promise<{
     id: string;

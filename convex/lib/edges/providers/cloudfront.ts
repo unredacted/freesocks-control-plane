@@ -411,7 +411,10 @@ export function policyMatchesVariant(
   p: CloudFrontOriginRequestPolicy,
   variant: CloudFrontPolicyVariant,
 ): boolean {
+  // The whole policy: cookies and query strings are settings of their own, and
+  // one edited to forward cookies is not the policy FCP made.
   if (p.headerBehavior !== 'whitelist') return false;
+  if (p.cookieBehavior !== 'none' || p.queryStringBehavior !== 'all') return false;
   const want = cloudFrontPolicyHeaders(variant).map((h) => h.toLowerCase());
   const have = p.headers.map((h) => h.toLowerCase());
   return have.length === want.length && want.every((h) => have.includes(h));
@@ -638,8 +641,10 @@ async function awaitCertificate(
     const hostname = cloudFrontHostnameOf(ledger);
     return { status: 'done', resources: [], ...(hostname ? { addresses: { hostname } } : {}) };
   }
+  // Terminal at ACM (a failed request is never retried, it is replaced), so
+  // the run stops on the code at once instead of waiting out its timeout.
   if (FAILED_STATES.has(c.status ?? ''))
-    return { status: 'partial', resources: [], code: failureCode(c) };
+    return { status: 'partial', resources: [], code: failureCode(c), refused: true };
   const code: L7CertificateCode | undefined =
     c.status === 'ISSUED' ? 'certificate_expiring' : await challengeRecordProblem(cfg, c);
   return { status: 'requested', opRef, resources: [], ...(code ? { code } : {}) };
@@ -1038,30 +1043,38 @@ export const cloudFrontProvider: EdgeProvider<CloudFrontConfig, CloudFrontTempla
       target = orderedCandidate(shared.candidates, opts.ordered);
       if (!target) return { removed: false, code: 'shared_certificate_ambiguous' };
     }
-    if (target && !opts.ordered.includes(`tls_subscription:${target.arn}`))
+    if (!target) return { removed: false };
+    if (!opts.ordered.includes(`tls_subscription:${target.arn}`))
       return { removed: false, code: 'shared_certificate_not_ours' };
-    let record: { name: string } | undefined;
-    if (target) {
-      try {
-        record = (await api.describeCertificate(target.arn)).validationRecords[0];
-        await api.deleteCertificate(target.arn);
-      } catch (e) {
-        if (isCloudFrontCode(e, 'resource_in_use_exception'))
-          return { removed: false, code: 'shared_certificate_in_use' };
-        if (!isCloudFrontNotFound(e)) throw e;
-      }
+    let certificate: AcmCertificate;
+    try {
+      certificate = await api.describeCertificate(target.arn);
+    } catch (e) {
+      if (isCloudFrontNotFound(e)) return { removed: false };
+      throw e;
     }
-    // Our account's validation record goes only when no certificate of ours
-    // for the name is left to renew through it.
-    const left = (await sharedCertificateOf(api, `*.${zone}`)).status !== 'absent';
-    const account = target ? acmArnParts(target.arn)?.account : undefined;
-    if (record && account && !left) {
+    if (certificate.inUseBy.length > 0)
+      return { removed: false, code: 'shared_certificate_in_use' };
+    // The validation record goes FIRST, while the certificate still names it:
+    // a DNS call that fails leaves the certificate in place, so the next try
+    // finds it and finishes both. It stays while another certificate of this
+    // account for the name renews through it, and only our account's is touched.
+    const record = certificate.validationRecords[0];
+    const account = acmArnParts(target.arn)?.account;
+    const others = shared.status === 'ambiguous' ? shared.candidates.length - 1 : 0;
+    if (record && account && others === 0) {
       const dns = await dnsClientFor(cfg);
-      for (const r of await dns.findRecordsByName(normalizeZoneName(record.name), 'CNAME')) {
+      for (const r of await dns.findRecordsByName(normalizeZoneName(record.name), 'CNAME'))
         if (parseCloudFrontAcmMarker(r.comment)?.account === account) await dns.deleteRecord(r.id);
-      }
     }
-    return { removed: !!target };
+    try {
+      await api.deleteCertificate(target.arn);
+    } catch (e) {
+      if (isCloudFrontCode(e, 'resource_in_use_exception'))
+        return { removed: false, code: 'shared_certificate_in_use' };
+      if (!isCloudFrontNotFound(e)) throw e;
+    }
+    return { removed: true };
   },
 
   /**
@@ -1092,6 +1105,15 @@ export const cloudFrontProvider: EdgeProvider<CloudFrontConfig, CloudFrontTempla
       if (zone.status !== 'active') {
         detail.push('zone_not_active');
         return out('zone_not_active');
+      }
+      // ACM's validation record is a CNAME: a zone that flattens every CNAME
+      // answers ACM with the target's addresses (it has none), so the
+      // certificate never issues. Unreadable is not a refusal.
+      const flat = dns.flattensAllCnames ? await dns.flattensAllCnames() : null;
+      if (flat !== null) observed.cnameFlattening = flat ? 'all' : 'root';
+      if (flat) {
+        detail.push('zone_flattens_cnames');
+        return out('zone_flattens_cnames');
       }
       const caa = await caaPreflight(cfg);
       if (caa) Object.assign(observed, caa.observed);
@@ -1484,9 +1506,10 @@ export const cloudFrontProvider: EdgeProvider<CloudFrontConfig, CloudFrontTempla
           kind: 'tls_subscription',
           resourceId: c.arn,
           ownership: 'adopted',
-          // A certificate for this name alone is the edge's; anything wider
-          // (the zone's wildcard) serves other fronts and is never deleted.
-          meta: { hostname: c.domainName, shared: !sameDnsName(c.domainName, name) },
+          // The edge's own only when it covers this name alone and nothing
+          // but this distribution uses it; anything wider (the zone's
+          // wildcard, another name, another user) is never deleted.
+          meta: { hostname: c.domainName, shared: certificateSharedBeyond(c, name, d.arn) },
         });
     }
     const dns = await dnsClientFor(cfg);
@@ -1600,6 +1623,22 @@ export const cloudFrontProvider: EdgeProvider<CloudFrontConfig, CloudFrontTempla
     }
   },
 };
+
+/**
+ * Whether an imported front's certificate serves more than the front: it
+ * covers another name (its domain name or any alternative name), or something
+ * other than the front's own distribution uses it (ACM's `InUseBy`; with no
+ * ARN to compare, any use counts).
+ */
+export function certificateSharedBeyond(
+  c: Pick<AcmCertificate, 'domainName' | 'subjectAlternativeNames' | 'inUseBy'>,
+  hostname: string,
+  distributionArn: string | undefined,
+): boolean {
+  const names = [c.domainName, ...c.subjectAlternativeNames];
+  if (names.some((n) => !sameDnsName(n, hostname))) return true;
+  return c.inUseBy.some((user) => !distributionArn || user !== distributionArn);
+}
 
 // --- destroy ordering --------------------------------------------------------------------------
 

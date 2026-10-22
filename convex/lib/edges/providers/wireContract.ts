@@ -435,9 +435,9 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       },
       {
         method: 'GET',
-        path: '^/client/v4/zones/[^/]+/settings/(ssl|websockets)$',
+        path: '^/client/v4/zones/[^/]+/settings/(ssl|websockets|cname_flattening)$',
         purpose:
-          'location check: zone encryption mode and WebSockets setting (recorded, not required)',
+          "location check: zone encryption mode and WebSockets setting (recorded, not required); a front's DNS zone flattening every CNAME, which hides certificate validation records",
       },
       {
         // Source: developers.cloudflare.com/ssl/edge-certificates/additional-options/minimum-tls/,

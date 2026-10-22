@@ -20,6 +20,7 @@ import {
   cloudFrontDestroyKey,
   cloudFrontDistributionConfig,
   cloudFrontOriginRequestPolicyConfig,
+  certificateSharedBeyond,
   cloudFrontProvider,
   effectiveCloudFrontParams,
 } from './cloudfront';
@@ -448,11 +449,17 @@ describe('cloudfront: the shared ACM certificate', () => {
       tpl,
       ledger,
     );
-    expect(out).toEqual({ status: 'partial', resources: [], code: 'tls_caa_conflict' });
+    // Terminal at ACM: the run stops on the code at once (a refusal), never a timeout.
+    expect(out).toEqual({
+      status: 'partial',
+      resources: [],
+      code: 'tls_caa_conflict',
+      refused: true,
+    });
     cert.failureReason = 'NO_AVAILABLE_CONTACTS';
     expect(
       await cloudFrontProvider.runStep(cfg, stepOfKind('await_tls'), specOf(), tpl, ledger),
-    ).toMatchObject({ status: 'partial', code: 'tls_failed' });
+    ).toMatchObject({ status: 'partial', code: 'tls_failed', refused: true });
     expect((await cloudFrontProvider.sharedCertificate!(cfg, {}))!).toMatchObject({
       state: 'failed',
       code: 'tls_failed',
@@ -604,6 +611,43 @@ describe('cloudfront: the shared ACM certificate', () => {
     expect(aws.certificates).toEqual([]);
     expect(dns.rows.some((r) => r.name === record)).toBe(false);
     expect(dns.rows.some((r) => r.id === 'foreign')).toBe(true);
+  });
+
+  test('a removal whose DNS call fails leaves the certificate, and the next try finishes both', async () => {
+    const ledger = await provision();
+    await destroyAll(ledger);
+    const arn = aws.certificates[0]!.arn;
+    const record = aws.certificates[0]!.record.name.replace(/\.$/, '');
+    const ordered = [`tls_subscription:${arn}`];
+    dns.failNextDelete = true;
+    await expect(cloudFrontProvider.removeSharedCertificate!(cfg, { ordered })).rejects.toThrow();
+    // The record goes before the certificate: nothing is half removed.
+    expect(aws.certificates.map((c) => c.arn)).toEqual([arn]);
+    expect(dns.rows.some((r) => r.name === record)).toBe(true);
+    expect(await cloudFrontProvider.removeSharedCertificate!(cfg, { ordered })).toEqual({
+      removed: true,
+    });
+    expect(aws.certificates).toEqual([]);
+    expect(dns.rows.some((r) => r.name === record)).toBe(false);
+    // Nothing left: a further try is a no-op.
+    expect(await cloudFrontProvider.removeSharedCertificate!(cfg, { ordered })).toEqual({
+      removed: false,
+    });
+  });
+
+  test('a certificate something outside FCP uses is never removed, nor is its record', async () => {
+    const ledger = await provision();
+    await destroyAll(ledger);
+    const cert = aws.certificates[0]!;
+    const record = cert.record.name.replace(/\.$/, '');
+    cert.otherUsers = [`arn:aws:elasticloadbalancing:us-east-1:${FAKE_AWS_ACCOUNT}:loadbalancer/x`];
+    expect(
+      await cloudFrontProvider.removeSharedCertificate!(cfg, {
+        ordered: [`tls_subscription:${cert.arn}`],
+      }),
+    ).toEqual({ removed: false, code: 'shared_certificate_in_use' });
+    expect(aws.certificates).toHaveLength(1);
+    expect(dns.rows.some((r) => r.name === record)).toBe(true);
   });
 });
 
@@ -912,6 +956,22 @@ describe('cloudfront: the distribution', () => {
     expect(aws.policies.map((p) => p.config.Name)).toEqual(['fcp-ws-1', 'fcp-ws-2', 'fcp-ws-3']);
   });
 
+  test('a policy with the right headers but edited to forward cookies, or to drop query strings, is never used', async () => {
+    const api = aws.api();
+    await api.createOriginRequestPolicy({
+      ...cloudFrontOriginRequestPolicyConfig('ws', 1),
+      CookiesConfig: { CookieBehavior: 'all' },
+    });
+    await api.createOriginRequestPolicy({
+      ...cloudFrontOriginRequestPolicyConfig('ws', 2),
+      QueryStringsConfig: { QueryStringBehavior: 'none' },
+    });
+    const ledger = await provision();
+    expect(metaOfRow(ofKind(ledger, 'origin_request_policy')[0]!).name).toBe('fcp-ws-3');
+    expect(aws.usersOfPolicy(aws.policies[0]!.id)).toBe(0);
+    expect(aws.usersOfPolicy(aws.policies[1]!.id)).toBe(0);
+  });
+
   test('the deployment wait: in progress is a wait, deployed finishes, disabled by hand stops the run', async () => {
     const spec = specOf();
     const ledger: Ledger = { steps: [], resources: [] };
@@ -1033,6 +1093,44 @@ describe('cloudfront: describe, inspect, inventory, import', () => {
         meta: { code: 'distribution_shared' },
       },
     );
+  });
+
+  test("import: a certificate is the front's own only for its name alone and its distribution alone", async () => {
+    const mine = 'arn:aws:cloudfront::123456789012:distribution/EMINE';
+    const alone = { domainName: HOSTNAME, subjectAlternativeNames: [HOSTNAME], inUseBy: [mine] };
+    expect(certificateSharedBeyond(alone, HOSTNAME, mine)).toBe(false);
+    // Another name on it, as an alternative name or as the domain name.
+    expect(
+      certificateSharedBeyond(
+        { ...alone, subjectAlternativeNames: [HOSTNAME, `other.${ZONE}`] },
+        HOSTNAME,
+        mine,
+      ),
+    ).toBe(true);
+    expect(certificateSharedBeyond({ ...alone, domainName: `*.${ZONE}` }, HOSTNAME, mine)).toBe(
+      true,
+    );
+    // Another user (ACM's InUseBy), or no ARN to tell ours from theirs.
+    expect(
+      certificateSharedBeyond({ ...alone, inUseBy: [mine, 'arn:aws:elb:x'] }, HOSTNAME, mine),
+    ).toBe(true);
+    expect(certificateSharedBeyond(alone, HOSTNAME, undefined)).toBe(true);
+
+    // Through import: a certificate for the name with a second name is recorded shared.
+    await provision();
+    const d = aws.distributions[0]!;
+    const own = aws.addCertificate({ domainName: HOSTNAME, extraNames: [`other.${ZONE}`] });
+    d.config.ViewerCertificate = { ...d.config.ViewerCertificate, ACMCertificateArn: own.arn };
+    const wide = await cloudFrontProvider.inspectForAdoption!(cfg, d.id, HOSTNAME);
+    expect(wide.resources.find((r) => r.kind === 'tls_subscription')).toMatchObject({
+      resourceId: own.arn,
+      meta: { shared: true },
+    });
+    own.extraNames = [];
+    const narrow = await cloudFrontProvider.inspectForAdoption!(cfg, d.id, HOSTNAME);
+    expect(narrow.resources.find((r) => r.kind === 'tls_subscription')).toMatchObject({
+      meta: { shared: false },
+    });
   });
 });
 
@@ -1171,6 +1269,24 @@ describe('cloudfront: credential test and location check', () => {
         dns: { ...cfg.dns!, zoneName: 'other.example' },
       }),
     ).toMatchObject({ ok: false, code: 'zone_name_mismatch' });
+  });
+
+  test('a zone that flattens every CNAME is refused: ACM would never see its validation record', async () => {
+    dns.flattenAll = true;
+    expect(await cloudFrontProvider.checkLocation!(cfg)).toMatchObject({
+      ok: false,
+      code: 'zone_flattens_cnames',
+      observed: { cnameFlattening: 'all' },
+    });
+    dns.flattenAll = false;
+    expect(await cloudFrontProvider.checkLocation!(cfg)).toMatchObject({
+      ok: true,
+      observed: { cnameFlattening: 'root' },
+    });
+    dns.flattenAll = null;
+    const unknown = await cloudFrontProvider.checkLocation!(cfg);
+    expect(unknown.ok).toBe(true);
+    expect(unknown.observed?.cnameFlattening).toBeUndefined();
   });
 });
 

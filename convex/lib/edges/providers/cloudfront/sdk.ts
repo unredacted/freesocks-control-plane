@@ -103,6 +103,8 @@ export interface AcmValidationRecord {
 }
 
 export interface AcmCertificate extends AcmCertificateSummary {
+  /** Every name the certificate covers (ACM lists the domain name among them). */
+  subjectAlternativeNames: string[];
   /** Why issuance failed (`CAA_ERROR`, `NO_AVAILABLE_CONTACTS`, ...): an identifier, never text. */
   failureReason?: string;
   /** `PENDING_AUTO_RENEWAL`, `PENDING_VALIDATION`, `SUCCESS`, `FAILED` while a renewal runs. */
@@ -145,6 +147,10 @@ export interface CloudFrontOriginRequestPolicy {
   comment?: string;
   headerBehavior?: string;
   headers: string[];
+  /** `none`, `whitelist`, `all`: the cookies the policy forwards. */
+  cookieBehavior?: string;
+  /** `none`, `whitelist`, `allExcept`, `all`: the query strings it forwards. */
+  queryStringBehavior?: string;
 }
 
 export interface CloudFrontApi {
@@ -277,6 +283,7 @@ export function certificateOf(c: CertificateDetail): AcmCertificate {
   }
   return {
     ...summaryOf(c),
+    subjectAlternativeNames: [...(c.SubjectAlternativeNames ?? [])],
     inUse: (c.InUseBy ?? []).length > 0,
     ...(c.FailureReason ? { failureReason: c.FailureReason } : {}),
     ...(c.RenewalSummary?.RenewalStatus ? { renewalStatus: c.RenewalSummary.RenewalStatus } : {}),
@@ -338,6 +345,10 @@ function policyOf(p: OriginRequestPolicy): CloudFrontOriginRequestPolicy {
     ...(c?.Comment ? { comment: c.Comment } : {}),
     ...(c?.HeadersConfig?.HeaderBehavior ? { headerBehavior: c.HeadersConfig.HeaderBehavior } : {}),
     headers: [...(c?.HeadersConfig?.Headers?.Items ?? [])],
+    ...(c?.CookiesConfig?.CookieBehavior ? { cookieBehavior: c.CookiesConfig.CookieBehavior } : {}),
+    ...(c?.QueryStringsConfig?.QueryStringBehavior
+      ? { queryStringBehavior: c.QueryStringsConfig.QueryStringBehavior }
+      : {}),
   };
 }
 
