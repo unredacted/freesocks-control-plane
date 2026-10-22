@@ -2130,6 +2130,12 @@ export default defineSchema({
         published: v.boolean(),
         probeRequestedAt: v.optional(v.number()),
         proofRequestedAt: v.optional(v.number()),
+        // A fresh outside check ("Check again", or after `reappliedEdgeId`):
+        // only evidence from this time on counts for the address.
+        recheckSince: v.optional(v.number()),
+        // The address whose configuration stage 4 saved again, once, when its
+        // outside check found it unreachable (EdgeProvider.reapply).
+        reappliedEdgeId: v.optional(v.id('edges')),
       }),
     ),
     // The isolated test links shown for the `try_it` card (one per L4 endpoint).

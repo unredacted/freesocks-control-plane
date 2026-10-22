@@ -126,9 +126,11 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     typicalProvisionMs: 5 * MIN,
     discoverySettleMs: 0,
   },
+  // Every change answers at once and is applied afterwards: the LB, backend
+  // and frontend steps are polled until the LB is `ready` again (scaleway.ts).
   scaleway: {
     ...L4,
-    asyncOps: false,
+    asyncOps: true,
     asyncDelete: true,
     needsPrivateNetwork: false,
     ipv6: true,

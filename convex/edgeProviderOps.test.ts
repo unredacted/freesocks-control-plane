@@ -1851,8 +1851,11 @@ describe('a refused create step carries the provider reason, never a secret, add
     const SECRET = '11111111-2222-4333-8444-555555555555';
     const { accountId, edgeId } = await scalewayEdge(t, SECRET, NAME);
     const said = `server ${NAME}-backend for ${HOST} cannot reach 198.51.100.7 / 2001:db8::7 (key ${SECRET})`;
+    // The LB reads ready (the step waits for that before it sends); the backend is refused.
     const stub = mockFetch((c) =>
-      jsonRes({ message: said, type: 'not_a_known_type', help: `ask about ${HOST}` }, 400),
+      c.method === 'GET' && c.path === '/lb/v1/zones/fr-par-1/lbs/lb-1'
+        ? jsonRes({ id: 'lb-1', name: NAME, status: 'ready', ip: [] })
+        : jsonRes({ message: said, type: 'not_a_known_type', help: `ask about ${HOST}` }, 400),
     );
     let err: unknown;
     try {
@@ -1906,6 +1909,68 @@ describe('a refused create step carries the provider reason, never a secret, add
     const detail = (out as { detail?: string }).detail!;
     expect(detail).toContain('cannot reach [address]');
     expectScrubbed(JSON.stringify(out), SECRET);
+  });
+});
+
+describe('saving an address again (reapply)', () => {
+  test('Scaleway: the frontend read back goes out again unchanged, its idle timeout an integer', async () => {
+    const t = newT();
+    const NAME = 'fcp-relay-o1-00000000';
+    const { accountId, edgeId } = await scalewayEdge(
+      t,
+      '11111111-2222-4333-8444-555555555555',
+      NAME,
+    );
+    const frontend = {
+      id: 'fe-1',
+      name: `${NAME}-frontend`,
+      inbound_port: 443,
+      backend: { id: 'be-1', name: `${NAME}-backend` },
+      timeout_client: 600000,
+      certificate_ids: [],
+      enable_http3: false,
+      enable_access_logs: false,
+    };
+    const stub = mockFetch((c) =>
+      c.path === '/lb/v1/zones/fr-par-1/lbs/lb-1'
+        ? jsonRes({ id: 'lb-1', name: NAME, status: 'ready', ip: [] })
+        : c.path === '/lb/v1/zones/fr-par-1/frontends/fe-1'
+          ? jsonRes(frontend)
+          : jsonRes({ message: 'not found', type: 'not_found' }, 404),
+    );
+    const ledger = {
+      steps: [],
+      resources: [
+        ...lbLedger.resources,
+        { ...lbLedger.resources[0]!, stepId: 'frontend', kind: 'frontend', resourceId: 'fe-1' },
+      ],
+    };
+    expect(await t.action(internal.edgeProviderOps.reapply, { accountId, edgeId, ledger })).toEqual(
+      {
+        status: 'sent',
+        settled: true,
+      },
+    );
+    const put = stub.calls.find((c) => c.method === 'PUT')!;
+    expect(put.path).toBe('/lb/v1/zones/fr-par-1/frontends/fe-1');
+    expect(put.body).toMatchObject({
+      name: `${NAME}-frontend`,
+      inbound_port: 443,
+      backend_id: 'be-1',
+      timeout_client: 600000,
+      enable_http3: false,
+    });
+    expect(put.rawBody).toContain('"timeout_client":600000');
+  });
+
+  test('an adapter with nothing to save again answers not_offered, sending nothing', async () => {
+    const t = newT();
+    const accountId = await createAccount(t, { provider: 'upcloud' });
+    const stub = mockFetch(() => jsonRes({}, 500));
+    expect(
+      await t.action(internal.edgeProviderOps.reapply, { accountId, ledger: lbLedger }),
+    ).toEqual({ status: 'skipped', code: 'not_offered' });
+    expect(stub.calls).toHaveLength(0);
   });
 });
 

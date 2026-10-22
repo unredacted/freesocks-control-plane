@@ -130,7 +130,12 @@ function expectContractCovered(id: EdgeProviderId, calls: readonly ObservedCall[
 
 /** Fold a step outcome into the ledger the way the orchestrator's mutation does. */
 function apply(ledger: Ledger, step: ResourceStep, out: StepOutcome): Ledger {
-  const resources: ChildResource[] = 'resources' in out ? out.resources : [];
+  // A resource reported again (a poll's `done` naming the step's own) is kept
+  // once, as the rotation's `settleOp` does.
+  const known = new Set(ledger.resources.map((r) => `${r.kind}:${r.resourceId}`));
+  const resources: ChildResource[] = ('resources' in out ? out.resources : []).filter(
+    (r) => !known.has(`${r.kind}:${r.resourceId}`),
+  );
   return {
     steps: [
       ...ledger.steps.filter((s) => s.stepId !== step.id),
@@ -628,10 +633,17 @@ describe('wire contract: scaleway', () => {
       'create_frontend',
     ]);
     for (const step of steps) {
-      const out = await scalewayProvider.runStep(cfg, step, spec, tpl, ledger);
+      let out = await scalewayProvider.runStep(cfg, step, spec, tpl, ledger);
       ledger = apply(ledger, step, out);
+      // Every change is waited on until the LB is `ready` again.
+      while (out.status === 'requested') {
+        out = await scalewayProvider.pollStep!(cfg, step, out.opRef, ledger);
+        ledger = apply(ledger, step, out);
+      }
+      expect(out.status).toBe('done');
     }
     for (const step of steps) await scalewayProvider.discover(cfg, step, spec, ledger, 1);
+    expect(await scalewayProvider.reapply!(cfg, ledger)).toEqual({ status: 'sent', settled: true });
 
     await scalewayProvider.describe(cfg, ledger);
     await scalewayProvider.inspect(cfg, ledger);

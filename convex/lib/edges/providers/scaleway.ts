@@ -3,10 +3,28 @@
  * `@scaleway/sdk-client` (zero runtime deps, native fetch — the fetch used is
  * injectable so tests stub it).
  *
- * Model (synchronous zoned API, five small steps): allocate a flexible IPv4
- * (+ an IPv6 when the template asks), create the LB with those IP ids, add a
- * TCP backend pointing at the origin, add a frontend on the edge port. Deletes
- * are asynchronous on the LB (`to_delete` → gone); IPs release synchronously.
+ * Model (zoned API, five small steps): allocate a flexible IPv4 (+ an IPv6
+ * when the template asks), create the LB with those IP ids, add a TCP backend
+ * pointing at the origin, add a frontend on the edge port. Deletes are
+ * asynchronous on the LB (`to_delete` → gone); IPs release synchronously.
+ *
+ * Settling: every call answers at once, but the LB applies each change on its
+ * own afterwards (`pending` → `ready`), and a change sent while it is still
+ * applying the previous one can be accepted and never applied: a frontend
+ * created seconds after its backend left both public addresses resetting
+ * every connection, while the API showed a ready LB, until the frontend was
+ * saved again unchanged. Scaleway's own Terraform provider waits for the LB to
+ * be `ready` before and after every backend and frontend change (`waitForLB`,
+ * 15 minutes), and so does this adapter: the LB, backend and frontend steps
+ * answer `requested` and `pollStep` reads the LB until it is `ready`
+ * (`SCALEWAY_SETTLE.timeoutMs` at most), and the backend and frontend steps
+ * first wait in place for a `ready` LB (`SCALEWAY_SETTLE.inStepMs`) before
+ * they send anything. Discovery answers `found` only once the LB has applied
+ * the step too (`unresolved` while it applies). A create only ever leaves from
+ * `runStep`: a poll claim has no unsettled-op guard, so a create there could
+ * be sent twice.
+ * `reapply` saves the frontend again unchanged, for a guided run whose
+ * outside check finds the new address unreachable.
  *
  * Discovery: every resource carries our deterministic name or tag and the
  * listings are authoritative, so each step answers found / confirmed_absent.
@@ -40,11 +58,12 @@ import type {
   EdgeSpec,
   Ledger,
   EdgeProvider,
+  ReapplyOutcome,
   ResourceStep,
   ScalewayConfig,
   StepOutcome,
 } from './types';
-import { firstResource, orderByKind, resourcesOfKind } from './types';
+import { firstResource, orderByKind, resourcesOfKind, stepOf } from './types';
 import { EdgeProviderError, toProviderError, credentialTestFailure, refusalOf } from './http';
 import { addressFamily } from '../ip';
 import {
@@ -250,6 +269,115 @@ function lbState(status: string): EdgeDescription['state'] {
   }
 }
 
+/**
+ * How long the adapter waits for the LB to settle (see the module comment).
+ * `inStepMs`: a backend or frontend step's wait in place before it sends,
+ * read every `pollMs` (well inside the step's claim; the previous step's poll
+ * normally left the LB `ready` already). `timeoutMs`: a step's wait after its
+ * change, from the step's first request: Terraform's `waitForLB` default.
+ */
+export const SCALEWAY_SETTLE = { inStepMs: 30_000, pollMs: 3_000, timeoutMs: 15 * 60_000 };
+
+let pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Test seam: replace the wait between two reads of the LB. */
+export function __setScalewayPause(f: ((ms: number) => Promise<void>) | null): void {
+  pause = f ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+}
+
+/**
+ * Where an LB is with the last change made to it. `ready`: applied, the next
+ * change may go. `stuck`: in a state it does not leave by itself (an error, a
+ * lock, stopped, being deleted). Anything else is still being applied (the
+ * SDK's `LB_TRANSIENT_STATUSES` and `unknown`).
+ */
+type LbSettle = 'ready' | 'applying' | 'stuck';
+function lbSettleOf(status: string): LbSettle {
+  switch (status) {
+    case 'ready':
+      return 'ready';
+    case 'error':
+    case 'locked':
+    case 'stopped':
+    case 'to_delete':
+    case 'deleting':
+      return 'stuck';
+    default:
+      return 'applying';
+  }
+}
+
+/** Read the LB until it is no longer applying, at most `SCALEWAY_SETTLE.inStepMs`. */
+async function settleInPlace(
+  cfg: ScalewayConfig,
+  api: ZonedApi,
+  lbId: string,
+  step: string,
+): Promise<{ settle: LbSettle; status: string }> {
+  const looks = Math.floor(SCALEWAY_SETTLE.inStepMs / SCALEWAY_SETTLE.pollMs) + 1;
+  for (let i = 1; ; i++) {
+    const lb = await sdk(cfg, step, () => api.getLb({ lbId }));
+    const settle = lbSettleOf(lb.status);
+    if (settle !== 'applying' || i >= looks) return { settle, status: lb.status };
+    await pause(SCALEWAY_SETTLE.pollMs);
+  }
+}
+
+/**
+ * Before a backend or frontend is sent: the LB must be `ready`. Still applying
+ * after the wait in place, the step throws BEFORE any create (nothing was
+ * sent, so discovery proves the absence and the step runs again); stuck, the
+ * run stops on `lb_unusable`.
+ */
+async function readyForChange(
+  cfg: ScalewayConfig,
+  api: ZonedApi,
+  lbId: string,
+  step: ResourceStep,
+): Promise<StepOutcome | null> {
+  const { settle, status } = await settleInPlace(cfg, api, lbId, step.id);
+  if (settle === 'ready') return null;
+  if (settle === 'stuck') return lbUnusable(status);
+  throw new EdgeProviderError('scaleway: the load balancer is still applying a change', {
+    provider: 'scaleway',
+    step: step.id,
+    code: 'lb_busy',
+    retryable: true,
+    timedOut: false,
+  });
+}
+
+/** The LB will not apply anything by itself: the run stops and keeps what was built. */
+function lbUnusable(status: string): StepOutcome {
+  return {
+    status: 'partial',
+    resources: [],
+    code: 'lb_unusable',
+    refused: true,
+    detail: `load balancer status ${status}`,
+  };
+}
+
+/** One read: is the LB still applying a change? */
+async function stillApplying(
+  cfg: ScalewayConfig,
+  api: ZonedApi,
+  lbId: string,
+  step: string,
+): Promise<boolean> {
+  const lb = await sdk(cfg, step, () => api.getLb({ lbId }));
+  return lbSettleOf(lb.status) === 'applying';
+}
+
+/** The resource kind each settling step creates. */
+const STEP_RESOURCE_KIND: Partial<Record<string, string>> = {
+  create_lb: 'lb',
+  create_backend: 'backend',
+  create_frontend: 'frontend',
+};
+
+/** The opRef a settling step waits under (the LB it waits on, for the reader). */
+const settleRef = (lbId: string) => `settle:${lbId}`;
+
 export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplateParams> = {
   id: 'scaleway',
   templateSchema: ScalewayTemplate,
@@ -393,16 +521,18 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             tags: [spec.name, ...tpl.tags],
           }),
         );
-        return {
-          status: 'done',
-          resources: [{ kind: 'lb', resourceId: lb.id, ownership: 'created' }],
-          addresses: addressesOf(lb.ip),
-        };
+        const created = { kind: 'lb', resourceId: lb.id, ownership: 'created' as const };
+        // A new LB is still being built: the backend waits for it (`pollStep`).
+        return lbSettleOf(lb.status) === 'ready'
+          ? { status: 'done', resources: [created], addresses: addressesOf(lb.ip) }
+          : { status: 'requested', opRef: settleRef(lb.id), resources: [created] };
       }
       case 'create_backend': {
         const lb = firstResource(ledger, 'lb');
         if (!lb) throw ledgerIncomplete(step);
         const timings = scalewayTimings(tpl, step.id);
+        const busy = await readyForChange(cfg, api, lb.resourceId, step);
+        if (busy) return busy;
         const backend = await sdk(cfg, step.id, () =>
           api.createBackend({
             lbId: lb.resourceId,
@@ -429,8 +559,10 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             ...(tpl.maxRetries !== undefined ? { maxRetries: tpl.maxRetries } : {}),
           }),
         );
+        // The LB applies the backend next: the frontend must not go before it has.
         return {
-          status: 'done',
+          status: 'requested',
+          opRef: settleRef(lb.resourceId),
           resources: [{ kind: 'backend', resourceId: backend.id, ownership: 'created' }],
         };
       }
@@ -439,6 +571,8 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         const backend = firstResource(ledger, 'backend');
         if (!lb || !backend) throw ledgerIncomplete(step);
         const { frontend: timings } = scalewayTimings(tpl, step.id);
+        const busy = await readyForChange(cfg, api, lb.resourceId, step);
+        if (busy) return busy;
         const frontend = await sdk(cfg, step.id, () =>
           api.createFrontend({
             lbId: lb.resourceId,
@@ -451,8 +585,10 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             ...(tpl.connectionRateLimit ? { connectionRateLimit: tpl.connectionRateLimit } : {}),
           }),
         );
+        // Done only once the LB has applied it: members are sent nowhere before that.
         return {
-          status: 'done',
+          status: 'requested',
+          opRef: settleRef(lb.resourceId),
           resources: [{ kind: 'frontend', resourceId: frontend.id, ownership: 'created' }],
         };
       }
@@ -465,6 +601,89 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
           timedOut: false,
         });
     }
+  },
+
+  /**
+   * A settling step: read the LB until it has applied the step's change. Done
+   * only with the step's own resource on the ledger (recorded with its
+   * `requested`); a ledger without it throws, and discovery finds it by name.
+   * Still applying after `SCALEWAY_SETTLE.timeoutMs` from the step's first
+   * request, or stuck, the run stops and keeps what was built.
+   */
+  async pollStep(cfg, step, opRef, ledger): Promise<StepOutcome> {
+    const lb = firstResource(ledger, 'lb');
+    const kind = STEP_RESOURCE_KIND[step.kind];
+    const own = kind
+      ? ledger.resources.find(
+          (r) => r.kind === kind && r.stepId === step.id && r.deleteState !== 'confirmed_gone',
+        )
+      : undefined;
+    if (!lb || !own) throw ledgerIncomplete(step);
+    const api = apiFactory(cfg);
+    const obj = await sdk(cfg, step.id, () => api.getLb({ lbId: lb.resourceId }));
+    const settle = lbSettleOf(obj.status);
+    if (settle === 'ready')
+      return {
+        status: 'done',
+        resources: [{ kind: own.kind, resourceId: own.resourceId, ownership: own.ownership }],
+        ...(step.kind === 'create_lb' ? { addresses: addressesOf(obj.ip) } : {}),
+      };
+    if (settle === 'stuck') return lbUnusable(obj.status);
+    const startedAt = stepOf(ledger, step.id)?.startedAt;
+    if (startedAt !== undefined && Date.now() - startedAt > SCALEWAY_SETTLE.timeoutMs)
+      return {
+        status: 'partial',
+        resources: [],
+        code: 'lb_settle_timeout',
+        refused: true,
+        detail: `load balancer status ${obj.status}`,
+      };
+    return { status: 'requested', opRef, resources: [] };
+  },
+
+  /**
+   * Save the frontend again exactly as the provider holds it (read back, then
+   * updated with its own fields): what made a dead new address answer when
+   * it was observed. Waits in place for a `ready` LB before and after, like a
+   * step.
+   */
+  async reapply(cfg, ledger): Promise<ReapplyOutcome> {
+    const lb = firstResource(ledger, 'lb');
+    const fe = firstResource(ledger, 'frontend');
+    if (!lb || !fe) return { status: 'skipped', code: 'no_frontend' };
+    const api = apiFactory(cfg);
+    const before = await settleInPlace(cfg, api, lb.resourceId, 'reapply');
+    if (before.settle !== 'ready')
+      return {
+        status: 'skipped',
+        code: before.settle === 'stuck' ? 'lb_unusable' : 'lb_busy',
+      };
+    const f = await sdk(cfg, 'reapply', () => api.getFrontend({ frontendId: fe.resourceId }));
+    const backendId = f.backend?.id ?? firstResource(ledger, 'backend')?.resourceId;
+    if (!backendId) return { status: 'skipped', code: 'no_frontend' };
+    // Every field as read: `timeout_client` comes back as the int64 milliseconds
+    // it is sent as (the SDK passes it through both ways).
+    await sdk(cfg, 'reapply', () =>
+      api.updateFrontend({
+        frontendId: f.id,
+        name: f.name,
+        inboundPort: f.inboundPort,
+        backendId,
+        enableHttp3: f.enableHttp3,
+        ...(f.timeoutClient !== undefined && f.timeoutClient !== null
+          ? { timeoutClient: f.timeoutClient }
+          : {}),
+        ...(f.certificateIds && f.certificateIds.length > 0
+          ? { certificateIds: f.certificateIds }
+          : {}),
+        ...(f.connectionRateLimit !== undefined && f.connectionRateLimit !== null
+          ? { connectionRateLimit: f.connectionRateLimit }
+          : {}),
+        ...(f.enableAccessLogs !== undefined ? { enableAccessLogs: f.enableAccessLogs } : {}),
+      }),
+    );
+    const after = await settleInPlace(cfg, api, lb.resourceId, 'reapply');
+    return { status: 'sent', settled: after.settle === 'ready' };
   },
 
   async discover(cfg, step, spec, ledger) {
@@ -492,11 +711,14 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             }
           : { status: 'confirmed_absent' };
       }
+      // A step found by name is done only once the LB has applied it, as after
+      // its own poll: while the LB is still applying, discovery keeps looking.
       case 'create_lb': {
         const lbs = await sdk(cfg, step.id, () =>
           api.listLbs({ name: spec.name, projectId: cfg.projectId }).all(),
         );
         const hit = lbs.find((l) => l.name === spec.name);
+        if (hit && lbSettleOf(hit.status) === 'applying') return { status: 'unresolved' };
         return hit
           ? {
               status: 'found',
@@ -512,6 +734,8 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
           api.listBackends({ lbId: lb.resourceId, name: step.resourceName }).all(),
         );
         const hit = list.find((b) => b.name === step.resourceName);
+        if (hit && (await stillApplying(cfg, api, lb.resourceId, step.id)))
+          return { status: 'unresolved' };
         return hit
           ? {
               status: 'found',
@@ -526,6 +750,8 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
           api.listFrontends({ lbId: lb.resourceId, name: step.resourceName }).all(),
         );
         const hit = list.find((f) => f.name === step.resourceName);
+        if (hit && (await stillApplying(cfg, api, lb.resourceId, step.id)))
+          return { status: 'unresolved' };
         return hit
           ? {
               status: 'found',

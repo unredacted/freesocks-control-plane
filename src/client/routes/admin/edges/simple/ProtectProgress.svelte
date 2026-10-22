@@ -4,14 +4,20 @@
    * from the latest event, and the interruption card (one sentence, one button,
    * at most one secondary) when the run needs you. Polls the run every 3 s.
    *
+   * The two cards the outside check stops on (`address_unreachable`,
+   * `blocked_in`) also offer a quiet third way on: "Check again" (`retry
+   * {checkAgain}`) checks the same address afresh and the run carries on if it
+   * now passes; "Go live anyway" where checking again is the first choice.
+   *
    * An enrolled node's run parks at publish (`node_not_approved`) until its
    * go-live is approved: the card then holds the node's approval card
    * (NodeApprovalCard, the same one the Servers node page shows), and the run
    * carries on by itself once the approval lands.
    *
    * At `try_it` each tick is saved on its own (`continue` with that one
-   * confirmation) and "Doesn't work" replaces that one address (`retry
-   * {tryAnotherAddress, edgeId}`); the run moves on once every line works. A
+   * confirmation) and "Doesn't work", once confirmed, replaces that one address
+   * (`retry {tryAnotherAddress, edgeId}`; refused, nothing removed, when no
+   * new address could be created now); the run moves on once every line works. A
    * paused (quarantined) node shows the plain PausedCard; the Live card offers
    * automatic protection while it is off.
    *
@@ -210,6 +216,8 @@
         return retry();
       case 'retry_another_address':
         return retry({ tryAnotherAddress: true });
+      case 'check_again':
+        return retry({ checkAgain: true });
       case 'accept_partial':
         return retry({ acceptPartial: true });
       case 'choose_account':
@@ -422,6 +430,7 @@
           locked={act.isPending}
           onWorks={(item) => void works(item)}
           onFails={(item) => void fails(item)}
+          confirmFails
         />
         {#if buttons.hint}<p class="text-muted-foreground text-xs">{buttons.hint}</p>{/if}
       {:else if need.code === 'review_changed'}
@@ -599,6 +608,17 @@
               onclick={() => perform(buttons.secondary!.action)}
             >
               {buttons.secondary.label}
+            </Button>
+          {/if}
+          {#if buttons.more}
+            <Button
+              size="sm"
+              variant="link"
+              class="h-11 px-1 sm:h-7"
+              disabled={act.isPending}
+              onclick={() => perform(buttons.more!.action)}
+            >
+              {buttons.more.label}
             </Button>
           {/if}
         </div>

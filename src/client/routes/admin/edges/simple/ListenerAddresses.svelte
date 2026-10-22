@@ -2,7 +2,8 @@
   /**
    * One transport's addresses on the node page: a reduced pool strip (one health
    * dot per address in use, a spare cell per spare) and a plain line per
-   * address (In use / Spare, health, tested or not). A retiring address says
+   * address (In use / Spare, the provider's own check of the node, whether it
+   * answers from outside, tested or not). A retiring address says
    * what that means and when it is deleted (drainWords.ts), with "Delete now"
    * ("Stop tracking" for an address FCP did not create) and "Keep as a spare"
    * when the caller can act on it.
@@ -23,7 +24,12 @@
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
   import { Button } from '@client/components/ui/button';
-  import { PLAIN_ATTENTION_ACTION_LABELS, healthLabel } from '@client/lib/edgeCodes';
+  import {
+    OUTSIDE_REACH_LABELS,
+    PLAIN_ATTENTION_ACTION_LABELS,
+    healthLabel,
+    outsideReachOf,
+  } from '@client/lib/edgeCodes';
   import EdgeCountryActions from '../components/EdgeCountryActions.svelte';
   import PoolStrip from '../components/PoolStrip.svelte';
   import type { PoolEntry } from '../lib/types';
@@ -79,6 +85,9 @@
   const address = (e: EdgeAdmin) =>
     e.addresses.hostname ?? e.addresses.v4 ?? e.addresses.v6 ?? e.name;
   const WORD = { published: 'In use', unpublished: 'Spare', draining: 'Retiring' } as const;
+  // The provider's check is not the members' view: whether it answers from outside, apart.
+  const reachWord = (e: EdgeAdmin) =>
+    OUTSIDE_REACH_LABELS[outsideReachOf(e.reachability)].toLowerCase();
   const tested = (e: EdgeAdmin): string | null => {
     if (!e.verification.required || retiring.includes(e)) return null;
     // A second address the provider reported later: served only once tested.
@@ -132,7 +141,7 @@
               {/if}
             {:else}
               <span class="text-muted-foreground">
-                {WORD[e.publication]}, {healthLabel(e.health).toLowerCase()}{#if t}, {t}{/if}
+                {WORD[e.publication]}, {healthLabel(e.health).toLowerCase()}, {reachWord(e)}{#if t}, {t}{/if}
               </span>
             {/if}
             {#if t && t !== 'tested'}

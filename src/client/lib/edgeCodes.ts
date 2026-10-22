@@ -13,7 +13,9 @@
  *   humanizeCode(code)              'l7_auto_select_blocked' -> 'L7 auto select blocked'
  *   ROTATION_PHASE_LABELS, phaseLabel
  *   EDGE_STATUS_LABELS, edgeStatusLabel, edgeStatusTone
- *   EDGE_HEALTH_LABELS, healthTone, PUBLICATION_LABELS, publicationTone
+ *   EDGE_HEALTH_LABELS, healthTone  the PROVIDER's own check of the node behind an edge
+ *   outsideReachOf, OUTSIDE_REACH_LABELS, outsideReachTone   reachability from outside (probes)
+ *   PUBLICATION_LABELS, publicationTone
  *   HOST_STATE_LABELS, SETUP_STEP_TITLES, SETUP_STATUS_LABELS
  *   ATTENTION_ACTION_LABELS, severityTone
  *   auditActionLabel(action)        audit `action` -> short sentence (small map + fallback)
@@ -527,8 +529,9 @@ const COPY = {
     explain: 'The listener is scoped to another account than the edge.',
   },
   edge_unhealthy: {
-    label: 'Edge unhealthy',
-    explain: 'The edge health is offline or degraded.',
+    label: 'Provider check failing',
+    explain:
+      "The provider's own check of the node behind this address is failing or partly failing.",
   },
   unverified_endpoint: {
     label: 'Address not yet tested',
@@ -1011,6 +1014,30 @@ const COPY = {
   no_load_signal: {
     label: 'No load signal',
     explain: 'This origin kind reports no user load, so the detector uses reports and probes only.',
+  },
+  // A load balancer applies each change after the call answers (Scaleway): every step waits for it.
+  lb_busy: {
+    label: 'Load balancer still applying',
+    explain:
+      'The load balancer was still applying an earlier change, so nothing was sent yet. The step runs again once it is ready.',
+  },
+  lb_unusable: {
+    label: 'Load balancer unusable',
+    explain:
+      'The load balancer is in a state it does not leave by itself (an error, a lock, stopped or being deleted), so it will not apply anything. What was built is kept.',
+    fix: "Look at the load balancer in the provider's console, then delete this address and try again.",
+  },
+  lb_settle_timeout: {
+    label: 'Load balancer never finished',
+    explain:
+      'The load balancer was still applying a change 15 minutes after it was sent. What was built is kept.',
+    fix: "Look at the load balancer in the provider's console, then delete this address and try again.",
+  },
+  // A guided run's run event: an unreachable new address was saved again at its provider once.
+  reapplied: {
+    label: 'Saved the address again',
+    explain:
+      'The new address could not be reached from outside, so its configuration was saved again at the provider, unchanged, and it is being checked afresh.',
   },
   // A provider refused the arguments of an address allocation (a 400): retrying cannot help.
   ip_allocation_refused: {
@@ -1653,6 +1680,13 @@ const REFUSAL_COPY = {
     explain: 'The hostname is not in the zone of the picked location.',
     fix: 'Pick the location whose zone holds the hostname.',
   },
+  // "Doesn't work" / "Try another address" when no new address could be made now.
+  replacement_cannot_start: {
+    label: 'No new address now',
+    explain: 'No new address can be created now, so this one was kept and nothing was removed.',
+    fix: "Check the account's daily budget and limits, and that new work is not paused, then try again.",
+    reasonFromServer: true,
+  },
 } as const satisfies Record<string, CodeCopy>;
 
 export const EDGE_REFUSAL_COPY: Record<string, CodeCopy> = REFUSAL_COPY;
@@ -1781,11 +1815,18 @@ export function edgeStatusTone(status: string): Tone {
   }
 }
 
+/**
+ * An edge's `health` is the PROVIDER's own check of the node behind it (a load
+ * balancer's backend health check), never whether members can reach the
+ * address: a new load balancer once answered every connection with a reset
+ * while its backend check passed. The words say whose check it is;
+ * reachability from outside has its own words (`outsideReachOf`).
+ */
 export const EDGE_HEALTH_LABELS: Record<string, string> = {
-  online: 'Online',
-  offline: 'Offline',
-  degraded: 'Degraded',
-  unknown: 'Unknown',
+  online: 'Provider check passing',
+  offline: 'Provider check failing',
+  degraded: 'Provider check partly failing',
+  unknown: 'No provider check',
 };
 export const healthLabel = (health: string): string =>
   EDGE_HEALTH_LABELS[health] ?? humanizeCode(health);
@@ -1797,6 +1838,45 @@ export function healthTone(health: string): Tone {
       return 'warning';
     case 'offline':
       return 'danger';
+    default:
+      return 'muted';
+  }
+}
+
+/** Whether an address answers from outside, from the probes (`outsideReachOf`). */
+export type OutsideReach = 'reachable' | 'unreachable' | 'partly' | 'unchecked';
+
+/**
+ * An address's reachability from outside, from its probe summary
+ * (`EdgeAdmin.reachability`, fresh evidence only, FCP's own vantage
+ * included): every checked place reaches it, none does, some do, or nothing
+ * checked it lately. A place with no verdict (`unknown`) is left out.
+ */
+export function outsideReachOf(
+  reachability: { byCountry: ReadonlyArray<{ verdict: string }> } | null | undefined,
+): OutsideReach {
+  const verdicts = (reachability?.byCountry ?? [])
+    .map((c) => c.verdict)
+    .filter((v) => v !== 'unknown');
+  if (verdicts.length === 0) return 'unchecked';
+  if (verdicts.every((v) => v === 'reachable')) return 'reachable';
+  if (verdicts.every((v) => v === 'unreachable')) return 'unreachable';
+  return 'partly';
+}
+export const OUTSIDE_REACH_LABELS: Record<OutsideReach, string> = {
+  reachable: 'Reachable from outside',
+  unreachable: 'Unreachable from outside',
+  partly: 'Reachable from some places',
+  unchecked: 'Not checked from outside',
+};
+export function outsideReachTone(reach: string): Tone {
+  switch (reach) {
+    case 'reachable':
+      return 'success';
+    case 'unreachable':
+      return 'danger';
+    case 'partly':
+      return 'warning';
     default:
       return 'muted';
   }
@@ -1997,14 +2077,15 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
   },
   address_unreachable: {
     label: 'Address unreachable',
-    explain: 'The new address could not be reached from outside.',
-    fix: 'Try another address (Go live anyway).',
+    explain:
+      'The new address could not be reached from outside. Where its provider can take the same configuration again, FCP saved it again once and checked afresh.',
+    fix: 'Check again (Try another address, Go live anyway).',
   },
   blocked_in: {
     label: 'Blocked in a country',
     explain:
       'The new address is blocked from at least one censored country on its first check, while it works from elsewhere.',
-    fix: 'Try another address (Go live anyway).',
+    fix: 'Try another address (Use it anyway, Check again).',
   },
   coverage_incomplete: {
     label: 'Not every transport covered',

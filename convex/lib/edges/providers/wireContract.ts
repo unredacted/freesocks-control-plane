@@ -211,7 +211,8 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/lb/v1/zones/[^/]+/lbs/[^/]+$',
-        purpose: 'read one load balancer: describe, inspect, delete confirmation',
+        purpose:
+          'read one load balancer: the wait for a ready LB around every change, describe, inspect, delete confirmation',
       },
       {
         method: 'DELETE',
@@ -275,7 +276,14 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/lb/v1/zones/[^/]+/frontends/[^/]+$',
-        purpose: 'read a frontend back after its delete',
+        purpose: 'read a frontend back: after its delete, and before it is saved again',
+      },
+      {
+        method: 'PUT',
+        path: '^/lb/v1/zones/[^/]+/frontends/[^/]+$',
+        purpose:
+          'save the frontend again with the fields it was read back with (a new address the outside check finds unreachable)',
+        body: ['name', 'inbound_port', 'backend_id'],
       },
       {
         method: 'DELETE',
