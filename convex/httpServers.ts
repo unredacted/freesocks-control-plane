@@ -569,11 +569,12 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
     });
     if (!intentId) return notFound();
     if (verb === 'test-link') {
-      const { link, binding } = await ctx.runAction(internal.nodeActivation.buildDirectTestLink, {
-        intentId,
-      });
+      const { link, links, binding } = await ctx.runAction(
+        internal.nodeActivation.buildDirectTestLink,
+        { intentId },
+      );
       const { inboundUuid, ...rest } = binding;
-      return json({ link, binding: { ...rest, transportUuid: inboundUuid } });
+      return json({ link, links, binding: { ...rest, transportUuid: inboundUuid } });
     }
     if (verb === 'confirm') {
       const w = parseWrite(DirectTestConfirm, body, LEGACY.directConfirm);

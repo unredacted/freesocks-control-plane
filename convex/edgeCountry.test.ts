@@ -10,7 +10,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { realityListener, registerRelay } from './lib/edges/testing/fixtures';
+import { insertPanelServer, realityListener, registerRelay } from './lib/edges/testing/fixtures';
 import { upsertSettingRow } from './appSettings';
 import { __setGlobalpingFactory, __setInternalProbeDeps } from './probeOps';
 import { __setEdgePlumbingForTests } from './lib/edgeConfig';
@@ -751,6 +751,93 @@ describe('edgeCountry: expiry', () => {
     expect(await evidence(t, edgeId, 'RU')).toBeNull();
     const beats = await t.run((ctx) => ctx.db.query('cronHeartbeats').collect());
     expect(beats.some((b) => b.name === 'edge-country-expiry')).toBe(true);
+  });
+
+  test('proofs of many edges in many places lapsing together stay within one execution, every copy follows', async () => {
+    vi.useFakeTimers();
+    const t = convexTest({ schema, modules, transactionLimits: true });
+    await insertPanelServer(t);
+    const { relayId, listenerId } = await registerRelay(t, {
+      listeners: [realityListener({ listenerKey: 'u', tlsNames: ['a.example'] })],
+    });
+    const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      listenerId,
+      ipv4: EDGE,
+      publish: true,
+      verified: true,
+    });
+    const countries = ['AA', 'BB', 'CC', 'DD', 'EE', 'FF', 'GG', 'HH', 'II', 'JJ'];
+    const now = Date.now();
+    const lapsed = now - MIN;
+    const edges = await t.run(async (ctx) => {
+      const { _id, _creationTime, ...base } = (await ctx.db.get(edgeId as Id<'edges'>))!;
+      void _id;
+      void _creationTime;
+      const out: Id<'edges'>[] = [];
+      for (let g = 0; g < 10; g++) {
+        const groupKey = `upcloud:place-${g}`;
+        for (let k = 0; k < 15; k++) {
+          const id = await ctx.db.insert('edges', {
+            ...base,
+            managed: true,
+            provider: 'upcloud',
+            placeKey: `place-${g}`,
+            name: `edge-${g}-${k}`,
+            countryState: {
+              byCountry: countries.map((country) => ({
+                country,
+                state: 'proven' as const,
+                from: 'edge' as const,
+                until: lapsed,
+              })),
+              updatedAt: lapsed - DAY,
+            },
+          });
+          out.push(id);
+          for (const country of countries)
+            await ctx.db.insert('edgeCountryEvidence', {
+              edgeId: id,
+              relayId,
+              groupKey,
+              country,
+              address: {
+                state: 'proven',
+                decidedAt: lapsed - DAY,
+                until: lapsed,
+                blockedRounds: 0,
+              },
+              handshake: { state: 'none', pathBatches: [] },
+              combined: 'proven',
+              stateUntil: lapsed,
+              until: lapsed,
+              updatedAt: lapsed - DAY,
+            });
+        }
+        for (const country of countries)
+          await ctx.db.insert('countryGroupGrades', {
+            groupKey,
+            country,
+            state: 'proven',
+            counts: { edges: 15, proven: 15, blocked: 0 },
+            until: lapsed,
+            updatedAt: lapsed - DAY,
+          });
+      }
+      return out;
+    });
+    await t.mutation(internal.edgeCountry.expire, { now });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await t.run(async (ctx) => {
+      const rows = await ctx.db.query('edgeCountryEvidence').collect();
+      return {
+        proven: rows.filter((r) => r.combined === 'proven').length,
+        copies: (await Promise.all(edges.map((id) => ctx.db.get(id)))).filter(
+          (e) => e?.countryState !== undefined,
+        ).length,
+      };
+    });
+    expect(left).toEqual({ proven: 0, copies: 0 });
   });
 });
 

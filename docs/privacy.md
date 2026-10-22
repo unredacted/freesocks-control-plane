@@ -56,8 +56,10 @@ accidentally regress it).
     seen) **only when it is on the censored-country list**; anything else stores nothing and
     reads "elsewhere". A newer listed reading replaces it; an unlisted one leaves it (a member
     whose app sometimes refreshes from elsewhere keeps it), and it is forgotten
-    `delivery.country.stickyDays` (30) after it was last seen, by a daily sweep. It is read on
-    the subscription route, the raw-config view and the account view only.
+    `delivery.country.stickyDays` (30) after it was last seen, by a daily sweep. Switching
+    detection off forgets every stored guess at the next daily sweep, however many there are
+    (the sweep runs page after page until none is left). It is read on the subscription route,
+    the raw-config view and the account view only.
   - **Our own exits.** An app that refreshes its subscription through the tunnel reaches FCP
     from one of FCP's own addresses, and the CDN country is then the node's. Such a reading
     never sets or changes the guess (it only keeps an existing one alive). The client address
@@ -67,7 +69,11 @@ accidentally regress it).
     address is stored.
   - **On the subscription row only**, and deleted with the key (the choice, the guess, and the
     cached bodies shaped for it, at deletion rather than when the row is swept), on a switch to
-    a mode that is not freedom-family, and when the country leaves the list. Every stored copy
+    a mode that is not freedom-family, and when the country leaves the list. Every deploy also
+    walks the keys that hold one (`memberCountry.cleanStoredCountries`, scheduled by
+    `seedCutover`, page after page in transactions of their own) and clears a choice that left
+    the list and any country on a key that is no longer freedom-family (an admin change to a
+    mode, its family or the default can turn many keys at once). Every stored copy
     of the country on a row (a cached body's region, the render snapshot's country) equals the
     row's choice or guess (`setStoredCountry`); a request
     that read an older one cannot write it back. It follows the member to a re-issued key of a
@@ -211,7 +217,9 @@ and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
 - **Edge-required delivery never leaks an origin.** A subscription whose node or backend
   server is covered by an origin is served a rendered body (edge addresses only) or a 503,
   never the origin body; every outgoing entry is checked against the origin address; the
-  account view and the issuance responses hand out only the fronted token URL; stored S3
+  account view and the issuance responses hand out only the fronted token URL (never the
+  raw URL or its short id, also for a key not pinned to a node yet on a backend where any node is
+  covered); stored S3
   mirrors are re-rendered or replaced by an unavailable stub. `docs/edges.md` § "Rendering".
 - **No member data in the edges area.** Probes measure FCP's own addresses; report
   attribution uses a peppered per-member dedupe mark and the member's own render snapshot

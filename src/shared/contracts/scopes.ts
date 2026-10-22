@@ -26,8 +26,9 @@ export const ApiScope = z.enum([
   'admin:servers:read',
   'admin:servers:write',
   // Server management WRITES to a panel (Hosts, squads, later nodes and
-  // profiles). Separate from `admin:servers:write` on purpose: the node role's
-  // token holds that one and must not gain the power to change a panel here.
+  // profiles) and every Edges write. Separate from `admin:servers:write` on
+  // purpose: the node role's token holds that one and must not gain the power
+  // to change a panel, an account or an origin here.
   'admin:servers:manage',
   // The node role's bounded token: the Servers `{slug}/nodes/by-name/{name}`
   // routes only, confined to the token's registration boundary (backend servers

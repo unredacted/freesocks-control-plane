@@ -104,10 +104,14 @@ async function seed(
     edge?: boolean;
     probeNode?: boolean;
     names?: string[];
+    /** Enforce Convex's per-execution limits. */
+    limits?: boolean;
   } = {},
 ) {
   const names = opts.names ?? NAMES;
-  const t = convexTest(schema, modules);
+  const t = opts.limits
+    ? convexTest({ schema, modules, transactionLimits: true })
+    : convexTest(schema, modules);
   await insertPanelServer(t);
   await t.run(async (ctx) => {
     await upsertSettingRow(ctx, 'edge.sni.enabled', 'true');
@@ -813,4 +817,41 @@ describe('review fixes', () => {
     expect(x.suspectIn).toEqual(['IR']);
     expect(x.vantage[0]).toMatchObject({ suggestion: 'blocked', reportsAgree: true });
   }, 60_000);
+});
+
+describe('the planning budget', () => {
+  test('four opted-in countries and an 800-name family with nothing due stay within one execution', async () => {
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    const countries = ['IR', 'RU', 'CN', 'MM'];
+    const names = Array.from({ length: 800 }, (_, i) => `n${i}.example`);
+    const { t, listenerId } = await seed({ countries, limits: true });
+    await t.mutation(internal.sniFamilies.importNames, { slug: 'fam-a', lines: names });
+    await t.run(async (ctx) => {
+      for (const n of await ctx.db.query('sniNames').collect())
+        await ctx.db.patch(n._id, {
+          qualification: { state: 'ok', consecutiveFails: 0, tlsVersion: 'TLSv1.3' },
+          checkedAt: Date.now(),
+        });
+      await ctx.db.patch(listenerId, {
+        tlsNames: names.map((name) => ({ name, status: 'active' as const })),
+      });
+    });
+    // Every pair was put into a batch just now: nothing is due anywhere.
+    await t.run(async (ctx) => {
+      for (const n of await ctx.db.query('sniNames').collect())
+        for (const country of countries)
+          await ctx.db.insert('sniVantageEvidence', {
+            familyId: n.familyId,
+            name: n.name,
+            country,
+            lastRequestedAt: Date.now(),
+            measurements: 0,
+            okVantages: 0,
+            okNetworks: 0,
+            latest: 'none',
+            updatedAt: Date.now(),
+          });
+    });
+    expect((await t.mutation(internal.sniVantage.tick, {})).reason).toBe('nothing_due');
+  });
 });

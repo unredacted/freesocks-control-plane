@@ -953,7 +953,10 @@ policy version, epoch, edges); creating an origin revalidates the origin's mirro
 a raw object with a fresh render or, when nothing can render, with an **unavailable stub**
 (the URL is already distributed, so the object itself must stop serving the origin). The
 account view and the issuance responses hand out ONLY the fronted token URL for a covered key
-(`edgeRequired`); an Outline member imports a dynamic access key
+(`edgeRequired`), with the raw URL and its short id blank. A key counts as covered when a binding
+covers its pinned node or its whole backend, and, while it is not pinned yet (a new key may land
+on any node), when any node of its backend has a binding (`edgeRender.rawUrlEdgeRequired`). An
+Outline member imports a dynamic access key
 `ssconf://<fcp-host>/api/v1/sub/<token>` and follows rotations by re-fetching. Outline over an
 edge is **TCP-only** today (no adapter forwards UDP).
 
@@ -1422,15 +1425,19 @@ or a provision FOR THAT LISTENER (`listenerId` in the start), then the origin-wi
 **Retention** (separate daily crons, `convex/retention.ts`): `retention-edges` prunes
 `destroyed` edges after 30 days, `retention-edge-rotations` terminal rotations after 90, and the
 workflow sweeps (`retention-panel-ops`, `-sni-rollouts`, `-edge-setup-runs`,
-`-activation-runs`, `-edge-host-hides`, `-port-changes`) terminal rows past 90 days each
-(`*_RETENTION_DAYS`, `docs/convex-self-hosting.md`). They never delete a row something still
-reads: an op a claim, rollout, port change or rename names; a binding's newest rollout; a node's
-newest setup run and one an open activation points at; a node's current activation run, the
-committed run of its current approval, and an uncommitted run while any of its candidates (an
-edge not destroyed, a Host still on the backend) remains, since it isolates them only while it
-exists; the newest hide row of each Host of a live origin, and every row while its restore runs;
-a port change whose op is open. Node renames and their aliases are kept (a former name stays
-reserved), mirror upload records are deleted when they settle, and the vantage tables keep
+`-activation-runs`, `-edge-host-hides`, `-port-changes`, `-maintenance-holds`, `-obligations`)
+terminal rows past 90 days each (`*_RETENTION_DAYS`, `docs/convex-self-hosting.md`). They never
+delete a row something still reads: an op a claim, rollout, port change or rename names; a
+binding's newest rollout; a node's newest setup run and one an open activation points at; a
+node's current activation run, the committed run of its current approval, and an uncommitted run
+while any of its candidates (an edge not destroyed, a Host still on the backend) remains, since
+it isolates them only while it exists; the newest hide row of each Host of a live origin, and
+every row while its restore runs; a port change whose op is open; an open maintenance hold; an
+outstanding obligation, and the confirmed create of an origin name's DNS record (how FCP knows
+the record is its own). Node renames and their aliases are kept (a former name stays reserved),
+so are a node's retirement (its intent points at it; one row per node ever retired) and the
+ownership rows (a tombstone refuses re-creating an object removed on purpose; one row per
+backend object), mirror upload records are deleted when they settle, and the vantage tables keep
 their own window.
 
 ### Operations safety
@@ -1468,7 +1475,9 @@ edges, or an edge parked at `needs_operator` whose resources are still present.
 **Dark members.** Every refusal the subscription route answers under edge-required delivery
 (the 503 with `x-fcp-delivery: <reason>`) is counted per reason in a sharded `appState` counter
 (`edge:refusals:<0..7>`, ten-minute buckets, `convex/deliveryRefusals.ts`): codes and counts
-only. Attention `delivery_refusals` sums the last hour (`facts.byReason`), critical from 25. A
+only. The route schedules the count rather than waiting for it, so a burst of refusals (a gate
+closing across the fleet) never slows the 503s on conflicting writes; the count lands a moment
+later. Attention `delivery_refusals` sums the last hour (`facts.byReason`), critical from 25. A
 client family whose render rule is off now answers `family_disabled` (no longer
 `render_disabled`), and attention `family_rule_disabled` lists the families while any node is
 edge-required. A `rotation_stuck` item (critical) appears for a rotation running over an hour.
@@ -1865,8 +1874,10 @@ while the name was in its **current** family, the newest working check ever (`ev
 past the window as the transition marker) and the current failing streak. When its oldest
 measurement leaves the window (`oldestAt`) the sweep aggregates it again, so a suggestion never
 outlives what it rests on. Cron `sni-vantage` (10 min) plans, from a starting listener that
-rotates every tick (the scan is bounded and must not always stop on the same prefix), and
-schedules the sweep (timeouts, retention, re-aggregation). Auto-apply runs only once every source
+rotates every tick (the scan is bounded and must not always stop on the same prefix; one read
+budget covers every country of the tick, which take turns going first, and the addresses, names
+and families are read once per tick), and schedules the sweep (timeouts, retention,
+re-aggregation). Auto-apply runs only once every source
 of a batch has settled.
 
 **Scoring** (`lib/edges/sni/vantage.ts`, pure; `minVantages` 3, `minNetworks` 2):
@@ -2072,8 +2083,10 @@ with `delivery.country.steer` on (next section).
   while the address proof does), not the earliest track's expiry the worker runs on: an address
   proof lapsing never ends a handshake block that still stands. A group never proves an edge.
 - **Expiry.** Cron `edge-country-expiry` (hourly, whether or not probes run) lapses decided
-  tracks past their `until`, regrades the groups, rewrites every affected `countryState` and
-  deletes rows nothing touched for a whole window.
+  tracks past their `until`, regrades the groups, rewrites every affected `countryState` (each
+  edge once per run) and deletes rows nothing touched for a whole window. Each step regrades at
+  most 50 (group, country) pairs and rewrites at most 200 edges; the rest continue in their own
+  transaction (`edgeCountry:settleExpiry`).
 - **Before use.** A guided setup's stage 4 asks for its address's round itself (even when the
   evidence on record already makes the rung `partial`, as for a reused spare) and waits for it (at most
   `preUseWaitMinutes`, 15; not known never holds it); one that finds the address blocked in a
@@ -2302,6 +2315,13 @@ whole list). Up to 40 entries, in the operator's order, each
 - `checkNamesInside`: the checks from inside a country run there (`SniVantageConfig.countries`),
   with the residual risk above stated next to the switch.
 
+**The suggestion after an upgrade.** Before the list, only `delivery.privacyCountries` (empty by
+default) moved the suggestion. A deployment whose list is first computed from the old keys gets
+their union, the old defaults included, so from that deploy on new members whose CDN country is
+on it get the matrix-ranked (or censorship-recommended) mode preselected instead of the default.
+That is intended: the list is where the operator says which countries censor. Existing keys and
+stored modes do not change; edit the list right after the upgrade to choose where it applies.
+
 While the key has never been written the list is computed **live** from the five old keys (their
 union, in the order curated, probe, vantage, privacy, matrix rows; a probe country keeps
 `checkEdges`, a vantage country keeps `checkNamesInside` only if it was also curated), so nothing
@@ -2327,8 +2347,10 @@ country back brings it back) but is not shown on the public page. Audit:
 Every route under `/api/v1/admin/edges/` is sealed by verb (GET reveals, POST seals both legs,
 PATCH seals the request, DELETE carries nothing; there is no PUT). Dual-mode plaintext stays
 for `fsv1_` callers; `FS_HPKE_ADMIN_REQUIRED=true` refuses plaintext from cookie-session
-callers. Config routes need `admin:settings:*`, everything else `admin:servers:*`. No route
-here accepts `admin:edges:register`: that scope is the node role's, on the Servers by-name
+callers. Config routes need `admin:settings:*`. Everything else reads with `admin:servers:read`
+and writes with `admin:servers:manage`: never `admin:servers:write`, which the node role's fleet
+token holds and which must not change a backend, an account or an origin, or create anything
+billed. No route here accepts `admin:edges:register`: that scope is the node role's, on the Servers by-name
 routes only (see the node role contract).
 
 ## Node role contract (Ansible)

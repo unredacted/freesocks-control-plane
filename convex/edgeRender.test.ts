@@ -33,6 +33,7 @@ const modules = import.meta.glob('./**/*.*s');
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 const NODE = FIXTURE_NODE;
@@ -423,10 +424,15 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
   });
 
   test('every edge-required refusal is counted per reason, never the member or the node', async () => {
+    vi.useFakeTimers();
     stubPanel();
     const { t } = await seed({ renderEnabled: false });
     expect((await get(t)).status).toBe(503);
     expect((await get(t, 'curl/8.0')).status).toBe(503);
+    // The answer never waited on the shared counter rows: the count is a scheduled write.
+    const before = await t.run((ctx) => ctx.db.query('appState').collect());
+    expect(before.filter((r) => r.key.startsWith('edge:refusals:'))).toEqual([]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
     const a = await t.query(internal.edgeOperator.attention, {});
     const item = a.items.find((i) => i.kind === 'delivery_refusals')!;
     expect(item).toMatchObject({
