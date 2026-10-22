@@ -49,6 +49,8 @@ describe('plans', () => {
     expect(sizeKeyOf('scaleway')).toBe('type');
     expect(sizeKeyOf('ovh')).toBe('flavorId');
     expect(sizeKeyOf('cloudflare')).toBeNull();
+    expect(sizeKeyOf('fastly')).toBeNull();
+    expect(sizeKeyOf('cloudfront')).toBeNull();
     expect(sizeOf('scaleway', { type: ' LB-GP-L ' })).toBe('LB-GP-L');
     expect(sizeOf('ovh', { flavorId: '' })).toBeNull();
     expect(sizeKey('LB-GP-L')).toBe('lb-gp-l');
@@ -97,6 +99,13 @@ describe('what one edge costs', () => {
     expect(
       edgeCostOf('fastly', { paid: 'amount', perEdgeMonthly: 5, currency: 'EUR' }, null),
     ).toMatchObject({ monthly: 5, basis: 'amount' });
+    // Every CDN alike, CloudFront included: no list price even with a plan at hand.
+    expect(edgeCostOf('cloudfront', null, plan())).toMatchObject({
+      monthly: null,
+      basis: 'unset',
+      listMonthly: null,
+    });
+    expect(edgeCostOf('cloudfront', { paid: 'free' }, null)).toMatchObject({ basis: 'free' });
   });
 });
 
@@ -170,6 +179,7 @@ describe('cost settings', () => {
   test('what the operator may say', () => {
     expect(costSettingsProblem('gcore', { paid: 'list' })).toBeNull();
     expect(costSettingsProblem('fastly', { paid: 'list' })).toMatch(/no list price/);
+    expect(costSettingsProblem('cloudfront', { paid: 'list' })).toMatch(/no list price/);
     expect(costSettingsProblem('gcore', { paid: 'amount', perEdgeMonthly: 5 })).toMatch(/currency/);
     expect(
       costSettingsProblem('gcore', { paid: 'amount', perEdgeMonthly: 5, currency: 'eur' }),

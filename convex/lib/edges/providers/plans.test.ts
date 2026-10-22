@@ -36,6 +36,9 @@ import {
 } from './scaleway';
 import type { GcoreConfig, OvhConfig, ScalewayConfig, UpcloudConfig } from './types';
 import { jsonRes, mockFetch } from '../testing/mockFetch';
+import { EDGE_PROVIDERS } from './registry';
+import { edgeLayerOf } from './capabilities';
+import { EDGE_PROVIDER_IDS } from '../../edgeProviderIds';
 import ovhCatalog from './fixtures/pricing/ovh_public_cloud_catalog_lb.json';
 import scalewayCatalog from './fixtures/pricing/scaleway_catalog_lb_zone.json';
 
@@ -315,6 +318,22 @@ describe('ovh: the public cloud catalog, joined to the region’s flavors by nam
     );
   });
 
+  test('a failing catalog read waits for the flavor list: nothing is left running', async () => {
+    let flavorsAnswered = false;
+    mockFetch(async (c) => {
+      if (c.path.endsWith('/auth/time')) return jsonRes(1_700_000_000);
+      if (c.path === '/1.0/order/catalog/public/cloud') return jsonRes({ message: 'down' }, 503);
+      if (c.path.endsWith('/loadbalancing/flavor')) {
+        await new Promise((r) => setTimeout(r, 20));
+        flavorsAnswered = true;
+        return jsonRes([{ id: 'f-small', name: 'small' }]);
+      }
+      return notFound();
+    });
+    await expect(ovhProvider.plans!(cfg)).rejects.toThrow(/503/);
+    expect(flavorsAnswered).toBe(true);
+  });
+
   test('a flavor the catalog does not name has no price', () => {
     expect(
       ovhPlanOf({ id: 'x', name: 'tiny' }, { currency: 'EUR', sizes: {}, floatingIp: null }, 'ZZ1'),
@@ -426,5 +445,14 @@ describe('scaleway: the public product catalog, else the dated table', () => {
       perHour: null,
       currency: null,
     });
+  });
+});
+
+describe('which adapters price', () => {
+  test('every load balancer adapter has a price source; no CDN adapter is ever auto-priced', () => {
+    for (const id of EDGE_PROVIDER_IDS) {
+      const priced = typeof EDGE_PROVIDERS[id].plans === 'function';
+      expect([id, priced]).toEqual([id, edgeLayerOf(id) === 'l4']);
+    }
   });
 });

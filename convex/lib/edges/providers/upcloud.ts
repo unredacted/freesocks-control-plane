@@ -540,14 +540,20 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
    * used. UpCloud charges no data transfer for a load balancer.
    */
   async plans(cfg) {
-    const [plans, prices, currency] = await Promise.all([
+    // Every call settles before the read answers: a failed plan list never
+    // leaves the price reads running unawaited.
+    const [listed, prices, currency] = await Promise.allSettled([
       up(cfg, 'plans', 'GET', `/load-balancer/plans`, Plans),
-      up(cfg, 'plans', 'GET', `/price`, PriceList).catch(() => null),
-      upcloudCurrency(cfg).catch(() => null),
+      up(cfg, 'plans', 'GET', `/price`, PriceList),
+      upcloudCurrency(cfg),
     ]);
-    const listed = prices?.prices.currency ?? currency;
-    const zone = listed ? (prices?.prices.zone.find((z) => z.name === cfg.zone) ?? null) : null;
-    return plans.plans.map((p) => upcloudPlanOf(p, zone, listed ?? null));
+    if (listed.status === 'rejected') throw listed.reason;
+    const plans = listed.value;
+    const list = prices.status === 'fulfilled' ? prices.value : null;
+    const billed =
+      list?.prices.currency ?? (currency.status === 'fulfilled' ? currency.value : null);
+    const zone = billed ? (list?.prices.zone.find((z) => z.name === cfg.zone) ?? null) : null;
+    return plans.plans.map((p) => upcloudPlanOf(p, zone, billed ?? null));
   },
 
   planDestroy: (_cfg, ledger) => orderByKind(ledger, UPCLOUD_DESTROY_ORDER),

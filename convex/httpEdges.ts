@@ -3,10 +3,12 @@
  * route per verb feeds a small dispatcher, so the HPKE policy is a clean
  * per-verb prefix rule (envelope.ts): GET reveals, POST seals both legs,
  * PATCH seals the body, DELETE carries nothing. Scopes: `admin:settings:*`
- * for the config namespace, `admin:servers:*` for everything else; the two
- * POSTs that only compute (`render/preview`, `templates/validate`) need the
- * READ scope. The POSTs that reach a cloud provider / spend probe credits are
- * rate-limited per actor (`admin.edges.provider-call` / `admin.edges.probe`).
+ * for the config namespace; everything else reads with `admin:servers:read`
+ * and writes with `admin:servers:manage` (never the fleet token's
+ * `admin:servers:write`); the POSTs that only compute (`render/preview`,
+ * `templates/validate`, plans, preflights) need the READ scope. The POSTs
+ * that reach a cloud provider / spend probe credits are rate-limited per
+ * actor (`admin.edges.provider-call` / `admin.edges.probe`).
  * Responses are the shapes in src/shared/contracts/edges.ts.
  */
 import type { HttpRouter } from 'convex/server';
@@ -114,22 +116,24 @@ function isReadOnlyPost(parts: string[]): boolean {
 }
 
 /**
- * Config routes need the settings scope; everything else the servers scope.
- * No route here takes `admin:edges:register`: the node role registers nothing
- * under this prefix (contract v2, docs/servers.md "Node registration").
+ * Config routes need the settings scope; everything else the servers scope,
+ * and a write there `admin:servers:manage`: it changes a backend, an account
+ * or an origin, or creates something billed. Deliberately not
+ * `admin:servers:write`, which the node role's fleet token holds. No route
+ * here takes `admin:edges:register`: the node role registers nothing under
+ * this prefix (contract v2, docs/servers.md "Node registration").
  */
 export function scopeFor(parts: string[], method: string): string {
   // The automation switch writes `edge.*` config: the settings scope, like `config`;
   // so does freedom delivery through edges (`edge.freedom.edgesOnly`).
-  const ns =
+  const settings =
     parts[0] === 'config' ||
     parts[0] === 'automation' ||
     parts[0] === 'freedom' ||
-    (parts[0] === 'sni' && parts[1] === 'config')
-      ? 'settings'
-      : 'servers';
+    (parts[0] === 'sni' && parts[1] === 'config');
   const write = method !== 'GET' && !(method === 'POST' && isReadOnlyPost(parts));
-  return `admin:${ns}:${write ? 'write' : 'read'}`;
+  if (settings) return `admin:settings:${write ? 'write' : 'read'}`;
+  return write ? 'admin:servers:manage' : 'admin:servers:read';
 }
 
 /**

@@ -1,7 +1,8 @@
 # Multi-stage image for the beta web tier: build the Svelte SPA with Bun, then
 # serve it (and reverse-proxy the Convex HTTP actions) with Caddy. The whole repo
 # is the build context (the SPA imports from src/shared); .dockerignore keeps
-# node_modules / dist / .git / .env* out. See docs/beta-deploy.md.
+# node_modules / dist / .git / .env* and database exports out. The final stage
+# copies only dist/ and the Caddyfile. See docs/beta-deploy.md.
 
 # --- build the SPA ---------------------------------------------------------
 FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS build

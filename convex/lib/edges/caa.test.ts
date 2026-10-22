@@ -184,7 +184,26 @@ describe('caa: one record set', () => {
       certainly: 'certainly.com',
       'lets-encrypt': 'letsencrypt.org',
       globalsign: 'globalsign.com',
+      amazon: 'amazon.com',
     });
+  });
+
+  test("ACM issues under any of Amazon's four CAA domains, issuewild governing a wildcard", async () => {
+    for (const domain of ['amazon.com', 'amazontrust.com', 'awstrust.com', 'amazonaws.com']) {
+      const lookup: CaaLookup = async (name) =>
+        name === 'example.org' ? [issue(domain), issuewild(domain)] : [];
+      const v = await checkCaa({ name: '*.example.org', certificateAuthority: 'amazon', lookup });
+      expect(v.verdict, domain).toBe('allows');
+      expect(v.issuer).toBe('amazon.com');
+    }
+    // An issuewild set without an Amazon domain forbids the wildcard, whatever issue says.
+    const wildOther: CaaLookup = async (name) =>
+      name === 'example.org' ? [issue('amazon.com'), issuewild('letsencrypt.org')] : [];
+    expect(
+      (await checkCaa({ name: '*.example.org', certificateAuthority: 'amazon', lookup: wildOther }))
+        .verdict,
+    ).toBe('forbids');
+    expect(caaSetAllows([issue('awstrust.com')], ['amazon.com', 'awstrust.com'], false)).toBe(true);
   });
 });
 

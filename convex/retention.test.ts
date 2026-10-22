@@ -341,3 +341,108 @@ describe('retention.sweepDeletedSubscriptions (pass 2)', () => {
     });
   });
 });
+
+describe('maintenance holds and obligations', () => {
+  async function server(t: ReturnType<typeof convexTest>) {
+    return t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-a',
+        slug: 'panel-a',
+        config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+  }
+  const hold = (sid: Id<'backendServers'>, released: boolean, at: number, name = 'node-a') => ({
+    backendServerId: sid,
+    transitionId: `tr-${at}`,
+    reason: 'profile edit',
+    heldNodeNames: [name],
+    closedIntentIds: [],
+    released,
+    since: at,
+    updatedAt: at,
+  });
+
+  test('the gate reads only the open holds, however many were released', async () => {
+    // A read budget far below the released history: reading every hold of the
+    // backend (what each member fetch of an unmanaged node did) would exceed it.
+    const t = convexTest({ schema, modules, transactionLimits: { documentsRead: 50 } });
+    const sid = await server(t);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 60; i++) await ctx.db.insert('panelMaintenanceHolds', hold(sid, true, i));
+      await ctx.db.insert('panelMaintenanceHolds', hold(sid, false, 100, 'node-b'));
+    });
+    const open = await t.query(internal.nodeIntents.holdsView, { backendServerId: sid });
+    expect(open.map((h) => h.heldNodeNames)).toEqual([['node-b']]);
+  });
+
+  test('released holds past the window go; open ones stay whatever their age', async () => {
+    const t = convexTest(schema, modules);
+    const sid = await server(t);
+    const now = Date.now();
+    const ids = await t.run(async (ctx) => ({
+      oldReleased: await ctx.db.insert('panelMaintenanceHolds', hold(sid, true, now - 100 * DAY)),
+      recentReleased: await ctx.db.insert('panelMaintenanceHolds', hold(sid, true, now - DAY)),
+      oldOpen: await ctx.db.insert('panelMaintenanceHolds', hold(sid, false, now - 100 * DAY)),
+    }));
+    const r = await t.mutation(internal.retention.sweepMaintenanceHolds, {});
+    expect(r.removed).toBe(1);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(ids.oldReleased)).toBeNull();
+      expect(await ctx.db.get(ids.recentReleased)).not.toBeNull();
+      expect(await ctx.db.get(ids.oldOpen)).not.toBeNull();
+    });
+  });
+
+  test('settled obligations past the window go; outstanding ones and owned DNS records stay', async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const sid = await server(t);
+    const old = Date.now() - 100 * DAY;
+    const ob = (
+      kind: 'dns.record' | 'host',
+      verb: 'create' | 'delete',
+      state: 'pending' | 'sent' | 'unresolved' | 'confirmed' | 'failed',
+      updatedAt = old,
+    ) => ({
+      backendServerId: sid,
+      ownerKind: 'intent' as const,
+      ownerId: 'intent-1',
+      ownerGeneration: 1,
+      attemptId: `a-${kind}-${verb}-${state}-${updatedAt}`,
+      kind,
+      identity: kind === 'dns.record' ? 'A:node-a.example.org' : 'host:node-a',
+      verb,
+      ownership: 'created' as const,
+      state,
+      intent: '{}',
+      createdAt: updatedAt,
+      updatedAt,
+    });
+    const ids = await t.run(async (ctx) => ({
+      ownedRecord: await ctx.db.insert(
+        'backendObligations',
+        ob('dns.record', 'create', 'confirmed'),
+      ),
+      withdrawn: await ctx.db.insert('backendObligations', ob('dns.record', 'create', 'failed')),
+      deleted: await ctx.db.insert('backendObligations', ob('dns.record', 'delete', 'confirmed')),
+      host: await ctx.db.insert('backendObligations', ob('host', 'create', 'confirmed')),
+      unresolved: await ctx.db.insert('backendObligations', ob('host', 'create', 'unresolved')),
+      pending: await ctx.db.insert('backendObligations', ob('host', 'create', 'pending')),
+      recent: await ctx.db.insert('backendObligations', ob('host', 'create', 'failed', Date.now())),
+    }));
+    await t.mutation(internal.retention.sweepObligations, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    await t.run(async (ctx) => {
+      for (const gone of [ids.withdrawn, ids.deleted, ids.host])
+        expect(await ctx.db.get(gone)).toBeNull();
+      for (const kept of [ids.ownedRecord, ids.unresolved, ids.pending, ids.recent])
+        expect(await ctx.db.get(kept)).not.toBeNull();
+    });
+  });
+});

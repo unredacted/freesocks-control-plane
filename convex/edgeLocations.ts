@@ -1095,7 +1095,11 @@ export const zonesWrittenThrough = internalQuery({
       if (locationId && !z.locationIds.includes(locationId)) z.locationIds.push(locationId);
       zones.set(zoneId, z);
     };
-    for (const provider of ['fastly'] as const) {
+    // Every front that writes its records through a DNS account (Fastly, CloudFront).
+    const writers = (Object.keys(EDGE_PROVIDER_CAPABILITIES) as EdgeProviderId[]).filter(
+      (p) => EDGE_PROVIDER_CAPABILITIES[p].needsDnsAccount,
+    );
+    for (const provider of writers) {
       const rows = await ctx.db
         .query('edgeLocations')
         .withIndex('by_place', (q) => q.eq('provider', provider))

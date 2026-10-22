@@ -677,11 +677,15 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
    * that names none) is billed apart.
    */
   async plans(cfg) {
-    const [flavors, catalog] = await Promise.all([
+    // Both calls settle before the read answers: a failure of one never
+    // leaves the other running unawaited.
+    const [flavors, catalog] = await Promise.allSettled([
       ovh(cfg, 'plans', 'GET', `${base(cfg)}/loadbalancing/flavor`, Flavors),
       ovhLbCatalog(cfg),
     ]);
-    return flavors.map((f) => ovhPlanOf(f, catalog, cfg.regionName));
+    if (flavors.status === 'rejected') throw flavors.reason;
+    if (catalog.status === 'rejected') throw catalog.reason;
+    return flavors.value.map((f) => ovhPlanOf(f, catalog.value, cfg.regionName));
   },
 
   planDestroy: (_cfg, ledger) => orderByKind(ledger, OVH_DESTROY_ORDER),

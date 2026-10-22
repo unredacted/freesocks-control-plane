@@ -1367,6 +1367,216 @@ export const FASTLY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
   },
 ];
 
+// --- CloudFront (L7) ---------------------------------------------------------------
+
+const CLOUDFRONT_PRICE_CLASSES = ['PriceClass_All', 'PriceClass_200', 'PriceClass_100'] as const;
+const CLOUDFRONT_HTTP_VERSIONS = ['http1.1', 'http2', 'http2and3', 'http3'] as const;
+const CLOUDFRONT_VIEWER_TLS = [
+  'TLSv1.2_2021',
+  'TLSv1.2_2025',
+  'TLSv1.3_2025',
+  'TLSv1.2_2019',
+] as const;
+const CLOUDFRONT_ORIGIN_TLS = ['TLSv1.2', 'TLSv1.1', 'TLSv1'] as const;
+
+/**
+ * A CloudFront front: one distribution, its origin (the node), the shared
+ * origin request policy it uses and the DNS records written for it. Every key
+ * is optional and the adapter applies the default (`CLOUDFRONT_DEFAULTS` in
+ * providers/cloudfront.ts), so a stored template parses to what it was saved as.
+ */
+export const CloudFrontTemplate = z.object({
+  ...LABEL_FIELDS,
+  priceClass: z.enum(CLOUDFRONT_PRICE_CLASSES).optional(),
+  ipv6: z.boolean().optional(),
+  viewerHttpVersion: z.enum(CLOUDFRONT_HTTP_VERSIONS).optional(),
+  viewerMinTlsVersion: z.enum(CLOUDFRONT_VIEWER_TLS).optional(),
+  originMinTlsVersion: z.enum(CLOUDFRONT_ORIGIN_TLS).optional(),
+  originConnectTimeoutS: z.number().int().min(1).max(10).optional(),
+  originConnectAttempts: z.number().int().min(1).max(3).optional(),
+  originReadTimeoutS: z.number().int().min(1).max(120).optional(),
+  originKeepaliveTimeoutS: z.number().int().min(1).max(300).optional(),
+  forwardClientAddress: z.boolean().optional(),
+  dnsTtl: z.union([z.literal(1), z.number().int().min(60).max(86_400)]).optional(),
+  dnsTags: RECORD_TAGS.optional(),
+  dnsFlatten: z.boolean().optional(),
+});
+export type CloudFrontTemplateParams = z.infer<typeof CloudFrontTemplate>;
+
+export const CLOUDFRONT_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
+  ...LABEL_FIELD_DESCRIPTORS,
+  {
+    key: 'priceClass',
+    label: 'Edge locations',
+    type: 'select',
+    group: 'Distribution',
+    prominent: true,
+    default: 'PriceClass_All',
+    help: "Which of the provider's edge locations serve the front. All of them reaches members everywhere; the cheaper classes serve from fewer regions, the cheapest from North America, Europe and Israel only.",
+    options: [
+      { value: 'PriceClass_All', label: 'All edge locations' },
+      { value: 'PriceClass_200', label: 'Most regions (no South America or Oceania)' },
+      { value: 'PriceClass_100', label: 'North America, Europe and Israel only' },
+    ],
+    wire: { resource: 'distribution', field: 'PriceClass', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'ipv6',
+    label: 'IPv6 for members',
+    type: 'boolean',
+    group: 'Distribution',
+    default: true,
+    help: 'Members can reach the front over IPv6 as well as IPv4.',
+    wire: { resource: 'distribution', field: 'IsIPV6Enabled', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'viewerHttpVersion',
+    label: 'HTTP versions offered to members',
+    type: 'select',
+    group: 'Distribution',
+    advanced: true,
+    default: 'http1.1',
+    help: 'The provider carries WebSocket over HTTP/1.1 only, so a client that agrees on HTTP/2 with the front cannot open its tunnel. Keep HTTP/1.1 unless every client in use asks for HTTP/1.1 itself.',
+    options: [
+      { value: 'http1.1', label: 'HTTP/1.1 only' },
+      { value: 'http2', label: 'HTTP/2 and HTTP/1.1' },
+      { value: 'http2and3', label: 'HTTP/3, HTTP/2 and HTTP/1.1' },
+      { value: 'http3', label: 'HTTP/3 and HTTP/1.1' },
+    ],
+    wire: { resource: 'distribution', field: 'HttpVersion', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'viewerMinTlsVersion',
+    label: 'Lowest TLS for members',
+    type: 'select',
+    group: 'Distribution',
+    advanced: true,
+    default: 'TLSv1.2_2021',
+    help: 'The security policy the front offers members: the lowest TLS version and the ciphers that go with it.',
+    options: [
+      { value: 'TLSv1.2_2021', label: 'TLS 1.2 (2021 ciphers)' },
+      { value: 'TLSv1.2_2025', label: 'TLS 1.2 (2025 ciphers)' },
+      { value: 'TLSv1.3_2025', label: 'TLS 1.3 only' },
+      { value: 'TLSv1.2_2019', label: 'TLS 1.2 (2019 ciphers)' },
+    ],
+    wire: {
+      resource: 'distribution',
+      field: 'ViewerCertificate.MinimumProtocolVersion',
+      manual: true,
+    },
+    live: 'in_place',
+  },
+  {
+    key: 'originMinTlsVersion',
+    label: 'Lowest TLS to the node',
+    type: 'select',
+    group: 'Origin',
+    advanced: true,
+    default: 'TLSv1.2',
+    help: 'The lowest TLS version the front uses with an https node. TLS 1.3 is used whenever the node offers it.',
+    options: [
+      { value: 'TLSv1.2', label: 'TLS 1.2' },
+      { value: 'TLSv1.1', label: 'TLS 1.1' },
+      { value: 'TLSv1', label: 'TLS 1.0' },
+    ],
+    wire: { resource: 'origin', field: 'CustomOriginConfig.OriginSslProtocols', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'originConnectTimeoutS',
+    label: 'Node connect timeout',
+    type: 'number',
+    unit: 's',
+    group: 'Origin',
+    advanced: true,
+    default: 10,
+    help: 'Seconds to wait for the node to accept a connection, 1 to 10.',
+    wire: { resource: 'origin', field: 'ConnectionTimeout', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'originConnectAttempts',
+    label: 'Node connect attempts',
+    type: 'number',
+    group: 'Origin',
+    advanced: true,
+    default: 3,
+    help: 'How many times the front tries to connect to the node before it answers the member with an error, 1 to 3.',
+    wire: { resource: 'origin', field: 'ConnectionAttempts', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'originReadTimeoutS',
+    label: 'Upgrade answer timeout',
+    type: 'number',
+    unit: 's',
+    group: 'Origin',
+    advanced: true,
+    default: 30,
+    help: 'Seconds to wait for the node to answer a request, 1 to 120. An open WebSocket is closed after 10 minutes without bytes from the node whatever this says: the node sends a heartbeat.',
+    wire: { resource: 'origin', field: 'CustomOriginConfig.OriginReadTimeout', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'originKeepaliveTimeoutS',
+    label: 'Idle connection reuse',
+    type: 'number',
+    unit: 's',
+    group: 'Origin',
+    advanced: true,
+    default: 5,
+    help: 'Seconds an idle connection to the node is kept for the next request, 1 to 300.',
+    wire: { resource: 'origin', field: 'CustomOriginConfig.OriginKeepaliveTimeout', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'forwardClientAddress',
+    label: "Pass the member's address to the node",
+    type: 'boolean',
+    group: 'Request',
+    default: false,
+    help: "Off (the default): the front's origin request policy forwards only the WebSocket handshake headers, so CloudFront-Viewer-Address and the other viewer headers never reach the node. CloudFront still sends X-Forwarded-For with the member's address, which no policy can remove: the node removes it. On also forwards CloudFront-Viewer-Address.",
+    wire: { resource: 'origin_request_policy', field: 'HeadersConfig.Headers', manual: true },
+    live: 'rebuild',
+  },
+  {
+    key: 'dnsTtl',
+    label: 'Record TTL',
+    type: 'number',
+    unit: 's',
+    group: 'DNS records',
+    advanced: true,
+    default: 1,
+    help: 'How long resolvers may cache the records written for the front: 1 is automatic (5 minutes), else 60 to 86400.',
+    wire: { resource: 'dns_record', field: 'ttl', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'dnsTags',
+    label: 'Record tags',
+    type: 'key-value',
+    group: 'DNS records',
+    advanced: true,
+    help: 'Extra name:value labels on the records written for the front. Paid DNS zones only.',
+    wire: { resource: 'dns_record', field: 'tags', manual: true },
+    live: 'in_place',
+  },
+  {
+    key: 'dnsFlatten',
+    label: 'Flatten the front name',
+    type: 'boolean',
+    group: 'DNS records',
+    advanced: true,
+    default: false,
+    help: "Answer the front name with the provider's addresses instead of a CNAME that names the provider. Paid DNS zones only.",
+    wire: { resource: 'dns_record', field: 'settings.flatten_cname', manual: true },
+    live: 'in_place',
+  },
+];
+
 // --- certificate options (CDN fronts) -------------------------------------------------
 
 /**
@@ -1418,6 +1628,31 @@ export const FASTLY_CERTIFICATE_FIELDS: TemplateFieldDescriptor[] = [
 ];
 
 /**
+ * A CloudFront front's certificate is always the zone's one ACM wildcard,
+ * requested in us-east-1 and shared by every front of the account there: a
+ * front's own name never reaches the Certificate Transparency logs. The scope
+ * is still an option so each edge's intent freezes it, as Fastly's does.
+ */
+export const CloudFrontCertificateOptions = z.object({
+  certificateScope: z.enum(['wildcard']).optional(),
+});
+
+export const CLOUDFRONT_CERTIFICATE_FIELDS: TemplateFieldDescriptor[] = [
+  {
+    key: 'certificateScope',
+    label: 'Certificate',
+    type: 'select',
+    kind: 'certificate',
+    group: 'Certificate',
+    default: 'wildcard',
+    help: 'One free ACM wildcard for the zone, shared by every front there: a new front never waits for a certificate, and its name never appears in public certificate logs.',
+    options: [{ value: 'wildcard', label: 'One wildcard for every front' }],
+    wire: { resource: 'tls_subscription', field: 'DomainName', manual: true },
+    live: 'rebuild',
+  },
+];
+
+/**
  * Option defaults a NEW account starts with where they differ from the
  * declared ones (an existing account keeps the declared, older behaviour until
  * it is switched): a new Fastly account shares one wildcard certificate.
@@ -1426,6 +1661,7 @@ export const EDGE_NEW_ACCOUNT_OPTION_DEFAULTS: Partial<
   Record<EdgeProviderId, Record<string, unknown>>
 > = {
   fastly: { certificateScope: 'wildcard' },
+  cloudfront: { certificateScope: 'wildcard' },
 };
 
 const NO_CERTIFICATE = z.object({});
@@ -1453,6 +1689,7 @@ export const EDGE_TEMPLATES: Record<EdgeProviderId, TemplateDefinition> = {
   ovh: template(OvhTemplate, OVH_TEMPLATE_FIELDS),
   cloudflare: template(CloudflareTemplate, CLOUDFLARE_TEMPLATE_FIELDS),
   fastly: template(FastlyTemplate, FASTLY_TEMPLATE_FIELDS),
+  cloudfront: template(CloudFrontTemplate, CLOUDFRONT_TEMPLATE_FIELDS),
 };
 
 export interface CertificateDefinition {
@@ -1474,6 +1711,7 @@ export const EDGE_CERTIFICATE_OPTIONS: Record<EdgeProviderId, CertificateDefinit
   ovh: certificate(NO_CERTIFICATE, []),
   cloudflare: certificate(NO_CERTIFICATE, []),
   fastly: certificate(FastlyCertificateOptions, FASTLY_CERTIFICATE_FIELDS),
+  cloudfront: certificate(CloudFrontCertificateOptions, CLOUDFRONT_CERTIFICATE_FIELDS),
 };
 
 /** Every option of a provider, tuning then certificate: what the forms render. */
@@ -1619,13 +1857,17 @@ export function contextProblems(
   }
   if (c.zonePlan === 'free') {
     const tagKey =
-      provider === 'cloudflare' ? 'recordTags' : provider === 'fastly' ? 'dnsTags' : null;
+      provider === 'cloudflare'
+        ? 'recordTags'
+        : provider === 'fastly' || provider === 'cloudfront'
+          ? 'dnsTags'
+          : null;
     const tags = tagKey ? (params[tagKey] as Record<string, string> | undefined) : undefined;
     if (tagKey && tags && Object.keys(tags).length > 0)
       out.push(
         `${label(tagKey)}: the zone is on Cloudflare's Free plan, which takes no record tags`,
       );
-    if (provider === 'fastly' && params.dnsFlatten === true)
+    if ((provider === 'fastly' || provider === 'cloudfront') && params.dnsFlatten === true)
       out.push(`${label('dnsFlatten')}: only a paid Cloudflare zone flattens one record`);
   }
   return out;

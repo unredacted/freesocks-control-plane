@@ -30,7 +30,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { addressesOf } from './nodeIntents';
+import { addressTransportsOf, addressesOf } from './nodeIntents';
 import { bumpGateVersion } from './backendSetup';
 import { scheduleMirrorRefresh } from './relays';
 import { runningRenameOf } from './lib/backend/nodeAliases';
@@ -174,8 +174,13 @@ export const context = internalQuery({
       intent,
       server: { _id: server._id, slug: server.slug },
       relay: relay ? { _id: relay._id, deleting: !!relay.deleting } : null,
-      // A direct node's own addresses (one per family name), by remark.
-      addresses: addressesOf(intent, hosts),
+      // A direct node's own addresses (one per family name): recorded, or
+      // under FCP's remark on its own transport.
+      addresses: addressesOf(
+        intent,
+        hosts,
+        (await addressTransportsOf(ctx, intent.backendServerId))(intent),
+      ),
       node,
     };
   },

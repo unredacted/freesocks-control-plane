@@ -35,7 +35,7 @@ import {
   type MemberCountryConfig,
   type MemberFamily,
 } from './lib/memberCountry';
-import { familyOfPlacement, memberFamilyOf } from './lib/memberFamily';
+import { familyOfPlacement, familyReads, memberFamilyOf } from './lib/memberFamily';
 import { EMPTY_OWN_EXITS, type OwnExits } from './lib/ownExits';
 import { OWN_EXITS_STATE_KEY } from './ownExits';
 import { recordHeartbeat } from './cronHeartbeat';
@@ -460,7 +460,9 @@ export async function carriedCountry(
 
 /**
  * Daily (`region-seen-expire`): guesses past `stickyDays`, and every guess
- * while detection is off. Bounded pages, rescheduled until done.
+ * while detection is off. Bounded pages, rescheduled until done, with no cap on
+ * the rounds: a cleared row leaves the index, so the walk ends, and no guess
+ * the run is due to clear waits for another day.
  */
 export const sweepGuesses = internalMutation({
   args: { now: v.optional(v.number()), rounds: v.optional(v.number()) },
@@ -474,7 +476,7 @@ export const sweepGuesses = internalMutation({
       .withIndex('by_region_seen_at', (q) => q.gt('regionSeenAt', 0).lt('regionSeenAt', cutoff))
       .take(PAGE);
     for (const s of rows) await setStoredCountry(ctx, s, { guess: null }, { cfg, listed, now });
-    if (rows.length === PAGE && (a.rounds ?? 0) < 50)
+    if (rows.length === PAGE)
       await ctx.scheduler.runAfter(0, internal.memberCountry.sweepGuesses, {
         now,
         rounds: (a.rounds ?? 0) + 1,
@@ -514,9 +516,11 @@ export const sweepCountry = internalMutation({
 });
 
 /**
- * Idempotent clean-up (every deploy, `seedCutover`): a stored choice that is no
- * longer on the list, and any country on a key that is not freedom-family.
- * Walks only rows that hold a choice or a guess.
+ * Idempotent clean-up (every deploy, `seedCutover` schedules it): a stored
+ * choice that is no longer on the list, and any country on a key that is not
+ * freedom-family. Walks only rows that hold a choice or a guess. What judging
+ * a key reads beyond the key and its member is read once per page, so a page
+ * stays far inside one execution's reads however many modes are bound.
  */
 export const cleanStoredCountries = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())), pass: v.optional(v.string()) },
@@ -533,10 +537,11 @@ export const cleanStoredCountries = internalMutation({
             .query('subscriptions')
             .withIndex('by_region_seen_at', (q) => q.gt('regionSeenAt', 0))
             .paginate({ cursor: a.cursor ?? null, numItems: PAGE });
+    const reads = familyReads();
     let cleared = 0;
     for (const s of page.page) {
-      if ((await memberFamilyOf(ctx.db, s)) !== 'freedom') {
-        await clearMemberCountry(ctx, s);
+      if ((await memberFamilyOf(ctx.db, s, undefined, reads)) !== 'freedom') {
+        await setStoredCountry(ctx, s, { guess: null, choice: null }, { cfg, listed });
         cleared++;
       } else if (s.sniRegion && !liveChoice(fieldsOf(s), listed)) {
         await setStoredCountry(ctx, s, { choice: null }, { cfg, listed });
