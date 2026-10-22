@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import {
   assess,
+  branchName,
   endOfLife,
   EOL_WARN_DAYS,
   fmt,
@@ -62,6 +63,20 @@ describe('node security watch', () => {
     expect(endOfLife(22, schedule, new Date('2027-05-02T00:00:00Z'))!.days).toBeLessThan(0);
     expect(endOfLife(30, schedule, now)).toBeNull();
     expect(endOfLife(22, null, now)).toBeNull();
+  });
+
+  test('the PR branch changes whenever the set of re-pinned refs does', () => {
+    // The workflow skips a branch whose PR exists in any state. Named by target
+    // versions alone, a partial re-pin (one lookup failed) would share its name
+    // with the later run that fixes the rest, and that run would be skipped.
+    const a = 'docker/a.Dockerfile=node:24.22.1-bookworm-slim@sha256:x';
+    const b = 'docker/b.Dockerfile=node:24.22.1-bookworm-slim@sha256:x';
+    const partial = branchName(['24.22.1'], [a]);
+    const full = branchName(['24.22.1'], [a, b]);
+    expect(partial).toMatch(/^node-security\/24\.22\.1-[0-9a-f]{8}$/);
+    expect(full).not.toBe(partial);
+    // Same change set, any order or repeats: same branch, so a re-run dedupes.
+    expect(branchName(['24.22.1'], [b, a, a])).toBe(full);
   });
 
   test('parses a pin and rewrites only the version and digest', () => {

@@ -33,6 +33,7 @@
 // schedule closes that gap: a pinned major within EOL_WARN_DAYS of its end is
 // written to --eol, and the workflow keeps one issue open per such major.
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { appendFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -104,6 +105,18 @@ export function endOfLife(major, schedule, now) {
   return { end, days };
 }
 
+/**
+ * The PR branch for one run's re-pins. It names the target versions and hashes
+ * the exact set of rewritten refs: the workflow skips a branch whose PR exists
+ * in any state, so a run that re-pins more (say, the pin a failed lookup left
+ * behind last time) must land on a new branch, not on the old PR's name.
+ */
+export function branchName(targets, changes) {
+  const set = [...new Set(changes)].sort().join('\n');
+  const hash = createHash('sha256').update(set).digest('hex').slice(0, 8);
+  return `node-security/${targets.join('+')}-${hash}`;
+}
+
 export function renderPin(pin, version, digest) {
   return `${pin.prefix}node:${fmt(version)}-${pin.variant}@${digest}${pin.rest}`;
 }
@@ -160,8 +173,17 @@ async function main() {
   }
   const now = new Date();
 
+  // One lookup per ref per run, so every pin moving to the same image moves
+  // together: a transient registry failure cannot split them across PRs.
+  const digests = new Map();
+  const digestOf = (ref) => {
+    if (!digests.has(ref)) digests.set(ref, imageDigest(ref));
+    return digests.get(ref);
+  };
+
   const rows = [];
   const targets = new Set();
+  const changes = [];
   const eol = new Map(); // major -> { end, days, pins }
   let changed = false;
   for (const file of dockerfiles(root)) {
@@ -191,7 +213,8 @@ async function main() {
         continue;
       }
       row.security = security.map(fmt).join(', ');
-      const digest = apply ? imageDigest(`node:${fmt(latest)}-${pin.variant}`) : null;
+      const ref = `node:${fmt(latest)}-${pin.variant}`;
+      const digest = apply ? digestOf(ref) : null;
       if (!apply) {
         rows.push({ ...row, status: `behind a security release; would move to ${fmt(latest)}` });
       } else if (!digest) {
@@ -203,6 +226,7 @@ async function main() {
         lines[line - 1] = renderPin(pin, latest, digest);
         fileChanged = true;
         targets.add(fmt(latest));
+        changes.push(`${file}=${ref}@${digest}`);
         rows.push({ ...row, status: `re-pinned to ${fmt(latest)}` });
       }
     }
@@ -268,7 +292,7 @@ async function main() {
   if (outFile) {
     appendFileSync(
       outFile,
-      `changed=${changed}\nbranch=node-security/${list.join('+')}\ntitle=${title}\n`,
+      `changed=${changed}\nbranch=${branchName(list, changes)}\ntitle=${title}\n`,
     );
   }
 }

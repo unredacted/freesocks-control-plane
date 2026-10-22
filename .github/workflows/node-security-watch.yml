@@ -63,9 +63,10 @@ jobs:
           BRANCH: ${{ steps.check.outputs.branch }}
         run: |
           set -euo pipefail
-          # Open, merged or closed: once a PR exists for this exact set of
-          # versions a person has it. Closing one unmerged is how to say "not
-          # this one"; the next security release opens a fresh PR.
+          # Open, merged or closed: once a PR exists for this exact change (the
+          # branch hashes every rewritten ref) a person has it. Closing one
+          # unmerged is how to say "not this one"; a different change, such as
+          # a pin a failed lookup left behind, gets a new branch and PR.
           n="$(gh pr list --state all --head "$BRANCH" --json number --jq 'length')"
           if [ "$n" != "0" ]; then
             echo "a PR for $BRANCH already exists"
