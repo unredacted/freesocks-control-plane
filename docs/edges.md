@@ -2764,8 +2764,9 @@ documentation (re-read 2026-10-21):
 
 - `X-Forwarded-For`: a rule may remove it, but the proxy adds it back with the member's address
   after every rule phase, managed transforms included, so the rule does not ask;
-- `CF-Connecting-IPv6`, sent while the zone's Pseudo IPv4 is on (`add_header` or
-  `overwrite_header`), and every other `cf-` or `x-cf-` header: rules may not touch them;
+- `CF-Connecting-IPv6` and `CF-Pseudo-IPv4` (a hash of the member's IPv6 address), sent while
+  the zone's Pseudo IPv4 is on (`add_header` or `overwrite_header`), and every other `cf-` or
+  `x-cf-` header: rules may not touch them;
 - `True-Client-IP` (Enterprise only, through a managed transform), `X-Real-IP` (Cloudflare drops
   it unless a Worker runs) and `Forwarded`: no documented removal, so they stay off the list
   until a front built with one shows it gone in a capture at a node (the Fastly lesson: one name
@@ -2827,7 +2828,8 @@ enrolled node's certificate (its origin name only) never carries, so enrolled no
 under Full: the location check reports it (`zone_ssl_not_strict`) and does not refuse it. This is
 where a Cloudflare front falls short of a Fastly one, which verifies the node's certificate
 against the name it dials. Closing it needs the front to present the node's own name (an Origin
-Rule SNI override, unverified) or nodes with a certificate for the front's name; neither is built.
+Rule SNI override, which Cloudflare offers on Enterprise plans only, as it does the Host header
+override) or nodes with a certificate for the front's name; neither is built.
 
 **Long-lived WebSockets.** The zone's WebSockets setting must be on (`zone_websockets_off`
 otherwise). Cloudflare publishes no idle timeout for a proxied WebSocket (it closes one after a

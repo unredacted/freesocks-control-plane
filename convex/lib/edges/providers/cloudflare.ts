@@ -302,8 +302,9 @@ export function originRuleTargetsHost(expression: unknown, hostname: string): bo
  *  - `X-Forwarded-For`: a rule may remove it, but the proxy adds it back with
  *    the member's address after every rule phase, managed transforms included;
  *    asking would change nothing, so it is not asked;
- *  - `CF-Connecting-IPv6` (sent while the zone's Pseudo IPv4 is on) and every
- *    other `cf-` header (`CF-IPCountry`, `CF-Ray`, `CF-Visitor`): refused.
+ *  - `CF-Connecting-IPv6` and `CF-Pseudo-IPv4` (sent while the zone's Pseudo
+ *    IPv4 is on) and every other `cf-` header (`CF-IPCountry`, `CF-Ray`,
+ *    `CF-Visitor`): refused.
  * A name joins this list only once a front built with it shows it gone in a
  * capture at the node: Cloudflare documents no removal of `True-Client-IP`,
  * `X-Real-IP` or `Forwarded`, and a list is no proof (one name Fastly refused
