@@ -93,13 +93,29 @@ export interface FastlyConfig {
   /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
   dns?: CloudflareDnsConfig;
 }
+export interface CloudFrontConfig {
+  type: 'cloudfront';
+  /** The IAM access key's public id (a settings identifier, rotates with the secret). */
+  accessKeyId: string;
+  secretAccessKey: string;
+  /**
+   * Always `wildcard`: every front of the account in one zone serves the
+   * zone's one ACM certificate (`*.<zone>`). A certificate option so the
+   * intent freezes it like Fastly's, which the shared-certificate locks and
+   * watch read.
+   */
+  certificateScope?: 'wildcard';
+  /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
+  dns?: CloudflareDnsConfig;
+}
 export type EdgeProviderConfig =
   | GcoreConfig
   | UpcloudConfig
   | ScalewayConfig
   | OvhConfig
   | CloudflareConfig
-  | FastlyConfig;
+  | FastlyConfig
+  | CloudFrontConfig;
 
 // --- what to build -----------------------------------------------------------------
 

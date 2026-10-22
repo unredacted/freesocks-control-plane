@@ -78,6 +78,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   ovh: 'OVH',
   cloudflare: 'Cloudflare',
   fastly: 'Fastly',
+  cloudfront: 'Amazon CloudFront',
 };
 export const providerLabel = (id: string | null | undefined): string =>
   id ? (PROVIDER_LABELS[id] ?? id) : 'Imported';

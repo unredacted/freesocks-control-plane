@@ -37,6 +37,8 @@ const EMPTY_TEMPLATE_HASHES: Record<string, string> = {
   ovh: '924d8c407f90e7a4',
   cloudflare: '8c7bb1602794a08e',
   fastly: '5cfb164e8072eb8e',
+  // Its first schema (added with every option optional): pinned from the start.
+  cloudfront: 'cc4939d2bf8fe80e',
 };
 
 type Node = {

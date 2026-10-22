@@ -31,6 +31,10 @@ export interface RecordedCall {
 export interface RecorderReply {
   status: number;
   body?: unknown;
+  /** A body sent as it is (an XML answer), instead of `body` as JSON. */
+  raw?: string;
+  /** Extra response headers (an `ETag`). */
+  headers?: Record<string, string>;
   contentType?: string;
   /** Destroy the socket instead of answering (a transport failure). */
   abort?: boolean;
@@ -88,10 +92,16 @@ export async function startHttpRecorder(initial: RecorderRoute): Promise<HttpRec
         res.destroy();
         return;
       }
-      const payload = reply.body === undefined ? '' : JSON.stringify(reply.body);
+      const payload =
+        reply.raw !== undefined
+          ? reply.raw
+          : reply.body === undefined
+            ? ''
+            : JSON.stringify(reply.body);
       res.writeHead(reply.status, {
         'content-type': reply.contentType ?? 'application/json',
         'content-length': Buffer.byteLength(payload),
+        ...(reply.headers ?? {}),
       });
       res.end(payload);
     });

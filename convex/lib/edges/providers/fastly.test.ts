@@ -2337,6 +2337,28 @@ describe("fastly: a front location's check asks whether the zone lets the CA iss
     });
   });
 
+  test('a zone that flattens every CNAME is refused: the CA would never see the challenge', async () => {
+    await serve();
+    const dns = fakeDns();
+    caaZone({});
+    dns.flattensAllCnames = async () => true;
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({
+      ok: false,
+      code: 'zone_flattens_cnames',
+      observed: { cnameFlattening: 'all' },
+    });
+    dns.flattensAllCnames = async () => false;
+    expect(await fastlyProvider.checkLocation!(cfg)).toMatchObject({
+      ok: true,
+      observed: { cnameFlattening: 'root' },
+    });
+    // A token that may not read the setting: no refusal on a guess.
+    dns.flattensAllCnames = async () => null;
+    const unknown = await fastlyProvider.checkLocation!(cfg);
+    expect(unknown.ok).toBe(true);
+    expect(unknown.observed?.cnameFlattening).toBeUndefined();
+  });
+
   test('a record allowing the CA passes, and says where it was decided', async () => {
     await serve();
     fakeDns();

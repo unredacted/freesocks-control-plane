@@ -349,6 +349,22 @@ export function cloudflareDnsClient(cfg: CloudflareDnsConfig, fetchImpl?: FetchL
       };
     },
 
+    async flattensAllCnames(): Promise<boolean | null> {
+      try {
+        const setting = await cfCall(
+          'location',
+          () => client.zones.settings.get('cname_flattening', { zone_id }),
+          [cfg.apiToken],
+        );
+        const value = (setting as unknown as { value?: unknown }).value;
+        return value === 'flatten_all' ? true : value === 'flatten_at_root' ? false : null;
+      } catch (e) {
+        // A token without Zone Settings Read: unknown, never a refusal.
+        if (e instanceof EdgeProviderError && (e.meta.status ?? 500) < 500) return null;
+        throw e;
+      }
+    },
+
     async listCaa(): Promise<Array<{ flags: number; tag: string; value: string }>> {
       const apex = normalizeDnsName(cfg.zoneName);
       const page = await cfCall(
