@@ -473,7 +473,11 @@ describe('retiring a node', () => {
       now,
     );
     expect(current(asked)!.key).toBe('decision');
-    expect(current(asked)!.why).toMatch(/Decide below/);
+    expect(current(asked)!.why).toMatch(/serves members meanwhile/);
+    expect(current(asked)!.why).toMatch(/reject the request/);
+    // The node is closed only once the request is decided.
+    expect(asked.map((s) => s.key).slice(0, 2)).toEqual(['decision', 'closed']);
+    expect(asked.find((s) => s.key === 'closed')!.state).toBe('todo');
     // Once decided, the decision is a done step.
     const decided = retirementSteps(
       { adopted: false, retirement: r({ requestedBy: 'role', decision: true, step: 'dns' }) },
@@ -538,8 +542,22 @@ describe('enrolled nodes', () => {
     expect(stageWords({ ...base, stage: 'live', maintenance: true }).sentence).toMatch(
       /maintenance/,
     );
+    // A role's request leaves the node serving until the admin decides.
     expect(
-      stageWords({ ...base, stage: 'live', retirement: { stage: 'needs_admin' } }).sentence,
+      stageWords({
+        ...base,
+        stage: 'live',
+        disposition: 'live',
+        retirement: { stage: 'needs_admin' },
+      }).sentence,
+    ).toBe('The node role asked to retire it. It serves members until you decide.');
+    expect(
+      stageWords({
+        ...base,
+        stage: 'live',
+        disposition: 'retiring',
+        retirement: { stage: 'needs_admin' },
+      }).sentence,
     ).toMatch(/decision/);
     expect(
       stageWords({

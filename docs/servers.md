@@ -329,7 +329,10 @@ FCP finds its own addresses by the uuids it recorded, and the remark only has to
 An address it wrote but has not recorded yet (a lost create) is found again only on the node's own
 transport and only under the remark FCP gives one of the transport's server names: an operator's
 Host whose remark merely starts with `<node> | `, or that sits on another transport, is never the
-node's, so a reconcile or a retirement never deletes it (`nodeIntents.ts` `addressesOf`).
+node's, so a reconcile or a retirement never deletes it (`nodeIntents.ts` `addressesOf`). An
+ADOPTED node's addresses are the ones it was adopted with (§ Adopting a backend): a reconcile
+neither adds one per server name nor removes, re-remarks or re-addresses one, whatever remark
+the operator gave it.
 
 The backend names every entry of a subscription body after its Host's remark, and the remark is
 how FCP reads which node an entry belongs to: node pinning (`lib/nodePinning.ts`
@@ -418,7 +421,9 @@ somebody else's.
 Refused before anything is sent: a name a node has or had, or that another running rename is
 giving its node (`servers.node_name_taken`, checked again right before the backend write), or one
 removed on purpose (`servers.tombstoned`); a node retiring, with its own work in flight, or
-already being renamed (`servers.node_rename_running`); an origin in front of it that is rotating,
+already being renamed (`servers.node_rename_running`); an adopted node with an address whose
+remark is not one of FCP's forms (`servers.node_rename_foreign_hosts`: the rename would leave it
+naming the old name, and the remark is the operator's); an origin in front of it that is rotating,
 restoring, quarantined or mid-setup, whose Hosts the operator writes or adopted
 (`servers.node_rename_foreign_hosts`: those remarks are theirs), for which the name is not a DNS
 label (`servers.node_name_origin`: origins keep it as one) or would make a Host remark longer
@@ -566,15 +571,15 @@ While freedom modes are only served through edges (`edge.freedom.edgesOnly`, doc
 and for a mode a change adds. A mode the backend already carries direct is kept (its shape cannot
 change); its nodes are withheld from its members while no edge covers them.
 
-| Step       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| observe    | A fresh look at the backend; everything below reads the cache.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| families   | Every REALITY mode's family must exist, be on, and have a usable (qualified, active) name today: `servers.family_missing`, `servers.family_empty`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| profile    | The profile by name: adopted when compatible (`lib/backend/profileCompat.ts`: per mode the transport found under the mode's tag or a tag an earlier setup gave it, checked for protocol, network, security, listen, port, path, names, target and a usable key; keys and short ids never touched; an adopted tag is kept, since a backend keys transports by tag), otherwise created from the template (`lib/backend/profileTemplate.ts`: one transport per mode, born with the privacy posture, each REALITY transport with its family's target and usable names and its own key pair generated inside the claimed attempt). `servers.profile_incompatible:<tag>:<field>`. |
-| bind       | Each REALITY transport is bound to its family (`sniFamilies.bind`, by the transport's own uuid, since a tag is unique per profile and not per backend): the family is the one authoritative allowlist from then on, and later name changes are rollouts (docs/edges.md). An adopted transport forwarding elsewhere than the family's target is `servers.family_target_mismatch`; one already bound to a DIFFERENT family is `servers.family_bound_elsewhere:<slug>` (that family's rollouts own its names, so an admin unbinds it or the mode names that family).                                                                                                           |
-| groups     | Each mode's group, found under its name, or under a name an earlier setup gave the same mode (`FreeSocks-Reality` → `Privacy-Reality`, `FreeSocks-Relay` → `Freedom-Reality`, `FreeSocks-Fronted`/`FreeSocks-Fastly` → `Freedom-WebSocket`) and **renamed in place** through the ledger (its id and every member assignment survive; audited `servers.setup.group_renamed`), else created; carrying EXACTLY the mode's transport (a transport an earlier release left in the group is removed: a mode grants one way in).                                                                                                                                                   |
-| placements | Each group into its mode's pool (`addSquadUuids`). A mode that does not exist is recorded `skipped` and blocks activation of its nodes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| templates  | The four subscription templates (`lib/backend/subscriptionTemplates/`, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches. Kept current afterwards by the sweep ("Templates after setup").                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Step       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| observe    | A fresh look at the backend; everything below reads the cache.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| families   | Every REALITY mode's family must exist, be on, and have a usable (qualified, active) name today: `servers.family_missing`, `servers.family_empty`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| profile    | The profile by name: adopted when compatible (`lib/backend/profileCompat.ts`: per mode the transport found under the mode's tag or a tag an earlier setup gave it, checked for protocol, network, security, listen, port, path, names, target and a usable key; keys and short ids never touched; an adopted tag is kept, since a backend keys transports by tag), otherwise created from the template (`lib/backend/profileTemplate.ts`: one transport per mode, born with the privacy posture, each REALITY transport with its family's target and usable names and its own key pair generated inside the claimed attempt). `servers.profile_incompatible:<tag>:<field>`.                                                      |
+| bind       | Each REALITY transport is bound to its family (`sniFamilies.bind`, by the transport's own uuid, since a tag is unique per profile and not per backend): the family is the one authoritative allowlist from then on, and later name changes are rollouts (docs/edges.md). An adopted transport forwarding elsewhere than the family's target is `servers.family_target_mismatch`; one already bound to a DIFFERENT family is `servers.family_bound_elsewhere:<slug>` (that family's rollouts own its names, so an admin unbinds it or the mode names that family).                                                                                                                                                                |
+| groups     | Each mode's group, found under its name, or under a name an earlier setup gave the same mode (`FreeSocks-Reality` → `Privacy-Reality`, `FreeSocks-Relay` → `Freedom-Reality`, `FreeSocks-Fronted`/`FreeSocks-Fastly` → `Freedom-WebSocket`) and **renamed in place** through the ledger (its id and every member assignment survive; audited `servers.setup.group_renamed`), else created; carrying EXACTLY the mode's transport (a transport an earlier release left in the group is removed: a mode grants one way in). On an ADOPTED backend a group with members never loses a transport an enabled Host serves: before any group is written the run stops with `servers.adopt_group_narrows:<slug>`, every group as it was. |
+| placements | Each group into its mode's pool (`addSquadUuids`). A mode that does not exist is recorded `skipped` and blocks activation of its nodes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| templates  | The four subscription templates (`lib/backend/subscriptionTemplates/`, YAML byte-exact) reconciled on drift; a refused write (401/403) blocks activation unless the live template already matches. Kept current afterwards by the sweep ("Templates after setup").                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 A ready row that still records a blocker (a drifted or refused template, a skipped placement, an
 unbound family, drifted privacy) is re-run on the next request so the blocker can clear. The
@@ -650,8 +655,14 @@ A backend that already has nodes or addresses, and that FCP does not write yet (
 quietly set up: `start` refuses with `servers.adopt_required` until the request carries
 `adopt: true` (the sheet's typed confirmation). Adopting means FCP becomes the backend's writer
 as it is: the profile is adopted under its existing tags, groups an earlier setup named are
-renamed in place, and nothing a member holds changes. The setup row records `adopted`; a change
-of the setup later never sets it.
+renamed in place, and no member loses a way in: a group with members that grants a transport an
+enabled Host serves, beside its mode's, stops the run before any group is written
+(`servers.adopt_group_narrows:<slug>`; the operator takes that transport out of the group, or
+moves those members to a group of their own, and sets up again). What does change for members is
+their app's configuration: the templates step installs FCP's four subscription templates in
+place of the backend's (`mode: rule`, `allow-lan: false`, FCP's cache names), which members' apps
+take at their next refresh; some apps pick their server again once. Nothing about how they
+connect moves. The setup row records `adopted`; a change of the setup later never sets it.
 
 **Adopting a node** (`POST {slug}/nodes/adopt {nodeUuid, mode, externallyFronted?}`,
 `nodeIntents.adoptNode`): a backend node that already serves members becomes an enrolled node
@@ -660,7 +671,18 @@ by remark or address) become its committed set; evidence and approval are synthe
 `adopted`. A fronted node whose edge FCP does not run yet (an earlier tool made it) is
 `externallyFronted`: it needs no standbys and no origin name until Edges protects it, one node at
 a time, through the normal flow. The role is never run for an adopted machine, which is also why
-its retirement is closed by an admin rather than by a report (below).
+its retirement is closed by an admin rather than by a report (below), and a role `PUT` under its
+name is refused (`servers.node_adopted`).
+
+An adopted node is **reconciled as it was adopted**, so the reconciles a rename, a settled port
+change, Finish maintenance or a settings change schedule leave what members hold alone: its row
+keeps the port it talks to the backend on and every transport it served when adopted
+(`adopted.activeInboundUuids`; members of other groups may reach the node on them), and its
+recorded addresses are authoritative: none is created per server name, none deleted, re-remarked
+or re-addressed for not matching FCP's remark scheme, so a remark the operator chose is never
+drift. A revision that moves under its evidence (the REALITY material, a foreign profile edit)
+still closes it as drift. A rename moves only FCP's remark forms, so an adopted node with an
+address under any other remark is not renamed (`servers.node_rename_foreign_hosts`).
 
 ### Moving to modes
 
@@ -911,9 +933,19 @@ check (`machine_ready`); for a run that never reports, the end of its 20 minutes
 (`nodeIntents.afterRoleRunWindow`, scheduled when the check was skipped, since a ready node is
 not on the sweep).
 
+**A report at another address is an endpoint move.** A `PUT` whose management address, public
+v4 or (when published) v6 differs from the last one never just re-points the node: whoever holds
+the node's token, or the fleet token, must not move where members go. What was proved at the old
+address no longer holds, so the node gets a new machine revision (the role applies it, and the
+machine check runs again), and a node that is `live` or `activating` closes in the report's own
+transaction, before any reconcile rewrites its origin record or its addresses (a live one under a
+maintenance transition, reason `drift`, audited `servers.node.drift` with `kind: endpoint`). It
+reopens only through Finish maintenance, the checks and a fresh approval.
+
 Refusals. `PUT`: `servers.manage_disabled`, `servers.contract_version`,
 `servers.panel_not_set_up`, `servers.mode_unknown`, `servers.node_retiring`,
-`servers.mode_change_needs_admin`, `servers.node_exists_unowned` (a backend node or Host of that
+`servers.mode_change_needs_admin`, `servers.node_adopted` (the node was adopted: no role runs its
+machine), `servers.node_exists_unowned` (a backend node or Host of that
 name no intent owns: an admin adopts first), `servers.tombstoned` (an admin restores),
 `servers.origin_label_invalid`, `validation`. `bootstrap`: `servers.node_retiring`,
 `servers.unsupported_backend`. `applied`: `servers.revision_stale` (the configuration moved on:
@@ -927,7 +959,8 @@ and `POST {slug}/holds/{id}/release` ends one. `POST {slug}/nodes/adopt` adopts 
 Admin routes on `{slug}/nodes/intents/{id}`: `GET review`, `POST test-link`, `POST confirm`,
 `POST approve {reviewHash}`, `POST settings {patch, maintenance}`, `POST maintenance {start:
 true}` (close the node for maintenance) and `POST maintenance` (finish),
-`POST retire [{disposition}]`, `POST wiped` (an ADOPTED node's machine confirmed gone by an
+`POST retire [{disposition}]`, `POST reject-retirement` (turn down the node role's retirement
+request; the node keeps serving), `POST wiped` (an ADOPTED node's machine confirmed gone by an
 admin, since no role runs it; the role's own `POST {slug}/nodes/by-name/{name}/wiped` does this
 for a machine FCP bootstrapped).
 
@@ -955,7 +988,12 @@ Records are **obligations** (`backendObligations`, kind `dns.record`) persisted 
 with the account, zone, marker `fcp-origin:<slug>:<name>` and expected content; an uncertain
 answer is discovered by name and marker before anything is sent again; a record FCP did not
 write, or a CNAME at the name, is `servers.origin_name_taken`, never replaced; FCP's own record
-with other content is replaced. Cleanup uses the obligation's own account and zone.
+with other content is replaced. Cleanup uses the obligation's own zone, through its own account
+or, once that account is gone (another account holding the same zone replaced it, and it was
+removed), through the account the setup uses for that zone now: the marker, not the account,
+makes a record FCP's, so a retirement never waits forever on an account that no longer exists. A
+node given a hostname of its own (`explicitHostname`) has its managed record withdrawn at its next
+reconcile.
 
 `created` and `resolves` are distinct, and the order is fixed: **FCP proves resolution before
 the role applies.** The role waits for the view's `origin.dns` to say `resolves` (or `none`)
@@ -981,11 +1019,21 @@ by name and marker), never by rule.
 ### Retirement
 
 `DELETE …/by-name/{name}` only records the request. Whenever the node was ever live or anything
-of it is still out there, the retirement is `needs_admin`; the admin decides `keep-dark` (its
-members get the edge-required unavailable answer). An admin's own retire (the node page's header
-More menu, "Retire node…", a typed-name confirm) IS that decision: it starts the ladder keep-dark
-at once (`nodeRetirement.startIfPlain`), audited with the admin. Either way the gate closes the
-moment the retirement is recorded: members lose the node at once. Moving the members to another node is not
+of it is still out there, the retirement is `needs_admin` and **nothing else changes**: the node
+keeps serving its members while it waits, so a wrong-host run or a leaked fleet token takes no
+node away. The admin decides `keep-dark` ("Decide the retirement": the gate closes then, and its
+members get the edge-required unavailable answer) or rejects the request ("Reject the request",
+`POST {slug}/nodes/intents/{id}/reject-retirement`: the retirement ends `rejected`, the node is
+free of it, audited `servers.node.retire_rejected`; the role may ask again). A request an earlier
+release recorded had already closed the node, and is only decided. A role's request for a node
+never live with nothing outstanding starts the ladder at once. An admin's own retire (the node
+page's header More menu, "Retire node…", a typed-name confirm) IS that decision: it starts the
+ladder keep-dark at once (`nodeRetirement.startIfPlain`), audited with the admin. Whenever the
+ladder starts, the gate closes in the same transaction: members lose the node at once. The node
+is the retirement's alone from then on: its generation moves and its lease goes, so an attempt
+that read it before records nothing (`progress` and `loadForRun` refuse a retiring node), opens no
+obligation, and the sweep resumes nothing for it; a record write still outstanding is waited for
+while its attempt could still run, then found by name and marker and withdrawn. Moving the members to another node is not
 offered: a `migrate` disposition is refused with `servers.migration_not_built`. Never
 `restore-direct`. The ladder: `draining` (the origin deleted keep-dark, credentials released,
 the direct Host deleted, DNS withdrawn) → `panel_removed` (the row removed with `removeOnly`, the

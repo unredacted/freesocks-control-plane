@@ -360,6 +360,12 @@ export const enroll = internalMutation({
     if (intent) {
       if (intent.state === 'retiring' || intent.state === 'retired')
         refuse('servers.node_retiring', 'This node is being retired. Enroll it under a new name');
+      // Adopted as it was: no role runs its machine (docs/servers.md "Adopting a backend").
+      if (intent.adopted)
+        refuse(
+          'servers.node_adopted',
+          'This node was adopted as it was. The node role does not run its machine',
+        );
       if (modeSlug(intent) !== a.mode)
         refuse(
           'servers.mode_change_needs_admin',
@@ -368,14 +374,16 @@ export const enroll = internalMutation({
       const desiredHash = await desiredHashOf({ observed: o, settings: intent.settings });
       const changed = desiredHash !== intent.desiredHash;
       fenceAttempt = !changed && intent.appliedRevision === intent.machineRevision;
+      const reported = { ...intent, observed: { ...o, at: now } };
       await ctx.db.patch(intent._id, {
-        observed: { ...o, at: now },
+        observed: reported.observed,
         contractVersion: a.contractVersion,
         desiredHash,
         generation: changed ? intent.generation + 1 : intent.generation,
         tokenId: a.tokenId,
         // A run that omits it keeps the last one reported.
         ...(machineName ? { machineName } : {}),
+        ...(endpointMoved(intent, o) ? await movedEndpoint(ctx, reported, now) : {}),
         updatedAt: now,
       });
       intent = (await ctx.db.get(intent._id))!;
@@ -468,7 +476,10 @@ export const enroll = internalMutation({
  * them. The node row must already run the mode's transport; a direct node's
  * addresses (those carrying its name or its address) become its committed
  * set. A fronted node whose edge FCP does not run yet is `externallyFronted`
- * until Edges protects it. The role is never run for an adopted machine.
+ * until Edges protects it. The role is never run for an adopted machine. Its
+ * row keeps its port and every transport it serves, and its addresses keep
+ * their remarks: a reconcile never narrows it, nor adds or removes an address
+ * by FCP's remark scheme.
  */
 export const adoptNode = internalMutation({
   args: {
@@ -524,6 +535,8 @@ export const adoptNode = internalMutation({
     const now = Date.now();
     const settings = defaultSettings(setup!, a.mode);
     if (isWs(mode.shape)) settings.originHostnameSource = 'explicit';
+    // The port it talks to the backend on stays: its row is reconciled as it is.
+    if (node.port) settings.nodePort = node.port;
     const observed: Intent['observed'] = {
       management: { address: node.address ?? '', port: node.port ?? 2222 },
       publicIps: node.address && IPV4.test(node.address) ? { v4: node.address } : {},
@@ -576,7 +589,11 @@ export const adoptNode = internalMutation({
       origin: { dns: 'none' },
       nodeUuid: node.nodeUuid,
       addressUuids: addresses.map((h) => h.hostUuid),
-      adopted: { at: now, externallyFronted: !direct && a.externallyFronted === true },
+      adopted: {
+        at: now,
+        externallyFronted: !direct && a.externallyFronted === true,
+        activeInboundUuids: node.activeInboundUuids,
+      },
       registeredAt: now,
       updatedAt: now,
     });
@@ -729,6 +746,55 @@ async function revisedForSettings(
     generation: intent.generation + 1,
     updatedAt: now,
   };
+}
+
+/** Where the node is reached moved: its management address, its public v4, or a v6 it publishes. */
+function endpointMoved(intent: Intent, o: Infer<typeof observed>): boolean {
+  const was = intent.observed;
+  return (
+    was.management.address !== o.management.address ||
+    (was.publicIps.v4 ?? null) !== (o.publicIps.v4 ?? null) ||
+    (intent.settings.publishV6 && (was.publicIps.v6 ?? null) !== (o.publicIps.v6 ?? null))
+  );
+}
+
+/**
+ * The role reported the node at another address (docs/servers.md "Node
+ * registration"). What was proved at the old one (the machine check, the
+ * ingress, a direct tick, the standbys) no longer holds: a new machine
+ * revision, applied and checked again. A node members are served from closes
+ * HERE, in the report's own transaction, before a reconcile rewrites its
+ * origin record or its addresses: whoever holds the node's token never moves
+ * where members go. It reopens only through Finish maintenance and a fresh
+ * approval. `intent` carries the new observations.
+ */
+async function movedEndpoint(ctx: MutationCtx, intent: Intent, now: number) {
+  const patch = await revisedForSettings(ctx, intent, intent.settings, now);
+  const d = intent.delivery.disposition;
+  if (d !== 'live' && d !== 'activating') return patch;
+  patch.delivery = { ...intent.delivery, disposition: d === 'live' ? 'unavailable' : 'staged' };
+  if (d === 'live')
+    patch.maintenance = intent.maintenance ?? {
+      id: crypto.randomUUID(),
+      reason: 'drift',
+      since: now,
+    };
+  await bumpGateVersion(ctx, intent.backendServerId);
+  if (d === 'live') await scheduleMirrorRefresh(ctx);
+  const server = await ctx.db.get(intent.backendServerId);
+  await writeAuditLog(ctx, {
+    actorType: 'system',
+    action: 'servers.node.drift',
+    targetType: 'panel_node_intent',
+    targetId: intent._id,
+    payload: {
+      backendSlug: server?.slug ?? '',
+      name: intent.name,
+      kind: 'endpoint',
+      wasLive: d === 'live',
+    },
+  });
+  return patch;
 }
 
 /**
@@ -968,11 +1034,14 @@ export const applied = internalMutation({
 
 // --- what the run reads and records ----------------------------------------------------------------
 
+/** Being retired: the node is the retirement's alone, and no attempt reads or records it. */
+const retiring = (i: Intent): boolean => i.state === 'retiring' || i.state === 'retired';
+
 export const loadForRun = internalQuery({
   args: fence,
   handler: async (ctx, f) => {
     const intent = await ctx.db.get(f.intentId);
-    if (!intent || !fenceHolds(intent, f)) return null;
+    if (!intent || !fenceHolds(intent, f) || retiring(intent)) return null;
     return loadContext(ctx, intent);
   },
 });
@@ -1112,7 +1181,8 @@ export const observeRevisions = internalMutation({
     { configRevision, authRevision, hostMoved, addressAdded, ownChange, ...f },
   ) => {
     const intent = await ctx.db.get(f.intentId);
-    if (!intent || !fenceHolds(intent, f)) return { ok: false as const, drift: false };
+    if (!intent || !fenceHolds(intent, f) || retiring(intent))
+      return { ok: false as const, drift: false };
     const now = Date.now();
     const configMoved =
       intent.configRevision !== undefined && intent.configRevision !== configRevision;
@@ -1232,7 +1302,10 @@ export const progress = internalMutation({
   args: { ...fence, patch: progressPatch },
   handler: async (ctx, { patch, ...f }) => {
     const intent = await ctx.db.get(f.intentId);
-    if (!intent || !fenceHolds(intent, f)) return { ok: false as const };
+    // A retirement fences every attempt that read the node before it; this
+    // holds even for one whose lease it did not move (nothing puts the node
+    // back to pending or ready).
+    if (!intent || !fenceHolds(intent, f) || retiring(intent)) return { ok: false as const };
     const now = Date.now();
     const next: Partial<Intent> = { updatedAt: now };
     if (patch.state !== undefined) next.state = patch.state;
@@ -1346,13 +1419,21 @@ export const reconcile = internalAction({
       c = await load();
 
       // 1. The node row: create through the ledger, or bring the fields in line.
+      //    An adopted node keeps every transport it served when it was adopted
+      //    (members of other groups may reach it on them); FCP's own node
+      //    serves its mode's alone.
+      const adopted = c.intent.adopted;
       const want = {
         address: c.intent.observed.management.address,
         port: c.intent.settings.nodePort,
         countryCode: c.intent.settings.countryCode,
         configProfileUuid: setup.profileUuid!,
-        activeInboundUuids: [t.uuid],
+        activeInboundUuids: adopted
+          ? (adopted.activeInboundUuids ?? c.node?.activeInboundUuids ?? [t.uuid])
+          : [t.uuid],
       };
+      const sameSet = (x: readonly string[], y: readonly string[]) =>
+        x.length === y.length && x.every((u) => y.includes(u));
       if (!c.node) {
         const { opId } = await ctx.runMutation(internal.backendWrites.requestNodeCreate, {
           backendServerId: sid,
@@ -1385,8 +1466,7 @@ export const reconcile = internalAction({
           diff.countryCode = want.countryCode;
         if (
           c.node.configProfileUuid !== want.configProfileUuid ||
-          c.node.activeInboundUuids.length !== 1 ||
-          c.node.activeInboundUuids[0] !== t.uuid
+          !sameSet(c.node.activeInboundUuids, want.activeInboundUuids)
         ) {
           diff.configProfileUuid = want.configProfileUuid;
           diff.activeInboundUuids = want.activeInboundUuids;
@@ -1418,19 +1498,23 @@ export const reconcile = internalAction({
       //    taken, or a direct node's endpoint moving under one of its
       //    addresses, is observed drift: evidence goes, a live node closes
       //    (observeRevisions). A direct node has one address per name its
-      //    transport lists today (the family's rollouts move that list).
+      //    transport lists today (the family's rollouts move that list). An
+      //    adopted node's addresses are the ones it came with, under the
+      //    operator's remarks and endpoints: FCP neither adds one per name nor
+      //    removes one it did not write.
       const configRevision = `${c.profile?.changeToken ?? ''}:${t.uuid}`;
       const authRevision = c.inbound?.realityAuth?.digest ?? null;
       const direct = isDirect(shape);
       const liveNames = c.inbound?.reality?.serverNames ?? t.serverNames ?? [];
-      const wanted = direct
-        ? liveNames.map((sni) => ({
-            remark: addressRemark(c.intent.name, sni),
-            address: c.originAddress,
-            port: c.inbound?.port ?? t.port,
-            sni,
-          }))
-        : [];
+      const wanted =
+        direct && !adopted
+          ? liveNames.map((sni) => ({
+              remark: addressRemark(c.intent.name, sni),
+              address: c.originAddress,
+              port: c.inbound?.port ?? t.port,
+              sni,
+            }))
+          : [];
       // A compact remark is a short tag of the server name: two names may land
       // on the same tag. That is never collapsed into one address silently.
       if (new Set(wanted.map((w) => w.remark)).size < wanted.length) {
@@ -1441,7 +1525,9 @@ export const reconcile = internalAction({
         const w = wanted.find((x) => x.remark === h.remark);
         return w && (h.address !== w.address || h.port !== w.port || (h.sni ?? null) !== w.sni);
       });
-      const extra = c.addresses.filter((h) => !wanted.some((w) => w.remark === h.remark));
+      const extra = adopted
+        ? []
+        : c.addresses.filter((h) => !wanted.some((w) => w.remark === h.remark));
       // A name the family added: the address for it does not exist yet. What
       // members hold keeps working, so this is not drift; it is a CANDIDATE the
       // node has to be verified and approved for before it is delivered.
@@ -1854,12 +1940,14 @@ export const blockedNodeNames = internalQuery({
 // --- retirement request (the role) ---------------------------------------------------------------------
 
 /**
- * A node is to be retired. The gate closes at once either way (disposition
- * `retiring`: members lose the node now). From the role it is only a request:
- * the admin decides whenever the node was ever live or anything of it is still
- * out there (Hosts, an origin, DNS, credentials); otherwise the ladder starts
- * at once. From an admin it IS the decision (their confirm said so): the ladder
- * starts keep-dark at once (nodeRetirement.startIfPlain).
+ * A node is to be retired. From the role it is only a request: whenever the
+ * node was ever live or anything of it is still out there (Hosts, an origin,
+ * DNS, credentials) it waits for an admin (`needs_admin`) and NOTHING changes
+ * meanwhile: the node keeps serving its members until the admin retires it
+ * (nodeRetirement.decide) or rejects the request (nodeRetirement.reject).
+ * Otherwise the ladder starts at once. From an admin it IS the decision (their
+ * confirm said so): the gate closes and the ladder starts keep-dark at once
+ * (nodeRetirement.startIfPlain).
  */
 export const requestRetirement = internalMutation({
   args: {
@@ -1903,18 +1991,11 @@ export const requestRetirement = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
-    await ctx.db.patch(intentId, {
-      retirementId: id,
-      state: 'retiring',
-      delivery: { ...intent.delivery, disposition: 'retiring', acceptingAssignments: false },
-      updatedAt: now,
-    });
-    await bumpGateVersion(ctx, intent.backendServerId);
-    // The gate closed: mirrored bodies must stop carrying a node members had
-    // (as a maintenance close does), not wait for the mirror cron.
-    if (intent.delivery.disposition === 'live') await scheduleMirrorRefresh(ctx);
-    if (stage === 'requested')
+    if (stage === 'needs_admin') await ctx.db.patch(intentId, { retirementId: id, updatedAt: now });
+    else {
+      await closeForRetirement(ctx, intent, id);
       await ctx.scheduler.runAfter(0, internal.nodeRetirement.startIfPlain, { retirementId: id });
+    }
     const server = await ctx.db.get(intent.backendServerId);
     await writeAuditLog(ctx, {
       actorType: requestedBy === 'admin' ? 'admin' : 'system',
@@ -1927,6 +2008,32 @@ export const requestRetirement = internalMutation({
     return { retirementId: id, stage };
   },
 });
+
+/**
+ * Members lose the node now: the gate closes (disposition `retiring`) and the
+ * node is the retirement's alone. An attempt in flight read the node before,
+ * so the generation moves and its lease goes: nothing it records, opens or
+ * resumes puts the node back (`progress`, `loadForRun`, the intent's
+ * obligations refuse a retiring node).
+ */
+export async function closeForRetirement(
+  ctx: MutationCtx,
+  intent: Intent,
+  retirementId: Id<'panelRetirements'>,
+) {
+  await ctx.db.patch(intent._id, {
+    retirementId,
+    state: 'retiring',
+    delivery: { ...intent.delivery, disposition: 'retiring', acceptingAssignments: false },
+    generation: intent.generation + 1,
+    claim: undefined,
+    updatedAt: Date.now(),
+  });
+  await bumpGateVersion(ctx, intent.backendServerId);
+  // The gate closed: mirrored bodies must stop carrying a node members had
+  // (as a maintenance close does), not wait for the mirror cron.
+  if (intent.delivery.disposition === 'live') await scheduleMirrorRefresh(ctx);
+}
 
 /**
  * Finish a maintenance transition: the node is re-verified from the earliest
@@ -2237,6 +2344,18 @@ export const markWiped = internalMutation({
 export const byName = internalQuery({
   args: { backendServerId: v.id('backendServers'), name: v.string() },
   handler: (ctx, { backendServerId, name }) => intentByName(ctx, backendServerId, name),
+});
+
+/** The zone a backend's origin names go into now, with the account that writes them. */
+export const originZoneOf = internalQuery({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }) =>
+    (
+      await ctx.db
+        .query('panelSetups')
+        .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+        .unique()
+    )?.originDns ?? null,
 });
 
 /** The role-facing view: what the role may know (never a secret, never another node). */

@@ -1165,3 +1165,224 @@ describe('activating a direct node', () => {
     expect((await gateOf(t, serverId)).state).toBe('blocked');
   });
 });
+
+/**
+ * An adopted node is reconciled as it was adopted: the Hosts it came with keep
+ * the operator's remarks, and its row keeps its port and every transport it
+ * served. A reconcile (what a rename, a settled port change or Finish
+ * maintenance schedules) neither deletes nor adds an address by FCP's remark
+ * scheme and never narrows the row, so a live node stays live.
+ */
+describe('an adopted node is reconciled as it was adopted', () => {
+  async function adoptLegacy(opts: { port?: number; both?: boolean; remark?: string } = {}) {
+    const s = await seedLiveDirect();
+    const { t, serverId, panel } = s;
+    const [reality, ws] = panel.profiles[0].inbounds as { uuid: string; tag: string }[];
+    panel.nodes.push({
+      uuid: UUID(200),
+      name: 'legacy-a',
+      address: '203.0.113.20',
+      port: opts.port ?? 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: panel.profiles[0].uuid,
+        activeInbounds: [reality!, ...(opts.both ? [ws!] : [])],
+      },
+    });
+    // The Host members use, under the remark an earlier tool gave it.
+    panel.hosts.push({
+      uuid: UUID(201),
+      remark: opts.remark ?? 'legacy-a-reality',
+      address: '203.0.113.20',
+      port: 443,
+      sni: 'decoy-a.example',
+      inbound: {
+        configProfileUuid: panel.profiles[0].uuid,
+        configProfileInboundUuid: reality!.uuid,
+      },
+      isDisabled: false,
+    });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    const { intentId: adoptedId } = await t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: serverId,
+      nodeUuid: UUID(200),
+      mode: 'privacy-reality',
+    });
+    return { ...s, adoptedId, reality: reality!, ws: ws! };
+  }
+  const legacyGate = (t: T, serverId: Id<'backendServers'>, name = 'legacy-a') =>
+    gateOfNode(t, { backendServerId: serverId, nodeName: name });
+
+  test('a reconcile writes nothing: its Host stays, the node stays live', async () => {
+    const { t, serverId, panel, adoptedId } = await adoptLegacy();
+    const writes = panel.writes.length;
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId: adoptedId });
+    const after = await settled(() => t.run((ctx) => ctx.db.get(adoptedId)));
+    expect(panel.writes.slice(writes).map((w) => w.call)).toEqual([]);
+    expect(panel.hosts.find((h) => h.uuid === UUID(201))).toMatchObject({
+      remark: 'legacy-a-reality',
+      isDisabled: false,
+    });
+    expect(after).toMatchObject({
+      addressUuids: [UUID(201)],
+      delivery: { disposition: 'live' },
+      activation: { stage: 'live' },
+    });
+    expect(after.maintenance).toBeUndefined();
+    expect((await legacyGate(t, serverId)).state).toBe('open');
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.some((a) => a.action === 'servers.node.drift')).toBe(false);
+  });
+
+  test('a node on another port serving two transports keeps both, and its port', async () => {
+    const { t, panel, adoptedId, reality, ws } = await adoptLegacy({ port: 3000, both: true });
+    const adopted = (await t.run((ctx) => ctx.db.get(adoptedId)))!;
+    expect(adopted.settings.nodePort).toBe(3000);
+    const writes = panel.writes.length;
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId: adoptedId });
+    await settled(() => t.run((ctx) => ctx.db.get(adoptedId)));
+    expect(panel.writes.slice(writes).filter((w) => w.call === 'PATCH /api/nodes')).toEqual([]);
+    const node = panel.nodes.find((n) => n.uuid === UUID(200))!;
+    expect(node.port).toBe(3000);
+    expect(node.configProfile.activeInbounds.map((i: { uuid: string }) => i.uuid)).toEqual([
+      reality.uuid,
+      ws.uuid,
+    ]);
+  });
+
+  test('the role never enrolls it, and it is not renamed while its Host carries the remark it came with', async () => {
+    const { t, serverId, panel, adoptedId } = await adoptLegacy();
+    await expect(
+      t.mutation(internal.nodeIntents.enroll, {
+        backendServerId: serverId,
+        name: 'legacy-a',
+        mode: 'privacy-reality',
+        contractVersion: 2,
+        observed: {
+          management: { address: '203.0.113.20', port: 2222 },
+          publicIps: { v4: '203.0.113.20' },
+          capabilities: { caddy: false, ipv6: false },
+        },
+      }),
+    ).rejects.toThrow(/servers\.node_adopted/);
+    // A rename moves only FCP's remarks: this one would keep naming the old name.
+    await expect(
+      t.mutation(internal.backendNodeRenames.request, {
+        backendServerId: serverId,
+        nodeUuid: UUID(200),
+        name: 'legacy-b',
+      }),
+    ).rejects.toThrow(/servers\.node_rename_foreign_hosts/);
+    expect(panel.nodes.find((n) => n.uuid === UUID(200))!.name).toBe('legacy-a');
+    expect((await t.run((ctx) => ctx.db.get(adoptedId)))!.name).toBe('legacy-a');
+  });
+
+  test('renamed, an adopted node under FCP remarks keeps its Host and stays live', async () => {
+    const { t, serverId, panel, adoptedId } = await adoptLegacy({
+      remark: 'legacy-a | decoy-a.example',
+    });
+    const { renameId } = await t.mutation(internal.backendNodeRenames.request, {
+      backendServerId: serverId,
+      nodeUuid: UUID(200),
+      name: 'legacy-b',
+    });
+    await runUntil(
+      () => t.run((ctx) => ctx.db.get(renameId)),
+      (s) => s !== 'running',
+    );
+    // The rename's own reconcile of the node has run.
+    for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 5));
+    const after = await settled(() => t.run((ctx) => ctx.db.get(adoptedId)));
+    expect(
+      panel.hosts.filter((h) => h.uuid === UUID(201) || h.remark.startsWith('legacy-')),
+    ).toEqual([
+      expect.objectContaining({
+        uuid: UUID(201),
+        remark: 'legacy-b | decoy-a.example',
+        isDisabled: false,
+      }),
+    ]);
+    expect(after).toMatchObject({ name: 'legacy-b', delivery: { disposition: 'live' } });
+    expect(after.maintenance).toBeUndefined();
+    expect((await legacyGate(t, serverId, 'legacy-b')).state).toBe('open');
+  });
+});
+
+/**
+ * The node role asking to retire a node that was ever live is a request: the
+ * node keeps serving until an admin decides. Retiring it closes the gate then;
+ * rejecting the request leaves it as it was.
+ */
+describe("a role's retirement request", () => {
+  async function liveNodeWithRequest() {
+    const s = await liveAndCommitted();
+    const out = await s.t.mutation(internal.nodeIntents.requestRetirement, {
+      intentId: s.intentId,
+      requestedBy: 'role',
+    });
+    return { ...s, out };
+  }
+
+  test('changes nothing for members until an admin decides', async () => {
+    const { t, serverId, intentId, out } = await liveNodeWithRequest();
+    expect(out.stage).toBe('needs_admin');
+    const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(intent).toMatchObject({ state: 'ready', delivery: { disposition: 'live' } });
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    // The request is there for the admin, and asked again it is the same one.
+    const again = await t.mutation(internal.nodeIntents.requestRetirement, {
+      intentId,
+      requestedBy: 'role',
+    });
+    expect(again.retirementId).toBe(out.retirementId);
+    const call = await adminCall(t);
+    const list = (await (await call('GET', 'nodes/intents')).json()) as { intents: unknown[] };
+    const view = list.intents
+      .map((i) => NodeIntentView.parse(i))
+      .find((i) => i.id === (intentId as string))!;
+    expect(view).toMatchObject({
+      disposition: 'live',
+      retirement: { stage: 'needs_admin', requestedBy: 'role' },
+    });
+
+    // The admin retires it: now the gate closes.
+    const res = await call('POST', `nodes/intents/${intentId}/retire`, {
+      disposition: 'keep-dark',
+    });
+    expect(res.status).toBe(200);
+    expect((await t.run((ctx) => ctx.db.get(intentId)))!).toMatchObject({
+      state: 'retiring',
+      delivery: { disposition: 'retiring' },
+    });
+    expect((await gateOf(t, serverId)).state).toBe('blocked');
+  });
+
+  test('rejected, the node serves on and the role may ask again', async () => {
+    const { t, serverId, intentId, out } = await liveNodeWithRequest();
+    const call = await adminCall(t);
+    const res = await call('POST', `nodes/intents/${intentId}/reject-retirement`, {});
+    expect(res.status).toBe(200);
+    const intent = (await t.run((ctx) => ctx.db.get(intentId)))!;
+    expect(intent.retirementId).toBeUndefined();
+    expect(intent).toMatchObject({ state: 'ready', delivery: { disposition: 'live' } });
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    const r = (await t.run((ctx) => ctx.db.get(out.retirementId)))!;
+    expect(r.stage).toBe('rejected');
+    expect(r.events.map((e) => e.code)).toEqual(['needs_admin', 'rejected']);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const row = audit.find((a) => a.action === 'servers.node.retire_rejected')!;
+    expect(row.actorType).toBe('admin');
+    // Nothing waits for a decision any more; an admin's own retirement is not rejected.
+    expect((await call('POST', `nodes/intents/${intentId}/reject-retirement`, {})).status).toBe(
+      409,
+    );
+    const next = await t.mutation(internal.nodeIntents.requestRetirement, {
+      intentId,
+      requestedBy: 'role',
+    });
+    expect(next.stage).toBe('needs_admin');
+    expect(next.retirementId).not.toBe(out.retirementId);
+  });
+});

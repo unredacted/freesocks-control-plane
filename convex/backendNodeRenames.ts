@@ -94,6 +94,8 @@ async function audit(
  *  - a name another node has, had (a former name stays reserved: a pin or the
  *    role may still use it) or that was removed on purpose;
  *  - a node that is retiring, has work in flight, or is being renamed;
+ *  - an adopted node with a Host whose remark is not one of FCP's forms (the
+ *    rename would leave it naming the old name);
  *  - an origin in front of the node that is rotating, restoring, quarantined
  *    or mid-setup, whose Hosts the operator owns (the remarks are theirs), or
  *    whose new name is not a DNS label (origins keep it as one) or would make a
@@ -167,6 +169,25 @@ export const request = internalMutation({
       refuse('servers.node_retiring', 'This node is being retired');
     if (intent?.claim && intent.claim.expiresAt > now)
       refuse('servers.op_running', 'The node is still being brought in line. Try again shortly');
+    // An adopted node's Hosts keep the remarks they came with, and the rename
+    // moves only FCP's forms: one it would leave behind keeps naming the old name.
+    if (intent?.adopted) {
+      const hosts = await ctx.db
+        .query('panelHosts')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .collect();
+      if (
+        hosts.some(
+          (h) =>
+            intent.addressUuids?.includes(h.hostUuid) &&
+            renamedRemark(h.remark, h.sni, from, to) === null,
+        )
+      )
+        refuse(
+          'servers.node_rename_foreign_hosts',
+          `${from} was adopted with Hosts the operator named. Their remarks are theirs, and FCP does not change them`,
+        );
+    }
 
     const relays = (
       await ctx.db

@@ -9,8 +9,8 @@
    * Retiring starts from the header's More menu (NodeActions, "Retire node…");
    * once a retirement exists this section shows its steps (retirementSteps):
    * the one it is on and why it waits there. A retirement the node role asked
-   * for waits here for "Decide the retirement"; an adopted node's ends here with
-   * "The machine is gone".
+   * for waits here, with the node still serving, for "Decide the retirement" or
+   * "Reject the request"; an adopted node's ends here with "The machine is gone".
    *
    * A fronted node goes live through its protection in Edges (Start, try each
    * address, approve go-live, all in the protect sheet): this page links there
@@ -33,6 +33,7 @@
     confirmWiped,
     finishMaintenance,
     invalidateServers,
+    rejectRetirement,
     retireNode,
   } from '@client/lib/serversApi';
   import Link from '@client/components/Link.svelte';
@@ -82,11 +83,17 @@
       await confirmDirect(slug, intent.id, link.binding);
       ticked = true;
     });
-  // The decision on a retirement the node role asked for (keep-dark, the only one offered).
+  // The decision on a retirement the node role asked for (keep-dark, the only one offered),
+  // or turning the request down: the node serves on as it did while it waited.
   const decide = () =>
     run(async () => {
       retireOpen = false;
       await retireNode(slug, intent.id, { disposition: 'keep-dark' });
+    });
+  const reject = () =>
+    run(async () => {
+      await rejectRetirement(slug, intent.id);
+      toast.success(`${intent.name} keeps serving its members.`);
     });
 
   let direct = $derived(intent.mode.shape.fronting === 'direct');
@@ -302,6 +309,11 @@
       <Button size="sm" variant="destructive" disabled={busy} onclick={() => (retireOpen = true)}
         >Decide the retirement</Button
       >
+      {#if intent.disposition !== 'retiring'}
+        <Button size="sm" variant="outline" disabled={busy} onclick={reject}
+          >Reject the request</Button
+        >
+      {/if}
     {/if}
   </div>
 </section>
@@ -320,7 +332,7 @@
 <ConfirmDialog
   bind:open={retireOpen}
   title={`Retire ${intent.name}?`}
-  body={'The node role asked to retire it. Members on this node get the unavailable answer until they are moved. Its addresses, edges and records are removed. ' +
+  body={'The node role asked to retire it. Members on this node get the unavailable answer from now on, until they are moved. Its addresses, edges and records are removed. ' +
     (intent.adopted
       ? 'FCP never ran this machine, so confirm here once you have cleaned it up yourself.'
       : 'The role then wipes the machine.')}

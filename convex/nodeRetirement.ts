@@ -2,9 +2,10 @@
  * Retiring a node (docs/servers.md "Retirement"). The role's
  * DELETE only records the request; whenever the node was ever live or
  * anything of it is still out there (an origin, Hosts, DNS, credentials, a
- * mirror) an admin decides the disposition: `keep-dark` (its members get the
- * edge-required unavailable behaviour; moving them to another node is not
- * offered). Never `restore-direct`.
+ * mirror) the node keeps serving until an admin decides: the disposition
+ * `keep-dark` (its members get the edge-required unavailable behaviour; moving
+ * them to another node is not offered), or rejecting the request. Never
+ * `restore-direct`.
  *
  * An admin's own request is that decision (its confirm says members lose the
  * node at once): it starts draining keep-dark without a second question.
@@ -30,8 +31,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { addressTransportsOf, addressesOf } from './nodeIntents';
-import { bumpGateVersion } from './backendSetup';
+import { addressTransportsOf, addressesOf, closeForRetirement } from './nodeIntents';
 import { scheduleMirrorRefresh } from './relays';
 import { runningRenameOf } from './lib/backend/nodeAliases';
 
@@ -98,17 +98,13 @@ export const decide = internalMutation({
         createdAt: now,
         updatedAt: now,
       });
-      await ctx.db.patch(intent._id, {
-        retirementId: id,
-        state: 'retiring',
-        delivery: { ...intent.delivery, disposition: 'retiring', acceptingAssignments: false },
-        updatedAt: now,
-      });
-      await bumpGateVersion(ctx, intent.backendServerId);
       r = (await ctx.db.get(id))!;
     }
     if (r.stage !== 'requested' && r.stage !== 'needs_admin')
       refuse('servers.retirement_stage', `The retirement is already ${r.stage}`);
+    // A role's request left the node serving until now: members lose it here.
+    if (intent.state !== 'retiring' && intent.state !== 'retired')
+      await closeForRetirement(ctx, intent, r._id);
     await event(ctx, r, { disposition: a.disposition, stage: 'draining' }, 'decided');
     await scheduleMirrorRefresh(ctx);
     const server = await ctx.db.get(intent.backendServerId);
@@ -122,6 +118,44 @@ export const decide = internalMutation({
     });
     await ctx.scheduler.runAfter(0, internal.nodeRetirement.advance, { retirementId: r._id });
     return { stage: 'draining' as const };
+  },
+});
+
+/**
+ * The admin turns down a retirement the node role asked for. The request
+ * changed nothing (the node kept serving while it waited), so nothing is put
+ * back: the request is closed as `rejected` and the node is free of it; the
+ * role may ask again. A request an earlier release recorded had already closed
+ * the node, and is only decided.
+ */
+export const reject = internalMutation({
+  args: { intentId: v.id('panelNodeIntents'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, a) => {
+    const intent = await ctx.db.get(a.intentId);
+    if (!intent) return refuse('not_found', 'No such node');
+    const r = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
+    if (
+      !r ||
+      r.stage !== 'needs_admin' ||
+      intent.state === 'retiring' ||
+      intent.state === 'retired'
+    )
+      refuse(
+        'servers.retirement_stage',
+        'Only a retirement the node role asked for, still waiting for your decision, can be rejected',
+      );
+    await event(ctx, r!, { stage: 'rejected' }, 'rejected');
+    await ctx.db.patch(intent._id, { retirementId: undefined, updatedAt: Date.now() });
+    const server = await ctx.db.get(intent.backendServerId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'servers.node.retire_rejected',
+      targetType: 'panel_node_intent',
+      targetId: intent._id,
+      payload: { backendSlug: server?.slug ?? '', name: intent.name },
+    });
+    return { stage: 'rejected' as const };
   },
 });
 

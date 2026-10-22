@@ -621,6 +621,11 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         }),
       );
     }
+    // The node role asked to retire it and the admin says no: it keeps serving.
+    if (verb === 'reject-retirement')
+      return json(
+        await ctx.runMutation(internal.nodeRetirement.reject, { intentId, ...actorOf(admin) }),
+      );
     // A node FCP bootstrapped reports its own wipe (POST …/wiped, role token);
     // for an adopted node, whose machine the role never runs, an admin confirms
     // the machine is gone and the retirement closes.
