@@ -63,13 +63,12 @@ services:
     # `Migration complete` in the backend log (self-hosted/advanced/upgrading.md).
     # Full procedure: docs/beta-deploy.md § Upgrading the Convex backend.
     #
-    # Built, not pulled: docker/convex-node.Dockerfile swaps a patched Node into
+    # Built, not pulled: docker/convex-node/Dockerfile swaps a patched Node into
     # the image (upstream's lags Node security releases), so a deploy needs
     # `--build`. Convex moved its images from ghcr.io/get-convex to ghcr.io/convex
     # in Oct 2026 (same tags, same digests); the old path refuses anonymous pulls.
     build:
-      context: .
-      dockerfile: docker/convex-node.Dockerfile
+      context: docker/convex-node
       args:
         CONVEX_IMAGE: ghcr.io/convex/convex-backend:6422278e11c9ea384f54a455c248010559bd6807@sha256:bcbe82c68a06ae2b8445cce837123198329deb89249a9a5199bc73b8261e107b
     pids_limit: 512
@@ -206,8 +205,7 @@ services:
     # Same release git sha as `backend` above — required, not cosmetic. Same
     # Node overlay too: the dashboard is a Node server.
     build:
-      context: .
-      dockerfile: docker/convex-node.Dockerfile
+      context: docker/convex-node
       args:
         CONVEX_IMAGE: ghcr.io/convex/convex-dashboard:6422278e11c9ea384f54a455c248010559bd6807@sha256:8d5167990b1d7f69cf362ba028a5055a99aee2b5396cab26247febdcf4caa485
     pids_limit: 256

@@ -6,7 +6,7 @@
 #
 # Rewrites, in place:
 #   - the two `convex-backend` refs (the `backend` service's CONVEX_IMAGE build
-#     arg, which docker/convex-node.Dockerfile builds on, + the one-shot
+#     arg, which docker/convex-node/Dockerfile builds on, + the one-shot
 #     `keygen`'s `image:`),
 #   - the one `convex-dashboard` ref (also a CONVEX_IMAGE build arg),
 #   - the release-name comment on the `backend` service, which

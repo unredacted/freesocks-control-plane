@@ -603,9 +603,8 @@ queue — `gh workflow run convex-repin.yml -f version=X.Y.Z` (or
 the soak collapses to "beta is green" at operator judgment.
 
 _Node security releases_ never wait for this flow: the images' Node comes from
-`docker/convex-node.Dockerfile`, and `node-security-watch.yml` opens a PR for it
-within hours of a nodejs.org security release. No migration runs, so beta green
-is enough soak.
+`docker/convex-node/`, whose own Dependabot entry is checked every day. No
+migration runs, so beta green is enough soak.
 
 _Escalation:_ `convex-release-watch.yml` files an issue only when the pinned
 release is older than its staleness threshold — i.e. only when this flow has
@@ -666,7 +665,7 @@ docker compose -f docker-compose.stack.yml --env-file .env.beta \
 ```
 
 `--build` because the backend and dashboard are built, not pulled:
-`docker/convex-node.Dockerfile` puts a patched Node on top of the pinned image
+`docker/convex-node/` puts a patched Node on top of the pinned image
 (see `docs/convex-self-hosting.md` § Node runtime). The same command deploys a
 Node-only re-pin of that file. `keygen` re-runs on the new binary (its
 `generate_admin_key.sh` ships in the backend image); the deployer re-push is

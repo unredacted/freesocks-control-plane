@@ -41,6 +41,7 @@ const stack = read('../docker-compose.stack.yml');
 const backupDockerfile = read('../docker/backup.Dockerfile');
 const webDockerfile = read('../docker/web.Dockerfile');
 const deployDockerfile = read('../docker/deploy.Dockerfile');
+const convexNodeDockerfile = read('../docker/convex-node/Dockerfile');
 const packageJson = read('../package.json');
 const ciWorkflow = read('../.github/workflows/ci.yml');
 
@@ -242,7 +243,7 @@ describe('cross-file image pins', () => {
     // PRs and cannot know they are halves of one release — the same cross-file
     // shape as postgres/pg_dump above, one ecosystem further out.
     // `image:` for the one-shot `keygen`; `CONVEX_IMAGE:` for the build arg the
-    // backend and dashboard hand docker/convex-node.Dockerfile.
+    // backend and dashboard hand docker/convex-node/Dockerfile.
     const refs = [
       ...stack.matchAll(
         /(?:image|CONVEX_IMAGE):\s*ghcr\.io\/convex\/(convex-\w+):(\S+?)@(sha256:[a-f0-9]{64})/g,
@@ -315,20 +316,28 @@ describe('cross-file image pins', () => {
     // Upstream installs the Node in its .nvmrc and has fallen behind Node
     // security releases (22.22.2 against 22.23.4 in Oct 2026). Going back to a
     // plain `image:` would silently undo the patch, so both services that run
-    // Node build docker/convex-node.Dockerfile on their pinned Convex image.
+    // Node build docker/convex-node/Dockerfile on their pinned Convex image.
     for (const [service, image] of [
       ['backend', 'convex-backend'],
       ['dashboard', 'convex-dashboard'],
     ] as const) {
       const block = serviceBlock(service);
       expect(block, `no \`${service}\` service found in docker-compose.stack.yml`).not.toBe('');
-      expect(block, `${service} must build docker/convex-node.Dockerfile`).toMatch(
-        /^\s+dockerfile:\s*docker\/convex-node\.Dockerfile$/m,
+      expect(block, `${service} must build docker/convex-node/`).toMatch(
+        /^\s+context:\s*docker\/convex-node$/m,
       );
       expect(block, `${service} must hand the overlay its pinned ${image}`).toMatch(
         new RegExp(`^\\s+CONVEX_IMAGE:\\s*ghcr\\.io/convex/${image}:`, 'm'),
       );
       expect(block, `${service} must not pull a plain image as well`).not.toMatch(/^\s+image:/m);
     }
+
+    // An exact version and digest: Dependabot's PRs then name the versions, and
+    // convex-repin.yml reads the version to compare it with upstream's .nvmrc.
+    const nodeBase = fromRefs(convexNodeDockerfile).find((ref) => ref.startsWith('node:'));
+    expect(
+      nodeBase,
+      'docker/convex-node/Dockerfile must pin node:<x.y.z>-<variant>@sha256:<digest>',
+    ).toMatch(/^node:\d+\.\d+\.\d+-[a-z0-9.-]+@sha256:[0-9a-f]{64}$/);
   });
 });

@@ -6,9 +6,8 @@
 # security releases: the release FCP pins shipped 22.22.2 (March 2026) while
 # 22.23.0, 22.23.2 and 22.23.4 carried security fixes. Re-pinning Convex cannot
 # fix that, so this overlay swaps in the official binary from a pinned node
-# image. The pin below is ours to move: Dependabot (docker, weekly) and
-# .github/workflows/node-security-watch.yml (every few hours, security releases
-# only) both open PRs for it.
+# image. The pin below is ours to move: this folder has its own Dependabot entry,
+# checked every day, so a Node release reaches a PR within a day.
 #
 # The Convex image arrives as a build arg from docker-compose.stack.yml, where
 # scripts/convex-repin.sh keeps it. Stay on the major in upstream's .nvmrc at

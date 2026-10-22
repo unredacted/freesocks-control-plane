@@ -71,7 +71,7 @@ jobs:
         run: |
           for img in convex-backend convex-dashboard; do
             ref="$(grep -oE "ghcr\.io/convex/$img:[0-9a-f]{40}@sha256:[0-9a-f]{64}" docker-compose.stack.yml | head -1)"
-            docker build -f docker/convex-node.Dockerfile --build-arg CONVEX_IMAGE="$ref" .
+            docker build --build-arg CONVEX_IMAGE="$ref" docker/convex-node
           done
 
   # Reproducible build (CDN-blinding Phase 3f): build twice from a clean checkout

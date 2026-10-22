@@ -15,6 +15,9 @@
 # slack) means the flow has stalled; then this files (and keeps updating) a
 # single issue, and closes it once the pin is fresh again — so the pin cannot
 # quietly rot the way the backup sidecar's image did for four weeks in Aug 2026.
+#
+# Two loud checks ride along: the pinned images can still be pulled, and the
+# Node the images run (docker/convex-node/Dockerfile) is not near end of life.
 name: Convex release watch
 
 on:
@@ -156,4 +159,27 @@ jobs:
             echo "updated issue #$existing"
           else
             gh issue create --title "$ISSUE_TITLE" --body-file body.md
+          fi
+
+      # The images run docker/convex-node/Dockerfile's Node. An end-of-life Node
+      # line gets no more security releases, so its Dependabot entry would just
+      # go quiet. Fail from 90 days before the end (Node 22: 2027-04-30). The way
+      # out is a major Convex builds against: convex-repin.yml's PR says when
+      # upstream's .nvmrc moves. Last and always(), so it never hides the
+      # stale-pin issue above.
+      - name: The Convex images' Node is not near end of life
+        if: always()
+        run: |
+          set -euo pipefail
+          major="$(grep -oE '^FROM node:[0-9]+' docker/convex-node/Dockerfile | cut -d: -f2)"
+          if ! end="$(curl -fsSL https://raw.githubusercontent.com/nodejs/Release/main/schedule.json |
+            jq -er --arg v "v$major" '.[$v].end')"; then
+            echo "::warning::could not read Node $major's end of life from nodejs/Release; skipped"
+            exit 0
+          fi
+          days=$((($(date -u -d "$end" +%s) - $(date -u +%s)) / 86400))
+          echo "Node $major (docker/convex-node/Dockerfile) reaches end of life on $end, in $days days"
+          if [ "$days" -le 90 ]; then
+            echo "::error::Node $major reaches end of life on $end ($days days) and then gets no security releases. Move docker/convex-node/Dockerfile to a major Convex builds against (.nvmrc in $UPSTREAM; re-pin Convex first if it is still on $major)."
+            exit 1
           fi
