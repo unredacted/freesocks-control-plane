@@ -515,6 +515,36 @@ describe("reconcile refusals that are not the node's fault", () => {
   });
 });
 
+describe('the addresses a direct node owns', () => {
+  test("an operator's Host named after the node is not the node's: on another transport, or under a remark FCP never writes", async () => {
+    const { t, serverId, panel, intentId } = await seedLiveDirect();
+    const profile = panel.profiles[0];
+    const reality = profile.inbounds.find((i: { tag: string }) => i.tag === TAG);
+    const ws = profile.inbounds.find((i: { tag: string }) => i.tag !== TAG);
+    const operatorHost = (uuid: string, remark: string, inboundUuid: string) => ({
+      uuid,
+      remark,
+      address: 'cdn.example',
+      port: 443,
+      sni: 'cdn.example',
+      inbound: { configProfileUuid: profile.uuid, configProfileInboundUuid: inboundUuid },
+      isDisabled: false,
+    });
+    panel.hosts.push(
+      operatorHost(UUID(300), 'node-a | cdn', ws.uuid),
+      operatorHost(UUID(301), 'node-a | spare', reality.uuid),
+    );
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId });
+    const intent = await settled(() => t.run((c) => c.db.get(intentId)));
+    expect(panel.hosts.map((h) => h.uuid)).toEqual(expect.arrayContaining([UUID(300), UUID(301)]));
+    expect(panel.writes.filter((w) => w.call.startsWith('DELETE /api/hosts'))).toEqual([]);
+    // The node's own address is still the only one it records.
+    const own = panel.hosts.find((h) => h.remark === addressRemark('node-a', 'decoy-a.example'));
+    expect(intent.addressUuids).toEqual([own.uuid]);
+  });
+});
+
 describe('a parked reconcile', () => {
   const park = async (code: string, roleContactMsAgo: number) => {
     const { t, intentId } = await seedLiveDirect();
@@ -1011,6 +1041,42 @@ describe('activating a direct node', () => {
     const added = panel.hosts.find((h) => h.sni === 'www.decoy-a.example');
     expect(added.isDisabled).toBe(true);
     expect(intent.addressUuids).toHaveLength(2);
+  });
+
+  // The tick proves what the operator tested: every name the node now
+  // serves, the one the family added among them, never the first alone.
+  test('the re-tick after a name was added covers every name: a confirmation of the first name alone is refused', async () => {
+    const { t, serverId, panel, intentId } = await liveAndCommitted();
+    await addFamilyName(t, serverId, panel);
+    await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    await settled(() => t.run((c) => c.db.get(intentId)));
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    expect(built.links.map((l) => l.sni)).toEqual(['decoy-a.example', 'www.decoy-a.example']);
+    expect(built.links[1]!.link).toContain('sni=www.decoy-a.example');
+    expect(built.link).toBe(built.links[0]!.link);
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    expect(binding.params.names).toEqual(['decoy-a.example', 'www.decoy-a.example']);
+    await expect(
+      t.mutation(internal.nodeActivation.confirmDirect, {
+        intentId,
+        binding: { ...binding, params: { ...binding.params, names: ['decoy-a.example'] } },
+      }),
+    ).rejects.toThrow(/confirmation_stale/);
+    const confirmed = await t.mutation(internal.nodeActivation.confirmDirect, {
+      intentId,
+      binding,
+    });
+    expect(confirmed.stage).toBe('candidates_verified');
   });
 
   // A direct body passes to members as the backend serves it: an address

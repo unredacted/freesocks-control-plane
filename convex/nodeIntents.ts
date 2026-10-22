@@ -176,18 +176,60 @@ export function originAddressOf(intent: Intent, hostname: string | undefined): s
 // The remark of a direct node's address for one server name (always within the
 // backend's 40-character cap): `convex/lib/backend/hostRemark.ts`.
 export { ADDRESS_SEP, addressRemark, ownsAddress };
+/** The transport a node's addresses sit on, with every server name it serves. */
+export interface AddressTransport {
+  uuid: string;
+  serverNames: readonly string[];
+}
+
 /**
  * A node's own addresses: the ones it has recorded (an adopted node's carry
- * whatever remarks the operator gave them) plus any remark FCP wrote for this
- * node, which is how a lost create is found again before it is recorded.
+ * whatever remarks the operator gave them) plus an address FCP wrote for this
+ * node and has not recorded yet, which is how a lost create is found again: on
+ * the node's own transport, under the remark FCP gives one of its server names.
+ * Anything else whose remark merely starts with the node's name is the
+ * operator's. Without the transport (no setup), only the recorded ones.
  */
-export const addressesOf = <H extends { hostUuid: string; remark: string }>(
+export const addressesOf = <
+  H extends { hostUuid: string; remark: string; configProfileInboundUuid?: string },
+>(
   intent: { name: string; addressUuids?: string[] },
   hosts: readonly H[],
-): H[] =>
-  hosts.filter(
-    (h) => intent.addressUuids?.includes(h.hostUuid) || ownsAddress(intent.name, h.remark),
+  transport: AddressTransport | null,
+): H[] => {
+  const written = new Set(transport?.serverNames.map((n) => addressRemark(intent.name, n)));
+  return hosts.filter(
+    (h) =>
+      intent.addressUuids?.includes(h.hostUuid) ||
+      (!!transport && h.configProfileInboundUuid === transport.uuid && written.has(h.remark)),
   );
+};
+
+/**
+ * For `addressesOf`, outside a reconcile: each node's transport on this
+ * backend, with the names the profile serves on it now and the setup's.
+ */
+export async function addressTransportsOf(
+  ctx: { db: QueryCtx['db'] },
+  sid: Id<'backendServers'>,
+): Promise<(intent: { mode?: string }) => AddressTransport | null> {
+  const setup = await ctx.db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .unique();
+  const inbounds = (
+    await ctx.db
+      .query('panelProfiles')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect()
+  ).flatMap((p) => p.inbounds);
+  return (intent) => {
+    const t = setup ? modeOf(setup, modeSlug(intent))?.transport : undefined;
+    if (!t) return null;
+    const live = inbounds.find((i) => i.inboundUuid === t.uuid)?.reality?.serverNames ?? [];
+    return { uuid: t.uuid, serverNames: [...new Set([...live, ...(t.serverNames ?? [])])] };
+  };
+}
 
 export function ingressOf(intent: Intent, hostname: string | undefined): IngressMapping | null {
   const i = intent.settings.ingress;
@@ -989,7 +1031,12 @@ async function loadContext(ctx: QueryCtx, intent: Intent) {
       : null,
     inbound,
     // A direct node's own addresses, one per family name.
-    addresses: addressesOf(intent, hosts),
+    addresses: addressesOf(intent, hosts, {
+      uuid: t.uuid,
+      serverNames: [
+        ...new Set([...(inbound?.reality?.serverNames ?? []), ...(t.serverNames ?? [])]),
+      ],
+    }),
     hostname,
     originAddress: originAddressOf(intent, hostname),
     ingress: ingressOf(intent, hostname),
@@ -1761,16 +1808,20 @@ export async function nodeGateFor(
   return nodeGateOf(intent, runs, gateVersion, held);
 }
 
-/** The unmanaged node names an open maintenance hold of this backend keeps closed. */
+/**
+ * The unmanaged node names an open maintenance hold of this backend keeps
+ * closed. Every member fetch of a node without an intent reads this, so only
+ * the open holds are read (released ones stay for the record until retention).
+ */
 export async function heldNodeNames(
   ctx: { db: QueryCtx['db'] },
   sid: Id<'backendServers'>,
 ): Promise<Set<string>> {
   const holds = await ctx.db
     .query('panelMaintenanceHolds')
-    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .withIndex('by_server_released', (q) => q.eq('backendServerId', sid).eq('released', false))
     .collect();
-  return new Set(holds.filter((h) => !h.released).flatMap((h) => h.heldNodeNames));
+  return new Set(holds.flatMap((h) => h.heldNodeNames));
 }
 
 /** The names of every node of a backend whose gate is closed (the pinner never picks one while another exists). */
@@ -2123,17 +2174,17 @@ export const holdsView = internalQuery({
     (
       await ctx.db
         .query('panelMaintenanceHolds')
-        .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+        .withIndex('by_server_released', (q) =>
+          q.eq('backendServerId', backendServerId).eq('released', false),
+        )
         .collect()
-    )
-      .filter((h) => !h.released)
-      .map((h) => ({
-        id: h._id as string,
-        reason: h.reason,
-        heldNodeNames: h.heldNodeNames,
-        closed: h.closedIntentIds.length,
-        since: new Date(h.since).toISOString(),
-      })),
+    ).map((h) => ({
+      id: h._id as string,
+      reason: h.reason,
+      heldNodeNames: h.heldNodeNames,
+      closed: h.closedIntentIds.length,
+      since: new Date(h.since).toISOString(),
+    })),
 });
 
 /**

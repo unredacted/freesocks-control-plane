@@ -49,9 +49,16 @@ function stubBackend(): void {
 }
 
 async function world(
-  o: { mode?: string; detect?: boolean; placement?: string; listed?: string[] } = {},
+  o: {
+    mode?: string;
+    detect?: boolean;
+    placement?: string;
+    listed?: string[];
+    /** Convex's per-execution limits (db calls, documents) enforced. */
+    limits?: boolean;
+  } = {},
 ) {
-  const t = convexTest(schema, modules);
+  const t = convexTest({ schema, modules, transactionLimits: o.limits ?? false });
   stubBackend();
   const ids = await t.run(async (ctx) => {
     const tierId = await ctx.db.insert('tiers', {
@@ -368,6 +375,42 @@ describe('sweeps', () => {
     expect((await row(t, subId)).regionSeenCountry).toBeUndefined();
   });
 
+  test('with detection off the sweep runs until no guess is left, however many rounds that takes', async () => {
+    vi.useFakeTimers();
+    const { t, subId, userId, serverId } = await world();
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      const { _id, _creationTime, ...base } = sub;
+      void _id;
+      void _creationTime;
+      // One page and one more, met by a run already deep into its rounds.
+      for (let i = 0; i < 201; i++)
+        await ctx.db.insert('subscriptions', {
+          ...base,
+          userId,
+          backendServerId: serverId,
+          backendUserId: `uuid-g${i}`,
+          subToken: `tok_g${i}`,
+          regionSeenCountry: 'IR',
+          regionSeenFirstAt: Date.now(),
+          regionSeenAt: Date.now(),
+        });
+      await upsertSettingRow(ctx, 'delivery.country.detect', 'false');
+    });
+    await t.mutation(internal.memberCountry.sweepGuesses, { rounds: 50 });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await t.run(
+      async (ctx) =>
+        (
+          await ctx.db
+            .query('subscriptions')
+            .withIndex('by_region_seen_at', (q) => q.gt('regionSeenAt', 0))
+            .collect()
+        ).length,
+    );
+    expect(left).toBe(0);
+  });
+
   test('the deploy clean-up drops choices off the list and any country on a privacy key', async () => {
     const { t, subId, userId } = await world();
     await t.run((ctx) => ctx.db.patch(subId, { sniRegion: 'DE' }));
@@ -381,6 +424,64 @@ describe('sweeps', () => {
     await t.mutation(internal.memberCountry.cleanStoredCountries, {});
     await t.finishInProgressScheduledFunctions();
     expect(countriesOn(await row(t, subId))).toEqual([]);
+  });
+});
+
+describe('the deploy clean-up at scale', () => {
+  test('a full page of Automatic members whose default turned privacy, with every mode bound, stays within one execution', async () => {
+    vi.useFakeTimers();
+    const { t, serverId } = await world({ limits: true });
+    await t.run(async (ctx) => {
+      // Four bound modes: judging an Automatic key reads every bound pool.
+      for (const [modeSlug, n] of [
+        ['freedom-reality', 3],
+        ['freedom-xhttp', 4],
+      ] as const)
+        await ctx.db.insert('modePlacements', {
+          modeSlug,
+          backend: 'remnawave',
+          config: JSON.stringify({ squadUuids: [`11111111-2222-3333-4444-00000000000${n}`] }),
+          updatedAt: Date.now(),
+        });
+      await upsertSettingRow(ctx, 'connectionMode.default', JSON.stringify('privacy-reality'));
+    });
+    // More than a page of members who answered, each judged privacy now.
+    await t.run(async (ctx) => {
+      const tierId = (await ctx.db.query('tiers').first())!._id;
+      for (let i = 0; i < 250; i++) {
+        const userId = await ctx.db.insert('users', {
+          tierId,
+          status: 'active',
+          updatedAt: Date.now(),
+        });
+        await ctx.db.insert('subscriptions', {
+          userId,
+          backend: 'remnawave',
+          backendUserId: `uuid-c${i}`,
+          backendShortId: `short-c${i}`,
+          backendServerId: serverId,
+          backendPlacement: FREEDOM_SQUAD,
+          subscriptionUrl: `https://panel.example/sub/short-c${i}`,
+          subscriptionMirrors: [],
+          subToken: `tok_c${i}`,
+          sniRegion: 'IR',
+          state: 'active',
+          updatedAt: Date.now(),
+        });
+      }
+    });
+    await t.mutation(internal.memberCountry.cleanStoredCountries, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const holding = await t.run(
+      async (ctx) =>
+        (
+          await ctx.db
+            .query('subscriptions')
+            .withIndex('by_sni_region', (q) => q.gt('sniRegion', ''))
+            .collect()
+        ).length,
+    );
+    expect(holding).toBe(0);
   });
 });
 

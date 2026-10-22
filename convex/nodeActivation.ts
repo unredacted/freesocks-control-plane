@@ -2,10 +2,11 @@
  * Node activation (docs/servers.md "Node lifecycle"): from `machine_ready` to
  * `live` without a member ever seeing the node before the delivery commit.
  *
- *  - A DIRECT node is proven with an isolated test link built from the
- *    node's own test credential and the transport's live parameters, and the
- *    operator's tick is bound to the exact endpoint, revisions and parameters
- *    it tested (`confirmDirect` recomputes the binding from live rows).
+ *  - A DIRECT node is proven with isolated test links (one per server name)
+ *    built from the node's own test credential and the transport's live
+ *    parameters, and the operator's tick is bound to the exact endpoint,
+ *    revisions, parameters and name set it tested (`confirmDirect` recomputes
+ *    the binding from live rows).
  *  - The review card hashes the delivery SHAPE; approval creates one
  *    activation run with an immutable candidate snapshot of its own.
  *  - The run enables the direct Host (a candidate resource, filtered from
@@ -628,14 +629,32 @@ export interface DirectTestBinding {
   machineRevision: number;
   configRevision: string;
   authRevision: string | null;
-  params: { sni: string; fingerprint: string; shortIdRef: number; publicKey: string };
+  /** `names`: every server name the links cover, in the transport's order; `sni` is the first. */
+  params: {
+    sni: string;
+    names: string[];
+    fingerprint: string;
+    shortIdRef: number;
+    publicKey: string;
+  };
   credentialRef: string;
   issuedAt: string;
 }
 
+/**
+ * One link per server name the transport serves (same credential, endpoint
+ * and keys): a name proves only itself, so the tick binds the whole set.
+ */
 export const buildDirectTestLink = internalAction({
   args: { intentId: v.id('panelNodeIntents') },
-  handler: async (ctx, { intentId }): Promise<{ link: string; binding: DirectTestBinding }> => {
+  handler: async (
+    ctx,
+    { intentId },
+  ): Promise<{
+    link: string;
+    links: { sni: string; link: string }[];
+    binding: DirectTestBinding;
+  }> => {
     const c = (await ctx.runQuery(internal.nodeActivation.credentialContext, {
       intentId,
     })) as CredentialCtx | null;
@@ -672,19 +691,24 @@ export const buildDirectTestLink = internalAction({
         code: 'servers.credential_unavailable',
         message: 'No protocol credential',
       });
-    const sni = params.serverNames[0] ?? '';
+    const names = [...params.serverNames];
     const endpoint = `${c.originAddress}:${params.port ?? reality.port}`;
-    const q = new URLSearchParams({
-      encryption: 'none',
-      flow: REALITY_RAW_FLOW,
-      security: 'reality',
-      type: 'tcp',
-      sni,
-      fp: 'chrome',
-      pbk: params.publicKey,
-      sid: params.shortId,
+    const links = (names.length > 0 ? names : ['']).map((sni) => {
+      const q = new URLSearchParams({
+        encryption: 'none',
+        flow: REALITY_RAW_FLOW,
+        security: 'reality',
+        type: 'tcp',
+        sni,
+        fp: 'chrome',
+        pbk: params.publicKey,
+        sid: params.shortId,
+      });
+      return {
+        sni,
+        link: `vless://${protocolUuid}@${endpoint}?${q.toString()}#${encodeURIComponent(`FCP test ${c.intent.name}`)}`,
+      };
     });
-    const link = `vless://${protocolUuid}@${endpoint}?${q.toString()}#${encodeURIComponent(`FCP test ${c.intent.name}`)}`;
     const binding: DirectTestBinding = {
       intentId: intentId as string,
       inboundUuid: params.inboundUuid,
@@ -692,11 +716,17 @@ export const buildDirectTestLink = internalAction({
       machineRevision: c.intent.machineRevision,
       configRevision: `${params.changeToken}:${params.inboundUuid}`,
       authRevision: params.authDigest,
-      params: { sni, fingerprint: 'chrome', shortIdRef: 0, publicKey: params.publicKey },
+      params: {
+        sni: links[0]!.sni,
+        names,
+        fingerprint: 'chrome',
+        shortIdRef: 0,
+        publicKey: params.publicKey,
+      },
       credentialRef: cred.id as string,
       issuedAt: new Date().toISOString(),
     };
-    return { link, binding };
+    return { link: links[0]!.link, links, binding };
   },
 });
 
@@ -712,6 +742,7 @@ export const confirmDirect = internalMutation({
       authRevision: v.union(v.string(), v.null()),
       params: v.object({
         sni: v.string(),
+        names: v.array(v.string()),
         fingerprint: v.string(),
         shortIdRef: v.number(),
         publicKey: v.string(),
@@ -728,14 +759,16 @@ export const confirmDirect = internalMutation({
       refuse('validation', 'Only a direct node is confirmed this way');
     const reality = transportFor(setup, modeSlug(intent));
     const hostname = originHostnameOf(intent, setup);
-    const names = await liveNamesOf(ctx, intent, reality.uuid);
+    const observed = await liveNamesOf(ctx, intent, reality.uuid);
+    const names = observed.length > 0 ? observed : (reality.serverNames ?? []);
     const live = {
       inboundUuid: reality.uuid,
       endpoint: `${originAddressOf(intent, hostname)}:${reality.port}`,
       machineRevision: intent.machineRevision,
       configRevision: intent.configRevision ?? '',
       authRevision: intent.authRevision ?? null,
-      sni: names[0] ?? reality.serverNames?.[0] ?? '',
+      sni: names[0] ?? '',
+      names,
       publicKey: reality.publicKey ?? '',
     };
     const b = a.binding;
@@ -746,6 +779,9 @@ export const confirmDirect = internalMutation({
       b.configRevision === live.configRevision &&
       b.authRevision === live.authRevision &&
       b.params.sni === live.sni &&
+      // The tick covers every name the node serves now, never fewer.
+      b.params.names.length === live.names.length &&
+      b.params.names.every((n, i) => n === live.names[i]) &&
       b.params.publicKey === live.publicKey;
     if (!same)
       refuse(
