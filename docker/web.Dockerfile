@@ -4,7 +4,7 @@
 # node_modules / dist / .git / .env* out. See docs/beta-deploy.md.
 
 # --- build the SPA ---------------------------------------------------------
-FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS build
+FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS build
 WORKDIR /app
 
 # Install against the lockfile first so deps cache independently of source.
