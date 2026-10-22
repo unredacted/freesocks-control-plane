@@ -123,6 +123,10 @@ async function seed(
     failCreateAt?: number;
     /** Lands a per-country round with the verification probes (the nth request, from 1). */
     countryRound?: (t: T, edgeId: Id<'edges'>, nth: number) => Promise<void>;
+    /** What the nth verification round finds (default: the address is partial). */
+    evidence?: (nth: number) => 'partial' | 'unreachable';
+    /** What saving an address again answers (default: its provider has nothing to save). */
+    reapply?: StageOps['reapplyEdge'];
   } = {},
 ) {
   vi.useFakeTimers();
@@ -152,6 +156,7 @@ async function seed(
     hide: [] as Array<{ approvedUuids: string[] }>,
     restore: [] as string[],
     probes: [] as string[],
+    reapplied: [] as string[],
   };
   let hideResult: Partial<Awaited<ReturnType<StageOps['hideHosts']>>> = {};
   let hideStatus: Partial<Awaited<ReturnType<StageOps['hideStatus']>>> = {};
@@ -161,8 +166,16 @@ async function seed(
     ensureCredential: async () => ({ ok: true, reused: false }),
     requestVerificationProbes: async (_ctx, edgeId) => {
       calls.probes.push(edgeId as string);
-      await landPartialEvidence(t, edgeId);
+      if ((opts.evidence?.(calls.probes.length) ?? 'partial') === 'partial')
+        await landPartialEvidence(t, edgeId);
+      else await landUnreachableEvidence(t, edgeId);
       if (opts.countryRound) await opts.countryRound(t, edgeId, calls.probes.length);
+    },
+    reapplyEdge: async (ctx, edgeId) => {
+      calls.reapplied.push(edgeId as string);
+      return opts.reapply
+        ? opts.reapply(ctx, edgeId)
+        : { status: 'skipped' as const, code: 'not_offered' as const };
     },
     runFrontProof: async () => ({ ok: false, code: 'unsupported_protocol' }),
     buildTestLink: async (ctx, edgeId) => {
@@ -283,6 +296,51 @@ async function landPartialEvidence(t: T, edgeId: Id<'edges'>) {
       requestedAt: now,
       finishedAt: now,
       results: [{ country: 'XX', vantageClass: 'datacenter', ok: true }],
+    });
+  });
+}
+
+/**
+ * The probe round "lands" on a dead address (a load balancer resetting every
+ * connection): both outside vantages unreachable, the internal shape run fails.
+ */
+async function landUnreachableEvidence(t: T, edgeId: Id<'edges'>) {
+  await t.run(async (ctx) => {
+    const edge = (await ctx.db.get(edgeId))!;
+    const listener = (await ctx.db.get(edge.listenerId))!;
+    const now = Date.now();
+    for (const country of ['DE', 'FR']) {
+      await ctx.db.insert('probeReachability', {
+        targetKind: 'edge',
+        targetRef: edgeId as string,
+        country,
+        source: 'globalping',
+        ipVersion: 4,
+        addressKind: 'ip',
+        probeProtocol: 'tcp',
+        port: listener.originPort,
+        okCount: 0,
+        failCount: 1,
+        lastFailAt: now,
+        verdict: 'unreachable',
+        updatedAt: now,
+      });
+    }
+    await ctx.db.insert('probeRuns', {
+      targetKind: 'edge',
+      targetRef: edgeId as string,
+      source: 'internal',
+      target: `${edge.addresses.v4}:${listener.originPort}`,
+      port: listener.originPort,
+      ipVersion: 4,
+      addressKind: 'ip',
+      probeProtocol: listener.security === 'none' ? 'tcp' : 'tls-sni',
+      requestedFamily: 4,
+      status: 'finished',
+      trigger: 'qualification',
+      requestedAt: now,
+      finishedAt: now,
+      results: [{ country: 'XX', vantageClass: 'datacenter', ok: false }],
     });
   });
 }
@@ -729,6 +787,107 @@ describe('edgeSetupRuns: per-country checks before use', () => {
   });
 });
 
+describe('edgeSetupRuns: an address the outside check finds unreachable', () => {
+  const sent: StageOps['reapplyEdge'] = async () => ({ status: 'sent', settled: true });
+
+  test('it is saved again at its provider once, checked afresh, and the run goes on when it now passes', async () => {
+    const { t, world, serverId, accountId, calls } = await seed({
+      evidence: (nth) => (nth === 1 ? 'unreachable' : 'partial'),
+      reapply: sent,
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    const edgeId = r.listeners[0]!.edgeId!;
+    // Once, for this address, then a second round that counted only its own evidence.
+    expect(calls.reapplied).toEqual([edgeId]);
+    expect(calls.probes).toEqual([edgeId, edgeId]);
+    expect(r.listeners[0]).toMatchObject({ verify: 'partial', reappliedEdgeId: edgeId });
+    expect(r.events.find((e) => e.code === 'reapplied')).toMatchObject({
+      level: 'info',
+      detail: r.listeners[0]!.listenerKey,
+    });
+    // The same address: nothing new was bought.
+    expect(world.lbCreates()).toBe(1);
+  });
+
+  test('still unreachable after it: the card asks, and Check again checks the same address afresh', async () => {
+    const { t, world, serverId, accountId, calls } = await seed({
+      evidence: (nth) => (nth <= 2 ? 'unreachable' : 'partial'),
+      reapply: sent,
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.need).toMatchObject({ code: 'address_unreachable' });
+    const edgeId = r.listeners[0]!.edgeId!;
+    expect(r.listeners[0]!.verify).toBe('unreachable');
+    expect(calls.probes).toHaveLength(2);
+    // A run of the earlier check still in flight: the fresh check waits for it,
+    // so a verdict it brings in late is never counted as fresh.
+    const inflight = await t.run((ctx) =>
+      ctx.db.insert('probeRuns', {
+        targetKind: 'edge',
+        targetRef: edgeId as string,
+        source: 'globalping',
+        target: '198.51.100.9:443',
+        status: 'running',
+        trigger: 'qualification',
+        requestedAt: Date.now(),
+        results: [],
+      }),
+    );
+    await t.mutation(internal.edgeSetupRuns.retry, { runId, checkAgain: true });
+    r = await pumpFine(t, runId, (x) => x.state === 'waiting');
+    for (let i = 0; i < 5; i++) {
+      await vi.runOnlyPendingTimersAsync();
+      await t.finishInProgressScheduledFunctions();
+    }
+    expect(calls.probes).toHaveLength(2);
+    await t.run((ctx) => ctx.db.patch(inflight, { status: 'finished', finishedAt: Date.now() }));
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.listeners[0]).toMatchObject({ edgeId, verify: 'partial' });
+    expect(calls.probes).toHaveLength(3);
+    // The address is saved again once only, and no other one was bought.
+    expect(calls.reapplied).toEqual([edgeId]);
+    expect(world.lbCreates()).toBe(1);
+  });
+
+  test('a provider with nothing to save again asks at once; Check again that fails asks again', async () => {
+    const { t, serverId, accountId, calls } = await seed({ evidence: () => 'unreachable' });
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('address_unreachable');
+    expect(calls.reapplied).toHaveLength(1);
+    expect(calls.probes).toHaveLength(1);
+    expect(r.events.some((e) => e.code === 'reapplied')).toBe(false);
+    await t.mutation(internal.edgeSetupRuns.retry, { runId, checkAgain: true });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('address_unreachable');
+    expect(calls.probes).toHaveLength(2);
+    expect(calls.reapplied).toHaveLength(1);
+  });
+
+  test('busy, or the call failed: still one fresh check; Check again answers only the check cards', async () => {
+    const { t, serverId, accountId, calls } = await seed({
+      evidence: (nth) => (nth === 1 ? 'unreachable' : 'partial'),
+      reapply: async () => {
+        throw new ConvexError({ code: 'ScalewayError', message: 'unknown outcome' });
+      },
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.events.find((e) => e.code === 'reapplied')?.detail).toBe(
+      `${r.listeners[0]!.listenerKey}: ScalewayError`,
+    );
+    expect(calls.probes).toHaveLength(2);
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, { runId, checkAgain: true }),
+    ).rejects.toThrow(/Check again/);
+  });
+});
+
 describe('edgeSetupRuns: the happy path (cases 1, 26)', () => {
   test('one listener: standby first, partial from outside, try_it before anything is published, publish, hide, rehearse, go live', async () => {
     const { t, world, serverId, accountId, calls } = await seed();
@@ -1089,6 +1248,102 @@ describe('edgeSetupRuns: one line does not work', () => {
     await tickAll(t, runId);
     r = await pump(t, runId, settled);
     expect(r.state).toBe('done');
+  });
+});
+
+describe("edgeSetupRuns: Doesn't work when no new address can be made", () => {
+  /** The run at its test card, with the one address it built. */
+  async function atTheCard(opts: Parameters<typeof seed>[0] = {}) {
+    const w = await seed(opts);
+    const { runId } = await startRun(w.t, w.serverId, w.accountId);
+    const r = await pump(w.t, runId, settled);
+    return { ...w, runId, r };
+  }
+  const edgeRow = (t: T, id: string) => t.run((ctx) => ctx.db.get(id as Id<'edges'>));
+  /** The account's daily budget is what it already used today. */
+  const budgetUsedUp = (t: T, accountId: Id<'edgeProviderAccounts'>) =>
+    t.run(async (ctx) => {
+      const a = (await ctx.db.get(accountId))!;
+      expect(a.allocationsToday).toBeGreaterThan(0);
+      await ctx.db.patch(accountId, { dailyAllocationBudget: a.allocationsToday });
+    });
+
+  test('a used-up daily budget refuses it and keeps the address; with budget again it replaces', async () => {
+    const { t, world, accountId, runId, r } = await atTheCard();
+    expect(r.need?.code).toBe('try_it');
+    const edgeId = r.testLinks![0]!.edgeId;
+    await budgetUsedUp(t, accountId);
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, {
+        runId,
+        tryAnotherAddress: true,
+        edgeId: edgeId as Id<'edges'>,
+      }),
+    ).rejects.toThrow(/replacement_cannot_start.*Account budget exhausted/);
+    // Nothing moved: the same card, the same address, still live.
+    const after = await run(t, runId);
+    expect(after).toMatchObject({ state: 'needs_you', generation: r.generation });
+    expect(after.need?.code).toBe('try_it');
+    expect(after.testLinks!.map((l) => l.edgeId)).toEqual([edgeId]);
+    expect(after.listeners[0]!.edgeId).toBe(edgeId);
+    expect((await edgeRow(t, edgeId))!.status).toBe('active');
+    expect(world.lbCreates()).toBe(1);
+    // With budget again, "Doesn't work" replaces it.
+    await t.run((ctx) => ctx.db.patch(accountId, { dailyAllocationBudget: 0 }));
+    await t.mutation(internal.edgeSetupRuns.retry, {
+      runId,
+      tryAnotherAddress: true,
+      edgeId: edgeId as Id<'edges'>,
+    });
+    const next = await pump(t, runId, settled);
+    expect(next.need?.code).toBe('try_it');
+    expect(next.testLinks![0]!.edgeId).not.toBe(edgeId);
+    expect((await edgeRow(t, edgeId))!.status).toBe('cancelled');
+    expect(world.lbCreates()).toBe(2);
+  });
+
+  test('a freeze refuses it at the card in its own words, removing nothing', async () => {
+    const { t, runId, r } = await atTheCard();
+    const edgeId = r.testLinks![0]!.edgeId;
+    await t.mutation(internal.edgeMaintenance.freeze, { reason: 'test' });
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, {
+        runId,
+        tryAnotherAddress: true,
+        edgeId: edgeId as Id<'edges'>,
+      }),
+    ).rejects.toThrow(/replacement_cannot_start.*maintenance/);
+    expect((await edgeRow(t, edgeId))!.status).toBe('active');
+    expect((await run(t, runId)).need?.code).toBe('try_it');
+  });
+
+  test('an account at its live cap refuses it too: a cancelled address counts until it is destroyed', async () => {
+    const { t, world, accountId, runId, r } = await atTheCard();
+    const edgeId = r.testLinks![0]!.edgeId;
+    await t.run((ctx) => ctx.db.patch(accountId, { maxLiveEdges: 1 }));
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, {
+        runId,
+        tryAnotherAddress: true,
+        edgeId: edgeId as Id<'edges'>,
+      }),
+    ).rejects.toThrow(/replacement_cannot_start.*Account capacity reached/);
+    expect((await edgeRow(t, edgeId))!.status).toBe('active');
+    expect(world.lbCreates()).toBe(1);
+  });
+
+  test('"Try another address" on an unreachable address is kept the same way', async () => {
+    const { t, accountId, runId, r } = await atTheCard({ evidence: () => 'unreachable' });
+    expect(r.need?.code).toBe('address_unreachable');
+    const edgeId = r.listeners[0]!.edgeId!;
+    await budgetUsedUp(t, accountId);
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, { runId, tryAnotherAddress: true }),
+    ).rejects.toThrow(/replacement_cannot_start/);
+    const after = await run(t, runId);
+    expect(after.need?.code).toBe('address_unreachable');
+    expect(after.listeners[0]).toMatchObject({ edgeId, verify: 'unreachable' });
+    expect((await edgeRow(t, edgeId))!.status).toBe('active');
   });
 });
 

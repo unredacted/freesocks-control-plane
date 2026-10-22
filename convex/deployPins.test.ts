@@ -46,6 +46,24 @@ const deployDockerfile = read('../docker/deploy.Dockerfile');
 const convexNodeDockerfile = read('../docker/convex-node/Dockerfile');
 const packageJson = read('../package.json');
 const ciWorkflow = read('../.github/workflows/ci.yml');
+const dockerignore = read('../.dockerignore');
+const gitignore = read('../.gitignore');
+
+/** The pattern lines of an ignore file, comments and blanks dropped. */
+function ignoreLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+}
+
+/**
+ * Database exports, dumps and env captures as the operator docs write them
+ * (docs/beta-deploy.md § Exports stay outside the checkout): the re-pin
+ * checklist's `snapshots/*.zip`, the backup sidecar's `*.sql.gz[.age]`, and the
+ * age-encrypted `convex-env-*.txt.age` env capture.
+ */
+const EXPORT_PATTERNS = ['snapshots', '*.zip', '*.sql', '*.sql.gz*', '*.age', 'convex-env-*'];
 
 /** One service's block in a compose file (up to the next top-level key). */
 function serviceBlock(name: string, compose = stack): string {
@@ -437,5 +455,44 @@ describe('backend log privacy', () => {
           'or use plain `warn`. docs/privacy.md §4.',
       ).toBe(true);
     }
+  });
+});
+
+describe('what the images take from the checkout', () => {
+  test('.dockerignore keeps database exports out of every image, at any depth', () => {
+    // The deployer image is `COPY . .` of the whole checkout, so an export left
+    // in the repo directory (the old re-pin recipe made `snapshots/` there) was
+    // baked into it: every account hash and live subscription token, in an
+    // image layer that outlives the file. `**/` because a bare .dockerignore
+    // pattern matches at the context root only, so `*.zip` alone would let
+    // `snapshots/pre-upgrade.zip` through.
+    const lines = ignoreLines(dockerignore);
+    for (const pattern of EXPORT_PATTERNS) {
+      expect(lines, `.dockerignore must exclude \`**/${pattern}\``).toContain(`**/${pattern}`);
+    }
+
+    // The last matching line wins, so a `!` exception could put one back.
+    expect(
+      lines.filter((line) => line.startsWith('!')),
+      'a `!` line in .dockerignore can re-include an export. If you need one, scope it so it ' +
+        'cannot match an export and relax this check.',
+    ).toEqual([]);
+  });
+
+  test('.gitignore keeps the same exports from being committed', () => {
+    // gitignore patterns without a slash match at any depth already.
+    const lines = ignoreLines(gitignore);
+    for (const pattern of EXPORT_PATTERNS) {
+      const line = pattern === 'snapshots' ? 'snapshots/' : pattern;
+      expect(lines, `.gitignore must exclude \`${line}\``).toContain(line);
+    }
+  });
+
+  test('the web image ships only the built SPA and the Caddyfile', () => {
+    // Its build stage copies the whole context; the final stage is what Caddy
+    // runs, and it must not pick up anything beyond the build output.
+    const finalStage = webDockerfile.split(/^FROM\s/m).at(-1) ?? '';
+    const copies = [...finalStage.matchAll(/^(?:COPY|ADD)\s+(.+)$/gm)].map((m) => m[1].trim());
+    expect(copies).toEqual(['--from=build /app/dist /srv/dist', 'Caddyfile /etc/caddy/Caddyfile']);
   });
 });

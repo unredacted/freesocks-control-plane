@@ -273,6 +273,18 @@ export interface EdgeDescription {
   readiness?: EdgeReadiness;
 }
 
+/**
+ * What saving an edge's configuration again did (`EdgeProvider.reapply`).
+ * `sent`: the same configuration went out again (`settled`: the provider had
+ * finished applying it when the call returned). `skipped`: nothing was sent,
+ * and `code` says why (`lb_busy`: still applying an earlier change;
+ * `lb_unusable`: in a state it does not leave by itself; `no_frontend`: the
+ * ledger holds nothing to save again).
+ */
+export type ReapplyOutcome =
+  | { status: 'sent'; settled: boolean }
+  | { status: 'skipped'; code: 'lb_busy' | 'lb_unusable' | 'no_frontend' };
+
 export type DestroyOutcome =
   | { status: 'delete_requested'; opRef?: string }
   | { status: 'confirmed_gone' }
@@ -509,6 +521,14 @@ export interface EdgeProvider<
   ): Promise<Discovery>;
 
   describe(cfg: Cfg, ledger: Ledger): Promise<EdgeDescription>;
+  /**
+   * Save the edge's configuration again, unchanged, for a provider that can
+   * accept a change and never apply it (Scaleway: a frontend created while
+   * its load balancer was still applying the previous change). A guided run
+   * offers it once when its outside check finds a new address unreachable.
+   * Never creates or deletes anything. Absent = nothing to save again.
+   */
+  reapply?(cfg: Cfg, ledger: Ledger): Promise<ReapplyOutcome>;
   inspect(cfg: Cfg, ledger: Ledger): Promise<InspectResult>;
   inventory(cfg: Cfg): Promise<Inventory>;
   /**
