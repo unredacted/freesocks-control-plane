@@ -435,6 +435,7 @@ async function rawBodyOf(ctx: ActionCtx, c: CohortRef): Promise<string> {
     backendShortId: c.backendShortId,
     subscriptionUrl: c.subscriptionUrl,
     ...(c.excludeNode ? { excludeNode: c.excludeNode } : {}),
+    nodeCheck: true,
   });
   return fetched.content;
 }

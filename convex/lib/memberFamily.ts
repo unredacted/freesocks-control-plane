@@ -24,7 +24,7 @@ type SubLike = Pick<
 >;
 
 /** The mode slugs whose bound pool holds this placement. */
-async function modesOfPlacement(db: DatabaseReader, placement: string): Promise<string[]> {
+export async function modesOfPlacement(db: DatabaseReader, placement: string): Promise<string[]> {
   // One row per mode on this backend: a small set.
   const rows = await db
     .query('modePlacements')

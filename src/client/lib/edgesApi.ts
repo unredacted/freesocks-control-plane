@@ -58,6 +58,8 @@ import {
   EdgeLocationCreateResponse,
   EdgeLocationList,
   EdgeMaintenanceView,
+  FreedomDeliveryView,
+  FreedomPreview,
   type EdgeLocationCreateRequest,
   type EdgeLocationUpdateRequest,
   EdgeOkResponse,
@@ -319,6 +321,11 @@ export const freezeMaintenance = (reason?: string) =>
   apiClient.post(`${BASE}/maintenance/freeze`, reason ? { reason } : {}, EdgeMaintenanceView);
 export const thawMaintenance = (reason?: string) =>
   apiClient.post(`${BASE}/maintenance/thaw`, reason ? { reason } : {}, EdgeMaintenanceView);
+/** Freedom modes only through edges: the switch, what turning it on would close, and the switch itself. */
+export const fetchFreedomDelivery = () => apiClient.get(`${BASE}/freedom`, FreedomDeliveryView);
+export const fetchFreedomPreview = () => apiClient.get(`${BASE}/freedom/preview`, FreedomPreview);
+export const setFreedomEdgesOnly = (on: boolean, confirm = false) =>
+  apiClient.post(`${BASE}/freedom`, { on, confirm }, FreedomDeliveryView);
 /** The one automation switch: `edge.enabled` + `autoRotate` + `probe.enabled` + `autoProvisionToDesired` (+ one spare per listener when on). */
 export const setEdgeAutomation = (on: boolean) =>
   apiClient.post(`${BASE}/automation`, { on }, EdgeAutomationResponse);
@@ -735,6 +742,8 @@ export const edgeKeys = {
   setupDraft: (draftKey: string) => [...ROOT, 'setup-status', 'draft', draftKey] as const,
   config: [...ROOT, 'config'] as const,
   maintenance: [...ROOT, 'maintenance'] as const,
+  freedom: [...ROOT, 'freedom'] as const,
+  freedomPreview: [...ROOT, 'freedom', 'preview'] as const,
   setupRuns: [...ROOT, 'setup-runs'] as const,
   setupRun: (runId: string) => [...ROOT, 'setup-runs', 'run', runId] as const,
   testLinks: (edgeIds: readonly string[]) => [...ROOT, 'test-links', edgeIds.join(',')] as const,
@@ -896,6 +905,22 @@ export const testLinksQuery = (edgeIds: () => readonly string[]) =>
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
     retry: false,
+  }));
+
+export const freedomDeliveryQuery = () =>
+  createQuery(() => ({
+    queryKey: edgeKeys.freedom,
+    queryFn: fetchFreedomDelivery,
+    staleTime: 15_000,
+  }));
+
+/** Read on demand (it counts members): the card asks for it, nothing polls it. */
+export const freedomPreviewQuery = (enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.freedomPreview,
+    queryFn: fetchFreedomPreview,
+    enabled: enabled(),
+    staleTime: 60_000,
   }));
 
 export const maintenanceQuery = () =>

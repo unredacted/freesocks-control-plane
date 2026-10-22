@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Edge settings (`/admin/edges/settings`).
-   * URL state: `?section` = basics | rotation | rendering | detector | probes | l7 | maintenance.
+   * URL state: `?section` = basics | rotation | rendering | detector | probes | l7 | maintenance | freedom.
    * Basics and Maintenance are always open; `?section` opens ONE advanced card and
    * scrolls to it. Each section saves only its own changed keys (flat patch); the
    * knobs, their copy and their section live in settings/fields.ts, bounds and
@@ -24,6 +24,7 @@
   import RenderRules from './settings/RenderRules.svelte';
   import DeliveryBindingsCard from './settings/DeliveryBindingsCard.svelte';
   import MaintenanceCard from './settings/MaintenanceCard.svelte';
+  import FreedomDeliveryCard from './settings/FreedomDeliveryCard.svelte';
   import { ConfigForm } from './settings/form.svelte';
   import {
     AUTO_PROVISION,
@@ -333,6 +334,7 @@
       </div>
     </SettingsSectionCard>
 
+    <FreedomDeliveryCard />
     <MaintenanceCard />
     <DeliveryBindingsCard />
   </div>

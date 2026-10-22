@@ -1773,26 +1773,31 @@ export async function heldNodeNames(
   return new Set(holds.filter((h) => !h.released).flatMap((h) => h.heldNodeNames));
 }
 
-/** The names of every enrolled node of a backend whose gate is closed (the pinner never picks one while another exists). */
+/** The names of every node of a backend whose gate is closed (the pinner never picks one while another exists). */
+export async function blockedNamesOf(
+  ctx: { db: QueryCtx['db'] },
+  backendServerId: Id<'backendServers'>,
+): Promise<string[]> {
+  const intents = await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+    .collect();
+  const held = await heldNodeNames(ctx, backendServerId);
+  const blocked = [
+    ...intents
+      .filter((i) => i.delivery.disposition !== 'live' || !!i.maintenance)
+      .map((i) => i.name),
+    ...held,
+  ];
+  // A body whose Hosts still carry a renamed node's old remark names it by
+  // its old name: excluded under that name too.
+  const formers = await formerNamesByName(ctx.db, backendServerId);
+  return [...blocked, ...blocked.flatMap((n) => formers.get(n) ?? [])];
+}
+
 export const blockedNodeNames = internalQuery({
   args: { backendServerId: v.id('backendServers') },
-  handler: async (ctx, { backendServerId }) => {
-    const intents = await ctx.db
-      .query('panelNodeIntents')
-      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-      .collect();
-    const held = await heldNodeNames(ctx, backendServerId);
-    const blocked = [
-      ...intents
-        .filter((i) => i.delivery.disposition !== 'live' || !!i.maintenance)
-        .map((i) => i.name),
-      ...held,
-    ];
-    // A body whose Hosts still carry a renamed node's old remark names it by
-    // its old name: excluded under that name too.
-    const formers = await formerNamesByName(ctx.db, backendServerId);
-    return [...blocked, ...blocked.flatMap((n) => formers.get(n) ?? [])];
-  },
+  handler: (ctx, { backendServerId }) => blockedNamesOf(ctx, backendServerId),
 });
 
 // --- retirement request (the role) ---------------------------------------------------------------------

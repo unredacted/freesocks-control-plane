@@ -89,6 +89,7 @@ import { l7PlaceOf } from './lib/edges/l7Place';
 import { readRefusals, REFUSAL_WINDOW_MS, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
 import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { modeRefOf } from './nodeIntents';
+import { freedomAttention } from './freedomDelivery';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { setStateOf } from './lib/edges/setState';
@@ -741,7 +742,7 @@ export const setupStatus = internalQuery({
 export { ATTENTION_RANK };
 type AttentionKind = (typeof ATTENTION_RANK)[number];
 
-interface AttentionItem {
+export interface AttentionItem {
   id: string;
   kind: AttentionKind;
   severity: 'critical' | 'warning' | 'info';
@@ -1865,6 +1866,8 @@ export const attention = internalQuery({
     // Enrolled nodes waiting on the operator (docs/servers.md "Node lifecycle"):
     // FCP never starts a protect run or approves on its own, it asks.
     items.push(...(await nodeAttention(ctx, relays)));
+    // Freedom modes only through edges: the nodes their members are not handed.
+    items.push(...(await freedomAttention(ctx)));
     const maintenance = await readMaintenance(ctx.db);
     if (maintenance.frozen) {
       items.push({

@@ -28,6 +28,11 @@ import {
   resolveCatalogWithAvailability,
   resolverFor,
 } from './lib/placement';
+import {
+  FREEDOM_FAMILY,
+  freedomDirectRefusal,
+  freedomEdgesOnly,
+} from './lib/edges/freedomDelivery';
 
 // --- reads --------------------------------------------------------------------
 
@@ -410,6 +415,18 @@ async function materializeDefaultsIfEmpty(ctx: MutationCtx): Promise<void> {
   }
 }
 
+/**
+ * Freedom modes only through edges (lib/edges/freedomDelivery.ts): a mode is
+ * never put in the freedom family, or turned on there, while a backend sets it
+ * up direct.
+ */
+async function refuseFreedomDirect(ctx: MutationCtx, slug: string): Promise<void> {
+  if (!(await freedomEdgesOnly(ctx.db))) return;
+  const reason = await freedomDirectRefusal(ctx.db, slug);
+  if (reason)
+    throw new ConvexError({ code: 'conflict', message: reason, data: { freedomModeDirect: true } });
+}
+
 /** Clear the family's previous default leaf when a new one claims the flag. */
 async function clearOtherFamilyDefault(
   ctx: MutationCtx,
@@ -492,6 +509,11 @@ export const updateFamily = internalMutation({
     if (a.iconId !== undefined) patch.iconId = a.iconId.trim() || 'zap';
     if (a.enabled !== undefined) patch.enabled = a.enabled;
     if (a.order !== undefined) patch.order = a.order;
+    if (row.slug === FREEDOM_FAMILY && a.enabled === true && !row.enabled) {
+      const modes = await ctx.db.query('connectionModes').collect(); // tiny table, admin path
+      for (const m of modes)
+        if (m.familySlug === FREEDOM_FAMILY && m.enabled) await refuseFreedomDirect(ctx, m.slug);
+    }
     await ctx.db.patch(row._id, patch);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -554,6 +576,7 @@ export const createMode = internalMutation({
     if (!label && !BUILT_IN_MODE_SLUGS.has(slug)) {
       validationError('a label is required (new ids have no built-in translation)');
     }
+    if (a.family === FREEDOM_FAMILY && (a.enabled ?? true)) await refuseFreedomDirect(ctx, slug);
     const id = await ctx.db.insert('connectionModes', {
       slug,
       familySlug: a.family,
@@ -623,6 +646,11 @@ export const updateMode = internalMutation({
     if (a.makeDefault && (a.enabled === false || (!row.enabled && a.enabled === undefined))) {
       validationError('cannot make a disabled mode the default');
     }
+    // Moved into the freedom family, or turned on there: never while set up direct.
+    const family = patch.familySlug ?? row.familySlug;
+    const enabled = patch.enabled ?? row.enabled;
+    if (family === FREEDOM_FAMILY && enabled && (row.familySlug !== FREEDOM_FAMILY || !row.enabled))
+      await refuseFreedomDirect(ctx, row.slug);
     await ctx.db.patch(row._id, patch);
     if (a.isFamilyDefault) {
       await clearOtherFamilyDefault(ctx, patch.familySlug ?? row.familySlug, row._id);

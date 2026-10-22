@@ -586,6 +586,11 @@ export const fetchSubscriptionContent = internalAction({
     // resolves ONE node's entry itself (by Host identity), so a pin that
     // rendezvous-picked another node of the placement would hide it.
     unpinned: v.optional(v.boolean()),
+    // An operator's look at what ONE node hands a key (the delivery rehearsal
+    // before a binding, the restore's raw checks): pinned as a member's body is
+    // before freedom delivery through edges narrows the pick, so a node about
+    // to be covered (or uncovered) is the node looked at, not a covered one.
+    nodeCheck: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -597,6 +602,7 @@ export const fetchSubscriptionContent = internalAction({
       hwidHeaders,
       excludeNode,
       unpinned,
+      nodeCheck,
     },
   ): Promise<SubscriptionContent> => {
     if (mockBackendEnabled()) return mockFetchContent();
@@ -624,14 +630,22 @@ export const fetchSubscriptionContent = internalAction({
         // Nodes whose delivery gate is closed (enrolled but not live, under
         // maintenance, retiring; docs/servers.md "Node lifecycle") are never
         // picked while another node exists; a body that can only resolve to one
-        // is refused by the delivery policy afterwards.
-        const gated = await ctx.runQuery(internal.nodeIntents.blockedNodeNames, {
+        // is refused by the delivery policy afterwards. A key held to freedom
+        // delivery through edges is pinned among the nodes an edge covers while
+        // one is in the body (lib/edges/freedomDelivery.ts); otherwise the
+        // delivery policy refuses the node it lands on (`node_unprotected`).
+        const rules = await ctx.runQuery(internal.freedomDelivery.pinRules, {
           backendServerId,
+          backendShortId,
         });
-        const pinned = pinSubscriptionToNode(fetched.content, backendShortId, [
-          ...(excludeNode ? [excludeNode] : []),
-          ...gated,
-        ]);
+        const blocked = new Set(rules.blocked);
+        const servable = rules.servable && !nodeCheck ? new Set(rules.servable) : null;
+        const pinned = pinSubscriptionToNode(
+          fetched.content,
+          backendShortId,
+          [...(excludeNode ? [excludeNode] : []), ...rules.blocked],
+          servable ? (n) => servable.has(n) && !blocked.has(n) : undefined,
+        );
         return {
           ...fetched,
           content: pinned.content,
