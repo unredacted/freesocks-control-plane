@@ -36,7 +36,11 @@ import {
   withLearnedAddresses,
   verificationStale,
 } from './lib/edges/verification';
-import { partialRungFor } from './lib/edges/verifyRung';
+import {
+  partialRungFor,
+  type RungProbeRun,
+  type RungReachabilityRow,
+} from './lib/edges/verifyRung';
 import { verificationListenerOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { checkPublishable } from './relays';
 import { applyQualification } from './edgeProviderAccounts';
@@ -284,6 +288,33 @@ async function accountTrustEvidence(
  */
 const RUNG_RUN_WINDOW = 40;
 
+/** A rollup row as the rung reads it (lib/edges/verifyRung.ts). */
+export function rungRowOf(r: Doc<'probeReachability'>): RungReachabilityRow {
+  return {
+    country: r.country,
+    source: r.source,
+    verdict: r.verdict,
+    port: r.port,
+    ipVersion: r.ipVersion,
+    addressKind: r.addressKind,
+    okCount: r.okCount,
+  };
+}
+
+/** A probe run as the rung reads it. */
+export function rungRunOf(r: Doc<'probeRuns'>): RungProbeRun {
+  return {
+    source: r.source,
+    status: r.status,
+    probeProtocol: r.probeProtocol,
+    results: r.results,
+    requestedAt: r.requestedAt,
+    ipVersion: r.ipVersion,
+    addressKind: r.addressKind,
+    port: r.port,
+  };
+}
+
 /** The newest internal shape runs of an edge (the only runs the rung reads). */
 export function internalRunsOf(db: DatabaseReader, edgeId: Id<'edges'>) {
   return db
@@ -336,19 +367,8 @@ export async function refreshPartialRung(
     providerHealthy:
       !edge.managed ||
       providerHealthSatisfies(edge.provider, edge.health, cfg.requireProviderHealth),
-    reachability: reachability.map((r) => ({
-      country: r.country,
-      source: r.source,
-      verdict: r.verdict,
-      port: r.port,
-    })),
-    probeRuns: runs.map((r) => ({
-      source: r.source,
-      status: r.status,
-      probeProtocol: r.probeProtocol,
-      results: r.results,
-      requestedAt: r.requestedAt,
-    })),
+    reachability: reachability.map(rungRowOf),
+    probeRuns: runs.map(rungRunOf),
     agreementVantages: cfg.probe.agreementVantages,
   });
   const rec = edge.verification;

@@ -29,6 +29,46 @@ export type ProbeProtocol = 'tcp' | 'tls' | 'https' | 'tls-sni';
 export function isBareConnect(p: ProbeProtocol | undefined): boolean {
   return (p ?? 'tcp') === 'tcp' || p === 'tls-sni';
 }
+
+/**
+ * What a probe tells about the ADDRESS. Every vantage answer falls in one of
+ * three classes:
+ *
+ *   reached     the vantage connected (`ok: true`);
+ *   refused     the vantage could test the path and the address refused the
+ *               connection, reset it, or never answered (`ok: false`);
+ *   not tested  the vantage could not test at all: no route for that address
+ *               family on its side, a service that refused the request (bad
+ *               input, no credential, a limit), a measurement job that timed
+ *               out before any vantage answered.
+ *
+ * "Not tested" is never stored as a result: the parsers drop such answers
+ * (one vantage of many) and a run whose vantages all could not test ends
+ * `failed` / `timeout` with a short class in `error`. So a stored result is
+ * always evidence, and a run without results is never evidence about the
+ * address (`runOutcome`).
+ */
+export type RunOutcome = 'in_flight' | 'evidence' | 'not_tested';
+
+export function runOutcome(run: {
+  status: 'requested' | 'running' | 'finished' | 'failed' | 'timeout';
+  results: ReadonlyArray<unknown>;
+}): RunOutcome {
+  if (run.status === 'requested' || run.status === 'running') return 'in_flight';
+  return run.status === 'finished' && run.results.length > 0 ? 'evidence' : 'not_tested';
+}
+
+/**
+ * A vantage's own "no route for this family" (`ENETUNREACH`, "Network is
+ * unreachable"): the vantage could not test the address, which says nothing
+ * about it. `EHOSTUNREACH` is NOT included: from a remote vantage it is as
+ * likely a router's answer about the address itself (an address nobody routes)
+ * as the vantage's own gap, and only FCP's own host can tell the two apart
+ * (internal.ts checks its local route).
+ */
+export function vantageHasNoRoute(error: unknown): boolean {
+  return typeof error === 'string' && /enetunreach|network is unreachable/i.test(error);
+}
 /** The family FCP asked for; `any` for a name (the resolver decides). */
 export type RequestedFamily = 4 | 6 | 'any';
 
@@ -81,6 +121,24 @@ export interface ProbeStarted {
 export interface ProbePoll {
   status: 'running' | 'finished';
   results: ProbeResult[];
+}
+
+/** The address families an L4 address is probed over (a name is probed once, as `any`). */
+export type AddressFamily = 4 | 6;
+
+/**
+ * The families a target's IP literals are probed over: IPv4 always, IPv6 when
+ * `v6Allowed` (for an edge: members are handed IPv6, `render.ipv6Mode` not
+ * off) or when IPv6 is all the target has.
+ */
+export function literalFamilies(
+  a: { v4?: string; v6?: string },
+  v6Allowed: boolean,
+): AddressFamily[] {
+  const out: AddressFamily[] = [];
+  if (a.v4) out.push(4);
+  if (a.v6 && (v6Allowed || !a.v4)) out.push(6);
+  return out;
 }
 
 /** `[v6]:port` / `name:port` / `v4:port` as the wire formats want it. */

@@ -9,12 +9,19 @@
  * `tcp` targets use `check-tcp` (a bare connect). `tls`/`https` targets use
  * `check-http` against `https://<name>:<port>/`: any HTTP answer means the
  * connection and handshake completed.
+ *
+ * No IPv6 literal: the API answers `{"error":"invalid_url"}` to every spelling
+ * of one (`[v6]:port`, a bare `v6`, `tcp://[v6]:port`, `https://[v6]/`; its
+ * docs never mention IPv6), so FCP never sends one (`checkhostTakes`) and an
+ * IPv6 address is simply not checked from here.
  */
 import {
   isBareConnect,
   normalizeCountry,
   shortError,
   targetHost,
+  vantageHasNoRoute,
+  type ProbeAddressKind,
   type ProbeRequestOptions,
   type ProbeResult,
   type ProbeStarted,
@@ -74,6 +81,14 @@ export async function checkhostNodes(fetchFn: FetchLike): Promise<CheckhostNode[
   return parseCheckhostNodes(await res.json());
 }
 
+/**
+ * Whether check-host can test this path at all: not an IPv6 literal (see the
+ * header). A name is fine: its resolver picks the family.
+ */
+export function checkhostTakes(t: { addressKind: ProbeAddressKind; family: 4 | 6 | 'any' }) {
+  return !(t.addressKind === 'ip' && t.family === 6);
+}
+
 /** Which check-host endpoint a probe protocol maps to. */
 export function checkhostEndpoint(
   target: Pick<ProbeTarget, 'protocol'>,
@@ -108,8 +123,20 @@ export async function checkhostStart(
     headers: { accept: 'application/json' },
   });
   if (!res.ok) throw new Error(`check-host ${endpoint}: ${res.status}`);
-  const body = (await res.json()) as { ok?: unknown; request_id?: unknown; nodes?: unknown };
-  if (typeof body.request_id !== 'string') throw new Error('check-host: no request_id');
+  const body = (await res.json()) as {
+    ok?: unknown;
+    request_id?: unknown;
+    nodes?: unknown;
+    error?: unknown;
+  };
+  // A refusal comes back as 200 with a code (`invalid_url`, `limit_exceeded`):
+  // keep the code (failureCode classes it), never anything else of the body.
+  if (typeof body.request_id !== 'string')
+    throw new Error(
+      typeof body.error === 'string' && /^[a-z_]{1,40}$/.test(body.error)
+        ? `check-host: ${body.error}`
+        : 'check-host: no request_id',
+    );
   const nodeCountries: Record<string, string> = {};
   for (const n of selected) nodeCountries[n.host] = n.country;
   if (body.nodes && typeof body.nodes === 'object') {
@@ -127,8 +154,9 @@ export async function checkhostStart(
  * (`[[1, seconds, 'OK', '200', ip]]` ok, `[[0, seconds, '<error>']]` fail).
  * Pending nodes leave the poll `running`. A node that answered with no result
  * (`[null]`, an empty array or an unparsable shape) could not run the check: it
- * is dropped, never counted as a failed target. `redact` scrubs the target's
- * own spelling out of stored error text.
+ * is dropped, never counted as a failed target. So is a node whose own error is
+ * "no route" (`vantageHasNoRoute`). `redact` scrubs the target's own spelling
+ * out of stored error text.
  */
 export function parseCheckhostResult(
   body: unknown,
@@ -158,6 +186,7 @@ export function parseCheckhostResult(
       // a completed connection + handshake; `0` is a connect/TLS error.
       const ok = Number(first[0]) === 1;
       const t = Number(first[1]);
+      if (!ok && vantageHasNoRoute(first[2])) continue;
       results.push({
         ...base,
         ok,
@@ -166,6 +195,7 @@ export function parseCheckhostResult(
           : { error: shortError(first[2] ?? 'http_failed', 60, redact) }),
       });
     } else if (first && typeof first === 'object' && 'error' in first) {
+      if (vantageHasNoRoute((first as { error: unknown }).error)) continue;
       results.push({
         ...base,
         ok: false,

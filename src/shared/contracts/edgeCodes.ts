@@ -699,6 +699,8 @@ export const PROBE_FAILURE_CLASSES = [
   'service_error',
   'request_refused',
   'network',
+  // FCP's own host has no route for the address family (no IPv6 on the host).
+  'no_route',
   'error',
   'no_results',
   'failed',

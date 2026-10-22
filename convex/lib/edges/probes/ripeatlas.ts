@@ -13,6 +13,7 @@
 import {
   isBareConnect,
   shortError,
+  vantageHasNoRoute,
   type ProbeProtocol,
   type ProbeRequestOptions,
   type ProbeResult,
@@ -123,8 +124,9 @@ function asnOfRow(raw: Record<string, unknown>, af: 4 | 6): string | undefined {
  * present a certificate for a random SNI; same rule as the internal probe),
  * for a `tls` / `https` probe the handshake IS the measurement and an alert is
  * a failure, or several alerting probes would become positive country evidence
- * for a front that cannot complete a handshake. The probe's ASN is the network;
- * the probe id never is.
+ * for a front that cannot complete a handshake. An `err` that is the probe's
+ * own missing route (`vantageHasNoRoute`) could not test and is dropped. The
+ * probe's ASN is the network; the probe id never is.
  */
 export function parseRipeAtlasResults(
   body: unknown,
@@ -140,6 +142,7 @@ export function parseRipeAtlasResults(
     const asn = asnOfRow(raw, af) ?? (Number.isFinite(prb) ? opts.asnByProbe?.[prb] : undefined);
     const base = { country, ...(asn ? { asn } : {}), vantageClass: 'unknown' as const };
     if (raw.err !== undefined) {
+      if (vantageHasNoRoute(raw.err)) continue;
       out.push({ ...base, ok: false, error: shortError(raw.err) });
     } else if (raw.alert !== undefined) {
       const rt = Number(raw.rt);

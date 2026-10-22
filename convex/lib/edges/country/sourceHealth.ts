@@ -7,13 +7,24 @@
 
 /**
  * A short class for why a run could not measure. Stored on the run, so it
- * never carries service text, an address or a name.
+ * never carries service text, an address or a name. Every class is "the
+ * vantages could not test" (lib/edges/probes/types.ts `RunOutcome`), never
+ * evidence about the address: `no_route` is FCP's own host without a route for
+ * the family, `request_refused` covers a service that rejects the input
+ * (check-host's `invalid_url`), and `timeout` is the measurement job's own.
  */
 export function failureCode(message: string): string {
   const m = message.toLowerCase();
+  if (m.includes('no_route')) return 'no_route';
   if (/\b(401|403)\b/.test(m) || m.includes('unauthor') || m.includes('forbidden')) return 'auth';
-  if (/\b429\b/.test(m) || m.includes('rate limit') || m.includes('too many'))
+  if (
+    /\b429\b/.test(m) ||
+    m.includes('rate limit') ||
+    m.includes('too many') ||
+    m.includes('limit_exceeded')
+  )
     return 'rate_limited';
+  if (m.includes('invalid_url')) return 'request_refused';
   if (m.includes('globalping_limit')) return 'globalping_limit';
   if (m.includes('key not set')) return 'no_key';
   if (m.includes('no nodes') || m.includes('no probes')) return 'no_vantages';
@@ -55,7 +66,12 @@ export const FAILING_STREAK = 3;
 /** ...with nothing that worked for at least this long. */
 export const FAILING_QUIET_MS = 6 * 60 * 60_000;
 
-/** Per source, from its runs of the window (any order). */
+/**
+ * Per source, from its runs of the window (any order). A run that failed with
+ * `no_route` is left out: the source works, FCP's own host just has no route
+ * for that family (no IPv6), and every IPv6 target would otherwise read as a
+ * failing source.
+ */
 export function sourceHealth(
   sources: readonly string[],
   runs: readonly SourceRun[],
@@ -66,7 +82,8 @@ export function sourceHealth(
       .filter(
         (r) =>
           r.source === source &&
-          (r.status === 'finished' || r.status === 'failed' || r.status === 'timeout'),
+          (r.status === 'finished' || r.status === 'failed' || r.status === 'timeout') &&
+          r.error !== 'no_route',
       )
       .sort((a, b) => b.requestedAt - a.requestedAt);
     const good = (r: SourceRun) => r.status === 'finished' && r.results > 0;

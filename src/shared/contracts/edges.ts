@@ -2473,6 +2473,11 @@ export const SetupRunAdmin = z.object({
       edgeId: z.string().nullable(),
       verify: z.enum(['pending', 'partial', 'verified', 'unreachable']),
       published: z.boolean(),
+      /**
+       * Address families no outside source could test when the outside check
+       * passed it ("Not checked from outside over IPv6"): unknown, not failed.
+       */
+      notChecked: z.array(z.union([z.literal(4), z.literal(6)])).default([]),
       /** What it carries (from the plan), for naming it in words; null on older runs. */
       transport: z
         .object({

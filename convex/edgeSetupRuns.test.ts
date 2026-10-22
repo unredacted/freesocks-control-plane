@@ -124,7 +124,7 @@ async function seed(
     /** Lands a per-country round with the verification probes (the nth request, from 1). */
     countryRound?: (t: T, edgeId: Id<'edges'>, nth: number) => Promise<void>;
     /** What the nth verification round finds (default: the address is partial). */
-    evidence?: (nth: number) => 'partial' | 'unreachable';
+    evidence?: (nth: number) => Evidence;
     /** What saving an address again answers (default: its provider has nothing to save). */
     reapply?: StageOps['reapplyEdge'];
   } = {},
@@ -166,9 +166,10 @@ async function seed(
     ensureCredential: async () => ({ ok: true, reused: false }),
     requestVerificationProbes: async (_ctx, edgeId) => {
       calls.probes.push(edgeId as string);
-      if ((opts.evidence?.(calls.probes.length) ?? 'partial') === 'partial')
-        await landPartialEvidence(t, edgeId);
-      else await landUnreachableEvidence(t, edgeId);
+      const evidence = opts.evidence?.(calls.probes.length) ?? 'partial';
+      if (evidence === 'partial') await landPartialEvidence(t, edgeId);
+      else if (evidence === 'unreachable') await landUnreachableEvidence(t, edgeId);
+      else await landUntestedEvidence(t, edgeId, evidence);
       if (opts.countryRound) await opts.countryRound(t, edgeId, calls.probes.length);
     },
     reapplyEdge: async (ctx, edgeId) => {
@@ -256,6 +257,63 @@ async function seed(
       rehearsalHold = on;
     },
   };
+}
+
+type Evidence = 'partial' | 'unreachable' | 'beta_mix' | 'nothing_tested';
+
+/**
+ * A round whose sources mostly could not test (what beta saw on a working
+ * dual-stack address): FCP's own shape check reached it over IPv4; its IPv6
+ * run failed `no_route` (the host has no IPv6); check-host's IPv4 job timed
+ * out (and it takes no IPv6 literal, so it had no IPv6 run); Globalping
+ * refused both requests. `nothing_tested`: every source failed, IPv4 too.
+ */
+async function landUntestedEvidence(
+  t: T,
+  edgeId: Id<'edges'>,
+  mix: Exclude<Evidence, 'partial' | 'unreachable'>,
+) {
+  await t.run(async (ctx) => {
+    const edge = (await ctx.db.get(edgeId))!;
+    const listener = (await ctx.db.get(edge.listenerId))!;
+    const v6 = '2001:db8::5';
+    if (mix === 'beta_mix' && !edge.addresses.v6)
+      await ctx.db.patch(edgeId, { addresses: { ...edge.addresses, v6 } });
+    const now = Date.now();
+    const port = listener.originPort;
+    const land = (
+      source: 'internal' | 'checkhost' | 'globalping',
+      family: 4 | 6,
+      status: 'finished' | 'failed' | 'timeout',
+      error?: string,
+    ) =>
+      ctx.db.insert('probeRuns', {
+        targetKind: 'edge',
+        targetRef: edgeId as string,
+        source,
+        target: family === 6 ? `[${v6}]:${port}` : `${edge.addresses.v4}:${port}`,
+        port,
+        ipVersion: family,
+        addressKind: 'ip',
+        probeProtocol:
+          source !== 'internal' ? 'tcp' : listener.security === 'none' ? 'tcp' : 'tls-sni',
+        requestedFamily: family,
+        status,
+        trigger: 'qualification',
+        requestedAt: now,
+        finishedAt: now,
+        results:
+          status === 'finished' ? [{ country: 'XX', vantageClass: 'datacenter', ok: true }] : [],
+        ...(error ? { error } : {}),
+      });
+    if (mix === 'beta_mix') {
+      await land('internal', 4, 'finished');
+      await land('internal', 6, 'failed', 'no_route');
+      await land('globalping', 6, 'failed', 'request_refused');
+    } else await land('internal', 4, 'failed', 'error');
+    await land('checkhost', 4, 'timeout', 'timeout');
+    await land('globalping', 4, 'failed', 'request_refused');
+  });
 }
 
 /** The probe round "lands": two outside vantages reachable + a passing internal tls-sni / tcp shape run. */
@@ -885,6 +943,52 @@ describe('edgeSetupRuns: an address the outside check finds unreachable', () => 
     await expect(
       t.mutation(internal.edgeSetupRuns.retry, { runId, checkAgain: true }),
     ).rejects.toThrow(/Check again/);
+  });
+});
+
+describe('edgeSetupRuns: what the outside check could not test', () => {
+  test('the beta mix: reached on IPv4, IPv6 untested by every source; no re-apply, IPv6 shows as not checked', async () => {
+    const { t, world, serverId, accountId, calls } = await seed({ evidence: () => 'beta_mix' });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.listeners[0]).toMatchObject({ verify: 'partial', notChecked: [6] });
+    expect(calls.probes).toHaveLength(1);
+    // Nothing was refused at the address: its provider is left alone.
+    expect(calls.reapplied).toEqual([]);
+    expect(r.events.some((e) => e.code === 'reapplied')).toBe(false);
+    expect(world.lbCreates()).toBe(1);
+    // The run card says it in plain words.
+    const view = await t.query(internal.edgeSetupRuns.getForAdmin, { id: runId });
+    expect(view?.listeners[0]).toMatchObject({ notChecked: [6] });
+  });
+
+  test('nothing could test the address at all: no re-apply, the test card decides', async () => {
+    const { t, serverId, accountId, calls } = await seed({ evidence: () => 'nothing_tested' });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.listeners[0]).toMatchObject({ verify: 'partial', notChecked: [4] });
+    expect(calls.reapplied).toEqual([]);
+  });
+
+  test('Check again clears what the earlier check could not test', async () => {
+    const { t, serverId, accountId } = await seed({
+      evidence: (nth) => (nth === 1 ? 'unreachable' : 'partial'),
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    // The provider has nothing to save again: the card asks at once.
+    expect(r.need?.code).toBe('address_unreachable');
+    await t.run((ctx) =>
+      ctx.db.patch(runId, {
+        listeners: r.listeners.map((l) => ({ ...l, notChecked: [6 as const] })),
+      }),
+    );
+    await t.mutation(internal.edgeSetupRuns.retry, { runId, checkAgain: true });
+    const after = await pump(t, runId, settled);
+    expect(after.need?.code).toBe('try_it');
+    expect(after.listeners[0]!.notChecked).toBeUndefined();
   });
 });
 

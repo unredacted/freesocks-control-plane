@@ -22,6 +22,12 @@
  *    every real REALITY session through it would fail (lib/edges/verifyRung.ts
  *    caps it at the `partial` rung for that reason).
  *
+ * A dial that fails for want of a route (`ENETUNREACH`, `EHOSTUNREACH`) is
+ * checked against FCP's own routing table: when this host has no route to the
+ * literal (no IPv6 on the host, say), it could not test the address at all, and
+ * the probe answers `{ untested: 'no_route' }` instead of a result. Only a
+ * failure past a route this host has is evidence about the address.
+ *
  * A NAME is resolved first and every answer must be a public literal: the probe
  * runs from the control plane's own network, so a name pointing at a private
  * range would turn it into an internal port scanner. The connection is then
@@ -121,6 +127,19 @@ export interface HttpsRequest {
   }): Promise<{ ok: boolean; error?: string }>;
 }
 
+/**
+ * Whether this host has a route to a literal. Asked only after a dial failed
+ * for want of one; never sends a packet.
+ */
+export interface RouteCheck {
+  (opts: { host: string; port: number }): Promise<{ ok: boolean; error?: string }>;
+}
+
+/** FCP's own host could not test the target (no result is recorded). */
+export interface ProbeUntested {
+  untested: 'no_route';
+}
+
 export interface InternalProbeDeps {
   fetchFn: FetchLike;
   /** name → IP literals. Injected in tests; defaults to the platform resolver. */
@@ -131,6 +150,8 @@ export interface InternalProbeDeps {
   tcpConnect?: TcpConnect;
   /** HTTPS request for a NAME target's `https` probe. Injected in tests; defaults to `node:tls`. */
   httpsRequest?: HttpsRequest;
+  /** Local route lookup. Injected in tests; defaults to a `node:dgram` connect. */
+  routeCheck?: RouteCheck;
 }
 
 async function defaultLookup(name: string): Promise<string[]> {
@@ -209,6 +230,56 @@ const defaultHttpsRequest: HttpsRequest = async ({ host, port, servername, timeo
   });
 };
 
+/**
+ * A UDP "connect" runs the kernel's route lookup for the destination and sends
+ * nothing: it fails at once when this host has no route for that family.
+ * Any failure counts as no route (it is asked only after a dial already failed
+ * with one of `NO_ROUTE_CODES`).
+ */
+const defaultRouteCheck: RouteCheck = async ({ host, port }) => {
+  const dgram = await import('node:dgram');
+  return new Promise((resolve) => {
+    let settled = false;
+    let socket: ReturnType<typeof dgram.createSocket> | null = null;
+    const done = (r: { ok: boolean; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        socket?.close();
+      } catch {
+        // Already closed.
+      }
+      resolve(r);
+    };
+    const timer = setTimeout(() => done({ ok: false, error: 'timeout' }), 2000);
+    try {
+      socket = dgram.createSocket(host.includes(':') ? 'udp6' : 'udp4');
+      socket.on('error', (err) => done({ ok: false, error: codeOf(err) || 'error' }));
+      socket.connect(port, host, (err?: Error) =>
+        done(err ? { ok: false, error: codeOf(err) || 'error' } : { ok: true }),
+      );
+    } catch (err) {
+      done({ ok: false, error: codeOf(err) || 'error' });
+    }
+  });
+};
+
+/** Dial failures that may be this host's own missing route rather than the address. */
+const NO_ROUTE_CODES = new Set(['ENETUNREACH', 'EHOSTUNREACH']);
+
+/** True when a failed dial never left this host: it has no route to `host`. */
+async function noRouteHere(
+  deps: InternalProbeDeps,
+  r: { ok: boolean; error?: string },
+  host: string,
+  port: number,
+): Promise<boolean> {
+  if (r.ok || !r.error || !NO_ROUTE_CODES.has(r.error)) return false;
+  const route = await (deps.routeCheck ?? defaultRouteCheck)({ host, port });
+  return !route.ok;
+}
+
 /** The verified literal to dial: the requested family when one of the answers has it, else the first answer. */
 export function pickDialAddress(addresses: string[], requestedFamily: 4 | 6 | 'any'): string {
   if (requestedFamily !== 'any') {
@@ -247,16 +318,24 @@ export async function internalProbe(
   deps: InternalProbeDeps,
   target: ProbeTarget,
   timeoutMs = 6000,
-): Promise<ProbeResult> {
+): Promise<ProbeResult | ProbeUntested> {
   const lookup = deps.lookup ?? defaultLookup;
   const redact = target.addressKind === 'name' ? [target.address] : [];
   const started = Date.now();
-  const finish = (r: { ok: boolean; error?: string }): ProbeResult => ({
-    ...vantage,
-    ok: r.ok,
-    rttMs: r.ok ? Date.now() - started : undefined,
-    ...(r.error ? { error: shortError(r.error, 60, redact) } : {}),
-  });
+  // Every dial ends here: a failure for want of a route this host does not
+  // have is no result at all.
+  const finish = async (
+    r: { ok: boolean; error?: string },
+    host: string,
+  ): Promise<ProbeResult | ProbeUntested> => {
+    if (await noRouteHere(deps, r, host, target.port)) return { untested: 'no_route' };
+    return {
+      ...vantage,
+      ok: r.ok,
+      rttMs: r.ok ? Date.now() - started : undefined,
+      ...(r.error ? { error: shortError(r.error, 60, redact) } : {}),
+    };
+  };
   if (target.addressKind === 'name') {
     const resolved = await resolvePublic(target.address, lookup);
     if (!resolved.ok) return { ...vantage, ok: false, error: resolved.error };
@@ -271,6 +350,7 @@ export async function internalProbe(
             target.protocol === 'tls-sni' ? (target.servername ?? target.address) : target.address,
           timeoutMs,
         }),
+        dial,
       );
     }
     if (target.protocol === 'https') {
@@ -281,10 +361,12 @@ export async function internalProbe(
           servername: target.address,
           timeoutMs,
         }),
+        dial,
       );
     }
     return finish(
       await (deps.tcpConnect ?? defaultTcpConnect)({ host: dial, port: target.port, timeoutMs }),
+      dial,
     );
   }
   const host = targetHost(target);
@@ -299,6 +381,7 @@ export async function internalProbe(
         servername: target.servername,
         timeoutMs,
       }),
+      target.address,
     );
   }
   if (target.protocol === 'tls') {
@@ -309,6 +392,7 @@ export async function internalProbe(
         servername: undefined,
         timeoutMs,
       }),
+      target.address,
     );
   }
   try {
@@ -323,11 +407,6 @@ export async function internalProbe(
     // failure; `tcp` only asks whether anything answered on the port.
     const c =
       target.protocol === 'https' ? classifyHandshakeError(err) : classifyInternalError(err);
-    return {
-      ...vantage,
-      ok: c.ok,
-      rttMs: c.ok ? Date.now() - started : undefined,
-      error: shortError(c.error, 60, redact),
-    };
+    return finish(c, target.address);
   }
 }

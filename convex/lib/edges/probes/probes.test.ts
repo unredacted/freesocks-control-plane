@@ -16,6 +16,7 @@ import {
   selectCheckhostNodes,
   parseCheckhostResult,
   checkhostStart,
+  checkhostTakes,
   type FetchLike,
 } from './checkhost';
 import { fetchAtlasProbeAsns, parseRipeAtlasResults, ripeAtlasBody } from './ripeatlas';
@@ -27,7 +28,7 @@ import {
   sourceVerdict,
   unreachableCountries,
 } from './verdict';
-import { shortError } from './types';
+import { runOutcome, shortError, vantageHasNoRoute } from './types';
 import type { ProbeResult, ProbeTarget } from './types';
 
 const target: ProbeTarget = {
@@ -54,8 +55,17 @@ describe('globalping', () => {
     expect(req).toMatchObject({
       type: 'ping',
       target: '198.51.100.7',
-      measurementOptions: { protocol: 'TCP', port: 443, ipVersion: 4 },
+      measurementOptions: { protocol: 'TCP', port: 443 },
     });
+    // Globalping refuses `ipVersion` next to an IP literal (400: "not allowed
+    // when target is not a domain"): a literal's own family is the family.
+    expect(req.measurementOptions).not.toHaveProperty('ipVersion');
+    expect(
+      globalpingRequest(
+        { ...target, address: '2001:db8::7', requestedFamily: 6, ipVersion: 6 },
+        opts,
+      ).measurementOptions,
+    ).not.toHaveProperty('ipVersion');
     expect(req.locations).toEqual([
       { country: 'IR', limit: 3, tags: ['eyeball-network'] },
       { country: 'RU', limit: 3, tags: ['eyeball-network'] },
@@ -125,9 +135,12 @@ describe('globalping', () => {
         request: { method: 'GET', path: '/', host: 'front.example' },
       },
     });
-    // A name pins no family: the vantage's own resolver decides.
+    // A name asked for with `any` pins no family: the vantage's own resolver decides.
     expect(req.measurementOptions).not.toHaveProperty('ipVersion');
-    expect(globalpingRequest(target, opts).measurementOptions).toMatchObject({ ipVersion: 4 });
+    // A name asked for over one family pins it (the only place Globalping takes it).
+    expect(
+      globalpingRequest({ ...nameTarget, requestedFamily: 6 }, opts).measurementOptions,
+    ).toMatchObject({ ipVersion: 6 });
   });
 
   test('http results: any status = the handshake completed (reachable); a failed item is a real connect/TLS failure, scrubbed of the name', () => {
@@ -287,6 +300,32 @@ describe('check-host.net', () => {
       nodes,
     );
     expect(new URL(seen[1].url).searchParams.get('host')).toBe('[2001:db8::7]:443');
+  });
+
+  test('an IPv6 literal is not something check-host takes: it is skipped, never a failed check', () => {
+    // check-host answers {"error":"invalid_url"} to every spelling of one.
+    expect(checkhostTakes({ addressKind: 'ip', family: 6 })).toBe(false);
+    expect(checkhostTakes({ addressKind: 'ip', family: 4 })).toBe(true);
+    // A name is fine whatever it resolves to.
+    expect(checkhostTakes({ addressKind: 'name', family: 'any' })).toBe(true);
+  });
+
+  test('a refusal answered as 200 + error code keeps the code, never the body', async () => {
+    const nodes = parseCheckhostNodes(nodesBody);
+    const answering =
+      (body: unknown): FetchLike =>
+      async () =>
+        new Response(JSON.stringify(body), { status: 200 });
+    await expect(
+      checkhostStart(answering({ error: 'invalid_url' }), target, opts, nodes),
+    ).rejects.toThrow('check-host: invalid_url');
+    await expect(
+      checkhostStart(answering({ error: 'limit_exceeded' }), target, opts, nodes),
+    ).rejects.toThrow('check-host: limit_exceeded');
+    // Anything that is not a short code stays out of the stored error.
+    await expect(
+      checkhostStart(answering({ error: 'see 192.0.2.9 for details' }), target, opts, nodes),
+    ).rejects.toThrow('check-host: no request_id');
   });
 
   test('a tls/https target uses check-http against the https URL; tcp keeps check-tcp with host:port', async () => {
@@ -560,10 +599,59 @@ describe('internal probe', () => {
         fetchFn: async () => {
           throw Object.assign(new Error('fetch failed'), { cause: { code: 'EHOSTUNREACH' } });
         },
+        // This host routes the family: the failure is the address's.
+        routeCheck: async () => ({ ok: true }),
       },
       target,
     );
     expect(down).toMatchObject({ country: 'XX', ok: false, error: 'EHOSTUNREACH' });
+  });
+
+  test('a dial that fails for want of a route this host does not have is no result at all', async () => {
+    const routes: string[] = [];
+    const deps = (dialError: string, hostRoutes: boolean) => ({
+      fetchFn: async () => {
+        throw Object.assign(new Error('fetch failed'), { cause: { code: dialError } });
+      },
+      tlsConnect: async () => ({ ok: false, error: dialError }),
+      routeCheck: async ({ host }: { host: string; port: number }) => {
+        routes.push(host);
+        return hostRoutes ? { ok: true } : { ok: false, error: 'ENETUNREACH' };
+      },
+    });
+    const v6 = {
+      ...target,
+      address: '2001:db8::7',
+      requestedFamily: 6 as const,
+      ipVersion: 6 as const,
+    };
+    // FCP's host has no IPv6 route (the beta host): not tested, for the bare
+    // connect and for the tls-sni shape check alike.
+    expect(await internalProbe(deps('ENETUNREACH', false), v6)).toEqual({ untested: 'no_route' });
+    expect(
+      await internalProbe(deps('ENETUNREACH', false), {
+        ...v6,
+        protocol: 'tls-sni',
+        servername: 'camouflage.example',
+      }),
+    ).toEqual({ untested: 'no_route' });
+    expect(await internalProbe(deps('EHOSTUNREACH', false), v6)).toEqual({ untested: 'no_route' });
+    expect(routes).toEqual(['2001:db8::7', '2001:db8::7', '2001:db8::7']);
+    // The host has a route: the failure happened past it, which IS evidence.
+    expect(await internalProbe(deps('EHOSTUNREACH', true), v6)).toMatchObject({
+      ok: false,
+      error: 'EHOSTUNREACH',
+    });
+    // Other failures never ask about the route.
+    routes.length = 0;
+    expect(await internalProbe(deps('ECONNREFUSED', false), v6)).toMatchObject({
+      ok: false,
+      error: 'ECONNREFUSED',
+    });
+    expect(await internalProbe(deps('ENETUNREACH', false), { ...v6, protocol: 'tls' })).toEqual({
+      untested: 'no_route',
+    });
+    expect(routes).toEqual(['2001:db8::7']);
   });
 
   test('a tls target handshakes with SNI = the name, and a certificate failure IS unreachable', async () => {
@@ -635,8 +723,8 @@ describe('internal probe', () => {
       },
       nameTarget,
     );
-    expect(failed.ok).toBe(false);
-    expect(failed.error).not.toContain('front.example');
+    expect(failed).toMatchObject({ ok: false });
+    expect(JSON.stringify(failed)).not.toContain('front.example');
     expect(await resolvePublic('front.example', async () => [])).toEqual({
       ok: false,
       error: 'no_address',
@@ -675,6 +763,63 @@ describe('internal probe', () => {
     await internalProbe(deps, { ...nameTarget, protocol: 'tcp' });
     expect(dialed[2]).toMatchObject({ host: '2001:db8::7' });
     expect(pickDialAddress(['198.51.100.7'], 6)).toBe('198.51.100.7');
+  });
+});
+
+describe('could not test: dropped, never a failure', () => {
+  test('a vantage without a route of its own; EHOSTUNREACH stays evidence from outside', () => {
+    expect(vantageHasNoRoute('connect ENETUNREACH 2001:db8::7:443')).toBe(true);
+    expect(vantageHasNoRoute('Network is unreachable')).toBe(true);
+    expect(vantageHasNoRoute('No route to host')).toBe(false);
+    expect(vantageHasNoRoute('Connection timed out')).toBe(false);
+    expect(vantageHasNoRoute(undefined)).toBe(false);
+  });
+
+  test('a run is evidence only when it finished with results', () => {
+    expect(runOutcome({ status: 'running', results: [] })).toBe('in_flight');
+    expect(runOutcome({ status: 'requested', results: [] })).toBe('in_flight');
+    expect(runOutcome({ status: 'finished', results: [{}] })).toBe('evidence');
+    expect(runOutcome({ status: 'finished', results: [] })).toBe('not_tested');
+    expect(runOutcome({ status: 'failed', results: [] })).toBe('not_tested');
+    expect(runOutcome({ status: 'timeout', results: [] })).toBe('not_tested');
+  });
+
+  test('check-host, Globalping and RIPE Atlas drop a vantage that had no route itself', () => {
+    const ch = parseCheckhostResult(
+      {
+        'ir1.node.check-host.net': [{ error: 'Network is unreachable' }],
+        'ir2.node.check-host.net': [[0, 0.0, 'connect ENETUNREACH']],
+        'ru1.node.check-host.net': [{ error: 'Connection timed out' }],
+      },
+      {
+        'ir1.node.check-host.net': 'IR',
+        'ir2.node.check-host.net': 'IR',
+        'ru1.node.check-host.net': 'RU',
+      },
+    );
+    expect(ch.status).toBe('finished');
+    expect(ch.results).toEqual([expect.objectContaining({ country: 'RU', ok: false })]);
+    const gp = parseGlobalpingHttpResults([
+      {
+        probe: { country: 'IR', asn: 1, tags: [] },
+        result: { status: 'failed', rawOutput: 'connect ENETUNREACH' },
+      },
+      {
+        probe: { country: 'IR', asn: 2, tags: [] },
+        result: { status: 'failed', rawOutput: 'connect ECONNREFUSED' },
+      },
+    ]);
+    expect(gp).toEqual([expect.objectContaining({ asn: 'AS2', ok: false })]);
+    const atlas = parseRipeAtlasResults(
+      [
+        { prb_id: 1, err: 'connect: Network is unreachable' },
+        { prb_id: 2, err: 'connect: Connection refused' },
+      ],
+      'IR',
+    );
+    expect(atlas).toEqual([
+      expect.objectContaining({ ok: false, error: 'connect: Connection refused' }),
+    ]);
   });
 });
 
