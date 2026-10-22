@@ -46,20 +46,23 @@ export interface MirrorValidation {
  * The mirror barrier's token for one upload (convex/mirrorUploads.ts): the
  * delivery token of the place the body resolved to (`edgeRender.epochFor`)
  * and the key's own `deliveryRev`, so an in-place mode or server switch that
- * lands while the object is written leaves the obligation open like any
- * policy move (subscriptions.ts `invalidateDelivery`).
+ * lands while the body is fetched or the object written counts as a policy
+ * move (subscriptions.ts `invalidateDelivery`). `readRev`: the revision the
+ * caller read BEFORE it fetched the body; the baseline is taken with it, so a
+ * switch that lands during the fetch is already a move. Absent, the live one.
  */
 async function mirrorToken(
   ctx: ActionCtx,
   subscriptionId: Id<'subscriptions'>,
   backendServerId: Id<'backendServers'> | null | undefined,
   node: string | undefined,
+  readRev?: number,
 ): Promise<string> {
   const [place, rev] = await Promise.all([
     backendServerId
       ? ctx.runQuery(internal.edgeRender.epochFor, { backendServerId, nodeName: node })
       : Promise.resolve(null),
-    ctx.runQuery(internal.subscriptions.deliveryRevOf, { subscriptionId }),
+    readRev ?? ctx.runQuery(internal.subscriptions.deliveryRevOf, { subscriptionId }),
   ]);
   return `r${rev ?? '-'}|${place ?? ''}`;
 }
@@ -329,7 +332,13 @@ export const provisionMirror = internalAction({
     // (the mirror barrier below).
     const tokenOf = () =>
       mirrorToken(ctx, context.subscriptionId, context.backendServerId, fetched.pinnedNode);
-    const tokenBefore = await tokenOf();
+    const tokenBefore = await mirrorToken(
+      ctx,
+      context.subscriptionId,
+      context.backendServerId,
+      fetched.pinnedNode,
+      context.deliveryRev,
+    );
     // The first upload is rendered like every later refresh: a mirror must
     // never hold the template entries (the origin / index-0 address) until the
     // sweep comes round.
@@ -340,6 +349,15 @@ export const provisionMirror = internalAction({
       fetched.content,
     );
     const contentAt = Date.now();
+    // The key moved in place while its body was fetched (a mode or server
+    // switch): the body is the placement it left, and a new mirror URL must
+    // never start out serving it. The member asks again.
+    if (
+      (await ctx.runQuery(internal.subscriptions.deliveryRevOf, {
+        subscriptionId: context.subscriptionId,
+      })) !== context.deliveryRev
+    )
+      return { status: 'error', remaining: Math.max(0, cap - used) };
     const hash = await sha256Hex(rendered.content);
     // One capability token per sub, reused across providers (stable + unguessable).
     const objectPath = context.objectPath ?? `mirrors/${randomHex(16)}`;
@@ -567,7 +585,16 @@ async function refreshOneSubMirrors(
     // the new one (docs/servers.md "Node lifecycle").
     const tokenOf = () =>
       mirrorToken(ctx, sub.id, sub.backendServerId, fetched.pinnedNode ?? undefined);
-    const tokenBefore = await tokenOf();
+    // Baseline at the revision read before the fetch: a switch that landed
+    // while the body was fetched never reaches the object (it scheduled its
+    // own refresh).
+    const tokenBefore = await mirrorToken(
+      ctx,
+      sub.id,
+      sub.backendServerId,
+      fetched.pinnedNode ?? undefined,
+      sub.deliveryRev,
+    );
     // Origin rendering (docs/edges.md): a mirror serves the same rendered
     // endpoints as the fronted route (link-list family: no User-Agent here).
     const rendered = await renderMirrorBody(
