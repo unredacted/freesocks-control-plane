@@ -906,7 +906,12 @@ export const runUserOp = internalAction({
             backendUserId: sub.backendUserId,
           });
         } catch {
-          /* best-effort */
+          // Nothing was reset: say so instead of a success the backend never
+          // saw (and no audit row for a reset that did not happen).
+          throw new ConvexError({
+            code: 'backend.reset_failed',
+            message: 'The backend did not reset this key’s traffic. Try again later.',
+          });
         }
       }
       await ctx.runMutation(internal.adminApi.recordUserOpAudit, {

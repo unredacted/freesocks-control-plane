@@ -237,22 +237,25 @@ describe('lifecycle grace/disable transitions', () => {
     const t = convexTest(schema, modules);
     const { memberTierId } = await seedTiers(t);
     const now = Date.now();
-    const { failId, okId } = await t.run(async (ctx) => {
+    const { failId, okId, legacyId } = await t.run(async (ctx) => {
       const userId = await ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
         updatedAt: now,
       });
-      const serverId = await ctx.db.insert('backendServers', {
-        backend: 'remnawave',
-        name: 'RW',
-        slug: 'rw',
-        config: { type: 'remnawave', baseUrl: 'https://panel.test.example', apiToken: 'tkn' },
-        isActive: true,
-        priority: 0,
-        keyCount: 0,
-        updatedAt: now,
-      });
+      const server = (slug: string, baseUrl: string) =>
+        ctx.db.insert('backendServers', {
+          backend: 'remnawave',
+          name: slug,
+          slug,
+          config: { type: 'remnawave', baseUrl, apiToken: 'tkn' },
+          isActive: true,
+          priority: 0,
+          keyCount: 0,
+          updatedAt: now,
+        });
+      const serverId = await server('rw', 'https://panel.test.example');
+      const okServerId = await server('rw-ok', 'https://panel-ok.test.example');
       const mk = (buid: string, backendServerId?: Id<'backendServers'>) =>
         ctx.db.insert('subscriptions', {
           userId,
@@ -268,22 +271,31 @@ describe('lifecycle grace/disable transitions', () => {
         });
       // Oldest row fails (its backend 500s); the newer one must still delete.
       const failId = await mk('bu-fail', serverId);
-      const okId = await mk('bu-ok');
-      return { failId, okId };
+      const okId = await mk('bu-ok', okServerId);
+      // No instance names this key: its backend user cannot be removed, so the
+      // row is NOT marked deleted as if it had been (it backs off like a failure).
+      const legacyId = await mk('bu-legacy');
+      return { failId, okId, legacyId };
     });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response('boom', { status: 500 })),
+      vi.fn(async (input: string | URL) =>
+        String(input).startsWith('https://panel-ok.')
+          ? new Response(null, { status: 204 })
+          : new Response('boom', { status: 500 }),
+      ),
     );
 
     const { removed } = await t.action(internal.lifecycle.sweepTombstones, {});
     expect(removed).toBe(1);
 
     await t.run(async (ctx) => {
-      const fail = await ctx.db.get(failId);
-      expect(fail?.state).toBe('disabled'); // kept, but deferred
-      expect(fail?.tombstoneAttempts).toBe(1);
-      expect(fail?.tombstoneRetryAfter).toBeGreaterThan(Date.now());
+      for (const id of [failId, legacyId]) {
+        const row = await ctx.db.get(id);
+        expect(row?.state).toBe('disabled'); // kept, but deferred
+        expect(row?.tombstoneAttempts).toBe(1);
+        expect(row?.tombstoneRetryAfter).toBeGreaterThan(Date.now());
+      }
       expect((await ctx.db.get(okId))?.state).toBe('deleted');
     });
     // The deferred row falls out of the due set until its backoff elapses.
@@ -292,6 +304,7 @@ describe('lifecycle grace/disable transitions', () => {
       limit: 100,
     });
     expect(due.map((d) => d.backendUserId)).not.toContain('bu-fail');
+    expect(due.map((d) => d.backendUserId)).not.toContain('bu-legacy');
   });
 
   test('a tombstone that exhausts its attempts is abandoned: marked deleted + audited', async () => {

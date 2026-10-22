@@ -4,6 +4,7 @@
  * Exports:
  *   TestItem, runTestItems(run)      the test card's lines from a run's `testLinks`
  *   runTestLines(run)                every line of the card, the ones already ticked included
+ *   TEST_PROFILE_NOTE                under every test link: a short test only, remove the profile after
  *   replaceWords(item)               the "Doesn't work" confirmation: the address it removes and replaces
  *   needButtons(code)                the one button (at most one secondary, and a quiet third) of an interruption
  *   automationOn(config)             the four switches `POST automation` sets, read back as one
@@ -116,6 +117,13 @@ export function runTestLines(
   }
   return { items, done };
 }
+
+/**
+ * Under every test link: the profile is for one short test. Left connected in
+ * a client, it keeps using the test account until the backend limits it.
+ */
+export const TEST_PROFILE_NOTE =
+  'For a short test only. Remove this profile from the client once you have tried it: left connected, it uses up the test account.';
 
 /**
  * The "Doesn't work" confirmation of one test line: it names the address (and

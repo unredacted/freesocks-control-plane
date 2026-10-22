@@ -407,6 +407,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.update': ['slug', 'changed', 'autoRotate', 'hostMode', 'enabled'],
   // Booleans only: the credential itself never reaches the audit log.
   'relay.qualification_credential': ['slug', 'minted', 'revoked', 'replaced', 'adopted'],
+  // The account kept usable before a test (relayQualification.keepUsable): booleans only.
+  'relay.qualification_reset': ['slug', 'reset', 'failed', 'reenabled', 'nearCap'],
   // Temporary test credentials (edgeTestCredentials.ts): booleans + counts only.
   'edge.test_credential': ['relaySlug', 'purpose', 'issued', 'removed', 'failed', 'attempts'],
   // `restore` = the delete entered the restore workflow first (a guided origin).

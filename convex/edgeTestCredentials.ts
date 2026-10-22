@@ -5,8 +5,10 @@
  *
  *  - Remnawave: the origin's qualification credential, through
  *    `relayQualification.ensure` (a persisted, idempotent mint on the origin's
- *    placement; never a second user). No row is written here: that credential
- *    lives with the origin and goes when the origin goes.
+ *    placement; never a second user), reset first when it is used up
+ *    (`relayQualification.keepUsable`; `test_account_used_up` when that
+ *    fails). No row is written here: that credential lives with the origin
+ *    and goes when the origin goes.
  *  - Outline: a temporary access key through the provider's `issueUser`. The
  *    `edgeTestCredentials` row is written BEFORE the create (`backendUserId`
  *    absent until issuance is observed) and is a DURABLE OBLIGATION: the
@@ -293,6 +295,14 @@ export const ensure = internalAction({
         ...(force ? { force: true } : {}),
       });
       if (!r.ok) return { ok: false, code: r.code ?? 'credential_unavailable', credentialId: null };
+      // A reused account may be used up (a test profile left connected in a
+      // client spends its cap, and the backend then answers with a placeholder
+      // body): reset it before a link or a rehearsal body is built from it.
+      if (r.reused) {
+        const usable = await ctx.runAction(internal.relayQualification.keepUsable, { relayId });
+        if (!usable.ok)
+          return { ok: false, code: usable.code ?? 'test_account_used_up', credentialId: null };
+      }
       const relay = await ctx.runQuery(internal.relays.get, { id: relayId });
       const sub = relay?.qualificationSubscription;
       if (!sub) return { ok: false, code: 'credential_unavailable', credentialId: null };

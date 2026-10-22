@@ -22,6 +22,12 @@
  * origin (`qualificationRemovalPending`) and retried on the next mint, revoke or
  * origin delete, so a capped test account cannot be silently orphaned. Nothing
  * here is logged or audited beyond booleans.
+ *
+ * The account is kept usable before each use (`keepUsable`): a test profile
+ * left connected in a client spends the cap, the backend then limits the
+ * account, and every test link, rehearsal body and front check through it
+ * fails without saying why. A limited, disabled or expired account, or one
+ * past half its cap, has its traffic reset (and is re-enabled) first.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -30,7 +36,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import type { IssuedUser } from './lib/backends/types';
+import { farFutureExpiryIso, type IssuedUser, type UserState } from './lib/backends/types';
 import { boundedUsername } from './lib/backends/username';
 import { writeAuditLog } from './lib/audit';
 import { randomHex } from './lib/crypto';
@@ -40,6 +46,8 @@ import { protocolL7Proof } from './lib/edges/protocols';
 /** Enough for many qualification sessions (each moves a few kilobytes), never for real use. */
 export const QUALIFICATION_TRAFFIC_LIMIT_BYTES = 50 * 1024 * 1024;
 export const QUALIFICATION_TAG = 'fcp-qualify';
+/** Past this share of its cap the account is reset before use: an operator's test needs headroom. */
+export const QUALIFICATION_RESET_AT_SHARE = 0.5;
 
 /**
  * The settle rule for a pending mint whose user cannot be found: the backend
@@ -751,5 +759,125 @@ export const revoke = internalAction({
     }
     await ctx.runMutation(internal.relayQualification.clear, { relayId, actorAdminId });
     return { ok: true, pendingRemovals: stillOwed.length };
+  },
+});
+
+// --- keeping the account usable ---------------------------------------------------------------
+
+type AccountState = Pick<UserState, 'status' | 'usedTrafficBytes' | 'trafficLimitBytes'>;
+
+/** Reset before use: limited, disabled or expired, or past `QUALIFICATION_RESET_AT_SHARE` of its cap. */
+export function qualificationNeedsReset(state: AccountState): boolean {
+  if (state.status === 'limited' || state.status === 'disabled' || state.status === 'expired')
+    return true;
+  return (
+    state.trafficLimitBytes !== null &&
+    state.usedTrafficBytes >= state.trafficLimitBytes * QUALIFICATION_RESET_AT_SHARE
+  );
+}
+
+/** Whether the account carries a session as it is (a failed reset of a nearly-spent one still does). */
+function carriesSession(state: AccountState): boolean {
+  return (
+    state.status === 'active' &&
+    (state.trafficLimitBytes === null || state.usedTrafficBytes < state.trafficLimitBytes)
+  );
+}
+
+/** The stored account and the instance it lives on; null when none is stored. */
+export const usableContext = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay?.qualificationBackendUserId || !relay.backendServerId) return null;
+    const server = await ctx.db.get(relay.backendServerId);
+    if (!server) return null;
+    return {
+      backend: server.backend,
+      backendServerId: server._id,
+      backendUserId: relay.qualificationBackendUserId,
+    };
+  },
+});
+
+export const recordReset = internalMutation({
+  args: {
+    relayId: v.id('relays'),
+    reset: v.boolean(),
+    reenabled: v.boolean(),
+    nearCap: v.boolean(),
+  },
+  handler: async (ctx, a) => {
+    const relay = await ctx.db.get(a.relayId);
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'relay.qualification_reset',
+      targetType: 'relay',
+      targetId: a.relayId,
+      payload: {
+        slug: relay?.slug ?? '',
+        reset: a.reset,
+        failed: !a.reset,
+        reenabled: a.reenabled,
+        nearCap: a.nearCap,
+      },
+    });
+    return null;
+  },
+});
+
+export interface UsableResult {
+  ok: boolean;
+  /** `test_account_used_up`: the account carries no session and could not be reset. */
+  code?: 'test_account_used_up';
+  /** The account's state was read (false: none is stored, or the read failed). */
+  checked: boolean;
+  reset: boolean;
+}
+
+/**
+ * Before the account is used (a test link, a rehearsal body, a front check):
+ * read it on its own instance, and reset its traffic (and re-enable it) when
+ * `qualificationNeedsReset`. Every reset is audited, booleans only. A read
+ * that fails changes nothing (the use goes ahead and fails on its own if the
+ * backend is down); a reset that fails refuses only when the account carries
+ * no session as it is.
+ */
+export const keepUsable = internalAction({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }): Promise<UsableResult> => {
+    const c = await ctx.runQuery(internal.relayQualification.usableContext, { relayId });
+    if (!c) return { ok: true, checked: false, reset: false };
+    let state: UserState;
+    try {
+      state = await ctx.runAction(internal.backends.getUser, c);
+    } catch {
+      console.warn('[relayQualification] could not read the qualification account');
+      return { ok: true, checked: false, reset: false };
+    }
+    if (!qualificationNeedsReset(state)) return { ok: true, checked: true, reset: false };
+    const reenable = state.status !== 'active';
+    let reset = true;
+    try {
+      // An expired account gets the no-expiry date back first, or enabling it does not hold.
+      if (state.status === 'expired')
+        await ctx.runAction(internal.backends.updateUser, {
+          ...c,
+          patch: { expireAt: farFutureExpiryIso() },
+        });
+      await ctx.runAction(internal.backends.resetUserTraffic, c);
+      if (reenable) await ctx.runAction(internal.backends.setUserStatus, { ...c, active: true });
+    } catch {
+      reset = false;
+      console.warn('[relayQualification] could not reset the qualification account');
+    }
+    await ctx.runMutation(internal.relayQualification.recordReset, {
+      relayId,
+      reset,
+      reenabled: reset && reenable,
+      nearCap: !reenable,
+    });
+    if (reset || carriesSession(state)) return { ok: true, checked: true, reset };
+    return { ok: false, code: 'test_account_used_up', checked: true, reset: false };
   },
 });

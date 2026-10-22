@@ -91,7 +91,9 @@ New-key issuance calls `internal.backendServers.pickCandidatesForIssue` (in
    `keyCount`.
 
 Reads/updates/deletes on an existing key resolve the hosting server from the subscription
-row via `internal.backendServers.resolveKeyServer` (keyed by `backendUserId`).
+row via `internal.backendServers.resolveKeyServer` (keyed by `backendUserId`; a key with no row
+is resolved through the instance its caller names, and a key nothing resolves is refused with
+`backend.key_unresolved`).
 
 ## Enabling the Outline backend
 
