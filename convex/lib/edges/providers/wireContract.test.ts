@@ -714,7 +714,13 @@ describe('wire contract: scaleway', () => {
     const [step] = scalewayProvider.planProvision(cfg, spec, tpl);
     expect(
       await scalewayProvider.runStep(cfg, step!, spec, tpl, { steps: [], resources: [] }),
-    ).toEqual({ status: 'partial', resources: [], code: 'ip_allocation_refused', refused: true });
+    ).toEqual({
+      status: 'partial',
+      resources: [],
+      code: 'ip_allocation_refused',
+      refused: true,
+      detail: 'invalid argument(s): project_id is required, required',
+    });
     expect(stub.calls).toHaveLength(1);
   });
 });

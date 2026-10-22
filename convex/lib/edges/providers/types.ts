@@ -233,8 +233,16 @@ export type StepOutcome =
    * provider answered and refused what FCP built (a configuration that does
    * not compile), so the same call would be refused again; the run stops on
    * `code` at once and keeps what was built for the operator to read.
+   * `detail`: the provider's own words on the refusal (`redactErrorDetail`d);
+   * the ops layer scrubs the edge's names from it before it leaves the action.
    */
-  | { status: 'partial'; resources: ChildResource[]; code?: string; refused?: true }
+  | {
+      status: 'partial';
+      resources: ChildResource[];
+      code?: string;
+      refused?: true;
+      detail?: string;
+    }
   /**
    * Async provider: an operation/task to poll; children known so far listed.
    * `code`: what the wait is held up by, when the provider says (a code from a
@@ -315,7 +323,11 @@ export interface InventoryIp {
 export interface Inventory {
   loadBalancers: InventoryLb[];
   ips: InventoryIp[];
-  flavors: Array<{ id: string; label: string }>;
+  /**
+   * `multicloud`: the provider says the size takes a backend server outside
+   * its own cloud (Scaleway `LbType.multicloud`; lib/edges/sizeCheck.ts).
+   */
+  flavors: Array<{ id: string; label: string; multicloud?: boolean }>;
 }
 
 // --- templates ---------------------------------------------------------------------------

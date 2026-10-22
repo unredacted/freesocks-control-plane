@@ -36,6 +36,7 @@
   import KeyValue from '../components/KeyValue.svelte';
   import PublishDialog from '../forms/PublishDialog.svelte';
   import ActionConfirm from './ActionConfirm.svelte';
+  import ProviderAnswer from '../components/ProviderAnswer.svelte';
   import ReplaceDialog from './ReplaceDialog.svelte';
   import SimulateBlockDialog from './SimulateBlockDialog.svelte';
   import { relayAction } from './actions.svelte';
@@ -307,6 +308,7 @@
         rows={operatorFactsRows(edge)}
         columns={1}
       />
+      <ProviderAnswer detail={edge.failure?.detail} names />
     </ActionConfirm>
   {/if}
 

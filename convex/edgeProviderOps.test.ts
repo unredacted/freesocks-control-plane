@@ -19,7 +19,12 @@ import { __setEdgeProviderForTests, edgeProviderFor } from './lib/edges/provider
 import type { EdgeProviderOpsFailure } from './edgeProviderOps';
 import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import type { Id } from './_generated/dataModel';
-import { insertPanelServer, registerRelay, wsListener } from './lib/edges/testing/fixtures';
+import {
+  createAccount,
+  insertPanelServer,
+  registerRelay,
+  wsListener,
+} from './lib/edges/testing/fixtures';
 
 const WS = { protocol: 'vless', streamTransport: 'ws', security: 'tls' } as const;
 const GRPC = { protocol: 'vless', streamTransport: 'grpc', security: 'tls' } as const;
@@ -1743,5 +1748,224 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     });
     const admin = (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: accountId }))!;
     expect(admin.sharedCertificate).toMatchObject({ name: '*.example.org', state: 'issued' });
+  });
+});
+
+/** A Scaleway account and one edge of it with its own placement (the SDK reaches the wire). */
+async function scalewayEdge(t: ReturnType<typeof newT>, secretKey: string, name: string) {
+  const accountId = await createAccount(t, {
+    provider: 'scaleway',
+    settings: { accessKey: 'SCWXXXXXXXXXXXXXXXXX', zone: 'fr-par-1' },
+    credentials: { secretKey },
+  });
+  await insertPanelServer(t);
+  const { relayId, listenerId } = await registerRelay(t, { slug: 'o1', nodeName: 'o1' });
+  const edgeId = await t.run((ctx) =>
+    ctx.db.insert('edges', {
+      relayId,
+      listenerId,
+      accountId,
+      provider: 'scaleway',
+      managed: true,
+      name,
+      placement: {
+        type: 'scaleway',
+        zone: 'fr-par-1',
+        projectId: '66666666-7777-4888-8999-000000000000',
+      },
+      steps: [],
+      resources: [],
+      listeners: [],
+      addresses: {},
+      publication: 'unpublished',
+      status: 'provisioning',
+      statusChangedAt: Date.now(),
+      health: 'unknown',
+      destroyAttempts: 0,
+      updatedAt: Date.now(),
+    }),
+  );
+  return { accountId, edgeId };
+}
+
+describe('a refused create step carries the provider reason, never a secret, address or name', () => {
+  const HOST = 'member-front.example.org';
+  const NAME = 'fcp-relay-o1-00000000';
+  const hostSpec = { ...spec, hostname: HOST };
+  /** Nothing the request carried that names the deployment survives. */
+  const expectScrubbed = (blob: string, secret: string) => {
+    expect(blob).not.toContain(secret);
+    expect(blob).not.toContain('198.51.100.7');
+    expect(blob).not.toContain('2001:db8::7');
+    expect(blob.toLowerCase()).not.toContain('member-front');
+    expect(blob).not.toContain(NAME);
+  };
+
+  test('the shared HTTP helper (gcore): a 400 on a create comes back redacted and scrubbed', async () => {
+    const t = newT();
+    const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'acct-g',
+      settings: { projectId: 11, regionId: 22 },
+      credentials: { apiKey: 'SECRET_GCORE_KEY' },
+    });
+    const [step] = await t.action(internal.edgeProviderOps.planProvision, {
+      accountId,
+      spec,
+      templateParams: {},
+    });
+    const body = {
+      code: 'bad_request',
+      message: `listener for ${NAME} on MEMBER-FRONT.example.org: member 198.51.100.7 (2001:db8::7) is not allowed with key SECRET_GCORE_KEY`,
+    };
+    mockFetch(() => jsonRes(body, 400));
+    let err: unknown;
+    try {
+      await t.action(internal.edgeProviderOps.runStep, {
+        accountId,
+        spec: hostSpec,
+        templateParams: {},
+        step,
+        ledger: { steps: [], resources: [] },
+      });
+    } catch (e) {
+      err = e;
+    }
+    const data = dataOf(err);
+    expect(data).toMatchObject({ code: 'bad_request', status: 400, provider: 'gcore' });
+    expect(data.detail).toContain('is not allowed with key [redacted]');
+    expect(data.detail).toContain('member [address] ([address])');
+    expect(data.detail).toContain('listener for [name] on [name]');
+    expectScrubbed(`${JSON.stringify(data)} ${(err as Error).message}`, 'SECRET_GCORE_KEY');
+    // A call that is not a create forwards nothing, whatever the provider said.
+    try {
+      await t.action(internal.edgeProviderOps.describe, { accountId, ledger: lbLedger });
+    } catch (e) {
+      err = e;
+    }
+    expect(dataOf(err).detail).toBeUndefined();
+  });
+
+  test('the Scaleway SDK: a backend refusal (generic ScalewayError) and a refused address', async () => {
+    const t = newT();
+    const SECRET = '11111111-2222-4333-8444-555555555555';
+    const { accountId, edgeId } = await scalewayEdge(t, SECRET, NAME);
+    const said = `server ${NAME}-backend for ${HOST} cannot reach 198.51.100.7 / 2001:db8::7 (key ${SECRET})`;
+    const stub = mockFetch((c) =>
+      jsonRes({ message: said, type: 'not_a_known_type', help: `ask about ${HOST}` }, 400),
+    );
+    let err: unknown;
+    try {
+      await t.action(internal.edgeProviderOps.runStep, {
+        accountId,
+        edgeId,
+        spec: hostSpec,
+        templateParams: {},
+        step: {
+          id: 'backend',
+          kind: 'create_backend',
+          resourceName: `${NAME}-backend`,
+          discoverability: 'by_name',
+        },
+        ledger: {
+          steps: [],
+          resources: [
+            {
+              stepId: 'lb',
+              kind: 'lb',
+              resourceId: 'lb-1',
+              ownership: 'created',
+              deleteState: 'present',
+            },
+          ],
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+    // It really went through the SDK to the wire.
+    expect(stub.calls.some((c) => c.path === '/lb/v1/zones/fr-par-1/lbs/lb-1/backends')).toBe(true);
+    const data = dataOf(err);
+    expect(data).toMatchObject({ code: 'ScalewayError', status: 400, provider: 'scaleway' });
+    expect(data.detail).toContain('http error 400');
+    expect(data.detail).toContain('server [name] for [name] cannot reach [address] / [address]');
+    expect(data.detail).toContain('not_a_known_type');
+    expectScrubbed(`${JSON.stringify(data)} ${(err as Error).message}`, SECRET);
+
+    // The refused address allocation stops the run with the same words, scrubbed.
+    mockFetch(() => jsonRes({ message: said, type: 'invalid_request_error' }, 400));
+    const out = await t.action(internal.edgeProviderOps.runStep, {
+      accountId,
+      edgeId,
+      spec: hostSpec,
+      templateParams: {},
+      step: { id: 'ip4', kind: 'allocate_ip', resourceName: NAME, discoverability: 'by_tag' },
+      ledger: { steps: [], resources: [] },
+    });
+    expect(out).toMatchObject({ status: 'partial', code: 'ip_allocation_refused', refused: true });
+    const detail = (out as { detail?: string }).detail!;
+    expect(detail).toContain('cannot reach [address]');
+    expectScrubbed(JSON.stringify(out), SECRET);
+  });
+});
+
+describe('the live view of an SDK adapter', () => {
+  test('a Scaleway inspect (Dates from the SDK) and describe come back as plain data', async () => {
+    const t = newT();
+    const { accountId, edgeId } = await scalewayEdge(
+      t,
+      '11111111-2222-4333-8444-555555555555',
+      'fcp-relay-o1-00000000',
+    );
+    const lb = {
+      id: 'lb-1',
+      name: 'fcp-relay-o1-00000000',
+      description: '',
+      status: 'ready',
+      type: 'lb-gp-l',
+      zone: 'fr-par-1',
+      tags: [],
+      ip: [{ id: 'ip-1', ip_address: '203.0.113.10', lb_id: 'lb-1', zone: 'fr-par-1', tags: [] }],
+      instances: [
+        {
+          id: 'i-1',
+          status: 'ready',
+          ip_address: '',
+          created_at: '2026-10-21T10:00:00Z',
+          updated_at: '2026-10-21T10:00:05Z',
+          zone: 'fr-par-1',
+        },
+      ],
+      created_at: '2026-10-21T10:00:00Z',
+      updated_at: '2026-10-21T10:00:05Z',
+      private_network_count: 0,
+      route_count: 0,
+      backend_count: 0,
+      frontend_count: 0,
+    };
+    mockFetch((c) =>
+      c.path === '/lb/v1/zones/fr-par-1/lbs/lb-1'
+        ? jsonRes(lb)
+        : c.path.endsWith('/stats')
+          ? jsonRes({ instances_stats: [], backend_servers_stats: [] })
+          : c.path.endsWith('/backends')
+            ? jsonRes({ backends: [], total_count: 0 })
+            : jsonRes({ frontends: [], total_count: 0 }),
+    );
+    const res = await t.action(internal.edgeProviderOps.inspect, {
+      accountId,
+      edgeId,
+      ledger: lbLedger,
+    });
+    expect(res.summary).toMatchObject({ status: 'ready', createdAt: '2026-10-21T10:00:00.000Z' });
+    const raw = res.raw as { lb: { createdAt: unknown; instances: Array<{ updatedAt: unknown }> } };
+    expect(raw.lb.createdAt).toBe('2026-10-21T10:00:00.000Z');
+    expect(raw.lb.instances[0]!.updatedAt).toBe('2026-10-21T10:00:05.000Z');
+    const desc = await t.action(internal.edgeProviderOps.describe, {
+      accountId,
+      edgeId,
+      ledger: lbLedger,
+    });
+    expect(desc).toMatchObject({ state: 'active', addresses: { v4: '203.0.113.10' } });
   });
 });

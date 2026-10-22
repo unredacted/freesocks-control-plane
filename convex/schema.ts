@@ -1897,8 +1897,16 @@ export default defineSchema({
     // Consecutive `unresolved` confirmDestroyed passes for the resource the
     // destroy walk is currently on; past the cap the idempotent delete is re-issued.
     destroyConfirm: v.optional(v.object({ resourceId: v.string(), attempts: v.number() })),
+    // Why the edge stopped. `detail`: the provider's own words on the refusal,
+    // redacted and scrubbed of the edge's names (edgeProviderOps toOpsFailure);
+    // admin display only, never a log line or an audit row.
     failure: v.optional(
-      v.object({ step: v.string(), code: v.optional(v.string()), status: v.optional(v.number()) }),
+      v.object({
+        step: v.string(),
+        code: v.optional(v.string()),
+        status: v.optional(v.number()),
+        detail: v.optional(v.string()),
+      }),
     ),
     // What a requested step is held up by while it waits, when the provider
     // says (L7: a CAA record, the validation record; `L7_CERTIFICATE_CODES`),
@@ -2080,7 +2088,15 @@ export default defineSchema({
     kind: v.optional(v.literal('reprotect')),
     stage: setupRunStage,
     state: setupRunState,
-    need: v.optional(v.object({ code: v.string(), detail: v.optional(v.string()) })),
+    // `providerAnswer`: the provider's redacted words on the refused create that
+    // ended the run (from the edge's `failure.detail`), admin display only.
+    need: v.optional(
+      v.object({
+        code: v.string(),
+        detail: v.optional(v.string()),
+        providerAnswer: v.optional(v.string()),
+      }),
+    ),
     // Bumped by retry / continue: the terminal hook of a rotation started under
     // an older generation is a no-op.
     generation: v.number(),
