@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import {
+  MAX_EVENT_DETAIL_CHARS,
   accountsForSlot,
+  appendEvent,
   l7SelectionAllowed,
+  nextFailure,
+  withProviderAnswer,
   pickAccount,
   pickSlot,
   pickLocation,
@@ -354,5 +358,34 @@ describe('pickLocation', () => {
       ok: false,
       code: 'accounts_exhausted',
     });
+  });
+});
+
+describe('the provider answer on a failed create', () => {
+  test('a later failure without its own answer keeps the last one; a new answer replaces it', () => {
+    const refused = {
+      step: 'backend',
+      code: 'ScalewayError',
+      status: 400,
+      detail: 'server refused',
+    };
+    expect(nextFailure(refused, { step: 'provisioning', code: 'step_retries_exhausted' })).toEqual({
+      step: 'provisioning',
+      code: 'step_retries_exhausted',
+      detail: 'server refused',
+    });
+    expect(nextFailure(refused, { step: 'lb', code: 'x', detail: 'other' }).detail).toBe('other');
+    expect(nextFailure(undefined, { step: 'lb' })).toEqual({ step: 'lb' });
+  });
+
+  test('the event detail carries it, and an event keeps room for it', () => {
+    expect(withProviderAnswer('step backend threw: ScalewayError 400', undefined)).toBe(
+      'step backend threw: ScalewayError 400',
+    );
+    const long = withProviderAnswer('step backend threw: x', 'y'.repeat(600));
+    expect(long).toContain('. The provider answered: yyy');
+    const [ev] = appendEvent([], { at: 1, level: 'warn', code: 'progress', detail: long });
+    expect(ev!.detail).toBe(long);
+    expect(long.length).toBeLessThanOrEqual(MAX_EVENT_DETAIL_CHARS);
   });
 });

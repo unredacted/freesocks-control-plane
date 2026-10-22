@@ -39,6 +39,7 @@ import {
 } from './lib/edges/locations';
 import { resolveTemplateFor, type TemplateLocation } from './edgeTemplates';
 import { EDGE_TEMPLATES } from './lib/edges/providers/templates';
+import { sizeCheckApplies, sizeProblemOf } from './lib/edges/sizeCheck';
 import { assertAdmission } from './lib/edges/maintenance';
 import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQualify';
 import { verificationEndpoint } from './lib/edges/verification';
@@ -134,6 +135,22 @@ export async function effectiveTemplateOfLocation(
     account._id,
     location,
   );
+}
+
+/**
+ * Why the size this location builds with (its template, its regional values)
+ * cannot front an FCP node, or null (`sizeProblemOf`: a Scaleway size that is
+ * not multi-cloud). A node's own options are checked with its pick
+ * (`checkPickOptions`) and at selection.
+ */
+export async function sizeProblemOfLocation(
+  ctx: { db: DatabaseReader },
+  account: Pick<Account, '_id' | 'provider' | 'defaultTemplateId'>,
+  location: Pick<Location, 'defaultTemplateId' | 'regionalParams' | 'inventorySnapshot'>,
+): Promise<string | null> {
+  if (!sizeCheckApplies(account.provider)) return null;
+  const tpl = await effectiveTemplateOfLocation(ctx, account, location);
+  return sizeProblemOf(account.provider, tpl.params, location.inventorySnapshot);
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   type SetupRunState,
 } from '../../../src/shared/contracts/edgeCodes';
 import { sha256Hex } from '../crypto';
+import { MAX_EVENT_DETAIL_CHARS } from './rotation';
 
 export { SETUP_RUN_STAGES };
 
@@ -27,7 +28,7 @@ export interface RunEvent {
 }
 
 export function appendRunEvent(events: readonly RunEvent[], ev: RunEvent): RunEvent[] {
-  const out = [...events, { ...ev, detail: ev.detail?.slice(0, 200) }];
+  const out = [...events, { ...ev, detail: ev.detail?.slice(0, MAX_EVENT_DETAIL_CHARS) }];
   return out.length > MAX_RUN_EVENTS ? out.slice(out.length - MAX_RUN_EVENTS) : out;
 }
 

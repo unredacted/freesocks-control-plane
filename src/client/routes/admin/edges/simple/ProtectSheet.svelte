@@ -370,6 +370,7 @@
       case 'location_disabled':
       case 'location_capacity_reached':
       case 'project_unresolved':
+      case 'size_not_multicloud':
         return edgesPaths.provider(id);
       case 'provider_mismatch':
         return plan?.existingRelay

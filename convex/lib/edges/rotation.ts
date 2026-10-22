@@ -54,10 +54,39 @@ export interface RotationEvent {
   detail?: string;
 }
 export const MAX_EVENTS = 60;
+/** Longest event detail kept: room for a provider's redacted answer (600) and its step. */
+export const MAX_EVENT_DETAIL_CHARS = 800;
 
 export function appendEvent(events: readonly RotationEvent[], ev: RotationEvent): RotationEvent[] {
-  const out = [...events, { ...ev, detail: ev.detail?.slice(0, 200) }];
+  const out = [...events, { ...ev, detail: ev.detail?.slice(0, MAX_EVENT_DETAIL_CHARS) }];
   return out.length > MAX_EVENTS ? out.slice(out.length - MAX_EVENTS) : out;
+}
+
+/**
+ * An event detail with the provider's own answer on a refused create appended
+ * (already redacted and scrubbed of the edge's names by edgeProviderOps).
+ */
+export function withProviderAnswer(detail: string, answer: string | undefined): string {
+  return answer ? `${detail}. The provider answered: ${answer}` : detail;
+}
+
+/** What an edge records about why it stopped (`edges.failure`). */
+export interface EdgeFailure {
+  step: string;
+  code?: string;
+  status?: number;
+  /** The provider's redacted answer on the refusal (admin display only). */
+  detail?: string;
+}
+
+/**
+ * An edge's next failure. One that brings no provider answer of its own keeps
+ * the last one the edge recorded: a create the provider refused until its
+ * retries ran out ends on `step_retries_exhausted`, and the refusal is still
+ * the reason the operator needs to read.
+ */
+export function nextFailure(prev: EdgeFailure | undefined, next: EdgeFailure): EdgeFailure {
+  return next.detail || !prev?.detail ? next : { ...next, detail: prev.detail };
 }
 
 // --- progress ---------------------------------------------------------------------------

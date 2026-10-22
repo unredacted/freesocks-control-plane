@@ -45,7 +45,7 @@ import type {
   StepOutcome,
 } from './types';
 import { firstResource, orderByKind, resourcesOfKind } from './types';
-import { EdgeProviderError, toProviderError, credentialTestFailure } from './http';
+import { EdgeProviderError, toProviderError, credentialTestFailure, refusalOf } from './http';
 import { addressFamily } from '../ip';
 import {
   ScalewayTemplate,
@@ -308,6 +308,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
               resources: [],
               code: 'ip_allocation_refused',
               refused: true,
+              ...(refusalOf(e) ? { detail: refusalOf(e) } : {}),
             };
           throw e;
         }
@@ -588,10 +589,12 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         createdAt: l.createdAt?.toISOString(),
       })),
       ips: ips.map((ip) => ({ id: ip.id, address: ip.ipAddress, attachedTo: ip.lbId ?? null })),
-      // Only a multi-cloud offer accepts a node outside Scaleway: the label says which.
+      // Only a multi-cloud offer accepts a node outside Scaleway: the label says
+      // which, and the flag is kept for planning (lib/edges/sizeCheck.ts).
       flavors: types.map((t) => ({
         id: t.name,
         label: t.multicloud ? `${t.name} (multi-cloud)` : t.name,
+        multicloud: t.multicloud === true,
       })),
     };
   },

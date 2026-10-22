@@ -906,6 +906,12 @@ const COPY = {
       "This Scaleway location names no Project id, and the API key's default project could not be read, so nothing can be created there.",
     fix: 'Set the Project id on the location, or let the key read its own details in IAM and test the account again.',
   },
+  size_not_multicloud: {
+    label: 'Size takes Scaleway servers only',
+    explain:
+      'This size only accepts servers hosted at Scaleway. Pick a multi-cloud size (L or XL).',
+    fix: "Set the location's size, or the node's own size option, to a multi-cloud one such as LB-GP-L or LB-GP-XL.",
+  },
   l4_not_for_websocket: {
     label: 'No load balancer for WebSocket',
     explain:
@@ -2019,6 +2025,12 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     explain:
       "This location names no Project id and the API key's default project could not be read.",
     fix: 'Set the Project id on this location.',
+  },
+  size_not_multicloud: {
+    label: 'Size takes Scaleway servers only',
+    explain:
+      'This size only accepts servers hosted at Scaleway. Pick a multi-cloud size (L or XL).',
+    fix: "Set this location's size to a multi-cloud one, such as LB-GP-L or LB-GP-XL.",
   },
   l4_not_for_websocket: {
     label: 'Not for a WebSocket node',

@@ -15,7 +15,9 @@
  * body/URL/credential), but a plain Error's extra fields do NOT survive
  * `ctx.runAction` — only `ConvexError.data` does. Every action is therefore
  * wrapped by `run()`, which rethrows as `ConvexError<EdgeProviderOpsFailure>`
- * so the callers' `errCode`/`errText` can read `err.data.code` etc.
+ * so the callers' `errCode`/`errText` can read `err.data.code` etc. A create
+ * step's failure also carries the provider's own refusal (`detail`), with the
+ * edge's names scrubbed (`refusalNames`); no other call forwards one.
  *
  * The Node version that executes this file is decided by the self-hosted Convex
  * backend image (its .nvmrc), not by FCP. `runtimeInfo` exposes it so the deploy
@@ -30,7 +32,7 @@ import type { Id } from './_generated/dataModel';
 import type { ActionCtx } from './_generated/server';
 import { edgeProviderFor, edgeProviderConfigFrom } from './lib/edges/providers/registry';
 import { cloudflareDnsClient } from './lib/edges/providers/dns/cloudflareDns';
-import { EdgeProviderError } from './lib/edges/providers/http';
+import { EdgeProviderError, refusalOf, scrubNames } from './lib/edges/providers/http';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeLayerOf,
@@ -39,6 +41,7 @@ import {
   zoneModeGovernsOrigin,
 } from './lib/edges/providers/capabilities';
 import { renderTemplateValue } from './lib/edges/providers/template';
+import { jsonSafe } from './lib/edges/jsonSafe';
 import { isRelayProviderId, type EdgeProviderId } from './lib/edgeProviderIds';
 import { frozenSettingsOf, parseObservedSettings, type ProvisionIntent } from './lib/edges/intent';
 import type { ListenerProto } from './lib/edges/protocols';
@@ -101,7 +104,10 @@ export const runtimeInfo = internalAction({
  * What a failed provider action carries across `ctx.runAction` as
  * `ConvexError.data`. `code` is a short provider/adapter code (or the HTTP
  * status as text, or `timeout` / `error`); `message` is the adapter's
- * body-free message. Never a URL, header, response body or credential.
+ * body-free message. Never a URL, header or credential. `detail` is the
+ * provider's own words on a refused create step only: its secrets, address
+ * literals and every name of the edge already replaced (admin display only,
+ * never a log line or an audit row).
  */
 export type EdgeProviderOpsFailure = {
   code: string;
@@ -109,17 +115,23 @@ export type EdgeProviderOpsFailure = {
   provider?: EdgeProviderId;
   step?: string;
   status?: number;
+  detail?: string;
   retryable: boolean;
   timedOut: boolean;
 };
 
 const URL_RE = /https?:\/\/[^\s'")]+/gi;
 
-/** Wrap any throw into a ConvexError whose data survives the action boundary. */
-export function toOpsFailure(err: unknown): ConvexError<EdgeProviderOpsFailure> {
+/**
+ * Wrap any throw into a ConvexError whose data survives the action boundary.
+ * `names` (a create step's: `refusalNames`) lets the provider's redacted answer
+ * through with every one of them replaced; without it, the answer stays here.
+ */
+export function toOpsFailure(err: unknown, names?: string[]): ConvexError<EdgeProviderOpsFailure> {
   if (err instanceof ConvexError) return err as ConvexError<EdgeProviderOpsFailure>;
   if (err instanceof EdgeProviderError) {
     const m = err.meta;
+    const detail = names ? scrubNames(refusalOf(err), names) : undefined;
     return new ConvexError<EdgeProviderOpsFailure>({
       code:
         m.code ?? (m.status !== undefined ? String(m.status) : m.timedOut ? 'timeout' : 'error'),
@@ -127,6 +139,7 @@ export function toOpsFailure(err: unknown): ConvexError<EdgeProviderOpsFailure> 
       provider: m.provider,
       step: m.step,
       status: m.status,
+      ...(detail ? { detail } : {}),
       retryable: m.retryable,
       timedOut: m.timedOut,
     });
@@ -153,12 +166,68 @@ export function toOpsFailure(err: unknown): ConvexError<EdgeProviderOpsFailure> 
   });
 }
 
-/** Run one action body; any throw crosses the action boundary as `ConvexError<EdgeProviderOpsFailure>`. */
-async function run<R>(fn: () => Promise<R>): Promise<R> {
+/** Ledger meta keys whose values name something (a hostname, a record, an address). */
+const NAME_META_KEYS = ['name', 'hostname', 'fqdn', 'domain', 'address'] as const;
+
+/**
+ * Every name a create step's request could carry and a refusal could echo
+ * back: the edge's resource names (spec and ledger), its fronted hostname, the
+ * origin's addresses and certificate names, the zone, and what the ledger
+ * recorded under a naming key. Filled as the call learns them (the intent and
+ * the zone only once the adapter is loaded).
+ */
+function refusalNames(
+  into: string[],
+  from: {
+    spec?: EdgeSpec;
+    ledger?: Ledger;
+    intent?: ProvisionIntent | null;
+    cfg?: EdgeProviderConfig;
+  },
+): void {
+  const add = (v: unknown) => {
+    if (typeof v === 'string' && v.length > 0) into.push(v);
+  };
+  const { spec, ledger, intent, cfg } = from;
+  if (spec) {
+    add(spec.name);
+    add(spec.hostname);
+    for (const l of spec.listeners) for (const m of l.members) add(m.address);
+    for (const n of spec.originTransport?.certNames ?? []) add(n);
+  }
+  for (const st of ledger?.steps ?? []) add(st.resourceName);
+  for (const r of ledger?.resources ?? [])
+    for (const k of NAME_META_KEYS) add((r.meta as Record<string, unknown> | undefined)?.[k]);
+  if (intent) {
+    add(intent.hostname);
+    add(intent.zoneName);
+    for (const n of intent.originTransport?.certNames ?? []) add(n);
+  }
+  if (cfg) {
+    const c = cfg as unknown as { zoneName?: unknown; dns?: { zoneName?: unknown } };
+    add(c.zoneName);
+    add(c.dns?.zoneName);
+  }
+}
+
+/** A refused create's words (`StepOutcome.detail`), scrubbed of the edge's names on the way out. */
+function scrubbedOutcome(out: StepOutcome, names: string[]): StepOutcome {
+  if (out.status !== 'partial' || !out.detail) return out;
+  const { detail: said, ...rest } = out;
+  const detail = scrubNames(said, names);
+  return detail ? { ...rest, detail } : rest;
+}
+
+/**
+ * Run one action body; any throw crosses the action boundary as
+ * `ConvexError<EdgeProviderOpsFailure>` (with the refusal, scrubbed of
+ * `names`, when given).
+ */
+async function run<R>(fn: () => Promise<R>, names?: string[]): Promise<R> {
   try {
     return await fn();
   } catch (err) {
-    throw toOpsFailure(err);
+    throw toOpsFailure(err, names);
   }
 }
 
@@ -213,6 +282,8 @@ async function tracked<R>(
   ctx: ActionCtx,
   accountId: Id<'edgeProviderAccounts'>,
   fn: (seen: ApiSeen) => Promise<R>,
+  /** A create step's names: its refusal crosses scrubbed of them (`toOpsFailure`). */
+  names?: string[],
 ): Promise<R> {
   const seen: ApiSeen = { failures: 0 };
   let result: R;
@@ -221,7 +292,7 @@ async function tracked<R>(
   } catch (err) {
     const failure = apiFailureCode(err);
     if (failure !== null) await noteApiOutcome(ctx, accountId, failure);
-    throw toOpsFailure(err);
+    throw toOpsFailure(err, names);
   }
   if (seen.failures > 0 && !seen.failed) await noteApiOutcome(ctx, accountId, null);
   return result;
@@ -1611,8 +1682,10 @@ export const planProvision = internalAction({
     /** The zone's observed encryption mode (L7), checked against the origin transport. */
     zoneSslMode: v.optional(v.string()),
   },
-  handler: (ctx, a): Promise<ResourceStep[]> =>
-    run(async () => {
+  handler: (ctx, a): Promise<ResourceStep[]> => {
+    const names: string[] = [];
+    refusalNames(names, { spec: a.spec });
+    return run(async () => {
       const { provider, cfg, providerId } = await loadAdapter(
         ctx,
         a.accountId,
@@ -1620,10 +1693,12 @@ export const planProvision = internalAction({
         undefined,
         a.locationId,
       );
+      refusalNames(names, { cfg });
       const tpl = renderedTemplate(provider, a.templateParams, a.spec, a.zoneSslMode);
       checkSpec(providerId, a.spec, a.proto, tpl, a.zoneSslMode);
       return provider.planProvision(cfg, a.spec, tpl);
-    }),
+    }, names);
+  },
 });
 
 export const runStep = internalAction({
@@ -1636,18 +1711,31 @@ export const runStep = internalAction({
     edgeId: v.optional(v.id('edges')),
     proto: v.optional(v.object(listenerProtoFields)),
   },
-  handler: (ctx, a): Promise<StepOutcome> =>
-    tracked(ctx, a.accountId, async (seen) => {
-      const { provider, cfg, providerId, intent } = await loadAdapter(
-        ctx,
-        a.accountId,
-        a.edgeId,
-        seen,
-      );
-      const tpl = renderedTemplate(provider, a.templateParams, a.spec, intent?.zoneSslMode);
-      checkSpec(providerId, a.spec, a.proto, tpl, intent?.zoneSslMode);
-      return provider.runStep(cfg, a.step as ResourceStep, a.spec, tpl, a.ledger as Ledger);
-    }),
+  handler: (ctx, a): Promise<StepOutcome> => {
+    // A create the provider refuses comes back with its reason, scrubbed of these.
+    const names: string[] = [a.step.resourceName];
+    refusalNames(names, { spec: a.spec, ledger: a.ledger as Ledger });
+    return tracked(
+      ctx,
+      a.accountId,
+      async (seen) => {
+        const { provider, cfg, providerId, intent } = await loadAdapter(
+          ctx,
+          a.accountId,
+          a.edgeId,
+          seen,
+        );
+        refusalNames(names, { intent, cfg });
+        const tpl = renderedTemplate(provider, a.templateParams, a.spec, intent?.zoneSslMode);
+        checkSpec(providerId, a.spec, a.proto, tpl, intent?.zoneSslMode);
+        return scrubbedOutcome(
+          await provider.runStep(cfg, a.step as ResourceStep, a.spec, tpl, a.ledger as Ledger),
+          names,
+        );
+      },
+      names,
+    );
+  },
 });
 
 export const pollStep = internalAction({
@@ -1658,25 +1746,42 @@ export const pollStep = internalAction({
     ledger,
     edgeId: v.optional(v.id('edges')),
   },
-  handler: (ctx, a): Promise<StepOutcome> =>
-    tracked(ctx, a.accountId, async (seen) => {
-      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
-      // A `requested` step exists only because the adapter asked to be polled.
-      // Fabricating `done` here would mark an allocating step complete with an
-      // EMPTY ledger: the resource it created would never be recorded, never be
-      // destroyed, and stay billable forever. An adapter that plans async steps
-      // without a poller is a contract violation, not a success.
-      if (!provider.pollStep)
-        throw new ConvexError<EdgeProviderOpsFailure>({
-          code: 'contract_violation',
-          message: `${providerId} has no pollStep but planned an async step`,
-          provider: providerId,
-          step: a.step.id,
-          retryable: false,
-          timedOut: false,
-        });
-      return provider.pollStep(cfg, a.step as ResourceStep, a.opRef, a.ledger as Ledger);
-    }),
+  handler: (ctx, a): Promise<StepOutcome> => {
+    const names: string[] = [a.step.resourceName];
+    refusalNames(names, { ledger: a.ledger as Ledger });
+    return tracked(
+      ctx,
+      a.accountId,
+      async (seen) => {
+        const { provider, cfg, providerId, intent } = await loadAdapter(
+          ctx,
+          a.accountId,
+          a.edgeId,
+          seen,
+        );
+        refusalNames(names, { intent, cfg });
+        // A `requested` step exists only because the adapter asked to be polled.
+        // Fabricating `done` here would mark an allocating step complete with an
+        // EMPTY ledger: the resource it created would never be recorded, never be
+        // destroyed, and stay billable forever. An adapter that plans async steps
+        // without a poller is a contract violation, not a success.
+        if (!provider.pollStep)
+          throw new ConvexError<EdgeProviderOpsFailure>({
+            code: 'contract_violation',
+            message: `${providerId} has no pollStep but planned an async step`,
+            provider: providerId,
+            step: a.step.id,
+            retryable: false,
+            timedOut: false,
+          });
+        return scrubbedOutcome(
+          await provider.pollStep(cfg, a.step as ResourceStep, a.opRef, a.ledger as Ledger),
+          names,
+        );
+      },
+      names,
+    );
+  },
 });
 
 export const discover = internalAction({
@@ -1715,12 +1820,17 @@ export const discover = internalAction({
     }),
 });
 
+/**
+ * `describe` and `inspect` answer with what the adapter read, which for an SDK
+ * adapter holds class values (`Date`s) Convex cannot return: both go through
+ * `jsonSafe` here, once, for every adapter.
+ */
 export const describe = internalAction({
   args: { accountId: v.id('edgeProviderAccounts'), ledger, edgeId: v.optional(v.id('edges')) },
   handler: (ctx, a): Promise<EdgeDescription> =>
     tracked(ctx, a.accountId, async (seen) => {
       const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
-      return provider.describe(cfg, a.ledger as Ledger);
+      return jsonSafe(await provider.describe(cfg, a.ledger as Ledger)) as EdgeDescription;
     }),
 });
 
@@ -1729,7 +1839,7 @@ export const inspect = internalAction({
   handler: (ctx, a): Promise<InspectResult> =>
     tracked(ctx, a.accountId, async (seen) => {
       const { provider, cfg } = await loadAdapter(ctx, a.accountId, a.edgeId, seen);
-      return provider.inspect(cfg, a.ledger as Ledger);
+      return jsonSafe(await provider.inspect(cfg, a.ledger as Ledger)) as InspectResult;
     }),
 });
 
