@@ -32,6 +32,7 @@ import {
   verificationStale,
 } from './lib/edges/verification';
 import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
+import { nextFailure } from './lib/edges/rotation';
 
 /** Consecutive `gone` describes before the pool drop + status transition act. */
 export const GONE_OBSERVATIONS_REQUIRED = 2;
@@ -506,7 +507,12 @@ export const settleOp = internalMutation({
     status: v.optional(v.string()),
     health: v.optional(v.string()),
     failure: v.optional(
-      v.object({ step: v.string(), code: v.optional(v.string()), status: v.optional(v.number()) }),
+      v.object({
+        step: v.string(),
+        code: v.optional(v.string()),
+        status: v.optional(v.number()),
+        detail: v.optional(v.string()),
+      }),
     ),
     resourceDeleteState: v.optional(
       v.array(v.object({ resourceId: v.string(), deleteState: v.string() })),
@@ -591,7 +597,7 @@ export const settleOp = internalMutation({
       patch.health = a.health as Edge['health'];
       patch.lastHealthAt = now;
     }
-    if (a.failure) patch.failure = a.failure;
+    if (a.failure) patch.failure = nextFailure(edge.failure, a.failure);
     // A step that settles any way but `requested` (done by discovery, a
     // thrown poll) no longer waits on what it was held up by.
     const settledOtherwise =
@@ -627,7 +633,12 @@ export const patchEdge = internalMutation({
     drainUntil: v.optional(v.union(v.number(), v.null())),
     burnedAt: v.optional(v.number()),
     failure: v.optional(
-      v.object({ step: v.string(), code: v.optional(v.string()), status: v.optional(v.number()) }),
+      v.object({
+        step: v.string(),
+        code: v.optional(v.string()),
+        status: v.optional(v.number()),
+        detail: v.optional(v.string()),
+      }),
     ),
     destroyAttemptsDelta: v.optional(v.number()),
     /** Consecutive unresolved confirms for the destroy walk's current resource (null = clear). */
@@ -653,7 +664,7 @@ export const patchEdge = internalMutation({
     if (a.poolIndex !== undefined) patch.poolIndex = a.poolIndex ?? undefined;
     if (a.drainUntil !== undefined) patch.drainUntil = a.drainUntil ?? undefined;
     if (a.burnedAt !== undefined) patch.burnedAt = a.burnedAt;
-    if (a.failure) patch.failure = a.failure;
+    if (a.failure) patch.failure = nextFailure(edge.failure, a.failure);
     if (a.destroyAttemptsDelta)
       patch.destroyAttempts = edge.destroyAttempts + a.destroyAttemptsDelta;
     if (a.stepStates) {

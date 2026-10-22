@@ -179,6 +179,8 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'l4_not_for_websocket',
   // a Scaleway location with no Project id whose API key's default project is unknown
   'project_unresolved',
+  // a load balancer size that takes only the provider's own servers (lib/edges/sizeCheck.ts)
+  'size_not_multicloud',
 ] as const;
 export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
 
@@ -570,6 +572,8 @@ export const SETUP_ACCOUNT_REASONS = [
   'l4_not_for_websocket',
   // A Scaleway location with no Project id whose API key's default project is unknown.
   'project_unresolved',
+  // A load balancer size there that takes only the provider's own servers (lib/edges/sizeCheck.ts).
+  'size_not_multicloud',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 

@@ -40,8 +40,14 @@ import {
 } from './lib/edges/providers/capabilities';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
-import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
+import {
+  defaultLocationOf,
+  liveCountForLocation,
+  locationsOfAccount,
+  sizeProblemOfLocation,
+} from './edgeLocations';
 import { placeProblemOf } from './lib/edges/l7Place';
+import { SIZE_NOT_MULTICLOUD, SIZE_NOT_MULTICLOUD_WORDS } from './lib/edges/sizeCheck';
 import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
@@ -197,8 +203,10 @@ async function planContextOf(
           live: await liveCountForLocation(ctx.db, loc),
           maxLiveEdges: loc.maxLiveEdges ?? null,
           // Why no new edge can be planned in this place (the zone itself, a
-          // Scaleway location with no project to create in).
-          placeProblem: await placeProblemOf(ctx.db, a, loc),
+          // Scaleway location with no project to create in, or a size there
+          // that takes only Scaleway's own servers).
+          placeProblem:
+            (await placeProblemOf(ctx.db, a, loc)) ?? (await sizeProblemOfLocation(ctx, a, loc)),
           // The certificate the account's DEFAULT could not get there (CAA, a
           // failed or foreign wildcard): a pick with its own certificate may
           // still go, so it is shown, and its pick check judges it.
@@ -464,6 +472,13 @@ export function refuseSet(set: SetupPlanSet): void {
   // is why its transport is left uncovered).
   if (set.problems.some((p) => p.reason.replace(/^edge\./, '') === 'l4_not_for_websocket'))
     throw new ConvexError({ code: 'edge.l4_not_for_websocket', message: L4_NOT_FOR_WEBSOCKET });
+  // A load balancer size that takes only the provider's own servers: refused
+  // in its own words, before anything billable exists (lib/edges/sizeCheck.ts).
+  if (set.problems.some((p) => p.reason.replace(/^edge\./, '') === SIZE_NOT_MULTICLOUD))
+    throw new ConvexError({
+      code: `edge.${SIZE_NOT_MULTICLOUD}`,
+      message: SIZE_NOT_MULTICLOUD_WORDS,
+    });
   if (set.uncovered.length > 0)
     throw new ConvexError({
       code: 'edge.set_uncovered_listener',

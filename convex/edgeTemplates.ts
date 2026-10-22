@@ -40,6 +40,7 @@ import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { assertAdmission } from './lib/edges/maintenance';
 import { L4_NOT_FOR_WEBSOCKET } from './lib/edges/websocketNode';
 import { parseRegionalParams, withRegionalOverlay } from './lib/edges/locations';
+import { SIZE_NOT_MULTICLOUD_WORDS, sizeProblemOf } from './lib/edges/sizeCheck';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto needed). */
 export function fnv1a64Hex(input: string): string {
@@ -300,6 +301,9 @@ export async function checkPickOptions(
     zonePlan: await zonePlanOf(ctx.db, account, location),
   });
   if (problems.length > 0) return { ok: false, code: 'edge.option_invalid', issues: problems };
+  // A size that takes only the provider's own servers cannot front this node.
+  const size = sizeProblemOf(account.provider, built.params, location.inventorySnapshot);
+  if (size) return { ok: false, code: `edge.${size}`, issues: [SIZE_NOT_MULTICLOUD_WORDS] };
   const tested = certificateValuesFor(account.provider, accountOptionDefaultsOf(account), null);
   const mine = certificateValuesFor(account.provider, accountOptionDefaultsOf(account), options);
   // The zone holds ONE shared wildcard, issued by the account's default

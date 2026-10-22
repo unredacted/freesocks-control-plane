@@ -27,7 +27,13 @@
  */
 import Cloudflare, { APIConnectionError, APIConnectionTimeoutError, APIError } from 'cloudflare';
 import type { CloudflareDnsConfig } from '../types';
-import { EdgeProviderError, capturesErrorDetail, redactErrorDetail } from '../http';
+import {
+  EdgeProviderError,
+  capturesErrorDetail,
+  isRefusal,
+  redactErrorDetail,
+  withRefusal,
+} from '../http';
 import type { DnsClient, DnsCreateArgs, DnsRecord, DnsRecordType } from './types';
 
 export type FetchLike = typeof fetch;
@@ -78,7 +84,8 @@ export function cloudflareClient(cfg: CloudflareTokenConfig, fetchImpl?: FetchLi
 /**
  * Reduce any SDK throwable to the provider error class. The message holds the
  * `status` and the numeric `errors[0].code` only; `meta.detail` holds the
- * envelope's redacted `errors[].message` texts for the admin. Never headers or
+ * envelope's redacted `errors[].message` texts for the admin on a diagnostic
+ * step (on any other refused call they are held aside: `refusalOf`). Never headers or
  * the URL. See https://developers.cloudflare.com/api/ (error envelope).
  */
 export function cloudflareError(
@@ -90,10 +97,11 @@ export function cloudflareError(
   const status = err instanceof APIError && typeof err.status === 'number' ? err.status : undefined;
   let code: string | undefined;
   let detail: string | undefined;
+  const diagnostic = capturesErrorDetail(step);
   if (err instanceof APIError && Array.isArray(err.errors)) {
     const first = err.errors[0]?.code;
     if (typeof first === 'number' && Number.isFinite(first)) code = String(first);
-    if (capturesErrorDetail(step))
+    if (diagnostic || isRefusal(status))
       detail = redactErrorDetail(
         err.errors
           .map((x) => (typeof x?.message === 'string' ? `${x.code ?? ''} ${x.message}`.trim() : ''))
@@ -104,19 +112,21 @@ export function cloudflareError(
   }
   const timedOut = err instanceof APIConnectionTimeoutError;
   const connection = err instanceof APIConnectionError;
-  return new EdgeProviderError(
+  const out = new EdgeProviderError(
     `cloudflare ${status ?? (timedOut ? 'timeout' : 'error')} on ${step}${code ? ` (${code})` : ''}`,
     {
       provider: 'cloudflare',
       step,
       status,
       code,
-      detail,
+      detail: diagnostic ? detail : undefined,
       retryable:
         timedOut || connection || status === 429 || (status !== undefined && status >= 500),
       timedOut,
     },
   );
+  // A refusal of any other call: its words held aside for the ops layer (http.ts).
+  return diagnostic ? out : withRefusal(out, detail);
 }
 
 /** Every SDK call goes through here so no raw SDK error can escape. */
@@ -274,23 +284,29 @@ export function cloudflareDnsClient(cfg: CloudflareDnsConfig, fetchImpl?: FetchL
           ? { settings: args.settings }
           : {}),
       };
-      const rec = await cfCall('dns-create', () =>
-        // The SDK's params type is a discriminated union over `type`; the body
-        // is built from a runtime value, so the union is resolved here.
-        client.dns.records.create(body as never),
+      const rec = await cfCall(
+        'dns-create',
+        () =>
+          // The SDK's params type is a discriminated union over `type`; the body
+          // is built from a runtime value, so the union is resolved here.
+          client.dns.records.create(body as never),
+        [cfg.apiToken],
       );
       return toDnsRecord(rec as unknown as RawRecord);
     },
 
     async findRecordsByName(name: string, type?: DnsRecordType): Promise<DnsRecord[]> {
       const wanted = normalizeDnsName(name);
-      const page = await cfCall('dns-list', () =>
-        client.dns.records.list({
-          zone_id,
-          name: { exact: wanted },
-          ...(type ? { type } : {}),
-          per_page: 5,
-        }),
+      const page = await cfCall(
+        'dns-list',
+        () =>
+          client.dns.records.list({
+            zone_id,
+            name: { exact: wanted },
+            ...(type ? { type } : {}),
+            per_page: 5,
+          }),
+        [cfg.apiToken],
       );
       return (page.result as unknown as RawRecord[])
         .map(toDnsRecord)
@@ -299,7 +315,9 @@ export function cloudflareDnsClient(cfg: CloudflareDnsConfig, fetchImpl?: FetchL
 
     async getRecord(id: string): Promise<DnsRecord | null> {
       try {
-        const rec = await cfCall('dns-get', () => client.dns.records.get(id, { zone_id }));
+        const rec = await cfCall('dns-get', () => client.dns.records.get(id, { zone_id }), [
+          cfg.apiToken,
+        ]);
         return toDnsRecord(rec as unknown as RawRecord);
       } catch (e) {
         if (isCloudflareNotFound(e)) return null;
@@ -309,7 +327,9 @@ export function cloudflareDnsClient(cfg: CloudflareDnsConfig, fetchImpl?: FetchL
 
     async deleteRecord(id: string): Promise<void> {
       try {
-        await cfCall('dns-delete', () => client.dns.records.delete(id, { zone_id }));
+        await cfCall('dns-delete', () => client.dns.records.delete(id, { zone_id }), [
+          cfg.apiToken,
+        ]);
       } catch (e) {
         // Already gone is the outcome the caller wanted (idempotent destroy).
         if (isCloudflareNotFound(e)) return;
@@ -331,8 +351,11 @@ export function cloudflareDnsClient(cfg: CloudflareDnsConfig, fetchImpl?: FetchL
 
     async listCaa(): Promise<Array<{ flags: number; tag: string; value: string }>> {
       const apex = normalizeDnsName(cfg.zoneName);
-      const page = await cfCall('dns-caa', () =>
-        client.dns.records.list({ zone_id, name: { exact: apex }, type: 'CAA', per_page: 100 }),
+      const page = await cfCall(
+        'dns-caa',
+        () =>
+          client.dns.records.list({ zone_id, name: { exact: apex }, type: 'CAA', per_page: 100 }),
+        [cfg.apiToken],
       );
       return (page.result as unknown as RawRecord[]).map((r) => ({
         flags: r.data?.flags ?? 0,
