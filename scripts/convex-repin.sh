@@ -5,9 +5,10 @@
 #     <release-tag> [npm-version]
 #
 # Rewrites, in place:
-#   - the two `convex-backend` refs (the `backend` service + the one-shot
-#     `keygen`, which reuses the backend image),
-#   - the one `convex-dashboard` ref,
+#   - the two `convex-backend` refs (the `backend` service's CONVEX_IMAGE build
+#     arg, which docker/convex-node/Dockerfile builds on, + the one-shot
+#     `keygen`'s `image:`),
+#   - the one `convex-dashboard` ref (also a CONVEX_IMAGE build arg),
 #   - the release-name comment on the `backend` service, which
 #     convex/deployPins.test.ts asserts matches the pinned tag.
 # Prints the OLD pinned sha on stdout (the caller builds the compare link from
@@ -71,7 +72,7 @@ NEW7="${NEW:0:7}"
   exit 2
 }
 
-OLD="$(grep -oE 'ghcr\.io/get-convex/convex-backend:[0-9a-f]{40}' "$FILE" | head -1 | cut -d: -f2)"
+OLD="$(grep -oE 'ghcr\.io/convex/convex-backend:[0-9a-f]{40}' "$FILE" | head -1 | cut -d: -f2)"
 [ -n "$OLD" ] || {
   echo "error: no git-sha-tagged convex-backend pin found in $FILE" >&2
   exit 1
@@ -106,9 +107,9 @@ substitute() { # <expected-count> <label> <perl-expression>
 
 export NEW BDIG DDIG COMMENT
 substitute 2 'convex-backend ref' \
-  '$c += s{(image:\s*ghcr\.io/get-convex/convex-backend:)[0-9a-f]{40}\@sha256:[0-9a-f]{64}}{$1$ENV{NEW}\@sha256:$ENV{BDIG}}g; END { print STDERR $c // 0 }'
+  '$c += s{((?:image|CONVEX_IMAGE):\s*ghcr\.io/convex/convex-backend:)[0-9a-f]{40}\@sha256:[0-9a-f]{64}}{$1$ENV{NEW}\@sha256:$ENV{BDIG}}g; END { print STDERR $c // 0 }'
 substitute 1 'convex-dashboard ref' \
-  '$c += s{(image:\s*ghcr\.io/get-convex/convex-dashboard:)[0-9a-f]{40}\@sha256:[0-9a-f]{64}}{$1$ENV{NEW}\@sha256:$ENV{DDIG}}g; END { print STDERR $c // 0 }'
+  '$c += s{((?:image|CONVEX_IMAGE):\s*ghcr\.io/convex/convex-dashboard:)[0-9a-f]{40}\@sha256:[0-9a-f]{64}}{$1$ENV{NEW}\@sha256:$ENV{DDIG}}g; END { print STDERR $c // 0 }'
 substitute 1 'release-name comment' \
   '$c += s{\b[0-9a-f]{7} = precompiled-\d{4}-\d{2}-\d{2}-[0-9a-f]{7}(?: \(the npm \d+\.\d+\.\d+ anchor\))?}{$ENV{COMMENT}}g; END { print STDERR $c // 0 }'
 

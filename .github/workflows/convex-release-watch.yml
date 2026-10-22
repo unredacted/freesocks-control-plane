@@ -15,6 +15,9 @@
 # slack) means the flow has stalled; then this files (and keeps updating) a
 # single issue, and closes it once the pin is fresh again — so the pin cannot
 # quietly rot the way the backup sidecar's image did for four weeks in Aug 2026.
+#
+# Two loud checks ride along: the pinned images can still be pulled, and the
+# Node the images run (docker/convex-node/Dockerfile) is not near end of life.
 name: Convex release watch
 
 on:
@@ -34,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      UPSTREAM: get-convex/convex-backend
+      UPSTREAM: convex/convex-backend
       ISSUE_TITLE: 'Convex self-hosted: pinned release is stale (monthly re-pin has stalled)'
       # The pre-2026-08 title; searched as a fallback and retitled in place so
       # the original issue's history survives the rename. Drop once no issue
@@ -46,11 +49,33 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Convex moved its images from ghcr.io/get-convex to ghcr.io/convex in Oct
+      # 2026, and the old path began refusing anonymous pulls. Nothing noticed:
+      # the hosts had the images cached, and convex-repin.yml reads a refused
+      # inspect as "no image yet", so a fresh host could not have deployed and
+      # the next re-pin would have found nothing. Fail loudly instead.
+      - name: The pinned Convex images can still be pulled
+        run: |
+          set -euo pipefail
+          refs="$(grep -oE 'ghcr\.io/convex/convex-[a-z]+:[0-9a-f]{40}@sha256:[0-9a-f]{64}' \
+            docker-compose.stack.yml | sort -u)"
+          if [ -z "$refs" ]; then
+            echo "::error::no ghcr.io/convex/* pins found in docker-compose.stack.yml"
+            exit 1
+          fi
+          for ref in $refs; do
+            if ! docker buildx imagetools inspect "$ref" > /dev/null; then
+              echo "::error::$ref cannot be resolved anonymously, so a fresh host cannot pull it. Has Convex moved its registry path again?"
+              exit 1
+            fi
+            echo "pullable: $ref"
+          done
+
       - name: Check the pinned Convex release's age against the policy window
         run: |
           set -euo pipefail
 
-          pinned="$(grep -oE 'ghcr\.io/get-convex/convex-backend:[0-9a-f]{40}' \
+          pinned="$(grep -oE 'ghcr\.io/convex/convex-backend:[0-9a-f]{40}' \
             docker-compose.stack.yml | head -1 | cut -d: -f2)"
           if [ -z "$pinned" ]; then
             echo "::error::no git-sha-tagged convex-backend pin found in docker-compose.stack.yml"
@@ -134,4 +159,27 @@ jobs:
             echo "updated issue #$existing"
           else
             gh issue create --title "$ISSUE_TITLE" --body-file body.md
+          fi
+
+      # The images run docker/convex-node/Dockerfile's Node. An end-of-life Node
+      # line gets no more security releases, so its Dependabot entry would just
+      # go quiet. Fail from 90 days before the end (Node 22: 2027-04-30). The way
+      # out is a major Convex builds against: convex-repin.yml's PR says when
+      # upstream's .nvmrc moves. Last and always(), so it never hides the
+      # stale-pin issue above.
+      - name: The Convex images' Node is not near end of life
+        if: always()
+        run: |
+          set -euo pipefail
+          major="$(grep -oE '^FROM node:[0-9]+' docker/convex-node/Dockerfile | cut -d: -f2)"
+          if ! end="$(curl -fsSL https://raw.githubusercontent.com/nodejs/Release/main/schedule.json |
+            jq -er --arg v "v$major" '.[$v].end')"; then
+            echo "::warning::could not read Node $major's end of life from nodejs/Release; skipped"
+            exit 0
+          fi
+          days=$((($(date -u -d "$end" +%s) - $(date -u +%s)) / 86400))
+          echo "Node $major (docker/convex-node/Dockerfile) reaches end of life on $end, in $days days"
+          if [ "$days" -le 90 ]; then
+            echo "::error::Node $major reaches end of life on $end ($days days) and then gets no security releases. Move docker/convex-node/Dockerfile to a major Convex builds against (.nvmrc in $UPSTREAM; re-pin Convex first if it is still on $major)."
+            exit 1
           fi

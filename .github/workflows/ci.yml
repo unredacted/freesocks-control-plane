@@ -48,7 +48,7 @@ jobs:
       # Build the SPA (the only build artifact now; the backend is convex/).
       - run: bun run build
 
-  # The deploy artifacts themselves: all three Dockerfiles must build, and the
+  # The deploy artifacts themselves: every stack Dockerfile must build, and the
   # shell entrypoints must pass shellcheck (a broken entrypoint otherwise merges
   # green and only fails on the beta host at deploy time).
   docker:
@@ -64,6 +64,15 @@ jobs:
           docker build -f docker/web.Dockerfile .
           docker build -f docker/backup.Dockerfile .
           docker build -f docker/deploy.Dockerfile .
+      # The Convex backend and dashboard on the patched Node, from the exact
+      # refs the stack pins. The overlay's RUN step fails if the binary cannot
+      # load against the image's libraries.
+      - name: Build the Convex images with the patched Node
+        run: |
+          for img in convex-backend convex-dashboard; do
+            ref="$(grep -oE "ghcr\.io/convex/$img:[0-9a-f]{40}@sha256:[0-9a-f]{64}" docker-compose.stack.yml | head -1)"
+            docker build --build-arg CONVEX_IMAGE="$ref" docker/convex-node
+          done
 
   # Reproducible build (CDN-blinding Phase 3f): build twice from a clean checkout
   # and assert byte-for-byte identical output. The printed dist-sha256 is the hash
