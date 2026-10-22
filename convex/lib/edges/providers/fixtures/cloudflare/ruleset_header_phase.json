@@ -1,0 +1,34 @@
+{
+  "_source": {
+    "api": "GET /zones/{zone_id}/rulesets/phases/http_request_late_transform/entrypoint (and the WHOLE ruleset a rule create answers with)",
+    "doc": "https://developers.cloudflare.com/rules/transform/request-header-modification/create-api/",
+    "sdk": "node_modules/cloudflare/resources/rulesets/phases/phases.d.ts (PhaseGetResponse); rules.d.ts (RuleCreateParams.RewriteRule)",
+    "note": "a rewrite rule removing cf-connecting-ip for one hostname; rules may not touch other cf- headers; Free zones allow 10 Transform Rules",
+    "taken": "2026-10-21"
+  },
+  "result": {
+    "id": "5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a",
+    "name": "default",
+    "description": "",
+    "kind": "zone",
+    "version": "2",
+    "phase": "http_request_late_transform",
+    "last_updated": "2026-10-21T10:00:01.000000Z",
+    "rules": [
+      {
+        "id": "b2c3d4e5f60718293a4b5c6d7e8f90a1",
+        "version": "1",
+        "action": "rewrite",
+        "action_parameters": { "headers": { "cf-connecting-ip": { "operation": "remove" } } },
+        "expression": "(http.host eq \"k7m2x9qp4n3f.example.net\")",
+        "description": "fcp-relay-o1-0badf00d",
+        "ref": "fcp-relay-o1-0badf00d",
+        "enabled": true,
+        "last_updated": "2026-10-21T10:00:01.000000Z"
+      }
+    ]
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

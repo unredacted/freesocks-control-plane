@@ -4,7 +4,7 @@
  *
  * An edge is ONE proxied DNS record in the account's zone: clients reach the
  * CDN on 443 with SNI = the minted hostname, the CDN terminates TLS and dials
- * the origin origin. Two resource kinds:
+ * the origin. Three resource kinds:
  *
  *  - `dns_record`: the proxied A/AAAA/CNAME carrying the edge hostname. Its
  *    `comment` is the ownership marker (`<prefix>:<spec.name>`), which is what
@@ -16,6 +16,16 @@
  *    zone encryption mode's effective default. Cloudflare dials port 80 for a
  *    `flexible` zone and 443 for `full`/`strict`; the client-facing port is
  *    always 443, so the incoming proxied-port allowlist never applies here.
+ *  - `header_rule`: a request-header Transform Rule (`http_request_late_transform`
+ *    phase) for the edge hostname only, removing the member's address headers a
+ *    rule may remove (`CLOUDFLARE_CLIENT_ADDRESS_HEADERS`), unless the node's
+ *    options pass them on (`forwardClientAddress`). Never zone-wide.
+ *
+ * An account fronts only when it is set to DNS and fronting (role `dns`,
+ * `frontsTraffic`); its location checks then also check what a front needs:
+ * the zone's edge certificate, its CAA records for Cloudflare's certificate
+ * authorities, Full (strict) encryption, and the zone settings that put more of
+ * the member on the request (`frontingChecks`).
  *
  * Everything goes through the shared SDK client in ./dns/cloudflareDns.ts, so
  * retries (none), logging (off), the pinned API version and the body-free
@@ -51,6 +61,8 @@ import { firstResource, metaOf, orderByKind } from './types';
 import { EdgeProviderError, credentialTestFailure, noteDiscoverError } from './http';
 import { addressFamily } from '../ip';
 import { isFirstLevelUnder } from '../hostname';
+import { checkCaa, type CaaLookup, type CaaRecord, type CaaVerdictKind } from '../caa';
+import { dnsCaaLookup } from './dns/caaLookup';
 import {
   cfCall,
   cloudflareApi,
@@ -72,11 +84,14 @@ export { CloudflareTemplate, CLOUDFLARE_TEMPLATE_FIELDS } from './templates';
 export type { CloudflareTemplateParams } from './templates';
 export { cloudflareApi, __setCloudflareApiFactory, cloudflareDnsClient };
 
-/** Ledger resource kinds this adapter owns, in destroy order (rule before record). */
-export const CLOUDFLARE_DESTROY_ORDER = ['origin_rule', 'dns_record'] as const;
+/** Ledger resource kinds this adapter owns, in destroy order (rules before the record). */
+export const CLOUDFLARE_DESTROY_ORDER = ['header_rule', 'origin_rule', 'dns_record'] as const;
 
 /** The Origin Rules phase; a zone has exactly one entry point ruleset per phase. */
 const ORIGIN_PHASE = 'http_request_origin';
+/** The request-header Transform Rules phase (late: after every other rule has run). */
+const HEADER_PHASE = 'http_request_late_transform';
+type RulePhase = typeof ORIGIN_PHASE | typeof HEADER_PHASE;
 /** DNS record comments are capped at 100 characters on every plan. */
 const MAX_COMMENT = 100;
 /** Client-facing port of an L7 edge: always 443 (the CDN terminates TLS). */
@@ -126,6 +141,10 @@ function providerError(step: string, code: string, retryable = false): EdgeProvi
  *  - an https origin needs `full` or `strict` (`flexible` would dial port 80);
  *  - `strict` additionally validates the origin certificate, so an origin whose
  *    certificate is not publicly trusted cannot sit behind it.
+ * `full` encrypts the origin leg without checking whose certificate answers;
+ * `strict` checks it against the FRONT's hostname, which an enrolled node's
+ * certificate (its origin name only) never carries, so `full` stays allowed
+ * (docs/edges.md § "Cloudflare fronts", the origin leg).
  * Source: https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/, 2026-09-16.
  */
 export function zoneSslModeOf(
@@ -270,6 +289,66 @@ export function originRuleTargetsHost(expression: unknown, hostname: string): bo
   return false;
 }
 
+/**
+ * The request headers carrying the member's address that a Transform Rule may
+ * REMOVE at the CDN: the header rule of every front whose node must not see
+ * the member's address (the default) removes each of them, for the front's
+ * hostname only. Cloudflare's rules may not touch a `cf-` or `x-cf-` header
+ * except `cf-connecting-ip` (Request Header Transform Rules, Important
+ * remarks, re-read 2026-10-21), so that is the one name today.
+ *
+ * What no rule removes at Cloudflare, by its own documentation (the node's
+ * Caddy removes them all before the proxy reads the request; that layer stays):
+ *  - `X-Forwarded-For`: a rule may remove it, but the proxy adds it back with
+ *    the member's address after every rule phase, managed transforms included;
+ *    asking would change nothing, so it is not asked;
+ *  - `CF-Connecting-IPv6` (sent while the zone's Pseudo IPv4 is on) and every
+ *    other `cf-` header (`CF-IPCountry`, `CF-Ray`, `CF-Visitor`): refused.
+ * A name joins this list only once a front built with it shows it gone in a
+ * capture at the node: Cloudflare documents no removal of `True-Client-IP`,
+ * `X-Real-IP` or `Forwarded`, and a list is no proof (one name Fastly refused
+ * failed every front there). `cloudflare.test.ts` keeps the known ones out.
+ */
+export const CLOUDFLARE_CLIENT_ADDRESS_HEADERS = ['cf-connecting-ip'] as const;
+
+/** Address headers that reach the node from a Cloudflare front whatever FCP asks (docs and tests). */
+export const CLOUDFLARE_ADDRESS_HEADERS_KEPT = ['x-forwarded-for', 'cf-connecting-ipv6'] as const;
+
+export interface CloudflareHeaderRule {
+  action: 'rewrite';
+  action_parameters: { headers: Record<string, { operation: 'remove' }> };
+  expression: string;
+  description: string;
+  ref: string;
+  enabled: true;
+}
+
+/**
+ * The header rule body: the removals for EXACTLY this hostname (the expression
+ * `cloudflareOriginRule` writes), never the zone. `ref` is its discovery key in
+ * the late-transform entry point, as for the origin rule.
+ */
+export function cloudflareHeaderRule(spec: EdgeSpec): CloudflareHeaderRule {
+  const hostname = hostnameOf(spec, 'headers');
+  return {
+    action: 'rewrite',
+    action_parameters: {
+      headers: Object.fromEntries(
+        CLOUDFLARE_CLIENT_ADDRESS_HEADERS.map((h) => [h, { operation: 'remove' as const }]),
+      ),
+    },
+    expression: `(http.host eq "${hostname}")`,
+    description: spec.name,
+    ref: spec.name,
+    enabled: true,
+  };
+}
+
+/** Whether a front keeps the member's address from its node (the default; `forwardClientAddress` off). */
+export function stripsClientAddress(tpl: Pick<CloudflareTemplateParams, 'forwardClientAddress'>) {
+  return tpl.forwardClientAddress !== true;
+}
+
 // --- SDK plumbing ------------------------------------------------------------------
 
 function dnsFor(cfg: CloudflareConfig, fetchImpl?: FetchLike) {
@@ -292,7 +371,10 @@ interface RawRule {
   description?: string;
   enabled?: boolean;
   expression?: string;
-  action_parameters?: { origin?: { port?: number } };
+  action_parameters?: {
+    origin?: { port?: number };
+    headers?: Record<string, { operation?: string }>;
+  };
 }
 
 /** A ruleset as the phase/rule endpoints return it. */
@@ -301,17 +383,59 @@ interface RawRuleset {
   rules?: RawRule[];
 }
 
-async function getOriginPhase(cfg: CloudflareConfig, step: string): Promise<RawRuleset | null> {
+async function getPhase(
+  cfg: CloudflareConfig,
+  phase: RulePhase,
+  step: string,
+): Promise<RawRuleset | null> {
   try {
-    const phase = await cfCall(step, () =>
-      cloudflareClient(cfg).rulesets.phases.get(ORIGIN_PHASE, { zone_id: cfg.zoneId }),
+    const found = await cfCall(step, () =>
+      cloudflareClient(cfg).rulesets.phases.get(phase, { zone_id: cfg.zoneId }),
     );
-    return phase as unknown as RawRuleset;
+    return found as unknown as RawRuleset;
   } catch (e) {
     // No entry point ruleset exists for the phase yet.
     if (isCloudflareNotFound(e)) return null;
     throw e;
   }
+}
+
+const getOriginPhase = (cfg: CloudflareConfig, step: string) => getPhase(cfg, ORIGIN_PHASE, step);
+
+/**
+ * Add one rule to the zone's entry point ruleset of a phase, creating the entry
+ * point with that rule when the phase has none yet (the create IS the write
+ * then). The zone lock the orchestrator holds (`stepLockKey`) keeps a
+ * concurrent edge from replacing a ruleset created meanwhile. Both endpoints
+ * answer with the WHOLE ruleset.
+ */
+async function addZoneRule(
+  cfg: CloudflareConfig,
+  phase: RulePhase,
+  rule: CloudflareOriginRule | CloudflareHeaderRule,
+  step: string,
+): Promise<RawRuleset> {
+  const existing = await getPhase(cfg, phase, step);
+  if (!existing?.id) {
+    const created = await cfCall(step, () =>
+      cloudflareClient(cfg).rulesets.phases.update(phase, {
+        zone_id: cfg.zoneId,
+        name: 'default',
+        rules: [rule as never],
+      }),
+    );
+    return created as unknown as RawRuleset;
+  }
+  const updated = await cfCall(step, () =>
+    cloudflareClient(cfg).rulesets.rules.create(
+      existing.id as string,
+      {
+        zone_id: cfg.zoneId,
+        ...rule,
+      } as never,
+    ),
+  );
+  return { ...(updated as unknown as RawRuleset), id: (updated as RawRuleset).id ?? existing.id };
 }
 
 function findRuleByRef(ruleset: RawRuleset | null, ref: string) {
@@ -331,12 +455,15 @@ interface CertPack {
  * Universal SSL state for one hostname: an ACTIVE certificate pack listing the
  * hostname itself or the zone's first-level wildcard covers it. An error here
  * is `unknown` (the token may lack "SSL and Certificates Read"), never a
- * failure: a missing read must not fail an otherwise healthy edge.
+ * failure: a missing read must not fail an otherwise healthy edge (the front
+ * qualification proves the certificate end to end either way). While nothing
+ * covers it, `code` says why: one is still being issued
+ * (`edge_certificate_pending`) or none is on its way (`edge_certificate_missing`).
  */
 async function certificateReadiness(
   cfg: CloudflareConfig,
   hostname: string,
-): Promise<{ state: ReadinessState; packs: CertPack[] }> {
+): Promise<{ state: ReadinessState; packs: CertPack[]; code?: string }> {
   try {
     const page = await cfCall('describe-cert', () =>
       cloudflareClient(cfg).ssl.certificatePacks.list({
@@ -347,15 +474,18 @@ async function certificateReadiness(
     );
     const packs = (page.result as unknown as CertPack[]) ?? [];
     const wildcard = `*.${normalizeDnsName(cfg.zoneName)}`;
-    const covered = packs.some(
-      (p) =>
-        p.status === 'active' &&
-        (p.hosts ?? []).some((h) => {
-          const n = normalizeDnsName(h);
-          return n === hostname || n === wildcard;
-        }),
-    );
-    return { state: covered ? 'ready' : 'pending', packs };
+    const covers = (p: CertPack) =>
+      (p.hosts ?? []).some((h) => {
+        const n = normalizeDnsName(h);
+        return n === hostname || n === wildcard;
+      });
+    if (packs.some((p) => p.status === 'active' && covers(p))) return { state: 'ready', packs };
+    const coming = packs.some((p) => covers(p) && /^(initializing|pending)/.test(p.status ?? ''));
+    return {
+      state: 'pending',
+      packs,
+      code: coming ? 'edge_certificate_pending' : 'edge_certificate_missing',
+    };
   } catch {
     return { state: 'unknown', packs: [] };
   }
@@ -376,6 +506,165 @@ async function zoneSetting(
   } catch {
     return null;
   }
+}
+
+// --- what a front needs of its zone (DNS and fronting accounts only) ----------------
+
+let caaLookupOverride: CaaLookup | null = null;
+/** Test seam: answer CAA lookups from a table (the offline suite refuses real DNS). */
+export function __setCloudflareCaaLookup(f: CaaLookup | null): void {
+  caaLookupOverride = f;
+}
+
+/**
+ * The certificate authorities Universal SSL issues from, by their CAA issuer
+ * domain. Cloudflare chooses among them and may change it at a renewal
+ * without notice, so a zone must let at least one issue (Sectigo is used for
+ * backup certificates only).
+ * Source: https://developers.cloudflare.com/ssl/reference/certificate-authorities/, 2026-10-21.
+ */
+export const CLOUDFLARE_UNIVERSAL_CAS = ['letsencrypt.org', 'pki.goog', 'ssl.com'] as const;
+
+/**
+ * The CAA preflight of a fronting zone: the zone's edge certificate is its
+ * `*.<zone>` wildcard (Universal SSL covers the apex and first-level names
+ * only, which is where every front is minted), so the walk is the wildcard's
+ * (`issuewild`, else `issue`), from the zone up. Cloudflare adds CAA records
+ * for its own authorities to a zone it hosts that has any; records ABOVE the
+ * zone (a zone for a subdomain) are inherited and never touched, which is what
+ * this walk is for. `forbids` only when records exist and allow none of the
+ * authorities; a lookup that fails anywhere is `unchecked` and passes.
+ */
+export async function cloudflareCaaPreflight(zone: string): Promise<{
+  verdict: CaaVerdictKind;
+  allowed: string[];
+  decidedAt?: string;
+}> {
+  const lookup = caaLookupOverride ?? dnsCaaLookup;
+  // Every authority walks the same names: one lookup per name.
+  const seen = new Map<string, Promise<CaaRecord[]>>();
+  const once: CaaLookup = (name) => {
+    let p = seen.get(name);
+    if (!p) seen.set(name, (p = lookup(name)));
+    return p;
+  };
+  const verdicts = [];
+  for (const ca of CLOUDFLARE_UNIVERSAL_CAS)
+    verdicts.push(await checkCaa({ name: `*.${zone}`, certificateAuthority: ca, lookup: once }));
+  const allowed = verdicts.filter((v) => v.verdict === 'allows').map((v) => v.issuer);
+  const decidedAt = verdicts.find((v) => v.decidedAt)?.decidedAt;
+  const verdict: CaaVerdictKind = verdicts.some((v) => v.verdict === 'unchecked')
+    ? allowed.length > 0
+      ? 'allows'
+      : 'unchecked'
+    : verdicts[0]!.verdict === 'no_records'
+      ? 'no_records'
+      : allowed.length > 0
+        ? 'allows'
+        : 'forbids';
+  return { verdict, allowed, ...(decidedAt ? { decidedAt } : {}) };
+}
+
+/** A certificate pack's state for the zone's wildcard: ready, on its way, none, or unreadable. */
+export type ZoneCertificateState = 'active' | 'pending' | 'none' | 'unknown';
+
+/**
+ * The zone's edge certificate for its fronts: a certificate pack (Universal,
+ * Advanced or Total TLS) listing `*.<zone>`, the best one first (active, then
+ * one still being issued). An error is `unknown` (the token may lack "SSL and
+ * Certificates Read"): reported, never a refusal.
+ */
+async function zoneCertificate(
+  cfg: CloudflareConfig,
+  zone: string,
+): Promise<{ state: ZoneCertificateState; authority?: string; type?: string }> {
+  let packs: Array<CertPack & { certificate_authority?: string }>;
+  try {
+    const page = await cfCall('location', () =>
+      cloudflareClient(cfg).ssl.certificatePacks.list({
+        zone_id: cfg.zoneId,
+        status: 'all',
+        per_page: 50,
+      }),
+    );
+    packs = (page.result as unknown as typeof packs) ?? [];
+  } catch {
+    return { state: 'unknown' };
+  }
+  const wildcard = `*.${normalizeDnsName(zone)}`;
+  const mine = packs.filter((p) => (p.hosts ?? []).some((h) => normalizeDnsName(h) === wildcard));
+  const active = mine.find((p) => p.status === 'active');
+  const pending = mine.find((p) => /^(initializing|pending)/.test(p.status ?? ''));
+  const best = active ?? pending;
+  if (!best) return { state: 'none' };
+  return {
+    state: active ? 'active' : 'pending',
+    ...(best.certificate_authority ? { authority: best.certificate_authority } : {}),
+    ...(best.type ? { type: best.type } : {}),
+  };
+}
+
+/**
+ * What a front needs of its zone, for an account set to DNS and fronting (a
+ * DNS-only account's zone is never judged by it):
+ *  - an edge certificate for `*.<zone>` (`edge_certificate_missing` when none
+ *    is active or on its way: Universal SSL switched off, or nothing ordered);
+ *  - CAA records that let one of Cloudflare's authorities issue it
+ *    (`caa_forbids_ca`, the refusal every CDN's zone check shares);
+ *  - recorded, never refused: Full without strict (`zone_ssl_not_strict`: the
+ *    origin leg is encrypted but its certificate is not checked; strict checks
+ *    it against the front's name, which an enrolled node's certificate does
+ *    not carry), the lowest TLS version members may use, and the zone-wide
+ *    settings that put more of the member on the request (Pseudo IPv4 adds the
+ *    address in `CF-Connecting-IPv6`, IP geolocation the country in
+ *    `CF-IPCountry`; no rule removes either at the CDN).
+ */
+async function frontingChecks(
+  cfg: CloudflareConfig,
+  zone: string,
+  ssl: string | null,
+): Promise<{ observed: Record<string, string>; detail: string[]; refusal?: string }> {
+  const observed: Record<string, string> = {};
+  const detail: string[] = [];
+  const [minTls, pseudoIpv4, ipGeolocation] = await Promise.all([
+    zoneSetting(cfg, 'min_tls_version', 'location'),
+    zoneSetting(cfg, 'pseudo_ipv4', 'location'),
+    zoneSetting(cfg, 'ip_geolocation', 'location'),
+  ]);
+  if (minTls) {
+    observed.minTlsVersion = minTls;
+    if (minTls === '1.0' || minTls === '1.1') detail.push(`min_tls_${minTls}`);
+  }
+  if (pseudoIpv4) {
+    observed.pseudoIpv4 = pseudoIpv4;
+    if (pseudoIpv4 !== 'off') detail.push('pseudo_ipv4_on');
+  }
+  if (ipGeolocation) {
+    observed.ipGeolocation = ipGeolocation;
+    if (ipGeolocation === 'on') detail.push('ip_country_header_on');
+  }
+  if (ssl === 'full') detail.push('zone_ssl_not_strict');
+  const cert = await zoneCertificate(cfg, zone);
+  observed.edgeCertificate = cert.state;
+  if (cert.authority) observed.edgeCertificateAuthority = cert.authority;
+  if (cert.type) observed.edgeCertificateType = cert.type;
+  if (cert.state === 'none') {
+    detail.push('edge_certificate_missing');
+    return { observed, detail, refusal: 'edge_certificate_missing' };
+  }
+  if (cert.state !== 'active') detail.push(`edge_certificate_${cert.state}`);
+  const caa = await cloudflareCaaPreflight(zone);
+  observed.caa = caa.verdict;
+  observed.caaIssuer = (caa.allowed.length > 0 ? caa.allowed : CLOUDFLARE_UNIVERSAL_CAS).join(' ');
+  observed.caaCertificate = 'wildcard';
+  if (caa.decidedAt) observed.caaAt = caa.decidedAt;
+  if (caa.verdict === 'forbids') {
+    detail.push(
+      `the CAA records at ${caa.decidedAt} allow none of ${CLOUDFLARE_UNIVERSAL_CAS.join(', ')} for the wildcard (issuewild)`,
+    );
+    return { observed, detail, refusal: 'caa_forbids_ca' };
+  }
+  return { observed, detail };
 }
 
 /** One zone as the listing shows it. */
@@ -476,7 +765,8 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
    * from the API). The zone's `ssl` mode is RECORDED, not required:
    * `flexible|full|strict` are all usable and the feasibility check against a
    * slot's origin transport happens at plan time, not here. Only `off` is
-   * refused outright.
+   * refused outright; an account set to DNS and fronting also has what a
+   * front needs of its zone checked (`frontingChecks`).
    *
    * The two settings also travel as `observed`, the machine-readable half of
    * `detail`: the orchestrator stores them on the location and freezes
@@ -531,6 +821,13 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
         detail.push('zone_not_active');
         return out('zone_not_active');
       }
+      // What a front needs of the zone: only for an account that fronts.
+      if (cfg.frontsTraffic) {
+        const front = await frontingChecks(cfg, name, ssl);
+        Object.assign(observed, front.observed);
+        detail.push(...front.detail);
+        if (front.refusal) return out(front.refusal);
+      }
       return out();
     } catch (e) {
       const failed = credentialTestFailure(e);
@@ -568,8 +865,9 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
   },
 
   /**
-   * Pure: one DNS record, plus an Origin Rule only when the origin port is not
-   * the zone mode's effective default.
+   * Pure: one DNS record, an Origin Rule only when the origin port is not the
+   * zone mode's effective default, and the header rule unless the node's
+   * options pass the member's address on.
    */
   planProvision(_cfg, spec, tpl) {
     const originPort = originPortOf(spec, 'plan');
@@ -586,6 +884,13 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
         discoverability: 'by_name',
       });
     }
+    if (stripsClientAddress(tpl))
+      steps.push({
+        id: 'headers',
+        kind: 'create_header_rule',
+        resourceName: `${spec.name}-headers`,
+        discoverability: 'by_name',
+      });
     return steps;
   },
 
@@ -616,34 +921,13 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       }
       case 'create_origin_rule': {
         const originPort = originPortOf(spec, step.id);
-        const rule = cloudflareOriginRule(spec, originPort);
-        const phase = await getOriginPhase(cfg, step.id);
-        let ruleset: RawRuleset;
-        if (!phase?.id) {
-          // No entry point ruleset for the phase yet: creating it with our one
-          // rule IS the create. The zone lock the orchestrator holds is what
-          // keeps a concurrent edge from replacing a ruleset created meanwhile.
-          const created = await cfCall(step.id, () =>
-            cloudflareClient(cfg).rulesets.phases.update(ORIGIN_PHASE, {
-              zone_id: cfg.zoneId,
-              name: 'default',
-              rules: [rule as never],
-            }),
-          );
-          ruleset = created as unknown as RawRuleset;
-        } else {
-          const updated = await cfCall(step.id, () =>
-            cloudflareClient(cfg).rulesets.rules.create(
-              phase.id as string,
-              {
-                zone_id: cfg.zoneId,
-                ...rule,
-              } as never,
-            ),
-          );
-          ruleset = updated as unknown as RawRuleset;
-        }
-        // Both endpoints answer with the WHOLE ruleset: ours is the one with our ref.
+        const ruleset = await addZoneRule(
+          cfg,
+          ORIGIN_PHASE,
+          cloudflareOriginRule(spec, originPort),
+          step.id,
+        );
+        // The whole ruleset comes back: ours is the one with our ref.
         const mine = findRuleByRef(ruleset, spec.name);
         if (!mine?.id) return { status: 'partial', resources: [], code: 'rule_not_returned' };
         return {
@@ -653,7 +937,38 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
               kind: 'origin_rule',
               resourceId: mine.id,
               ownership: 'created',
-              meta: { rulesetId: ruleset.id ?? phase?.id ?? '' },
+              meta: { rulesetId: ruleset.id ?? '' },
+            },
+          ],
+        };
+      }
+      case 'create_header_rule': {
+        let ruleset: RawRuleset;
+        try {
+          ruleset = await addZoneRule(cfg, HEADER_PHASE, cloudflareHeaderRule(spec), step.id);
+        } catch (e) {
+          // A token without Transform Rules: Edit (or a zone at its rule limit,
+          // answered the same way) is refused on every try: the run stops on
+          // it now, and the operator fixes the token or the zone.
+          if (e instanceof EdgeProviderError && e.meta.status === 403)
+            return {
+              status: 'partial',
+              resources: [],
+              code: 'header_rule_forbidden',
+              refused: true,
+            };
+          throw e;
+        }
+        const mine = findRuleByRef(ruleset, spec.name);
+        if (!mine?.id) return { status: 'partial', resources: [], code: 'rule_not_returned' };
+        return {
+          status: 'done',
+          resources: [
+            {
+              kind: 'header_rule',
+              resourceId: mine.id,
+              ownership: 'created',
+              meta: { rulesetId: ruleset.id ?? '' },
             },
           ],
         };
@@ -709,8 +1024,10 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
           })),
         };
       }
-      case 'create_origin_rule': {
-        const phase = await getOriginPhase(cfg, step.id);
+      case 'create_origin_rule':
+      case 'create_header_rule': {
+        const header = step.kind === 'create_header_rule';
+        const phase = await getPhase(cfg, header ? HEADER_PHASE : ORIGIN_PHASE, step.id);
         if (!phase) return { status: 'confirmed_absent' };
         const mine = findRuleByRef(phase, spec.name);
         if (!mine?.id) return { status: 'confirmed_absent' };
@@ -718,7 +1035,7 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
           status: 'found',
           resources: [
             {
-              kind: 'origin_rule',
+              kind: header ? 'header_rule' : 'origin_rule',
               resourceId: mine.id,
               ownership: 'adopted',
               meta: { rulesetId: phase.id ?? '' },
@@ -739,19 +1056,21 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
     const hostname = record.name;
     const cert = await certificateReadiness(cfg, hostname);
     const dnsReady: ReadinessState = record.proxied ? 'ready' : 'pending';
-    // An unproxied record hands members the ORIGIN address: an error, not a wait.
+    // An unproxied record hands members the ORIGIN address: an error, not a
+    // wait. A certificate this token cannot read is left to the front
+    // qualification, which proves it end to end.
     const state: EdgeDescription['state'] = !record.proxied
       ? 'error'
-      : cert.state === 'ready'
-        ? 'active'
-        : 'pending';
+      : cert.state === 'pending'
+        ? 'pending'
+        : 'active';
     return {
       state,
       addresses: { hostname },
       // memberHealth is false for this provider: a DNS record says nothing
       // about whether the origin is up, so health is never claimed.
       health: 'unknown',
-      ...(record.proxied ? {} : { code: 'unproxied' }),
+      ...(record.proxied ? (cert.code ? { code: cert.code } : {}) : { code: 'unproxied' }),
       readiness: { dns: dnsReady, certificate: cert.state },
     };
   },
@@ -778,6 +1097,14 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       rule = (phase?.rules ?? []).find((r) => r.id === ruleRes.resourceId);
       const port = rule?.action_parameters?.origin?.port;
       if (typeof port === 'number') originPort = port;
+    }
+    // The header rule: which headers it removes now (none = the member's
+    // address reaches the node in every header the CDN sets).
+    const headerRes = firstResource(ledger, 'header_rule');
+    let headerRule: RawRule | undefined;
+    if (headerRes) {
+      const phase = await getPhase(cfg, HEADER_PHASE, 'inspect');
+      headerRule = (phase?.rules ?? []).find((r) => r.id === headerRes.resourceId);
     }
     return {
       summary: {
@@ -813,6 +1140,17 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
                 id: rule.id,
                 ref: rule.ref,
                 port: rule.action_parameters?.origin?.port,
+              },
+            }
+          : {}),
+        ...(headerRes
+          ? {
+              headerRule: {
+                id: headerRes.resourceId,
+                found: headerRule !== undefined,
+                removes: Object.entries(headerRule?.action_parameters?.headers ?? {})
+                  .filter(([, op]) => op?.operation === 'remove')
+                  .map(([name]) => name),
               },
             }
           : {}),
@@ -879,7 +1217,9 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
    * later destroy removes the port override the operator set up by hand. The
    * operand is parsed rather than substring-matched: `ba.example.org` contains
    * `a.example.org`, and adopting that rule would delete another host's
-   * override.
+   * override. A request-header rule naming exactly this hostname is adopted
+   * the same way; an imported front without one gets none from FCP (it is
+   * never edited), so its node sees `CF-Connecting-IP` until it is replaced.
    */
   async inspectForAdoption(cfg, resourceId, hostname): Promise<AdoptionInspection> {
     const step = 'adopt';
@@ -915,6 +1255,19 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
         },
       });
     }
+    // A token that cannot read Transform Rules imports the front without its
+    // header rule: the rule stays at the provider for the operator.
+    const headers = await getPhase(cfg, HEADER_PHASE, step).catch(() => null);
+    const headerRule = (headers?.rules ?? []).find(
+      (r) => r.action === 'rewrite' && originRuleTargetsHost(r.expression, wanted),
+    );
+    if (headerRule?.id)
+      resources.push({
+        kind: 'header_rule',
+        resourceId: headerRule.id,
+        ownership: 'adopted',
+        meta: { rulesetId: headers?.id ?? '' },
+      });
     return {
       resources,
       hostname: record.name,
@@ -927,12 +1280,13 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
   planDestroy: (_cfg, ledger): LedgerResource[] => orderByKind(ledger, CLOUDFLARE_DESTROY_ORDER),
 
   /**
-   * Both deletes are synchronous and idempotent, so there is no
+   * Every delete is synchronous and idempotent, so there is no
    * `confirmDestroyed` (capability `asyncDelete: false`): a 404 IS the
    * confirmation. An unknown kind stays `unresolved` and parks the edge.
    */
   async runDestroy(cfg, r) {
     switch (r.kind) {
+      case 'header_rule':
       case 'origin_rule': {
         const rulesetId = metaOf(r).rulesetId;
         if (typeof rulesetId !== 'string' || rulesetId.length === 0)

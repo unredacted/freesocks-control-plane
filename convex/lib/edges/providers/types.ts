@@ -67,6 +67,12 @@ export interface CloudflareConfig {
   zoneId: string;
   zoneName: string;
   accountId?: string;
+  /**
+   * The account is set to DNS and fronting (`edgeProviderAccounts.frontsTraffic`):
+   * a location check then also runs the checks a front needs (its certificate,
+   * CAA, the zone's privacy settings). Absent = DNS only.
+   */
+  frontsTraffic?: boolean;
 }
 export interface FastlyConfig {
   type: 'fastly';
@@ -138,6 +144,7 @@ export type ResourceKind =
   // L7 (CDN) kinds
   | 'create_dns_record'
   | 'create_origin_rule'
+  | 'create_header_rule'
   | 'create_service'
   | 'create_snippet'
   | 'create_domain'

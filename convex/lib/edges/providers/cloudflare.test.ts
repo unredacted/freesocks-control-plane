@@ -9,7 +9,12 @@ import { errorBlob, jsonRes, mockFetch, type Captured, type Handler } from '../t
 import { EDGE_PROVIDER_CAPABILITIES } from './capabilities';
 import type { CloudflareConfig, EdgeSpec, Ledger, LedgerResource } from './types';
 import {
+  CLOUDFLARE_ADDRESS_HEADERS_KEPT,
+  CLOUDFLARE_CLIENT_ADDRESS_HEADERS,
+  CLOUDFLARE_UNIVERSAL_CAS,
   CloudflareTemplate,
+  cloudflareCaaPreflight,
+  cloudflareHeaderRule,
   cloudflareOriginRule,
   cloudflareProvider,
   cloudflareRecordBody,
@@ -19,7 +24,9 @@ import {
   recordComment,
   zoneSslModeOf,
   __setCloudflareApiFactory,
+  __setCloudflareCaaLookup,
 } from './cloudflare';
+import headerPhase from './fixtures/cloudflare/ruleset_header_phase.json';
 import tokenVerify from './fixtures/cloudflare/token_verify.json';
 import tokenVerifyAccount from './fixtures/cloudflare/token_verify_account.json';
 import invalidToken from './fixtures/cloudflare/error_invalid_token.json';
@@ -40,6 +47,7 @@ import rateLimited from './fixtures/cloudflare/error_rate_limited.json';
 afterEach(() => {
   vi.unstubAllGlobals();
   __setCloudflareApiFactory(null);
+  __setCloudflareCaaLookup(null);
 });
 
 /** Fixtures carry a `_source` header for reviewers; the wire body never does. */
@@ -169,8 +177,11 @@ describe('cloudflare: port model', () => {
     for (const [port, mode, needed] of matrix) {
       expect(originRuleNeeded(port, mode)).toBe(needed);
       const steps = cloudflareProvider.planProvision(cfg, specFor(port), withMode(mode));
+      // The header rule closes every plan (the member's address kept from the node).
       expect(steps.map((s) => s.kind)).toEqual(
-        needed ? ['create_dns_record', 'create_origin_rule'] : ['create_dns_record'],
+        needed
+          ? ['create_dns_record', 'create_origin_rule', 'create_header_rule']
+          : ['create_dns_record', 'create_header_rule'],
       );
       expect(steps.every((s) => s.discoverability === 'by_name')).toBe(true);
     }
@@ -267,7 +278,9 @@ describe('cloudflare: port model', () => {
       /origin_port_override_disabled/,
     );
     // The default-port case is still fine with overrides disabled.
-    expect(cloudflareProvider.planProvision(cfg, specFor(443), strictTpl)).toHaveLength(1);
+    expect(
+      cloudflareProvider.planProvision(cfg, specFor(443), strictTpl).map((s) => s.kind),
+    ).toEqual(['create_dns_record', 'create_header_rule']);
     expect(stub.calls).toHaveLength(0);
   });
 });
@@ -590,13 +603,25 @@ describe('cloudflare: describe readiness matrix', () => {
     expect(out).toMatchObject({
       state: 'pending',
       readiness: { dns: 'ready', certificate: 'pending' },
+      // What the wait is for, kept on the edge like a step's (L7_CERTIFICATE_CODES).
+      code: 'edge_certificate_missing',
     });
+  });
+
+  test('a pack still being issued for the wildcard is a wait with its own code', async () => {
+    const packs = structuredClone(wire(certPacks)) as { result: Array<{ status: string }> };
+    packs.result[0]!.status = 'pending_validation';
+    mockFetch(route({ '/ssl/certificate_packs': () => jsonRes(packs) }));
+    const out = await cloudflareProvider.describe(cfg, ledgerWith(recordResource));
+    expect(out).toMatchObject({ state: 'pending', code: 'edge_certificate_pending' });
   });
 
   test('a certificate read the token cannot make is unknown, never a failure', async () => {
     mockFetch(route({ '/ssl/certificate_packs': () => jsonRes(wire(notFound), 403) }));
     const out = await cloudflareProvider.describe(cfg, ledgerWith(recordResource));
-    expect(out).toMatchObject({ state: 'pending', readiness: { certificate: 'unknown' } });
+    // Nor a wait that never ends: the front qualification proves the certificate.
+    expect(out).toMatchObject({ state: 'active', readiness: { certificate: 'unknown' } });
+    expect(out.code).toBeUndefined();
   });
 
   test('an UNPROXIED record is an error (it would hand members the origin address)', async () => {
@@ -725,8 +750,9 @@ describe('cloudflare: inspectForAdoption', () => {
       shared: false,
       content: ORIGIN,
     });
-    // Two reads, no writes: an import changes nothing at the provider.
-    expect(stub.calls.map((c) => c.method)).toEqual(['GET', 'GET']);
+    // Reads only (the record, the origin rules, the header rules): an import
+    // changes nothing at the provider.
+    expect(stub.calls.map((c) => c.method)).toEqual(['GET', 'GET', 'GET']);
     expect(stub.calls[0]!.path).toBe(`/client/v4/zones/${ZONE}/dns_records/${RECORD_ID}`);
   });
 
@@ -1295,5 +1321,273 @@ describe('cloudflare: capability cross-check + error hygiene', () => {
     ])
       expect(blob).not.toContain(secret);
     expect(blob).toContain('81053');
+  });
+});
+
+// --- fronting parity (an account set to DNS and fronting) ------------------------------
+
+describe('cloudflare: the member address at a front', () => {
+  test('the header rule removes what a rule may remove, for the hostname only', () => {
+    expect(cloudflareHeaderRule(specFor())).toEqual({
+      action: 'rewrite',
+      action_parameters: { headers: { 'cf-connecting-ip': { operation: 'remove' } } },
+      expression: `(http.host eq "${HOSTNAME}")`,
+      description: NAME,
+      ref: NAME,
+      enabled: true,
+    });
+    expect(originRuleTargetsHost(cloudflareHeaderRule(specFor()).expression, HOSTNAME)).toBe(true);
+  });
+
+  test('the list holds only names Cloudflare documents a rule may remove', () => {
+    const names: readonly string[] = CLOUDFLARE_CLIENT_ADDRESS_HEADERS;
+    // Re-added by the proxy after every rule (asking changes nothing), refused
+    // (`cf-` other than cf-connecting-ip), or never shown removable: a name
+    // joins only once a capture at a node shows it gone.
+    for (const never of [
+      'x-forwarded-for',
+      'cf-connecting-ipv6',
+      'cf-ipcountry',
+      'cf-ray',
+      'cf-visitor',
+      'cdn-loop',
+      'true-client-ip',
+      'x-real-ip',
+      'forwarded',
+    ])
+      expect(names).not.toContain(never);
+    for (const n of names) {
+      expect(n).toBe(n.toLowerCase());
+      if (n.startsWith('cf-') || n.startsWith('x-cf-')) expect(n).toBe('cf-connecting-ip');
+    }
+    // What still reaches the node is said, not hidden.
+    expect(CLOUDFLARE_ADDRESS_HEADERS_KEPT).toEqual(['x-forwarded-for', 'cf-connecting-ipv6']);
+  });
+
+  test('a node whose options pass the address on gets no header rule', () => {
+    const steps = cloudflareProvider.planProvision(
+      cfg,
+      specFor(443),
+      withMode('full', { forwardClientAddress: true }),
+    );
+    expect(steps.map((s) => s.kind)).toEqual(['create_dns_record']);
+    // A front planned before the option (its params do not name it) strips too.
+    expect(
+      cloudflareProvider.planProvision(cfg, specFor(443), withMode('full')).map((s) => s.kind),
+    ).toEqual(['create_dns_record', 'create_header_rule']);
+  });
+
+  test('the header rule is created in the late-transform entry point and found by its ref', async () => {
+    const stub = mockFetch(
+      route({
+        '/phases/http_request_late_transform/entrypoint': () => jsonRes(wire(headerPhase)),
+        '/rulesets/5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a/rules': () => jsonRes(wire(headerPhase)),
+      }),
+    );
+    const step = cloudflareProvider
+      .planProvision(cfg, specFor(), tpl)
+      .find((s) => s.kind === 'create_header_rule')!;
+    const out = await cloudflareProvider.runStep(cfg, step, specFor(), tpl, emptyLedger);
+    expect(out).toMatchObject({
+      status: 'done',
+      resources: [
+        {
+          kind: 'header_rule',
+          resourceId: 'b2c3d4e5f60718293a4b5c6d7e8f90a1',
+          meta: { rulesetId: '5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a' },
+        },
+      ],
+    });
+    const post = stub.calls.find((c) => c.method === 'POST' && c.path.endsWith('/rules'))!;
+    expect(post.body).toMatchObject({ action: 'rewrite', ref: NAME });
+    expect(await cloudflareProvider.discover(cfg, step, specFor(), emptyLedger, 1)).toMatchObject({
+      status: 'found',
+      resources: [{ kind: 'header_rule' }],
+    });
+  });
+
+  test('a token that may not edit Transform Rules stops the run at once', async () => {
+    mockFetch(
+      route({
+        '/phases/http_request_late_transform/entrypoint': () =>
+          jsonRes({ result: null, success: false, errors: [{ code: 10000 }] }, 403),
+      }),
+    );
+    const step = cloudflareProvider
+      .planProvision(cfg, specFor(), tpl)
+      .find((s) => s.kind === 'create_header_rule')!;
+    expect(await cloudflareProvider.runStep(cfg, step, specFor(), tpl, emptyLedger)).toEqual({
+      status: 'partial',
+      resources: [],
+      code: 'header_rule_forbidden',
+      refused: true,
+    });
+  });
+
+  test('destroy deletes the header rule before the record, by its ruleset', async () => {
+    const stub = mockFetch(route({ '/rules/': () => jsonRes({ result: null, success: true }) }));
+    const header: LedgerResource = {
+      stepId: 'headers',
+      kind: 'header_rule',
+      resourceId: 'b2c3d4e5f60718293a4b5c6d7e8f90a1',
+      ownership: 'created',
+      deleteState: 'present',
+      meta: JSON.stringify({ rulesetId: '5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a' }),
+    };
+    const ledger = ledgerWith(recordResource, ruleResource, header);
+    const order = cloudflareProvider.planDestroy(cfg, ledger);
+    expect(order.map((r) => r.kind)).toEqual(['header_rule', 'origin_rule', 'dns_record']);
+    expect(await cloudflareProvider.runDestroy(cfg, header, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    expect(stub.calls[0]).toMatchObject({
+      method: 'DELETE',
+      path: `/client/v4/zones/${ZONE}/rulesets/5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a/rules/b2c3d4e5f60718293a4b5c6d7e8f90a1`,
+    });
+  });
+
+  test('an import adopts the header rule naming exactly its hostname', async () => {
+    mockFetch(
+      route({
+        '/phases/http_request_late_transform/entrypoint': () => jsonRes(wire(headerPhase)),
+      }),
+    );
+    const seen = await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME);
+    expect(seen.resources.map((r) => r.kind)).toEqual(['dns_record', 'origin_rule', 'header_rule']);
+    // A token that cannot read Transform Rules imports the front without it.
+    mockFetch(
+      route({
+        '/phases/http_request_late_transform/entrypoint': () =>
+          jsonRes({ result: null, success: false, errors: [{ code: 10000 }] }, 403),
+      }),
+    );
+    expect(
+      (await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME)).resources.map(
+        (r) => r.kind,
+      ),
+    ).toEqual(['dns_record', 'origin_rule']);
+  });
+});
+
+describe('cloudflare: what a front needs of its zone', () => {
+  const fronting: CloudflareConfig = { ...cfg, frontsTraffic: true };
+  const setting = (value: string) => () => jsonRes({ result: { value }, success: true });
+  const strict = { '/settings/ssl': setting('strict') };
+
+  test('a DNS-only account is never judged by them: no extra read', async () => {
+    const stub = mockFetch(route());
+    expect(await cloudflareProvider.checkLocation!(cfg)).toMatchObject({ ok: true });
+    expect(stub.calls.some((c) => c.path.includes('/settings/min_tls_version'))).toBe(false);
+    expect(stub.calls.some((c) => c.path.endsWith('/ssl/certificate_packs'))).toBe(false);
+  });
+
+  test('a fronting zone in Full (strict) with its wildcard certificate passes, its facts recorded', async () => {
+    __setCloudflareCaaLookup(async () => []);
+    mockFetch(
+      route({
+        ...strict,
+        '/settings/min_tls_version': setting('1.0'),
+        '/settings/pseudo_ipv4': setting('overwrite_header'),
+        '/settings/ip_geolocation': setting('on'),
+      }),
+    );
+    const out = await cloudflareProvider.checkLocation!(fronting);
+    expect(out).toMatchObject({
+      ok: true,
+      observed: {
+        zoneSslMode: 'strict',
+        edgeCertificate: 'active',
+        edgeCertificateAuthority: 'google',
+        edgeCertificateType: 'universal',
+        caa: 'no_records',
+        caaCertificate: 'wildcard',
+        minTlsVersion: '1.0',
+        pseudoIpv4: 'overwrite_header',
+        ipGeolocation: 'on',
+      },
+    });
+    // Reported, never changed: FCP writes no zone-wide setting.
+    expect(out.detail).toContain('min_tls_1.0');
+    expect(out.detail).toContain('pseudo_ipv4_on');
+    expect(out.detail).toContain('ip_country_header_on');
+  });
+
+  test('Full without strict is reported, never refused (strict checks the front name)', async () => {
+    __setCloudflareCaaLookup(async () => []);
+    mockFetch(route());
+    const out = await cloudflareProvider.checkLocation!(fronting);
+    expect(out).toMatchObject({ ok: true, observed: { zoneSslMode: 'full' } });
+    expect(out.detail).toContain('zone_ssl_not_strict');
+  });
+
+  test('no certificate for the zone wildcard refuses it; one being issued passes', async () => {
+    __setCloudflareCaaLookup(async () => []);
+    const packs = structuredClone(wire(certPacks)) as {
+      result: Array<{ hosts: string[]; status: string }>;
+    };
+    packs.result[0]!.hosts = ['example.net'];
+    mockFetch(route({ ...strict, '/ssl/certificate_packs': () => jsonRes(packs) }));
+    expect(await cloudflareProvider.checkLocation!(fronting)).toMatchObject({
+      ok: false,
+      code: 'edge_certificate_missing',
+      observed: { edgeCertificate: 'none' },
+    });
+    packs.result[0]!.hosts = ['example.net', '*.example.net'];
+    packs.result[0]!.status = 'pending_validation';
+    mockFetch(route({ ...strict, '/ssl/certificate_packs': () => jsonRes(packs) }));
+    expect(await cloudflareProvider.checkLocation!(fronting)).toMatchObject({
+      ok: true,
+      observed: { edgeCertificate: 'pending' },
+    });
+  });
+
+  test("CAA records that allow none of Cloudflare's authorities refuse the zone", async () => {
+    // Records above a zone it hosts (a zone for a subdomain inherits its
+    // parent's) are ones Cloudflare never adds its authorities to.
+    mockFetch(route(strict));
+    __setCloudflareCaaLookup(async (name) =>
+      name === 'example.net' ? [{ flags: 0, tag: 'issue', value: 'certainly.com' }] : [],
+    );
+    expect(await cloudflareProvider.checkLocation!(fronting)).toMatchObject({
+      ok: false,
+      code: 'caa_forbids_ca',
+      observed: { caa: 'forbids', caaAt: 'example.net' },
+    });
+  });
+
+  test('the CAA preflight walks the wildcard and needs one authority', async () => {
+    const at = (records: Array<{ tag: string; value: string }>) => async (name: string) =>
+      name === 'example.net' ? records.map((r) => ({ flags: 0, ...r })) : [];
+    __setCloudflareCaaLookup(at([{ tag: 'issue', value: 'letsencrypt.org' }]));
+    expect(await cloudflareCaaPreflight('example.net')).toEqual({
+      verdict: 'allows',
+      allowed: ['letsencrypt.org'],
+      decidedAt: 'example.net',
+    });
+    // `issuewild` governs the wildcard over `issue`.
+    __setCloudflareCaaLookup(
+      at([
+        { tag: 'issue', value: 'letsencrypt.org' },
+        { tag: 'issuewild', value: 'certainly.com' },
+      ]),
+    );
+    expect((await cloudflareCaaPreflight('example.net')).verdict).toBe('forbids');
+    __setCloudflareCaaLookup(at([]));
+    expect(await cloudflareCaaPreflight('example.net')).toEqual({
+      verdict: 'no_records',
+      allowed: [],
+    });
+    // A lookup that fails is unchecked, never a refusal.
+    __setCloudflareCaaLookup(async () => {
+      throw new Error('SERVFAIL');
+    });
+    expect((await cloudflareCaaPreflight('example.net')).verdict).toBe('unchecked');
+    expect(CLOUDFLARE_UNIVERSAL_CAS).toEqual(['letsencrypt.org', 'pki.goog', 'ssl.com']);
+  });
+
+  test('the capability row says what fronting through Cloudflare carries', () => {
+    const caps = EDGE_PROVIDER_CAPABILITIES.cloudflare;
+    expect(caps.role).toBe('dns');
+    expect(caps.l7Transports).toContain('ws');
   });
 });

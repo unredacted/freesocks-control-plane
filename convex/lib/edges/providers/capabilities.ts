@@ -18,7 +18,8 @@ export type EdgeAddressKind = 'ip' | 'hostname';
  * What an account of the provider is FOR. `edge`: it fronts member traffic.
  * `dns`: it holds the records FCP writes for L7 fronts (a front's certificate
  * challenge and traffic name, a front node's origin name) and fronts nothing
- * itself unless `edge.l7.dnsProvidersFront` says so (`frontsAllowed`).
+ * itself unless the account is set to DNS and fronting (`frontsTraffic`,
+ * `frontsAllowed`).
  */
 export type EdgeProviderRole = 'edge' | 'dns';
 /**
@@ -144,8 +145,8 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
   // front qualification instead.
   cloudflare: {
     layer: 'l7',
-    // A DNS account first: fronting member traffic through it is an operator
-    // switch, off by default (`frontsAllowed`).
+    // A DNS account first: fronting member traffic through it is the
+    // account's own choice, DNS only unless set otherwise (`frontsAllowed`).
     role: 'dns',
     addressKind: 'hostname',
     // XHTTP packet-up is plain GET + POST requests; the stream modes would need
@@ -210,16 +211,22 @@ export function edgeRoleOf(id: EdgeProviderId | string | null | undefined): Edge
     : 'edge';
 }
 
+/** What `frontsAllowed` reads of an account row. */
+export interface FrontingAccount {
+  provider: EdgeProviderId | string;
+  frontsTraffic?: boolean;
+}
+
 /**
- * Whether NEW edges may be placed on an account of this provider. A DNS
- * provider fronts member traffic only while `edge.l7.dnsProvidersFront` is on;
- * edges that already exist are never torn down by it.
+ * Whether NEW edges may be placed on this account, and its spares go live. A
+ * DNS provider's account fronts member traffic only when it is set to DNS and
+ * fronting (`frontsTraffic`); an edge provider's account always does. No
+ * account at all fronts nothing. Edges that already exist are never torn down
+ * by it.
  */
-export function frontsAllowed(
-  id: EdgeProviderId | string | null | undefined,
-  dnsProvidersFront: boolean,
-): boolean {
-  return edgeRoleOf(id) !== 'dns' || dnsProvidersFront;
+export function frontsAllowed(account: FrontingAccount | null | undefined): boolean {
+  if (!account) return false;
+  return edgeRoleOf(account.provider) !== 'dns' || account.frontsTraffic === true;
 }
 
 export function edgeAddressKindOf(id: EdgeProviderId | string | null | undefined): EdgeAddressKind {

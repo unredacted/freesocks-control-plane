@@ -1,0 +1,17 @@
+{
+  "_source": {
+    "api": "GET /zones/{zone_id}/settings/ip_geolocation",
+    "doc": "https://developers.cloudflare.com/api/resources/zones/subresources/settings/methods/get/",
+    "note": "value is on | off; on adds CF-IPCountry to every request to the origin (https://developers.cloudflare.com/network/ip-geolocation/)",
+    "taken": "2026-10-21"
+  },
+  "result": {
+    "id": "ip_geolocation",
+    "value": "on",
+    "editable": true,
+    "modified_on": "2026-01-02T00:01:00.12345Z"
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

@@ -1372,16 +1372,14 @@ describe('origin admin routes: importing an existing L7 front', () => {
   async function l7Fixture() {
     const s = await seed();
     const { call, t, serverId } = s;
-    // A Cloudflare account is a DNS provider: it fronts only with the switch on.
-    await t.mutation(internal.edgeAdmin.patchConfig, {
-      patch: { l7: { dnsProvidersFront: true } },
-    });
+    // A Cloudflare account is a DNS provider: it fronts only when set to DNS and fronting.
     const acct = (await (
       await call('POST', 'providers', {
         provider: 'cloudflare',
         name: 'acct-cf',
         settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
         credentials: { apiToken: 'cf' },
+        frontsTraffic: true,
       })
     ).json()) as { id: string };
     // The zone's encryption mode comes from the zone location's check, never typed.

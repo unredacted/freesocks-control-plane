@@ -704,6 +704,12 @@ export const recordDescribe = internalMutation({
     resources: v.optional(v.array(childResource)),
     /** L7 adapters only: the DNS + certificate dimensions they can observe. */
     readiness: v.optional(v.object({ dns: readinessState, certificate: readinessState })),
+    /**
+     * A new edge whose every step is done but whose certificate the provider
+     * still waits on (a code from `L7_CERTIFICATE_CODES`), kept as `waiting`
+     * like a step's; null clears it. Absent leaves it as it is.
+     */
+    waiting: v.optional(v.union(v.null(), v.object({ step: v.string(), code: v.string() }))),
   },
   handler: async (ctx, a) => {
     const edge = await ctx.db.get(a.edgeId);
@@ -812,6 +818,18 @@ export const recordDescribe = internalMutation({
               certificate: a.readiness.certificate,
               front: frontReadiness(edge, now),
               checkedAt: now,
+            },
+          }
+        : {}),
+      ...(a.waiting === null && edge.waiting ? { waiting: undefined } : {}),
+      ...(a.waiting
+        ? {
+            waiting: {
+              ...a.waiting,
+              since:
+                edge.waiting?.step === a.waiting.step && edge.waiting.code === a.waiting.code
+                  ? edge.waiting.since
+                  : now,
             },
           }
         : {}),

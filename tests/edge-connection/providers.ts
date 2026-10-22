@@ -10,7 +10,10 @@
  *    Every name of the zone already lands on the stack's front (its resolver
  *    answers the whole zone); creating the record adds the front's route for
  *    that name to the record's content, on the zone's origin port or the one
- *    its Origin Rule sets. The fake records what FCP asked for.
+ *    its Origin Rule sets, sending the member's address in CF-Connecting-IP
+ *    unless the name's request-header Transform Rule removes it (and in
+ *    X-Forwarded-For always, as Cloudflare does). The fake records what FCP
+ *    asked for.
  *
  *  - Outline: the Outline Manager API of the stack's Outline server (whose data
  *    plane is real: `ec-outline`). Every key it hands out is a Shadowsocks key
@@ -95,6 +98,8 @@ export function installProviderFakes(opts: {
   const records = new Map<string, DnsRecord>();
   /** The zone's Origin Rules phase (one entry point ruleset), as the API keeps it. */
   let originPhase: { id: string; rules: Array<Record<string, unknown>> } | null = null;
+  /** The zone's request-header Transform Rules phase, likewise. */
+  let headerPhase: { id: string; rules: Array<Record<string, unknown>> } | null = null;
   const pool = [...ADDR.forwarderPool];
   let seq = 0;
 
@@ -104,12 +109,21 @@ export function installProviderFakes(opts: {
       String(r.expression ?? '').includes(`"${rec.name}"`),
     ) as { action_parameters?: { origin?: { port?: number } } } | undefined;
     const port = rule?.action_parameters?.origin?.port ?? 443;
+    // A rule may remove CF-Connecting-IP for the name; nothing removes X-Forwarded-For.
+    const removesAddress = (headerPhase?.rules ?? []).some(
+      (r) =>
+        r.action === 'rewrite' &&
+        String(r.expression ?? '').includes(`"${rec.name}"`) &&
+        (r.action_parameters as { headers?: Record<string, { operation?: string }> } | undefined)
+          ?.headers?.['cf-connecting-ip']?.operation === 'remove',
+    );
     // A CNAME origin is dialled by its own name; an address origin is sent the
     // edge hostname as its server name (the record's name is all a CDN knows).
     return routeFront(
       rec.name,
       { host: rec.content, port },
       rec.type === 'CNAME' ? rec.content : rec.name,
+      { clientAddress: !removesAddress },
     );
   };
 
@@ -283,17 +297,51 @@ export function installProviderFakes(opts: {
         return envelope({ ...originPhase, phase: 'http_request_origin', kind: 'zone' });
       }
     }
+    // The request-header Transform Rules phase: the same three calls.
+    if (rest === '/rulesets/phases/http_request_late_transform/entrypoint') {
+      if (method === 'GET')
+        return headerPhase
+          ? envelope({ ...headerPhase, phase: 'http_request_late_transform', kind: 'zone' })
+          : json(
+              {
+                success: false,
+                errors: [{ code: 10003, message: 'not found' }],
+                messages: [],
+                result: null,
+              },
+              404,
+            );
+      if (method === 'PUT') {
+        headerPhase = {
+          id: `echs${String(++seq).padStart(28, '0')}`,
+          rules: (body.rules ?? []).map((r: Record<string, unknown>) => ({
+            ...r,
+            id: `ech${String(++seq).padStart(29, '0')}`,
+          })),
+        };
+        for (const r of records.values()) await routeRecord(r);
+        return envelope({ ...headerPhase, phase: 'http_request_late_transform', kind: 'zone' });
+      }
+    }
     const addRule = rest.match(/^\/rulesets\/([^/]+)\/rules$/);
-    if (addRule && method === 'POST' && originPhase && addRule[1] === originPhase.id) {
+    const phaseOf = (id: string | undefined) =>
+      originPhase && id === originPhase.id
+        ? { phase: originPhase, name: 'http_request_origin' }
+        : headerPhase && id === headerPhase.id
+          ? { phase: headerPhase, name: 'http_request_late_transform' }
+          : null;
+    const into = phaseOf(addRule?.[1]);
+    if (addRule && method === 'POST' && into) {
       const { zone_id: _zone, ...rule } = body ?? {};
-      originPhase.rules.push({ ...rule, id: `ecr${String(++seq).padStart(29, '0')}` });
+      into.phase.rules.push({ ...rule, id: `ecr${String(++seq).padStart(29, '0')}` });
       for (const r of records.values()) await routeRecord(r);
-      return envelope({ ...originPhase, phase: 'http_request_origin', kind: 'zone' });
+      return envelope({ ...into.phase, phase: into.name, kind: 'zone' });
     }
     const oneRule = rest.match(/^\/rulesets\/([^/]+)\/rules\/([^/]+)$/);
-    if (oneRule && method === 'DELETE' && originPhase) {
-      originPhase.rules = originPhase.rules.filter((r) => r.id !== oneRule[2]);
-      return envelope({ ...originPhase, phase: 'http_request_origin', kind: 'zone' });
+    const from = phaseOf(oneRule?.[1]);
+    if (oneRule && method === 'DELETE' && from) {
+      from.phase.rules = from.phase.rules.filter((r) => r.id !== oneRule[2]);
+      return envelope({ ...from.phase, phase: from.name, kind: 'zone' });
     }
     refused.push(`cloudflare ${method} ${rest}`);
     return envelope(null, 404);

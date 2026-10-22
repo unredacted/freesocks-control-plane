@@ -123,8 +123,10 @@ import {
   type ProvisionIntent,
 } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
+import { isL7CertificateCode } from '../src/shared/contracts/edgeCodes';
 import {
   edgeLayerOf,
+  edgeRoleOf,
   frontsAllowed,
   providerHealthSatisfies,
   zoneModeGovernsOrigin,
@@ -2846,14 +2848,15 @@ export async function selectionContext(
       publication: e.publication,
       health: e.health,
       // An untested L4 spare is not a candidate (lib/edges/verification.ts),
-      // nor one outside the node's approved shape, nor a DNS account's spare
-      // while DNS accounts may not front.
+      // nor one outside the node's approved shape, nor the spare of a DNS
+      // account set to DNS only.
       hasAddress:
         hasPublishableAddress(e) &&
         standbyEligible(e, slotOfEdge) &&
         // A load balancer the node already had is left as it is, never reused.
         !(barred && (e.layer ?? edgeLayerOf(e.provider)) === 'l4') &&
-        frontsAllowed(e.provider, cfg.l7.dnsProvidersFront) &&
+        (edgeRoleOf(e.provider) !== 'dns' ||
+          frontsAllowed(e.accountId ? await ctx.db.get(e.accountId) : null)) &&
         // Built with what its pick asks for now (the operator's named spare excepted).
         (e._id === rotation.requestedSpareEdgeId ||
           (await edgeFitsPick(ctx, rotation, origin, e))) &&
@@ -2940,7 +2943,6 @@ export async function selectionContext(
       proto: protoOf(listener),
       originPort: listener.originPort,
       allowL7,
-      dnsProvidersFront: cfg.l7.dnsProvidersFront,
     },
   );
   const accounts = eligibleAccounts;
@@ -2976,9 +2978,8 @@ export async function selectionContext(
     );
     if (certificate) return failure(certificate);
     if (!accountTested(a)) return failure('account_untested');
-    // A DNS account named on purpose still fronts nothing while the switch is off.
-    if (!frontsAllowed(a.provider, cfg.l7.dnsProvidersFront))
-      return failure('dns_account_not_fronting');
+    // A DNS account named on purpose still fronts nothing while it is DNS only.
+    if (!frontsAllowed(a)) return failure('dns_account_not_fronting');
     if (!eligibleAccounts.some((e) => e._id === a._id)) return failure('account_incompatible');
     const where = named ?? (await defaultLocationOf(ctx.db, a));
     if (!where) return failure('no_location');
@@ -3269,7 +3270,9 @@ export function stepLockKey(edge: Edge, stepKind: string): string | null {
     edge.accountId
   )
     return fastlyCertificateLockKey(edge.accountId, intent.zoneId);
-  if (stepKind !== 'create_origin_rule') return null;
+  // Both Cloudflare rules (the origin port and the header removals) live in
+  // the zone's entry point ruleset of their phase.
+  if (stepKind !== 'create_origin_rule' && stepKind !== 'create_header_rule') return null;
   return intent?.zoneId ? `cloudflare-zone:${intent.zoneId}` : null;
 }
 
@@ -3679,6 +3682,12 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       });
       return;
     }
+    // A certificate the provider is still waiting on once every step is done
+    // (a Cloudflare zone's edge certificate) is kept on the edge like a
+    // step's wait: logged once per change, raised, and the reason a timeout
+    // ends with.
+    const certificateWait =
+      desc.state === 'pending' && isL7CertificateCode(desc.code) ? desc.code : null;
     await ctx.runMutation(internal.edges.recordDescribe, {
       edgeId: edge._id,
       state: desc.state,
@@ -3686,6 +3695,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       health: desc.health,
       resources: desc.resources,
       readiness: desc.readiness,
+      waiting: certificateWait ? { step: 'certificate', code: certificateWait } : null,
     });
     if (desc.state === 'error' || desc.state === 'gone') {
       await advanceCall(ctx, r._id, sv, {
@@ -3705,7 +3715,14 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       await advanceCall(ctx, r._id, sv, { type: 'provisioned' });
       return;
     }
-    await advanceCall(ctx, r._id, sv, { type: 'progress', delayMs: poll, countPoll: true });
+    await advanceCall(ctx, r._id, sv, {
+      type: 'progress',
+      delayMs: poll,
+      countPoll: true,
+      ...(certificateWait && certificateWait !== (edge.waiting?.code ?? null)
+        ? { waitCode: certificateWait }
+        : {}),
+    });
     return;
   }
   const step = resourceStepOf(pending);

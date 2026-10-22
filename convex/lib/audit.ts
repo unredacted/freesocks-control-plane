@@ -332,13 +332,19 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // --- origin edges (provider-managed load balancers). Payloads carry slugs,
   // provider ids, edge/rotation ids, counts and codes ONLY: never an address,
   // handle, template body, probe token or provider credential.
-  'edge.provider_account.create': ['name', 'provider'],
+  // `frontsTraffic` for a DNS provider's account only: DNS and fronting (true) or DNS only.
+  'edge.provider_account.create': ['name', 'provider', 'frontsTraffic'],
   'edge.provider_account.update': ['name', 'provider'],
   // The account's certificate option defaults changed: which keys, with the
   // values of choices, numbers and switches only (lib/edges/providers/options.ts).
   'edge.provider_account.options_changed': ['name', 'provider', 'changes'],
   // A deploy moved option defaults kept under settings into `optionDefaults`.
   'edge.provider_account.options_migrated': ['name', 'provider', 'keys'],
+  // A DNS account switched between DNS only and DNS and fronting, with how
+  // many of its edges exist (they are kept either way).
+  'edge.provider_account.fronting_changed': ['name', 'provider', 'frontsTraffic', 'liveEdges'],
+  // A deploy turned the retired deployment-wide switch into the account's own choice.
+  'edge.provider_account.fronting_migrated': ['name', 'provider', 'frontsTraffic'],
   'edge.provider_account.delete': ['name', 'provider'],
   'edge.provider_account.upsert': ['name', 'provider', 'created'],
   // Trust is per location: `placeKey` names it (the provider's region id).

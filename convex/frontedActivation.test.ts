@@ -641,13 +641,16 @@ const fetchSub = (t: T, ua = LINKS_UA, token = 'tok_member') =>
 
 /**
  * A tested UpCloud account (L4) and a tested Cloudflare account (L7, the fake
- * adapter). Cloudflare is a DNS provider, so it may front only with the switch on.
+ * adapter). Cloudflare is a DNS provider, so it fronts only when set to DNS and fronting.
  */
 async function accounts(t: T) {
-  await t.mutation(internal.edgeAdmin.patchConfig, { patch: { l7: { dnsProvidersFront: true } } });
   const l4 = await createAccount(t, { provider: 'upcloud', name: 'acct-l4' });
   await t.mutation(internal.edgeProviderAccounts.recordTest, { id: l4, ok: true });
-  const l7 = await createAccount(t, { provider: 'cloudflare', name: 'acct-l7' });
+  const l7 = await createAccount(t, {
+    provider: 'cloudflare',
+    name: 'acct-l7',
+    frontsTraffic: true,
+  });
   await t.mutation(internal.edgeProviderAccounts.recordTest, { id: l7, ok: true });
   // The zone's encryption mode, as the zone location's check observed it.
   await t.run(async (ctx) => {

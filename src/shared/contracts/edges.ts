@@ -149,6 +149,11 @@ export const EdgeProviderAccountAdmin = z.object({
   defaultLocationId: z.string().nullable().default(null),
   locations: EdgeLocationList.default([]),
   enabled: z.boolean(),
+  /**
+   * Whether the account fronts member traffic: always for an edge provider's;
+   * for a DNS provider's (Cloudflare), only when set to DNS and fronting.
+   */
+  frontsTraffic: z.boolean().default(false),
   /** Trusted in at least one enabled location (the rest read the default location's). */
   qualified: z.boolean(),
   qualifiedTemplateHash: z.string().nullable(),

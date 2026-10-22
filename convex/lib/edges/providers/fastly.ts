@@ -79,14 +79,8 @@ import { EdgeProviderError, credentialTestFailure, noteDiscoverError } from './h
 import { acmeChallengeName, normalizeZoneName } from '../hostname';
 import { addressFamily } from '../ip';
 import { certCovers } from '../layers';
-import {
-  caaProbeName,
-  checkCaa,
-  wildcardBase,
-  wildcardNameFor,
-  type CaaLookup,
-  type CaaRecord,
-} from '../caa';
+import { caaProbeName, checkCaa, wildcardBase, wildcardNameFor, type CaaLookup } from '../caa';
+import { dnsCaaLookup } from './dns/caaLookup';
 import type { L7CertificateCode } from '../../../../src/shared/contracts/edgeCodes';
 import type { DnsClient, DnsCreateArgs, DnsRecord } from './dns/types';
 import {
@@ -151,36 +145,6 @@ let caaLookupOverride: CaaLookup | null = null;
 /** Test seam: answer CAA lookups from a table (the offline suite refuses real DNS). */
 export function __setFastlyCaaLookup(f: CaaLookup | null): void {
   caaLookupOverride = f;
-}
-
-/** A lookup is a few round trips; a resolver that cannot answer in this is `unchecked`. */
-const CAA_TIMEOUT_MS = 4_000;
-
-/**
- * CAA as public resolvers answer it, which is what the certificate authority
- * reads: no record (no data, or a name that does not exist) is `[]` so the walk
- * climbs; anything else that fails is thrown, and the verdict is `unchecked`.
- */
-async function dnsCaaLookup(name: string): Promise<CaaRecord[]> {
-  const { Resolver } = await import('node:dns/promises');
-  const resolver = new Resolver({ timeout: CAA_TIMEOUT_MS, tries: 2 });
-  try {
-    const rows = (await resolver.resolveCaa(name)) as unknown as Array<Record<string, unknown>>;
-    return rows.map((r) => {
-      // Node names the property after its tag (`{ critical: 0, issue: 'x' }`).
-      const tag = Object.keys(r).find((k) => k !== 'critical') ?? '';
-      const value = r[tag];
-      return {
-        flags: typeof r.critical === 'number' ? r.critical : 0,
-        tag,
-        value: typeof value === 'string' ? value : '',
-      };
-    });
-  } catch (e) {
-    const code = (e as { code?: unknown }).code;
-    if (code === 'ENODATA' || code === 'ENOTFOUND') return [];
-    throw e;
-  }
 }
 
 function caaLookup(): CaaLookup {

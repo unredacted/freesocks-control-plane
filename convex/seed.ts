@@ -628,6 +628,9 @@ export const seedCutover = internalAction({
     // A CDN account's zone moves from its settings onto its location (once;
     // a no-op afterwards). docs/edges.md § "Deploy notes".
     await ctx.runMutation(internal.edgeL7Locations.migrate, {});
+    // The retired DNS-fronting switch becomes each DNS account's own choice
+    // (once; a no-op afterwards).
+    await ctx.runMutation(internal.edgeProviderAccounts.migrateDnsFronting, {});
     // Locations still named after a bare region id get their provider's name.
     await ctx.scheduler.runAfter(0, internal.edgeProviderOps.relabelLocations, {});
     return {
@@ -714,6 +717,9 @@ export const seedDevEdges = internalMutation({
         credentials: a.credentials as never,
         settings: a.settings as never,
         enabled: true,
+        // The fake L7 account stands in for a Cloudflare one, a DNS provider:
+        // set to DNS and fronting, so it fronts the dev nodes.
+        ...(a.provider === 'cloudflare' ? { frontsTraffic: true } : {}),
         priority: 10,
         dailyAllocationBudget: 20,
         allocationsToday: 0,
@@ -737,9 +743,6 @@ export const seedDevEdges = internalMutation({
       );
       created++;
     }
-    // The fake L7 account stands in for a Cloudflare one, which is a DNS
-    // provider: it fronts only with the switch on (off by default elsewhere).
-    await upsertSettingRow(ctx, 'edge.l7.dnsProvidersFront', 'true');
     return { panelSlug: panel.slug, accountsCreated: created };
   },
 });

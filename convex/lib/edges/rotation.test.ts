@@ -102,9 +102,10 @@ describe('pickAccount', () => {
 });
 
 describe('accountsForSlot', () => {
+  // The Cloudflare account is set to DNS and fronting (`frontsTraffic`).
   const accounts = [
     { id: 'l4', provider: 'upcloud' },
-    { id: 'cf', provider: 'cloudflare' },
+    { id: 'cf', provider: 'cloudflare', frontsTraffic: true },
     { id: 'fastly', provider: 'fastly' },
   ];
 
@@ -116,7 +117,6 @@ describe('accountsForSlot', () => {
         layers: ['l7'],
         proto: WS,
         allowL7: true,
-        dnsProvidersFront: true,
       }).map((a) => a.id),
     ).toEqual(['cf', 'fastly']);
     expect(
@@ -124,7 +124,6 @@ describe('accountsForSlot', () => {
         layers: ['l4'],
         proto: TLS,
         allowL7: true,
-        dnsProvidersFront: true,
       }).map((a) => a.id),
     ).toEqual(['l4']);
   });
@@ -136,7 +135,6 @@ describe('accountsForSlot', () => {
         layers: ['l7'],
         proto: GRPC,
         allowL7: true,
-        dnsProvidersFront: true,
       }).map((a) => a.id),
     ).toEqual(['cf']);
   });
@@ -147,7 +145,6 @@ describe('accountsForSlot', () => {
         layers: ['l4', 'l7'],
         proto: WS,
         allowL7: false,
-        dnsProvidersFront: true,
       }).map((a) => a.id),
     ).toEqual(['l4']);
     // An L7-only slot then has nothing to pick, which the caller reports as a
@@ -157,34 +154,37 @@ describe('accountsForSlot', () => {
         layers: ['l7'],
         proto: WS,
         allowL7: false,
-        dnsProvidersFront: true,
       }),
     ).toEqual([]);
   });
 
-  test('a DNS account fronts nothing while DNS providers may not front, whoever is choosing', () => {
+  test('a DNS account set to DNS only fronts nothing, whoever is choosing', () => {
     // The default: the Cloudflare account holds DNS records for other fronts.
+    const dnsOnly = accounts.map((a) =>
+      a.provider === 'cloudflare' ? { ...a, frontsTraffic: false } : a,
+    );
     expect(
-      accountsForSlot(accounts, {
+      accountsForSlot(dnsOnly, {
         layers: ['l4', 'l7'],
         proto: WS,
         allowL7: true,
-        dnsProvidersFront: false,
       }).map((a) => a.id),
     ).toEqual(['l4', 'fastly']);
     // gRPC is carried by no remaining L7 front.
     expect(
-      accountsForSlot(accounts, {
+      accountsForSlot(dnsOnly, {
         layers: ['l7'],
         proto: GRPC,
         allowL7: true,
-        dnsProvidersFront: false,
       }),
     ).toEqual([]);
-    expect(frontsAllowed('cloudflare', false)).toBe(false);
-    expect(frontsAllowed('cloudflare', true)).toBe(true);
+    // A row from before the choice (unset) is DNS only too.
+    expect(frontsAllowed({ provider: 'cloudflare' })).toBe(false);
+    expect(frontsAllowed({ provider: 'cloudflare', frontsTraffic: false })).toBe(false);
+    expect(frontsAllowed({ provider: 'cloudflare', frontsTraffic: true })).toBe(true);
     for (const id of ['upcloud', 'gcore', 'scaleway', 'ovh', 'fastly'])
-      expect(frontsAllowed(id, false)).toBe(true);
+      expect(frontsAllowed({ provider: id })).toBe(true);
+    expect(frontsAllowed(null)).toBe(false);
   });
 });
 
@@ -193,14 +193,13 @@ describe('accountsForSlot: transport carriage', () => {
     const accounts = [
       { id: 'l4', provider: 'upcloud' },
       { id: 'g', provider: 'gcore' },
-      { id: 'cf', provider: 'cloudflare' },
+      { id: 'cf', provider: 'cloudflare', frontsTraffic: true },
     ];
     expect(
       accountsForSlot(accounts, {
         layers: ['l4', 'l7'],
         proto: HY2,
         allowL7: true,
-        dnsProvidersFront: true,
       }),
     ).toEqual([]);
     // A plain (Shadowsocks) or REALITY listener is carried by every L4 forwarder and no L7 front.
@@ -210,7 +209,6 @@ describe('accountsForSlot: transport carriage', () => {
           layers: ['l4', 'l7'],
           proto,
           allowL7: true,
-          dnsProvidersFront: true,
         }).map((a) => a.id),
       ).toEqual(['l4', 'g']);
     }

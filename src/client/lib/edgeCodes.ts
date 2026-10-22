@@ -167,6 +167,12 @@ const COPY = {
     explain: "The zone's encryption mode is off, so a front there cannot serve HTTPS.",
     fix: 'Set Flexible, Full or Full (strict) on the zone at the provider, then check the location again.',
   },
+  header_rule_forbidden: {
+    label: 'Header rule refused',
+    explain:
+      "Cloudflare refused the Transform Rule that removes the member's address for the front's name: the token may not edit Transform Rules, or the zone has no rules left.",
+    fix: 'Give the token Transform Rules: Edit on the zone, or free a rule there, then delete this front and build it again.',
+  },
   zone_paused: {
     label: 'Zone paused',
     explain: 'The zone is paused at the provider.',
@@ -599,8 +605,8 @@ const COPY = {
   dns_account_not_fronting: {
     label: 'DNS account, not a front',
     explain:
-      'The named account is a DNS account: it holds the records FCP writes for L7 fronts and carries no member traffic.',
-    fix: 'Pick an edge provider account, or turn on Let DNS accounts front traffic in Settings.',
+      'The named account is a DNS account set to DNS only: it holds the records FCP writes for L7 fronts and carries no member traffic.',
+    fix: 'Pick an edge provider account, or set this account to DNS and fronting on its page.',
   },
   template_not_found: {
     label: 'Template not found',
@@ -650,8 +656,20 @@ const COPY = {
   caa_forbids_ca: {
     label: 'CAA forbids the CA',
     explain:
-      'The zone’s CAA records do not let the account’s certificate authority issue. Certainly is named certainly.com, Let’s Encrypt letsencrypt.org and GlobalSign globalsign.com, under issue for one name and issuewild for the shared wildcard certificate.',
+      'The zone’s CAA records do not let the account’s certificate authority issue. Certainly is named certainly.com, Let’s Encrypt letsencrypt.org and GlobalSign globalsign.com, under issue for one name and issuewild for the shared wildcard certificate. A Cloudflare zone’s certificate comes from letsencrypt.org, pki.goog or ssl.com, and the records must allow one of them for its wildcard.',
     fix: 'Add a CAA record that allows the certificate authority, or pick one the records allow, then test the account again.',
+  },
+  edge_certificate_missing: {
+    label: 'No edge certificate',
+    explain:
+      'The zone has no certificate for its first-level names, active or on its way, so a front there cannot serve HTTPS.',
+    fix: 'Turn Universal SSL on for the zone at the provider (or order a certificate for its wildcard), then check the location again.',
+  },
+  edge_certificate_pending: {
+    label: 'Edge certificate on its way',
+    explain:
+      'The zone’s certificate for its first-level names is still being issued, so the front waits for it.',
+    fix: 'Nothing to do: the front carries on once the provider has issued it.',
   },
   tls_caa_conflict: {
     label: 'Certificate blocked by CAA',

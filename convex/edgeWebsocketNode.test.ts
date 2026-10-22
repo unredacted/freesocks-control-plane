@@ -15,6 +15,7 @@ import {
   createAccount,
   realityListener,
   seedEdgeFixture,
+  setFrontsTraffic,
   wsListener,
   type EdgeFixture,
 } from './lib/edges/testing/fixtures';
@@ -144,10 +145,12 @@ async function world(opts: { mode?: Mode | null; cdn?: boolean; reality?: boolea
   let cdn: Id<'edgeProviderAccounts'> | null = null;
   let cdnLocation: Id<'edgeLocations'> | null = null;
   if (opts.cdn) {
-    await t.mutation(internal.edgeAdmin.patchConfig, {
-      patch: { l7: { dnsProvidersFront: true } },
+    cdn = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'acct-cdn',
+      qualified: true,
+      frontsTraffic: true,
     });
-    cdn = await createAccount(t, { provider: 'cloudflare', name: 'acct-cdn', qualified: true });
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: cdn, ok: true });
     cdnLocation = (await defaultLocationRow(t, cdn))!._id;
     await t.mutation(internal.edgeLocations.recordCheck, {
@@ -430,6 +433,38 @@ describe('no backup elsewhere', () => {
     expect(await attentionCode(t)).toBe('second_cdn_needed');
   });
 
+  test('a Cloudflare account set to DNS and fronting is that second CDN; set to DNS only it is not', async () => {
+    const { t, fx, cdn, cdnLocation } = await world({ cdn: true });
+    // A Fastly front writing its records through the same DNS account.
+    const fastly = await createAccount(t, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      qualified: true,
+      settings: {
+        dnsAccountId: cdn,
+        zoneId: 'a'.repeat(32),
+        zoneName: 'example.org',
+        certificateAuthority: 'certainly',
+      },
+    });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: fastly, ok: true });
+    const fastlyLocation = (await defaultLocationRow(t, fastly))!._id;
+    await t.run((c) =>
+      c.db.patch(fx.relayId, {
+        providerSet: [
+          { locationId: fastlyLocation, addedAt: 1 },
+          { locationId: cdnLocation!, addedAt: 2 },
+        ],
+      }),
+    );
+    expect(await attentionCode(t)).toBeUndefined();
+    const view = (await t.query(internal.edgeProviderSets.view, { relayId: fx.relayId }))!;
+    expect(view.reduced).toEqual([]);
+    // DNS only: it keeps the Fastly front's records, and fronts nothing new.
+    await setFrontsTraffic(t, cdn!, false);
+    expect(await attentionCode(t)).toBe('second_cdn_needed');
+  });
+
   test('a node with both kinds gets one item per remedy, each naming its own transports', async () => {
     const t = convexTest(schema, modules);
     const fx = await seedEdgeFixture(t, {
@@ -438,10 +473,11 @@ describe('no backup elsewhere', () => {
       listeners: [wsListener(), realityListener()],
     });
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: fx.accountId, ok: true });
-    await t.mutation(internal.edgeAdmin.patchConfig, {
-      patch: { l7: { dnsProvidersFront: true } },
+    const cdn = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'acct-cdn',
+      frontsTraffic: true,
     });
-    const cdn = await createAccount(t, { provider: 'cloudflare', name: 'acct-cdn' });
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: cdn, ok: true });
     const cdnLocation = (await defaultLocationRow(t, cdn))!._id;
     await t.mutation(internal.edgeLocations.recordCheck, {

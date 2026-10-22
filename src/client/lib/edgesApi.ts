@@ -151,6 +151,8 @@ export interface CreateProviderBody {
   defaultTemplateId?: string | null;
   /** Defaults for the provider's certificate options. */
   optionDefaults?: Record<string, unknown>;
+  /** A DNS provider's account: DNS and fronting (true) or DNS only (false, the default). */
+  frontsTraffic?: boolean;
 }
 export interface ProviderPatch {
   name?: string;
@@ -158,6 +160,8 @@ export interface ProviderPatch {
   /** The account's certificate option defaults, whole. */
   optionDefaults?: Record<string, unknown>;
   enabled?: boolean;
+  /** A DNS provider's account: DNS and fronting (true) or DNS only (false). */
+  frontsTraffic?: boolean;
   priority?: number;
   dailyAllocationBudget?: number;
   maxLiveEdges?: number;

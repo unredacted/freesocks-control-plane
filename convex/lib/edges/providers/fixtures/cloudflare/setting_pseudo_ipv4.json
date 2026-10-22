@@ -1,0 +1,17 @@
+{
+  "_source": {
+    "api": "GET /zones/{zone_id}/settings/pseudo_ipv4",
+    "doc": "https://developers.cloudflare.com/api/resources/zones/subresources/settings/methods/get/",
+    "note": "value is one of off | add_header | overwrite_header; on, the address travels in CF-Connecting-IPv6 (https://developers.cloudflare.com/network/pseudo-ipv4/)",
+    "taken": "2026-10-21"
+  },
+  "result": {
+    "id": "pseudo_ipv4",
+    "value": "off",
+    "editable": true,
+    "modified_on": "2026-01-02T00:01:00.12345Z"
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}
