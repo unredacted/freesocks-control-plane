@@ -45,6 +45,7 @@ const EDGE_A = '198.51.100.1';
 const OTHER_ADDR = '198.51.100.50';
 const UUID = '11111111-2222-4333-8444-555555555555';
 const SQUAD = '33333333-3333-4333-8333-333333333333';
+const SQUAD_B = '44444444-4444-4444-8444-444444444444';
 const REALITY_QS =
   'encryption=none&flow=xtls-rprx-vision&security=reality&sni=target.example&fp=chrome&pbk=PUBKEY&sid=abcd&type=tcp';
 /** The covered node's template Host (`<node>-relay-<listenerKey>`), and an uncovered node's own address. */
@@ -71,6 +72,8 @@ async function seed(
   opts: {
     keys?: Array<{ token: string; short: string; pinned?: string; placement?: string | null }>;
     mode?: string;
+    /** The freedom modes' pools (default: `freedom-reality` holds one group). */
+    pools?: Record<string, string[]>;
   } = {},
 ) {
   const t = convexTest(schema, modules);
@@ -80,12 +83,15 @@ async function seed(
   await t.mutation(internal.seed.seedConnectionModes, {});
   const keys = opts.keys ?? [{ token: 'tok_one', short: 'short-1', pinned: OTHER }];
   const subIds = await t.run(async (ctx) => {
-    await ctx.db.insert('modePlacements', {
-      modeSlug: 'freedom-reality',
-      backend: 'remnawave',
-      config: JSON.stringify({ squadUuids: [SQUAD] }),
-      updatedAt: Date.now(),
-    });
+    for (const [modeSlug, squadUuids] of Object.entries(
+      opts.pools ?? { 'freedom-reality': [SQUAD] },
+    ))
+      await ctx.db.insert('modePlacements', {
+        modeSlug,
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids }),
+        updatedAt: Date.now(),
+      });
     const tierId = await ctx.db.insert('tiers', {
       slug: 'free',
       name: 'Free',
@@ -198,6 +204,22 @@ describe('the delivery rule', () => {
     const res = await sub(t);
     expect(res.status).toBe(200);
     expect(await res.text()).toContain(OTHER_ADDR);
+  });
+
+  test("on: a key in a privacy group is handed its node, whatever its member's stored mode", async () => {
+    stubPanel(OTHER_LINE);
+    // The group decides what the body carries; a stored or default mode does not hold a key.
+    const { t, subIds } = await seed({
+      mode: 'freedom-ws',
+      keys: [{ token: 'tok_one', short: 'short-1', pinned: OTHER, placement: null }],
+    });
+    await setSwitch(t, true);
+    const res = await sub(t);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(OTHER_ADDR);
+    expect(
+      await t.query(internal.freedomDelivery.rawUrlWithheld, { subscriptionId: subIds[0]! }),
+    ).toBe(false);
   });
 
   test('on: a freedom key on the covered node gets the edge, never the origin', async () => {
@@ -589,6 +611,89 @@ describe('the preview and the switch', () => {
     expect(p.totals.cutOffMembers).toBe(2);
   });
 
+  test('a group is judged on its own: a covered node of another group of the mode does not save it', async () => {
+    const { t } = await seed({
+      pools: { 'freedom-reality': [SQUAD, SQUAD_B] },
+      keys: [
+        ...twoKeys,
+        { token: 'tok_b1', short: 'short-b1', pinned: 'node-three', placement: SQUAD_B },
+        { token: 'tok_b2', short: 'short-b2', placement: SQUAD_B },
+      ],
+    });
+    const p = await t.action(internal.freedomDelivery.preview, {});
+    const m = p.modes.find((x) => x.mode === 'freedom-reality')!;
+    expect(m.nodes).toEqual({ total: 3, servable: 1, withheld: 2 });
+    // Group A's key on the uncovered node moves; group B has no covered node: both its keys get nothing.
+    expect(m.members).toEqual({ total: 4, onWithheld: 2, cutOff: 2, moved: 1 });
+    expect(p.totals).toEqual({ withheldNodes: 2, affectedMembers: 3, cutOffMembers: 2 });
+  });
+
+  test('a freedom group with keys and no known node is cut off, and turning it on needs the confirm', async () => {
+    const { t } = await seed({
+      keys: [
+        { token: 'tok_one', short: 'short-1' },
+        { token: 'tok_two', short: 'short-2' },
+      ],
+    });
+    const p = await t.action(internal.freedomDelivery.preview, {});
+    const m = p.modes.find((x) => x.mode === 'freedom-reality')!;
+    expect(m.nodes).toEqual({ total: 0, servable: 0, withheld: 0 });
+    expect(m.members).toEqual({ total: 2, onWithheld: 0, cutOff: 2, moved: 0 });
+    await expect(t.mutation(internal.freedomDelivery.setEdgesOnly, { on: true })).rejects.toThrow(
+      /would no longer be handed/,
+    );
+  });
+
+  test('a key pinned under a name its node had before a rename counts as on that node', async () => {
+    const { t, serverId } = await seed({
+      keys: [
+        { token: 'tok_cov', short: 'short-cov', pinned: NODE },
+        { token: 'tok_old', short: 'short-old', pinned: 'node-old' },
+      ],
+    });
+    await t.run(async (ctx) => {
+      const renameId = await ctx.db.insert('panelNodeRenames', {
+        backendServerId: serverId,
+        nodeUuid: 'uuid-two',
+        from: 'node-old',
+        to: OTHER,
+        relayIds: [],
+        state: 'done',
+        step: 'done',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('panelNodeAliases', {
+        backendServerId: serverId,
+        formerName: 'node-old',
+        name: OTHER,
+        nodeUuid: 'uuid-two',
+        renameId,
+        at: Date.now(),
+      });
+    });
+    const p = await t.action(internal.freedomDelivery.preview, {});
+    const m = p.modes.find((x) => x.mode === 'freedom-reality')!;
+    expect(m.withheldNodes.map((n) => n.node)).toEqual([OTHER]);
+    expect(m.members).toEqual({ total: 2, onWithheld: 1, cutOff: 0, moved: 1 });
+    await expect(t.mutation(internal.freedomDelivery.setEdgesOnly, { on: true })).rejects.toThrow(
+      /would no longer be handed/,
+    );
+  });
+
+  test('a group two freedom modes share counts each key once in the totals', async () => {
+    const { t } = await seed({
+      pools: { 'freedom-reality': [SQUAD], 'freedom-xhttp': [SQUAD] },
+      keys: twoKeys,
+    });
+    const p = await t.action(internal.freedomDelivery.preview, {});
+    expect(p.modes.map((m) => [m.mode, m.members.moved])).toEqual([
+      ['freedom-reality', 1],
+      ['freedom-xhttp', 1],
+    ]);
+    expect(p.totals).toEqual({ withheldNodes: 1, affectedMembers: 1, cutOffMembers: 0 });
+  });
+
   test('turning it on with members affected needs the confirm, and is audited', async () => {
     const { t } = await seed({ keys: twoKeys });
     await expect(t.mutation(internal.freedomDelivery.setEdgesOnly, { on: true })).rejects.toThrow(
@@ -609,6 +714,9 @@ describe('the preview and the switch', () => {
     expect(audit.map((a) => a.payload)).toEqual([
       { on: true, confirmed: true, withheldNodes: 1, affected: true },
     ]);
+    // Every mirror is rendered again in one full pass, not the sweep's window.
+    const jobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(jobs.map((j) => j.name)).toContain('storage:drainMirrors');
     // Off needs no confirm.
     expect((await t.mutation(internal.freedomDelivery.setEdgesOnly, { on: false })).on).toBe(false);
   });

@@ -23,9 +23,8 @@ import type { Doc, Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { protectionAt } from './edgeRender';
 import { writeAuditLog } from './lib/audit';
-import { formerNamesByName, currentNodeName } from './lib/backend/nodeAliases';
+import { formerNamesByName } from './lib/backend/nodeAliases';
 import { resolveModeCatalog } from './lib/connectionModes';
-import { cohortPage, type CohortCursor } from './lib/edges/cohorts';
 import {
   FREEDOM_EDGES_ONLY_KEY,
   FREEDOM_FAMILY,
@@ -36,7 +35,6 @@ import {
   withheldReason,
   type NodeProtection,
 } from './lib/edges/freedomDelivery';
-import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { blockedNamesOf } from './nodeIntents';
 import { relayForBackendNode } from './relays';
@@ -130,36 +128,65 @@ export const rawUrlWithheld = internalQuery({
 
 // --- the pools ---------------------------------------------------------------------------------------
 
-/** One node of a freedom mode's pool on one backend, and whether its members may be handed it. */
+/**
+ * One node FCP knows serves a group of a freedom mode's pool on one backend,
+ * and whether the mode's members may be handed it.
+ */
 export interface PoolNode {
   node: string;
+  /** Its name and every name a key may still be pinned under (a rename drains pins over time). */
+  pinNames: string[];
   nodeUuid: string | null;
   enrolled: boolean;
-  /** null: it may serve the mode's members. */
+  /** The freedom groups (placements) it serves: INTERNAL, never in an admin answer. */
+  placements: string[];
+  /** The freedom modes it serves (an enrolled node: its own). */
+  modes: string[];
+  /** null: it may serve the members of those groups. */
   reason: FreedomWithheldReason | null;
   /** The origin that covers it, when one does. */
   relaySlug: string | null;
+  /** When an enrolled node last changed, for the attention row. */
+  since: number | null;
 }
 
-/** One freedom mode on one backend. */
-export interface PoolEntry {
+/** The freedom pools of one backend: every freedom mode (its groups and fronting here) and the nodes known to serve them. */
+export interface BackendPools {
   backendServerId: Id<'backendServers'>;
   serverSlug: string;
-  mode: string;
-  label: string | null;
-  fronting: ModeFronting | null;
-  /** The mode's placements (group uuids): INTERNAL, never in an admin answer. */
-  placements: string[];
+  modes: Array<{
+    mode: string;
+    label: string | null;
+    fronting: ModeFronting | null;
+    /** INTERNAL: never in an admin answer. */
+    placements: string[];
+  }>;
   nodes: PoolNode[];
-  /** When the node was last changed (an enrolled node), for the attention row. */
-  since: Record<string, number>;
 }
 
-/** The distinct node names active keys of a backend are pinned to (one read per name). */
+/**
+ * The groups a key of which may be handed a node: one a node that may serve
+ * it is known to serve. A key in any other group of a freedom mode gets
+ * nothing while the switch is on (its body carries no covered node).
+ */
+export function servableGroups(b: BackendPools): Set<string> {
+  return new Set(b.nodes.filter((n) => n.reason === null).flatMap((n) => n.placements));
+}
+
+/** Every freedom group of a backend's pools. */
+function groupsOf(b: BackendPools): Set<string> {
+  return new Set(b.modes.flatMap((m) => m.placements));
+}
+
+/**
+ * The distinct node names active keys of a backend are pinned to: two reads
+ * per name looked at, at most `2 * MAX_PINNED_NODES` names (the rest is a
+ * stale tail of nodes long gone).
+ */
 async function pinnedNodeNames(db: Db, sid: Id<'backendServers'>): Promise<string[]> {
   const out: string[] = [];
   let after = '';
-  while (out.length < MAX_PINNED_NODES) {
+  for (let probe = 0; probe < 2 * MAX_PINNED_NODES && out.length < MAX_PINNED_NODES; probe++) {
     const next = await db
       .query('subscriptions')
       .withIndex('by_backend_server_pinned', (q) =>
@@ -179,177 +206,190 @@ async function pinnedNodeNames(db: Db, sid: Id<'backendServers'>): Promise<strin
   return out;
 }
 
-/** The placements of the active keys pinned to a node (one read per placement). */
-async function pinnedPlacements(
-  ctx: { db: Db },
-  sid: Id<'backendServers'>,
-  nodeName: string,
-): Promise<string[]> {
-  const out: string[] = [];
-  let cursor: CohortCursor | null = null;
-  for (let page = 0; page < 20; page++) {
-    const p = await cohortPage(ctx, { backendServerId: sid, nodeName }, cursor);
-    for (const c of p.cohorts) if (c.placement) out.push(c.placement);
-    if (!p.next) break;
-    cursor = p.next;
-  }
-  return out;
+/** An active key of a backend pinned under `name`, in `placement` when given (one indexed read). */
+function pinnedKey(db: Db, sid: Id<'backendServers'>, name: string, placement?: string) {
+  return db
+    .query('subscriptions')
+    .withIndex('by_backend_server_pinned', (q) => {
+      const base = q.eq('backendServerId', sid).eq('pinnedNode', name).eq('state', 'active');
+      return placement === undefined ? base : base.eq('backendPlacement', placement);
+    })
+    .first();
 }
 
 /**
- * Every freedom mode's pool on every Remnawave backend, each node judged
- * (lib/edges/freedomDelivery.ts `withheldReason`). Read whether the switch is
- * on or not: the preview is what it WOULD withhold.
+ * Every freedom mode's pool on every Remnawave backend, each known node judged
+ * (lib/edges/freedomDelivery.ts `withheldReason`): the enrolled nodes serving a
+ * freedom mode whose gate is open (the gate already withholds the others from
+ * everybody), the observed nodes serving a transport of a freedom group, and
+ * the nodes active keys of a freedom group are pinned to (one indexed read per
+ * pinned name and group). Read whether the switch is on or not: the preview
+ * is what it WOULD withhold. Every backend is listed with every freedom mode,
+ * known nodes or not: a group with keys and no known node is cut off.
  */
-export async function freedomPools(ctx: { db: Db }): Promise<PoolEntry[]> {
+export async function freedomPools(ctx: { db: Db }): Promise<BackendPools[]> {
   const db = ctx.db;
   const { modes } = await resolveModeCatalog(db);
-  const freedom = modes.filter((m) => m.family === FREEDOM_FAMILY);
+  const freedom = modes
+    .filter((m) => m.family === FREEDOM_FAMILY)
+    .sort((a, b) => a.id.localeCompare(b.id));
   if (freedom.length === 0) return [];
-  const labels = new Map(freedom.map((m) => [m.id, m.label ?? null]));
-  const placements = new Map<string, string[]>();
+  const placements = new Map<string, string[]>(freedom.map((m) => [m.id, []]));
   for (const r of await db
     .query('modePlacements')
     .withIndex('by_backend', (q) => q.eq('backend', 'remnawave'))
     .collect())
-    if (labels.has(r.modeSlug)) placements.set(r.modeSlug, poolFromConfig(r.config));
-  const modesOfPlacement = (p: string) =>
+    if (placements.has(r.modeSlug)) placements.set(r.modeSlug, poolFromConfig(r.config));
+  const freedomGroups = [...new Set([...placements.values()].flat())].sort();
+  const modesOfGroup = (p: string) =>
     [...placements].filter(([, pool]) => pool.includes(p)).map(([slug]) => slug);
-  const servers = (await db.query('backendServers').collect()).filter(
-    (s) => s.backend === 'remnawave',
-  );
-  const out: PoolEntry[] = [];
+  const servers = (await db.query('backendServers').collect())
+    .filter((s) => s.backend === 'remnawave')
+    .sort((a, b) => a.slug.localeCompare(b.slug));
+  const out: BackendPools[] = [];
   for (const server of servers) {
     const sid = server._id;
-    const frontings = await setupFrontings(db, sid);
+    const setup = await db
+      .query('panelSetups')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .unique();
+    const frontings = new Map((setup?.modes ?? []).map((m) => [m.slug, m.shape.fronting]));
+    const groupOf = new Map((setup?.modes ?? []).map((m) => [m.slug, m.groupUuid ?? null]));
     const intents = (
       await db
         .query('panelNodeIntents')
         .withIndex('by_server', (q) => q.eq('backendServerId', sid))
         .collect()
     ).filter((i) => i.state !== 'retiring' && i.state !== 'retired');
-    // node name -> what is known of it; mode slug -> node names
-    const known = new Map<string, { nodeUuid: string | null; enrolled: boolean; since?: number }>();
-    const byMode = new Map<string, Set<string>>();
-    const add = (mode: string, node: string) => {
-      if (!labels.has(mode)) return;
-      const set = byMode.get(mode) ?? new Set<string>();
-      set.add(node);
-      byMode.set(mode, set);
-    };
-    // Enrolled nodes: their own mode. A node whose gate is closed is withheld
-    // by the gate already, from every member.
-    for (const i of intents) {
-      known.set(i.name, { nodeUuid: i.nodeUuid ?? null, enrolled: true, since: i.updatedAt });
-      if (i.delivery.disposition === 'live' && !i.maintenance) add(i.mode, i.name);
-    }
+    const formers = await formerNamesByName(db, sid);
+    const currentOf = new Map<string, string>();
+    for (const [name, olds] of formers) for (const o of olds) currentOf.set(o, name);
+    const enrolledNames = new Set(intents.map((i) => i.name));
     const enrolledUuids = new Set(intents.map((i) => i.nodeUuid).filter(Boolean));
-    // Observed nodes serving a transport of a group in a freedom mode's pool.
-    const squads = await db
-      .query('panelSquads')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .collect();
-    const observed = await db
-      .query('panelNodes')
-      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
-      .collect();
-    for (const n of observed) {
-      if (n.isDisabled || known.has(n.name) || enrolledUuids.has(n.nodeUuid)) continue;
-      known.set(n.name, { nodeUuid: n.nodeUuid, enrolled: false });
-      const served = new Set(n.activeInboundUuids);
-      for (const sq of squads)
-        if (sq.inboundUuids.some((u) => served.has(u)))
-          for (const mode of modesOfPlacement(sq.squadUuid)) add(mode, n.name);
-    }
-    // Nodes members are pinned to, by the placements of the keys pinned there.
-    for (const name of await pinnedNodeNames(db, sid)) {
-      const current = (await currentNodeName(db, sid, name)) ?? name;
-      const k = known.get(current);
-      if (k?.enrolled) continue;
-      if (!k) known.set(current, { nodeUuid: null, enrolled: false });
-      for (const p of await pinnedPlacements(ctx, sid, name))
-        for (const mode of modesOfPlacement(p)) add(mode, current);
-    }
-    const protection = new Map<string, NodeProtection>();
-    for (const [mode, names] of byMode) {
-      const fronting = frontings.get(mode) ?? null;
-      const nodes: PoolNode[] = [];
-      const since: Record<string, number> = {};
-      for (const name of [...names].sort()) {
-        const k = known.get(name)!;
-        let p = protection.get(name);
-        if (!p) {
-          p = await protectionAt(ctx, sid, name);
-          protection.set(name, p);
-        }
-        const reason = withheldReason({ protection: p, enrolled: k.enrolled, fronting });
-        const relay = p.bound ? await relayForBackendNode(db, sid, name) : null;
-        nodes.push({
-          node: name,
-          nodeUuid: k.nodeUuid,
-          enrolled: k.enrolled,
-          reason,
-          relaySlug: relay?.slug ?? null,
-        });
-        if (k.since) since[name] = k.since;
+    const known = new Map<
+      string,
+      {
+        nodeUuid: string | null;
+        enrolled: boolean;
+        placements: Set<string>;
+        modes: Set<string>;
+        since: number | null;
       }
-      out.push({
-        backendServerId: sid,
-        serverSlug: server.slug,
-        mode,
-        label: labels.get(mode) ?? null,
-        fronting,
-        placements: placements.get(mode) ?? [],
-        nodes,
-        since,
+    >();
+    const add = (name: string, nodeUuid: string | null, group: string) => {
+      const k = known.get(name) ?? {
+        nodeUuid,
+        enrolled: false,
+        placements: new Set<string>(),
+        modes: new Set<string>(),
+        since: null,
+      };
+      k.nodeUuid ??= nodeUuid;
+      k.placements.add(group);
+      for (const m of modesOfGroup(group)) k.modes.add(m);
+      known.set(name, k);
+    };
+    // Enrolled nodes: their own mode, in the group the setup made for it.
+    for (const i of intents) {
+      if (!placements.has(i.mode) || i.delivery.disposition !== 'live' || i.maintenance) continue;
+      const pool = placements.get(i.mode) ?? [];
+      const group = groupOf.get(i.mode);
+      known.set(i.name, {
+        nodeUuid: i.nodeUuid ?? null,
+        enrolled: true,
+        placements: new Set(group && pool.includes(group) ? [group] : pool),
+        modes: new Set([i.mode]),
+        since: i.updatedAt,
       });
     }
+    // Observed nodes serving a transport of a freedom group.
+    const squads = (
+      await db
+        .query('panelSquads')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .collect()
+    ).filter((sq) => freedomGroups.includes(sq.squadUuid));
+    for (const n of await db
+      .query('panelNodes')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect()) {
+      if (n.isDisabled || enrolledNames.has(n.name) || enrolledUuids.has(n.nodeUuid)) continue;
+      const served = new Set(n.activeInboundUuids);
+      for (const sq of squads)
+        if (sq.inboundUuids.some((u) => served.has(u))) add(n.name, n.nodeUuid, sq.squadUuid);
+    }
+    // Nodes active keys of a freedom group are pinned to (under any name they had).
+    for (const name of await pinnedNodeNames(db, sid)) {
+      const current = currentOf.get(name) ?? name;
+      if (enrolledNames.has(current)) continue;
+      for (const group of freedomGroups)
+        if (await pinnedKey(db, sid, name, group)) add(current, null, group);
+    }
+    const nodes: PoolNode[] = [];
+    for (const [name, k] of [...known].sort(([a], [b]) => a.localeCompare(b))) {
+      const own = [...k.modes].sort();
+      // An enrolled node at its own mode's layer, any other at its first mode's.
+      const fronting = own[0] ? (frontings.get(own[0]) ?? null) : null;
+      const protection = await protectionAt(ctx, sid, name);
+      const relay = protection.bound ? await relayForBackendNode(db, sid, name) : null;
+      nodes.push({
+        node: name,
+        pinNames: [name, ...(formers.get(name) ?? [])],
+        nodeUuid: k.nodeUuid,
+        enrolled: k.enrolled,
+        placements: [...k.placements].sort(),
+        modes: own,
+        reason: withheldReason({ protection, enrolled: k.enrolled, fronting }),
+        relaySlug: relay?.slug ?? null,
+        since: k.since,
+      });
+    }
+    out.push({
+      backendServerId: sid,
+      serverSlug: server.slug,
+      modes: freedom.map((m) => ({
+        mode: m.id,
+        label: m.label ?? null,
+        fronting: frontings.get(m.id) ?? null,
+        placements: placements.get(m.id) ?? [],
+      })),
+      nodes,
+    });
   }
-  return out.sort(
-    (a, b) => a.serverSlug.localeCompare(b.serverSlug) || a.mode.localeCompare(b.mode),
-  );
+  return out;
 }
 
 /**
- * Whether turning the switch on would stop handing any member their node: a
- * withheld node an active key of the mode is pinned to, or a mode with no node
- * that may serve it and an active key in its pool. Indexed existence reads
- * only (one per withheld node and placement): what a mutation can afford.
+ * Whether turning the switch on would stop handing any member their node: an
+ * active key in a freedom group no servable node is known to serve, or one
+ * pinned (under any name) to a withheld node. Indexed existence reads only
+ * (one per group and per withheld node's name and group): what a mutation can
+ * afford.
  */
-async function anyMemberAffected(db: Db, pools: PoolEntry[]): Promise<boolean> {
-  for (const e of pools) {
-    const servable = e.nodes.some((n) => n.reason === null);
-    if (!servable)
-      for (const p of e.placements) {
-        const key = await db
-          .query('subscriptions')
-          .withIndex('by_backend_server_state', (q) =>
-            q
-              .eq('backendServerId', e.backendServerId)
-              .eq('state', 'active')
-              .eq('backendPlacement', p),
-          )
-          .first();
-        if (key) return true;
-      }
-    for (const n of e.nodes) {
+async function anyMemberAffected(db: Db, pools: BackendPools[]): Promise<boolean> {
+  for (const b of pools) {
+    const sid = b.backendServerId;
+    const servable = servableGroups(b);
+    for (const p of groupsOf(b)) {
+      if (servable.has(p)) continue;
+      const key = await db
+        .query('subscriptions')
+        .withIndex('by_backend_server_state', (q) =>
+          q.eq('backendServerId', sid).eq('state', 'active').eq('backendPlacement', p),
+        )
+        .first();
+      if (key) return true;
+    }
+    for (const n of b.nodes) {
       if (n.reason === null) continue;
-      const pinned = (placement?: string) =>
-        db
-          .query('subscriptions')
-          .withIndex('by_backend_server_pinned', (q) => {
-            const base = q
-              .eq('backendServerId', e.backendServerId)
-              .eq('pinnedNode', n.node)
-              .eq('state', 'active');
-            return placement === undefined ? base : base.eq('backendPlacement', placement);
-          })
-          .first();
-      if (n.enrolled) {
-        if (await pinned()) return true;
-        continue;
+      for (const name of n.pinNames) {
+        // An enrolled node's keys are held whatever their group.
+        if (n.enrolled) {
+          if (await pinnedKey(db, sid, name)) return true;
+          continue;
+        }
+        for (const p of n.placements) if (await pinnedKey(db, sid, name, p)) return true;
       }
-      for (const p of e.placements) if (await pinned(p)) return true;
     }
   }
   return false;
@@ -387,9 +427,9 @@ export const view = internalQuery({
  * Turn freedom delivery through edges on or off. Turning it on while members
  * would stop being handed their node needs `confirm` (the admin has seen the
  * preview): `edge.freedom_confirm_required` otherwise. Audited either way;
- * every mirror is rendered again (a held key's mirror gets the unavailable
- * stub, a released one its body back). The place tokens move with the switch,
- * so no cached body outlives it.
+ * every mirror is rendered again in one full pass (`storage.drainMirrors`: a
+ * held key's mirror gets the unavailable stub, a released one its body back).
+ * The place tokens move with the switch, so no cached body outlives it.
  */
 export const setEdgesOnly = internalMutation({
   args: {
@@ -404,11 +444,10 @@ export const setEdgesOnly = internalMutation({
     let affected = false;
     if (on) {
       const pools = await freedomPools(ctx);
-      withheldNodes = new Set(
-        pools.flatMap((e) =>
-          e.nodes.filter((n) => n.reason !== null).map((n) => `${e.backendServerId}:${n.node}`),
-        ),
-      ).size;
+      withheldNodes = pools.reduce(
+        (x, b) => x + b.nodes.filter((n) => n.reason !== null).length,
+        0,
+      );
       affected = await anyMemberAffected(ctx.db, pools);
       if (affected && confirm !== true)
         throw new ConvexError({
@@ -426,7 +465,9 @@ export const setEdgesOnly = internalMutation({
       targetId: FREEDOM_EDGES_ONLY_KEY,
       payload: { on, confirmed: on && affected, withheldNodes, affected },
     });
-    await scheduleMirrorRefresh(ctx);
+    // Every mirror now, not the six-hourly sweep's window: a full pass that
+    // continues itself until it reached the last key.
+    await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, { cursor: null });
     return stateOf(ctx.db);
   },
 });
@@ -499,10 +540,11 @@ export interface FreedomPreviewMode {
     reason: FreedomWithheldReason;
   }>;
   /**
-   * Active keys of the mode on this backend (`total`), those pinned to a
-   * withheld node (`onWithheld`), and those that would get nothing: the ones
-   * on withheld nodes while the mode has a node that may serve them (they move
-   * there at their next refresh, so 0 here), else every key of the mode.
+   * Active keys of the mode on this backend (`total`); those pinned to a
+   * withheld node (`onWithheld`); those that move to a node that may serve
+   * them at their next refresh (`moved`: on a withheld node, in a group a
+   * servable node serves); those that get nothing (`cutOff`: every key of a
+   * group no servable node is known to serve).
    */
   members: { total: number; onWithheld: number; cutOff: number; moved: number };
 }
@@ -510,6 +552,7 @@ export interface FreedomPreviewMode {
 export interface FreedomPreview {
   on: boolean;
   modes: FreedomPreviewMode[];
+  /** Each key counted once, whatever number of modes share its group. */
   totals: { withheldNodes: number; affectedMembers: number; cutOffMembers: number };
   /** A count stopped at its page cap: the figures are lower bounds. */
   approximate: boolean;
@@ -518,14 +561,19 @@ export interface FreedomPreview {
 /**
  * What turning the switch on would close, read-only: per freedom mode and
  * backend, its nodes (servable, withheld and why) and its members (on a
- * withheld node, moved, cut off). Never a placement or an address.
+ * withheld node, moved, cut off), judged group by group (a key's body carries
+ * the nodes of its own group only). Never a group or an address.
  */
 export const preview = internalAction({
   args: {},
   handler: async (ctx): Promise<FreedomPreview> => {
     const { on, pools } = await ctx.runQuery(internal.freedomDelivery.poolsForPreview, {});
     let approximate = false;
-    const countPlacement = async (sid: Id<'backendServers'>, placement: string) => {
+    const totals = new Map<string, number>();
+    const totalOf = async (sid: Id<'backendServers'>, placement: string) => {
+      const key = `${sid}:${placement}`;
+      const known = totals.get(key);
+      if (known !== undefined) return known;
       let total = 0;
       let cursor: string | null = null;
       for (let i = 0; i < MAX_COUNT_PAGES; i++) {
@@ -535,16 +583,13 @@ export const preview = internalAction({
         );
         total += page.count;
         cursor = page.next;
-        if (!cursor) return total;
+        if (!cursor) break;
+        if (i === MAX_COUNT_PAGES - 1) approximate = true;
       }
-      approximate = true;
+      totals.set(key, total);
       return total;
     };
-    const pinnedCounts = new Map<string, Record<string, number>>();
-    const countPinned = async (sid: Id<'backendServers'>, nodeName: string) => {
-      const key = `${sid}:${nodeName}`;
-      const known = pinnedCounts.get(key);
-      if (known) return known;
+    const pinnedOf = async (sid: Id<'backendServers'>, nodeName: string) => {
       const acc: Record<string, number> = {};
       let cursor: string | null = null;
       for (let i = 0; i < MAX_COUNT_PAGES; i++) {
@@ -559,48 +604,70 @@ export const preview = internalAction({
         if (!cursor) break;
         if (i === MAX_COUNT_PAGES - 1) approximate = true;
       }
-      pinnedCounts.set(key, acc);
       return acc;
     };
-    const modes: FreedomPreviewMode[] = [];
-    const withheldSet = new Set<string>();
-    for (const e of pools) {
-      const withheld = e.nodes.filter((n) => n.reason !== null);
-      const servable = e.nodes.length - withheld.length;
-      let total = 0;
-      for (const p of e.placements) total += await countPlacement(e.backendServerId, p);
-      let onWithheld = 0;
-      for (const n of withheld) {
-        withheldSet.add(`${e.backendServerId}:${n.node}`);
-        const by = await countPinned(e.backendServerId, n.node);
-        onWithheld += n.enrolled
-          ? Object.values(by).reduce((x, y) => x + y, 0)
-          : e.placements.reduce((x, p) => x + (by[p] ?? 0), 0);
+    const rows: FreedomPreviewMode[] = [];
+    let withheldNodes = 0;
+    let moved = 0;
+    let cutOff = 0;
+    for (const b of pools) {
+      const sid = b.backendServerId;
+      const servable = servableGroups(b);
+      const groups = groupsOf(b);
+      const withheld = b.nodes.filter((n) => n.reason !== null);
+      withheldNodes += withheld.length;
+      // Keys pinned to a withheld node, per group (each pinned name read once).
+      const onWithheld = new Map<string, number>();
+      for (const n of withheld)
+        for (const name of n.pinNames)
+          for (const [p, c] of Object.entries(await pinnedOf(sid, name)))
+            if (n.enrolled || n.placements.includes(p))
+              onWithheld.set(p, (onWithheld.get(p) ?? 0) + c);
+      // The backend's figures, each key once: a group shared by several modes
+      // is counted once; a key held only by its enrolled node's mode gets nothing.
+      for (const p of groups)
+        if (servable.has(p)) moved += onWithheld.get(p) ?? 0;
+        else cutOff += await totalOf(sid, p);
+      for (const [p, c] of onWithheld) if (!groups.has(p)) cutOff += c;
+      for (const m of b.modes) {
+        const nodes = b.nodes.filter((n) => n.modes.includes(m.mode));
+        let total = 0;
+        let mCut = 0;
+        let mMoved = 0;
+        let mOn = 0;
+        for (const p of m.placements) {
+          const t = await totalOf(sid, p);
+          total += t;
+          mOn += onWithheld.get(p) ?? 0;
+          if (servable.has(p)) mMoved += onWithheld.get(p) ?? 0;
+          else mCut += t;
+        }
+        if (nodes.length === 0 && total === 0) continue;
+        const held = nodes.filter((n) => n.reason !== null);
+        rows.push({
+          serverSlug: b.serverSlug,
+          mode: m.mode,
+          label: m.label,
+          fronting: m.fronting,
+          nodes: {
+            total: nodes.length,
+            servable: nodes.length - held.length,
+            withheld: held.length,
+          },
+          withheldNodes: held.map((n) => ({
+            node: n.node,
+            nodeUuid: n.nodeUuid,
+            enrolled: n.enrolled,
+            reason: n.reason!,
+          })),
+          members: { total, onWithheld: mOn, cutOff: mCut, moved: mMoved },
+        });
       }
-      const cutOff = servable > 0 ? 0 : Math.max(total, onWithheld);
-      modes.push({
-        serverSlug: e.serverSlug,
-        mode: e.mode,
-        label: e.label,
-        fronting: e.fronting,
-        nodes: { total: e.nodes.length, servable, withheld: withheld.length },
-        withheldNodes: withheld.map((n) => ({
-          node: n.node,
-          nodeUuid: n.nodeUuid,
-          enrolled: n.enrolled,
-          reason: n.reason!,
-        })),
-        members: { total, onWithheld, cutOff, moved: servable > 0 ? onWithheld : 0 },
-      });
     }
     return {
       on,
-      modes,
-      totals: {
-        withheldNodes: withheldSet.size,
-        affectedMembers: modes.reduce((x, m) => x + m.members.cutOff + m.members.moved, 0),
-        cutOffMembers: modes.reduce((x, m) => x + m.members.cutOff, 0),
-      },
+      modes: rows,
+      totals: { withheldNodes, affectedMembers: moved + cutOff, cutOffMembers: cutOff },
       approximate,
     };
   },
@@ -609,16 +676,17 @@ export const preview = internalAction({
 // --- attention ---------------------------------------------------------------------------------------
 
 /**
- * While the switch is on: one item per node withheld from a freedom mode's
- * members (`freedom_node_withheld`, the reason as its code), naming the
- * backend, the node and the mode, never an address. The action goes where
- * the reason is fixed: protecting the node, its origin, or the modes.
+ * While the switch is on: one item per node withheld from the freedom
+ * members it serves (`freedom_node_withheld`, the reason as its code), naming
+ * the backend, the node and its freedom modes, never an address. The action
+ * goes where the reason is fixed: protecting the node, its origin, or the
+ * modes.
  */
 export async function freedomAttention(ctx: { db: Db }): Promise<AttentionItem[]> {
   if (!(await freedomEdgesOnly(ctx.db))) return [];
   const out: AttentionItem[] = [];
-  for (const e of await freedomPools(ctx)) {
-    for (const n of e.nodes) {
+  for (const b of await freedomPools(ctx)) {
+    for (const n of b.nodes) {
       if (n.reason === null) continue;
       const action =
         n.reason === 'withheld_direct_mode'
@@ -627,7 +695,7 @@ export async function freedomAttention(ctx: { db: Db }): Promise<AttentionItem[]
             ? 'open_relay'
             : 'protect_node';
       out.push({
-        id: `freedom_node_withheld:${e.backendServerId}:${n.node}:${e.mode}`,
+        id: `freedom_node_withheld:${b.backendServerId}:${n.node}`,
         kind: 'freedom_node_withheld',
         severity: 'warning',
         relaySlug: n.relaySlug,
@@ -638,14 +706,15 @@ export async function freedomAttention(ctx: { db: Db }): Promise<AttentionItem[]
         rotationId: null,
         code: n.reason,
         facts: {
-          serverSlug: e.serverSlug,
+          serverSlug: b.serverSlug,
           node: n.node,
           ...(n.nodeUuid ? { nodeUuid: n.nodeUuid } : {}),
-          mode: e.mode,
+          mode: n.modes[0] ?? null,
+          modes: n.modes,
           enrolled: n.enrolled,
         },
         action,
-        since: e.since[n.node] ? new Date(e.since[n.node]!).toISOString() : null,
+        since: n.since ? new Date(n.since).toISOString() : null,
       });
     }
   }

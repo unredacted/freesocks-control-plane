@@ -2593,8 +2593,9 @@ export const FreedomPreviewMode = z.object({
   ),
   /**
    * Active keys of the mode on that backend; those pinned to a withheld node;
-   * those that would get nothing (`cutOff`: the mode has no node that may serve
-   * it there); those that move to a node that may (`moved`), at their next refresh.
+   * those that would get nothing (`cutOff`: no node that may serve them is known
+   * to serve their group); those that move to one that does (`moved`), at their
+   * next refresh.
    */
   members: z.object({
     total: z.number(),
@@ -2605,7 +2606,7 @@ export const FreedomPreviewMode = z.object({
 });
 export type FreedomPreviewMode = z.infer<typeof FreedomPreviewMode>;
 
-/** `GET freedom/preview`: what turning freedom delivery through edges on would close (read-only). */
+/** `GET freedom/preview`: what turning freedom delivery through edges on would close (read-only; totals count each key once). */
 export const FreedomPreview = z.object({
   on: z.boolean(),
   modes: z.array(FreedomPreviewMode),

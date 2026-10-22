@@ -750,6 +750,44 @@ export const repairMirrorUploads = internalAction({
 });
 
 /**
+ * One full pass over every mirrored key, started NOW and continued until it
+ * reached the last one: for a change that must not wait for the six-hourly
+ * sweep's window (freedom modes only through edges: a held key's mirror is
+ * replaced by the unavailable stub, a released one gets its body back). The
+ * same per-key refresh as the sweep, `REFRESH_MAX_PAGES` pages per run, then
+ * it schedules itself with its own cursor; the sweep's cursor is untouched.
+ */
+export const drainMirrors = internalAction({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (
+    ctx,
+    { cursor: start },
+  ): Promise<{ refreshed: number; scanned: number; done: boolean }> => {
+    const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
+    if (providers.length === 0) return { refreshed: 0, scanned: 0, done: true };
+    const byName = new Map(providers.map((p) => [p.name, p]));
+    let cursor = start;
+    let refreshed = 0;
+    let scanned = 0;
+    for (let page = 0; page < REFRESH_MAX_PAGES; page++) {
+      // Annotated (not inferred) to break the internal-API self-reference cycle.
+      const res: ActiveMirrorPage = await ctx.runQuery(internal.subscriptions.pageActiveForMirror, {
+        cursor,
+        numItems: REFRESH_PAGE,
+      });
+      for (const sub of res.items) {
+        scanned++;
+        if (await refreshOneSubMirrors(ctx, byName, sub)) refreshed++;
+      }
+      if (res.isDone) return { refreshed, scanned, done: true };
+      cursor = res.continueCursor;
+    }
+    await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, { cursor });
+    return { refreshed, scanned, done: false };
+  },
+});
+
+/**
  * Cron: keep EXISTING (opt-in) mirrors fresh. Pages only subs that already have a
  * mirror (never creates one) and re-uploads each sub's current content to ITS OWN
  * providers at the SAME object path — so the mirror URL the member already holds

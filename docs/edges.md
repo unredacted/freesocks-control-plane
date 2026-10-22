@@ -777,7 +777,7 @@ enrolled node that is not live (`lib/edges/freedomDelivery.ts`, `convex/freedomD
 | the pinner (`backends.fetchSubscriptionContent`)                 | The pick is made among the nodes an origin with a live edge of the node's layer covers (`freedomDelivery.pinRules` `servable`; an enrolled node at its own mode's layer, any other at the key's) while one is in the body; gated nodes stay excluded and the previous pin is avoided within them. With none in the body the pick is as before and the next row refuses. |
 | `/sub`, the raw-config view (`edgeRender.decideForSubscription`) | `node_unprotected` (503 with `Retry-After`; the app keeps its last configuration), counted with the other refusals. Also for a body that names no node.                                                                                                                                                                                                                 |
 | a cached body                                                    | Never served: the place's token carries `f` while the switch is on, so an entry cached before it moved does not match.                                                                                                                                                                                                                                                  |
-| a mirror                                                         | The unavailable stub (the mirror render reads the same decision); every mirror is rendered again when the switch moves.                                                                                                                                                                                                                                                 |
+| a mirror                                                         | The unavailable stub (the mirror render reads the same decision); when the switch moves, one full pass renders every mirror again at once (`storage.drainMirrors`, continued until the last key), not the six-hourly sweep's window.                                                                                                                                    |
 | the raw backend URL (account view, issue and switch answers)     | Blank, like an edge-required key's (`freedomDelivery.rawUrlWithheld`): the backend's own URL hands out the nodes' addresses.                                                                                                                                                                                                                                            |
 
 A covered place is unchanged: the binding's render hands out edges or refuses, as always. A
@@ -785,11 +785,14 @@ front of another layer cannot carry the mode's transport, so the render never ha
 the layer is judged for the pick and the attention items. Issuance hands out no address (a new
 key's node is chosen at its first fetch, by the pinner), so placement is unchanged.
 
-**Which keys are held: fail closed toward the rule.** A key is held when ANY signal says
-freedom: the mode of the enrolled node it resolves to, a mode whose pool holds its placement, or
-the member's stored mode (unset: the effective default on their backend). This is the opposite
-of the country handling's `memberFamilyOf`, which fails closed toward no country logic. A key
-on a backend without connection modes (Outline) is never held.
+**Which keys are held.** What a key is handed is decided by its placement (the group the backend
+serves it, so the nodes in its body) and the node it resolves to, and either signal is enough: a
+mode whose pool holds its placement is freedom-family, or the enrolled node it resolves to serves
+a freedom mode. This fails closed toward the rule, the opposite of the country handling's
+`memberFamilyOf`. The member's stored (or default) mode is not a signal: a member who never
+chose, on a privacy group, would otherwise be cut off by a freedom default, and a key with no
+placement has no node to hand out. A key on a backend without connection modes (Outline) is
+never held.
 
 **Why a node is withheld** (`FREEDOM_WITHHELD_REASONS`, the attention code):
 `withheld_unmanaged` (FCP does not enroll it and no binding covers it), `withheld_unprotected`
@@ -801,10 +804,14 @@ of a freedom mode's pool (`freedom_node_withheld`, a warning that also alerts: f
 backend, the node and the mode, never an address), with the action that fixes the reason:
 protect the node, open its origin, or open Connection modes.
 
-A freedom mode's pool on a backend is what FCP knows of it: the enrolled nodes serving the mode
-whose gate is open, the observed nodes serving a transport of a group in the mode's pool, and the
-nodes active keys of the mode are pinned to (one indexed read per node and placement, at most
-200 pinned names per backend).
+A freedom mode's pool on a backend is what FCP knows of it, group by group: the enrolled nodes
+serving the mode whose gate is open (in the group the setup made for the mode), the observed
+nodes serving a transport of the group, and the nodes active keys of the group are pinned to,
+under any name the node had before a rename (one indexed read per pinned name and group, at most
+200 pinned names per backend). A key's body carries the nodes of its own group only, so a group is
+judged on its own: its keys move to a covered node when one serves the group, and get nothing
+when none does, whatever another group of the same mode has. A group with keys and no known node
+counts as one with no covered node.
 
 **Saving a freedom mode direct is refused** while the switch is on: a backend setup (or a change
 of it) that gives a freedom-family mode the shape `direct` (`servers.freedom_mode_direct:<slug>`;
@@ -822,7 +829,8 @@ again. Until the seed has run the switch reads off. It is in neither `SETTINGS_D
 **Turning it on.** The card first shows a read-only preview (`GET freedom/preview`, an action
 that pages the member counts, never one transaction over every key): per freedom mode and
 backend, its nodes (covered, withheld and why) and its members (on a withheld node; moved to a
-covered node at their next refresh; cut off, when the mode has no covered node there). Turning it
+covered node of their group at their next refresh; cut off, when no covered node serves their
+group); the totals count each key once, however many modes share its group. Turning it
 on while any member would stop being handed their node needs `confirm: true` (the dialog sends
 it); without it `edge.freedom_confirm_required`, judged again in the mutation by indexed
 existence reads. Audited as `edge.freedom.edges_only` (`on`, `confirmed`, `withheldNodes`,

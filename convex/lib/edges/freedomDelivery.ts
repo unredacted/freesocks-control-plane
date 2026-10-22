@@ -15,11 +15,14 @@
  * A deployment the seed has not reached reads it off; `seedCutover` stores it
  * on for a deployment with no members and off for one that has members, once.
  *
- * Which keys are held: FAIL CLOSED toward the rule. A key is held when ANY
- * signal says freedom (the opposite of `memberFamilyOf`, which fails closed
- * toward no country handling): the mode of the enrolled node it resolves to,
- * a mode whose pool holds its placement, or the member's stored mode (unset:
- * the effective default on their backend).
+ * Which keys are held: what a key is handed is decided by its placement (the
+ * group the backend serves it, so the nodes in its body) and the node it
+ * resolves to, so those are the signals, and EITHER is enough (the opposite of
+ * `memberFamilyOf`, which fails closed toward no country handling): a mode
+ * whose pool holds its placement is freedom-family, or the enrolled node it
+ * resolves to serves a freedom mode. The member's stored (or default) mode is
+ * not a signal: a member who never chose, on a privacy group, would be cut off
+ * by a freedom default, and a key with no placement has no node to hand out.
  */
 import type { DatabaseReader } from '../../_generated/server';
 import type { Doc, Id } from '../../_generated/dataModel';
@@ -29,7 +32,6 @@ import type { ModeFronting } from '../../../src/shared/contracts/servers';
 import { currentNodeName } from '../backend/nodeAliases';
 import { resolveModeCatalog } from '../connectionModes';
 import { modesOfPlacement } from '../memberFamily';
-import { effectiveDefaultFor, resolveCatalogWithAvailability } from '../placement';
 
 export const FREEDOM_EDGES_ONLY_KEY = 'edge.freedom.edgesOnly';
 
@@ -93,16 +95,13 @@ export interface FreedomHold {
   layer: EdgeLayer | null;
 }
 
-type HoldSub = Pick<Doc<'subscriptions'>, 'backend' | 'backendPlacement' | 'backendServerId'> & {
-  userId: Id<'users'>;
-};
+type HoldSub = Pick<Doc<'subscriptions'>, 'backend' | 'backendPlacement' | 'backendServerId'>;
 
 /**
  * Whether a key is held to the rule at `node` (the node its body resolved to,
  * or its stored pin), and to which mode: the enrolled node's own mode first,
- * then its placement's, then the member's stored (or default) mode. Null for a
- * key no signal places on a freedom mode, and for a backend without connection
- * modes (Outline). Does not read the switch.
+ * then its placement's. Null for a key neither places on a freedom mode, and
+ * for a backend without connection modes (Outline). Does not read the switch.
  */
 export async function freedomHoldOf(
   db: DatabaseReader,
@@ -121,13 +120,6 @@ export async function freedomHoldOf(
   if (sub.backendPlacement)
     for (const slug of await modesOfPlacement(db, sub.backendPlacement))
       if (freedom(slug)) held.push(slug);
-  if (held.length === 0) {
-    const member = await db.get(sub.userId);
-    const stored =
-      member?.connectionModeId ??
-      effectiveDefaultFor(await resolveCatalogWithAvailability(db), 'remnawave');
-    if (freedom(stored)) held.push(stored);
-  }
   const mode = held[0];
   if (!mode) return null;
   const fronting = sub.backendServerId
