@@ -366,7 +366,8 @@ See `docs/threat-model-cdn-blinding.md`.
   (private compose network). The backend `data` volume still holds file/module/
   search storage (until S3). Postgres data is the `pgdata` volume; PG18's image
   volume is `/var/lib/postgresql`, not the pre-18 `/data` path. Back up with
-  `bunx convex export` and/or `pg_dump`.
+  `bunx convex export` (through the deployer, into a directory outside the
+  checkout: § Upgrading the Convex backend, step 2) and/or `pg_dump`.
 - **Client IP.** Trust is topology-dependent — the backend reads the resolved IP per
   `convex/lib/http.ts:resolveClientIp`; verify live via the admin self-diagnostic
   `GET /api/v1/admin/client-ip` (returns `{ resolvedIp, rule, hops, chain }` for your own request):
@@ -541,10 +542,17 @@ client-side before upload: a dump carries `accountIdHash` + live subscription
 tokens, so an unencrypted bucket compromise yields the readable datastore.
 Also back up the **secret set** (the `bunx convex env` values, especially
 `ACCOUNT_ID_PEPPER` — losing it invalidates every account number). Export it
-alongside each dump, encrypted with the same age recipient:
+alongside each dump, encrypted with the same age recipient, through the
+deployer container and into the snapshot directory outside the checkout (§
+Exports stay outside the checkout, below):
 
-```
-bunx convex env list | age -r "$BACKUP_AGE_PUBLIC_KEY" -o "convex-env-$(date -u +%Y%m%d).txt.age"
+```sh
+install -d -m 700 "$HOME/fcp-snapshots"
+docker compose -f docker-compose.stack.yml --env-file .env.beta \
+  run --rm --no-deps -T --entrypoint bash deployer -c '
+    export CONVEX_SELF_HOSTED_ADMIN_KEY="$(grep "|" /keys/admin_key | tail -n1 | tr -d "[:space:]")" \
+    && bunx convex env list' \
+  | age -r "$BACKUP_AGE_PUBLIC_KEY" -o "$HOME/fcp-snapshots/convex-env-$(date -u +%Y%m%d).txt.age"
 ```
 
 Backup coverage notes:
@@ -569,10 +577,12 @@ restore drill below must have been run at least once.
 
 Restore a dump:
 
-```
-# copy the chosen dump to the host, then (for an age-encrypted dump, decrypt first):
-#   age -d -i backup-key.txt freesocks-freesocks_beta-<ts>.sql.gz.age > dump.sql.gz
-gunzip -c freesocks-freesocks_beta-<ts>.sql.gz \
+```sh
+# copy the chosen dump into ~/fcp-snapshots (never into the checkout), then
+# (for an age-encrypted dump, decrypt first; the key file stays out of the checkout too):
+#   age -d -i /path/to/backup-key.txt -o "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz" \
+#     "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz.age"
+gunzip -c "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz" \
   | docker compose -f docker-compose.stack.yml exec -T postgres \
       psql -U convex -d freesocks_beta
 ```
@@ -581,6 +591,64 @@ Run a **restore drill** before launch and periodically after:
 `sh docker/restore-verify.sh` restores the latest dump into a scratch DB,
 asserts core-table row counts, and drops it (set `AGE_KEY_FILE` for encrypted
 dumps). A backup that has never been restored is not a backup.
+
+### Exports stay outside the checkout
+
+The deployer image is built from the whole checkout (`COPY . .` in
+`docker/deploy.Dockerfile`), so anything sitting in the repo directory at build
+time is baked into the image, and stays in its layers after the file itself is
+deleted. A `convex export` zip carries every member's `accountIdHash` and live
+subscription tokens in plaintext; an env capture carries `ACCOUNT_ID_PEPPER`. So
+every recipe here writes them to **`$HOME/fcp-snapshots`** (mode 700, owned by
+whoever runs the stack commands; §0 does not require root), outside the
+checkout. Any directory outside the checkout works; use the same one in every
+recipe. As a backstop, `.dockerignore` and `.gitignore` both exclude
+`snapshots/`, `*.zip`, `*.sql`, `*.sql.gz*`, `*.age` and `convex-env-*`, and
+`convex/deployPins.test.ts` holds the `.dockerignore` list in place.
+
+The `web` image's final stage copies only the built `dist/` and the `Caddyfile`,
+so a stray export never reaches the image Caddy runs. Its build stage does copy
+the whole context, though, so the host's build cache can still hold one.
+
+**An export already in the checkout** (from the old `mkdir -p snapshots` recipe,
+or written by hand). From the checkout, list what is there:
+
+```sh
+find . \( -path ./.git -o -path ./node_modules \) -prune -o \
+  \( -name snapshots -o -name '*.zip' -o -name '*.sql' -o -name '*.sql.gz*' \
+     -o -name '*.age' -o -name 'convex-env-*' \) -print
+```
+
+Move what you still need (the newest pre-upgrade export, say) into
+`~/fcp-snapshots` and delete the rest. Deleting the file does not take it
+out of the deployer image, so rebuild the image, remove the exited one-shot
+container that still holds the old image (the next §6 deploy recreates it), and
+prune the old image layers and the build cache:
+
+```sh
+install -d -m 700 "$HOME/fcp-snapshots"
+mv <file you keep> "$HOME/fcp-snapshots/"  # then rm the rest, and rmdir snapshots
+docker compose -f docker-compose.stack.yml --env-file .env.<stack> build deployer
+docker compose -f docker-compose.stack.yml --env-file .env.<stack> rm -f deployer
+docker image prune -f
+docker builder prune -af
+```
+
+`docker image prune` also drops the older dangling deployer images, which hold
+whatever the checkout held at their build. Both prunes are host-wide, and
+`docker builder prune -a` makes the next build re-run `bun install`, so it is
+slower once. Check the rebuilt image
+holds none of them (no output):
+
+```sh
+docker compose -f docker-compose.stack.yml --env-file .env.<stack> \
+  run --rm --no-deps --entrypoint sh deployer -c \
+  'find /app -path /app/node_modules -prune -o \( -name snapshots -o -name "*.zip" -o -name "*.sql" -o -name "*.sql.gz*" -o -name "*.age" -o -name "convex-env-*" \) -print'
+```
+
+The host already holds the live database, so an export that never left it needs
+no rotation. If the image or the file was ever copied off the host (`docker
+save`, a registry push), treat its contents as disclosed.
 
 ### Upgrading the Convex backend (image re-pin)
 
@@ -631,12 +699,14 @@ before the prod deploy — the beta export is not a prod backup):
 2. Take an on-demand snapshot export through the deployer container (the
    "One-off functions" recipe with a host mount; `--no-deps` is right — the
    backend is already running on the OLD image, which is exactly the state you
-   want the export to capture):
+   want the export to capture). The mount is the snapshot directory OUTSIDE the
+   checkout: an export in the repo directory gets baked into the next deployer
+   image (§ Exports stay outside the checkout):
 
    ```sh
-   mkdir -p snapshots
+   install -d -m 700 "$HOME/fcp-snapshots"
    docker compose -f docker-compose.stack.yml --env-file .env.beta \
-     run --rm --no-deps -v "$PWD/snapshots:/snapshots" --entrypoint bash deployer -c '
+     run --rm --no-deps -v "$HOME/fcp-snapshots:/snapshots" --entrypoint bash deployer -c '
        export CONVEX_SELF_HOSTED_ADMIN_KEY="$(grep "|" /keys/admin_key | tail -n1 | tr -d "[:space:]")" \
        && bunx convex export --path "/snapshots/pre-upgrade-$(date -u +%Y%m%dT%H%M%SZ).zip"'
    ```
@@ -646,10 +716,10 @@ before the prod deploy — the beta export is not a prod backup):
 
    ```sh
    docker compose -f docker-compose.stack.yml --env-file .env.beta \
-     run --rm --no-deps --entrypoint bash deployer -c '
+     run --rm --no-deps -T --entrypoint bash deployer -c '
        export CONVEX_SELF_HOSTED_ADMIN_KEY="$(grep "|" /keys/admin_key | tail -n1 | tr -d "[:space:]")" \
        && bunx convex env list' \
-     | age -r "$BACKUP_AGE_PUBLIC_KEY" -o "convex-env-$(date -u +%Y%m%d).txt.age"
+     | age -r "$BACKUP_AGE_PUBLIC_KEY" -o "$HOME/fcp-snapshots/convex-env-$(date -u +%Y%m%d).txt.age"
    ```
 
    Note the export does **not** cover the backend's `data` volume (file blobs)

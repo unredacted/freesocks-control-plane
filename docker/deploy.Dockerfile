@@ -7,6 +7,9 @@ WORKDIR /app
 
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
+# Everything .dockerignore lets through lands in the image, so database exports
+# and env captures live outside the checkout (docs/beta-deploy.md § Exports stay
+# outside the checkout) and .dockerignore drops any left behind.
 COPY . .
 RUN chmod +x docker/deploy-entrypoint.sh
 
