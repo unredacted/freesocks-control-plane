@@ -24,6 +24,7 @@ import type {
   AttentionKind,
   AttentionSeverity,
   DeliveryUnavailableCode,
+  FreedomWithheldReason,
   InboundUnsupportedCode,
   L7CertificateCode,
   LayerExclusionCode,
@@ -65,7 +66,8 @@ type KnownCode =
   | DeliveryUnavailableCode
   | PoolCode
   | SettingsWarningCode
-  | L7CertificateCode;
+  | L7CertificateCode
+  | FreedomWithheldReason;
 
 const COPY = {
   // --- origin --------------------------------------------------------------------------
@@ -1139,6 +1141,39 @@ const COPY = {
     explain:
       'The member is on a node that is not live yet, or is closed for maintenance, so nothing is handed out for it.',
   },
+  node_unprotected: {
+    label: 'Node not protected',
+    explain:
+      'The member is on a freedom mode and their node is not protected, so nothing is handed out for it.',
+    fix: 'Protect the node.',
+  },
+  // --- freedom modes only through edges (a node held back from a freedom mode's members) ---
+  freedom_node_withheld: {
+    label: 'Freedom node held back',
+    explain:
+      'This node of a freedom mode has no live edge in front of it, and freedom members are only given protected nodes, so they are not given this one.',
+  },
+  withheld_unmanaged: {
+    label: 'Not enrolled or protected',
+    explain: 'FCP does not manage this node and nothing protects it.',
+    fix: "Protect the node, or take it out of the freedom mode's groups.",
+  },
+  withheld_unprotected: {
+    label: 'Not protected yet',
+    explain: 'The node is enrolled, but nothing protects it.',
+    fix: 'Protect the node.',
+  },
+  withheld_no_edge: {
+    label: 'No live edge',
+    explain: 'The node is protected, but none of its edges of the kind the mode needs is live.',
+    fix: 'Publish a tested edge on the node.',
+  },
+  withheld_direct_mode: {
+    label: 'Mode set up direct',
+    explain:
+      "The node's mode is in the freedom family, but its backend sets it up direct, so nothing protects its nodes.",
+    fix: 'Move the mode to another family, or move its members to a protected mode.',
+  },
   policy_moved: {
     label: 'Changed while answering',
     explain:
@@ -1237,6 +1272,11 @@ export function inboundUnsupportedCopy(code: string): CodeCopy {
 // vocabulary above carries. An error line shows these as `explain` + `fix` (lib/edgeErrors.ts),
 // so both read as full sentences on their own. `throttled` words a rate-limited call (HTTP 429).
 const REFUSAL_COPY = {
+  freedom_confirm_required: {
+    label: 'Confirm what it closes',
+    explain: 'Turning this on would stop handing some members their node.',
+    fix: 'Look at what it closes, then confirm.',
+  },
   host_adopt_required: {
     label: 'Hosts not adopted yet',
     explain: 'FCP can only take over the Hosts once it has adopted every one of them.',

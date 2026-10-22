@@ -555,6 +555,12 @@ Every REALITY transport listens on 443: a node serves ONE mode, so they never co
 named by a node is the only thing the role needs to know about it (`node_mode`); the machine
 shape (Caddy or not, ingress, what an edge dials) follows from the mode's shape.
 
+While freedom modes are only served through edges (`edge.freedom.edgesOnly`, docs/edges.md
+"Freedom modes only through edges"), a mode of the freedom family is never given the shape
+`direct`: `start` refuses `servers.freedom_mode_direct:<slug>` before any write, for a fresh setup
+and for a mode a change adds. A mode the backend already carries direct is kept (its shape cannot
+change); its nodes are withheld from its members while no edge covers them.
+
 | Step       | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | observe    | A fresh look at the backend; everything below reads the cache.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -719,7 +725,11 @@ affected node FCP does not manage needs a treatment from the operator, `hold` (c
 **The delivery gate** (`lib/backend/deliveryGate.ts`, enforced in `edgeRender.deliveryPolicyFor`,
 the pinner's exclusion list, the subscription route, the mirror refresh): closed for an enrolled
 node that is not live, under maintenance or retiring; open for an unmanaged node unless an open
-maintenance hold names it. Its
+maintenance hold names it (the place's cache token then carries the gate too, so a body cached
+before the hold is not served from the cache). While freedom modes are only served through edges,
+an open node no delivery binding covers is withheld from freedom-family keys the same way, on
+the same paths, whether FCP enrolls it or not (`node_unprotected`; the pinner picks a covered
+node while the body has one; docs/edges.md "Freedom modes only through edges"). Its
 **candidate set** is every resource of every activation run that never committed (running,
 blocked, under review, superseded, failed), minus what the committed set holds: a superseded or
 blocked run's candidate stays isolated until a later commit takes it over. Every render carries

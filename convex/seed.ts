@@ -9,6 +9,7 @@ import { internalAction, internalMutation } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { SETTINGS_DEFAULTS, upsertSettingRow } from './appSettings';
+import { FREEDOM_EDGES_ONLY_KEY, freedomEdgesOnly } from './lib/edges/freedomDelivery';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
 import {
   BUILT_IN_MODES_VERSION,
@@ -114,6 +115,32 @@ export const seedAppSettings = internalMutation({
       inserted++;
     }
     return { inserted };
+  },
+});
+
+/**
+ * Freedom modes only through edges (lib/edges/freedomDelivery.ts), set ONCE:
+ * on for a deployment with no members yet (nothing is cut off, and no freedom
+ * member is ever handed a node's own address), off for one that already has
+ * members (with no edges, its freedom members are served directly today and
+ * turning it on would cut them off: the admin turns it on after the preview).
+ * Never touches a stored value, so a later deploy keeps the admin's choice.
+ */
+export const seedFreedomEdgesOnly = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', FREEDOM_EDGES_ONLY_KEY))
+      .unique();
+    if (row) return { inserted: false, on: await freedomEdgesOnly(ctx.db) };
+    const on = (await ctx.db.query('users').first()) === null;
+    await ctx.db.insert('appSettings', {
+      key: FREEDOM_EDGES_ONLY_KEY,
+      value: JSON.stringify(on),
+      updatedAt: Date.now(),
+    });
+    return { inserted: true, on };
   },
 });
 
@@ -606,7 +633,10 @@ export const seedCutover = internalAction({
     clientsInserted: number;
     modeFamiliesInserted: number;
     modesInserted: number;
+    freedomEdgesOnly: boolean;
   }> => {
+    // First: whether this deployment already has members decides it, once.
+    const freedom = await ctx.runMutation(internal.seed.seedFreedomEdgesOnly, {});
     const freeTierId = await ctx.runMutation(internal.seed.seedDefaultFreeTier, {});
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
     const settings = await ctx.runMutation(internal.seed.seedAppSettings, {});
@@ -638,6 +668,7 @@ export const seedCutover = internalAction({
       clientsInserted: clients.inserted,
       modeFamiliesInserted: modes.familiesInserted,
       modesInserted: modes.modesInserted,
+      freedomEdgesOnly: freedom.on,
     };
   },
 });

@@ -14,6 +14,7 @@ import {
   COUNTRY_ROUND_RESULTS,
   COUNTRY_STATE_FROM,
   COUNTRY_TRACK_STATES,
+  FREEDOM_WITHHELD_REASONS,
   INBOUND_UNSUPPORTED_CODES,
   PREFLIGHT_KINDS,
   RESTORE_PHASES,
@@ -24,6 +25,7 @@ import {
   SETUP_STEP_STATUSES,
 } from './edgeCodes';
 import { EDGE_PROVIDER_IDS } from './edgeProviderIds';
+import { ModeFronting } from './servers';
 import {
   LISTENER_PROTOCOL_IDS,
   LISTENER_SECURITY_IDS,
@@ -2574,3 +2576,59 @@ export const EdgeMaintenanceView = z.object({
   since: isoN.default(null),
 });
 export type EdgeMaintenanceView = z.infer<typeof EdgeMaintenanceView>;
+
+/**
+ * `GET freedom` / `POST freedom {on, confirm?}`: freedom modes only through edges
+ * (`edge.freedom.edgesOnly`, docs/edges.md). `since`: when it last changed (null: never set).
+ */
+export const FreedomDeliveryView = z.object({
+  on: z.boolean(),
+  since: isoN.default(null),
+});
+export type FreedomDeliveryView = z.infer<typeof FreedomDeliveryView>;
+
+export const FreedomWithheldReason = z.enum(FREEDOM_WITHHELD_REASONS);
+
+/** One freedom mode on one backend in the preview: its nodes and its members. */
+export const FreedomPreviewMode = z.object({
+  serverSlug: z.string(),
+  mode: z.string(),
+  label: z.string().nullable(),
+  fronting: ModeFronting.nullable(),
+  nodes: z.object({ total: z.number(), servable: z.number(), withheld: z.number() }),
+  withheldNodes: z.array(
+    z.object({
+      node: z.string(),
+      nodeUuid: z.string().nullable(),
+      enrolled: z.boolean(),
+      reason: FreedomWithheldReason,
+    }),
+  ),
+  /**
+   * Active keys of the mode on that backend; those pinned to a withheld node;
+   * those that would get nothing (`cutOff`: no node that may serve them is known
+   * to serve their group); those that move to one that does (`moved`), at their
+   * next refresh.
+   */
+  members: z.object({
+    total: z.number(),
+    onWithheld: z.number(),
+    cutOff: z.number(),
+    moved: z.number(),
+  }),
+});
+export type FreedomPreviewMode = z.infer<typeof FreedomPreviewMode>;
+
+/** `GET freedom/preview`: what turning freedom delivery through edges on would close (read-only; totals count each key once). */
+export const FreedomPreview = z.object({
+  on: z.boolean(),
+  modes: z.array(FreedomPreviewMode),
+  totals: z.object({
+    withheldNodes: z.number(),
+    affectedMembers: z.number(),
+    cutOffMembers: z.number(),
+  }),
+  /** A count stopped at its cap: the member figures are lower bounds. */
+  approximate: z.boolean(),
+});
+export type FreedomPreview = z.infer<typeof FreedomPreview>;

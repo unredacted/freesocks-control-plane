@@ -33,16 +33,22 @@ import { NODE_STATS_STALE_MS } from './lib/remnawavePlacement';
  * The member-facing raw subscription URL. Under edge-required delivery a
  * backend server covered by an origin binding (an Outline instance behind edges)
  * hands out ONLY the fronted token URL: its raw URL is the origin's own key.
- * A backend URL names the backend, not a node, and passes through.
+ * So does a key held to freedom delivery through edges (the backend URL hands
+ * out its nodes' own addresses). A backend URL names the backend, not a node,
+ * and otherwise passes through.
  */
 async function memberFacingUrl(
   ctx: ActionCtx,
   backendServerId: Id<'backendServers'> | null | undefined,
   url: string,
+  subscriptionId: Id<'subscriptions'>,
 ): Promise<string> {
   if (!backendServerId) return url;
   const policy = await ctx.runQuery(internal.edgeRender.deliveryPolicy, { backendServerId });
-  return policy.required ? '' : url;
+  if (policy.required) return '';
+  return (await ctx.runQuery(internal.freedomDelivery.rawUrlWithheld, { subscriptionId }))
+    ? ''
+    : url;
 }
 
 type Backend = BackendId;
@@ -473,11 +479,16 @@ export const getAccountView = internalAction({
           })
         : null;
       const edgeRequired = delivery?.required === true;
+      // Freedom delivery through edges: the backend URL hands out the nodes'
+      // own addresses, so a held key never shows it (lib/edges/freedomDelivery.ts).
+      const rawWithheld =
+        !edgeRequired &&
+        (await ctx.runQuery(internal.freedomDelivery.rawUrlWithheld, { subscriptionId: sub._id }));
       subscription = {
         // The raw backend URL (fallback) + the opaque token; the SPA builds the
         // FCP-fronted URL from the token + its own origin, so there's no
         // deployment-origin env dependency and every UI surface fronts uniformly.
-        url: edgeRequired ? '' : sub.subscriptionUrl,
+        url: edgeRequired || rawWithheld ? '' : sub.subscriptionUrl,
         edgeRequired,
         subToken: sub.subToken ?? null,
         shortUuid: sub.backendShortId,
@@ -763,7 +774,12 @@ export const regenerate = internalAction({
       requestId,
     });
     return {
-      subscriptionUrl: await memberFacingUrl(ctx, issued.backendServerId, issued.subscriptionUrl),
+      subscriptionUrl: await memberFacingUrl(
+        ctx,
+        issued.backendServerId,
+        issued.subscriptionUrl,
+        issued.subscriptionId,
+      ),
       shortUuid: issued.backendShortId,
     };
   },
@@ -910,7 +926,12 @@ export const switchBackend = internalAction({
     });
     return {
       ok: true,
-      subscriptionUrl: await memberFacingUrl(ctx, issued.backendServerId, issued.subscriptionUrl),
+      subscriptionUrl: await memberFacingUrl(
+        ctx,
+        issued.backendServerId,
+        issued.subscriptionUrl,
+        issued.subscriptionId,
+      ),
       shortUuid: issued.backendShortId,
       backend: issued.backend,
       tier: {
@@ -1022,7 +1043,12 @@ export const switchMode = internalAction({
       });
       return {
         ok: true,
-        subscriptionUrl: await memberFacingUrl(ctx, oldSub.backendServerId, oldSub.subscriptionUrl),
+        subscriptionUrl: await memberFacingUrl(
+          ctx,
+          oldSub.backendServerId,
+          oldSub.subscriptionUrl,
+          oldSub._id,
+        ),
         shortUuid: oldSub.backendShortId,
         mode: { id: chosen.id, label: chosen.label },
         oldSubscriptionDeletedAt: null,
@@ -1095,7 +1121,12 @@ export const switchMode = internalAction({
       });
       return {
         ok: true,
-        subscriptionUrl: await memberFacingUrl(ctx, issued.backendServerId, issued.subscriptionUrl),
+        subscriptionUrl: await memberFacingUrl(
+          ctx,
+          issued.backendServerId,
+          issued.subscriptionUrl,
+          issued.subscriptionId,
+        ),
         shortUuid: issued.backendShortId,
         mode: { id: chosen.id, label: chosen.label },
         oldSubscriptionDeletedAt:
@@ -1173,6 +1204,7 @@ export const switchMode = internalAction({
             ctx,
             oldSub.backendServerId,
             oldSub.subscriptionUrl,
+            oldSub._id,
           ),
           shortUuid: oldSub.backendShortId,
           mode: { id: chosen.id, label: chosen.label },
@@ -1423,7 +1455,12 @@ export const switchServer = internalAction({
       });
       return {
         ok: true,
-        subscriptionUrl: await memberFacingUrl(ctx, issued.backendServerId, issued.subscriptionUrl),
+        subscriptionUrl: await memberFacingUrl(
+          ctx,
+          issued.backendServerId,
+          issued.subscriptionUrl,
+          issued.subscriptionId,
+        ),
         shortUuid: issued.backendShortId,
         inPlace: false,
         oldSubscriptionDeletedAt: tomb ? new Date(tomb.deletedAt).toISOString() : null,
@@ -1490,6 +1527,7 @@ export const switchServer = internalAction({
             ctx,
             oldSub.backendServerId,
             oldSub.subscriptionUrl,
+            oldSub._id,
           ),
           shortUuid: oldSub.backendShortId,
           inPlace: true,
@@ -1541,7 +1579,12 @@ export const switchServer = internalAction({
       });
       return {
         ok: true,
-        subscriptionUrl: await memberFacingUrl(ctx, oldSub.backendServerId, oldSub.subscriptionUrl),
+        subscriptionUrl: await memberFacingUrl(
+          ctx,
+          oldSub.backendServerId,
+          oldSub.subscriptionUrl,
+          oldSub._id,
+        ),
         shortUuid: oldSub.backendShortId,
         inPlace: true,
         oldSubscriptionDeletedAt: null,

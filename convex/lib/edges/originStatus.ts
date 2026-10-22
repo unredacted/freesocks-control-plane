@@ -46,6 +46,7 @@ export const ATTENTION_RANK = [
   'host_unresolved',
   'members_dark',
   'delivery_refusals',
+  'freedom_node_withheld',
   'direct_host_reappeared',
   'node_awaiting_approval',
   'go_live_pending',

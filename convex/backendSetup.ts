@@ -60,6 +60,7 @@ import {
   templatesOutdated,
 } from './lib/backend/subscriptionTemplates';
 import { resolveServerConfig } from './lib/serverConfig';
+import { FREEDOM_FAMILY, freedomEdgesOnly } from './lib/edges/freedomDelivery';
 import { observeInstance } from './backendObserve';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { catalogOf } from './edgeProviderCatalog';
@@ -415,6 +416,26 @@ export const start = internalMutation({
     ]);
     const existing = !!nodes || !!addresses;
     let row = await setupRow(ctx, sid);
+    // Freedom modes only through edges (lib/edges/freedomDelivery.ts): a mode
+    // of the freedom family is never set up direct. One this backend already
+    // carries direct is kept (its shape cannot change: setup_mode_kept); its
+    // nodes are withheld from its members while no edge covers them.
+    if (await freedomEdgesOnly(ctx.db)) {
+      const familyOf = new Map(catalog.map((m) => [m.id, m.family]));
+      const kept = new Set(
+        (row?.modes ?? []).filter((m) => m.shape.fronting === 'direct').map((m) => m.slug),
+      );
+      for (const m of input.modes)
+        if (
+          familyOf.get(m.slug) === FREEDOM_FAMILY &&
+          m.shape.fronting === 'direct' &&
+          !kept.has(m.slug)
+        )
+          refuse(
+            `servers.freedom_mode_direct:${m.slug}`,
+            `${m.name} feeds a freedom mode, and freedom modes are only served through edges. Give it a shape behind an edge`,
+          );
+    }
     const writer = fcpWrites(row);
     if (existing && !input.adopt && !writer)
       refuse(
