@@ -36,6 +36,8 @@ import {
   classifyDirectHosts,
   isDirectHost,
   listingHash,
+  nodeNameCandidates,
+  nodeNamesOf,
   observedTuple,
   sameTuple,
   toDirectHost,
@@ -44,8 +46,9 @@ import {
 } from './lib/edges/directHosts';
 import { relayRemarkRegex, sameAddress } from './lib/edges/hosts';
 import { deliveryBindingFor } from './relays';
+import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
 import { listenerRemark, listenersOf } from './relayListeners';
-import { enrolledOriginOf } from './nodeIntents';
+import { nodeAddressesOf } from './nodeIntents';
 import { HOST_OP_TTL_MS, HOST_SETTLE_LOOKS, HOST_SETTLE_MS } from './hostOps';
 
 /** Disable retries the reconcile pass issues for one Host before it counts as failed. */
@@ -166,7 +169,7 @@ export interface HideContext {
   fcpRemarks: string[];
   legacyHostUuids: string[];
   bound: boolean;
-  /** An enrolled node reached by hostname: its public addresses are the node too. */
+  /** Every other address that is the node (`nodeIntents.nodeAddressesOf`). */
   alsoAddresses: string[];
 }
 
@@ -184,10 +187,6 @@ async function hideContext(
     relay.backendServerId,
     relay.nodeName ?? undefined,
   );
-  const enrolled =
-    relay.origin.kind === 'panel-node'
-      ? await enrolledOriginOf(ctx, relay.backendServerId, relay.origin.nodeName)
-      : null;
   return {
     relay,
     backendServerId: relay.backendServerId,
@@ -196,7 +195,7 @@ async function hideContext(
     fcpRemarks,
     legacyHostUuids,
     bound: !!binding && binding.relaySlug === relay.slug,
-    alsoAddresses: enrolled?.directAddresses ?? [],
+    alsoAddresses: await nodeAddressesOf(ctx, relay),
   };
 }
 
@@ -591,6 +590,64 @@ function nodeInbounds(
   return [...set];
 }
 
+/**
+ * The names among a node's Hosts that turn out to be the node (they resolve to
+ * one of its addresses), with what they resolve to: a direct Host may dial the
+ * node by a name. Resolved only when such a name is there (`nodeNameCandidates`).
+ */
+export async function resolveNodeNames(
+  ctx: ActionCtx,
+  hosts: readonly BackendHost[],
+  dctx: DirectHostContext,
+): Promise<string[]> {
+  const names = nodeNameCandidates(hosts, dctx);
+  if (names.length === 0) return [];
+  const answers = await ctx.runAction(internal.nodeIntentOps.resolveNames, { names });
+  return nodeNamesOf(dctx, answers);
+}
+
+/**
+ * The hide context with the names found among the node's Hosts that are the
+ * node: recorded on the origin (every later look and every render's leak
+ * check counts them) and added to this look's addresses.
+ */
+async function withNodeNames(
+  ctx: ActionCtx,
+  c: HideContext,
+  hosts: readonly BackendHost[],
+  inbounds: string[],
+): Promise<HideContext> {
+  const found = await resolveNodeNames(
+    ctx,
+    hosts,
+    directContextOf(c, inbounds, conventionRemarks(hosts, c.nodeName)),
+  );
+  if (found.length === 0) return c;
+  await ctx.runMutation(internal.edgeHostHides.recordNodeAddresses, {
+    relayId: c.relay._id,
+    addresses: found,
+  });
+  return { ...c, alsoAddresses: [...c.alsoAddresses, ...found] };
+}
+
+/** Bound on the names kept per origin (a node's own names are few). */
+const MAX_NODE_ADDRESSES = 50;
+
+export const recordNodeAddresses = internalMutation({
+  args: { relayId: v.id('relays'), addresses: v.array(v.string()) },
+  handler: async (ctx, { relayId, addresses }) => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay) return null;
+    const next = [...(relay.nodeAddresses ?? [])];
+    for (const a of addresses) if (!next.some((x) => sameAddress(x, a))) next.push(a);
+    if (next.length === (relay.nodeAddresses ?? []).length) return null;
+    await ctx.db.patch(relayId, { nodeAddresses: next.slice(0, MAX_NODE_ADDRESSES) });
+    // What a member may be served changed: no body rendered before is reused.
+    await bumpEpochAndRefresh(ctx, relay);
+    return null;
+  },
+});
+
 export function directContextOf(
   c: HideContext,
   nodeInboundUuids: string[],
@@ -698,14 +755,15 @@ export const hide = internalAction({
     nodeInboundUuids: v.optional(v.array(v.string())),
   },
   handler: async (ctx, a): Promise<HideResult> => {
-    const c = await ctx.runQuery(internal.edgeHostHides.context, { relayId: a.relayId });
-    if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
-    if (c.relay.restore)
+    const c0 = await ctx.runQuery(internal.edgeHostHides.context, { relayId: a.relayId });
+    if (!c0) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    if (c0.relay.restore)
       throw new ConvexError({
         code: 'edge.restore_in_progress',
         message: 'a restore workflow is running on this origin',
       });
-    const hosts = await listPanelHosts(ctx, c.backendServerId);
+    const hosts = await listPanelHosts(ctx, c0.backendServerId);
+    const c = await withNodeNames(ctx, c0, hosts, nodeInbounds(c0, hosts, a.nodeInboundUuids));
     const inbounds = nodeInbounds(c, hosts, a.nodeInboundUuids);
     const dctx = directContextOf(c, inbounds, conventionRemarks(hosts, c.nodeName));
     const { covered, uncovered } = classifyDirectHosts(hosts, dctx);
@@ -854,15 +912,16 @@ export const reobserveDirect = internalAction({
     const ids = await ctx.runQuery(internal.edgeHostHides.boundGuidedRelays, {});
     const report = { relays: 0, rehidden: 0, alerted: 0 };
     for (const relayId of ids) {
-      const c = await ctx.runQuery(internal.edgeHostHides.context, { relayId });
-      if (!c || c.relay.restore) continue;
+      const c0 = await ctx.runQuery(internal.edgeHostHides.context, { relayId });
+      if (!c0 || c0.relay.restore) continue;
       let hosts: BackendHost[];
       try {
-        hosts = await listPanelHosts(ctx, c.backendServerId);
+        hosts = await listPanelHosts(ctx, c0.backendServerId);
       } catch {
         continue;
       }
       report.relays++;
+      const c = await withNodeNames(ctx, c0, hosts, nodeInbounds(c0, hosts, undefined));
       const st = await ctx.runQuery(internal.edgeHostHides.status, { relayId });
       const approved = new Set(
         st.rows.filter((r) => r.intent === 'disable').map((r) => r.hostUuid),

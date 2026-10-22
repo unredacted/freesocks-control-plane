@@ -37,7 +37,7 @@ import {
 } from './lib/edges/freedomDelivery';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { blockedNamesOf } from './nodeIntents';
-import { relayForBackendNode } from './relays';
+import { relayForBackendNode, scheduleMirrorRefresh } from './relays';
 import type { FreedomWithheldReason } from '../src/shared/contracts/edgeCodes';
 import type { ModeFronting } from '../src/shared/contracts/servers';
 import type { AttentionItem } from './edgeOperator';
@@ -467,7 +467,7 @@ export const setEdgesOnly = internalMutation({
     });
     // Every mirror now, not the six-hourly sweep's window: a full pass that
     // continues itself until it reached the last key.
-    await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, { cursor: null });
+    await scheduleMirrorRefresh(ctx);
     return stateOf(ctx.db);
   },
 });

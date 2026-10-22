@@ -16,6 +16,7 @@
  * keypair (shown). Nothing here is logged.
  */
 import { internalMutation, internalQuery } from './_generated/server';
+import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
@@ -127,6 +128,75 @@ export const anyActive = internalQuery({
       .withIndex('by_active', (q) => q.eq('isActive', true))
       .first();
     return one !== null;
+  },
+});
+
+// The one full mirror pass (`storage.drainMirrors`, asked for by
+// `scheduleMirrorRefresh` whenever members must stop receiving something): at
+// most one runs. A request while one runs makes it go round once more at its
+// end, so every key is rendered after the latest change and a burst of changes
+// costs one more pass, not one each. A pass not heard from for
+// MIRROR_PASS_STALE_MS died (its action threw): the next request starts anew.
+const MIRROR_PASS_KEY = 'mirror:pass';
+const MIRROR_PASS_STALE_MS = 30 * 60_000;
+
+interface MirrorPass {
+  running: boolean;
+  again: boolean;
+  at: number;
+}
+
+async function mirrorPassOf(db: DatabaseReader) {
+  const row = await db
+    .query('appState')
+    .withIndex('by_key', (q) => q.eq('key', MIRROR_PASS_KEY))
+    .unique();
+  let pass: MirrorPass = { running: false, again: false, at: 0 };
+  try {
+    if (row) pass = { ...pass, ...(JSON.parse(row.value) as Partial<MirrorPass>) };
+  } catch {
+    // An unreadable row is no pass at all.
+  }
+  return { row, pass };
+}
+
+async function writeMirrorPass(
+  ctx: MutationCtx,
+  row: Doc<'appState'> | null,
+  pass: MirrorPass,
+): Promise<void> {
+  const value = JSON.stringify(pass);
+  if (row) await ctx.db.patch(row._id, { value, updatedAt: Date.now() });
+  else await ctx.db.insert('appState', { key: MIRROR_PASS_KEY, value, updatedAt: Date.now() });
+}
+
+/** A requested pass starts: true = it is THE pass now; false = one runs and goes round again. */
+export const claimMirrorPass = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<boolean> => {
+    const now = Date.now();
+    const { row, pass } = await mirrorPassOf(ctx.db);
+    if (pass.running && pass.at > now - MIRROR_PASS_STALE_MS) {
+      if (!pass.again) await writeMirrorPass(ctx, row, { ...pass, again: true });
+      return false;
+    }
+    await writeMirrorPass(ctx, row, { running: true, again: false, at: now });
+    return true;
+  },
+});
+
+/** The pass finished a run (`done`: it reached the last key). Returns whether it goes round again. */
+export const noteMirrorPass = internalMutation({
+  args: { done: v.boolean() },
+  handler: async (ctx, { done }): Promise<boolean> => {
+    const now = Date.now();
+    const { row, pass } = await mirrorPassOf(ctx.db);
+    if (!done) {
+      await writeMirrorPass(ctx, row, { ...pass, running: true, at: now });
+      return false;
+    }
+    await writeMirrorPass(ctx, row, { running: pass.again, again: false, at: now });
+    return pass.again;
   },
 });
 

@@ -43,7 +43,7 @@ import { qualificationBinding, qualificationVerdict } from './lib/edges/frontChe
 import { needsEndpointVerification, verificationCurrent } from './lib/edges/verification';
 import type { EdgeRenderContext } from './lib/edges/renderPipeline';
 import { gateToken, isCandidateEdge, type NodeGate } from './lib/backend/deliveryGate';
-import { nodeGateFor } from './nodeIntents';
+import { nodeAddressesOf, nodeGateFor } from './nodeIntents';
 import { deliveryBindingFor, relayForBackendNode } from './relays';
 import { listenersOf } from './relayListeners';
 import { resolveSniConfig } from './lib/sniConfig';
@@ -590,6 +590,7 @@ export const decideForSubscription = internalQuery({
         storedEdgeCountry,
         storedAvoidBlockedIn: steeredKey && !storedEdgeCountry ? curated : [],
         originAddress: relay.originAddress,
+        nodeAddresses: await nodeAddressesOf(ctx, relay),
         deliveryStyle: await deliveryStyleOf(ctx, sub.backendServerId),
       },
     };

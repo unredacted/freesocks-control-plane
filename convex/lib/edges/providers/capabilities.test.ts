@@ -325,7 +325,7 @@ describe('origin capability record ⇔ adapters', () => {
   );
 
   test.each([...L4_IDS])(
-    '%s: discoverySettleMs > 0 mirrors a first-look absence being unresolved (listing not authoritative)',
+    '%s: a first quiet look is unresolved (a lost create may not be listed yet)',
     async (id) => {
       // Empty listings under every shape: gcore `{results}`, others arrays.
       mockFetch((c) =>
@@ -365,7 +365,7 @@ describe('origin capability record ⇔ adapters', () => {
         },
         1,
       );
-      expect(first.status === 'unresolved').toBe(caps.discoverySettleMs > 0);
+      expect(first.status).toBe('unresolved');
       expect(caps.discoverySettleMs).toBeLessThanOrEqual(caps.typicalProvisionMs);
     },
   );
@@ -396,9 +396,10 @@ describe('origin capability record ⇔ adapters', () => {
     // A lost settle that never stamped startedAt must NOT let a 40-second-old
     // create be declared absent (review R1): the caller supplies a fallback time.
     expect(discoveryMaySettle('gcore', 2, undefined, now)).toBe(false);
-    expect(discoveryMaySettle('upcloud', 2, undefined, now)).toBe(true);
     // A zero floor (authoritative listings) settles on the look count alone.
+    expect(discoveryMaySettle('scaleway', 2, undefined, now)).toBe(true);
     expect(discoveryMaySettle('scaleway', 2, now, now)).toBe(true);
+    expect(discoveryMaySettle('scaleway', 1, now - 60 * 60_000, now)).toBe(false);
   });
 
   test.each([...L4_IDS])('%s: default template validates and steps are well-formed', (id) => {

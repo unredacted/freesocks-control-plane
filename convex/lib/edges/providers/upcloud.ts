@@ -8,11 +8,13 @@
  * as NOT stable, so by default a floating IPv4 is allocated and delegated to
  * the service and THAT is the published address. Public networks are IPv4-only.
  *
- * Discovery: the service list is authoritative (found / confirmed_absent by
- * exact name). Floating IPs carry no name or tag, so an unknown-outcome
- * allocation is `ambiguous` whenever the account holds any unattached floating
- * IPv4 in the zone (an operator adopts or releases it), and `confirmed_absent`
- * when it holds none.
+ * Discovery: the service list, read page by page, is authoritative (found /
+ * confirmed_absent by exact name). Floating IPs carry no name or tag, so an
+ * unknown-outcome allocation is `ambiguous` whenever the account holds any
+ * unattached floating IPv4 in the zone (an operator adopts or releases it), and
+ * `confirmed_absent` when it holds none. Absent only on a second quiet look
+ * past the settle floor (`discoverySettleMs`): a create that outlived its
+ * timeout can still land.
  *
  * Deletes are synchronous HTTP calls but the service tears down in the
  * background, so a 2xx is reported as `delete_requested` and the dispatcher
@@ -25,6 +27,7 @@ import { z } from 'zod';
 import type {
   DiscoverResult,
   ChildResource,
+  Discovery,
   EdgeDescription,
   EdgeSpec,
   EdgeProvider,
@@ -32,7 +35,8 @@ import type {
   StepOutcome,
   UpcloudConfig,
 } from './types';
-import { firstResource, metaOf, orderByKind } from './types';
+import { firstResource, metaOf, orderByKind, stepOf } from './types';
+import { discoveryMaySettle } from './capabilities';
 import {
   isProviderNotFound,
   providerFetch,
@@ -258,6 +262,29 @@ function nodePublicV4(lb: z.infer<typeof Lb>): string | undefined {
   return undefined;
 }
 
+/** The page size of the service list (UpCloud answers 10 by default, at most 100). */
+const LB_PAGE = 100;
+
+/**
+ * Every service of the account, page by page: the list answers 10 services
+ * unless asked for more, so one unpaged look misses the rest (a discovery
+ * would call a created service absent and create it again).
+ */
+async function listLbs(cfg: UpcloudConfig, step: string): Promise<z.infer<typeof LbList>> {
+  const out: z.infer<typeof LbList> = [];
+  for (let offset = 0; ; offset += LB_PAGE) {
+    const page = await up(
+      cfg,
+      step,
+      'GET',
+      `/load-balancer?limit=${LB_PAGE}&offset=${offset}`,
+      LbList,
+    );
+    out.push(...page);
+    if (page.length < LB_PAGE) return out;
+  }
+}
+
 function getLb(cfg: UpcloudConfig, step: string, uuid: string) {
   return up(cfg, step, 'GET', `/load-balancer/${encodeURIComponent(uuid)}`, Lb);
 }
@@ -383,17 +410,23 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
     }
   },
 
-  async discover(cfg, step, spec, ledger) {
+  async discover(cfg, step, spec, ledger, attempt) {
+    // A create that outlived its timeout can still land: an empty listing
+    // proves nothing until a second look past the settle floor.
+    const absent = (): Discovery =>
+      discoveryMaySettle('upcloud', attempt, stepOf(ledger, step.id)?.startedAt)
+        ? { status: 'confirmed_absent' }
+        : { status: 'unresolved' };
     switch (step.kind) {
       case 'create_lb': {
-        const list = await up(cfg, step.id, 'GET', `/load-balancer`, LbList);
+        const list = await listLbs(cfg, step.id);
         const hit = list.find((l) => l.name === spec.name);
         return hit
           ? {
               status: 'found',
               resources: [{ kind: 'lb', resourceId: hit.uuid, ownership: 'adopted' }],
             }
-          : { status: 'confirmed_absent' };
+          : absent();
       }
       case 'allocate_ip': {
         const list = await up(cfg, step.id, 'GET', `/ip_address`, IpAddressList);
@@ -411,9 +444,7 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
             ownership: 'adopted',
             meta: { address: ip.address },
           }));
-        return candidates.length === 0
-          ? { status: 'confirmed_absent' }
-          : { status: 'ambiguous', candidates };
+        return candidates.length === 0 ? absent() : { status: 'ambiguous', candidates };
       }
       case 'attach_ip': {
         const lb = firstResource(ledger, 'lb');
@@ -504,7 +535,7 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
 
   async inventory(cfg) {
     const [lbs, ips, plans] = await Promise.all([
-      up(cfg, 'inventory', 'GET', `/load-balancer`, LbList),
+      listLbs(cfg, 'inventory'),
       up(cfg, 'inventory', 'GET', `/ip_address`, IpAddressList).catch(() => ({
         ip_addresses: { ip_address: [] },
       })),

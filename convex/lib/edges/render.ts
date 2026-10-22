@@ -142,16 +142,29 @@ export function renderEntries(
   return renderEntriesChecked(assigned, rule, hasAutoGroup, originAddress).entries;
 }
 
+/** Whether an address is the node itself: its origin or another address it is known by. */
+export function isNodeAddress(
+  addr: string,
+  originAddress: string | undefined,
+  nodeAddresses: readonly string[] = [],
+): boolean {
+  return (
+    (originAddress !== undefined && sameAddress(addr, originAddress)) ||
+    nodeAddresses.some((a) => sameAddress(addr, a))
+  );
+}
+
 export function renderEntriesChecked(
   assigned: { primary: AssignedEndpoint | null; backup: AssignedEndpoint | null },
   rule: EffectiveRule,
   hasAutoGroup: boolean,
   originAddress?: string,
+  nodeAddresses: readonly string[] = [],
 ): { entries: RenderEndpoint[]; leaked: number } {
   const out: RenderEndpoint[] = [];
   let leaked = 0;
   const wantV6 = ruleCanEmitV6(rule, hasAutoGroup);
-  const leaks = (addr: string) => originAddress !== undefined && sameAddress(addr, originAddress);
+  const leaks = (addr: string) => isNodeAddress(addr, originAddress, nodeAddresses);
   const push = (ep: AssignedEndpoint | null) => {
     if (!ep) return;
     const label = ep.role === 'primary' ? rule.primaryLabel : rule.backupLabel;
@@ -283,6 +296,8 @@ export function renderEdgeEndpoints(args: {
   assigned: { primary: AssignedEndpoint | null; backup: AssignedEndpoint | null };
   rule: EffectiveRule;
   originAddress: string;
+  /** Other addresses the node is known by (its other family, a name): never served either. */
+  nodeAddresses?: readonly string[];
   deliveryStyle?: DeliveryStyle;
 }): RenderResult {
   const rule0 = ruleForDelivery(args.rule, args.deliveryStyle ?? 'subscription');
@@ -310,6 +325,7 @@ export function renderEdgeEndpoints(args: {
     rule,
     formatHasAutoGroup(rule, format),
     args.originAddress,
+    args.nodeAddresses,
   );
   if (entries.length === 0) return unavailable(leaked > 0 ? 'leak_detected' : 'empty_pool');
   const input = { body: args.body, matchers: args.matchers, endpoints: entries, rule };
@@ -332,9 +348,10 @@ export function renderEdgeEndpoints(args: {
     return unavailable(reason, out);
   }
   if (out.emitted === 0) return unavailable('empty_pool', out);
-  // Every entry that leaves (emitted AND retained) must not be the origin.
+  // Every entry that leaves (emitted AND retained) must not be the node, by
+  // any of its addresses.
   const originEntries = outgoingAddresses(out.body, format).filter((e) =>
-    sameAddress(e.address, args.originAddress),
+    isNodeAddress(e.address, args.originAddress, args.nodeAddresses),
   ).length;
   if (originEntries > 0)
     return {

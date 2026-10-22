@@ -27,7 +27,8 @@
  * outside check finds the new address unreachable.
  *
  * Discovery: every resource carries our deterministic name or tag and the
- * listings are authoritative, so each step answers found / confirmed_absent.
+ * listings are authoritative, so each step answers found / confirmed_absent
+ * (absent only on a second quiet look: a lost create may not be listed yet).
  *
  * Destroy order is by kind: frontend → backend → LB → flexible IPs (an IP
  * cannot be released while an LB holds it). Every kind is read back after its
@@ -54,6 +55,7 @@ import type {
   DiscoverResult,
   Addresses,
   ChildResource,
+  Discovery,
   EdgeDescription,
   EdgeSpec,
   Ledger,
@@ -64,6 +66,7 @@ import type {
   StepOutcome,
 } from './types';
 import { firstResource, orderByKind, resourcesOfKind, stepOf } from './types';
+import { discoveryMaySettle } from './capabilities';
 import { z } from 'zod';
 import {
   EdgeProviderError,
@@ -890,8 +893,14 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
     return { status: 'sent', settled: after.settle === 'ready' };
   },
 
-  async discover(cfg, step, spec, ledger) {
+  async discover(cfg, step, spec, ledger, attempt) {
     const api = apiFactory(cfg);
+    // A create whose answer was lost may not be listed yet: one quiet look is
+    // not proof, a second one is.
+    const absent = (): Discovery =>
+      discoveryMaySettle('scaleway', attempt, stepOf(ledger, step.id)?.startedAt)
+        ? { status: 'confirmed_absent' }
+        : { status: 'unresolved' };
     switch (step.kind) {
       case 'allocate_ip':
       case 'allocate_ipv6': {
@@ -913,7 +922,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
               ],
               addresses: wantV6 ? { v6: hit.ipAddress } : { v4: hit.ipAddress },
             }
-          : { status: 'confirmed_absent' };
+          : absent();
       }
       // A step found by name is done only once the LB has applied it, as after
       // its own poll: while the LB is still applying, discovery keeps looking.
@@ -929,7 +938,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
               resources: [{ kind: 'lb', resourceId: hit.id, ownership: 'adopted' }],
               addresses: addressesOf(hit.ip),
             }
-          : { status: 'confirmed_absent' };
+          : absent();
       }
       case 'create_backend': {
         const lb = firstResource(ledger, 'lb');
@@ -945,7 +954,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
               status: 'found',
               resources: [{ kind: 'backend', resourceId: hit.id, ownership: 'adopted' }],
             }
-          : { status: 'confirmed_absent' };
+          : absent();
       }
       case 'create_frontend': {
         const lb = firstResource(ledger, 'lb');
@@ -961,7 +970,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
               status: 'found',
               resources: [{ kind: 'frontend', resourceId: hit.id, ownership: 'adopted' }],
             }
-          : { status: 'confirmed_absent' };
+          : absent();
       }
       default:
         return { status: 'confirmed_absent' };

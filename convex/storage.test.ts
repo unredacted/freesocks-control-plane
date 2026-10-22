@@ -7,6 +7,7 @@ import { internal } from './_generated/api';
 import { pinSubscriptionToNode } from './lib/nodePinning';
 import { relabelMemberEntries } from './lib/memberEntryNames';
 import { sha256Hex } from './lib/crypto';
+import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import {
   deleteFromProviders,
   uploadToProviders,
@@ -417,4 +418,106 @@ describe('provisionMirror honours the pending node switch', () => {
       expect((await ctx.db.get(subId))!.subscriptionMirrors).toEqual([]);
     });
   }, 20_000);
+});
+
+describe('a change members must see reaches every mirror in one pass', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  test('a triggered refresh renders a mirrored key far past the sweep window', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const pinned = pinSubscriptionToNode(RAW, 'short-last');
+    const hash = await sha256Hex(memberBody(pinned.content));
+    const subId = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const backendServerId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'n1',
+        slug: 'n1',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('mirrorProviders', {
+        name: 'p1',
+        endpoint: 'https://s3.invalid',
+        bucket: 'b',
+        publicUrl: 'https://cdn.test',
+        region: 'auto',
+        accessKeyId: 'ak',
+        secretAccessKey: 'sk',
+        isActive: true,
+        priority: 0,
+        updatedAt: Date.now(),
+      });
+      const key = (i: number) => ({
+        userId,
+        backend: 'remnawave' as const,
+        backendUserId: `k${i}`,
+        backendShortId: `short${i}`,
+        backendServerId,
+        subscriptionUrl: `https://panel.test/sub/short${i}`,
+        subscriptionMirrors: [],
+        state: 'active' as const,
+        updatedAt: Date.now(),
+      });
+      // More active keys than one sweep run reads, and the one mirrored key last.
+      for (let i = 0; i < 2600; i++) await ctx.db.insert('subscriptions', key(i));
+      return ctx.db.insert('subscriptions', {
+        ...key(2600),
+        backendShortId: 'short-last',
+        subscriptionMirrors: [{ provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'x' }],
+        rawContentHash: hash,
+      });
+    });
+    const fetches = vi.fn(async () => new Response(RAW, { status: 200 }));
+    vi.stubGlobal('fetch', fetches);
+    await t.run((ctx) => scheduleMirrorRefresh(ctx));
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetches).toHaveBeenCalledTimes(1);
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.lastDeliveredContentAt).toBeDefined();
+  }, 60_000);
+
+  test('requests while a pass runs make it go round once more, not once each', async () => {
+    const t = convexTest(schema, modules);
+    const claim = () => t.mutation(internal.mirrorProviders.claimMirrorPass, {});
+    const progress = (done: boolean) =>
+      t.mutation(internal.mirrorProviders.noteMirrorPass, { done });
+    expect(await claim()).toBe(true);
+    expect(await claim()).toBe(false);
+    expect(await claim()).toBe(false);
+    expect(await progress(false)).toBe(false);
+    // The end of the pass: one more round for the two requests it absorbed...
+    expect(await progress(true)).toBe(true);
+    // ...and then it is over: the next request starts a pass of its own.
+    expect(await progress(true)).toBe(false);
+    expect(await claim()).toBe(true);
+  });
 });

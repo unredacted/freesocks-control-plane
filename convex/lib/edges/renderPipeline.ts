@@ -41,6 +41,12 @@ export interface EdgeRenderContext {
   rule: EffectiveRule;
   preferDistinctProviders: boolean;
   originAddress: string;
+  /**
+   * Other addresses the node is known by (an enrolled node's other public
+   * addresses and names, a name among its Hosts that resolves to it): an
+   * entry at any of them is the node too (`leak_detected`).
+   */
+  nodeAddresses?: string[];
   deliveryStyle?: DeliveryStyle;
   /** Delivery by country: proven edges needed before they are handed out alone (default 1). */
   minProvenForExclusive?: number;
@@ -138,6 +144,7 @@ export function applyEdgeRender(
     assigned,
     rule: rctx.rule,
     originAddress: rctx.originAddress,
+    nodeAddresses: rctx.nodeAddresses,
     deliveryStyle: rctx.deliveryStyle,
   });
   // (6): the eligibility snapshot the DB half persists on the subscription.

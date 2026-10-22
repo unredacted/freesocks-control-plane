@@ -50,6 +50,7 @@ import { liveEdgesOfRelay } from './lib/edges/relayGuards';
 import type { VectorActivation } from './lib/edges/setupRuns';
 import { listenersOf } from './relayListeners';
 import { activationVectorFor } from './nodeActivation';
+import { nodeAddressesOf } from './nodeIntents';
 
 export const REHEARSAL_MAX_ATTEMPTS = 3;
 
@@ -244,6 +245,7 @@ export const context = internalQuery({
       nodeName: relay.origin.kind === 'panel-node' ? (relay.nodeName ?? null) : null,
       panelNode: relay.origin.kind === 'panel-node' && capabilitiesOf(server.backend).placement,
       originAddress: relay.originAddress,
+      nodeAddresses: await nodeAddressesOf(ctx, relay),
       epoch: relay.publicationEpoch,
       formats,
       deliveryStyle,
@@ -313,6 +315,7 @@ async function rehearseBody(
     rule: { ...c.rules[family], enabled: true },
     preferDistinctProviders: c.preferDistinctProviders,
     originAddress: c.originAddress,
+    nodeAddresses: c.nodeAddresses,
     deliveryStyle: c.deliveryStyle,
   };
   const out = applyEdgeRender(rctx, content, renderKey, { now: Date.now() });

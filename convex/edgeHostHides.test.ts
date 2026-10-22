@@ -18,6 +18,7 @@ import { classifyDirectHosts, listingHash } from './lib/edges/directHosts';
 import { cohortPage, type Cohort, type CohortCursor, type CohortPage } from './lib/edges/cohorts';
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
 import { HOST_OP_TTL_MS, HOST_SETTLE_MS } from './hostOps';
+import { __setNameResolutionForTests } from './nodeIntentOps';
 import { fakeHostPanel, type AddressRow } from './lib/edges/testing/fakeHostPanel';
 import {
   FIXTURE_CONFIG_PROFILE,
@@ -650,6 +651,54 @@ describe('acceptance 17: a direct Host reappears on a bound guided origin', () =
     await t.action(internal.hostOps.reconcileHosts, {});
     expect(panel.patches).toHaveLength(before);
     expect((await relay()).directHostAlert).toBeUndefined();
+  });
+});
+
+describe('the node by any of its addresses', () => {
+  afterEach(() => __setNameResolutionForTests(null));
+  const D3 = 'd3d3d3d3-d3d3-4d3d-8d3d-d3d3d3d3d3d3';
+  const D4 = 'd4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4';
+  const D5 = 'd5d5d5d5-d5d5-4d5d-8d5d-d5d5d5d5d5d5';
+  const direct = (uuid: string, address: string): AddressRow => ({
+    uuid,
+    remark: `${FIXTURE_NODE}-reality`,
+    address,
+    port: 443,
+    sni: 'target.example',
+    isDisabled: false,
+    inbound: inbound(FIXTURE_INBOUND),
+  });
+
+  test('a direct Host dialling the node by a name, its other family or another spelling is hidden, and never served if it comes back', async () => {
+    // The name resolves to the node, and to its IPv6 as well.
+    __setNameResolutionForTests(async (name) =>
+      name === 'node-one.example.net'
+        ? { v4: [FIXTURE_ORIGIN], v6: ['2001:db8::10'] }
+        : { v4: ['198.51.100.200'], v6: [] },
+    );
+    const hosts = [
+      ...panelHosts(),
+      direct(D3, 'node-one.example.net'),
+      direct(D4, '2001:db8:0:0::10'),
+      direct(D5, `::ffff:${FIXTURE_ORIGIN}`),
+      // A Host at a name that is not the node stays as it is.
+      { ...direct('elsewhere', 'cdn.example.org'), remark: 'other-front' },
+    ];
+    const { t, panel, relayId, download, relay } = await world({ hosts });
+    const hid = await t.action(internal.edgeHostHides.hide, { relayId, approvedUuids: [] });
+    expect(hid).toMatchObject({ hidden: 4 });
+    for (const id of [D1, D3, D4, D5]) expect(panel.find(id).isDisabled).toBe(true);
+    expect(panel.find('elsewhere').isDisabled).toBe(false);
+    expect((await relay()).nodeAddresses).toEqual(['node-one.example.net', '2001:db8::10']);
+    expect((await download()).status).toBe(200);
+    // Enabled again behind FCP's back: delivery refuses rather than hand the node out.
+    for (const id of [D3, D4, D5]) {
+      panel.find(id).isDisabled = false;
+      const leak = await download();
+      expect(leak.status).toBe(503);
+      expect(leak.reason).toBe('leak_detected');
+      panel.find(id).isDisabled = true;
+    }
   });
 });
 

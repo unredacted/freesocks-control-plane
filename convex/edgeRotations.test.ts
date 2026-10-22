@@ -2071,3 +2071,328 @@ describe('edgeRotations: delivery by country holds a block it already routes aro
     }
   });
 });
+
+describe('edgeRotations: a provision step that keeps failing', () => {
+  /**
+   * UpCloud where the load balancer is created but the floating IP never is
+   * (a 500 on every allocation, and no floating IP to discover), plus a backend
+   * with no Hosts. Records every LB create and every delete.
+   */
+  function ipNeverAllocates() {
+    const lbs = new Map<string, { uuid: string; name: string; operational_state: string }>();
+    const deletes: string[] = [];
+    let lbCreates = 0;
+    mockFetch((c) => {
+      if (new URL(c.url).hostname === 'panel.example') {
+        if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: [] });
+        return jsonRes({ message: 'not found' }, 404);
+      }
+      if (c.path === '/1.3/load-balancer' && c.method === 'POST') {
+        lbCreates++;
+        const uuid = `lb-${lbCreates}`;
+        lbs.set(uuid, {
+          uuid,
+          name: (c.body as { name: string }).name,
+          operational_state: 'running',
+        });
+        return jsonRes(lbs.get(uuid));
+      }
+      if (c.path === '/1.3/load-balancer' && c.method === 'GET') return jsonRes([...lbs.values()]);
+      if (c.path === '/1.3/ip_address' && c.method === 'POST')
+        return jsonRes({ error: { error_code: 'INTERNAL_ERROR' } }, 500);
+      if (c.path === '/1.3/ip_address' && c.method === 'GET')
+        return jsonRes({ ip_addresses: { ip_address: [] } });
+      const one = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
+      if (one && c.method === 'GET') {
+        const lb = lbs.get(one[1]);
+        return lb ? jsonRes(lb) : jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
+      }
+      if (one && c.method === 'DELETE') {
+        if (!lbs.has(one[1])) return jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
+        lbs.delete(one[1]);
+        deletes.push(one[1]);
+        return new Response(null, { status: 204 });
+      }
+      return jsonRes({ message: 'not found' }, 404);
+    });
+    return { lbs, deletes, lbCreates: () => lbCreates };
+  }
+
+  /** backend-a + a qualified UpCloud account + origin node-one with listener `u`, nothing published. */
+  async function bareSeed() {
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    await createAccount(t, { provider: 'upcloud', name: 'acct-u', qualified: true });
+    const { relayId } = await registerRelay(t, { listeners: [listenerU()] });
+    return { t, relayId };
+  }
+
+  test('retries exhausted after the load balancer was built: the failed edge is destroyed with it', async () => {
+    vi.useFakeTimers();
+    const w = ipNeverAllocates();
+    const { t, relayId } = await bareSeed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      publishOnDone: false,
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('failed');
+    expect(r.outcome).toBe('step_retries_exhausted');
+    const failed = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    expect(failed.status).toBe('failed');
+    expect(failed.resources.map((x) => x.resourceId)).toEqual(['lb-1']);
+    // Nothing exists for the step that never succeeded, so nothing holds the
+    // edge back from the destroy walk: the load balancer it paid for goes.
+    expect(failed.steps.find((s) => s.stepId === 'ip')!.state).toBe('pending');
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+      await t.action(internal.edgeReconcile.run, {});
+    }
+    expect(w.deletes).toEqual(['lb-1']);
+    expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!.status).toBe('destroyed');
+  });
+
+  test('automatic upkeep does not provision again right after its provision failed', async () => {
+    vi.useFakeTimers();
+    const w = ipNeverAllocates();
+    const { t, relayId } = await bareSeed();
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoProvisionToDesired', 'true');
+    });
+    await t.action(internal.edgeReconcile.run, {});
+    const first = (await t.query(internal.relays.get, { id: relayId }))!.activeRotationId!;
+    expect(first).toBeDefined();
+    await drain(t, first);
+    expect((await t.query(internal.edgeRotations.get, { id: first }))!.phase).toBe('failed');
+    // The next ticks inside the back-off clean up and start nothing new.
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+      await t.action(internal.edgeReconcile.run, {});
+      expect((await t.query(internal.relays.get, { id: relayId }))!.activeRotationId).toBe(
+        undefined,
+      );
+    }
+    expect(w.lbCreates()).toBe(1);
+    expect(w.deletes).toEqual(['lb-1']);
+    // Past the back-off, upkeep tries again.
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    await t.action(internal.edgeReconcile.run, {});
+    expect((await t.query(internal.relays.get, { id: relayId }))!.activeRotationId).toBeDefined();
+  });
+});
+
+describe('edgeRotations: cancel while a create is in flight', () => {
+  test('the cancelled edge keeps what the create built and the reconcile destroys it', async () => {
+    vi.useFakeTimers();
+    const lbs = new Map<string, { uuid: string; name: string; operational_state: string }>();
+    const deletes: string[] = [];
+    const hook: {
+      t?: ReturnType<typeof convexTest>;
+      rotationId?: Id<'edgeRotations'>;
+      fired: boolean;
+    } = { fired: false };
+    mockFetch(async (c) => {
+      if (new URL(c.url).hostname === 'panel.example') {
+        if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: [] });
+        return jsonRes({ message: 'not found' }, 404);
+      }
+      if (c.path === '/1.3/load-balancer' && c.method === 'POST') {
+        const uuid = `lb-${lbs.size + 1}`;
+        lbs.set(uuid, {
+          uuid,
+          name: (c.body as { name: string }).name,
+          operational_state: 'running',
+        });
+        if (!hook.fired) {
+          hook.fired = true;
+          // The operator cancels while the create is out; the cancel's own step
+          // runs, and so does a reconcile pass, before the create answers.
+          await hook.t!.mutation(internal.edgeRotations.requestCancel, {
+            rotationId: hook.rotationId!,
+          });
+          await hook.t!.action(internal.edgeRotations.step, { rotationId: hook.rotationId! });
+          await hook.t!.action(internal.edgeReconcile.run, {});
+        }
+        return jsonRes(lbs.get(uuid));
+      }
+      if (c.path === '/1.3/load-balancer' && c.method === 'GET') return jsonRes([...lbs.values()]);
+      const one = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
+      if (one && c.method === 'GET') {
+        const lb = lbs.get(one[1]);
+        return lb ? jsonRes(lb) : jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
+      }
+      if (one && c.method === 'DELETE') {
+        if (!lbs.has(one[1])) return jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
+        lbs.delete(one[1]);
+        deletes.push(one[1]);
+        return new Response(null, { status: 204 });
+      }
+      return jsonRes({ message: 'not found' }, 404);
+    });
+    const t = convexTest(schema, modules);
+    hook.t = t;
+    await insertPanelServer(t);
+    await createAccount(t, { provider: 'upcloud', name: 'acct-u', qualified: true });
+    const { relayId } = await registerRelay(t, { listeners: [listenerU()] });
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      publishOnDone: false,
+    });
+    hook.rotationId = rotationId;
+    const r0 = await driveUntil(t, rotationId, 'provisioning');
+    // The step that claims `create_lb` and calls the provider (the hook fires inside it).
+    await t.action(internal.edgeRotations.step, { rotationId });
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
+      'cancelled',
+    );
+    const edge = (await t.query(internal.edges.get, { id: r0.toEdgeId! }))!;
+    // The late answer is recorded on the edge, which stays cancelled.
+    expect(edge.status).toBe('cancelled');
+    expect(edge.resources.map((x) => x.resourceId)).toEqual(['lb-1']);
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+      await t.action(internal.edgeReconcile.run, {});
+    }
+    expect(deletes).toEqual(['lb-1']);
+    expect((await t.query(internal.edges.get, { id: r0.toEdgeId! }))!.status).toBe('destroyed');
+  });
+});
+
+describe('edgeRotations: the replaced edge while a replace is still running', () => {
+  /** UpCloud + a backend whose Host table can go down; every LB delete recorded. */
+  function world() {
+    const panelHosts: BackendAddress[] = [];
+    const lbs = new Map<string, { uuid: string; name: string; operational_state: string }>();
+    const deletes: string[] = [];
+    let ips = 0;
+    const state = { panelDown: false };
+    mockFetch((c) => {
+      if (new URL(c.url).hostname === 'panel.example') {
+        if (state.panelDown) return jsonRes({ message: 'down' }, 503);
+        if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: panelHosts });
+        if (c.path === '/api/hosts' && c.method === 'PATCH') {
+          const body = c.body as { uuid: string; address: string; port: number };
+          const h = panelHosts.find((x) => x.uuid === body.uuid)!;
+          h.address = body.address;
+          h.port = body.port;
+          return jsonRes({ response: h });
+        }
+        if (c.path === '/api/hosts' && c.method === 'POST') {
+          const body = c.body as Omit<BackendAddress, 'uuid'>;
+          panelHosts.push({ ...body, uuid: HOST_UUID });
+          return jsonRes({ response: { uuid: HOST_UUID } });
+        }
+        return jsonRes({ message: 'not found' }, 404);
+      }
+      if (c.path === '/1.3/load-balancer' && c.method === 'POST') {
+        const uuid = `lb-${lbs.size + deletes.length + 1}`;
+        lbs.set(uuid, {
+          uuid,
+          name: (c.body as { name: string }).name,
+          operational_state: 'running',
+        });
+        return jsonRes(lbs.get(uuid));
+      }
+      if (c.path === '/1.3/load-balancer' && c.method === 'GET') return jsonRes([...lbs.values()]);
+      if (c.path === '/1.3/ip_address' && c.method === 'POST')
+        return jsonRes({ ip_address: { address: `198.51.100.${60 + ++ips}`, floating: 'yes' } });
+      if (/^\/1\.3\/load-balancer\/[^/]+\/ip-addresses$/.test(c.path) && c.method === 'POST')
+        return jsonRes({});
+      const one = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
+      if (one && c.method === 'GET') {
+        const lb = lbs.get(one[1]);
+        return lb ? jsonRes(lb) : jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
+      }
+      if (one && c.method === 'DELETE') {
+        if (!lbs.has(one[1])) return jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
+        lbs.delete(one[1]);
+        deletes.push(one[1]);
+        return new Response(null, { status: 204 });
+      }
+      if (/^\/1\.3\/ip_address\/[^/]+$/.test(c.path) && c.method === 'DELETE')
+        return new Response(null, { status: 204 });
+      return jsonRes({ message: 'not found' }, 404);
+    });
+    return { state, deletes };
+  }
+
+  /** Origin node-one with listener `u`: a managed edge A published by a publish run, and a tested spare B. */
+  async function published() {
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    await createAccount(t, { provider: 'upcloud', name: 'acct-u', qualified: true });
+    const { relayId } = await registerRelay(t, { listeners: [listenerU()] });
+    const a = await provisionSpare(t, relayId);
+    const pub = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'publish',
+      trigger: 'manual',
+      toEdgeId: a,
+    });
+    await drain(t, pub.rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: pub.rotationId }))!.phase).toBe('done');
+    await provisionSpare(t, relayId);
+    // A short drain (the minimum allowed is one minute), and past any cooldown.
+    await t.run((ctx) => ctx.db.patch(relayId, { drainMs: 60_000 }));
+    vi.setSystemTime(Date.now() + 3 * 60 * 60_000);
+    return { t, relayId, a };
+  }
+
+  test('its drain ending mid-run does not destroy it, and the rollback serves it again', async () => {
+    vi.useFakeTimers();
+    const w = world();
+    const { t, relayId, a } = await published();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: a,
+    });
+    await driveUntil(t, rotationId, 'host_flipping');
+    // The backend is unreachable during the flip; the drain runs out; a reconcile pass runs.
+    w.state.panelDown = true;
+    vi.setSystemTime(Date.now() + 2 * 60_000);
+    await t.action(internal.edgeReconcile.run, {});
+    expect((await t.query(internal.edges.get, { id: a }))!.status).toBe('draining');
+    expect(w.deletes).toEqual([]);
+    // The operator cancels: the rollback puts A back, and A still exists.
+    w.state.panelDown = false;
+    await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
+    await drain(t, rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
+      'rolled_back',
+    );
+    const after = (await t.query(internal.edges.get, { id: a }))!;
+    expect(after.status).toBe('active');
+    expect(after.publication).toBe('published');
+    expect(w.deletes).toEqual([]);
+  });
+
+  test('the rollback never publishes a replaced edge that is being destroyed', async () => {
+    vi.useFakeTimers();
+    world();
+    const { t, relayId, a } = await published();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: a,
+    });
+    await driveUntil(t, rotationId, 'host_flipping');
+    await t.run((ctx) => ctx.db.patch(a, { status: 'destroying' }));
+    await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
+    await drain(t, rotationId);
+    const after = (await t.query(internal.edges.get, { id: a }))!;
+    expect(after.status).toBe('destroying');
+    expect(after.publication).not.toBe('published');
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds).not.toContain(
+      a,
+    );
+  });
+});

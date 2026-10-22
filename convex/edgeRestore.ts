@@ -58,11 +58,14 @@ import { applyDeleteBody, deliveryBindingFor } from './relays';
 import { assertNoRelayPanelClaim, scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { listenerRemark, listenersOf } from './relayListeners';
 import { listPanelHosts, restoreOne, type HideRow } from './edgeHostHides';
+import { nodeAddressesOf } from './nodeIntents';
 
 // --- the pure raw-body judgement -----------------------------------------------------------------
 
 export interface RawBodyContext {
   originAddress: string;
+  /** Other addresses that are the node (`nodeIntents.nodeAddressesOf`): direct entries too. */
+  nodeAddresses?: string[];
   /** Listener remarks + adopted legacy remarks. */
   fcpRemarks: string[];
   nodeName: string | null;
@@ -93,7 +96,7 @@ export function judgeRawBody(body: string, ctx: RawBodyContext): RawBodyVerdict 
     const u = parseProxyUri(line);
     if (!u) continue;
     entries++;
-    if (sameAddress(u.host, ctx.originAddress)) {
+    if ([ctx.originAddress, ...(ctx.nodeAddresses ?? [])].some((a) => sameAddress(u.host, a))) {
       direct++;
       continue;
     }
@@ -123,6 +126,14 @@ export const start = internalMutation({
   handler: async (ctx, { relayId, purpose, actorAdminId, darkCohortKeys, force }) => {
     const relay = await ctx.db.get(relayId);
     if (!relay) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    // A cancelled setup restores only an origin a setup still owns: one that
+    // went live serves members through its edges, whatever run is cancelled.
+    // (A workflow already running is refused below, in its own words.)
+    if (purpose === 'cancel_setup' && !relay.setupOwned && !relay.restore)
+      throw new ConvexError({
+        code: 'edge.origin_live',
+        message: 'The origin went live; cancelling a setup run no longer restores it',
+      });
     await assertNoRelayPanelClaim(ctx.db, relay);
     await startRestoreWorkflow(ctx, relay, {
       purpose,
@@ -234,6 +245,7 @@ export const context = internalQuery({
       rotationRunning,
       raw: {
         originAddress: relay.originAddress,
+        nodeAddresses: await nodeAddressesOf(ctx, relay),
         fcpRemarks,
         nodeName: relay.nodeName ?? null,
         edgeAddresses,

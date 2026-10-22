@@ -1489,6 +1489,10 @@ export default defineSchema({
     backendServerId: v.optional(v.id('backendServers')),
     nodeName: v.optional(v.string()),
     originAddress: v.string(),
+    // Names among the node's Hosts found to resolve to the node, with their
+    // answers (its other family): the node too, for the direct-Host hide and
+    // every leak check. Kept once found (nodeIntents.nodeAddressesOf).
+    nodeAddresses: v.optional(v.array(v.string())),
     locationCode: v.optional(v.string()),
     hostMode: relayHostMode,
     // The only delivery policy today: a subscription pinned to this origin is

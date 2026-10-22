@@ -257,14 +257,21 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   for (const edge of edges) {
     // Nothing bypasses a quarantine: no describe, drop, destroy or forget.
     if (quarantinedOrigins.has(edge.relayId as string)) continue;
+    const inRotation = rotatingOrigins.has(edge.relayId as string);
+    // A drained edge is removed only while no rotation runs on its origin: the
+    // edge a replace swapped out is what its rollback puts back, so its drain
+    // ending mid-run (a stuck flip) must not destroy it under the rollback.
+    const drained =
+      edge.status === 'draining' &&
+      edge.drainUntil !== undefined &&
+      edge.drainUntil <= now &&
+      !inRotation;
     if (!edge.managed || !edge.accountId) {
       // Observe-only edges: nothing to discover, describe or destroy. A failed /
       // cancelled adopted row is simply forgotten, and so is a DRAINING one once
       // its drain has elapsed: FCP never calls a provider for it, so without
       // this it would stay `draining` for good, keep its origin's delete from
       // finishing and keep counting against the account's live-edge cap.
-      const drained =
-        edge.status === 'draining' && edge.drainUntil !== undefined && edge.drainUntil <= now;
       if (drained || ['failed', 'cancelled', 'destroying'].includes(edge.status)) {
         await ctx.runMutation(internal.edges.patchEdge, {
           edgeId: edge._id,
@@ -274,7 +281,6 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       }
       continue;
     }
-    const inRotation = rotatingOrigins.has(edge.relayId as string);
     try {
       // 2. Settle unknown outcomes (outside a running rotation, which does this itself).
       if (!inRotation && isDiscoverable(edge, now)) {
@@ -296,14 +302,17 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         const fresh = await ctx.runQuery(internal.edges.get, { id: edge._id });
         if (fresh?.status === 'destroying') await destroyStep(ctx, cfg, fresh, report);
       };
-      if (edge.status === 'draining' && edge.drainUntil !== undefined && edge.drainUntil <= now) {
+      if (drained) {
         await destroyNow();
         continue;
       }
       if ((edge.status === 'failed' || edge.status === 'cancelled') && !inRotation) {
         // Only once every step is settled (done or confirmed absent): unresolved
-        // steps went through settleEdge above.
+        // steps went through settleEdge above. And never while a call is still
+        // out (a run cancelled during a create): what it builds is recorded by
+        // its settle, which a destroy now would clear and lose.
         if (
+          !edge.currentOp &&
           !edge.steps.some((s) =>
             ['requested', 'unresolved', 'ambiguous', 'needs_operator'].includes(s.state),
           )
@@ -443,6 +452,15 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       const standbysOf = (listenerId: string) =>
         standbys.filter((e) => (e.listenerId as string) === listenerId);
       const provision = async (listenerId: string | null, publishOnDone: boolean) => {
+        // An automatic provision that just failed is not started again every
+        // tick (each attempt pays for what it built before the failing step).
+        if (
+          await ctx.runQuery(internal.edgeRotations.autoProvisionBackingOff, {
+            relayId: origin._id,
+            now,
+          })
+        )
+          return;
         await ctx.runMutation(internal.edgeRotations.start, {
           relayId: origin._id,
           kind: 'provision',

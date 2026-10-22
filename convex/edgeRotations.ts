@@ -298,6 +298,31 @@ export const get = internalQuery({
   handler: (ctx, { id }) => ctx.db.get(id),
 });
 
+/**
+ * Whether automatic upkeep holds off provisioning on this origin: its latest
+ * rotation is an automatic provision that failed less than
+ * `autoProvisionBackoffMs` ago. Every attempt pays for what it built before the
+ * failing step, so a cause that persists (a quota, a provider fault) is not
+ * paid for again on every tick; a manual start is never held.
+ */
+export const autoProvisionBackingOff = internalQuery({
+  args: { relayId: v.id('relays'), now: v.number() },
+  handler: async (ctx, { relayId, now }): Promise<boolean> => {
+    const last = await ctx.db
+      .query('edgeRotations')
+      .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+      .order('desc')
+      .first();
+    return (
+      !!last &&
+      last.kind === 'provision' &&
+      last.trigger === 'reconcile' &&
+      last.phase === 'failed' &&
+      (last.finishedAt ?? last.updatedAt) > now - EDGE_PLUMBING.autoProvisionBackoffMs
+    );
+  },
+});
+
 export const getForAdmin = internalQuery({
   args: { id: v.id('edgeRotations') },
   handler: async (ctx, { id }) => {
@@ -2135,7 +2160,14 @@ export const applyRollbackBinding = internalMutation({
     let evicted: Id<'edges'> | null = null;
     if (r.previousBinding) {
       const prev = await ctx.db.get(r.previousBinding.edgeId);
-      if (prev && prev.status !== 'destroyed' && prev.publication !== 'published') {
+      // Only an edge that still serves (draining since the publish, or active)
+      // goes back: one being destroyed, failed or parked for an operator would
+      // hand members an address whose resources are going or gone.
+      if (
+        prev &&
+        (prev.status === 'draining' || prev.status === 'active') &&
+        prev.publication !== 'published'
+      ) {
         await ctx.db.patch(prev._id, {
           publication: 'published',
           status: 'active',
@@ -2313,9 +2345,7 @@ export const finalize = internalMutation({
         });
       }
     }
-    if (published && cfg.refreshMirrorsAfterFlip) {
-      await ctx.scheduler.runAfter(0, internal.storage.refreshActiveMirrors, {});
-    }
+    if (published && cfg.refreshMirrorsAfterFlip) await scheduleMirrorRefresh(ctx);
     return { ok: true as const };
   },
 });
@@ -4102,8 +4132,11 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         await releaseAfterDiscovery();
         const attempt = pending.attempt + 1;
         if (attempt > MAX_STEP_RETRIES) {
+          // Nothing exists for this step, so it stays `pending` (never built):
+          // the failed edge then has no unsettled step and the reconcile's
+          // destroy walk removes what the earlier steps built and billed.
           await settle(cl.opId, {
-            stepPatch: { stepId: pending.stepId, state: 'needs_operator', attempt },
+            stepPatch: { stepId: pending.stepId, state: 'pending', opRef: null, attempt },
           });
           await advanceCall(ctx, r._id, sv, {
             type: 'fail',
@@ -4170,7 +4203,13 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       return;
     }
     default:
-      // ambiguous / needs_operator: an operator decides.
+      // ambiguous / needs_operator: an operator decides, so the EDGE waits for
+      // one too (the fail below keeps such an edge as it is, and its billed
+      // resources stay raised until someone deletes them).
+      await ctx.runMutation(internal.edges.patchEdge, {
+        edgeId: edge._id,
+        status: 'needs_operator',
+      });
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
         code: `step_${pending.state}`,

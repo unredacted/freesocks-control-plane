@@ -895,6 +895,8 @@ const PLUMBING_DEFAULTS = {
   maxDestroyStepsPerPass: 12,
   /** Automatic starts one reconcile pass may make (`edge.enabled` is the switch). */
   maxReconcileStartsPerTick: 1,
+  /** After an automatic provision fails, upkeep provisions on that origin again only this much later. */
+  autoProvisionBackoffMs: 60 * MIN,
   /** Report rows read per origin per evaluation; past it the window is `incomplete` (no rotation). */
   maxReportRowsPerEval: 2000,
   /** Per-step timeout of the authenticated front qualification session. */

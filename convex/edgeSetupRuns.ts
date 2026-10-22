@@ -2762,6 +2762,9 @@ export const goLive = internalMutation({
     if (!relay || relay.deleting) return need('provider_failed', 'relay_missing');
     if (!relay.enabled) return need('provider_failed', 'relay_disabled');
     if (relay.quarantine) return need('quarantined', relay.quarantine.reason);
+    // A restore workflow (a cancel, a delete) is taking the origin back to
+    // direct delivery: binding it now would serve members what it removes.
+    if (relay.restore) return need('provider_failed', 'restore_in_progress');
     if (relay.activeRotationId) {
       const rot = await ctx.db.get(relay.activeRotationId);
       if (rot && !isTerminalPhase(rot.phase)) return back('rehearse', 'rotation_running');
@@ -3054,6 +3057,7 @@ export const retry = internalMutation({
     // only while the node is still live behind it and nothing else owns it.
     const reclaim = r.kind === 'reprotect' && r.state === 'failed';
     if (reclaim) await assertReprotectReclaimable(ctx, r);
+    else if (r.state === 'failed') await assertStillTheNodesRun(ctx, r);
     const now = Date.now();
     let stage = r.stage;
     let listeners = r.listeners.map((l) => ({ ...l }));
@@ -3433,6 +3437,39 @@ async function assertReprotectReclaimable(ctx: MutationCtx, r: Run): Promise<voi
     });
 }
 
+/**
+ * A failed run is tried again only while it is still the node's run: no run of
+ * the node is newer or still open, and its origin (once it has one) is still
+ * owned by a setup and serves no member. A newer run that took the half set
+ * up origin over, or went live on it, supersedes this one: trying the old run
+ * again would put two runs on one origin, and cancelling it would then delete
+ * or restore the live origin.
+ */
+async function assertStillTheNodesRun(ctx: MutationCtx, r: Run): Promise<void> {
+  const runs = await ctx.db
+    .query('edgeSetupRuns')
+    .withIndex('by_origin', (q) =>
+      q.eq('backendServerId', r.backendServerId).eq('nodeName', r.nodeName),
+    )
+    .collect();
+  const newer = runs.some(
+    (x) => x._id !== r._id && (x._creationTime > r._creationTime || !isTerminalRunState(x.state)),
+  );
+  const relay = r.relayId ? await ctx.db.get(r.relayId) : null;
+  if (newer || (relay && (!relay.setupOwned || (await servesMembers(ctx, relay)))))
+    throw new ConvexError({
+      code: 'edge.setup_run_superseded',
+      message: 'A newer setup run took this node over; open that run or start a new one',
+    });
+}
+
+/** Whether a delivery binding names this origin (deferred or not): members depend on it. */
+async function servesMembers(ctx: { db: QueryCtx['db'] }, relay: Relay): Promise<boolean> {
+  if (!relay.backendServerId) return false;
+  const binding = await deliveryBindingFor(ctx.db, relay.backendServerId, relay.nodeName);
+  return !!binding && binding.relaySlug === relay.slug;
+}
+
 /** Whether the node's members are served through THIS origin (its delivery binding is active). */
 export async function boundToRelay(ctx: { db: QueryCtx['db'] }, relay: Relay): Promise<boolean> {
   if (relay.bindingDeferred || !relay.backendServerId) return false;
@@ -3622,6 +3659,12 @@ export const resume = internalMutation({
  * instead of being left half set up; after go-live there is no cancel. A re-protect run
  * (`kind: 'reprotect'`) drops only its own candidates instead, in one
  * mutation (`cancelReprotect`): the live node keeps what members have.
+ *
+ * What happens is decided, and the run marked cancelled, in ONE mutation
+ * (`decideCancel`) before anything acts on it: a go-live that committed first
+ * refuses the cancel, and one still due is fenced out by the run's new step
+ * version. An origin that is live (no setup owns it, or a binding names it)
+ * is never deleted or restored: the cancel then only ends the run.
  */
 export const cancel = internalAction({
   args: { runId: v.id('edgeSetupRuns'), actorAdminId: v.optional(v.id('adminUsers')) },
@@ -3633,76 +3676,91 @@ export const cancel = internalAction({
     if (!r) throw new ConvexError({ code: 'not_found', message: 'Run not found' });
     if (r.kind === 'reprotect')
       return ctx.runMutation(internal.edgeSetupRuns.cancelReprotect, { runId, actorAdminId });
-    assertCancellable(r);
-    const parkedAtGoLive = r.stage === 'go_live' && r.state === 'needs_you';
-    let disposition: 'deleted' | 'restore' | 'none' = 'none';
-    if (r.relayId && cancelDeletesRelay(r.stage)) {
+    const d = await ctx.runMutation(internal.edgeSetupRuns.decideCancel, { runId, actorAdminId });
+    if (d.relayId && d.disposition === 'deleted') {
       await ctx.runMutation(internal.relays.requestDelete, {
-        id: r.relayId,
+        id: d.relayId,
         disposition: 'restore-direct',
         actorAdminId,
       });
-      disposition = 'deleted';
-    } else if (r.relayId && (cancelRestores(r.stage) || parkedAtGoLive)) {
-      if (!(await ctx.runQuery(internal.edgeSetupRuns.originEverServed, { relayId: r.relayId }))) {
-        await ctx.runMutation(internal.relays.requestDelete, {
-          id: r.relayId,
-          disposition: 'restore-direct',
-          actorAdminId,
-        });
-        disposition = 'deleted';
-      } else {
-        await ops.restoreStart(ctx, {
-          relayId: r.relayId,
-          purpose: 'cancel_setup',
-          actorAdminId,
-          darkCohortKeys: r.rehearsal?.darkCohortKeys ?? [],
-        });
-        disposition = 'restore';
-      }
+    } else if (d.relayId && d.disposition === 'restore') {
+      await ops.restoreStart(ctx, {
+        relayId: d.relayId,
+        purpose: 'cancel_setup',
+        actorAdminId,
+        darkCohortKeys: d.darkCohortKeys,
+      });
     }
     // A temporary test credential minted for this run expires now rather than
     // at its 24 h TTL (the sweep removes it; an origin delete releases too).
-    if (r.relayId)
-      await ctx.runMutation(internal.edgeTestCredentials.releaseForRelay, { relayId: r.relayId });
-    await ctx.runMutation(internal.edgeSetupRuns.markCancelled, {
-      runId,
-      disposition,
-      actorAdminId,
-    });
-    return { ok: true as const, disposition };
+    if (d.relayId)
+      await ctx.runMutation(internal.edgeTestCredentials.releaseForRelay, { relayId: d.relayId });
+    return { ok: true as const, disposition: d.disposition };
   },
 });
 
 export type CancelDisposition = 'deleted' | 'restore' | 'candidates' | 'none';
 
 /**
+ * The deciding half of a cancel, with the run's terminal write: re-read, still
+ * cancellable, and what happens to its origin judged from the rows as they are
+ * now. Marked cancelled here, so the go-live can no longer land in between.
+ */
+export const decideCancel = internalMutation({
+  args: { runId: v.id('edgeSetupRuns'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (
+    ctx,
+    { runId, actorAdminId },
+  ): Promise<{
+    disposition: 'deleted' | 'restore' | 'none';
+    relayId: Id<'relays'> | null;
+    darkCohortKeys: string[];
+  }> => {
+    const r = await ctx.db.get(runId);
+    if (!r) throw new ConvexError({ code: 'not_found', message: 'Run not found' });
+    if (r.kind === 'reprotect')
+      throw new ConvexError({
+        code: 'validation',
+        message: 'A re-protect run cancels its own way',
+      });
+    assertCancellable(r);
+    const parkedAtGoLive = r.stage === 'go_live' && r.state === 'needs_you';
+    const relay = r.relayId ? await ctx.db.get(r.relayId) : null;
+    let disposition: 'deleted' | 'restore' | 'none' = 'none';
+    if (relay && relay.setupOwned && !(await servesMembers(ctx, relay))) {
+      if (cancelDeletesRelay(r.stage)) disposition = 'deleted';
+      else if (cancelRestores(r.stage) || parkedAtGoLive)
+        disposition = (await originEverServed(ctx.db, relay)) ? 'restore' : 'deleted';
+    }
+    await markRunCancelled(ctx, r, disposition, actorAdminId);
+    return {
+      disposition,
+      relayId: relay?._id ?? null,
+      darkCohortKeys: r.rehearsal?.darkCohortKeys ?? [],
+    };
+  },
+});
+
+/**
  * Whether an origin ever reached members: an edge of it was published (now or
  * before), it hid a direct Host, or a delivery binding names it. One that
  * never did has nothing to restore and nothing worth keeping.
  */
-export const originEverServed = internalQuery({
-  args: { relayId: v.id('relays') },
-  handler: async (ctx, { relayId }): Promise<boolean> => {
-    const relay = await ctx.db.get(relayId);
-    if (!relay) return false;
-    if (relay.publishedEdgeIds.some(Boolean)) return true;
-    const hide = await ctx.db
-      .query('edgeHostHides')
-      .withIndex('by_relay', (q) => q.eq('relayId', relayId))
-      .first();
-    if (hide) return true;
-    const edges = await ctx.db
-      .query('edges')
-      .withIndex('by_relay_status', (q) => q.eq('relayId', relayId))
-      .collect();
-    if (edges.some((e) => e.publishedAt !== undefined || e.publication !== 'unpublished'))
-      return true;
-    if (!relay.backendServerId) return false;
-    const binding = await deliveryBindingFor(ctx.db, relay.backendServerId, relay.nodeName);
-    return !!binding && binding.relaySlug === relay.slug;
-  },
-});
+async function originEverServed(db: QueryCtx['db'], relay: Relay): Promise<boolean> {
+  if (relay.publishedEdgeIds.some(Boolean)) return true;
+  const hide = await db
+    .query('edgeHostHides')
+    .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+    .first();
+  if (hide) return true;
+  const edges = await db
+    .query('edges')
+    .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id))
+    .collect();
+  if (edges.some((e) => e.publishedAt !== undefined || e.publication !== 'unpublished'))
+    return true;
+  return servesMembers({ db }, relay);
+}
 
 /**
  * Cancel is refused once the run is finished or binding: after go-live there
@@ -3721,20 +3779,6 @@ function assertCancellable(r: Run): void {
       message: 'The run is past the point of cancellation',
     });
 }
-
-export const markCancelled = internalMutation({
-  args: {
-    runId: v.id('edgeSetupRuns'),
-    disposition: v.union(v.literal('deleted'), v.literal('restore'), v.literal('none')),
-    actorAdminId: v.optional(v.id('adminUsers')),
-  },
-  handler: async (ctx, { runId, disposition, actorAdminId }) => {
-    const r = await ctx.db.get(runId);
-    if (!r || isTerminalRunState(r.state)) return null;
-    await markRunCancelled(ctx, r, disposition, actorAdminId);
-    return null;
-  },
-});
 
 /** The end of every cancel: the end hook (THIS attempt), the terminal write, the audit. */
 async function markRunCancelled(

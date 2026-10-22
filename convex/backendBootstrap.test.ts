@@ -1627,6 +1627,26 @@ describe('enrolling a direct node', () => {
     ).rejects.toThrow(/mode_change_needs_admin/);
   });
 
+  test('a node dialled at its IPv4 is still known by its IPv6 and its management address', async () => {
+    const { t, serverId } = await seed();
+    await runSetup(t, serverId);
+    await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10', v6: '2001:db8::10' },
+        capabilities: { caddy: false, ipv6: true },
+      },
+    });
+    const origin = (await t.run((ctx) => enrolledOriginOf(ctx, serverId, 'node-a')))!;
+    expect(origin.originAddress).toBe('203.0.113.10');
+    // A direct Host at any of them is the node: the hide and the leak check count them.
+    expect(origin.directAddresses).toEqual(['2001:db8::10', '192.0.2.10']);
+  });
+
   test('the machine name is for operators only: kept, shown, never in a remark or the desired hash', async () => {
     const { t, serverId, panel } = await seed();
     await runSetup(t, serverId);

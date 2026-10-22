@@ -15,6 +15,7 @@ import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import {
   createAccount,
   insertPanelServer,
+  realityListener,
   registerRelay,
   seedEdgeFixture,
   wsListener,
@@ -592,6 +593,32 @@ describe('a Scaleway location with no Project id', () => {
     const lists = stub.calls.filter((c) => /\/lb\/v1\/zones\/[^/]+\/(lbs|ips)$/.test(c.path));
     expect(lists.length).toBeGreaterThan(0);
     for (const c of lists) expect(c.query).toContain(`project_id=${DEFAULT_PROJECT}`);
+  });
+
+  test('an edge keeps the project it was planned in when the key changes', async () => {
+    const t = convexTest(schema, modules);
+    const id = await scaleway(t);
+    const observe = (projectId: string) =>
+      t.run((c) =>
+        c.db.patch(id, { observedSettings: JSON.stringify({ defaultProjectId: projectId }) }),
+      );
+    await observe(DEFAULT_PROJECT);
+    await insertPanelServer(t);
+    const { relayId, listenerIds } = await registerRelay(t, {
+      listeners: [realityListener({ listenerKey: 'u', tlsNames: ['a.example'] })],
+    });
+    const { id: edgeId } = await insertPlanned(t, {
+      relayId,
+      listenerId: listenerIds.u,
+      accountId: id,
+      templateHash: 'h',
+      listeners: [{ edgePort: 443, originAddress: '203.0.113.10', originPort: 443 }],
+      steps: [{ id: 'lb', kind: 'create_lb', resourceName: 'n', discoverability: 'by_name' }],
+    });
+    // A rotated key whose default project is another one: the edge's calls stay where it lives.
+    await observe('99999999-8888-4777-8666-555555555555');
+    const placement = await t.query(internal.edgeLocations.placementOfEdge, { edgeId });
+    expect(placement).toMatchObject({ projectId: DEFAULT_PROJECT });
   });
 
   test('a key that may not read its default project passes its test, and the location asks for a Project id', async () => {

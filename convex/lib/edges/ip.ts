@@ -40,6 +40,56 @@ export function isIpv6Literal(s: string): boolean {
   return true;
 }
 
+/** The eight 16-bit groups of an IPv6 literal (an embedded IPv4 tail is two of them). */
+function v6Groups(t: string): number[] {
+  const [head = '', tail] = t.split('::');
+  const parse = (part: string): number[] =>
+    part === ''
+      ? []
+      : part.split(':').flatMap((g) => {
+          if (!g.includes('.')) return [parseInt(g, 16)];
+          const [a = 0, b = 0, c = 0, d = 0] = g.split('.').map(Number);
+          return [(a << 8) | b, (c << 8) | d];
+        });
+  const left = parse(head);
+  if (tail === undefined) return left;
+  const right = parse(tail);
+  return [...left, ...new Array<number>(8 - left.length - right.length).fill(0), ...right];
+}
+
+/**
+ * The one spelling of an IP literal, so two ways of writing the same address
+ * compare equal: IPv4 as its dotted quad; IPv6 lower-case and compressed
+ * (RFC 5952: no leading zeros, the longest run of zero groups as `::`), and an
+ * IPv4-mapped IPv6 (`::ffff:192.0.2.1`, `::ffff:c000:201`) as its IPv4. Null
+ * for anything that is not an IP literal (a name).
+ */
+export function canonicalIp(s: string): string | null {
+  const t = s
+    .trim()
+    .replace(/^\[|\]$/g, '')
+    .toLowerCase();
+  if (isIpv4Literal(t)) return t;
+  if (!isIpv6Literal(t)) return null;
+  const g = v6Groups(t);
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
+    return [g[6]! >> 8, g[6]! & 255, g[7]! >> 8, g[7]! & 255].join('.');
+  let best = -1;
+  let bestLen = 1;
+  for (let i = 0; i < 8; ) {
+    let j = i;
+    while (j < 8 && g[j] === 0) j++;
+    if (j - i > bestLen) {
+      best = i;
+      bestLen = j - i;
+    }
+    i = j > i ? j : i + 1;
+  }
+  const hex = g.map((x) => x.toString(16));
+  if (best < 0) return hex.join(':');
+  return `${hex.slice(0, best).join(':')}::${hex.slice(best + bestLen).join(':')}`;
+}
+
 export type AddressFamily = 'v4' | 'v6';
 
 export function addressFamily(s: string): AddressFamily | null {

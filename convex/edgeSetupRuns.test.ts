@@ -129,6 +129,8 @@ async function seed(
     reapply?: StageOps['reapplyEdge'];
     /** Thrown by the test-link builder instead of a link while it returns one. */
     testLinkError?: () => Error | null;
+    /** Runs inside the restore start, before it is recorded (a race lands here). */
+    onRestoreStart?: () => Promise<void>;
   } = {},
 ) {
   vi.useFakeTimers();
@@ -238,6 +240,7 @@ async function seed(
     }),
     vectorNow: (ctx, relayId) => ctx.runQuery(internal.edgeSetupRuns.localVector, { relayId }),
     restoreStart: async (_ctx, a) => {
+      await opts.onRestoreStart?.();
       calls.restore.push(a.purpose);
     },
   };
@@ -1914,6 +1917,95 @@ describe('edgeSetupRuns: cancel', () => {
     // It takes the origin's own edges back and goes live (no card without links).
     expect([r3.stage, r3.state]).toEqual(['done', 'done']);
     expect(r3.listeners.every((l) => !!l.edgeId)).toBe(true);
+  });
+});
+
+describe('edgeSetupRuns: an older failed run once a newer one took the node', () => {
+  test('Try again on it is refused, and no cancel deletes or restores the live origin', async () => {
+    const { t, serverId, accountId, calls } = await seed({ failCreateAt: 1 });
+    const { runId: old } = await startRun(t, serverId, accountId);
+    const failed = await pump(t, old, settled);
+    expect(failed.state).toBe('failed');
+    // A new run picks the half set up origin up and goes live on it.
+    const { runId: next } = await startRun(t, serverId, accountId);
+    await pump(t, next, settled);
+    await tickAll(t, next);
+    const live = await pump(t, next, settled);
+    expect(live.state).toBe('done');
+    expect(live.relayId).toBe(failed.relayId);
+    expect((await bindingFor(t, serverId))?.state).toBe('active');
+    // "Try again" on the old run's sheet.
+    await expect(t.mutation(internal.edgeSetupRuns.retry, { runId: old })).rejects.toThrow(
+      /setup_run_superseded/,
+    );
+    expect((await run(t, old)).state).toBe('failed');
+    // Even a run that found its way back onto the live origin cannot cancel it away.
+    await t.run((ctx) => ctx.db.patch(old, { state: 'running', stage: 'try_it' }));
+    const c = await t.action(internal.edgeSetupRuns.cancel, { runId: old });
+    expect(c.disposition).toBe('none');
+    const relay = (await t.run((ctx) => ctx.db.get(live.relayId!)))!;
+    expect(relay.deleting).toBeUndefined();
+    expect(relay.restore).toBeUndefined();
+    expect(calls.restore).toEqual([]);
+    expect((await bindingFor(t, serverId))?.state).toBe('active');
+  });
+});
+
+describe('edgeSetupRuns: a cancel racing the go-live', () => {
+  /** A run held at stage 7 (the rehearsal reports no serve), then released: its next step goes live. */
+  async function dueToGoLive() {
+    const race: { go?: () => Promise<void> } = {};
+    const seeded = await seed({ onRestoreStart: async () => race.go?.() });
+    const { t, serverId, accountId, setRehearsalHold } = seeded;
+    const { runId } = await startRun(t, serverId, accountId);
+    await pump(t, runId, settled);
+    setRehearsalHold(true);
+    await tickAll(t, runId);
+    const held = await pump(t, runId, settled);
+    expect(held.need?.code).toBe('rehearsal_failed');
+    setRehearsalHold(false);
+    // Try again: the rehearsal step is scheduled (not run yet); it passes and goes live at once.
+    await t.mutation(internal.edgeSetupRuns.retry, { runId });
+    return { ...seeded, runId, race };
+  }
+
+  test('a go-live due while the cancel decides never lands: the run ends cancelled and nothing binds', async () => {
+    const { t, serverId, calls, runId, race } = await dueToGoLive();
+    // Whatever the run has scheduled runs between the cancel's decision and its restore.
+    race.go = () => pump(t, runId, settled).then(() => undefined);
+    const c = await t.action(internal.edgeSetupRuns.cancel, { runId });
+    expect(c.disposition).toBe('restore');
+    expect(calls.restore).toEqual(['cancel_setup']);
+    expect((await run(t, runId)).state).toBe('cancelled');
+    expect(await bindingFor(t, serverId)).toBeNull();
+    expect((await relayOf(t, runId)).setupOwned).toBe(true);
+  });
+
+  test('go-live waits while a restore runs on the origin, and a cancelled setup restores only an origin it owns', async () => {
+    const { t, serverId, runId } = await dueToGoLive();
+    const r = await run(t, runId);
+    // A restore workflow takes the origin (another cancel, a delete) before the go-live step.
+    const now = Date.now();
+    await t.run((ctx) =>
+      ctx.db.patch(r.relayId!, {
+        restore: {
+          purpose: 'delete_relay',
+          phase: 'freeze',
+          attempt: 0,
+          startedAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    const after = await pump(t, runId, settled);
+    expect(after.state).toBe('needs_you');
+    expect(after.stage).toBe('go_live');
+    expect(await bindingFor(t, serverId)).toBeNull();
+    // An origin no setup owns any more is never restored as a cancelled setup.
+    await t.run((ctx) => ctx.db.patch(r.relayId!, { restore: undefined, setupOwned: undefined }));
+    await expect(
+      t.mutation(internal.edgeRestore.start, { relayId: r.relayId!, purpose: 'cancel_setup' }),
+    ).rejects.toThrow(/edge\.origin_live/);
   });
 });
 
