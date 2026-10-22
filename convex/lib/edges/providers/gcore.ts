@@ -19,6 +19,9 @@
  * Destroy order is by kind: LB first, then the floating IP it held. Deletes are
  * tasks, so each kind is read back: an LB that is not PENDING_DELETE after the
  * request means the delete never landed (`still_present`).
+ *
+ * Plans and prices (`plans`): the flavor list with `include_prices=true`, and
+ * the v2 price preview for a flavor it does not price (lib/edges/pricing.ts).
  */
 import { z } from 'zod';
 import type {
@@ -47,6 +50,7 @@ import {
   noteDiscoverError,
 } from './http';
 import { addressFamily, isPublicIpLiteral } from '../ip';
+import type { ProviderPlan } from '../pricing';
 import { GcoreTemplate, GCORE_TEMPLATE_FIELDS, type GcoreTemplateParams } from './templates';
 
 const BASE = 'https://api.gcore.com';
@@ -152,6 +156,35 @@ const RegionList = z
 const FlavorList = z
   .object({
     results: z.array(z.object({ flavor_name: z.string().nullish() }).passthrough()).default([]),
+  })
+  .passthrough();
+/** `GET /cloud/v1/lbflavors/{project}/{region}?include_prices=true` (`LbFlavorPricingSerializer`). */
+const FlavorPriceList = z
+  .object({
+    results: z
+      .array(
+        z
+          .object({
+            flavor_name: z.string().nullish(),
+            ram: z.number().nullish(),
+            vcpus: z.number().nullish(),
+            price_per_hour: z.number().nullish(),
+            price_per_month: z.number().nullish(),
+            currency_code: z.string().nullish(),
+            price_status: z.string().nullish(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+/** `POST /cloud/v2/pricing/{project}/{region}/loadbalancers` (`LoadBalancerPricingPreviewResponseSerializer`). */
+const PricePreview = z
+  .object({
+    currency_code: z.string().nullish(),
+    per_hour: z.object({ flavor: z.number().nullish() }).passthrough().nullish(),
+    per_month: z.object({ flavor: z.number().nullish() }).passthrough().nullish(),
+    price_status: z.string().nullish(),
   })
   .passthrough();
 
@@ -559,6 +592,43 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
     return inv;
   },
 
+  /**
+   * Every flavor of the region with its price, from the flavor list itself
+   * (`include_prices=true`). A flavor the list does not price (`price_status`
+   * other than `show`) is asked the v2 price preview, the price of creating
+   * that flavor here (a few at most). The list says nothing about traffic or
+   * bandwidth; a trial account reads every price as 0, as Gcore documents.
+   */
+  async plans(cfg) {
+    const list = await gcore(
+      cfg,
+      'plans',
+      'GET',
+      `/cloud/v1/lbflavors/${scope(cfg)}?include_prices=true`,
+      FlavorPriceList,
+    );
+    const out = list.results.flatMap((f) => (f.flavor_name ? [gcorePlanOf(f)] : []));
+    for (const p of out.filter((x) => x.currency === null).slice(0, GCORE_PREVIEW_MAX)) {
+      try {
+        const pre = await gcore(
+          cfg,
+          'plans',
+          'POST',
+          `/cloud/v2/pricing/${scope(cfg)}/loadbalancers`,
+          PricePreview,
+          { flavor: p.size },
+        );
+        if (pre.price_status !== 'show' || !pre.currency_code) continue;
+        p.perHour = pre.per_hour?.flavor ?? null;
+        p.perMonth = pre.per_month?.flavor ?? null;
+        p.currency = pre.currency_code.toUpperCase();
+      } catch {
+        // The preview is a second chance only: the flavor stays unpriced.
+      }
+    }
+    return out;
+  },
+
   planDestroy: (_cfg, ledger) => orderByKind(ledger, GCORE_DESTROY_ORDER),
 
   async runDestroy(cfg, r) {
@@ -613,6 +683,30 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
     }
   },
 };
+
+/** Flavors priced by the v2 preview when the flavor list prices none of them, at most. */
+const GCORE_PREVIEW_MAX = 8;
+
+/** One flavor of the priced list as a plan (exported for tests). */
+export function gcorePlanOf(f: z.infer<typeof FlavorPriceList>['results'][number]): ProviderPlan {
+  const shown = f.price_status === 'show' && !!f.currency_code;
+  const size = f.flavor_name ?? '';
+  const specs = [
+    typeof f.vcpus === 'number' ? `${f.vcpus} vCPU` : null,
+    typeof f.ram === 'number' ? `${Math.round((f.ram / 1024) * 10) / 10} GiB` : null,
+  ].filter(Boolean);
+  return {
+    size,
+    label: specs.length > 0 ? `${size} (${specs.join(', ')})` : size,
+    perHour: shown ? (f.price_per_hour ?? null) : null,
+    perMonth: shown ? (f.price_per_month ?? null) : null,
+    currency: shown ? f.currency_code!.toUpperCase() : null,
+    traffic: { kind: 'unknown' },
+    bandwidthMbps: null,
+    acceptsOutsideNode: null,
+    source: 'api',
+  };
+}
 
 /** The floating IP is attached to the LB's VIP port: the LB goes first. */
 const GCORE_DESTROY_ORDER = ['lb', 'floating_ip'] as const;

@@ -51,7 +51,7 @@ describe('edge provider meta', () => {
       Object.entries(EDGE_PROVIDER_META)
         .filter(([, m]) => m.sharedCertificates)
         .map(([id]) => id),
-    ).toEqual(['fastly']);
+    ).toEqual(['fastly', 'cloudfront']);
   });
 
   it('groups providers by what an account is for: L4, L7, then DNS', () => {
@@ -67,7 +67,7 @@ describe('edge provider meta', () => {
       'scaleway',
       'ovh',
     ]);
-    expect(groups.find((g) => g.id === 'l7')!.providers).toEqual(['fastly']);
+    expect(groups.find((g) => g.id === 'l7')!.providers).toEqual(['fastly', 'cloudfront']);
     // Cloudflare is a DNS provider here, listed ONLY as one (never as an L7 front).
     expect(groups.find((g) => g.id === 'dns')!.providers).toEqual(['cloudflare']);
     expect(providerGroupOf('cloudflare')).toBe('dns');

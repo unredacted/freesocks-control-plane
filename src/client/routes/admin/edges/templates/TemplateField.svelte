@@ -10,7 +10,9 @@
    *                                       default in a template; the template's for a node)
    *   changed: boolean                    shows the "differs from ..." chip + Reset
    *   baseWord?: string                   what `defaultValue` is, in the chip ("default")
-   *   offered?: { id, label }[]           the location's sizes, for a `from: 'flavors'` field
+   *   offered?: { id, label, plan? }[]    the location's sizes, for a `from: 'flavors'` field
+   *                                       (`plan`: its price, traffic and what it accepts; a
+   *                                       size FCP refuses for a node cannot be picked)
    *   disabled?: boolean
    *   onchange(value: unknown)            undefined clears the key
    *   onreset()
@@ -27,6 +29,8 @@
   import { displayValue } from '../lib/format';
   import { listToText, numberFromInput, textToList } from './params';
   import { kvToText, textToKv } from '../lib/options';
+  import { planOptionLabel, planRefused, type PlanLike } from '../lib/planWords';
+  import PlanFacts from '../components/PlanFacts.svelte';
 
   interface Props {
     field: EdgeTemplateField;
@@ -34,7 +38,7 @@
     defaultValue: unknown;
     changed: boolean;
     baseWord?: string;
-    offered?: ReadonlyArray<{ id: string; label: string }>;
+    offered?: ReadonlyArray<{ id: string; label: string; plan?: PlanLike }>;
     disabled?: boolean;
     onchange: (value: unknown) => void;
     onreset: () => void;
@@ -54,10 +58,11 @@
   const sizeChoices = $derived.by(() => {
     if (field.from !== 'flavors' || offered.length === 0) return null;
     const cur = typeof value === 'string' && value !== '' ? value : null;
-    return cur && !offered.some((o) => o.id === cur)
-      ? [...offered, { id: cur, label: cur }]
-      : offered;
+    const list: ReadonlyArray<{ id: string; label: string; plan?: PlanLike }> = offered;
+    return cur && !list.some((o) => o.id === cur) ? [...list, { id: cur, label: cur }] : list;
   });
+  /** The plan of the size shown (its price and terms under the picker). */
+  const shownPlan = $derived(sizeChoices?.find((o) => o.id === shown)?.plan ?? null);
 
   const uid = $props.id();
   const shown = $derived(value === undefined ? defaultValue : value);
@@ -153,10 +158,16 @@
       >
       <Select.Content>
         {#each sizeChoices as o (o.id)}
-          <Select.Item value={o.id}>{o.label}</Select.Item>
+          <Select.Item
+            value={o.id}
+            label={o.label}
+            disabled={!!o.plan && planRefused(o.plan) && o.id !== shown}
+            >{o.plan ? planOptionLabel(o.plan) : o.label}</Select.Item
+          >
         {/each}
       </Select.Content>
     </Select.Root>
+    {#if shownPlan}<PlanFacts plan={shownPlan} />{/if}
   {:else if field.type === 'number'}
     <Input
       id={`${uid}-f`}

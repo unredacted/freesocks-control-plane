@@ -91,6 +91,18 @@ const CONFIGS: Record<(typeof EDGE_PROVIDER_IDS)[number], EdgeProviderConfig> = 
       accountId: 'acct',
     },
   },
+  cloudfront: {
+    type: 'cloudfront',
+    accessKeyId: 'AKIAEXAMPLEEXAMPLE00',
+    secretAccessKey: 'SECRET_AWS',
+    certificateScope: 'wildcard',
+    dns: {
+      apiToken: 'SECRET_CF',
+      zoneId: '0123456789abcdef0123456789abcdef',
+      zoneName: 'example.org',
+      accountId: 'acct',
+    },
+  },
 };
 
 /** L4 providers only (the balancer-shaped tests below); L7 fronts have their own checks. */
@@ -112,6 +124,12 @@ const SETTINGS_WITH_NETWORK: Record<(typeof EDGE_PROVIDER_IDS)[number], Record<s
   },
   cloudflare: { zoneId: '0123456789abcdef0123456789abcdef', zoneName: 'example.org' },
   fastly: {
+    dnsAccountId: 'acct',
+    zoneId: '0123456789abcdef0123456789abcdef',
+    zoneName: 'example.org',
+  },
+  cloudfront: {
+    accessKeyId: 'AKIAEXAMPLEEXAMPLE00',
     dnsAccountId: 'acct',
     zoneId: '0123456789abcdef0123456789abcdef',
     zoneName: 'example.org',

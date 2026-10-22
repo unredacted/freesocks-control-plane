@@ -1,0 +1,151 @@
+{
+  "products": [
+    {
+      "sku": "/network/loadbalancer/ip/par1",
+      "description": "Load Balancer IP - fr-par-1 (0.005\u20ac per ip)",
+      "variant": "Load Balancer IP - fr-par-1",
+      "product": "Load Balancer IP",
+      "locality": {
+        "zone": "fr-par-1"
+      },
+      "price": {
+        "retail_price": {
+          "currency_code": "EUR",
+          "units": 0,
+          "nanos": 5000000
+        }
+      },
+      "properties": {
+        "load_balancer": {
+          "ipv4": {}
+        }
+      },
+      "unit_of_measure": {
+        "unit": "ip",
+        "size": 1
+      },
+      "status": "general_availability"
+    },
+    {
+      "sku": "/network/loadbalancer/loadbalancer-gp-l/par1",
+      "description": "Loadbalancer LB-GP-L - fr-par-1 (0.094\u20ac per node)",
+      "variant": "Loadbalancer LB-GP-L - fr-par-1",
+      "product": "LB-GP-L",
+      "locality": {
+        "zone": "fr-par-1"
+      },
+      "price": {
+        "retail_price": {
+          "currency_code": "EUR",
+          "units": 0,
+          "nanos": 94000000
+        }
+      },
+      "properties": {
+        "load_balancer": {
+          "node": {
+            "offer_id": "lb-gp-l",
+            "multi_cloud_provider": true,
+            "bandwidth": 1000000000
+          }
+        }
+      },
+      "unit_of_measure": {
+        "unit": "node",
+        "size": 1
+      },
+      "status": "general_availability"
+    },
+    {
+      "sku": "/network/loadbalancer/loadbalancer-gp-m/par1",
+      "description": "Loadbalancer LB-GP-M - fr-par-1 (0.054\u20ac per node)",
+      "variant": "Loadbalancer LB-GP-M - fr-par-1",
+      "product": "LB-GP-M",
+      "locality": {
+        "zone": "fr-par-1"
+      },
+      "price": {
+        "retail_price": {
+          "currency_code": "EUR",
+          "units": 0,
+          "nanos": 54000000
+        }
+      },
+      "properties": {
+        "load_balancer": {
+          "node": {
+            "offer_id": "lb-gp-m",
+            "multi_cloud_provider": false,
+            "bandwidth": 500000000
+          }
+        }
+      },
+      "unit_of_measure": {
+        "unit": "node",
+        "size": 1
+      },
+      "status": "general_availability"
+    },
+    {
+      "sku": "/network/loadbalancer/loadbalancer-gp-xl/par1",
+      "description": "Loadbalancer LB-GP-XL - fr-par-1 (0.941\u20ac per node)",
+      "variant": "Loadbalancer LB-GP-XL - fr-par-1",
+      "product": "LB-GP-XL",
+      "locality": {
+        "zone": "fr-par-1"
+      },
+      "price": {
+        "retail_price": {
+          "currency_code": "EUR",
+          "units": 0,
+          "nanos": 941000000
+        }
+      },
+      "properties": {
+        "load_balancer": {
+          "node": {
+            "offer_id": "lb-gp-xl",
+            "multi_cloud_provider": true,
+            "bandwidth": 4000000000
+          }
+        }
+      },
+      "unit_of_measure": {
+        "unit": "node",
+        "size": 1
+      },
+      "status": "general_availability"
+    },
+    {
+      "sku": "/network/loadbalancer/loadbalancer-s/par1",
+      "description": "Loadbalancer LB-S - fr-par-1 (0.023\u20ac per node)",
+      "variant": "Loadbalancer LB-S - fr-par-1",
+      "product": "LB-S",
+      "locality": {
+        "zone": "fr-par-1"
+      },
+      "price": {
+        "retail_price": {
+          "currency_code": "EUR",
+          "units": 0,
+          "nanos": 23000000
+        }
+      },
+      "properties": {
+        "load_balancer": {
+          "node": {
+            "offer_id": "lb-s",
+            "multi_cloud_provider": false,
+            "bandwidth": 200000000
+          }
+        }
+      },
+      "unit_of_measure": {
+        "unit": "node",
+        "size": 1
+      },
+      "status": "general_availability"
+    }
+  ],
+  "total_count": 5
+}

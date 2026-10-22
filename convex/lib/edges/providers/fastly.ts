@@ -1634,6 +1634,15 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         detail.push('zone_not_active');
         return out('zone_not_active');
       }
+      // The managed-DNS challenge is a CNAME: a zone that flattens every CNAME
+      // answers the CA with the target's addresses instead, so the certificate
+      // never issues. Unreadable is not a refusal.
+      const flat = dns.flattensAllCnames ? await dns.flattensAllCnames() : null;
+      if (flat !== null) observed.cnameFlattening = flat ? 'all' : 'root';
+      if (flat) {
+        detail.push('zone_flattens_cnames');
+        return out('zone_flattens_cnames');
+      }
       // The issuance preflight: the zone's CAA records must let the
       // certificate authority this zone's fronts get (the account's default)
       // issue, for the wildcard when its fronts share one.

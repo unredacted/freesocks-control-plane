@@ -50,6 +50,7 @@
   import { edgesPaths } from './lib/routes';
   import { relativeTime } from './lib/time';
   import type { KeyValueRow } from './lib/types';
+  import CostCard from './providers/CostCard.svelte';
   import CountriesCard from './providers/CountriesCard.svelte';
   import DeleteDialog from './providers/DeleteDialog.svelte';
   import InventoryTab from './providers/InventoryTab.svelte';
@@ -464,6 +465,7 @@
       <CountriesCard account={a} />
 
       {#key a.id}
+        <CostCard account={a} />
         <LimitsCard account={a} templates={tplList} />
       {/key}
 

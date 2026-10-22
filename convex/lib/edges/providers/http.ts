@@ -226,6 +226,8 @@ export interface ProviderFetchArgs<T> {
   okStatuses?: number[];
   /** Secrets that are NOT a request header value (a signing secret): redacted from `meta.detail`. */
   secrets?: string[];
+  /** A larger body read than `MAX_RESPONSE_BYTES` (a provider's public price catalog). */
+  maxBytes?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -271,7 +273,8 @@ async function readBounded(res: Response, limit: number): Promise<string | null>
  *
  * Redirects are never followed (`redirect: 'manual'` + a refusal): the request
  * carries credentials in its headers and a redirect would replay them against
- * another host. The body read is capped at `MAX_RESPONSE_BYTES`. There is NO
+ * another host. The body read is capped at `MAX_RESPONSE_BYTES` (or the call's
+ * `maxBytes`). There is NO
  * retry here on purpose — POST/DELETE are not idempotent at every provider;
  * the orchestrator retries through discovery instead.
  */
@@ -312,7 +315,7 @@ export async function providerFetch<T>(a: ProviderFetchArgs<T>): Promise<T> {
     }
     let bounded: string | null;
     try {
-      bounded = await readBounded(res, MAX_RESPONSE_BYTES);
+      bounded = await readBounded(res, a.maxBytes ?? MAX_RESPONSE_BYTES);
     } catch (err) {
       const timedOut = err instanceof Error && err.name === 'AbortError';
       if (timedOut)

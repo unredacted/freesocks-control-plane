@@ -88,6 +88,12 @@ import {
   type LocationAdmin,
 } from './edgeLocations';
 import { deleteCatalogOf } from './edgeProviderCatalog';
+import {
+  accountCostAdmin,
+  deletePlansOfAccount,
+  spendOf,
+  type AccountCostAdmin,
+} from './edgePlans';
 
 // A display label (never a provider resource name or a URL segment): same shape as a
 // template name.
@@ -118,7 +124,11 @@ function checkName(name: string): void {
  * DEFAULT location's (`qualified`: any enabled location is trusted), so a
  * single-location account reads as it always did; `locations` has them all.
  */
-export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>, locations: LocationAdmin[]) {
+export function mapAccountAdmin(
+  r: Doc<'edgeProviderAccounts'>,
+  locations: LocationAdmin[],
+  cost?: AccountCostAdmin,
+) {
   const { type: _t, ...raw } = r.settings as { type: string } & Record<string, unknown>;
   const settings = withoutPlacementKeys(r.provider, raw);
   const dflt = locations.find((l) => l.isDefault) ?? null;
@@ -173,6 +183,8 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>, locations: Locat
     // Dev only: the adapter behind this account is the in-memory fake, so the
     // CMS can badge it and no screenshot shows a real adapter name for it.
     fake: fakeShadowedIds().includes(r.provider),
+    // What the operator says the account costs, and its monthly estimate (`edgePlans`).
+    cost: cost ?? null,
     createdAt: new Date(r._creationTime).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
   };
@@ -236,7 +248,13 @@ export const listForAdmin = internalQuery({
     const rows = await ctx.db.query('edgeProviderAccounts').collect();
     const out = [];
     for (const r of rows.sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name)))
-      out.push(mapAccountAdmin(r, await locationsAdminOf(ctx.db, r)));
+      out.push(
+        mapAccountAdmin(
+          r,
+          await locationsAdminOf(ctx.db, r),
+          accountCostAdmin(r, await spendOf(ctx, r)),
+        ),
+      );
     return out;
   },
 });
@@ -245,7 +263,13 @@ export const getForAdmin = internalQuery({
   args: { id: v.id('edgeProviderAccounts') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
-    return r ? mapAccountAdmin(r, await locationsAdminOf(ctx.db, r)) : null;
+    return r
+      ? mapAccountAdmin(
+          r,
+          await locationsAdminOf(ctx.db, r),
+          accountCostAdmin(r, await spendOf(ctx, r)),
+        )
+      : null;
   },
 });
 
@@ -1063,6 +1087,7 @@ export const remove = internalMutation({
     }
     for (const loc of locations) await ctx.db.delete(loc._id);
     await deleteCatalogOf(ctx, id);
+    await deletePlansOfAccount(ctx, id);
     await ctx.db.delete(id);
     await writeAuditLog(ctx, {
       actorType: 'admin',

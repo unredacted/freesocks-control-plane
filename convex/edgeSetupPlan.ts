@@ -49,6 +49,8 @@ import {
 import { regionOffersOf } from './edgeProviderCatalog';
 import { placeProblemOf } from './lib/edges/l7Place';
 import { SIZE_NOT_MULTICLOUD, SIZE_NOT_MULTICLOUD_WORDS } from './lib/edges/sizeCheck';
+import { SPEND_CAP_REACHED, spendOf } from './edgePlans';
+import { atCap } from './lib/edges/pricing';
 import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
@@ -193,10 +195,13 @@ async function planContextOf(
       string,
       Array<{ id: string; label: string; project?: string }>
     > = {};
+    const accountSpendCap: Record<string, boolean> = {};
     for (const a of accounts) {
       accountLive[a._id as string] = (await liveEdgesOfAccount(ctx.db, a._id)).filter(
         (e) => e.managed,
       ).length;
+      if (typeof a.cost?.monthlyCap === 'number')
+        accountSpendCap[a._id as string] = atCap(await spendOf(ctx, a));
       const dflt = await defaultLocationOf(ctx.db, a);
       const rows = [];
       for (const loc of await locationsOfAccount(ctx.db, a._id))
@@ -308,6 +313,8 @@ async function planContextOf(
         live: accountLive[a._id as string] ?? 0,
         dailyAllocationBudget: a.dailyAllocationBudget,
         allocationsToday: a.allocationsDayKey === todayKey() ? a.allocationsToday : 0,
+        // At its monthly cap already: no new edge whatever it costs (the budget guard).
+        spendCapReached: accountSpendCap[a._id as string] === true,
         settings: a.settings as Record<string, unknown>,
         locations: accountLocations[a._id as string] ?? [],
         regions: accountRegions[a._id as string] ?? [],
@@ -438,6 +445,7 @@ function accountCompatibility(
   if (a.maxLiveEdges - a.live < need) reasons.push('account_capacity_reached');
   if (a.dailyAllocationBudget !== 0 && a.dailyAllocationBudget - a.allocationsToday < need)
     reasons.push('account_budget_exhausted');
+  if (a.spendCapReached) reasons.push(SPEND_CAP_REACHED);
   const locations = a.locations.map((loc) => {
     const why: string[] = [];
     if (websocketOnly) why.push('l4_not_for_websocket');
@@ -493,6 +501,12 @@ export function refuseSet(set: SetupPlanSet): void {
     throw new ConvexError({
       code: `edge.${SIZE_NOT_MULTICLOUD}`,
       message: SIZE_NOT_MULTICLOUD_WORDS,
+    });
+  // An account these edges would take past its monthly cap (the budget guard).
+  if (set.problems.some((p) => p.reason.replace(/^edge\./, '') === SPEND_CAP_REACHED))
+    throw new ConvexError({
+      code: `edge.${SPEND_CAP_REACHED}`,
+      message: 'These addresses would take an account past its monthly spend cap',
     });
   if (set.uncovered.length > 0)
     throw new ConvexError({
@@ -579,6 +593,33 @@ async function applyPickChecks(
         reason: r.code,
         ...(r.issues.length > 0 ? { detail: r.issues.join('; ') } : {}),
       });
+  }
+}
+
+/**
+ * What the picks cost a month before anything is created (`edgePlans.costOfPicks`):
+ * each pick's addresses at the size its options build, and the total. An
+ * account whose cap these edges would pass is a problem of its first pick
+ * (`account_spend_cap_reached`, the budget guard).
+ */
+async function applyPickCost(ctx: ActionCtx, set: SetupPlanSet): Promise<void> {
+  const counts = new Map<string, number>();
+  for (const t of set.targets) counts.set(t.locationId, (counts.get(t.locationId) ?? 0) + 1);
+  const priced = await ctx.runQuery(internal.edgePlans.costOfPicks, {
+    picks: set.picks.map((p) => ({
+      locationId: p.locationId as Id<'edgeLocations'>,
+      options: p.options ?? {},
+      count: counts.get(p.locationId) ?? 0,
+    })),
+  });
+  set.cost = { lines: priced.lines, total: priced.total };
+  for (const accountId of priced.capReached) {
+    const first = set.picks.find((p) => p.accountId === accountId);
+    if (
+      first &&
+      !set.problems.some((p) => p.locationId === first.locationId && p.reason === SPEND_CAP_REACHED)
+    )
+      set.problems.push({ locationId: first.locationId, reason: SPEND_CAP_REACHED });
   }
 }
 
@@ -905,11 +946,13 @@ export async function buildPlan(
     args.picks && args.picks.length > 0
       ? setOfPicks(args.picks, accounts, required, c.accounts)
       : undefined;
-  if (set)
+  if (set) {
     await applyPickChecks(ctx, set, args.pickOptions, {
       realityL4: servesReality(required),
       l4Barred: barsLoadBalancers(required, c.websocketNode),
     });
+    await applyPickCost(ctx, set);
+  }
   const plan: SetupPlanSnapshot = {
     backendServerId: a.backendServerId as string,
     backend: c.backend,
