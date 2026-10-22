@@ -2544,11 +2544,16 @@ server, a node from before sets) keeps the old rule: any trusted location.
   the listener's provider or account scope names it (`carries`, `setState.ts`); a switched-off
   location or a disabled or untested account carries nothing. A listener whose carriers make
   fewer than two groups is **reduced** (`one_group`): reported in the plan, the review, the run,
-  the node's card and an info attention item `reduced_resilience`, never hidden. The item's
-  code says what fixes it: `one_group` when a load balancer can front the transport (a location
-  of another provider, its load balancer included, gives the backup), `second_cdn_needed` when
-  only a CDN can (a WebSocket node's transport, § Layers): a second CDN account, at a provider
-  other than the one in use, and a zone of it on the node.
+  the node's card and an info attention item `reduced_resilience`, never hidden. There is one
+  item per remedy, each counting only its own transports, and its code says what fixes it:
+  `one_group` when a load balancer can front the transport (a location of another provider,
+  its load balancer included, gives the backup), `second_cdn_needed` when only a CDN can (a
+  WebSocket node's transport, § Layers, or a plaintext origin's): a second CDN account, at a
+  provider other than the one in use, and a zone of it on the node.
+
+  A load-balancer pick is refused for a WebSocket node only when none of its transports may be
+  fronted by one (`l4BarredForAll`); a node that also serves a REALITY or raw TLS transport keeps
+  the pick, which then carries that transport only.
 
 **The cover**: the fewest new (listener, pick) targets that meet the requirement given what is
 published: the listener demand left, plus every pick without an address, minus the targets

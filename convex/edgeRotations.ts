@@ -968,9 +968,12 @@ export async function startRotation(
         code: 'validation',
         message: 'Options for one address need the location it is built in',
       });
+    // The one edge's transport: a load balancer only where it may front it.
+    const forListener = listenerId ? await ctx.db.get(listenerId) : null;
     const checked = await checkPickOptions(ctx, where, owner, a.requestedOptions, {
       realityL4: await relayHasReality(ctx.db, a.relayId),
-      websocketNode: await websocketNodeOf(ctx.db, origin.origin),
+      l4Barred:
+        !!forListener && l4BarredFor(forListener, await websocketNodeOf(ctx.db, origin.origin)),
     });
     if (!checked.ok)
       throw new ConvexError({

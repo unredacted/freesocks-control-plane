@@ -263,9 +263,10 @@ export async function checkPickOptions(
   raw: unknown,
   /**
    * The node being protected: a REALITY transport refuses an HTTP health
-   * check; a WebSocket node refuses a load balancer (lib/edges/websocketNode.ts).
+   * check; when no transport of it may be fronted by a load balancer (a
+   * WebSocket node's, `l4BarredForAll`), a load-balancer pick is refused.
    */
-  context: { realityL4?: boolean; websocketNode?: boolean } = {},
+  context: { realityL4?: boolean; l4Barred?: boolean } = {},
 ): Promise<
   | {
       ok: true;
@@ -275,7 +276,7 @@ export async function checkPickOptions(
     }
   | { ok: false; code: string; issues: string[] }
 > {
-  if (context.websocketNode && edgeLayerOf(account.provider) === 'l4')
+  if (context.l4Barred && edgeLayerOf(account.provider) === 'l4')
     return { ok: false, code: 'edge.l4_not_for_websocket', issues: [L4_NOT_FOR_WEBSOCKET] };
   const res = validatePickOptions(account.provider, raw);
   if (!res.ok) return { ok: false, code: res.code, issues: res.issues };

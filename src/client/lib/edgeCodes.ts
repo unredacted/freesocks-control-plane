@@ -990,7 +990,7 @@ const COPY = {
   second_cdn_needed: {
     label: 'Needs a second CDN',
     explain:
-      'Only a CDN can front these transports (a load balancer cannot front a WebSocket node), and every location that carries them is at one CDN.',
+      'Only a CDN can front these transports, and every location that carries them is at one CDN.',
     fix: 'Add a second CDN account, at a provider other than the one in use, and a zone of it to this node.',
   },
   version_invalid: {

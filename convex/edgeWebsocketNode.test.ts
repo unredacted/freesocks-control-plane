@@ -194,13 +194,13 @@ describe('which node is a WebSocket node', () => {
 describe('a load balancer for a WebSocket node', () => {
   test('a pick of a load balancer is refused where it is checked (`checkPicks`), a CDN pick is not', async () => {
     const { t, l4Location, cdnLocation } = await world({ cdn: true });
-    const check = (websocketNode: boolean) =>
+    const check = (l4Barred: boolean) =>
       t.query(internal.edgeSetupPlan.checkPicks, {
         picks: [
           { locationId: l4Location, options: {} },
           { locationId: cdnLocation!, options: {} },
         ],
-        websocketNode,
+        l4Barred,
       });
     const refused = await check(true);
     expect(refused[0]).toMatchObject({ ok: false, code: 'edge.l4_not_for_websocket' });
@@ -208,6 +208,41 @@ describe('a load balancer for a WebSocket node', () => {
     expect(refused[1]!.ok).toBe(true);
     // Any other node keeps its load balancers.
     expect((await check(false))[0]!.ok).toBe(true);
+  });
+
+  test('a WebSocket node that also serves a REALITY transport keeps load balancers for that one', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t, {
+      qualified: true,
+      provider: 'upcloud',
+      listeners: [wsListener(), realityListener()],
+    });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: fx.accountId, ok: true });
+    await enroll(t, fx.serverId, 'freedom-ws');
+    const l4Location = (await defaultLocationRow(t, fx.accountId))!._id;
+    // The set may take the load balancer: it carries the REALITY transport only.
+    const view = (await t.query(internal.edgeProviderSets.view, { relayId: fx.relayId }))!;
+    expect(view.available.find((a) => a.locationId === l4Location)?.carries).toEqual(['a']);
+    // (Here it goes on to a Protect again run, which needs a live node: not the WebSocket refusal.)
+    expect(
+      await refusal(
+        t.mutation(internal.edgeProviderSets.change, { relayId: fx.relayId, add: [l4Location] }),
+      ),
+    ).not.toBe('edge.l4_not_for_websocket');
+    // A rotation for the REALITY transport may name it; one for the WebSocket transport may not.
+    const start = (listener: 'a' | 'w') =>
+      refusal(
+        t.mutation(internal.edgeRotations.start, {
+          relayId: fx.relayId,
+          kind: 'provision',
+          trigger: 'manual',
+          publishOnDone: false,
+          listenerId: fx.listenerIds[listener]!,
+          requestedLocationId: l4Location,
+        }),
+      );
+    expect(await start('w')).toBe('edge.l4_not_for_websocket');
+    expect(await start('a')).not.toBe('edge.l4_not_for_websocket');
   });
 
   test('a rotation naming a load balancer is refused at its start; selection never chooses one', async () => {
@@ -392,6 +427,57 @@ describe('no backup elsewhere', () => {
     await t.run((c) =>
       c.db.patch(fx.relayId, { providerSet: [{ locationId: cdnLocation!, addedAt: 1 }] }),
     );
+    expect(await attentionCode(t)).toBe('second_cdn_needed');
+  });
+
+  test('a node with both kinds gets one item per remedy, each naming its own transports', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t, {
+      qualified: true,
+      provider: 'upcloud',
+      listeners: [wsListener(), realityListener()],
+    });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: fx.accountId, ok: true });
+    await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { l7: { dnsProvidersFront: true } },
+    });
+    const cdn = await createAccount(t, { provider: 'cloudflare', name: 'acct-cdn' });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: cdn, ok: true });
+    const cdnLocation = (await defaultLocationRow(t, cdn))!._id;
+    await t.mutation(internal.edgeLocations.recordCheck, {
+      id: cdnLocation,
+      ok: true,
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    await enroll(t, fx.serverId, 'freedom-ws');
+    const l4Location = (await defaultLocationRow(t, fx.accountId))!._id;
+    await t.run((c) =>
+      c.db.patch(fx.relayId, {
+        providerSet: [
+          { locationId: l4Location, addedAt: 1 },
+          { locationId: cdnLocation, addedAt: 2 },
+        ],
+      }),
+    );
+    const items = (await t.query(internal.edgeOperator.attention, {})).items
+      .filter((i) => i.kind === 'reduced_resilience')
+      .map((i) => [i.code, i.listenerKey, i.facts.count])
+      .sort();
+    expect(items).toEqual([
+      ['one_group', 'a', 1],
+      ['second_cdn_needed', 'w', 1],
+    ]);
+  });
+
+  test('a transport only a CDN can front for another reason (a plaintext origin) also needs a second CDN', async () => {
+    const { t, fx, cdnLocation } = await world({ mode: null, cdn: true });
+    await t.run(async (c) => {
+      const l = (await c.db.get(fx.listenerId))!;
+      await c.db.patch(fx.listenerId, {
+        originTransport: { ...l.originTransport!, scheme: 'http' },
+      });
+      await c.db.patch(fx.relayId, { providerSet: [{ locationId: cdnLocation!, addedAt: 1 }] });
+    });
     expect(await attentionCode(t)).toBe('second_cdn_needed');
   });
 

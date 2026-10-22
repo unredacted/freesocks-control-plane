@@ -1501,22 +1501,32 @@ export const attention = internalQuery({
             since: null,
           });
         }
-        const reduced = setState.requirement.reduced;
-        // A transport no load balancer may front (a WebSocket node's, above all:
-        // lib/edges/websocketNode.ts) is backed up elsewhere only by a second CDN.
-        const first = setState.listeners.find((l) => l.listenerKey === reduced[0]?.listenerKey);
-        const cdnOnly =
-          !!first &&
-          !listenerLayers(first, { websocketNode: setState.websocketNode }).layers.includes('l4');
-        if (reduced.length > 0)
+        // One item per remedy, each naming only its own transports: another
+        // provider's location (its load balancer included) for a transport a
+        // load balancer may front (`one_group`), a second CDN for one only a
+        // CDN can (`second_cdn_needed`: a WebSocket node's, lib/edges/websocketNode.ts,
+        // or a plaintext origin's).
+        const byRemedy = new Map<'one_group' | 'second_cdn_needed', string[]>();
+        for (const r of setState.requirement.reduced) {
+          const l = setState.listeners.find((x) => x.listenerKey === r.listenerKey);
+          const cdnOnly =
+            !!l &&
+            !listenerLayers(l, { websocketNode: setState.websocketNode }).layers.includes('l4');
+          const code = cdnOnly ? 'second_cdn_needed' : 'one_group';
+          byRemedy.set(code, [...(byRemedy.get(code) ?? []), r.listenerKey]);
+        }
+        for (const [code, keys] of byRemedy)
           items.push({
             ...base(relay),
-            id: `reduced_resilience:${relay._id}`,
+            id:
+              code === 'one_group'
+                ? `reduced_resilience:${relay._id}`
+                : `reduced_resilience:${relay._id}:cdn`,
             kind: 'reduced_resilience',
             severity: 'info',
-            listenerKey: reduced[0]!.listenerKey,
-            code: cdnOnly ? 'second_cdn_needed' : 'one_group',
-            facts: { count: reduced.length },
+            listenerKey: keys[0]!,
+            code,
+            facts: { count: keys.length },
             action: 'open_relay',
             since: null,
           });

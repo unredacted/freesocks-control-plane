@@ -46,7 +46,12 @@ import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
 import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
-import { L4_NOT_FOR_WEBSOCKET, l4BarredFor, websocketNodeOf } from './lib/edges/websocketNode';
+import {
+  L4_NOT_FOR_WEBSOCKET,
+  l4BarredFor,
+  l4BarredForAll,
+  websocketNodeOf,
+} from './lib/edges/websocketNode';
 import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRuns';
 import type {
   SetupPlanAccount,
@@ -481,6 +486,17 @@ export function refuseSet(set: SetupPlanSet): void {
 }
 
 /** Check each pick's options (`checkPicks`) into the set: its options, or a problem. */
+/** Whether no transport to protect may be fronted by a load balancer (a WebSocket node's). */
+function barsLoadBalancers(
+  required: ReadonlyArray<{ listenerSpec: unknown }>,
+  websocketNode: boolean,
+): boolean {
+  return l4BarredForAll(
+    required.map((i) => i.listenerSpec as ListenerSpecInput),
+    websocketNode,
+  );
+}
+
 /** Whether the node's transports to protect include a REALITY one. */
 function servesReality(required: ReadonlyArray<{ listenerSpec: unknown }>): boolean {
   return required.some((i) => (i.listenerSpec as ListenerSpecInput).security === 'reality');
@@ -490,7 +506,7 @@ async function applyPickChecks(
   ctx: ActionCtx,
   set: SetupPlanSet,
   pickOptions: Record<string, unknown> | undefined,
-  node: { realityL4: boolean; websocketNode: boolean },
+  node: { realityL4: boolean; l4Barred: boolean },
 ): Promise<void> {
   const checked = await ctx.runQuery(internal.edgeSetupPlan.checkPicks, {
     picks: set.picks.map((p) => ({
@@ -498,7 +514,7 @@ async function applyPickChecks(
       options: pickOptions?.[p.locationId] ?? {},
     })),
     realityL4: node.realityL4,
-    websocketNode: node.websocketNode,
+    l4Barred: node.l4Barred,
   });
   for (const r of checked) {
     const pick = set.picks.find((p) => p.locationId === r.locationId);
@@ -547,8 +563,8 @@ export const checkPicks = internalQuery({
     picks: v.array(v.object({ locationId: v.id('edgeLocations'), options: v.any() })),
     /** The node serves a REALITY transport (an HTTP health check would fail on it). */
     realityL4: v.optional(v.boolean()),
-    /** The node is a WebSocket node (a load balancer is refused, lib/edges/websocketNode.ts). */
-    websocketNode: v.optional(v.boolean()),
+    /** No transport to protect may be fronted by a load balancer (`l4BarredForAll`): one is refused. */
+    l4Barred: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const out: Array<
@@ -570,7 +586,7 @@ export const checkPicks = internalQuery({
       }
       const r = await checkPickOptions(ctx, location, account, p.options, {
         realityL4: a.realityL4,
-        websocketNode: a.websocketNode,
+        l4Barred: a.l4Barred,
       });
       out.push(
         r.ok
@@ -862,7 +878,7 @@ export async function buildPlan(
   if (set)
     await applyPickChecks(ctx, set, args.pickOptions, {
       realityL4: servesReality(required),
-      websocketNode: c.websocketNode,
+      l4Barred: barsLoadBalancers(required, c.websocketNode),
     });
   const plan: SetupPlanSnapshot = {
     backendServerId: a.backendServerId as string,
@@ -1017,7 +1033,7 @@ export const create = internalAction({
       set = setOfPicks([location.id], plan.accounts, required, context.accounts);
       await applyPickChecks(ctx, set, undefined, {
         realityL4: servesReality(required),
-        websocketNode: context.websocketNode,
+        l4Barred: barsLoadBalancers(required, context.websocketNode),
       });
       plan.set = set;
     }

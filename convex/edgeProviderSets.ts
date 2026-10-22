@@ -5,8 +5,9 @@
  *  - Add: on a node live behind this origin and enrolled, an `add` re-protect
  *    run (new addresses in the added locations, a review when they are a new
  *    shape, nothing retired); on any other origin the set is saved, and the
- *    operator adds a spare there and puts it in use. A WebSocket node takes no
- *    load balancer (`edge.l4_not_for_websocket`, lib/edges/websocketNode.ts).
+ *    operator adds a spare there and puts it in use. A WebSocket node none of
+ *    whose transports a load balancer may front takes none
+ *    (`edge.l4_not_for_websocket`, lib/edges/websocketNode.ts).
  *  - Remove: allowed only when what SURVIVES still serves every transport and
  *    meets the requirement the remaining picks make (`edge.set_would_uncover`
  *    otherwise, naming the transports). A survivor is a published, active,
@@ -24,7 +25,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { MAX_DESIRED_PUBLISHED, dnsProvidersFrontOf } from './lib/edgeConfig';
 import { edgeLayerOf, frontsAllowed } from './lib/edges/providers/capabilities';
-import { L4_NOT_FOR_WEBSOCKET, websocketNodeOf } from './lib/edges/websocketNode';
+import { L4_NOT_FOR_WEBSOCKET, l4BarredForAll, websocketNodeOf } from './lib/edges/websocketNode';
 import { assertAdmission } from './lib/edges/maintenance';
 import { assertNoRunningSetup, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
 import { coverTargets, MAX_PROVIDER_PICKS, requirementOf } from './lib/edges/providerSet';
@@ -168,6 +169,11 @@ export const change = internalMutation({
         message: 'A location is both added and removed',
       });
     const before = relay.providerSet ?? (await impliedSetOf(ctx, relay));
+    // No load balancer for a node none of whose transports one may front.
+    const l4Barred = l4BarredForAll(
+      (await listenersOf(ctx, relay._id)).filter((l) => !l.retired && l.deployed && l.enabled),
+      await websocketNodeOf(ctx.db, relay.origin),
+    );
     for (const id of add) {
       const loc = await ctx.db.get(id);
       const account = loc ? await ctx.db.get(loc.accountId) : null;
@@ -180,7 +186,7 @@ export const change = internalMutation({
         });
       if (before.some((p) => p.locationId === id))
         throw new ConvexError({ code: 'validation', message: 'That location is already picked' });
-      if (edgeLayerOf(account.provider) === 'l4' && (await websocketNodeOf(ctx.db, relay.origin)))
+      if (l4Barred && edgeLayerOf(account.provider) === 'l4')
         throw new ConvexError({
           code: 'edge.l4_not_for_websocket',
           message: L4_NOT_FOR_WEBSOCKET,

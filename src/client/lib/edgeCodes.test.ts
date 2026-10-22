@@ -109,9 +109,9 @@ describe('a WebSocket node and load balancers', () => {
     expect(codeLabel('second_cdn_needed')).toBe('Needs a second CDN');
     expect(codeFix('second_cdn_needed')).toContain('second CDN account');
     expect(codeFix('second_cdn_needed')).toContain('other than the one in use');
-    expect(codeExplain('second_cdn_needed')).toContain(
-      'load balancer cannot front a WebSocket node',
-    );
+    // Not every transport only a CDN can front is a WebSocket node's (a plaintext origin's too).
+    expect(codeExplain('second_cdn_needed')).toContain('Only a CDN can front these transports');
+    expect(codeExplain('second_cdn_needed')).not.toContain('WebSocket');
     expect(codeFix('one_group')).toContain("another provider's load balancer works");
     for (const code of ['one_group', 'second_cdn_needed', 'l4_not_for_websocket'])
       for (const text of [codeLabel(code), codeExplain(code), codeFix(code) ?? ''])

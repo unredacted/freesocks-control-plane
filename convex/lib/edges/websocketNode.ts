@@ -16,6 +16,7 @@
  * Exports:
  *   websocketNodeOf(db, origin)          whether the origin's node is a WebSocket node
  *   l4BarredFor(listener, websocketNode) whether a load balancer may not front the listener
+ *   l4BarredForAll(listeners, ws)        ... nor any of these (a pick is refused only then)
  *   L4_NOT_FOR_WEBSOCKET                 the refusal's words
  */
 import type { Doc } from '../../_generated/dataModel';
@@ -59,4 +60,17 @@ export async function websocketNodeOf(
 /** A load balancer may not front this listener: an HTTP transport of a WebSocket node. */
 export function l4BarredFor(listener: ListenerProto, websocketNode: boolean): boolean {
   return websocketNode && protocolIsHttpTransport(listener);
+}
+
+/**
+ * A load balancer may front none of these listeners, so a load-balancer pick
+ * is refused outright. A node that also serves a transport a load balancer
+ * may carry (REALITY, raw TLS) keeps the pick: it simply carries none of the
+ * barred ones (`carries`). An empty list bars nothing.
+ */
+export function l4BarredForAll(
+  listeners: readonly ListenerProto[],
+  websocketNode: boolean,
+): boolean {
+  return websocketNode && listeners.length > 0 && listeners.every((l) => l4BarredFor(l, true));
 }
