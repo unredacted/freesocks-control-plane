@@ -101,6 +101,28 @@ describe('pickAccount', () => {
         'gcore',
       ),
     ).toMatchObject({ ok: true, account: { id: 'idle' } });
+    // Currencies interleaved (EUR 20, USD 5, EUR 10): the cheaper of the two in EUR
+    // still comes before the dearer one, whatever the order they came in.
+    for (const order of [
+      ['eur20', 'usd5', 'eur10'],
+      ['usd5', 'eur20', 'eur10'],
+      ['eur20', 'eur10', 'usd5'],
+    ]) {
+      const byId = {
+        eur20: eur('eur20', 20, { liveEdges: 0 }),
+        usd5: eur('usd5', 5, { costCurrency: 'USD', liveEdges: 2 }),
+        eur10: eur('eur10', 10, { liveEdges: 1 }),
+      } as Record<string, AccountCandidate>;
+      expect(
+        pickAccount(
+          order.map((id) => byId[id]!),
+          'gcore',
+        ),
+      ).toMatchObject({
+        ok: true,
+        account: { id: 'eur10' },
+      });
+    }
   });
 
   test('a candidate is a location: its own trust and cap count, the account budget too', () => {

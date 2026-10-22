@@ -29,6 +29,7 @@ import {
   SCALEWAY_LB_PRICES,
   __setScalewayApiFactory,
   __setScalewayCatalogFactory,
+  scalewayIpv4PriceOf,
   scalewayOffersOf,
   scalewayProvider,
   scalewayTablePlans,
@@ -150,23 +151,33 @@ describe('upcloud: the price list for the zone, else the pricing page', () => {
     ],
   };
 
-  test('a plan the price list names is priced from it (cents an hour)', async () => {
+  const priceList = {
+    prices: {
+      zone: [
+        { name: 'zz-other', managed_load_balancer_development: { amount: 1, price: 9 } },
+        {
+          name: 'zz-zone1',
+          ipv4_address: { amount: 1, price: 0.3 },
+          'managed_load_balancer_production-small': { amount: 1, price: 4.2 },
+        },
+      ],
+    },
+  };
+  /** The account's own answers: its username, then its details (the billing currency). */
+  const account = (currency: string | null) => (c: { path: string }) =>
+    c.path === '/1.3/account'
+      ? jsonRes({ account: { username: 'uc-user', credits: 0 } })
+      : c.path === '/1.3/account/details/uc-user'
+        ? currency === null
+          ? jsonRes({ error: { error_code: 'ACCOUNT_FORBIDDEN' } }, 403)
+          : jsonRes({ account: { username: 'uc-user', country: 'ZZZ', currency } })
+        : null;
+
+  test('a plan the price list names is priced from it, in the account’s billing currency', async () => {
     const stub = mockFetch((c) => {
       if (c.path === '/1.3/load-balancer/plans') return jsonRes(plansAnswer);
-      if (c.path === '/1.3/price')
-        return jsonRes({
-          prices: {
-            zone: [
-              { name: 'zz-other', managed_load_balancer_development: { amount: 1, price: 9 } },
-              {
-                name: 'zz-zone1',
-                ipv4_address: { amount: 1, price: 0.3 },
-                'managed_load_balancer_production-small': { amount: 1, price: 4.2 },
-              },
-            ],
-          },
-        });
-      return notFound();
+      if (c.path === '/1.3/price') return jsonRes(priceList);
+      return account('USD')(c) ?? notFound();
     });
     const plans = await upcloudProvider.plans!(cfg);
     expect(plans.find((p) => p.size === 'production-small')).toEqual({
@@ -174,7 +185,7 @@ describe('upcloud: the price list for the zone, else the pricing page', () => {
       label: 'production-small (2 nodes, 50,000 sessions each)',
       perHour: 0.042,
       perMonth: null,
-      currency: 'EUR',
+      currency: 'USD',
       traffic: { kind: 'unlimited' },
       bandwidthMbps: null,
       acceptsOutsideNode: null,
@@ -193,6 +204,20 @@ describe('upcloud: the price list for the zone, else the pricing page', () => {
       perMonth: null,
     });
     expect(stub.calls.every((c) => c.method === 'GET')).toBe(true);
+  });
+
+  test('a price list whose currency cannot be read is not used: the table answers', async () => {
+    mockFetch((c) => {
+      if (c.path === '/1.3/load-balancer/plans') return jsonRes(plansAnswer);
+      if (c.path === '/1.3/price') return jsonRes(priceList);
+      return account(null)(c) ?? notFound();
+    });
+    const plans = await upcloudProvider.plans!(cfg);
+    expect(plans.find((p) => p.size === 'production-small')).toMatchObject({
+      perMonth: 30,
+      currency: 'EUR',
+      source: 'catalog',
+    });
   });
 
   test('a price list that cannot be read falls back to the table for every plan', async () => {
@@ -228,8 +253,9 @@ describe('ovh: the public cloud catalog, joined to the region’s flavors by nam
     expect(c.sizes.medium).toEqual({ perHour: 0.0208, perMonth: 15, bandwidthMbps: 500 });
     expect(c.sizes.large).toEqual({ perHour: 0.0556, perMonth: 40, bandwidthMbps: 2000 });
     expect(c.sizes.xl).toEqual({ perHour: 0.2083, perMonth: 150, bandwidthMbps: 4000 });
-    // The floating IP is billed apart: never a size.
+    // The floating IP each balancer gets: priced apart, never a size.
     expect(Object.keys(c.sizes).sort()).toEqual(['large', 'medium', 'small', 'xl']);
+    expect(c.floatingIp).toEqual({ perHour: 0.0027, perMonth: 1.8 });
   });
 
   test('traffic: included, but past 1 TB a month in the Asia-Pacific regions', () => {
@@ -238,7 +264,7 @@ describe('ovh: the public cloud catalog, joined to the region’s flavors by nam
     expect(ovhTrafficOf('AP-SOUTH-MUM-1')).toEqual({ kind: 'included', includedGb: 1000 });
   });
 
-  test('plans: the flavor ids priced by name; the catalog read once, without the keys', async () => {
+  test('plans: the flavor ids priced by name with the floating IP added; the catalog read once, without the keys', async () => {
     const stub = mockFetch((c) => {
       if (c.path.endsWith('/auth/time')) return jsonRes(1_700_000_000);
       if (c.path === '/1.0/me') return jsonRes({ ovhSubsidiary: 'FR' });
@@ -256,15 +282,15 @@ describe('ovh: the public cloud catalog, joined to the region’s flavors by nam
       {
         size: 'f-small',
         label: 'small',
-        perHour: 0.0083,
-        perMonth: 6,
+        perHour: 0.011,
+        perMonth: 7.8,
         currency: 'EUR',
         traffic: { kind: 'unlimited' },
         bandwidthMbps: 200,
         acceptsOutsideNode: null,
         source: 'api',
       },
-      expect.objectContaining({ size: 'f-large', perHour: 0.0556, perMonth: 40 }),
+      expect.objectContaining({ size: 'f-large', perHour: 0.0583, perMonth: 41.8 }),
       expect.objectContaining({ size: 'f-odd', perHour: null, currency: null }),
     ]);
     const catalogCall = stub.calls.find((c) => c.path === '/1.0/order/catalog/public/cloud')!;
@@ -283,7 +309,7 @@ describe('ovh: the public cloud catalog, joined to the region’s flavors by nam
       return jsonRes([{ id: 'f-small', name: 'small' }]);
     });
     const plans = await ovhProvider.plans!({ ...cfg, endpoint: 'ovh-ca' });
-    expect(plans[0]).toMatchObject({ currency: 'EUR', perHour: 0.0083 });
+    expect(plans[0]).toMatchObject({ currency: 'EUR', perHour: 0.011 });
     expect(stub.calls.find((c) => c.path.endsWith('/catalog/public/cloud'))!.url).toContain(
       'ca.api.ovh.com/1.0/order/catalog/public/cloud?ovhSubsidiary=CA',
     );
@@ -291,8 +317,20 @@ describe('ovh: the public cloud catalog, joined to the region’s flavors by nam
 
   test('a flavor the catalog does not name has no price', () => {
     expect(
-      ovhPlanOf({ id: 'x', name: 'tiny' }, { currency: 'EUR', sizes: {} }, 'ZZ1'),
+      ovhPlanOf({ id: 'x', name: 'tiny' }, { currency: 'EUR', sizes: {}, floatingIp: null }, 'ZZ1'),
     ).toMatchObject({ perHour: null, perMonth: null, currency: null });
+    // A catalog with no floating IP: the balancer's own price alone.
+    expect(
+      ovhPlanOf(
+        { id: 'f', name: 'small' },
+        {
+          currency: 'EUR',
+          sizes: { small: { perHour: 0.0083, perMonth: 6, bandwidthMbps: 200 } },
+          floatingIp: null,
+        },
+        'ZZ1',
+      ),
+    ).toMatchObject({ perHour: 0.0083, perMonth: 6 });
   });
 });
 
@@ -315,9 +353,11 @@ describe('scaleway: the public product catalog, else the dated table', () => {
     expect(offers.every((o) => o.currency === 'EUR')).toBe(true);
     // Another zone's products are not this location's.
     expect(scalewayOffersOf(scalewayCatalog as never, 'zz-zone-9')).toEqual([]);
+    // The "Load Balancer IP": what each IPv4 an edge allocates costs an hour.
+    expect(scalewayIpv4PriceOf(scalewayCatalog as never, 'fr-par-1')).toBe(0.005);
   });
 
-  test('plans from the catalog, asked without credentials', async () => {
+  test('plans from the catalog with the IPv4 each edge allocates, asked without credentials', async () => {
     const stub = mockFetch((c) =>
       c.path === '/product-catalog/v2alpha1/public-catalog/products'
         ? jsonRes(scalewayCatalog)
@@ -327,7 +367,7 @@ describe('scaleway: the public product catalog, else the dated table', () => {
     expect(plans.find((p) => p.size === 'LB-GP-L')).toEqual({
       size: 'LB-GP-L',
       label: 'LB-GP-L',
-      perHour: 0.094,
+      perHour: 0.099,
       perMonth: null,
       currency: 'EUR',
       traffic: { kind: 'unlimited' },
@@ -344,7 +384,7 @@ describe('scaleway: the public product catalog, else the dated table', () => {
 
   test('the catalog failing: the zone’s size list priced from the table (its own flags win)', async () => {
     __setScalewayCatalogFactory(() => ({
-      loadBalancerOffers: async () => {
+      loadBalancerOffers: async (): Promise<never> => {
         throw new Error('alpha API gone');
       },
     }));
@@ -365,12 +405,12 @@ describe('scaleway: the public product catalog, else the dated table', () => {
     expect(plans).toEqual([
       expect.objectContaining({
         size: 'LB-S',
-        perHour: 0.023,
+        perHour: 0.028,
         acceptsOutsideNode: false,
         source: 'catalog',
         catalogAsOf: SCALEWAY_LB_PRICES.asOf,
       }),
-      expect.objectContaining({ size: 'LB-GP-L', perHour: 0.094, acceptsOutsideNode: true }),
+      expect.objectContaining({ size: 'LB-GP-L', perHour: 0.099, acceptsOutsideNode: true }),
     ]);
   });
 

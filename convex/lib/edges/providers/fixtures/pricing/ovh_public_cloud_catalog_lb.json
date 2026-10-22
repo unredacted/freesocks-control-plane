@@ -9,6 +9,27 @@
   "products": [],
   "addons": [
     {
+      "planCode": "floatingip.floatingip.month.consumption",
+      "invoiceName": "Public Cloud Floating IP",
+      "product": "publiccloud-floatingip-floatingip",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one month",
+          "interval": 1,
+          "intervalUnit": "month",
+          "mode": "default",
+          "price": 180000000,
+          "tax": 36000000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": []
+      }
+    },
+    {
       "planCode": "octavia-loadbalancer.loadbalancer-l.month.consumption",
       "invoiceName": "Octavia Loadbalancer - Large",
       "product": "publiccloud-octavia-loadbalancer-loadbalancer-l",

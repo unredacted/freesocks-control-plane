@@ -671,9 +671,10 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
    * Every balancer flavor of the region, priced from OVHcloud's public cloud
    * catalog (`GET /order/catalog/public/cloud`, no authentication; prices in
    * micro-cents of the subsidiary's currency): the size's hourly price and its
-   * monthly one, and its bandwidth. Flavors join the catalog by name (`small`
-   * is `octavia-loadbalancer.loadbalancer-s`). The floating IP and a gateway
-   * FCP creates are billed apart.
+   * monthly one, with the floating IP each balancer gets added, and its
+   * bandwidth. Flavors join the catalog by name (`small` is
+   * `octavia-loadbalancer.loadbalancer-s`). A gateway FCP creates (a location
+   * that names none) is billed apart.
    */
   async plans(cfg) {
     const [flavors, catalog] = await Promise.all([
@@ -804,6 +805,8 @@ export interface OvhLbPrice {
 export interface OvhLbCatalog {
   currency: string;
   sizes: Record<string, OvhLbPrice>;
+  /** The floating IP every balancer gets (`floatingip.floatingip.*`), null when the catalog names none. */
+  floatingIp: { perHour: number | null; perMonth: number | null } | null;
 }
 
 let catalogCache = new Map<string, { at: number; catalog: OvhLbCatalog }>();
@@ -821,16 +824,29 @@ const fromMicroCents = (n: number) => n / 100_000_000;
  */
 export function ovhLbCatalogOf(raw: z.infer<typeof PublicCatalog>): OvhLbCatalog {
   const sizes: Record<string, OvhLbPrice> = {};
+  let floatingIp: OvhLbCatalog['floatingIp'] = null;
   for (const entry of raw.addons) {
     const code = (entry as { planCode?: unknown })?.planCode;
-    if (typeof code !== 'string' || !code.startsWith('octavia-loadbalancer.')) continue;
+    if (typeof code !== 'string') continue;
+    const lb = code.startsWith('octavia-loadbalancer.');
+    if (!lb && !code.startsWith('floatingip.floatingip.')) continue;
     const a = CatalogAddon.safeParse(entry);
     if (!a.success) continue;
-    const name = a.data.blobs?.technical?.name?.toLowerCase();
     const price = a.data.pricings.find(
       (p) => !p.capacities || p.capacities.includes('consumption'),
     );
-    if (!name || !price) continue;
+    if (!price) continue;
+    if (!lb) {
+      floatingIp ??= { perHour: null, perMonth: null };
+      if (/\.hour\.consumption(\.3az)?$/i.test(code)) {
+        if (floatingIp.perHour === null || !/3az$/i.test(code))
+          floatingIp.perHour = fromMicroCents(price.price);
+      } else if (/\.month\.consumption$/i.test(code))
+        floatingIp.perMonth = fromMicroCents(price.price);
+      continue;
+    }
+    const name = a.data.blobs?.technical?.name?.toLowerCase();
+    if (!name) continue;
     const at = (sizes[name] ??= { perHour: null, perMonth: null, bandwidthMbps: null });
     const level = a.data.blobs?.technical?.bandwidth?.level;
     if (typeof level === 'number') at.bandwidthMbps = level;
@@ -839,7 +855,7 @@ export function ovhLbCatalogOf(raw: z.infer<typeof PublicCatalog>): OvhLbCatalog
       if (at.perHour === null || !/3az$/i.test(code)) at.perHour = fromMicroCents(price.price);
     } else if (/\.month\.consumption$/i.test(code)) at.perMonth = fromMicroCents(price.price);
   }
-  return { currency: raw.locale.currencyCode.toUpperCase(), sizes };
+  return { currency: raw.locale.currencyCode.toUpperCase(), sizes, floatingIp };
 }
 
 /** The account's subsidiary (`/me`), else its endpoint's. */
@@ -890,7 +906,13 @@ export function ovhTrafficOf(regionName: string): PlanTraffic {
     : { kind: 'unlimited' };
 }
 
-/** One balancer flavor as a plan, priced from the catalog by its name (exported for tests). */
+/** A sum of catalog prices, kept to the catalog's own precision (micro-cents). */
+const addPrices = (a: number, b: number) => Math.round((a + b) * 100_000_000) / 100_000_000;
+
+/**
+ * One balancer flavor as a plan, priced from the catalog by its name, with the
+ * floating IP every balancer of FCP's gets added (exported for tests).
+ */
 export function ovhPlanOf(
   f: { id: string; name?: string | null },
   catalog: OvhLbCatalog,
@@ -899,11 +921,26 @@ export function ovhPlanOf(
   const name = (f.name ?? '').toLowerCase();
   const price = catalog.sizes[name] ?? null;
   const priced = !!price && (price.perHour !== null || price.perMonth !== null);
+  const ip = catalog.floatingIp;
+  const ipHour = ip?.perHour ?? null;
+  const ipMonth = ip?.perMonth ?? (ipHour !== null ? ipHour * 730 : null);
+  const perHour =
+    price?.perHour != null
+      ? ipHour !== null
+        ? addPrices(price.perHour, ipHour)
+        : price.perHour
+      : null;
+  const perMonth =
+    price?.perMonth != null
+      ? ipMonth !== null
+        ? addPrices(price.perMonth, ipMonth)
+        : price.perMonth
+      : null;
   return {
     size: f.id,
     label: f.name ?? f.id,
-    perHour: price?.perHour ?? null,
-    perMonth: price?.perMonth ?? null,
+    perHour,
+    perMonth,
     currency: priced ? catalog.currency : null,
     traffic: ovhTrafficOf(regionName),
     bandwidthMbps: price?.bandwidthMbps ?? null,

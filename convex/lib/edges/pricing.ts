@@ -272,17 +272,30 @@ export function atCap(spend: SpendView): boolean {
 }
 
 /**
- * The cheaper of two candidates' monthly costs, for a tie between accounts of
- * the same priority: negative when `a` is cheaper. Costs in different
- * currencies, or not known, are no preference (0).
+ * The cost tie-break between accounts of the same priority (`pickAccount`):
+ * one key per candidate, its rank by monthly cost among the candidates of the
+ * same priority and the same currency (0 = the cheapest of its currency; equal
+ * costs share a rank). A candidate whose cost is not known ranks 0: costs in
+ * different currencies, or unknown, are never compared with each other. A key
+ * per candidate (not a pairwise comparison) keeps the ordering transitive
+ * whatever mix of currencies the candidates bring.
  */
-export function cheaperFirst(
-  a: { monthlyCost?: number | null; costCurrency?: string | null },
-  b: { monthlyCost?: number | null; costCurrency?: string | null },
-): number {
-  if (typeof a.monthlyCost !== 'number' || typeof b.monthlyCost !== 'number') return 0;
-  if (!a.costCurrency || a.costCurrency !== b.costCurrency) return 0;
-  return a.monthlyCost - b.monthlyCost;
+export function costTieKeys<
+  C extends { priority: number; monthlyCost?: number | null; costCurrency?: string | null },
+>(candidates: readonly C[]): Map<C, number> {
+  const keys = new Map<C, number>();
+  const groups = new Map<string, C[]>();
+  for (const c of candidates) {
+    keys.set(c, 0);
+    if (typeof c.monthlyCost !== 'number' || !c.costCurrency) continue;
+    const g = `${c.priority}|${c.costCurrency}`;
+    groups.set(g, [...(groups.get(g) ?? []), c]);
+  }
+  for (const group of groups.values()) {
+    const costs = [...new Set(group.map((c) => c.monthlyCost as number))].sort((a, b) => a - b);
+    for (const c of group) keys.set(c, costs.indexOf(c.monthlyCost as number));
+  }
+  return keys;
 }
 
 /** The checks an operator's cost settings must pass (`validation` message, or null). */

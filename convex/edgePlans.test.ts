@@ -7,7 +7,7 @@
  * through the adapter. Fixtures only (RFC 5737, `*.example`).
  */
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -196,6 +196,12 @@ describe('what the account costs', () => {
     await setCost(t, accountId, { paid: 'free', note: '  credits   until  spring ' });
     let v = await locationView(t, accountId);
     expect(v.pricing!.cost).toMatchObject({ monthly: 0, basis: 'free', listMonthly: 16.79 });
+    // Each plan says what one edge of its size would cost, the account's choice laid over.
+    expect(v.pricing!.plans.find((p) => p.size === 'LB-GP-XL')!.cost).toMatchObject({
+      monthly: 0,
+      basis: 'free',
+      listMonthly: 686.93,
+    });
     await setCost(t, accountId, { paid: 'amount', perEdgeMonthly: 12.5, currency: 'usd' });
     v = await locationView(t, accountId);
     expect(v.pricing!.cost).toMatchObject({ monthly: 12.5, currency: 'USD', basis: 'amount' });
@@ -450,6 +456,43 @@ describe('rollback', () => {
       undefined,
     ]);
     expect((await t.run((ctx) => ctx.db.get(e.id)))!.planSize).toBeUndefined();
+  });
+
+  test('more plans than one pass holds: paged until none is left, then the edges', async () => {
+    vi.useFakeTimers();
+    try {
+      const { t, accountId, relayId, listenerId, locationId } = await world();
+      await t.run(async (ctx) => {
+        for (let i = 0; i < 450; i++)
+          await ctx.db.insert('edgePlans', {
+            accountId,
+            locationId,
+            provider: 'scaleway',
+            size: `S-${i}`,
+            sizeKey: `s-${i}`,
+            label: `S-${i}`,
+            traffic: { kind: 'unknown' },
+            source: 'catalog',
+            pricedAt: 0,
+          });
+      });
+      await setCost(t, accountId, { paid: 'free' });
+      const e = await insertPlanned(t, {
+        relayId,
+        listenerId,
+        accountId,
+        ...edgePlan,
+        planSize: 'LB-GP-L',
+      });
+      // The first pass is one page of plans: not done, and the rest is scheduled.
+      expect(await t.mutation(internal.edgePlans.clearForRollback, {})).toEqual({ done: false });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await t.run((ctx) => ctx.db.query('edgePlans').collect())).toEqual([]);
+      expect((await t.run((ctx) => ctx.db.get(accountId)))!.cost).toBeUndefined();
+      expect((await t.run((ctx) => ctx.db.get(e.id)))!.planSize).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

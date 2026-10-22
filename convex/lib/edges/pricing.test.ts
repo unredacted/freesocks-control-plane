@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   HOURS_PER_MONTH,
   atCap,
-  cheaperFirst,
+  costTieKeys,
   costSettingsProblem,
   edgeCostOf,
   monthlyOf,
@@ -141,20 +141,28 @@ describe('totals and the cap', () => {
     expect(passesCap(spendViewOf(null, [{ cost: eur, count: 100 }]), eur, 100)).toBe(false);
   });
 
-  test('a tie between accounts prefers the cheaper edge, in the same currency only', () => {
-    expect(
-      cheaperFirst(
-        { monthlyCost: 10, costCurrency: 'EUR' },
-        { monthlyCost: 20, costCurrency: 'EUR' },
-      ),
-    ).toBeLessThan(0);
-    expect(
-      cheaperFirst(
-        { monthlyCost: 10, costCurrency: 'EUR' },
-        { monthlyCost: 20, costCurrency: 'USD' },
-      ),
-    ).toBe(0);
-    expect(cheaperFirst({ monthlyCost: null }, { monthlyCost: 20, costCurrency: 'EUR' })).toBe(0);
+  test('the tie-break keys: a rank by cost within each priority and currency; unknown ranks first', () => {
+    const c = (
+      id: string,
+      priority: number,
+      monthlyCost: number | null,
+      costCurrency?: string,
+    ) => ({
+      id,
+      priority,
+      monthlyCost,
+      costCurrency: costCurrency ?? null,
+    });
+    const eur20 = c('eur20', 1, 20, 'EUR');
+    const usd5 = c('usd5', 1, 5, 'USD');
+    const eur10 = c('eur10', 1, 10, 'EUR');
+    const eur10b = c('eur10b', 1, 10, 'EUR');
+    const unknown = c('unknown', 1, null);
+    const other = c('other', 2, 1, 'EUR');
+    const keys = costTieKeys([eur20, usd5, eur10, eur10b, unknown, other]);
+    expect([eur20, usd5, eur10, eur10b, unknown, other].map((x) => keys.get(x))).toEqual([
+      1, 0, 0, 0, 0, 0,
+    ]);
   });
 });
 

@@ -152,7 +152,10 @@ export interface ScalewayLbOffer {
   multicloud: boolean | null;
 }
 export interface ScalewayCatalogApi {
-  loadBalancerOffers(zone: string): Promise<ScalewayLbOffer[]>;
+  /** The zone's offers, and its "Load Balancer IP" price an hour (null when it lists none). */
+  loadBalancerOffers(
+    zone: string,
+  ): Promise<{ offers: ScalewayLbOffer[]; ipv4PerHour: number | null }>;
 }
 
 const CATALOG_URL = 'https://api.scaleway.com/product-catalog/v2alpha1/public-catalog/products';
@@ -189,6 +192,8 @@ const CatalogProducts = z
                       })
                       .passthrough()
                       .nullish(),
+                    // The "Load Balancer IP" product (priced per IP an hour).
+                    ipv4: z.object({}).passthrough().nullish(),
                   })
                   .passthrough()
                   .nullish(),
@@ -201,6 +206,29 @@ const CatalogProducts = z
       .default([]),
   })
   .passthrough();
+
+/** A catalog retail price (`google.type.Money`: units + nanos), or null. */
+function retailOf(
+  price: { units?: number | string | null; nanos?: number | null } | null | undefined,
+) {
+  if (!price) return null;
+  const units = Number(price.units ?? 0);
+  return Number.isFinite(units) ? units + (price.nanos ?? 0) / 1e9 : null;
+}
+
+/** The zone's "Load Balancer IP" price an hour (each IPv4 a load balancer holds), or null (exported for tests). */
+export function scalewayIpv4PriceOf(
+  raw: z.infer<typeof CatalogProducts>,
+  zone: string,
+): number | null {
+  const ip = raw.products.find(
+    (p) =>
+      !!p.properties?.load_balancer?.ipv4 &&
+      (!p.locality?.zone || p.locality.zone === zone) &&
+      !!p.price?.retail_price?.currency_code,
+  );
+  return ip ? retailOf(ip.price?.retail_price) : null;
+}
 
 /** The catalog's load balancer nodes of one zone (exported for tests). */
 export function scalewayOffersOf(
@@ -229,18 +257,17 @@ export function scalewayOffersOf(
 
 function scalewayCatalog(): ScalewayCatalogApi {
   return {
-    loadBalancerOffers: async (zone) =>
-      scalewayOffersOf(
-        await providerFetch({
-          provider: 'scaleway',
-          step: 'plans',
-          url: `${CATALOG_URL}?product_types=load_balancer&zone=${encodeURIComponent(zone)}&page_size=100`,
-          method: 'GET',
-          headers: {},
-          schema: CatalogProducts,
-        }),
-        zone,
-      ),
+    loadBalancerOffers: async (zone) => {
+      const raw = await providerFetch({
+        provider: 'scaleway',
+        step: 'plans',
+        url: `${CATALOG_URL}?product_types=load_balancer&zone=${encodeURIComponent(zone)}&page_size=100`,
+        method: 'GET',
+        headers: {},
+        schema: CatalogProducts,
+      });
+      return { offers: scalewayOffersOf(raw, zone), ipv4PerHour: scalewayIpv4PriceOf(raw, zone) };
+    },
   };
 }
 
@@ -252,12 +279,15 @@ export function __setScalewayCatalogFactory(f: (() => ScalewayCatalogApi) | null
 
 /**
  * The load balancer offers of the pricing page, for a zone the catalog does not
- * answer for: €/hour before tax, bandwidth, unlimited traffic, and which ones
- * are multi-cloud. https://www.scaleway.com/en/pricing/network/ (read 2026-10-22).
+ * answer for: €/hour before tax, bandwidth, unlimited traffic, which ones are
+ * multi-cloud, and the IPv4 each edge allocates (billed as its own asset).
+ * https://www.scaleway.com/en/pricing/network/ (read 2026-10-22).
  */
 export const SCALEWAY_LB_PRICES = {
   asOf: '2026-10-22',
   currency: 'EUR',
+  /** "IPv4 IP per asset", the Load Balancer row of Additional IP: each IPv4 FCP allocates. */
+  ipv4PerHour: 0.005,
   types: [
     { type: 'LB-S', perHour: 0.023, bandwidthMbps: 200, multicloud: false },
     { type: 'LB-GP-M', perHour: 0.054, bandwidthMbps: 500, multicloud: false },
@@ -265,6 +295,9 @@ export const SCALEWAY_LB_PRICES = {
     { type: 'LB-GP-XL', perHour: 0.941, bandwidthMbps: 4000, multicloud: true },
   ],
 } as const;
+
+/** A node's price an hour with the IPv4 its edge allocates added (kept to the catalog's nanos). */
+const withIpv4 = (perHour: number, ipv4: number) => Math.round((perHour + ipv4) * 1e9) / 1e9;
 
 /**
  * The plans of the dated table, for the sizes the zone lists (`listLbTypes`:
@@ -288,7 +321,7 @@ export function scalewayTablePlans(
     return {
       size: t.name,
       label: t.name,
-      perHour: row?.perHour ?? null,
+      perHour: row ? withIpv4(row.perHour, SCALEWAY_LB_PRICES.ipv4PerHour) : null,
       perMonth: null,
       currency: row ? SCALEWAY_LB_PRICES.currency : null,
       traffic: { kind: 'unlimited' },
@@ -820,18 +853,21 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
 
   /**
    * Every load balancer offer of the zone with its price: the public product
-   * catalog (per node an hour), else the zone's size list priced from the
-   * dated table of the pricing page (`SCALEWAY_LB_PRICES`). Traffic is not
-   * charged; only the multi-cloud offers take a node outside Scaleway.
+   * catalog (per node an hour, with the IPv4 each edge allocates added: its
+   * "Load Balancer IP"), else the zone's size list priced from the dated
+   * table of the pricing page (`SCALEWAY_LB_PRICES`). Traffic is not charged;
+   * only the multi-cloud offers take a node outside Scaleway.
    */
   async plans(cfg) {
     try {
-      const offers = await catalogFactory().loadBalancerOffers(cfg.zone);
+      const { offers, ipv4PerHour } = await catalogFactory().loadBalancerOffers(cfg.zone);
+      // Every edge allocates its own IPv4 (`allocate_ip`), billed as its own asset.
+      const ipv4 = ipv4PerHour ?? SCALEWAY_LB_PRICES.ipv4PerHour;
       if (offers.length > 0)
         return offers.map((o) => ({
           size: o.type,
           label: o.type,
-          perHour: o.perHour,
+          perHour: withIpv4(o.perHour, ipv4),
           perMonth: null,
           currency: o.currency,
           traffic: { kind: 'unlimited' },

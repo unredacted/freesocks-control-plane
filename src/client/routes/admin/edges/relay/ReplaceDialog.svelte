@@ -222,11 +222,14 @@
     <EdgeCostLine
       accountId={picks.find((p) => p.locationId === where.slice(4))?.accountId ?? null}
       locationId={where.slice(4)}
+      options={picks.find((p) => p.locationId === where.slice(4))?.options ?? null}
     />
   {:else if where === 'auto' && preflight.data?.wouldSelect && !preflight.data.wouldSelect.standbyEdgeId}
     <EdgeCostLine
       accountId={preflight.data.wouldSelect.accountId}
       locationId={preflight.data.wouldSelect.locationId}
+      options={picks.find((p) => p.locationId === preflight.data?.wouldSelect?.locationId)
+        ?.options ?? null}
     />
   {/if}
   {#if !plain}

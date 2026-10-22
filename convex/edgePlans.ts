@@ -265,8 +265,16 @@ export async function capRefusal(
 
 // --- admin views -----------------------------------------------------------------------
 
-/** One plan in its admin shape. `refusal`: why the size cannot carry an FCP node there (#173 codes). */
-export function planAdmin(row: PlanRow, refusal: string | null) {
+/**
+ * One plan in its admin shape. `refusal`: why the size cannot carry an FCP
+ * node there (#173 codes). `cost`: what one edge of this size there costs a
+ * month, the account's choice laid over the list price.
+ */
+export function planAdmin(
+  row: PlanRow,
+  refusal: string | null,
+  cost: ReturnType<typeof costAdmin> | null = null,
+) {
   return {
     size: row.size,
     label: row.label,
@@ -284,6 +292,7 @@ export function planAdmin(row: PlanRow, refusal: string | null) {
     source: row.source,
     catalogAsOf: row.catalogAsOf ?? null,
     pricedAt: new Date(row.pricedAt).toISOString(),
+    cost,
   };
 }
 export type PlanAdmin = ReturnType<typeof planAdmin>;
@@ -325,12 +334,15 @@ export async function locationCostAdmin(
   const rows = l4 ? await plansOfLocation(ctx.db, location._id) : [];
   const size = l4 ? await sizeAt(ctx, account, location, null) : null;
   const here = size ? (rows.find((r) => r.sizeKey === sizeKey(size)) ?? null) : null;
-  const cost = edgeCostOf(account.provider, accountCostOf(account), storedPlanOf(here));
+  const costOfRow = (r: PlanRow | null) =>
+    costAdmin(edgeCostOf(account.provider, accountCostOf(account), storedPlanOf(r)));
+  const adminOf = (r: PlanRow) =>
+    planAdmin(r, sizeRefusalAt(account.provider, location, r.size), costOfRow(r));
   return {
     size,
-    plan: here ? planAdmin(here, sizeRefusalAt(account.provider, location, here.size)) : null,
-    cost: costAdmin(cost),
-    plans: rows.map((r) => planAdmin(r, sizeRefusalAt(account.provider, location, r.size))),
+    plan: here ? adminOf(here) : null,
+    cost: costOfRow(here),
+    plans: rows.map(adminOf),
     plansAt: location.plansAt ? new Date(location.plansAt).toISOString() : null,
     plansError: location.plansError ?? null,
   };
@@ -640,24 +652,32 @@ export async function deletePlansOfAccount(
   for (const r of rows) await ctx.db.delete(r._id);
 }
 
-/** Edges cleared per pass of the rollback helper (one bounded page). */
-const ROLLBACK_EDGES_PER_PASS = 200;
+/** Rows the rollback helper deletes or clears per pass (one bounded page). */
+const ROLLBACK_ROWS_PER_PASS = 200;
 
 /**
  * Rollback helper: run BEFORE deploying a build from before plans and prices.
  * That build's schema has no `edgePlans` table rows to keep, no
  * `edgeProviderAccounts.cost`, no `edgeLocations.plans*` and no
  * `edges.planSize` (Convex refuses a deploy while a row holds a field its
- * schema lacks). The first pass deletes the plans and clears the account and
- * location fields; every pass clears one page of edges and schedules the
- * next, so the edges table is walked in bounded pages. `{ done }` once the
- * last page is cleared.
+ * schema lacks). Each pass does one bounded page and schedules the next:
+ * first the plans are deleted page by page; once none is left, the account
+ * and location fields are cleared and the edges are walked page by page to
+ * clear `planSize`. `{ done: true }` only once both are exhausted.
  */
 export const clearForRollback = internalMutation({
-  args: { cursor: v.optional(v.union(v.string(), v.null())) },
-  handler: async (ctx, { cursor }) => {
-    if (!cursor) {
-      for (const r of await ctx.db.query('edgePlans').take(4000)) await ctx.db.delete(r._id);
+  args: {
+    phase: v.optional(v.union(v.literal('plans'), v.literal('edges'))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, { phase, cursor }) => {
+    if ((phase ?? 'plans') === 'plans') {
+      const rows = await ctx.db.query('edgePlans').take(ROLLBACK_ROWS_PER_PASS);
+      for (const r of rows) await ctx.db.delete(r._id);
+      if (rows.length === ROLLBACK_ROWS_PER_PASS) {
+        await ctx.scheduler.runAfter(0, internal.edgePlans.clearForRollback, { phase: 'plans' });
+        return { done: false };
+      }
       for (const a of await ctx.db.query('edgeProviderAccounts').collect())
         if (a.cost !== undefined) await ctx.db.patch(a._id, { cost: undefined });
       for (const l of await ctx.db.query('edgeLocations').collect())
@@ -668,13 +688,15 @@ export const clearForRollback = internalMutation({
             plansError: undefined,
           });
     }
-    const page = await ctx.db
-      .query('edges')
-      .paginate({ cursor: cursor ?? null, numItems: ROLLBACK_EDGES_PER_PASS });
+    const page = await ctx.db.query('edges').paginate({
+      cursor: phase === 'edges' ? (cursor ?? null) : null,
+      numItems: ROLLBACK_ROWS_PER_PASS,
+    });
     for (const e of page.page)
       if (e.planSize !== undefined) await ctx.db.patch(e._id, { planSize: undefined });
     if (!page.isDone)
       await ctx.scheduler.runAfter(0, internal.edgePlans.clearForRollback, {
+        phase: 'edges',
         cursor: page.continueCursor,
       });
     return { done: page.isDone };

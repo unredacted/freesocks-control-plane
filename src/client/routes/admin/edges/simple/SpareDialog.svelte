@@ -255,6 +255,11 @@
         ? (picks.find((p) => p.locationId === where)?.accountId ?? null)
         : (preflight.data?.wouldSelect?.accountId ?? null)}
       locationId={where || (preflight.data?.wouldSelect?.locationId ?? null)}
+      options={where
+        ? (oneOff ?? whereOptions?.chosen ?? null)
+        : ((setQ.data?.picks ?? []).find(
+            (p) => p.locationId === preflight.data?.wouldSelect?.locationId,
+          )?.options ?? null)}
     />
     {#if preflight.isPending}
       <Skeleton class="h-9 w-full" />

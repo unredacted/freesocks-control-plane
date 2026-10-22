@@ -62,6 +62,20 @@ export const EdgePlanTraffic = z.object({
 });
 export type EdgePlanTraffic = z.infer<typeof EdgePlanTraffic>;
 
+/** What one edge costs a month (lib/edges/pricing.ts `EdgeCost`): what is paid, next to the list price. */
+export const EdgeCostView = z.object({
+  /** Null: not known (no price read, or a CDN account with none set). */
+  monthly: z.number().nullable(),
+  currency: z.string().nullable(),
+  /** `list` price, `free` (credits), the operator's `amount`, or `unset` (a CDN with none set). */
+  basis: z.enum(['list', 'free', 'amount', 'unset']),
+  /** Traffic is charged on top (per GB, or past an allowance). */
+  plusTraffic: z.boolean(),
+  listMonthly: z.number().nullable(),
+  listCurrency: z.string().nullable(),
+});
+export type EdgeCostView = z.infer<typeof EdgeCostView>;
+
 /**
  * One load balancer size at one location (convex/edgePlans.ts `planAdmin`):
  * its list price (`perMonth` = the provider's monthly figure, else hourly ×
@@ -82,22 +96,10 @@ export const EdgePlanAdmin = z.object({
   source: z.enum(['api', 'catalog']),
   catalogAsOf: z.string().nullable().default(null),
   pricedAt: iso,
+  /** What one edge of this size there costs a month (the account's choice laid over the list price). */
+  cost: EdgeCostView.nullable().default(null),
 });
 export type EdgePlanAdmin = z.infer<typeof EdgePlanAdmin>;
-
-/** What one edge costs a month (lib/edges/pricing.ts `EdgeCost`): what is paid, next to the list price. */
-export const EdgeCostView = z.object({
-  /** Null: not known (no price read, or a CDN account with none set). */
-  monthly: z.number().nullable(),
-  currency: z.string().nullable(),
-  /** `list` price, `free` (credits), the operator's `amount`, or `unset` (a CDN with none set). */
-  basis: z.enum(['list', 'free', 'amount', 'unset']),
-  /** Traffic is charged on top (per GB, or past an allowance). */
-  plusTraffic: z.boolean(),
-  listMonthly: z.number().nullable(),
-  listCurrency: z.string().nullable(),
-});
-export type EdgeCostView = z.infer<typeof EdgeCostView>;
 
 /** A location's plans, and what one edge there costs with the size it builds now. */
 export const EdgeLocationPricing = z.object({

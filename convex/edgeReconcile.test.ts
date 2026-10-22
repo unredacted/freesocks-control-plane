@@ -41,7 +41,8 @@ afterEach(() => {
  * destroy): its read of each location's plans and prices (step 4f, a day old
  * at most) says nothing about the edge and is left out.
  */
-const PRICE_READ = /\/lbflavors\/|\/pricing\/|^\/1\.3\/(price|load-balancer\/plans)$/;
+const PRICE_READ =
+  /\/lbflavors\/|\/pricing\/|^\/1\.3\/(price|load-balancer\/plans|account|account\/details\/[^/]+)$/;
 const edgeCalls = <C extends { path: string }>(calls: readonly C[], prefix: string): C[] =>
   calls.filter((c) => c.path.startsWith(prefix) && !PRICE_READ.test(c.path));
 

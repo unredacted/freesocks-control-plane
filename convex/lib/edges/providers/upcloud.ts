@@ -155,9 +155,20 @@ const Plans = z
 const PriceList = z
   .object({
     prices: z
-      .object({ zone: z.array(z.record(z.string(), z.unknown())).default([]) })
+      .object({
+        zone: z.array(z.record(z.string(), z.unknown())).default([]),
+        /** Not in UpCloud's documented example; taken when an answer carries it. */
+        currency: z.string().nullish(),
+      })
       .passthrough(),
   })
+  .passthrough();
+/** `GET /1.3/account` (the key's own account) and `GET /1.3/account/details/{username}` (its currency). */
+const AccountSelf = z
+  .object({ account: z.object({ username: z.string() }).passthrough() })
+  .passthrough();
+const AccountDetails = z
+  .object({ account: z.object({ currency: z.string().nullish() }).passthrough() })
   .passthrough();
 const PriceItem = z.object({ amount: z.number().nullish(), price: z.number() }).passthrough();
 
@@ -523,17 +534,20 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
   /**
    * Every load balancer plan with its price: the account's price list for the
    * location's zone (`GET /1.3/price`, cents an hour in the account's billing
-   * currency) where it names the plan, else the dated table of the pricing
-   * page (`UPCLOUD_LB_PRICES`). UpCloud charges no data transfer for a load
-   * balancer.
+   * currency, which the list does not name: read from the account's details)
+   * where it names the plan, else the dated table of the pricing page
+   * (`UPCLOUD_LB_PRICES`). A price list whose currency cannot be read is not
+   * used. UpCloud charges no data transfer for a load balancer.
    */
   async plans(cfg) {
-    const [plans, prices] = await Promise.all([
+    const [plans, prices, currency] = await Promise.all([
       up(cfg, 'plans', 'GET', `/load-balancer/plans`, Plans),
       up(cfg, 'plans', 'GET', `/price`, PriceList).catch(() => null),
+      upcloudCurrency(cfg).catch(() => null),
     ]);
-    const zone = prices?.prices.zone.find((z) => z.name === cfg.zone) ?? null;
-    return plans.plans.map((p) => upcloudPlanOf(p, zone));
+    const listed = prices?.prices.currency ?? currency;
+    const zone = listed ? (prices?.prices.zone.find((z) => z.name === cfg.zone) ?? null) : null;
+    return plans.plans.map((p) => upcloudPlanOf(p, zone, listed ?? null));
   },
 
   planDestroy: (_cfg, ledger) => orderByKind(ledger, UPCLOUD_DESTROY_ORDER),
@@ -615,14 +629,32 @@ function priceItemOf(
 }
 
 /**
+ * The account's billing currency (`account.currency` of its details): what
+ * the price list's amounts are in. Null when the details name none.
+ */
+async function upcloudCurrency(cfg: UpcloudConfig): Promise<string | null> {
+  const self = await up(cfg, 'plans', 'GET', `/account`, AccountSelf);
+  const details = await up(
+    cfg,
+    'plans',
+    'GET',
+    `/account/details/${encodeURIComponent(self.account.username)}`,
+    AccountDetails,
+  );
+  const c = details.account.currency?.trim().toUpperCase();
+  return c && /^[A-Z]{3}$/.test(c) ? c : null;
+}
+
+/**
  * One plan of `GET /load-balancer/plans` as a plan, priced from the zone's
- * price list (cents an hour; the list names no currency, it is the account's
- * billing one, read as EUR, UpCloud's default) or the pricing page's table
- * (exported for tests).
+ * price list (cents an hour, in `currency`, the account's billing one) or the
+ * pricing page's table (exported for tests). With no zone list (or no
+ * currency for it), the table.
  */
 export function upcloudPlanOf(
   p: z.infer<typeof Plans>['plans'][number],
   zone: Record<string, unknown> | null,
+  currency: string | null,
 ): ProviderPlan {
   const nodes = typeof p.server_number === 'number' ? p.server_number : null;
   const sessions = typeof p.per_server_max_sessions === 'number' ? p.per_server_max_sessions : null;
@@ -637,13 +669,13 @@ export function upcloudPlanOf(
     bandwidthMbps: null,
     acceptsOutsideNode: null,
   };
-  const item = priceItemOf(zone, p.name);
-  if (item)
+  const item = currency ? priceItemOf(zone, p.name) : null;
+  if (item && currency)
     return {
       ...base,
       perHour: item.price / 100 / Math.max(1, item.amount),
       perMonth: null,
-      currency: 'EUR',
+      currency,
       source: 'api',
     };
   const listed = UPCLOUD_LB_PRICES.monthly[p.name.toLowerCase()];
