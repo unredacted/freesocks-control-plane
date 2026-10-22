@@ -8,6 +8,10 @@
    * `configHash`; the server refuses a stale one); "Doesn't work" replaces that
    * one address. A ticked line stays on the card, folded to its "Works" mark.
    *
+   * With `confirmFails`, "Doesn't work" first asks (ConfirmDialog): the dialog
+   * names the address and says it is removed and replaced, so a mis-press
+   * costs nothing. A caller whose "Doesn't work" opens its own dialog leaves it off.
+   *
    * Props:
    *   items: TestItem[]
    *   done: ReadonlySet<string>            edge ids already ticked
@@ -15,12 +19,14 @@
    *   locked?: boolean                     every answer waits (the card is being rebuilt)
    *   onWorks: (item: TestItem) => void
    *   onFails?: (item: TestItem) => void   "Doesn't work" (no button without it)
+   *   confirmFails?: boolean               ask before `onFails` (default false)
    *   intro?: string                       the sentence above the lines
    */
   import Check from '@lucide/svelte/icons/check';
   import { Button } from '@client/components/ui/button';
+  import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import TestLink from './TestLink.svelte';
-  import type { TestItem } from './runWords';
+  import { replaceWords, type TestItem } from './runWords';
 
   interface Props {
     items: TestItem[];
@@ -29,6 +35,7 @@
     locked?: boolean;
     onWorks: (item: TestItem) => void;
     onFails?: (item: TestItem) => void;
+    confirmFails?: boolean;
     intro?: string;
   }
   let {
@@ -38,10 +45,21 @@
     locked = false,
     onWorks,
     onFails,
+    confirmFails = false,
     intro = 'Scan or copy each test link into a client on the device you test with (it uses a test account of its own), connect, and load a page.',
   }: Props = $props();
 
   const waiting = $derived(busyId !== null || locked);
+
+  // "Doesn't work" asks first: the line it would remove, in words.
+  let asking = $state<TestItem | null>(null);
+  let askOpen = $state(false);
+  const askWords = $derived(asking ? replaceWords(asking) : null);
+  function failPressed(item: TestItem): void {
+    if (!confirmFails) return onFails?.(item);
+    asking = item;
+    askOpen = true;
+  }
 </script>
 
 <div class="space-y-3">
@@ -89,7 +107,7 @@
                 variant="outline"
                 class="h-11 flex-1 sm:h-9 sm:flex-none"
                 disabled={waiting}
-                onclick={() => onFails(item)}
+                onclick={() => failPressed(item)}
               >
                 Doesn’t work
               </Button>
@@ -100,3 +118,19 @@
     {/each}
   </ul>
 </div>
+
+{#if confirmFails && askWords}
+  <ConfirmDialog
+    bind:open={askOpen}
+    title={askWords.title}
+    body={askWords.body}
+    confirmLabel="Remove and replace"
+    cancelLabel="Keep it"
+    danger
+    onConfirm={() => {
+      const item = asking;
+      askOpen = false;
+      if (item) onFails?.(item);
+    }}
+  />
+{/if}

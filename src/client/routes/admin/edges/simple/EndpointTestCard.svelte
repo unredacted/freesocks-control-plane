@@ -145,6 +145,15 @@
   {:else if links.isError}
     <AdminListState error={links.error} onRetry={() => void links.refetch()} />
   {:else}
-    <TestCard {items} {done} {busyId} onWorks={works} onFails={canFail ? fails : undefined} />
+    <!-- A run's "Doesn't work" removes the address: asked first. The page's own
+         path (`onDoesNotWork`) opens its own dialog. -->
+    <TestCard
+      {items}
+      {done}
+      {busyId}
+      onWorks={works}
+      onFails={canFail ? fails : undefined}
+      confirmFails={runId !== null}
+    />
   {/if}
 </div>
