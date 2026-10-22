@@ -1025,21 +1025,25 @@ authoritative stage machine, every stage idempotent and re-enterable:
 | 1   | `prepare`           | registration admitted; every pick's account tested, enabled and offered by the plan; `relays.create` with every frontable listener (or the operator's `listenerKeys` choice when the node has more than 8), `deferBinding` + `setupOwned`, `autoRotate: true`, `desiredPublished = max(default, required, targets)` (bound 16). An origin a previous run left owned is reused at its recorded `setupStage` only while its listeners still match what the new plan discovered (same keys, same canonical hash, no extra deployed listener); otherwise `edge.plan_changed` and the operator removes protection first. Replacing a pick (`retry {replacePick: {from, to}}`; a one-pick run also takes `{accountId?, locationId?}`) is allowed only before that pick's addresses are published (`edge.pick_switch_late`, `edge.account_switch_late` for a one-pick run); candidates of the old pick are cancelled, never re-labelled. | raw origin body     |
 | 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | unchanged           |
 | 3   | `provision`         | per target (a listener and a pick) without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedLocationId`, `allowUnqualified`) AND records `expect`; a live edge of the listener in that location, not used by another target, is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | unchanged           |
-| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged by `partialRungFor` (`partial` is the L4 ceiling); L7 runs the front proof. `unreachable` gets one re-apply and a fresh check first (below); then it (or a timeout) asks the operator (`address_unreachable`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | unchanged           |
+| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged per address family by `outsideCheckFor` (§ "Probe sources and verdicts"; `partial` is the L4 ceiling); L7 runs the front proof. Only a real refusal is `unreachable`: it gets one re-apply and a fresh check first (below), then asks the operator (`address_unreachable`); a family no source could test passes as `notChecked`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
 | 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | unchanged           |
 | 5   | `publish`           | per required listener: the node's approval is checked in the same mutation as the start (an enrolled node without one PARKS: `needs_you` `node_not_approved`, nothing published, docs/servers.md "A fronted node's activation"); then a `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here (never for an enrolled fronted node)                                                                                                                                                                                                                                                                                                                                                                                      | direct AND FCP Host |
 | 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | FCP Hosts only      |
 | 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after; an enrolled node renders exactly its activation's candidates); expired proofs re-run and the rehearsal repeats (bounded); the version vector (with the activation candidate) + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | unchanged           |
 | 8   | `go_live`           | ONE mutation: no active rotation, no quarantine, origin enabled; the local vector equals the rehearsal's; the observation younger than 60 s; every L7 proof `expiresAt` ahead; every hide row settled and none outstanding; no FCP Host op claimed; every required listener's edge published (in the pool, on a listener whose FCP Host exists), L4 with a current confirmation; `render.enabled` turned on if off (`edge.render.enabled_by_setup`); an enrolled node's candidate promoted in the same mutation (a live node with no activation binds only when every edge fits its committed approval); then `claimDeliveryBinding` and `setupOwned` cleared. A failed check sends the run BACK (7, 6 or the card); a stale candidate blocks the activation and waits for a fresh approval                                                                                                                                       | rendered body       |
 
-**An address the outside check finds unreachable** (stage 4). Before the run asks, an L4
+**An address the outside check finds unreachable** (stage 4). Only real evidence about the
+address gets here (§ "Probe sources and verdicts"): an outside source's agreed `unreachable`
+verdict over a family, or FCP's own shape check refused over it. A source that could not test
+(no route on FCP's host, a refused request, a measurement that timed out) never does, and never
+triggers the retry below. Before the run asks, an L4
 address gets ONE retry where its adapter offers `reapply` (Scaleway today): its configuration
 is saved again at the provider, unchanged (`edgeProviderOps.reapply`; the run event
 `reapplied`), because a provider can accept a change and never apply it (§ "Scaleway
 settling"). The entry remembers it (`reappliedEdgeId`), so a new address gets its own once and
-the same one never twice. Then the check starts afresh: `recheckSince` makes `rungFor` count
-only evidence from the new request on (rollup rows updated since, internal runs requested
-since), and the fresh round is requested only once every earlier probe run of the address has
+the same one never twice. Then the check starts afresh: `recheckSince` makes `outsideCheck` count
+only evidence from the new request on (rollup rows updated since, runs requested since), and
+the fresh round is requested only once every earlier probe run of the address has
 landed (`probesInFlight`), so a late verdict of the first round never counts as fresh. Busy
 (`lb_busy`) or an unknown outcome still earns the fresh check; nothing to save
 (`not_offered`, `no_frontend`) or a load balancer that will not apply anything
@@ -2027,6 +2031,60 @@ longer than one pass (provisioning, the 15-minute evidence wait) is still proven
 block was seen. A rotation row written before the snapshot existed reads the suspicion as
 before. Only a detector start carries one (`validation` otherwise); the rotation view shows it.
 
+### Probe sources and verdicts
+
+Four sources check an address from outside its provider: FCP's own host (`internal`), check-host.net,
+Globalping and RIPE Atlas (`edge.probe.sources.*`). An L4 address is probed once per listener
+port per address family: IPv4, and IPv6 when members are handed it (`render.ipv6Mode` not
+off) or when it is all the address has (`literalFamilies`).
+
+| Source         | What it does over IPv6                                                                                                                                                                                    | Limits worth knowing                                                                                                                                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal`     | Dials the literal. On a host without an IPv6 route the dial fails `ENETUNREACH`, a local route lookup confirms it (a UDP connect, nothing sent), and the run ends `failed` / `no_route`: not tested.      | One vantage, not a country. Runs the `tls-sni` / `tcp` shape check of an L4 edge.                                                                                            |
+| check-host.net | **Never asked.** Its API answers `{"error":"invalid_url"}` to every spelling of an IPv6 literal (`[v6]:port`, a bare literal, `tcp://`, `https://`), and its docs do not mention IPv6 (`checkhostTakes`). | Keyless; a refusal comes back as 200 with a code (`invalid_url` = `request_refused`, `limit_exceeded` = `rate_limited`).                                                     |
+| Globalping     | A TCP ping to the literal, its own family; only probes that can reach IPv6 answer.                                                                                                                        | `measurementOptions.ipVersion` is sent for a NAME only: Globalping refuses it next to an IP literal (400, `request_refused`). Works without a token, at the anonymous limit. |
+| RIPE Atlas     | `af: 6` measurements, from probes with IPv6.                                                                                                                                                              | Needs a key and credits; off by default.                                                                                                                                     |
+
+**Three kinds of answer** (`lib/edges/probes/types.ts` `RunOutcome`). A vantage either
+**reached** the address, was **refused** by it (connection refused, reset, no answer, a failed
+handshake where the handshake is the measurement), or **could not test** at all. "Could not
+test" is never stored as a result, so it can never count as a failure: a parser drops the one
+vantage (a node or probe whose own error is "Network is unreachable" / `ENETUNREACH`, a probe
+that could not run the command), and a run whose vantages all could not test ends `failed` or
+`timeout` with a short class (`no_route`, `request_refused`, `auth`, `no_key`, `rate_limited`,
+`globalping_limit`, `timeout`, ...). `EHOSTUNREACH` from an outside vantage stays evidence: it
+is as likely a router's answer about the address as the vantage's own gap, and only FCP's host
+can tell the two apart.
+
+**The guided run's verdict** (stage 4, `outsideCheckFor`), per address family:
+
+- **refused**: an outside source agreed the address is unreachable over it (at least
+  `probe.agreementVantages` distinct failing networks and no success, `lib/edges/probes/verdict.ts`),
+  or FCP's shape check over it was refused. Any refused family makes the address `unreachable`
+  (`address_unreachable`, after the one re-apply).
+- **reached**: a source connected over it and none refused. Once the run's own round has no run
+  of that family in flight, a reached family passes.
+- **unknown**: every source settled without being able to test it. Never "unreachable": the
+  address passes with that family in `notChecked`, and the run card says "Not checked from
+  outside over IPv6" (or IPv4, or both). The operator's own test link (stage 4b) still comes
+  before anything is published, so even an address nothing could test is tried by a person
+  first.
+
+Before its own round, an address passes only on the rung's strong evidence on record (a reused
+spare: `partial` over a family). Once the round is asked for, only its evidence counts (rows
+updated and runs requested since): an older success never stands in for a round that could not
+test. The stage waits 15 minutes for its round; past that, runs still in flight are not waited
+for, and only the provider's own health (`requireProviderHealth`) can still hold the address
+(`address_unreachable`, detail `<listener>:provider_health`). Both readings (this one and the
+rung) count only the edge's current listener ports: a port it no longer listens on says nothing
+about it.
+
+A source sits out a family it cannot take (check-host and an IPv6 literal), and the budget is
+charged for the runs actually made. A target no source in use can check at all (an IPv6-only
+address with check-host the only source) is refused `probe.no_source` and never kept due by the
+cron. A RIPE Atlas probe dropped for its own missing route still counts as answered, so the poll
+settles instead of waiting out its deadline.
+
 ### Simulating a block on a test deployment
 
 A beta or local deployment cannot produce real censorship, so the automatic path (detector,
@@ -2152,8 +2210,9 @@ with `delivery.country.steer` on (next section).
   control); a round that would pass it runs without Globalping, and the executor asks
   Globalping's `GET /v1/limits` first and does not start a measurement that would not fit
   (`globalping_limit`). A failed run keeps a short class (`probeRuns.error`: `auth`,
-  `rate_limited`, `timeout`, `service_error`, ...). A source whose newest three settled runs
-  brought back nothing (of its newest 50), with nothing working for six hours, raises attention
+  `rate_limited`, `timeout`, `service_error`, `no_route`, ...). A source whose newest three
+  settled runs brought back nothing (of its newest 50; `no_route` runs are left out: the source
+  works, FCP's host just lacks the family), with nothing working for six hours, raises attention
   `probe_source_failing` (warning) and shows on `GET probes/sources` and `GET probes/matrix`
   (`sources`).
 - **Admin API.** `GET countries` (checked and control countries, grades, every edge's tracks
@@ -2256,9 +2315,10 @@ the names and the edges (`locateMember` / `locateAt`).
   a member whose stored country that is (a listed one): names chosen for it and, with steering
   on, addresses ordered for it, with the tier each endpoint came from.
 
-**Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure): `partial` = provider
-health + outside reachability (at least `probe.agreementVantages` distinct vantages reachable,
-none `unreachable`) + a protocol-SHAPE check branched by the listener's security: the
+**Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure, read per address
+family): `partial` = provider health + outside reachability over one family (at least
+`probe.agreementVantages` distinct vantages reachable) + a passing protocol-SHAPE check over
+it, and no family refused; the shape check is branched by the listener's security: the
 internal source runs **`tls-sni`** for a REALITY / TLS listener (a full handshake to the edge
 ADDRESS with SNI = one of the listener's active names, the chain verified for that name
 against the system store, no HTTP; the name is resolved at execution time by
@@ -2275,7 +2335,9 @@ the word only); `unreachable` clears a `partial` record; a `verified` record is 
 The record is informational: `verificationCurrent` answers false for any rung but `verified`,
 so it never satisfies the publication gate and attention still lists the edge as
 `spare_untested`. `verified` comes only from the operator's per-endpoint confirmation
-(§ Publication); `unreachable` = an outside `unreachable` verdict or a failed shape run. L7
+(§ Publication); `unreachable` = an outside `unreachable` verdict or a shape run that was
+refused, over any family. A shape run that could not test (failed, timed out, no route on FCP's
+host) is no refusal: the newest one that IS evidence counts, per family and port. L7
 edges keep `tls` / `https` by name.
 
 ## Configuration

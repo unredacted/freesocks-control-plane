@@ -2205,6 +2205,9 @@ export default defineSchema({
         // The address whose configuration stage 4 saved again, once, when its
         // outside check found it unreachable (EdgeProvider.reapply).
         reappliedEdgeId: v.optional(v.id('edges')),
+        // Families of the address no outside source could test when stage 4
+        // passed it (the run card's "not checked from outside over IPv6").
+        notChecked: v.optional(v.array(v.union(v.literal(4), v.literal(6)))),
       }),
     ),
     // The isolated test links shown for the `try_it` card (one per L4 endpoint).

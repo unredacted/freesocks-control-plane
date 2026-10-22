@@ -16,6 +16,12 @@ describe('failureCode', () => {
     expect(failureCode('globalping_limit')).toBe('globalping_limit');
     expect(failureCode('something odd at 192.0.2.1')).toBe('error');
   });
+
+  it("names what could not test: no route on FCP's host, check-host refusals", () => {
+    expect(failureCode('no_route')).toBe('no_route');
+    expect(failureCode('check-host: invalid_url')).toBe('request_refused');
+    expect(failureCode('check-host: limit_exceeded')).toBe('rate_limited');
+  });
 });
 
 describe('sourceHealth', () => {
@@ -76,5 +82,18 @@ describe('sourceHealth', () => {
   it('ignores runs that have not settled', () => {
     const runs = [run('globalping', NOW - H, 'running'), run('globalping', NOW - H, 'requested')];
     expect(sourceHealth(['globalping'], runs, NOW)[0]).toMatchObject({ runs: 0, failing: false });
+  });
+
+  it("a family FCP's own host has no route for is not a failing source", () => {
+    // Every IPv6 run of the internal probe on a host without IPv6.
+    const runs = [
+      run('internal', NOW - 8 * H, 'finished', 1),
+      ...[1, 2, 3, 4].map((i) => run('internal', NOW - i * H, 'failed', 0, 'no_route')),
+    ];
+    expect(sourceHealth(['internal'], runs, NOW)[0]).toMatchObject({
+      runs: 1,
+      streak: 0,
+      failing: false,
+    });
   });
 });
