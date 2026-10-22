@@ -63,6 +63,7 @@ import type * as edgeTestLinks from "../edgeTestLinks.js";
 import type * as edgeVerification from "../edgeVerification.js";
 import type * as edges from "../edges.js";
 import type * as freeTier from "../freeTier.js";
+import type * as freedomDelivery from "../freedomDelivery.js";
 import type * as frontQualify from "../frontQualify.js";
 import type * as frontQualifyOps from "../frontQualifyOps.js";
 import type * as health from "../health.js";
@@ -243,6 +244,7 @@ declare const fullApi: ApiFromModules<{
   edgeVerification: typeof edgeVerification;
   edges: typeof edges;
   freeTier: typeof freeTier;
+  freedomDelivery: typeof freedomDelivery;
   frontQualify: typeof frontQualify;
   frontQualifyOps: typeof frontQualifyOps;
   health: typeof health;

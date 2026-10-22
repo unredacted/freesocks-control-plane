@@ -13,6 +13,7 @@ export const SETTINGS_SECTIONS = [
   'probes',
   'l7',
   'maintenance',
+  'freedom',
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 export const parseSection = (raw: string | null | undefined): SettingsSection =>
@@ -641,7 +642,10 @@ export const L7_FIELDS: Field[] = [
 const pathsOf = (fields: readonly Field[]): string[] => fields.map((f) => f.path);
 
 /** Every flat path a section owns (the rendering section adds its family rules at runtime). */
-export const SECTION_PATHS: Record<Exclude<SettingsSection, 'maintenance'>, string[]> = {
+export const SECTION_PATHS: Record<
+  Exclude<SettingsSection, 'maintenance' | 'freedom'>,
+  string[]
+> = {
   basics: [...pathsOf(BASIC_SWITCHES), ...pathsOf(BASIC_NUMBERS), AUTO_PROVISION.path],
   rotation: pathsOf(ROTATION_FIELDS),
   rendering: pathsOf(RENDER_GLOBAL_FIELDS),

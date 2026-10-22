@@ -427,6 +427,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.relay.providers_changed': ['relaySlug', 'added', 'removed', 'drained', 'picks', 'run'],
   // The automation switch: the one boolean it was set to.
   'edge.automation.set': ['on'],
+  // Freedom modes only through edges (freedomDelivery.setEdgesOnly): what it was set to,
+  // whether members were affected and the admin confirmed it, how many nodes it withholds.
+  'edge.freedom.edges_only': ['on', 'confirmed', 'withheldNodes', 'affected'],
   // Guided setup runs (edgeSetupRuns.ts): slugs, run ids, stage / code words
   // and counts only; never an address, a Host uuid or a test link.
   'edge.setup_run.started': [

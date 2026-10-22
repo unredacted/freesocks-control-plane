@@ -73,6 +73,7 @@ const RESERVED = new Set([
   'maintenance',
   'delivery-bindings',
   'automation',
+  'freedom',
   'setup-runs',
   'sni',
   'countries',
@@ -118,10 +119,12 @@ function isReadOnlyPost(parts: string[]): boolean {
  * under this prefix (contract v2, docs/servers.md "Node registration").
  */
 export function scopeFor(parts: string[], method: string): string {
-  // The automation switch writes `edge.*` config: the settings scope, like `config`.
+  // The automation switch writes `edge.*` config: the settings scope, like `config`;
+  // so does freedom delivery through edges (`edge.freedom.edgesOnly`).
   const ns =
     parts[0] === 'config' ||
     parts[0] === 'automation' ||
+    parts[0] === 'freedom' ||
     (parts[0] === 'sni' && parts[1] === 'config')
       ? 'settings'
       : 'servers';
@@ -285,6 +288,10 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   if (a === 'maintenance' && !b) return json(await maintenanceView(ctx));
   if (a === 'delivery-bindings' && !b)
     return json(await ctx.runQuery(internal.edgeOperator.deliveryBindings, {}));
+  // Freedom modes only through edges: the switch, and what turning it on would close.
+  if (a === 'freedom' && !b) return json(await ctx.runQuery(internal.freedomDelivery.view, {}));
+  if (a === 'freedom' && b === 'preview' && !c)
+    return json(await ctx.runAction(internal.freedomDelivery.preview, {}));
   if (a === 'setup-runs') {
     if (!b) return json(await ctx.runQuery(internal.edgeSetupRuns.listForAdmin, {}));
     if (!c) {
@@ -678,6 +685,17 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         ...act,
       }),
     );
+  // Freedom modes only through edges (settings scope): `{on: boolean, confirm?: boolean}`.
+  if (a === 'freedom' && !b) {
+    if (typeof body.on !== 'boolean') return errorJson('validation', 'on must be a boolean', 400);
+    return json(
+      await ctx.runMutation(internal.freedomDelivery.setEdgesOnly, {
+        on: body.on,
+        confirm: body.confirm === true,
+        ...act,
+      }),
+    );
+  }
   // The one automation switch (settings scope): `{on: boolean}`.
   if (a === 'automation' && !b) {
     if (typeof body.on !== 'boolean') return errorJson('validation', 'on must be a boolean', 400);

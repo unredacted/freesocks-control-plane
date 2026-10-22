@@ -294,6 +294,7 @@ async function rehearseBody(
       subscriptionUrl: ref.subscriptionUrl,
       userAgent: ua,
       ...(ref.excludeNode ? { excludeNode: ref.excludeNode } : {}),
+      nodeCheck: true,
     });
     content = fetched.content;
     pinnedNode = fetched.pinnedNode;
