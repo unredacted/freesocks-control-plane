@@ -480,7 +480,9 @@ credential fetching a neutral `204` target). A `vless` HTTP-transport `tls` list
 with its VLESS id (`l7Proof: 'vless'`), Trojan over WebSocket with the same account's Trojan
 password (`l7Proof: 'trojan'`, stored next to the id as `qualificationTrojanPassword`, never
 returned by any read); a credential of the wrong kind is `no_qualification_credential`, every
-other combination is `unsupported_protocol` and never L7-fronted.
+other combination is `unsupported_protocol` and never L7-fronted. The account is reset first when
+it is used up, and one that cannot be reset is `test_account_used_up` with no session sent
+(§ "Publication", "The test account is kept usable").
 The result is stored with its **binding** (hostname, listener id + revision, the three
 protocol fields, transport parameters, intent hash) and an expiry
 (60 minutes, a constant: `EDGE_PLUMBING.l7QualificationTtlMs`); publication re-derives the binding inside the mutation
@@ -661,6 +663,33 @@ obligation the reconcile sweep finishes (expired after 24 h or released when the
 the run is cancelled -> `deleteUser` with bounded retries; a delete that keeps failing is
 `failed` and raises attention `test_key_cleanup`, retried by hand); a rehearsal on an empty
 Outline server has no credential path (`use_manual_setup`).
+
+**The test account is kept usable** (`relayQualification.keepUsable`). The qualification
+account is a member-shaped backend user with a 50 MB cap and no expiry. A test profile imported
+into a real client and left connected spends that cap; the backend then limits the account,
+serves its subscription as a placeholder, and every test link, rehearsal body and front check
+through it fails without saying why (one was found at more than ten times its cap, and a good
+new address looked broken). So before the account is used, FCP reads it on its own instance
+(`backends.getUser` with the origin's `backendServerId` as the hint: the account has no
+subscription row) and, when it is limited, disabled or expired, or past half its cap
+(`QUALIFICATION_RESET_AT_SHARE`), resets its traffic and re-enables it (an expired one gets the
+no-expiry date back first). This runs on every reused credential a test link or a rehearsal is
+built from (`edgeTestCredentials.ensure`) and before every front-qualification session
+(`frontQualifyOps.run`, which the reconcile cron also runs to renew proofs). Each reset is
+audited as `relay.qualification_reset` (the origin's slug and booleans: `reset`, `failed`,
+`reenabled`, `nearCap`). A read that fails changes nothing (the use goes ahead, and a backend
+that does not answer fails it on its own). A reset that fails refuses only when the account
+carries no session as it is: a test link is refused with `edge.test_account_used_up`, a front
+check is recorded as `test_account_used_up` (no session is sent), and a guided run shows the card
+**`test_account_used_up`** ("The test account is used up and could not be reset"; "Try again"
+re-enters the stage, which checks and resets again) instead of a link that cannot connect. Every
+test link carries the note that its profile is for a short test only and should be removed from
+the client afterwards. There is no timed reset: the account is reset only when FCP is about to
+use it, so a profile left in a client gets the cap back no more often than FCP tests or renews a
+proof through the node. Resets that keep appearing in the Timeline mean such a profile is still
+connected somewhere; removing the origin's qualification credential and minting it again
+(Origin details, "L7 qualification credential": Remove, then Mint credential; a test link mints
+one by itself) replaces the account and cuts that profile off.
 
 **Account trust is a separate record.** The first confirmed endpoint of an untrusted L4
 account also trusts the account (`edgeProviderAccounts.applyQualification`, with endpoint
@@ -1024,6 +1053,8 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `POST relays/{id}/reprotect`                                        | "Protect again" for a live, bound, enrolled node: a re-protect run (`kind: 'reprotect'`, `mode` `replace_all` or `add`) that keeps the committed delivery until go-live and drops only its candidates on cancel. Refuses `edge.reprotect_not_bound`, `edge.reprotect_not_enrolled`, `edge.reprotect_no_room` and the usual run refusals. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `GET relays/{id}/providers`                                         | The node's provider set (§ "Provider sets"): each pick with its addresses in use and spare, whether it cools and until when, the locations outside the set that hold one of its addresses (`outside`), the transports with no backup at another provider, the deficit, the locations that could be added, and the regions a load balancer account reaches that are no location yet (`regions`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `POST relays/{id}/providers {add?, remove?}`                        | Edit the set: adding a location to a live enrolled node starts an `add` re-protect run (the response names it); elsewhere the set is saved. Removing one drains its addresses, refused (`edge.set_would_uncover`) unless the tested survivors elsewhere still serve every transport and meet the remaining requirement. Refused under a setup run, a rotation, quarantine, a restore or the freeze; at most 6 picks (`edge.set_too_large`). Audited `edge.relay.providers_changed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `POST providers/{id}/cost {cost}`                                   | What the account costs (§ "Plans and prices"): `{paid, perEdgeMonthly?, currency?, note?, monthlyCap?}` with `paid` one of `list`, `free`, `amount`; `null` for the default. Audited as `edge.provider_account.cost_changed` (amounts, never the note).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `POST providers/{id}/locations/{locationId}/plans/refresh`          | Read the location's plans and prices again at the provider (throttled): `{refreshed, error}`; a failure keeps the last plans.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `POST edges/{id}/test-link`                                         | The isolated test link for an L4 candidate (throttled: fetches the test credential's body and the backend Hosts): the candidate connection only, plus the binding the confirmation must echo. See § "Publication".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `GET relays/inbound-candidates?backendServerId=&nodeUuid=`          | Discovery with the origin probe applied (throttled): the node's transports as listener candidates, `originTransport` filled where probed, `unsupported` with reasons. Registers nothing. See § "Listener catalogue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
@@ -1039,21 +1070,25 @@ authoritative stage machine, every stage idempotent and re-enterable:
 | 1   | `prepare`           | registration admitted; every pick's account tested, enabled and offered by the plan; `relays.create` with every frontable listener (or the operator's `listenerKeys` choice when the node has more than 8), `deferBinding` + `setupOwned`, `autoRotate: true`, `desiredPublished = max(default, required, targets)` (bound 16). An origin a previous run left owned is reused at its recorded `setupStage` only while its listeners still match what the new plan discovered (same keys, same canonical hash, no extra deployed listener); otherwise `edge.plan_changed` and the operator removes protection first. Replacing a pick (`retry {replacePick: {from, to}}`; a one-pick run also takes `{accountId?, locationId?}`) is allowed only before that pick's addresses are published (`edge.pick_switch_late`, `edge.account_switch_late` for a one-pick run); candidates of the old pick are cancelled, never re-labelled. | raw origin body     |
 | 2   | `credential`        | `relayQualification.ensure` for an L7 listener (`qualification`) or an EMPTY backend node (`rehearsal`); an empty Outline server is `use_manual_setup`; a placement problem is `choose_mode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | unchanged           |
 | 3   | `provision`         | per target (a listener and a pick) without a live candidate: ONE mutation starts `provision` (`publishOnDone: false`, `requestedLocationId`, `allowUnqualified`) AND records `expect`; a live edge of the listener in that location, not used by another target, is reused. `edge.busy` / `edge.concurrency` wait and poll; `edge.maintenance` asks the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | unchanged           |
-| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged by `partialRungFor` (`partial` is the L4 ceiling); L7 runs the front proof. `unreachable` gets one re-apply and a fresh check first (below); then it (or a timeout) asks the operator (`address_unreachable`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | unchanged           |
-| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | unchanged           |
+| 4   | `verify`            | per standby: outside probes (`trigger: 'qualification'`) + the internal shape run, judged per address family by `outsideCheckFor` (§ "Probe sources and verdicts"; `partial` is the L4 ceiling); L7 runs the front proof. Only a real refusal is `unreachable`: it gets one re-apply and a fresh check first (below), then asks the operator (`address_unreachable`); a family no source could test passes as `notChecked`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
+| 4b  | `try_it`            | one isolated **test link** per L4 endpoint lacking a current confirmation (`edgeTestLinks.build`; a published address gets a named-connection retest instead); the card's ticks echo `{edgeId, endpoint, listenerRevision, configHash}` into `edgeVerification.confirm` (`edge.verification_stale` rebuilds the card). The links come from the origin's test account, reset first when used up; one that cannot be reset is the card `test_account_used_up`, never a dead link (stage 4's L7 proof too). Skipped when every listener is L7                                                                                                                                                                                                                                                                                                                                                                                        | unchanged           |
 | 5   | `publish`           | per required listener: the node's approval is checked in the same mutation as the start (an enrolled node without one PARKS: `needs_you` `node_not_approved`, nothing published, docs/servers.md "A fronted node's activation"); then a `publish` rotation (`admission: 'setup.complete'`, so a freeze declared meanwhile does not strand admitted work) through the UNCHANGED gate; `pool_full_standby` = `coverage_incomplete`; quarantine = `quarantined`. `keepDirect` finishes `done_unbound` here (never for an enrolled fronted node)                                                                                                                                                                                                                                                                                                                                                                                      | direct AND FCP Host |
 | 6   | `hide_direct_hosts` | every L4 confirmation re-checked (stale = back to the card); `edgeHostHides.hide` with the EXACT approved uuids; an uncovered Host the consent did not name = `review_changed` (a new consent bumps `planRevision`); `hide_failed`; pending rows are polled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | FCP Hosts only      |
 | 7   | `rehearse`          | every client family's render rule on (`family_disabled`); `edgeRehearsal.run` (fresh cohort bodies through the real renderer, listing before and after; an enrolled node renders exactly its activation's candidates); expired proofs re-run and the rehearsal repeats (bounded); the version vector (with the activation candidate) + the FINAL Host observation are persisted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | unchanged           |
 | 8   | `go_live`           | ONE mutation: no active rotation, no quarantine, origin enabled; the local vector equals the rehearsal's; the observation younger than 60 s; every L7 proof `expiresAt` ahead; every hide row settled and none outstanding; no FCP Host op claimed; every required listener's edge published (in the pool, on a listener whose FCP Host exists), L4 with a current confirmation; `render.enabled` turned on if off (`edge.render.enabled_by_setup`); an enrolled node's candidate promoted in the same mutation (a live node with no activation binds only when every edge fits its committed approval); then `claimDeliveryBinding` and `setupOwned` cleared. A failed check sends the run BACK (7, 6 or the card); a stale candidate blocks the activation and waits for a fresh approval                                                                                                                                       | rendered body       |
 
-**An address the outside check finds unreachable** (stage 4). Before the run asks, an L4
+**An address the outside check finds unreachable** (stage 4). Only real evidence about the
+address gets here (§ "Probe sources and verdicts"): an outside source's agreed `unreachable`
+verdict over a family, or FCP's own shape check refused over it. A source that could not test
+(no route on FCP's host, a refused request, a measurement that timed out) never does, and never
+triggers the retry below. Before the run asks, an L4
 address gets ONE retry where its adapter offers `reapply` (Scaleway today): its configuration
 is saved again at the provider, unchanged (`edgeProviderOps.reapply`; the run event
 `reapplied`), because a provider can accept a change and never apply it (§ "Scaleway
 settling"). The entry remembers it (`reappliedEdgeId`), so a new address gets its own once and
-the same one never twice. Then the check starts afresh: `recheckSince` makes `rungFor` count
-only evidence from the new request on (rollup rows updated since, internal runs requested
-since), and the fresh round is requested only once every earlier probe run of the address has
+the same one never twice. Then the check starts afresh: `recheckSince` makes `outsideCheck` count
+only evidence from the new request on (rollup rows updated since, runs requested since), and
+the fresh round is requested only once every earlier probe run of the address has
 landed (`probesInFlight`), so a late verdict of the first round never counts as fresh. Busy
 (`lb_busy`) or an unknown outcome still earns the fresh check; nothing to save
 (`not_offered`, `no_frontend`) or a load balancer that will not apply anything
@@ -1469,6 +1504,7 @@ and deletes the FCP-owned Hosts of retired listeners and deleting origins (read-
 settles the direct-Host hide ledger and re-observes the direct Hosts of bound guided origins;
 advances each restore workflow until a phase must wait; removes expired or released temporary
 test keys (`edgeTestCredentials.sweep`, bounded retries, then attention `test_key_cleanup`);
+reads the plans and prices of up to two locations a day old (§ "Plans and prices");
 turns drained / failed / cancelled edges into destroy runs and starts their walk in the same
 pass: in the provider's kind order, the next resource as soon as the last is confirmed gone (an
 async-delete provider's delete is read back at once), stopping at the first still going away,
@@ -2040,6 +2076,60 @@ longer than one pass (provisioning, the 15-minute evidence wait) is still proven
 block was seen. A rotation row written before the snapshot existed reads the suspicion as
 before. Only a detector start carries one (`validation` otherwise); the rotation view shows it.
 
+### Probe sources and verdicts
+
+Four sources check an address from outside its provider: FCP's own host (`internal`), check-host.net,
+Globalping and RIPE Atlas (`edge.probe.sources.*`). An L4 address is probed once per listener
+port per address family: IPv4, and IPv6 when members are handed it (`render.ipv6Mode` not
+off) or when it is all the address has (`literalFamilies`).
+
+| Source         | What it does over IPv6                                                                                                                                                                                    | Limits worth knowing                                                                                                                                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal`     | Dials the literal. On a host without an IPv6 route the dial fails `ENETUNREACH`, a local route lookup confirms it (a UDP connect, nothing sent), and the run ends `failed` / `no_route`: not tested.      | One vantage, not a country. Runs the `tls-sni` / `tcp` shape check of an L4 edge.                                                                                            |
+| check-host.net | **Never asked.** Its API answers `{"error":"invalid_url"}` to every spelling of an IPv6 literal (`[v6]:port`, a bare literal, `tcp://`, `https://`), and its docs do not mention IPv6 (`checkhostTakes`). | Keyless; a refusal comes back as 200 with a code (`invalid_url` = `request_refused`, `limit_exceeded` = `rate_limited`).                                                     |
+| Globalping     | A TCP ping to the literal, its own family; only probes that can reach IPv6 answer.                                                                                                                        | `measurementOptions.ipVersion` is sent for a NAME only: Globalping refuses it next to an IP literal (400, `request_refused`). Works without a token, at the anonymous limit. |
+| RIPE Atlas     | `af: 6` measurements, from probes with IPv6.                                                                                                                                                              | Needs a key and credits; off by default.                                                                                                                                     |
+
+**Three kinds of answer** (`lib/edges/probes/types.ts` `RunOutcome`). A vantage either
+**reached** the address, was **refused** by it (connection refused, reset, no answer, a failed
+handshake where the handshake is the measurement), or **could not test** at all. "Could not
+test" is never stored as a result, so it can never count as a failure: a parser drops the one
+vantage (a node or probe whose own error is "Network is unreachable" / `ENETUNREACH`, a probe
+that could not run the command), and a run whose vantages all could not test ends `failed` or
+`timeout` with a short class (`no_route`, `request_refused`, `auth`, `no_key`, `rate_limited`,
+`globalping_limit`, `timeout`, ...). `EHOSTUNREACH` from an outside vantage stays evidence: it
+is as likely a router's answer about the address as the vantage's own gap, and only FCP's host
+can tell the two apart.
+
+**The guided run's verdict** (stage 4, `outsideCheckFor`), per address family:
+
+- **refused**: an outside source agreed the address is unreachable over it (at least
+  `probe.agreementVantages` distinct failing networks and no success, `lib/edges/probes/verdict.ts`),
+  or FCP's shape check over it was refused. Any refused family makes the address `unreachable`
+  (`address_unreachable`, after the one re-apply).
+- **reached**: a source connected over it and none refused. Once the run's own round has no run
+  of that family in flight, a reached family passes.
+- **unknown**: every source settled without being able to test it. Never "unreachable": the
+  address passes with that family in `notChecked`, and the run card says "Not checked from
+  outside over IPv6" (or IPv4, or both). The operator's own test link (stage 4b) still comes
+  before anything is published, so even an address nothing could test is tried by a person
+  first.
+
+Before its own round, an address passes only on the rung's strong evidence on record (a reused
+spare: `partial` over a family). Once the round is asked for, only its evidence counts (rows
+updated and runs requested since): an older success never stands in for a round that could not
+test. The stage waits 15 minutes for its round; past that, runs still in flight are not waited
+for, and only the provider's own health (`requireProviderHealth`) can still hold the address
+(`address_unreachable`, detail `<listener>:provider_health`). Both readings (this one and the
+rung) count only the edge's current listener ports: a port it no longer listens on says nothing
+about it.
+
+A source sits out a family it cannot take (check-host and an IPv6 literal), and the budget is
+charged for the runs actually made. A target no source in use can check at all (an IPv6-only
+address with check-host the only source) is refused `probe.no_source` and never kept due by the
+cron. A RIPE Atlas probe dropped for its own missing route still counts as answered, so the poll
+settles instead of waiting out its deadline.
+
 ### Simulating a block on a test deployment
 
 A beta or local deployment cannot produce real censorship, so the automatic path (detector,
@@ -2165,8 +2255,9 @@ with `delivery.country.steer` on (next section).
   control); a round that would pass it runs without Globalping, and the executor asks
   Globalping's `GET /v1/limits` first and does not start a measurement that would not fit
   (`globalping_limit`). A failed run keeps a short class (`probeRuns.error`: `auth`,
-  `rate_limited`, `timeout`, `service_error`, ...). A source whose newest three settled runs
-  brought back nothing (of its newest 50), with nothing working for six hours, raises attention
+  `rate_limited`, `timeout`, `service_error`, `no_route`, ...). A source whose newest three
+  settled runs brought back nothing (of its newest 50; `no_route` runs are left out: the source
+  works, FCP's host just lacks the family), with nothing working for six hours, raises attention
   `probe_source_failing` (warning) and shows on `GET probes/sources` and `GET probes/matrix`
   (`sources`).
 - **Admin API.** `GET countries` (checked and control countries, grades, every edge's tracks
@@ -2269,9 +2360,10 @@ the names and the edges (`locateMember` / `locateAt`).
   a member whose stored country that is (a listed one): names chosen for it and, with steering
   on, addresses ordered for it, with the tier each endpoint came from.
 
-**Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure): `partial` = provider
-health + outside reachability (at least `probe.agreementVantages` distinct vantages reachable,
-none `unreachable`) + a protocol-SHAPE check branched by the listener's security: the
+**Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure, read per address
+family): `partial` = provider health + outside reachability over one family (at least
+`probe.agreementVantages` distinct vantages reachable) + a passing protocol-SHAPE check over
+it, and no family refused; the shape check is branched by the listener's security: the
 internal source runs **`tls-sni`** for a REALITY / TLS listener (a full handshake to the edge
 ADDRESS with SNI = one of the listener's active names, the chain verified for that name
 against the system store, no HTTP; the name is resolved at execution time by
@@ -2288,7 +2380,9 @@ the word only); `unreachable` clears a `partial` record; a `verified` record is 
 The record is informational: `verificationCurrent` answers false for any rung but `verified`,
 so it never satisfies the publication gate and attention still lists the edge as
 `spare_untested`. `verified` comes only from the operator's per-endpoint confirmation
-(§ Publication); `unreachable` = an outside `unreachable` verdict or a failed shape run. L7
+(§ Publication); `unreachable` = an outside `unreachable` verdict or a shape run that was
+refused, over any family. A shape run that could not test (failed, timed out, no route on FCP's
+host) is no refusal: the newest one that IS evidence counts, per family and port. L7
 edges keep `tls` / `https` by name.
 
 ## Configuration
@@ -2799,6 +2893,77 @@ Selection ranks the switched-on locations of enabled, tested accounts (trusted u
 allows otherwise); a provision run may name `requestedLocationId`, and `requestedAccountId` alone
 means that account's default location. A run that cannot use the one it names fails with
 `location_not_found`, `no_location`, `location_disabled` or `location_capacity_reached`.
+
+## Plans and prices
+
+What an edge costs is part of choosing where it goes (`convex/edgePlans.ts`,
+`convex/lib/edges/pricing.ts`). Every load balancer location keeps its **plans**: one row per
+size the provider offers there (`edgePlans`, per account, location and size), with its list
+price an hour and a month and the currency, its traffic terms (`unlimited`, `included` GB a
+month then charged, `per_gb`, or `unknown`), its bandwidth, whether it takes a node outside
+the provider (Scaleway's multi-cloud flag), where the price came from (`api`: the provider's
+own price list; `catalog`: FCP's dated table, "list price as of" its date) and when it was
+read. A month is the provider's own monthly figure, else its hourly price times 730 (the hours
+of an average month). A CDN account has no plans: FCP never prices one on its own.
+
+**Where the prices come from** (each checked against the provider's documentation on
+2026-10-22):
+
+| adapter  | plans and prices                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| gcore    | `GET /cloud/v1/lbflavors/{project_id}/{region_id}?include_prices=true`: `price_per_hour`, `price_per_month`, `currency_code`, used when `price_status` is `show` (a trial account reads every price as 0, as documented). A flavor the list does not price is asked the v2 preview, `POST /cloud/v2/pricing/{project_id}/{region_id}/loadbalancers {flavor}` (`per_hour.flavor`, `per_month.flavor`), a few at most. The flavor's own price: an address Gcore bills apart is not in it. Neither says anything about traffic: `unknown`.                                                                                                                                                                                                                                                                                          |
+| upcloud  | `GET /1.3/load-balancer/plans` for the plans (nodes, sessions per node) and the account's price list, `GET /1.3/price`, for the location's zone (cents an hour in the account's billing currency, which the list does not name: it is read from the account's details, `GET /1.3/account` then `GET /1.3/account/details/{username}`; a list whose currency cannot be read is not used). UpCloud does not document the price list's key for a load balancer plan, so it is matched by the plan's name; a plan it does not name takes the pricing page's monthly figure (`UPCLOUD_LB_PRICES`). The plan's own price: the floating IP FCP delegates is not in it. No data transfer charge: `unlimited`.                                                                                                                            |
+| ovh      | The region's flavors (`GET /cloud/project/{serviceName}/region/{regionName}/loadbalancing/flavor`) joined by name (`small` is `loadbalancer-s`) to the public cloud catalog, `GET /order/catalog/public/cloud?ovhSubsidiary=` (no authentication; prices in micro-cents; `octavia-loadbalancer.loadbalancer-<x>.hour.consumption` an hour, `...month.consumption` a month, `blobs.technical.bandwidth.level`), with the floating IP every balancer gets (`floatingip.floatingip.*`) added. The subsidiary is the account's (`/me`), else its endpoint's (FR, CA, US). The catalog is several megabytes: read with its own cap and kept an hour. Traffic is included, except in the Asia-Pacific regions, where a project gets 1 TB a month and pays past it. A gateway FCP creates when the location names none is billed apart. |
+| scaleway | The public product catalog, `GET https://api.scaleway.com/product-catalog/v2alpha1/public-catalog/products?product_types=load_balancer&zone=` (no authentication; an alpha API): `price.retail_price` per node an hour, `properties.load_balancer.node.bandwidth` (bits a second) and `multi_cloud_provider`, with the IPv4 each edge allocates added (the catalog's "Load Balancer IP", billed per IP an hour). When it does not answer, the zone's size list (`ListLbTypes`, which carries no price) priced from the pricing page (`SCALEWAY_LB_PRICES`: LB-S 0.023, LB-GP-M 0.054, LB-GP-L 0.094, LB-GP-XL 0.941 EUR an hour, plus 0.005 for the IPv4; 200 Mbps, 500 Mbps, 1 Gbps, 4 Gbps). Traffic is not charged.                                                                                                           |
+
+Sources: https://gcore.com/docs/api-reference/cloud/load-balancers/list-load-balancer-flavors.md,
+https://gcore.com/docs/api-reference/cloud/load-balancers/preview-load-balancer-price.md,
+https://developers.upcloud.com/1.3/4-pricing/, https://developers.upcloud.com/1.3/17-managed-loadbalancer/,
+https://upcloud.com/pricing/, https://eu.api.ovh.com/1.0/order.json,
+https://www.ovhcloud.com/en/public-cloud/prices/,
+https://www.scaleway.com/en/developers/api/product-catalog/public-catalog/v2alpha1/,
+https://www.scaleway.com/en/pricing/network/.
+
+**When they are read.** With every inventory pull of a location (a new location's first one
+included; the pull never fails on prices), by the reconcile cron once a location's plans are a
+day old (two locations a pass; a failed read is tried again an hour later), and by **Refresh
+prices** on the account page. The location form reads the plans of the region it is choosing
+live (stored nowhere). A read replaces the location's plans whole; one that fails keeps the last
+ones and says why (`plansError`).
+
+**The plan picker.** A location's plan is its size value (the template's flavor, plan or type
+for that location: every load balancer provider's size is set per location). The location
+form, **Change plan** on the account page and a node's own Options at a pick offer each size
+with its price, traffic terms, bandwidth and what it accepts. A size that cannot carry an FCP
+node (a Scaleway size that takes Scaleway's own servers only, `size_not_multicloud`) cannot be
+picked, and choosing one for a location is refused.
+
+**What you pay** (`edgeProviderAccounts.cost`, the account page's Cost card): the list price (a
+load balancer account's default), free or credits, or your own amount per edge a month in a
+currency, with an optional note. It is shown beside the list price wherever a cost is. A CDN
+account reads "No price set" until you say it is free or what it costs.
+
+**Before anything billable is created**, the protect sheet's "FCP creates" box lists what each
+pick's addresses cost a month at the size they build (the node's options included) and the total
+per currency; the review repeats the total. A spare, a replacement that creates a new address,
+and "Add a location" on a node say what one address there costs. A plan whose traffic is charged
+on top says "plus traffic"; FCP does not estimate it. Amounts in different currencies are never
+added together.
+
+**The budget guard** (optional, off by default): a monthly cap on an account, in its currency.
+The estimate is every live edge FCP manages there, at the size it was built with (frozen on the
+edge as `planSize`; an edge from before at what its location builds now), priced as above; an
+edge whose price is not known, or is in another currency, counts for nothing. Once the estimate
+plus the new edges would pass the cap, no new edge is created there: the protect plan refuses
+the account (`account_spend_cap_reached`), selection passes over it (named or automatic),
+preflight says so, and the edge insert refuses it last. An account at its cap raises attention
+`account_spend_cap`.
+
+**Selection** keeps its priorities (the lower number is tried first); between accounts of the
+same priority it prefers the cheaper edge among those priced in the same currency (each account
+ranks by cost within its currency; one whose price is not known ranks with the cheapest, so
+prices in different currencies are never compared), then the fewest live edges as before. A
+node's provider set keeps its own order.
 
 ## Provider sets
 
@@ -3634,7 +3799,7 @@ live resource; FCP never applies one (a new edge is built instead).
 | gcore      | Health check      | Healthy status codes                  | `health_monitor.expected_codes`                         | 200                          | template, per node             | in place                    |
 | gcore      | Health check      | HTTP check version                    | `health_monitor.http_version`                           | 1.0                          | template, per node             | in place                    |
 | gcore      | Health check      | HTTP check host name                  | `health_monitor.domain_name`                            | provider's own               | template, per node             | in place                    |
-| upcloud    | Load balancer     | Plan                                  | `loadbalancer.plan`                                     | development                  | template, per node             | in place                    |
+| upcloud    | Load balancer     | Plan                                  | `loadbalancer.plan`                                     | development                  | template or location, per node | in place                    |
 | upcloud    | Load balancer     | Maintenance day                       | `loadbalancer.maintenance_dow`                          | provider's own               | template, per node             | in place                    |
 | upcloud    | Load balancer     | Maintenance time (UTC)                | `loadbalancer.maintenance_time`                         | provider's own               | template, per node             | in place                    |
 | upcloud    | Load balancer     | Labels                                | `loadbalancer.labels`                                   | none                         | template, per node             | in place                    |
@@ -3940,6 +4105,16 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                 | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Plans and prices** add one table (`edgePlans`) and optional fields only
+(`edgeProviderAccounts.cost`, `edgeLocations.plansAt` / `plansTriedAt` / `plansError`,
+`edges.planSize`): one deploy, no migration, no env change. Prices appear with each location's
+next inventory pull, or within the reconcile cron's passes (two locations every five minutes);
+**Refresh prices** reads one at once. No account has a cap until one is set, so nothing new is
+refused. To roll back, run `edgePlans:clearForRollback` before deploying the older build: it
+deletes the plans page by page, clears the account and location fields, then walks the edges in
+bounded pages to clear `planSize`, scheduling itself until the edges are done (watch the
+scheduled runs finish before deploying).
 
 **Per-account Cloudflare fronting** adds one optional field (`edgeProviderAccounts.frontsTraffic`):
 one deploy, no freeze, no env change. `seedCutover` runs `edgeProviderAccounts:migrateDnsFronting`

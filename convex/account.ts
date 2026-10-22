@@ -470,7 +470,8 @@ export const getAccountView = internalAction({
           devices: state.devices,
         };
       } catch {
-        /* backend unreachable: serve local data with zeroed live fields */
+        /* backend unreachable, or no instance resolves the key: serve local data
+           with zeroed live fields and the `unknown` status */
       }
       // The hosting instance's member-facing location (code + label; no secrets).
       const server = sub.backendServerId

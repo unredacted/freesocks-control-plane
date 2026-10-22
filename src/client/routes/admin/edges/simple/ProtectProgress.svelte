@@ -21,6 +21,10 @@
    * paused (quarantined) node shows the plain PausedCard; the Live card offers
    * automatic protection while it is off.
    *
+   * A new address whose outside check passed while one of its address
+   * families could not be tested from anywhere (FCP's own server has no IPv6,
+   * say) says so in one quiet line ("not checked from outside over IPv6").
+   *
    * With the checks from each country on, each new address says how it fares
    * from every checked country as its first round comes back ("IR: checking",
    * then works or blocked); the checks read every 4 s while the run is live.
@@ -44,6 +48,7 @@
     needButtons,
     runTestLines,
     runLineName,
+    runNotCheckedLines,
     runPickLines,
     runListenerName,
     type NeedAction,
@@ -145,6 +150,7 @@
   // briefly `running` at try_it) the card stays up with its answers locked.
   const lines = $derived(run ? runTestLines(run) : { items: [], done: new Set<string>() });
   const pickLines = $derived(run ? runPickLines(run) : []);
+  const notChecked = $derived(run ? runNotCheckedLines(run) : []);
   const testing = $derived(
     !!run &&
       run.stage === 'try_it' &&
@@ -338,6 +344,13 @@
         {/each}
       </ul>
     </section>
+  {/if}
+  {#if notChecked.length > 0}
+    <ul class="text-muted-foreground space-y-0.5 text-sm" aria-label="Outside check">
+      {#each notChecked as line (line.key)}
+        <li>{line.text}</li>
+      {/each}
+    </ul>
   {/if}
   {#if run.reduced.length > 0}
     <p class="text-muted-foreground text-sm">

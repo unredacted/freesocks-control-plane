@@ -108,6 +108,8 @@ import {
 } from './lib/edges/originStatus';
 import { isTerminalRunState } from './lib/edges/setupRuns';
 import { setupRunLiveOn } from './lib/edges/relayGuards';
+import { spendOf } from './edgePlans';
+import { atCap } from './lib/edges/pricing';
 
 type Db = QueryCtx['db'];
 type Relay = Doc<'relays'>;
@@ -1580,6 +1582,34 @@ export const attention = internalQuery({
           action: 'open_account',
           since: isoN(a.apiFailingSince),
         });
+      }
+      // At its monthly spend cap (the budget guard, docs/edges.md § "Plans and
+      // prices"): no new edge is created in the account until the cap is
+      // raised or edges go.
+      if (a.enabled && typeof a.cost?.monthlyCap === 'number') {
+        const spend = await spendOf(ctx, a);
+        if (atCap(spend))
+          items.push({
+            id: `account_spend_cap:${a._id}`,
+            kind: 'account_spend_cap',
+            severity: 'warning',
+            relaySlug: null,
+            relayId: null,
+            edgeId: null,
+            listenerKey: null,
+            accountId: a._id as string,
+            rotationId: null,
+            code: null,
+            facts: {
+              name: a.name,
+              provider: a.provider,
+              monthly: spend.monthly,
+              cap: spend.cap ?? 0,
+              currency: spend.currency ?? '',
+            },
+            action: 'open_account',
+            since: null,
+          });
       }
       // A daily budget of 0 means no limit on billable allocations; new rows
       // refuse it outside development, older ones are pointed out here.

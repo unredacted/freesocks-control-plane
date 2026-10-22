@@ -1298,6 +1298,17 @@ const COPY = {
     explain:
       'The delivery policy changed while the answer was being built, so it was not sent. The next refresh gets the current one.',
   },
+  account_spend_cap: {
+    label: 'Monthly spend cap reached',
+    explain:
+      "This account's monthly estimate has reached the spend cap set on it, so FCP creates no new edge in it.",
+    fix: 'Raise the cap on the account, or remove edges it no longer needs.',
+  },
+  account_spend_cap_reached: {
+    label: 'Over the monthly spend cap',
+    explain: 'A new edge here would take the account past the monthly spend cap set on it.',
+    fix: 'Raise the cap on the account, pick another account, or remove an edge.',
+  },
   account_budget_unlimited: {
     label: 'No daily spending limit',
     explain:
@@ -1493,6 +1504,12 @@ const REFUSAL_COPY = {
     label: 'Choose a connection mode',
     explain: 'The node has no usable placement to mint the test credential on.',
     fix: 'Choose the connection mode whose placement covers this node.',
+  },
+  test_account_used_up: {
+    label: 'Test account used up',
+    explain:
+      'The test account is used up and could not be reset, so no test link can be made with it. A test profile left connected in a client uses it up.',
+    fix: 'Remove old test profiles from your clients, then try again.',
   },
   credential_unresolved: {
     label: 'Credential still settling',
@@ -2098,6 +2115,12 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
       'Import each test link into a client (it uses a test account of its own), connect, load a page, then answer Works or Doesn’t work.',
     fix: 'Works (Doesn’t work).',
   },
+  test_account_used_up: {
+    label: 'Test account used up',
+    explain:
+      'The test account is used up and could not be reset, so a test link or check made with it would not connect. A test profile left connected in a client uses it up.',
+    fix: 'Remove old test profiles from your clients, then try again.',
+  },
   review_changed: {
     label: 'Hosts changed',
     explain: 'The backend now has unsupported Hosts the review did not show.',
@@ -2173,6 +2196,11 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Daily budget used',
     explain: 'The account has fewer allocations left today than this node needs.',
     fix: 'Wait for tomorrow or raise the budget.',
+  },
+  account_spend_cap_reached: {
+    label: 'Spend cap reached',
+    explain: 'These addresses would take the account past the monthly spend cap set on it.',
+    fix: 'Raise the cap on the account, or pick another location.',
   },
   provider_mismatch: {
     label: 'Other provider pinned',
@@ -2284,6 +2312,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'relay.host.adopt_requested': 'Host adoption requested',
   'relay.host.released': 'Backend Host released',
   'relay.qualification_credential': 'Qualification credential changed',
+  'relay.qualification_reset': 'Test account reset',
   'edge.published': 'Edge published',
   'edge.unpublished': 'Edge unpublished',
   'edge.rotated': 'Edge replaced',
@@ -2313,6 +2342,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'edge.provider_account.delete': 'Provider account deleted',
   'edge.provider_account.qualified': 'Account qualification changed',
   'edge.provider_account.credentials_rotated': 'Account credentials rotated',
+  'edge.provider_account.cost_changed': 'Account cost settings changed',
   'edge.template.create': 'Template created',
   'edge.template.update': 'Template changed',
   'edge.template.delete': 'Template deleted',

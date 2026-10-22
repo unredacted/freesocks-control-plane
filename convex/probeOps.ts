@@ -120,7 +120,10 @@ export const execute = internalAction({
         case 'internal': {
           await ctx.runMutation(internal.probes.markRunning, { runId });
           const r = await internalProbe({ fetchFn: fetch, ...internalProbeDeps }, target);
-          await finish(ctx, runId, [r]);
+          // FCP's own host has no route for this family (no IPv6 on the host):
+          // it could not test the address, which is no evidence either way.
+          if ('untested' in r) await fail(ctx, runId, r.untested);
+          else await finish(ctx, runId, [r]);
           return null;
         }
         case 'globalping': {

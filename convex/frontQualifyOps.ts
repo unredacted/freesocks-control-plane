@@ -14,7 +14,9 @@
  */
 import { v } from 'convex/values';
 import { internalAction } from './_generated/server';
+import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import {
   qualifyFront,
   type FrontCheckResult,
@@ -55,6 +57,16 @@ export function providerVerdict(
   return result;
 }
 
+/**
+ * The session authenticates as the origin's test account: a used-up one (a
+ * test profile left connected in a client) is reset first
+ * (relayQualification.keepUsable), and one that cannot be reset is named
+ * `test_account_used_up`, not reported as a front that does not answer.
+ */
+async function accountUsable(ctx: ActionCtx, relayId: Id<'relays'>): Promise<boolean> {
+  return (await ctx.runAction(internal.relayQualification.keepUsable, { relayId })).ok;
+}
+
 export const run = internalAction({
   args: { edgeId: v.id('edges') },
   handler: async (ctx, { edgeId }): Promise<{ ok: boolean; code: string | null }> => {
@@ -73,6 +85,8 @@ export const run = internalAction({
         // no identifier in the string.
         detail: c.credentialConfigured ? 'id_shape' : 'absent',
       };
+    else if (!(await accountUsable(ctx, c.relayId)))
+      result = refusal('test_account_used_up', checkedAt);
     else
       result = providerVerdict(
         c.provider,

@@ -49,13 +49,15 @@ import {
   type SourceSummary,
   type Verdict,
 } from './lib/edges/probes/verdict';
-import type {
-  ProbeAddressKind,
-  ProbeProtocol,
-  ProbeResult,
-  ProbeSource,
-  RequestedFamily,
+import {
+  literalFamilies,
+  type ProbeAddressKind,
+  type ProbeProtocol,
+  type ProbeResult,
+  type ProbeSource,
+  type RequestedFamily,
 } from './lib/edges/probes/types';
+import { checkhostTakes } from './lib/edges/probes/checkhost';
 import { assertAdmission } from './lib/edges/maintenance';
 import { shapeProtocolFor } from './lib/edges/verifyRung';
 import { hostSniOf } from './relayListeners';
@@ -307,11 +309,22 @@ function splitByKind(address: string): { v4?: string; v6?: string; name?: string
  */
 export function familiesOf(resolved: ResolvedTarget, cfg: EdgeConfig): RequestedFamily[] {
   if (resolved.addresses.name) return ['any'];
-  const out: RequestedFamily[] = [];
-  if (resolved.addresses.v4) out.push(4);
-  const v6Allowed = resolved.kind === 'edge' ? cfg.render.ipv6Mode !== 'off' : cfg.probe.ipv6;
-  if (resolved.addresses.v6 && (v6Allowed || !resolved.addresses.v4)) out.push(6);
-  return out;
+  return literalFamilies(
+    resolved.addresses,
+    resolved.kind === 'edge' ? cfg.render.ipv6Mode !== 'off' : cfg.probe.ipv6,
+  );
+}
+
+/**
+ * The families one SOURCE probes a target over: every family of the target,
+ * except an IPv6 literal for check-host, which refuses one (`checkhostTakes`).
+ * A family no source takes is not tested, never a failed run.
+ */
+function sourceFamilies(source: ProbeSource, families: RequestedFamily[]): RequestedFamily[] {
+  if (source !== 'checkhost') return families;
+  return families.filter((f) =>
+    checkhostTakes({ addressKind: f === 'any' ? 'name' : 'ip', family: f }),
+  );
 }
 
 /** The rollup key a run or a row belongs to: the observed family, else the name path. */
@@ -444,9 +457,12 @@ interface TargetPlan {
   cfg: EdgeConfig;
   sources: ProbeSource[];
   families: RequestedFamily[];
-  /** Runs one source costs for this target (ports × address families). */
+  /**
+   * Runs one source costs for this target (ports × address families), the
+   * most any source takes (check-host takes no IPv6 literal): the stagger unit.
+   */
   runsPerSource: number;
-  /** Runs the round costs in total (sources × runsPerSource): its hourly-budget reservation. */
+  /** Runs the round costs in total (each source's own runs): its hourly-budget reservation. */
   cost: number;
   /**
    * Control countries every external run of the round also asks (one vantage
@@ -482,8 +498,17 @@ async function planTarget(
   }
   const cfg = await resolveEdgeConfig(ctx.db);
   const secrets = await resolveEdgeSecrets(ctx.db);
-  const use = sources ?? enabledSources(cfg, secrets);
   const families = familiesOf(resolved, cfg);
+  const asked = sources ?? enabledSources(cfg, secrets);
+  // A source that takes none of the target's families sits the round out
+  // (check-host and an IPv6-only literal); with none left, nothing can check it.
+  const use = asked.filter((s) => sourceFamilies(s, families).length > 0);
+  if (asked.length > 0 && use.length === 0) {
+    throw new ConvexError({
+      code: 'probe.no_source',
+      message: 'No probe source in use can check this address family',
+    });
+  }
   const runsPerSource = families.length * resolved.ports.length;
   const controls =
     cfg.country.enabled && target.kind === 'edge'
@@ -496,10 +521,15 @@ async function planTarget(
     sources: use,
     families,
     runsPerSource,
-    cost: use.length * runsPerSource,
+    cost: costOf(use, families, resolved.ports.length),
     controls,
     testsPerRun: globalpingTestsPerRun(cfg, controls.length),
   };
+}
+
+/** The runs a round of these sources costs (each source over the families it takes). */
+function costOf(sources: ProbeSource[], families: RequestedFamily[], ports: number): number {
+  return sources.reduce((n, s) => n + sourceFamilies(s, families).length * ports, 0);
 }
 
 /** What one Globalping run asks for: every checked country's vantages, plus one per control. */
@@ -542,7 +572,11 @@ function fitGlobalpingTests(plan: TargetPlan, spent: number): { plan: TargetPlan
   if (spent + tests <= plan.cfg.probe.globalpingTestsPerHour) return { plan, tests };
   const sources = plan.sources.filter((s) => s !== 'globalping');
   return {
-    plan: { ...plan, sources, cost: sources.length * plan.runsPerSource },
+    plan: {
+      ...plan,
+      sources,
+      cost: costOf(sources, plan.families, plan.resolved.ports.length),
+    },
     tests: 0,
   };
 }
@@ -582,7 +616,7 @@ function staggerSpacing(cfg: EdgeConfig, source: ProbeSource, batchRunsPerSource
   return EDGE_PLUMBING.probeSourceSpacingMs;
 }
 
-/** Insert a planned round: one run per source per port per address family. */
+/** Insert a planned round: one run per source per port per address family the source takes. */
 async function insertPlanned(
   ctx: MutationCtx,
   plan: TargetPlan,
@@ -600,7 +634,7 @@ async function insertPlanned(
   for (const source of plan.sources) {
     const spacing = staggerSpacing(plan.cfg, source, opts.batchRunsPerSource);
     let k = 0;
-    for (const requestedFamily of plan.families) {
+    for (const requestedFamily of sourceFamilies(source, plan.families)) {
       const address = addressForFamily(plan.resolved, requestedFamily);
       for (const port of plan.resolved.ports) {
         runIds.push(
@@ -827,7 +861,9 @@ export const failRun = internalMutation({
       finishedAt: now,
       error: timeout ? 'timeout' : failureCode(error),
     });
-    // A failed shape run is evidence too (lib/edges/verifyRung.ts).
+    // A failed run is never evidence about the address (its vantages could not
+    // test: lib/edges/probes/types.ts `RunOutcome`); the rung is re-read on
+    // what the other runs show.
     if (run.targetKind === 'edge') await refreshPartialRung(ctx, run.targetRef as Id<'edges'>, now);
     // A failed run is no evidence, but it may be the last of its round.
     if (run.roundId) await settleRoundIfDone(ctx, run.roundId, now);
@@ -1077,6 +1113,12 @@ function internalVerdict(perSource: SourceSummary[]): Verdict {
 
 /** The newest runs per source a source's health is judged on (one indexed read each). */
 const SOURCE_HEALTH_RUNS = 50;
+/**
+ * How far back that read looks for them: `no_route` runs (a family FCP's host
+ * lacks) say nothing about the source and are skipped before the bound, or a
+ * host probing many IPv6 targets would push every run that counts out of it.
+ */
+const SOURCE_HEALTH_SCAN = SOURCE_HEALTH_RUNS * 4;
 
 /**
  * Whether each ENABLED source is giving evidence (lib/edges/country/sourceHealth.ts):
@@ -1090,11 +1132,15 @@ export async function probeSourceHealth(db: QueryCtx['db'], now: number): Promis
   if (!cfg.probe.enabled || sources.length === 0) return [];
   const runs = [];
   for (const source of sources)
-    for (const r of await db
-      .query('probeRuns')
-      .withIndex('by_source_requested', (q) => q.eq('source', source))
-      .order('desc')
-      .take(SOURCE_HEALTH_RUNS))
+    for (const r of (
+      await db
+        .query('probeRuns')
+        .withIndex('by_source_requested', (q) => q.eq('source', source))
+        .order('desc')
+        .take(SOURCE_HEALTH_SCAN)
+    )
+      .filter((x) => x.error !== 'no_route')
+      .slice(0, SOURCE_HEALTH_RUNS))
       runs.push({
         source: r.source,
         status: r.status,
@@ -1469,7 +1515,10 @@ export const due = internalQuery({
       rank: number;
       /** Runs one source will cost for this target (ports × address families). */
       runsPerSource: number;
+      /** Runs the round costs over every enabled source (`costOf`). */
+      cost: number;
     }> = [];
+    const sources = enabledSources(cfg, secrets);
     // The hour's spend counts EVERY run of the hour — cron, manual, detector,
     // qualification, whatever its state — not only the due candidates' runs.
     // (The plan's estimate; requestProbes re-checks and reserves atomically.)
@@ -1498,10 +1547,18 @@ export const due = internalQuery({
       // No address, or no listener port to aim at: not probeable (probing a
       // guessed port would record its silence as a block).
       if (!resolved || !hasAddress(resolved) || resolved.ports.length === 0) return;
-      const runsPerSource = familiesOf(resolved, cfg).length * resolved.ports.length;
-      if (runsPerSource === 0) return;
+      const families = familiesOf(resolved, cfg);
+      const runsPerSource = families.length * resolved.ports.length;
+      // No family any enabled source takes (an IPv6-only literal and check-host alone).
+      if (runsPerSource === 0 || costOf(sources, families, resolved.ports.length) === 0) return;
       seen.add(key);
-      dueTargets.push({ target, suspected, rank, runsPerSource });
+      dueTargets.push({
+        target,
+        suspected,
+        rank,
+        runsPerSource,
+        cost: costOf(sources, families, resolved.ports.length),
+      });
     };
     const probeable = (edge: Doc<'edges'> | null): edge is Doc<'edges'> =>
       !!edge &&
@@ -1551,7 +1608,7 @@ export const due = internalQuery({
     dueTargets.sort((a, b) => a.rank - b.rank);
     return {
       enabled: cfg.probe.enabled,
-      sources: enabledSources(cfg, secrets),
+      sources,
       hourlyBudget: cfg.probe.hourlyBudget,
       spentThisHour: spent,
       dueTargets,
@@ -1641,13 +1698,12 @@ export const run = internalAction({
       let skipped = 0;
       const batch: typeof plan.dueTargets = [];
       for (const d of plan.dueTargets) {
-        // One run per source per port per address family.
-        const cost = plan.sources.length * d.runsPerSource;
-        if (spent + cost > plan.hourlyBudget) {
+        // One run per source per port per address family the source takes.
+        if (spent + d.cost > plan.hourlyBudget) {
           skipped++;
           continue;
         }
-        spent += cost;
+        spent += d.cost;
         batch.push(d);
       }
       const batchRunsPerSource = batch.reduce((a, d) => a + d.runsPerSource, 0);

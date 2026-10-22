@@ -13,6 +13,7 @@ import {
   isBareConnect,
   normalizeCountry,
   shortError,
+  vantageHasNoRoute,
   type ProbeRequestOptions,
   type ProbeResult,
   type ProbeStarted,
@@ -67,9 +68,17 @@ export function globalpingKind(target: Pick<ProbeTarget, 'protocol'>): Globalpin
   return isBareConnect(target.protocol) ? 'ping' : 'http';
 }
 
-/** `ipVersion` is only sent when FCP asked for a family: a name is left to the resolver. */
+/**
+ * `ipVersion` pins the family a NAME resolves to, and only a name: Globalping
+ * refuses it next to an IP literal (400, "not allowed when target is not a
+ * domain"), so a literal's own family is the family. A name FCP asks for with
+ * `any` is left to the resolver.
+ */
 function ipVersionOf(target: ProbeTarget): { ipVersion?: 4 | 6 } {
-  if (target.requestedFamily === 4 || target.requestedFamily === 6)
+  if (
+    target.addressKind === 'name' &&
+    (target.requestedFamily === 4 || target.requestedFamily === 6)
+  )
     return { ipVersion: target.requestedFamily };
   return {};
 }
@@ -177,8 +186,9 @@ export function parseGlobalpingResults(items: unknown): ProbeResult[] {
  * handshake is what `tls` asked about; the status code is not judged). A
  * `failed` item is a connect/TLS error, which IS evidence of unreachability
  * here, unlike the ping parser, where `failed` means the probe could not run
- * the command at all. The raw output is never stored: only a short class,
- * scrubbed of the target's own name.
+ * the command at all. A probe whose own error is "no route" could not test
+ * (`vantageHasNoRoute`) and is dropped. The raw output is never stored: only a
+ * short class, scrubbed of the target's own name.
  */
 export function parseGlobalpingHttpResults(items: unknown, redact: readonly string[] = []) {
   if (!Array.isArray(items)) return [];
@@ -196,7 +206,7 @@ export function parseGlobalpingHttpResults(items: unknown, redact: readonly stri
         ok: true,
         rttMs: Number.isFinite(total) ? Math.round(total) : undefined,
       });
-    } else if (status === 'failed') {
+    } else if (status === 'failed' && !vantageHasNoRoute(raw.result?.rawOutput)) {
       out.push({ ...base, ok: false, error: shortError(raw.result?.rawOutput, 60, redact) });
     }
     // else: still running, offline, or an answer with no status code: no evidence.

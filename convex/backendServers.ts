@@ -106,16 +106,30 @@ export const getById = internalQuery({
   handler: (ctx, { id }) => ctx.db.get(id),
 });
 
-/** Resolve which instance hosts a given key, via its subscription row. */
+/**
+ * Resolve which instance hosts a given key. The instance the caller names wins
+ * (a key with no subscription row: the origin's qualification account, a
+ * temporary test key, the issuance compensation); then the key's subscription
+ * row; then the instance its scoped id names (lib/backendUserId.ts). A named
+ * instance that disagrees with the id's own scope resolves to nothing: the
+ * bare integer on another instance is a different user. Null = not
+ * resolvable; the dispatch refuses rather than guess (backends.ts).
+ */
 export const resolveKeyServer = internalQuery({
-  args: { backendUserId: v.string() },
-  handler: async (ctx, { backendUserId }) => {
+  args: { backendUserId: v.string(), backendServerId: v.optional(v.id('backendServers')) },
+  handler: async (ctx, { backendUserId, backendServerId }) => {
+    const scope = scopedServerId(backendUserId);
+    if (backendServerId) {
+      if (scope !== null && scope !== (backendServerId as string)) return null;
+      return ctx.db.get(backendServerId);
+    }
     const sub = await ctx.db
       .query('subscriptions')
       .withIndex('by_backend_user_id', (q) => q.eq('backendUserId', backendUserId))
       .unique();
-    if (!sub || !sub.backendServerId) return null;
-    return ctx.db.get(sub.backendServerId);
+    if (sub?.backendServerId) return ctx.db.get(sub.backendServerId);
+    const scoped = scope === null ? null : ctx.db.normalizeId('backendServers', scope);
+    return scoped ? ctx.db.get(scoped) : null;
   },
 });
 

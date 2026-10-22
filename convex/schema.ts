@@ -223,6 +223,20 @@ const relayEdgePlacement = v.union(
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
 // front (address = hostname). Absent on rows written before L7 = l4.
 const relayEdgeLayer = v.union(v.literal('l4'), v.literal('l7'));
+
+// What a load balancer plan's traffic costs (lib/edges/pricing.ts): `unlimited`
+// = no traffic charge, `included` = that many GB a month then `perGb`, `per_gb`
+// = every GB, `unknown` = the source does not say.
+const edgePlanTraffic = v.object({
+  kind: v.union(
+    v.literal('unlimited'),
+    v.literal('included'),
+    v.literal('per_gb'),
+    v.literal('unknown'),
+  ),
+  includedGb: v.optional(v.number()),
+  perGb: v.optional(v.number()),
+});
 // What a listener speaks (`listenerProtoFields`, spread into the tables below):
 // three orthogonal fields with a validity matrix
 // (src/shared/contracts/edgeProtocolIds.ts). Client-facing security here is
@@ -1303,6 +1317,22 @@ export default defineSchema({
         checkedAt: v.number(),
       }),
     ),
+    // What the operator says this account costs (docs/edges.md § "Plans and
+    // prices"): `paid` = `list` (the provider's list price, a load balancer
+    // account only), `free` (free or credits) or `amount` (`perEdgeMonthly` in
+    // `currency`, per edge a month). Absent: a load balancer account pays the
+    // list price, a CDN account has no price set (never priced on its own).
+    // `monthlyCap` (in `currency`): new edges stop once the account's monthly
+    // estimate would pass it; absent = no cap (the default).
+    cost: v.optional(
+      v.object({
+        paid: v.union(v.literal('list'), v.literal('free'), v.literal('amount')),
+        perEdgeMonthly: v.optional(v.number()),
+        currency: v.optional(v.string()),
+        note: v.optional(v.string()),
+        monthlyCap: v.optional(v.number()),
+      }),
+    ),
     updatedAt: v.number(),
   })
     .index('by_name', ['name'])
@@ -1344,6 +1374,12 @@ export default defineSchema({
     // Last provider inventory pull here (LBs / IPs / flavors), JSON, admin-only.
     inventorySnapshot: v.optional(v.string()),
     inventoryAt: v.optional(v.number()),
+    // When this place's plans and prices were last read (`edgePlans`), when a
+    // read was last tried, and why the last one failed (a short code; the
+    // stored plans stay).
+    plansAt: v.optional(v.number()),
+    plansTriedAt: v.optional(v.number()),
+    plansError: v.optional(v.string()),
     // What the provider said about this place when it was last checked (a
     // CDN zone: its encryption mode, WebSockets, status). JSON, string values
     // only; the encryption mode is frozen into each new edge's intent.
@@ -1396,6 +1432,35 @@ export default defineSchema({
     errorDetail: v.optional(v.string()),
     errorAt: v.optional(v.number()),
   }).index('by_account_kind', ['accountId', 'kind']),
+
+  // One load balancer plan (size) at one location, as last read
+  // (`edgePlans.ts`, docs/edges.md § "Plans and prices"): its list price, its
+  // traffic terms and bandwidth, whether it takes a node outside the provider.
+  // `source` = `api` (the provider's own price list) or `catalog` (FCP's dated
+  // table, `catalogAsOf`). Rows are replaced whole per location on each read;
+  // a location has a handful (operator-scale). A CDN account has none.
+  edgePlans: defineTable({
+    accountId: v.id('edgeProviderAccounts'),
+    locationId: v.id('edgeLocations'),
+    provider: relayProviderId,
+    // The template value (a flavor, plan or type) and its lower-cased key.
+    size: v.string(),
+    sizeKey: v.string(),
+    label: v.string(),
+    perHour: v.optional(v.number()),
+    perMonth: v.optional(v.number()),
+    currency: v.optional(v.string()),
+    traffic: edgePlanTraffic,
+    bandwidthMbps: v.optional(v.number()),
+    // Takes a backend server outside the provider's own cloud (absent = the
+    // provider does not say, which every provider but Scaleway means yes).
+    acceptsOutsideNode: v.optional(v.boolean()),
+    source: v.union(v.literal('api'), v.literal('catalog')),
+    catalogAsOf: v.optional(v.string()),
+    pricedAt: v.number(),
+  })
+    .index('by_location_size', ['locationId', 'sizeKey'])
+    .index('by_account', ['accountId']),
 
   // Provisioning parameters for one provider (flavor/plan/type, health monitor,
   // timeouts, allowed CIDRs, tags, IP-family options). `params` is JSON validated
@@ -1777,6 +1842,10 @@ export default defineSchema({
     // compares), and the node's choices themselves (JSON), frozen.
     baseTemplateHash: v.optional(v.string()),
     choices: v.optional(v.string()),
+    // The load balancer size it was built with (the effective template's
+    // flavor, plan or type), frozen: what its monthly cost is read for
+    // (`edgePlans`). Absent on an edge from before, or a CDN front.
+    planSize: v.optional(v.string()),
     // An address family a describe reported after the endpoint was confirmed:
     // held here, not served and not in the confirmation's hash, until a test
     // of that address promotes it into `addresses` (edgeVerification.confirm).
@@ -2142,6 +2211,9 @@ export default defineSchema({
         // The address whose configuration stage 4 saved again, once, when its
         // outside check found it unreachable (EdgeProvider.reapply).
         reappliedEdgeId: v.optional(v.id('edges')),
+        // Families of the address no outside source could test when stage 4
+        // passed it (the run card's "not checked from outside over IPv6").
+        notChecked: v.optional(v.array(v.union(v.literal(4), v.literal(6)))),
       }),
     ),
     // The isolated test links shown for the `try_it` card (one per L4 endpoint).

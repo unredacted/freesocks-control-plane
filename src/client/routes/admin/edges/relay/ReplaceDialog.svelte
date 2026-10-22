@@ -34,6 +34,7 @@
   } from '@client/lib/edgesApi';
   import CodeNote from '../components/CodeNote.svelte';
   import PreflightPanel from '../components/PreflightPanel.svelte';
+  import EdgeCostLine from '../components/EdgeCostLine.svelte';
   import ActionConfirm from './ActionConfirm.svelte';
   import { edgeAddress } from './relayLogic';
   import { frontsNode } from '@client/lib/edgeProviderMeta';
@@ -215,6 +216,21 @@
       </Select.Root>
       {#if autoWords}<p class="text-muted-foreground text-xs">{autoWords}</p>{/if}
     </div>
+  {/if}
+  <!-- A new address (not a spare already paid for): what it costs a month, before it exists. -->
+  {#if where.startsWith('loc:')}
+    <EdgeCostLine
+      accountId={picks.find((p) => p.locationId === where.slice(4))?.accountId ?? null}
+      locationId={where.slice(4)}
+      options={picks.find((p) => p.locationId === where.slice(4))?.options ?? null}
+    />
+  {:else if where === 'auto' && preflight.data?.wouldSelect && !preflight.data.wouldSelect.standbyEdgeId}
+    <EdgeCostLine
+      accountId={preflight.data.wouldSelect.accountId}
+      locationId={preflight.data.wouldSelect.locationId}
+      options={picks.find((p) => p.locationId === preflight.data?.wouldSelect?.locationId)
+        ?.options ?? null}
+    />
   {/if}
   {#if !plain}
     <PreflightPanel

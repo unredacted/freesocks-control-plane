@@ -13,6 +13,7 @@
 import {
   isBareConnect,
   shortError,
+  vantageHasNoRoute,
   type ProbeProtocol,
   type ProbeRequestOptions,
   type ProbeResult,
@@ -123,8 +124,9 @@ function asnOfRow(raw: Record<string, unknown>, af: 4 | 6): string | undefined {
  * present a certificate for a random SNI; same rule as the internal probe),
  * for a `tls` / `https` probe the handshake IS the measurement and an alert is
  * a failure, or several alerting probes would become positive country evidence
- * for a front that cannot complete a handshake. The probe's ASN is the network;
- * the probe id never is.
+ * for a front that cannot complete a handshake. An `err` that is the probe's
+ * own missing route (`vantageHasNoRoute`) could not test and is dropped. The
+ * probe's ASN is the network; the probe id never is.
  */
 export function parseRipeAtlasResults(
   body: unknown,
@@ -140,6 +142,7 @@ export function parseRipeAtlasResults(
     const asn = asnOfRow(raw, af) ?? (Number.isFinite(prb) ? opts.asnByProbe?.[prb] : undefined);
     const base = { country, ...(asn ? { asn } : {}), vantageClass: 'unknown' as const };
     if (raw.err !== undefined) {
+      if (vantageHasNoRoute(raw.err)) continue;
       out.push({ ...base, ok: false, error: shortError(raw.err) });
     } else if (raw.alert !== undefined) {
       const rt = Number(raw.rt);
@@ -155,6 +158,22 @@ export function parseRipeAtlasResults(
     }
   }
   return out;
+}
+
+/**
+ * Probes that answered in a results body, evidence or not: a probe whose own
+ * route was missing (dropped by the parser) has still settled, so the poll
+ * counts it before deciding whether to wait for more.
+ */
+export function answeredCount(body: unknown): number {
+  if (!Array.isArray(body)) return 0;
+  return (body as Array<Record<string, unknown>>).filter(
+    (raw) =>
+      raw.err !== undefined ||
+      raw.alert !== undefined ||
+      raw.rt !== undefined ||
+      Array.isArray(raw.cert),
+  ).length;
 }
 
 /** Probe ids seen in a results body (for the registry lookup). */
@@ -234,7 +253,7 @@ export async function ripeAtlasPoll(
       asnByProbe: cache,
       protocol: started.protocol,
     });
-    if (parsed.length < Math.max(1, expectedPerCountry)) running = true;
+    if (answeredCount(body) < Math.max(1, expectedPerCountry)) running = true;
     results.push(...parsed);
   }
   return { status: running ? 'running' : 'finished', results };

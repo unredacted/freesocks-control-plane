@@ -52,8 +52,10 @@ import {
   EdgeIdResponse,
   EdgeInventoryResponse,
   EdgeLiveResponse,
+  EdgeAccountCostRequest,
   EdgeCatalogRefreshResponse,
   EdgeCatalogView,
+  EdgePlansRefreshResponse,
   EdgeLocationCheckResponse,
   EdgeLocationCreateResponse,
   EdgeLocationList,
@@ -514,6 +516,16 @@ export const removeSharedCertificate = (id: string, locationId: string) =>
   );
 export const updateProvider = (id: string, patch: ProviderPatch) =>
   apiClient.patch(`${BASE}/providers/${enc(id)}`, patch, EdgeOkResponse);
+/** What the account costs (`cost: null` = the default) and its monthly cap. */
+export const setProviderCost = (id: string, body: EdgeAccountCostRequest) =>
+  apiClient.post(`${BASE}/providers/${enc(id)}/cost`, body, EdgeOkResponse);
+/** Read one location's plans and prices again at the provider. */
+export const refreshLocationPlans = (accountId: string, locationId: string) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/plans/refresh`,
+    {},
+    EdgePlansRefreshResponse,
+  );
 export const deleteProvider = (id: string) =>
   apiClient.delete(`${BASE}/providers/${enc(id)}`, EdgeOkResponse);
 

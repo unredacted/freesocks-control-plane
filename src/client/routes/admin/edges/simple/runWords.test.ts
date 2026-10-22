@@ -13,8 +13,11 @@ import {
   replaceWords,
   setWords,
   providerPickWords,
+  notCheckedWords,
+  runNotCheckedLines,
   runTestItems,
   runTestLines,
+  TEST_PROFILE_NOTE,
 } from './runWords';
 
 describe('needButtons', () => {
@@ -51,11 +54,24 @@ describe('needButtons', () => {
       if (code !== 'address_unreachable' && code !== 'blocked_in')
         expect(needButtons(code).more).toBeUndefined();
     expect(needButtons('hide_failed').hint).toMatch(/backend yourself/);
+    // FCP resets the test account on every try: "Try again" re-enters the card.
+    expect(needButtons('test_account_used_up')).toEqual({
+      primary: { label: 'Try again', action: 'retry' },
+    });
     expect(needButtons('whatever').primary.action).toBe('retry');
     // Approving go-live is the one way on: no retry that would only park the run again.
     const approve = needButtons('node_not_approved');
     expect(approve.primary).toEqual({ label: 'Approve go-live', action: 'approve' });
     expect(approve.secondary).toBeUndefined();
+  });
+});
+
+describe('TEST_PROFILE_NOTE', () => {
+  it('says the profile is for a short test and is removed after, in plain words', () => {
+    expect(TEST_PROFILE_NOTE).toMatch(/short test only/);
+    expect(TEST_PROFILE_NOTE).toMatch(/Remove this profile from the client/);
+    expect(TEST_PROFILE_NOTE).not.toContain('—');
+    expect(TEST_PROFILE_NOTE).not.toContain('/api/');
   });
 });
 
@@ -207,13 +223,14 @@ describe('runTestLines', () => {
     method: 'test_link' as const,
     binding: { endpoint: `${edgeId}:443`, listenerRevision: 1, configHash: 'h', issuedAt },
   });
-  const listener = (listenerKey: string, edgeId: string | null) => ({
+  const listener = (listenerKey: string, edgeId: string | null, notChecked: Array<4 | 6> = []) => ({
     listenerKey,
     locationId: null,
     layer: 'l4' as const,
     edgeId,
     verify: 'pending' as const,
     published: false,
+    notChecked,
     transport:
       listenerKey === 'a'
         ? {
@@ -253,6 +270,18 @@ describe('runTestLines', () => {
       ],
     });
     expect(done.size).toBe(0);
+  });
+  it('an address family nothing could test is one plain line, no em-dash', () => {
+    expect(notCheckedWords([6])).toBe('Not checked from outside over IPv6');
+    expect(notCheckedWords([4])).toBe('Not checked from outside over IPv4');
+    expect(notCheckedWords([4, 6])).toBe('Not checked from outside');
+    const lines = runNotCheckedLines({
+      listeners: [listener('a', 'e1', [6]), listener('b', 'e2'), listener('c', null, [6])],
+    });
+    expect(lines).toEqual([
+      { key: 'a:e1', text: 'VLESS · raw · REALITY, port 443: not checked from outside over IPv6.' },
+    ]);
+    expect(lines[0]!.text).not.toContain('\u2014');
   });
 });
 

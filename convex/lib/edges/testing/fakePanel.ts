@@ -2,9 +2,9 @@
  * Test helper: a fake Remnawave backend (and a fake Outline server) behind the
  * routing fetch stub, with a mutable user table keyed by USERNAME so the
  * persisted mint operations can be exercised end to end through the real
- * provider code: create, re-find by name, delete, list Hosts, serve a
- * subscription body per user agent, list node transports. Every value is RFC
- * 5737 / `*.example`. Not a test file itself.
+ * provider code: create, re-find by name, read, reset traffic, enable, delete,
+ * list Hosts, serve a subscription body per user agent, list node transports.
+ * Every value is RFC 5737 / `*.example`. Not a test file itself.
  */
 import { BACKEND_USERNAME_RE } from '../../backends/username';
 import { jsonRes, mockFetch, type Captured, type FetchStub } from './mockFetch';
@@ -16,6 +16,10 @@ export interface FakePanelUser {
   vlessUuid: string;
   trojanPassword: string;
   subscriptionUrl: string;
+  /** The account's counters as the backend keeps them (a test sets them to use the cap up). */
+  status: 'ACTIVE' | 'DISABLED' | 'LIMITED' | 'EXPIRED';
+  usedTrafficBytes: number;
+  trafficLimitBytes: number;
 }
 
 export interface FakePanelHost {
@@ -54,6 +58,8 @@ export interface FakePanel {
   failCreateWith: number | null;
   /** Every delete answers this status while set. */
   failDeleteWith: number | null;
+  /** Every traffic reset answers this status while set. */
+  failResetWith: number | null;
   /** Requests the backend saw, by method + path. */
   calls: Captured[];
 }
@@ -75,6 +81,7 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
     deleted: [],
     failCreateWith: null,
     failDeleteWith: null,
+    failResetWith: null,
     calls: [],
   };
   const userJson = (u: FakePanelUser) => ({
@@ -83,10 +90,10 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
     vlessUuid: u.vlessUuid,
     trojanPassword: u.trojanPassword,
     username: u.username,
-    status: 'ACTIVE',
-    trafficLimitBytes: 0,
+    status: u.status,
+    trafficLimitBytes: u.trafficLimitBytes,
     trafficLimitStrategy: 'MONTH',
-    usedTrafficBytes: 0,
+    usedTrafficBytes: u.usedTrafficBytes,
     expireAt: new Date(Date.now() + 365 * 86_400_000).toISOString(),
     hwidDeviceLimit: null,
     subscriptionUrl: u.subscriptionUrl,
@@ -102,7 +109,7 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
         panel.failCreateWith = null;
         return jsonRes({ message: 'create failed' }, status);
       }
-      const body = call.body as { username: string };
+      const body = call.body as { username: string; trafficLimitBytes?: number };
       // The real create-user contract (3-36 of [A-Za-z0-9_-]), so a name FCP
       // builds too long fails here as it does on a real backend.
       if (!BACKEND_USERNAME_RE.test(body.username))
@@ -115,6 +122,9 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
         vlessUuid: uuidLike(1_000_000 + seq),
         trojanPassword: `trojan-pw-${seq}`,
         subscriptionUrl: `${baseUrl}/api/sub/short${seq}`,
+        status: 'ACTIVE',
+        usedTrafficBytes: 0,
+        trafficLimitBytes: body.trafficLimitBytes ?? 0,
       };
       users.set(u.username, u);
       panel.created.push(u.username);
@@ -127,6 +137,31 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
     if (method === 'GET' && (m = /^\/api\/users\/([^/]+)$/.exec(path))) {
       const u = byUuid(m[1]);
       return u ? jsonRes({ response: userJson(u) }) : jsonRes({ message: 'not found' }, 404);
+    }
+    // The counters stay as they are on a reset (only `enable` re-activates here),
+    // so a test proves FCP re-enables a limited account itself.
+    if (method === 'POST' && (m = /^\/api\/users\/([^/]+)\/actions\/reset-traffic$/.exec(path))) {
+      if (panel.failResetWith !== null) return jsonRes({ message: 'down' }, panel.failResetWith);
+      const u = byUuid(m[1]);
+      if (!u) return jsonRes({ message: 'not found' }, 404);
+      u.usedTrafficBytes = 0;
+      return jsonRes({ response: userJson(u) });
+    }
+    if (
+      method === 'POST' &&
+      (m = /^\/api\/users\/([^/]+)\/actions\/(enable|disable)$/.exec(path))
+    ) {
+      const u = byUuid(m[1]);
+      if (!u) return jsonRes({ message: 'not found' }, 404);
+      const to = m[2] === 'enable' ? 'ACTIVE' : 'DISABLED';
+      // The real backend refuses a no-op transition (A030 / A029).
+      if (u.status === to)
+        return jsonRes(
+          { message: to === 'ACTIVE' ? 'A030 User already enabled' : 'A029 User already disabled' },
+          400,
+        );
+      u.status = to;
+      return jsonRes({ response: userJson(u) });
     }
     if (method === 'DELETE' && (m = /^\/api\/users\/([^/]+)$/.exec(path))) {
       if (panel.failDeleteWith !== null) return jsonRes({ message: 'down' }, panel.failDeleteWith);

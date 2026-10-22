@@ -33,6 +33,7 @@ import {
 } from './lib/edges/verification';
 import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { nextFailure } from './lib/edges/rotation';
+import { SPEND_CAP_REACHED, capRefusal, edgeCostAt } from './edgePlans';
 
 /** Consecutive `gone` describes before the pool drop + status transition act. */
 export const GONE_OBSERVATIONS_REQUIRED = 2;
@@ -345,6 +346,8 @@ export interface PlannedEdgeInput {
   /** L7 only: the frozen intent + its layer (lib/edges/intent.ts). */
   layer?: 'l4' | 'l7';
   provisionIntent?: ProvisionIntent | null;
+  /** The load balancer size the edge builds (its effective template's), frozen for its cost. */
+  planSize?: string | null;
 }
 
 /**
@@ -381,6 +384,16 @@ export async function insertPlannedEdge(
       code: 'edge.location_capacity',
       message: 'The location is at its live-edge cap',
     });
+  // The budget guard (an account with a monthly cap): the edge's cost at its
+  // size here, added to the account's estimate, must not pass the cap.
+  if (typeof account.cost?.monthlyCap === 'number') {
+    const each = (await edgeCostAt(ctx.db, account, location._id, a.planSize ?? null)).cost;
+    if (await capRefusal(ctx, account, each))
+      throw new ConvexError({
+        code: `edge.${SPEND_CAP_REACHED}`,
+        message: 'The account would pass its monthly spend cap',
+      });
+  }
   if (!(await reserveAllocation(ctx, a.accountId))) {
     throw new ConvexError({
       code: 'edge.budget',
@@ -402,6 +415,7 @@ export async function insertPlannedEdge(
       ? { choices: a.choices, baseTemplateHash: a.baseTemplateHash ?? a.templateHash }
       : {}),
     provider: account.provider,
+    ...(a.planSize ? { planSize: a.planSize } : {}),
     managed: true,
     name,
     steps: a.steps.map((s) => ({

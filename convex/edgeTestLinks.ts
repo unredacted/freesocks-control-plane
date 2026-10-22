@@ -330,7 +330,10 @@ export const build = internalAction({
     if (!cred.ok)
       throw new ConvexError({
         code: `edge.${cred.code}`,
-        message: 'No test credential is available for this origin',
+        message:
+          cred.code === 'test_account_used_up'
+            ? 'The test account is used up and could not be reset'
+            : 'No test credential is available for this origin',
       });
     const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
       backend: cred.fetchRef.backend,

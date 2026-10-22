@@ -113,15 +113,140 @@ describe('backends dispatch', () => {
     ).rejects.toThrow(/backend\.unavailable/);
   });
 
-  test('deleteUser with no hint and no resolvable row is a tolerated no-op', async () => {
+  test('a key no instance resolves is refused by every op: no made-up state, no silent write', async () => {
     const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchSpy);
     const t = convexTest(schema, modules);
-    const out = await t.action(internal.backends.deleteUser, {
-      backend: 'remnawave',
-      backendUserId: 'ghost-user',
+    const key = { backend: 'remnawave' as const, backendUserId: 'ghost-user' };
+    // The read used to answer {status:'active', usedTrafficBytes:0}: a used-up
+    // account looked fine and nothing said why its links failed.
+    await expect(t.action(internal.backends.getUser, key)).rejects.toThrow(
+      /backend\.key_unresolved/,
+    );
+    await expect(t.action(internal.backends.resetUserTraffic, key)).rejects.toThrow(
+      /backend\.key_unresolved/,
+    );
+    await expect(
+      t.action(internal.backends.updateUser, { ...key, patch: { trafficLimitBytes: 5 } }),
+    ).rejects.toThrow(/backend\.key_unresolved/);
+    await expect(
+      t.action(internal.backends.setUserStatus, { ...key, active: true }),
+    ).rejects.toThrow(/backend\.key_unresolved/);
+    await expect(t.action(internal.backends.deleteUser, key)).rejects.toThrow(
+      /backend\.key_unresolved/,
+    );
+    // The best-effort usage read keeps degrading to null.
+    expect(await t.action(internal.backends.getUserUsage, key)).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test('a scoped key with no subscription row (a qualification account) resolves to the instance it names', async () => {
+    const user3 = {
+      id: 7,
+      shortUuid: 'short-q',
+      username: 'fcp-qualify-node-one-abcd1234',
+      status: 'LIMITED',
+      trafficLimitBytes: 52428800,
+      trafficLimitStrategy: 'NO_RESET',
+      expireAt: null,
+      hwidDeviceLimit: null,
+      subscriptionUrl: 'https://panel.test.example/api/sub/short-q',
+      userTraffic: { usedTrafficBytes: 706906753 },
+    };
+    const seen: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+        const u = new URL(String(input));
+        seen.push(`${(init.method ?? 'GET').toUpperCase()} ${u.host}${u.pathname}`);
+        if (u.pathname.startsWith('/api/hwid/'))
+          return new Response(JSON.stringify({ response: { devices: [] } }), { status: 200 });
+        return new Response(JSON.stringify({ response: user3 }), { status: 200 });
+      }),
+    );
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    const other = await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'Other RW',
+        slug: 'other-rw',
+        config: { type: 'remnawave', baseUrl: 'https://other.test.example', apiToken: 'tkn' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const key = { backend: 'remnawave' as const, backendUserId: `${serverId}:7` };
+
+    // The real counters, not the sentinel.
+    const state = await t.action(internal.backends.getUser, key);
+    expect(state).toMatchObject({
+      status: 'limited',
+      usedTrafficBytes: 706906753,
+      trafficLimitBytes: 52428800,
     });
-    expect(out).toBeNull();
+    await t.action(internal.backends.resetUserTraffic, key);
+    // The caller's hint agrees with the scope: same instance.
+    await t.action(internal.backends.setUserStatus, {
+      ...key,
+      active: true,
+      backendServerId: serverId,
+    });
+    expect(seen).toEqual([
+      'GET panel.test.example/api/users/7',
+      'GET panel.test.example/api/hwid/devices/7',
+      'POST panel.test.example/api/users/7/actions/reset-traffic',
+      'POST panel.test.example/api/users/7/actions/enable',
+    ]);
+
+    // A hint naming another instance is refused: user 7 there is someone else.
+    seen.length = 0;
+    await expect(
+      t.action(internal.backends.resetUserTraffic, { ...key, backendServerId: other }),
+    ).rejects.toThrow(/backend\.key_unresolved/);
+    expect(seen).toEqual([]);
+  });
+
+  test('a hint resolves an unscoped key that has no subscription row', async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+        const u = new URL(String(input));
+        seen.push(`${(init.method ?? 'GET').toUpperCase()} ${u.pathname}`);
+        return new Response(JSON.stringify({ response: {} }), { status: 200 });
+      }),
+    );
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    const uuid = '7b51b8a0-7a4c-4f0b-9e76-0d6a4c1f2a3b';
+    await t.action(internal.backends.resetUserTraffic, {
+      backend: 'remnawave',
+      backendUserId: uuid,
+      backendServerId: serverId,
+    });
+    expect(seen).toEqual([`POST /api/users/${uuid}/actions/reset-traffic`]);
+    // Without the hint nothing names its instance.
+    await expect(
+      t.action(internal.backends.resetUserTraffic, { backend: 'remnawave', backendUserId: uuid }),
+    ).rejects.toThrow(/backend\.key_unresolved/);
+  });
+
+  test('a hint naming a deleted instance refuses the teardown (possible orphan)', async () => {
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    await t.run((ctx) => ctx.db.delete(serverId));
+    await expect(
+      t.action(internal.backends.deleteUser, {
+        backend: 'remnawave',
+        backendUserId: 'uuid-123',
+        backendServerId: serverId,
+      }),
+    ).rejects.toThrow(/backend\.key_unresolved/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

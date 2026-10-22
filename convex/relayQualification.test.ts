@@ -14,6 +14,9 @@ import {
   __setQualificationRemoverForTests,
   MINT_SETTLE_LOOKS,
   MINT_SETTLE_MS,
+  QUALIFICATION_RESET_AT_SHARE,
+  QUALIFICATION_TRAFFIC_LIMIT_BYTES,
+  qualificationNeedsReset,
   qualificationUsername,
 } from './relayQualification';
 
@@ -489,5 +492,148 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
     // The removal itself re-finds the user by name and deletes it.
     await t.action(internal.relayQualification.removeByUsername, byName[0].args[0] as never);
     expect(panel.users.size).toBe(0);
+  });
+});
+
+// --- keeping the account usable (a test profile left connected in a client) -------------------
+
+describe('relayQualification.keepUsable', () => {
+  const CAP = QUALIFICATION_TRAFFIC_LIMIT_BYTES;
+
+  async function minted() {
+    const s = await seedWithPanel();
+    await s.t.action(internal.relayQualification.ensure, {
+      relayId: s.relayId,
+      placement: 'sq-a',
+      purpose: 'rehearsal',
+    });
+    const user = [...s.panel.users.values()][0]!;
+    const resets = () =>
+      s.t.run((ctx) =>
+        ctx.db
+          .query('auditLog')
+          .collect()
+          .then((rows) => rows.filter((a) => a.action === 'relay.qualification_reset')),
+      );
+    const actions = () =>
+      s.panel.calls.filter((c) => c.method === 'POST' && c.path.includes('/actions/'));
+    return { ...s, user, resets, actions };
+  }
+
+  test('the reset rule: limited, disabled or expired, or past half the cap', () => {
+    const at = (status: 'active' | 'limited' | 'disabled' | 'expired', used: number) =>
+      qualificationNeedsReset({ status, usedTrafficBytes: used, trafficLimitBytes: CAP });
+    expect(at('active', 0)).toBe(false);
+    expect(at('active', CAP * QUALIFICATION_RESET_AT_SHARE - 1)).toBe(false);
+    expect(at('active', CAP * QUALIFICATION_RESET_AT_SHARE)).toBe(true);
+    expect(at('limited', 0)).toBe(true);
+    expect(at('disabled', 0)).toBe(true);
+    expect(at('expired', 0)).toBe(true);
+    // No cap on the backend (someone lifted it): only the status counts.
+    expect(
+      qualificationNeedsReset({
+        status: 'active',
+        usedTrafficBytes: 10 * CAP,
+        trafficLimitBytes: null,
+      }),
+    ).toBe(false);
+  });
+
+  test('no stored account: nothing to read', async () => {
+    const { t, relayId, panel } = await seedWithPanel();
+    expect(await t.action(internal.relayQualification.keepUsable, { relayId })).toEqual({
+      ok: true,
+      checked: false,
+      reset: false,
+    });
+    expect(panel.calls).toEqual([]);
+  });
+
+  test('a fresh account is read on its own instance and left alone', async () => {
+    const { t, relayId, user, resets, actions } = await minted();
+    // The account was minted with the cap.
+    expect(user.trafficLimitBytes).toBe(CAP);
+    expect(await t.action(internal.relayQualification.keepUsable, { relayId })).toEqual({
+      ok: true,
+      checked: true,
+      reset: false,
+    });
+    expect(actions()).toEqual([]);
+    expect(await resets()).toEqual([]);
+  });
+
+  test('a used-up (limited) account is reset and re-enabled, and the reset is audited with booleans', async () => {
+    const { t, relayId, user, resets, actions } = await minted();
+    // A profile left connected in a client: ~674 MB used of a 50 MB cap, the backend limited it.
+    user.status = 'LIMITED';
+    user.usedTrafficBytes = 706906753;
+    expect(await t.action(internal.relayQualification.keepUsable, { relayId })).toEqual({
+      ok: true,
+      checked: true,
+      reset: true,
+    });
+    expect(actions().map((c) => c.path)).toEqual([
+      `/api/users/${user.uuid}/actions/reset-traffic`,
+      `/api/users/${user.uuid}/actions/enable`,
+    ]);
+    expect(user).toMatchObject({ status: 'ACTIVE', usedTrafficBytes: 0 });
+    const audits = await resets();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.payload).toEqual({
+      slug: 'node-one',
+      reset: true,
+      failed: false,
+      reenabled: true,
+      nearCap: false,
+    });
+    expect(JSON.stringify(audits[0]!.payload)).not.toContain(user.uuid);
+  });
+
+  test('an active account past half its cap is reset without an enable', async () => {
+    const { t, relayId, user, resets, actions } = await minted();
+    user.usedTrafficBytes = Math.ceil(CAP * 0.6);
+    expect(await t.action(internal.relayQualification.keepUsable, { relayId })).toMatchObject({
+      ok: true,
+      reset: true,
+    });
+    expect(actions().map((c) => c.path)).toEqual([`/api/users/${user.uuid}/actions/reset-traffic`]);
+    expect((await resets())[0]!.payload).toMatchObject({ reset: true, nearCap: true });
+  });
+
+  test('a reset the backend refuses: used up is refused, nearly spent still carries a session', async () => {
+    const { t, relayId, panel, user, resets } = await minted();
+    panel.failResetWith = 500;
+    user.status = 'LIMITED';
+    user.usedTrafficBytes = CAP + 1;
+    expect(await t.action(internal.relayQualification.keepUsable, { relayId })).toEqual({
+      ok: false,
+      code: 'test_account_used_up',
+      checked: true,
+      reset: false,
+    });
+    expect(user.status).toBe('LIMITED');
+    // Active and under the cap: a test may still run on what is left.
+    user.status = 'ACTIVE';
+    user.usedTrafficBytes = Math.ceil(CAP * 0.9);
+    expect(await t.action(internal.relayQualification.keepUsable, { relayId })).toEqual({
+      ok: true,
+      checked: true,
+      reset: false,
+    });
+    expect((await resets()).map((a) => a.payload)).toEqual([
+      { slug: 'node-one', reset: false, failed: true, reenabled: false, nearCap: false },
+      { slug: 'node-one', reset: false, failed: true, reenabled: false, nearCap: true },
+    ]);
+  });
+
+  test('an account the backend cannot read is used as it is', async () => {
+    const { t, relayId, panel, user, resets } = await minted();
+    panel.users.delete(user.username); // the read 404s
+    expect(await t.action(internal.relayQualification.keepUsable, { relayId })).toEqual({
+      ok: true,
+      checked: false,
+      reset: false,
+    });
+    expect(await resets()).toEqual([]);
   });
 });

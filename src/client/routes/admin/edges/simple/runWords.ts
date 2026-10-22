@@ -4,6 +4,7 @@
  * Exports:
  *   TestItem, runTestItems(run)      the test card's lines from a run's `testLinks`
  *   runTestLines(run)                every line of the card, the ones already ticked included
+ *   TEST_PROFILE_NOTE                under every test link: a short test only, remove the profile after
  *   replaceWords(item)               the "Doesn't work" confirmation: the address it removes and replaces
  *   needButtons(code)                the one button (at most one secondary, and a quiet third) of an interruption
  *   automationOn(config)             the four switches `POST automation` sets, read back as one
@@ -56,6 +57,31 @@ export function runLineName(
   const where = run.listeners.find((l) => l.edgeId === edgeId)?.locationId ?? null;
   const label = picks.find((p) => p.locationId === where)?.label;
   return label ? `${base ?? 'Address'} in ${label}` : base;
+}
+
+/** "Not checked from outside over IPv6": a family no outside source could test. */
+export function notCheckedWords(families: ReadonlyArray<4 | 6>): string {
+  if (families.includes(4) && families.includes(6)) return 'Not checked from outside';
+  return `Not checked from outside over IPv${families.includes(6) ? 6 : 4}`;
+}
+
+/**
+ * The addresses the outside check passed with a family nothing could test
+ * (FCP's own server has no IPv6, a source takes no IPv6 literal): one line
+ * each, so the gap stays visible without stopping the run.
+ */
+export function runNotCheckedLines(
+  run: Pick<SetupRunAdmin, 'listeners'> & Partial<Pick<SetupRunAdmin, 'picks'>>,
+): Array<{ key: string; text: string }> {
+  return run.listeners
+    .filter((l): l is typeof l & { edgeId: string } => l.edgeId !== null && l.notChecked.length > 0)
+    .map((l) => {
+      const words = notCheckedWords(l.notChecked);
+      return {
+        key: `${l.listenerKey}:${l.edgeId}`,
+        text: `${runLineName(run, l.edgeId, l.listenerKey) ?? 'New address'}: ${words[0]!.toLowerCase()}${words.slice(1)}.`,
+      };
+    });
 }
 
 export function runTestItems(
@@ -116,6 +142,13 @@ export function runTestLines(
   }
   return { items, done };
 }
+
+/**
+ * Under every test link: the profile is for one short test. Left connected in
+ * a client, it keeps using the test account until the backend limits it.
+ */
+export const TEST_PROFILE_NOTE =
+  'For a short test only. Remove this profile from the client once you have tried it: left connected, it uses up the test account.';
 
 /**
  * The "Doesn't work" confirmation of one test line: it names the address (and

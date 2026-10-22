@@ -3,7 +3,9 @@
    * The provider options one node gets at one location (a pick of its set):
    * a line saying what differs from what the location builds with anyway,
    * and an Options fold with the main choices first and every other option
-   * under "All options". Used on each pick of the protect sheet and the set card.
+   * under "All options". The size offers the location's plans with their
+   * prices (a size FCP refuses for a node cannot be picked). Used on each pick
+   * of the protect sheet and the set card.
    *
    * Props:
    *   accountId, locationId                the pick
@@ -15,7 +17,7 @@
    */
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import * as Collapsible from '@client/components/ui/collapsible';
-  import { providerInventoryQuery } from '@client/lib/edgesApi';
+  import { providerInventoryQuery, providersQuery } from '@client/lib/edgesApi';
   import type { EdgeTemplateField } from '@shared/contracts/edges';
   import OptionFields from '../templates/OptionFields.svelte';
   import { optionSummary } from '../lib/options';
@@ -34,13 +36,26 @@
 
   let open = $state(false);
   const words = $derived(optionSummary(fields, values));
-  // The location's sizes, read when the fold opens (a size field offers them).
-  const wantsSizes = $derived(open && fields.some((f) => f.from === 'flavors'));
+  // The location's sizes with their prices (its plans); a location whose plans
+  // were never read offers its inventory's sizes, read when the fold opens.
+  const providers = providersQuery();
+  const plans = $derived(
+    providers.data?.accounts
+      .find((a) => a.id === accountId)
+      ?.locations.find((l) => l.id === locationId)?.pricing?.plans ?? [],
+  );
+  const wantsSizes = $derived(
+    open && plans.length === 0 && fields.some((f) => f.from === 'flavors'),
+  );
   const inventory = providerInventoryQuery(
     () => (wantsSizes ? accountId : null),
     () => locationId,
   );
-  const offered = $derived(inventory.data?.inventory?.flavors ?? []);
+  const offered = $derived(
+    plans.length > 0
+      ? plans.map((p) => ({ id: p.size, label: p.label, plan: p }))
+      : (inventory.data?.inventory?.flavors ?? []),
+  );
 </script>
 
 {#if readonly}
