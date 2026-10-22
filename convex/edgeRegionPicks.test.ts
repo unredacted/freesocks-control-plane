@@ -24,6 +24,8 @@ import {
 } from './lib/edges/testing/fixtures';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
 import { regionOffersOf } from './edgeProviderCatalog';
+import cfTokenVerify from './lib/edges/providers/fixtures/cloudflare/token_verify.json';
+import cfZonesList from './lib/edges/providers/fixtures/cloudflare/zones_list.json';
 import type { BackendTransport } from './lib/backends/types';
 import { completePlacement, networkDefault, projectDefault } from './lib/edges/placementDefaults';
 import { setupVetoNow } from './lib/edges/scoring';
@@ -151,6 +153,44 @@ describe('a load balancer account of credentials alone', () => {
       expect(await catalogRegions(t, id)).toEqual(expect.arrayContaining([...fx.regions]));
       // Still no location: one is made when a region is picked.
       expect(await locationsOf(t, id)).toEqual([]);
+    },
+  );
+});
+
+/** A Cloudflare fixture as the wire carries it (the `_source` header is for reviewers). */
+const cfWire = (fixture: Record<string, unknown>) => {
+  const { _source: _s, ...body } = fixture;
+  return body;
+};
+
+describe('a Cloudflare account of its token alone, DNS only or DNS and fronting', () => {
+  test.each([false, true])(
+    'frontsTraffic %s: no zone needed, its test passes, it offers no region',
+    async (frontsTraffic) => {
+      const t = convexTest(schema, modules);
+      const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'cloudflare',
+        name: `cf-${frontsTraffic}`,
+        settings: {},
+        credentials: { apiToken: 'cf' },
+        frontsTraffic,
+      });
+      expect(await locationsOf(t, id)).toEqual([]);
+      mockFetch((c) =>
+        c.path.endsWith('/user/tokens/verify')
+          ? jsonRes(cfWire(cfTokenVerify))
+          : c.path.endsWith('/zones')
+            ? jsonRes(cfWire(cfZonesList))
+            : jsonRes({}, 404),
+      );
+      expect((await t.action(internal.edgeProviderOps.testCredentials, { accountId: id })).ok).toBe(
+        true,
+      );
+      const row = (await t.run((c) => c.db.get(id)))!;
+      expect(row.frontsTraffic).toBe(frontsTraffic);
+      expect(await locationsOf(t, id)).toEqual([]);
+      // Its place is a zone, added in the location form: never offered as a region.
+      expect(await t.run(async (ctx) => regionOffersOf(ctx.db, row, []))).toEqual([]);
     },
   );
 });
