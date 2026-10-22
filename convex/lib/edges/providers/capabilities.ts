@@ -26,9 +26,11 @@ export type EdgeProviderRole = 'edge' | 'dns';
  * How the provider reaches the origin port: `any` (an L4 forwarder dials
  * whatever the listener says), `fixed` (the port follows the origin scheme:
  * 443 for https, 80 for http), `default-or-override` (a default by the zone's
- * encryption mode, any other port through a destination-port override).
+ * encryption mode, any other port through a destination-port override),
+ * `web-or-high` (the front's origin setting names the port, which may be 80,
+ * 443 or one of 1024-65535: CloudFront's `HTTPPort` / `HTTPSPort`).
  */
-export type OriginPortMode = 'any' | 'fixed' | 'default-or-override';
+export type OriginPortMode = 'any' | 'fixed' | 'default-or-override' | 'web-or-high';
 
 export interface EdgeProviderCapabilities {
   /** L4 = a TCP forwarder in front of the node; L7 = a CDN front terminating TLS + HTTP. */
@@ -67,6 +69,14 @@ export interface EdgeProviderCapabilities {
    * and the reconcile cron keeps its state on the account.
    */
   sharedCertificates: boolean;
+  /**
+   * The Host header the front always sends the origin, when the provider
+   * decides it rather than a template option (`overrideHost`): `origin` = the
+   * origin's own name. CloudFront: forwarding the member's Host would make the
+   * front check the origin's certificate against the front name, which a
+   * node's certificate never carries. Absent = the template decides.
+   */
+  originHostHeader?: 'origin';
   /** Typical wall clock from create to active (informational; bounds `discoverySettleMs`). */
   typicalProvisionMs: number;
   /**
@@ -197,6 +207,39 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     typicalProvisionMs: 10 * MIN,
     discoverySettleMs: 0,
   },
+  // A distribution in front of one origin name, serving the zone's shared ACM
+  // wildcard (`*.<zone>`, requested in us-east-1), with the DNS records written
+  // into a Cloudflare account. Changes propagate asynchronously (`InProgress`
+  // to `Deployed`, minutes), and a delete is disable, wait, delete. WebSocket
+  // only: CloudFront proxies an RFC 6455 upgrade over HTTP/1.1 (it needs
+  // `Sec-WebSocket-Key`); an HTTP Upgrade transport sends none, and gRPC needs
+  // HTTP/2 to the origin, neither proven. The WebSocket idle timeout is fixed
+  // at 10 minutes of no bytes from the origin (the node's heartbeat keeps a
+  // quiet tunnel open). IPv6 on the viewer side is a distribution switch.
+  // Sources: docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/
+  // distribution-working-with.websockets.html and cloudfront-limits.html, 2026-10-22.
+  cloudfront: {
+    layer: 'l7',
+    role: 'edge',
+    addressKind: 'hostname',
+    l7Transports: ['ws'],
+    needsDnsAccount: true,
+    providesDns: false,
+    originPortMode: 'web-or-high',
+    // Host is never forwarded: CloudFront sends the origin's own name.
+    originHostHeader: 'origin',
+    // One ACM `*.<zone>` certificate for every front of the account in a zone.
+    sharedCertificates: true,
+    asyncOps: true,
+    asyncDelete: true,
+    needsPrivateNetwork: false,
+    ipv6: true,
+    udp: false,
+    idleTimeoutConfigurable: false,
+    memberHealth: false,
+    typicalProvisionMs: 10 * MIN,
+    discoverySettleMs: 0,
+  },
 };
 
 export function edgeLayerOf(id: EdgeProviderId | string | null | undefined): EdgeLayer {
@@ -287,6 +330,17 @@ export function originPortCarriedBy(
 ): boolean {
   if (EDGE_PROVIDER_CAPABILITIES[id].layer !== 'l7' || originPort === undefined) return true;
   return proto.streamTransport !== 'grpc' || originPort === 443;
+}
+
+/**
+ * Whether an L7 front can dial this origin port at all, whatever the
+ * transport: a `web-or-high` front only 80, 443 and 1024-65535 (CloudFront
+ * refuses the other privileged ports). Unknown port = no opinion.
+ */
+export function originPortDialable(id: EdgeProviderId, port?: number): boolean {
+  if (port === undefined || EDGE_PROVIDER_CAPABILITIES[id].originPortMode !== 'web-or-high')
+    return true;
+  return port === 80 || port === 443 || (port >= 1024 && port <= 65535);
 }
 
 /**

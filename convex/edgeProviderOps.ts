@@ -37,6 +37,7 @@ import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeLayerOf,
   edgeRoleOf,
+  originPortDialable,
   protocolCarriedBy,
   unsupportedTransport,
   zoneModeGovernsOrigin,
@@ -687,7 +688,12 @@ function checkOriginTransport(
   // The Host header the front will send the origin: the minted hostname, or the
   // origin's own address when the template passes it through. A node that
   // answers only for its certificate names would reject anything else.
-  if (!l7HostAccepted(spec.originTransport, l7HostHeaderFor(spec.hostname, tpl?.overrideHost)))
+  if (
+    !l7HostAccepted(
+      spec.originTransport,
+      l7HostHeaderFor(spec.hostname, tpl?.overrideHost, providerId),
+    )
+  )
     refuse(
       'host_header_rejected',
       'the origin does not accept the Host header this front would send',
@@ -714,7 +720,8 @@ function checkOriginTransport(
  * Refuse an origin port the provider cannot dial. `fixed` providers follow the
  * origin scheme (443 for https, 80 for http) because the transport honours no
  * port override; a `default-or-override` provider accepts any port but not for
- * gRPC, which needs 443 end to end.
+ * gRPC, which needs 443 end to end; a `web-or-high` provider names the port in
+ * its origin setting, which takes 80, 443 or 1024-65535 only.
  */
 function checkOriginPort(providerId: EdgeProviderId, spec: EdgeSpec, proto?: ListenerProto): void {
   const caps = EDGE_PROVIDER_CAPABILITIES[providerId];
@@ -730,6 +737,12 @@ function checkOriginPort(providerId: EdgeProviderId, spec: EdgeSpec, proto?: Lis
         providerId,
       );
   }
+  if (!originPortDialable(providerId, port))
+    refuse(
+      'origin_port_unsupported',
+      `${providerId} dials the origin on 80, 443 or 1024-65535 only`,
+      providerId,
+    );
   // gRPC is carried end to end over HTTP/2 on 443; a destination-port override
   // would break the h2 path the front negotiates.
   if (proto?.streamTransport === 'grpc' && port !== 443)

@@ -122,6 +122,7 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('ovh'), applicationSecret: v.string(), consumerKey: v.string() }),
   v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
+  v.object({ type: v.literal('cloudfront'), secretAccessKey: v.string() }),
 );
 // Account settings: credential identifiers and intent defaults. WHERE an
 // account's edges live is never here: it is a location
@@ -167,6 +168,10 @@ const relayProviderSettings = v.union(
     // A new front's domain: versionless (Domain Management, absent) or classic.
     domainModel: v.optional(v.union(v.literal('versionless'), v.literal('classic'))),
   }),
+  v.object({
+    type: v.literal('cloudfront'),
+    accessKeyId: v.string(), // the IAM access key's public id; not a secret
+  }),
 );
 // Where an edge's resources live (`lib/edges/accountSettings.ts`
 // EDGE_PLACEMENT_SCHEMAS validates every new one). A CDN front's keys are
@@ -207,6 +212,12 @@ const relayEdgePlacement = v.union(
     zoneId: v.optional(v.string()),
     zoneName: v.optional(v.string()),
     tlsConfigurationId: v.optional(v.string()),
+  }),
+  v.object({
+    type: v.literal('cloudfront'),
+    dnsAccountId: v.optional(v.string()),
+    zoneId: v.optional(v.string()),
+    zoneName: v.optional(v.string()),
   }),
 );
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN

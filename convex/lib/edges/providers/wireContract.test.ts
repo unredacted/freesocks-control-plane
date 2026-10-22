@@ -23,7 +23,12 @@
  */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { errorBlob, jsonRes, mockFetch, type Captured } from '../testing/mockFetch';
-import { startHttpRecorder, type HttpRecorder, type RecordedCall } from '../testing/httpRecorder';
+import {
+  startHttpRecorder,
+  type HttpRecorder,
+  type RecordedCall,
+  type RecorderRoute,
+} from '../testing/httpRecorder';
 import { acmeChallengeName } from '../hostname';
 import {
   WIRE_CONTRACTS,
@@ -37,6 +42,7 @@ import {
 } from './wireContract';
 import type {
   ChildResource,
+  CloudFrontConfig,
   CloudflareConfig,
   EdgeProvider,
   EdgeSpec,
@@ -71,6 +77,13 @@ import {
 import { cloudflareApi } from './dns/cloudflareDns';
 import { fastlyProvider, __setFastlyCaaLookup, __setFastlyDnsClientFactory } from './fastly';
 import { __setFastlyBasePath } from './fastly/sdk';
+import {
+  cloudFrontProvider,
+  __setCloudFrontCaaLookup,
+  __setCloudFrontDnsClientFactory,
+} from './cloudfront';
+import { __setCloudFrontEndpoint } from './cloudfront/sdk';
+import { fakeDnsZone } from '../testing/fakeCloudFront';
 import { readFileSync } from 'node:fs';
 
 // --- shared plumbing -------------------------------------------------------------------
@@ -1551,6 +1564,519 @@ describe('wire contract: fastly', () => {
     const names = await dns.findRecordsByName(acmeChallengeName(HOST), 'CNAME');
     expect(names).toHaveLength(1);
     expect(names[0].proxied).toBe(false);
+  });
+});
+
+// --- cloudfront ---------------------------------------------------------------------------
+
+describe('wire contract: cloudfront', () => {
+  const ZONE = 'example.org';
+  const HOST = 'k3m7q9zbx2wd.example.org';
+  const ORIGIN = 'node-7.origin.example.net';
+  const ACCOUNT = '123456789012';
+  const XMLNS = 'http://cloudfront.amazonaws.com/doc/2020-05-31/';
+
+  const cfg: CloudFrontConfig = {
+    type: 'cloudfront',
+    accessKeyId: 'AKIAEXAMPLEEXAMPLE00',
+    secretAccessKey: 'SECRET_AWS_ACCESS_KEY_0123456789',
+    certificateScope: 'wildcard',
+    dns: {
+      apiToken: 'SECRET_CF_TOKEN',
+      zoneId: '0123456789abcdef0123456789abcdef',
+      zoneName: ZONE,
+      accountId: 'dnsacct1',
+    },
+  };
+  const spec: EdgeSpec = {
+    name: 'fcp-relay-o1-deadbeef',
+    hostname: HOST,
+    listeners: [{ edgePort: 443, members: [{ address: ORIGIN, port: 443 }] }],
+    originTransport: {
+      scheme: 'https',
+      certPublic: true,
+      certNames: ['*.origin.example.net'],
+      acceptsHostHeader: 'any',
+    },
+  };
+  const tpl = cloudFrontProvider.templateSchema.parse({}) as never;
+
+  /** The top-level element names of an XML request body (the root's children). */
+  function xmlTopKeys(raw: string): string[] {
+    const body = raw.replace(/<\?xml[^>]*\?>/, '');
+    const keys: string[] = [];
+    let depth = 0;
+    for (const m of body.matchAll(/<(\/?)([A-Za-z][\w.-]*)[^>]*?(\/?)>/g)) {
+      const [, closing, name, selfClosing] = m;
+      if (closing) depth--;
+      else {
+        if (depth === 1) keys.push(name!);
+        if (!selfClosing) depth++;
+      }
+    }
+    return keys;
+  }
+
+  function observed(calls: readonly RecordedCall[]): ObservedCall[] {
+    return calls.map((c) => {
+      const target = c.headers['x-amz-target'];
+      return {
+        method: c.method,
+        path: c.path,
+        queryKeys: Object.keys(c.query),
+        bodyKeys: typeof c.body === 'string' ? xmlTopKeys(c.body) : keysOf(c.body),
+        ...(target ? { target } : {}),
+      };
+    });
+  }
+
+  /** The inner XML of the request's root element (what CloudFront echoes inside its answer). */
+  const inner = (raw: string, root: string) =>
+    raw
+      .replace(/<\?xml[^>]*\?>/, '')
+      .replace(new RegExp(`^\\s*<${root}[^>]*>|</${root}>\\s*$`, 'g'), '');
+  const xml = (status: number, body: string, headers: Record<string, string> = {}) => ({
+    status,
+    raw: `<?xml version="1.0" encoding="UTF-8"?>${body}`,
+    contentType: 'text/xml',
+    headers,
+  });
+  const cfError = (status: number, code: string, message: string) =>
+    xml(
+      status,
+      `<ErrorResponse xmlns="${XMLNS}"><Error><Type>Sender</Type><Code>${code}</Code><Message>${message}</Message></Error><RequestId>req-1</RequestId></ErrorResponse>`,
+    );
+  const acm = (status: number, body: unknown) => ({
+    status,
+    body,
+    contentType: 'application/x-amz-json-1.1',
+  });
+
+  /** A tiny CloudFront + ACM account answering the way their APIs do. */
+  function account() {
+    const state = {
+      certificate: null as null | { arn: string; status: string },
+      policies: [] as Array<{ id: string; config: string }>,
+      distributions: [] as Array<{
+        id: string;
+        config: string;
+        status: string;
+        etag: number;
+        reads: number;
+      }>,
+      seq: 0,
+      dns: fakeDnsZone(cfg.dns!),
+    };
+    const record = {
+      name: `_0a1b2c3d.${ZONE}.`,
+      value: '_4e5f6a7b.abcdefghij.acm-validations.aws.',
+    };
+    const distributionXml = (d: (typeof state.distributions)[number], root: string) =>
+      `<${root}${root === 'Distribution' ? ` xmlns="${XMLNS}"` : ''}><Id>${d.id}</Id><ARN>arn:aws:cloudfront::${ACCOUNT}:distribution/${d.id}</ARN><Status>${d.status}</Status><LastModifiedTime>2026-10-22T00:00:00.000Z</LastModifiedTime>${root === 'Distribution' ? '<InProgressInvalidationBatches>0</InProgressInvalidationBatches>' : ''}<DomainName>d${d.id.toLowerCase()}.cloudfront.net</DomainName>${root === 'Distribution' ? `<DistributionConfig>${d.config}</DistributionConfig>` : `${d.config}<Staging>false</Staging>`}</${root}>`;
+    const etag = (d: (typeof state.distributions)[number]) => ({ ETag: `${d.id}-v${d.etag}` });
+    const enabled = (d: (typeof state.distributions)[number]) =>
+      /<Enabled>true<\/Enabled>/.test(d.config);
+
+    function route(c: RecordedCall) {
+      const target = c.headers['x-amz-target'];
+      if (target) {
+        const b = (c.body ?? {}) as Record<string, string>;
+        switch (target) {
+          case 'CertificateManager.ListCertificates':
+            return acm(200, {
+              CertificateSummaryList: state.certificate
+                ? [
+                    {
+                      CertificateArn: state.certificate.arn,
+                      DomainName: `*.${ZONE}`,
+                      Status: state.certificate.status,
+                      Type: 'AMAZON_ISSUED',
+                      InUse: state.distributions.length > 0,
+                    },
+                  ]
+                : [],
+            });
+          case 'CertificateManager.RequestCertificate':
+            state.certificate = {
+              arn: `arn:aws:acm:us-east-1:${ACCOUNT}:certificate/11111111-2222-3333-4444-555555555555`,
+              status: 'PENDING_VALIDATION',
+            };
+            return acm(200, { CertificateArn: state.certificate.arn });
+          case 'CertificateManager.DescribeCertificate': {
+            const cert = state.certificate;
+            if (!cert || b.CertificateArn !== cert.arn)
+              return acm(400, { __type: 'ResourceNotFoundException', message: 'not found' });
+            // ACM issues once its validation record is in the zone.
+            if (state.dns.rows.some((r) => `${r.name}.` === record.name)) cert.status = 'ISSUED';
+            return acm(200, {
+              Certificate: {
+                CertificateArn: cert.arn,
+                DomainName: `*.${ZONE}`,
+                Status: cert.status,
+                Type: 'AMAZON_ISSUED',
+                ...(cert.status === 'ISSUED' ? { NotAfter: Date.now() / 1000 + 395 * 86_400 } : {}),
+                InUseBy: state.distributions.map(
+                  (d) => `arn:aws:cloudfront::${ACCOUNT}:distribution/${d.id}`,
+                ),
+                DomainValidationOptions: [
+                  {
+                    DomainName: `*.${ZONE}`,
+                    ValidationMethod: 'DNS',
+                    ValidationStatus: cert.status === 'ISSUED' ? 'SUCCESS' : 'PENDING_VALIDATION',
+                    ResourceRecord: { Name: record.name, Type: 'CNAME', Value: record.value },
+                  },
+                ],
+              },
+            });
+          }
+          case 'CertificateManager.DeleteCertificate':
+            state.certificate = null;
+            return acm(200, {});
+          default:
+            return acm(400, { __type: 'UnknownOperationException', message: target });
+        }
+      }
+      const m = c.method;
+      const p = c.path;
+      const raw = typeof c.body === 'string' ? c.body : '';
+      if (p === '/2020-05-31/origin-request-policy' && m === 'GET') {
+        const items = state.policies
+          .map(
+            (x) =>
+              `<OriginRequestPolicySummary><Type>custom</Type><OriginRequestPolicy><Id>${x.id}</Id><LastModifiedTime>2026-10-22T00:00:00.000Z</LastModifiedTime><OriginRequestPolicyConfig>${x.config}</OriginRequestPolicyConfig></OriginRequestPolicy></OriginRequestPolicySummary>`,
+          )
+          .join('');
+        return xml(
+          200,
+          `<OriginRequestPolicyList xmlns="${XMLNS}"><MaxItems>100</MaxItems><Quantity>${state.policies.length}</Quantity>${items ? `<Items>${items}</Items>` : ''}</OriginRequestPolicyList>`,
+        );
+      }
+      if (p === '/2020-05-31/origin-request-policy' && m === 'POST') {
+        const x = { id: `orp-${++state.seq}`, config: inner(raw, 'OriginRequestPolicyConfig') };
+        state.policies.push(x);
+        return xml(
+          201,
+          `<OriginRequestPolicy xmlns="${XMLNS}"><Id>${x.id}</Id><LastModifiedTime>2026-10-22T00:00:00.000Z</LastModifiedTime><OriginRequestPolicyConfig>${x.config}</OriginRequestPolicyConfig></OriginRequestPolicy>`,
+          { ETag: 'P1' },
+        );
+      }
+      const byPolicy = /^\/2020-05-31\/distributionsByOriginRequestPolicyId\/([^/]+)$/.exec(p);
+      if (byPolicy && m === 'GET') {
+        const ids = state.distributions
+          .filter((d) =>
+            d.config.includes(`<OriginRequestPolicyId>${byPolicy[1]}</OriginRequestPolicyId>`),
+          )
+          .map((d) => `<DistributionId>${d.id}</DistributionId>`);
+        return xml(
+          200,
+          `<DistributionIdList xmlns="${XMLNS}"><Marker></Marker><MaxItems>100</MaxItems><IsTruncated>false</IsTruncated><Quantity>${ids.length}</Quantity>${ids.length ? `<Items>${ids.join('')}</Items>` : ''}</DistributionIdList>`,
+        );
+      }
+      if (p === '/2020-05-31/distribution' && m === 'POST') {
+        const config = inner(raw, 'DistributionConfig');
+        const ref = /<CallerReference>([^<]*)</.exec(config)?.[1];
+        if (state.distributions.some((d) => d.config.includes(`<CallerReference>${ref}<`)))
+          return cfError(
+            409,
+            'DistributionAlreadyExists',
+            'The caller reference that you are using is already associated with another distribution.',
+          );
+        const d = {
+          id: `E${String(++state.seq).padStart(13, '0')}`,
+          config,
+          status: 'InProgress',
+          etag: 1,
+          reads: 0,
+        };
+        state.distributions.push(d);
+        return xml(201, distributionXml(d, 'Distribution'), etag(d));
+      }
+      if (p === '/2020-05-31/distribution' && m === 'GET') {
+        const items = state.distributions
+          .map((d) => distributionXml(d, 'DistributionSummary'))
+          .join('');
+        return xml(
+          200,
+          `<DistributionList xmlns="${XMLNS}"><Marker></Marker><MaxItems>100</MaxItems><IsTruncated>false</IsTruncated><Quantity>${state.distributions.length}</Quantity>${items ? `<Items>${items}</Items>` : ''}</DistributionList>`,
+        );
+      }
+      const one = /^\/2020-05-31\/distribution\/([^/]+)(\/config)?$/.exec(p);
+      if (one) {
+        const d = state.distributions.find((x) => x.id === one[1]);
+        if (!d)
+          return cfError(404, 'NoSuchDistribution', 'The specified distribution does not exist.');
+        const ifMatch = c.headers['if-match'];
+        if (m === 'GET' && one[2])
+          return xml(
+            200,
+            `<DistributionConfig xmlns="${XMLNS}">${d.config}</DistributionConfig>`,
+            etag(d),
+          );
+        if (m === 'GET') {
+          // A change deploys after one more read.
+          if (d.status === 'InProgress' && d.reads++ >= 1) d.status = 'Deployed';
+          return xml(200, distributionXml(d, 'Distribution'), etag(d));
+        }
+        if (m === 'PUT' && one[2]) {
+          if (ifMatch !== etag(d).ETag) return cfError(412, 'PreconditionFailed', 'stale');
+          d.config = inner(raw, 'DistributionConfig');
+          d.status = 'InProgress';
+          d.reads = 0;
+          d.etag++;
+          return xml(200, distributionXml(d, 'Distribution'), etag(d));
+        }
+        if (m === 'DELETE') {
+          if (ifMatch !== etag(d).ETag) return cfError(412, 'PreconditionFailed', 'stale');
+          if (enabled(d) || d.status !== 'Deployed')
+            return cfError(409, 'DistributionNotDisabled', 'not disabled');
+          state.distributions = state.distributions.filter((x) => x !== d);
+          return { status: 204 };
+        }
+      }
+      return cfError(400, 'InvalidRequest', `unrouted ${m} ${p}`);
+    }
+    return { state, route };
+  }
+
+  let rec: HttpRecorder | undefined;
+  afterEach(async () => {
+    __setCloudFrontEndpoint(null);
+    __setCloudFrontDnsClientFactory(null);
+    __setCloudFrontCaaLookup(null);
+    await rec?.close();
+    rec = undefined;
+  });
+
+  async function serve(route: RecorderRoute) {
+    rec = await startHttpRecorder(route);
+    __setCloudFrontEndpoint(rec.base);
+    __setCloudFrontCaaLookup(async () => []);
+    return rec;
+  }
+
+  test('the lifecycle stays inside the contract and exercises all of it', async () => {
+    const aws = account();
+    const server = await serve(aws.route);
+    __setCloudFrontDnsClientFactory(() => aws.state.dns);
+    expect((await cloudFrontProvider.testCredentials(cfg)).ok).toBe(true);
+
+    let ledger: Ledger = { steps: [], resources: [] };
+    const steps = cloudFrontProvider.planProvision(cfg, spec, tpl);
+    for (const step of steps) {
+      let out = await cloudFrontProvider.runStep(cfg, step, spec, tpl, ledger);
+      ledger = apply(ledger, step, out);
+      for (let i = 0; out.status === 'requested' && i < 5; i++) {
+        out = await cloudFrontProvider.pollStep!(cfg, step, out.opRef, ledger);
+        ledger = apply(ledger, step, out);
+      }
+      expect(out.status, step.id).toBe('done');
+    }
+    expect(ledger.resources.map((r) => r.kind)).toEqual([
+      'tls_subscription',
+      'dns_record',
+      'origin_request_policy',
+      'distribution',
+      'dns_record',
+    ]);
+    // What the SDK put on the wire for the distribution: FCP's policy and the
+    // uncached policy, the certificate by ARN for SNI, the origin by name.
+    const create = server.calls.find(
+      (c) => c.method === 'POST' && c.path === '/2020-05-31/distribution',
+    )!;
+    expect(create.body).toContain(`<CallerReference>${spec.name}</CallerReference>`);
+    expect(create.body).toContain(`<CNAME>${HOST}</CNAME>`);
+    expect(create.body).toContain(`<DomainName>${ORIGIN}</DomainName>`);
+    expect(create.body).toContain('<SSLSupportMethod>sni-only</SSLSupportMethod>');
+    expect(create.body).toContain(
+      '<CachePolicyId>4135ea2d-6df8-44a3-9df3-4b5a84be39ad</CachePolicyId>',
+    );
+    const policy = server.calls.find(
+      (c) => c.method === 'POST' && c.path === '/2020-05-31/origin-request-policy',
+    )!;
+    expect(policy.body).toContain('<HeaderBehavior>whitelist</HeaderBehavior>');
+    expect(policy.body).not.toMatch(/Forwarded|Viewer-Address|Real-IP|Client-IP/i);
+    const request = server.calls.find(
+      (c) => c.headers['x-amz-target'] === 'CertificateManager.RequestCertificate',
+    )!;
+    expect(request.body).toMatchObject({ DomainName: `*.${ZONE}`, ValidationMethod: 'DNS' });
+
+    // A second front of the zone: the policy is counted, then reused.
+    const second: EdgeSpec = {
+      ...spec,
+      name: 'fcp-relay-o2-feedface',
+      hostname: `zz9q8w7e6r5t.${ZONE}`,
+    };
+    const createStep = steps.find((s) => s.kind === 'create_service')!;
+    const secondLedger: Ledger = {
+      steps: [],
+      resources: ledger.resources.filter((r) => r.kind === 'tls_subscription'),
+    };
+    expect(
+      (await cloudFrontProvider.runStep(cfg, createStep, second, tpl, secondLedger)).status,
+    ).toBe('done');
+
+    for (const step of steps) await cloudFrontProvider.discover(cfg, step, spec, ledger, 1);
+    await cloudFrontProvider.describe(cfg, ledger);
+    await cloudFrontProvider.inspect(cfg, ledger);
+    await cloudFrontProvider.inventory(cfg);
+    expect(await cloudFrontProvider.sharedCertificate!(cfg, {})).toMatchObject({ state: 'issued' });
+    const id = ledger.resources.find((r) => r.kind === 'distribution')!.resourceId;
+    expect(await cloudFrontProvider.inspectForAdoption!(cfg, id, HOST)).toMatchObject({
+      hostname: HOST,
+      shared: false,
+      content: ORIGIN,
+    });
+
+    // Teardown of both fronts: disable, wait for the deployment, delete.
+    for (const d of [...aws.state.distributions]) {
+      const row = resource('distribution', 'distribution', d.id);
+      for (let pass = 0; pass < 6 && aws.state.distributions.some((x) => x.id === d.id); pass++) {
+        const out = await cloudFrontProvider.runDestroy(cfg, row, ledger);
+        expect(out.status).toBe('delete_requested');
+        await cloudFrontProvider.confirmDestroyed!(
+          cfg,
+          { ...row, deleteState: 'delete_requested' },
+          ledger,
+        );
+      }
+      expect(await cloudFrontProvider.confirmDestroyed!(cfg, row, ledger)).toEqual({
+        status: 'confirmed_gone',
+      });
+    }
+    expect(await destroyAll(cloudFrontProvider as never, cfg as never, ledger)).toEqual([
+      'dns_record',
+      'distribution',
+      'tls_subscription',
+      'dns_record',
+      'origin_request_policy',
+    ]);
+    const arn = aws.state.certificate!.arn;
+    expect(
+      await cloudFrontProvider.removeSharedCertificate!(cfg, {
+        ordered: [`tls_subscription:${arn}`],
+      }),
+    ).toEqual({
+      removed: true,
+    });
+
+    const calls = observed(server.calls);
+    expectContractCovered('cloudfront', calls);
+    // Every call is signed for us-east-1 with the key id, never the secret, and
+    // the SDK was told it may make ONE attempt.
+    for (const c of server.calls) {
+      const auth = c.headers.authorization ?? '';
+      expect(auth).toMatch(
+        /^AWS4-HMAC-SHA256 Credential=AKIAEXAMPLEEXAMPLE00\/\d{8}\/us-east-1\/(acm|cloudfront)\/aws4_request/,
+      );
+      expect(JSON.stringify(c.headers)).not.toContain(cfg.secretAccessKey);
+      expect(c.headers['amz-sdk-request']).toMatch(/max=1/);
+    }
+  });
+
+  test('an allocating call is never retried and never replayed after a lost response', async () => {
+    const aws = account();
+    __setCloudFrontDnsClientFactory(() => aws.state.dns);
+    const steps = cloudFrontProvider.planProvision(cfg, spec, tpl);
+    const certStep = steps[0]!;
+    const empty: Ledger = { steps: [], resources: [] };
+    for (const status of [429, 500] as const) {
+      const server = await serve((c) =>
+        c.headers['x-amz-target'] === 'CertificateManager.RequestCertificate'
+          ? acm(status, {
+              __type: status === 429 ? 'ThrottlingException' : 'InternalFailure',
+              message: 'x',
+            })
+          : aws.route(c),
+      );
+      expect(
+        await caught(() => cloudFrontProvider.runStep(cfg, certStep, spec, tpl, empty)),
+      ).toBeTruthy();
+      expect(
+        server.calls.filter(
+          (c) => c.headers['x-amz-target'] === 'CertificateManager.RequestCertificate',
+        ),
+      ).toHaveLength(1);
+      await server.close();
+      rec = undefined;
+    }
+    // A lost answer to the distribution create: ONE request, then discovery reads it back.
+    let ledger: Ledger = { steps: [], resources: [] };
+    const setup = await serve(aws.route);
+    for (const step of steps.slice(0, 3)) {
+      let out = await cloudFrontProvider.runStep(cfg, step, spec, tpl, ledger);
+      ledger = apply(ledger, step, out);
+      if (out.status === 'requested') {
+        out = await cloudFrontProvider.pollStep!(cfg, step, out.opRef, ledger);
+        ledger = apply(ledger, step, out);
+      }
+    }
+    await setup.close();
+    rec = undefined;
+    const createStep = steps[3]!;
+    const aborting = await serve((c) => {
+      const out = aws.route(c);
+      return c.method === 'POST' && c.path === '/2020-05-31/distribution'
+        ? { ...out, abort: true }
+        : out;
+    });
+    expect(
+      await caught(() => cloudFrontProvider.runStep(cfg, createStep, spec, tpl, ledger)),
+    ).toBeTruthy();
+    expect(
+      aborting.calls.filter((c) => c.method === 'POST' && c.path === '/2020-05-31/distribution'),
+    ).toHaveLength(1);
+    await aborting.close();
+    rec = undefined;
+    const recovery = await serve(aws.route);
+    const found = await cloudFrontProvider.discover(cfg, createStep, spec, ledger, 1);
+    expect(found.status).toBe('found');
+    expect(recovery.calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+    expectDeclared('cloudfront', observed(recovery.calls));
+  });
+
+  test('a destroy after a partial provisioning touches only the recorded children', async () => {
+    const aws = account();
+    const server = await serve(aws.route);
+    __setCloudFrontDnsClientFactory(() => aws.state.dns);
+    // The shared certificate landed; nothing else did.
+    const partial: Ledger = {
+      steps: [],
+      resources: [
+        resource('tls', 'tls_subscription', `arn:aws:acm:us-east-1:${ACCOUNT}:certificate/x`, {
+          shared: true,
+          hostname: `*.${ZONE}`,
+        }),
+      ],
+    };
+    expect(await destroyAll(cloudFrontProvider as never, cfg as never, partial)).toEqual([
+      'tls_subscription',
+    ]);
+    expect(server.calls).toEqual([]);
+  });
+
+  test('errors carry no secret, no origin address and no hostname', async () => {
+    const aws = account();
+    __setCloudFrontDnsClientFactory(() => aws.state.dns);
+    await serve((c) =>
+      c.headers['x-amz-target']
+        ? acm(400, {
+            __type: 'InvalidParameterException',
+            message: `bad ${HOST} ${ORIGIN} ${cfg.secretAccessKey}`,
+          })
+        : cfError(400, 'InvalidArgument', `The parameter ${HOST} ${ORIGIN} is invalid.`),
+    );
+    const empty: Ledger = { steps: [], resources: [] };
+    const [step] = cloudFrontProvider.planProvision(cfg, spec, tpl);
+    for (const err of [
+      await caught(() => cloudFrontProvider.runStep(cfg, step!, spec, tpl, empty)),
+      await caught(() => cloudFrontProvider.inventory(cfg)),
+    ]) {
+      expect(err).toBeTruthy();
+      const blob = errorBlob(err);
+      expect(blob).not.toContain('SECRET_');
+      expect(blob).not.toContain(ORIGIN);
+      expect(blob).not.toContain(HOST);
+    }
   });
 });
 

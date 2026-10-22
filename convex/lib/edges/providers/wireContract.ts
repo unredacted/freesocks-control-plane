@@ -32,6 +32,11 @@ export interface WireCall {
   query?: string[];
   /** Top-level body keys that must be present when the call sends a body. */
   body?: string[];
+  /**
+   * AWS JSON protocol (ACM): every call is `POST /` and names its operation
+   * in the `X-Amz-Target` header, which must equal this.
+   */
+  target?: string;
 }
 
 export interface WireContract {
@@ -46,6 +51,8 @@ export interface ObservedCall {
   path: string;
   queryKeys?: readonly string[];
   bodyKeys?: readonly string[];
+  /** The `X-Amz-Target` header of an AWS JSON protocol call. */
+  target?: string;
 }
 
 export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
@@ -729,6 +736,100 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       },
     ],
   },
+
+  // --- L7: CloudFront (distribution + shared origin request policy + ACM certificate) ---
+  cloudfront: {
+    source:
+      "https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare`",
+    calls: [
+      {
+        method: 'POST',
+        path: '^/$',
+        target: 'CertificateManager.ListCertificates',
+        purpose: 'list certificates (every key type): credential test, the shared wildcard by name',
+        body: ['Includes', 'MaxItems'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        target: 'CertificateManager.RequestCertificate',
+        purpose: "request the zone's shared wildcard, DNS-validated, with an idempotency token",
+        body: ['DomainName', 'ValidationMethod', 'IdempotencyToken'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        target: 'CertificateManager.DescribeCertificate',
+        purpose: 'read a certificate: its validation record, issuance and expiry',
+        body: ['CertificateArn'],
+      },
+      {
+        method: 'POST',
+        path: '^/$',
+        target: 'CertificateManager.DeleteCertificate',
+        purpose: "remove the zone's shared wildcard (operator action, once no front uses it)",
+        body: ['CertificateArn'],
+      },
+      {
+        method: 'GET',
+        path: '^/2020-05-31/origin-request-policy$',
+        query: ['Type'],
+        purpose: "list the account's own origin request policies (the shared ones by name)",
+      },
+      {
+        method: 'POST',
+        path: '^/2020-05-31/origin-request-policy$',
+        purpose: 'create a shared origin request policy (a whitelist of WebSocket headers)',
+        body: ['Name', 'HeadersConfig', 'CookiesConfig', 'QueryStringsConfig'],
+      },
+      {
+        method: 'GET',
+        path: '^/2020-05-31/distributionsByOriginRequestPolicyId/[^/]+$',
+        purpose: 'count the distributions of a policy (100 at most per policy)',
+      },
+      {
+        method: 'POST',
+        path: '^/2020-05-31/distribution$',
+        purpose: 'create the distribution (CallerReference = the edge name, its idempotency key)',
+        body: [
+          'CallerReference',
+          'Aliases',
+          'Origins',
+          'DefaultCacheBehavior',
+          'Comment',
+          'ViewerCertificate',
+          'Enabled',
+        ],
+      },
+      {
+        method: 'GET',
+        path: '^/2020-05-31/distribution$',
+        query: ['MaxItems'],
+        purpose: 'list distributions: credential test, discovery by comment, inventory',
+      },
+      {
+        method: 'GET',
+        path: '^/2020-05-31/distribution/[^/]+$',
+        purpose: 'read one distribution: deployment wait, describe, inspect, delete confirmation',
+      },
+      {
+        method: 'GET',
+        path: '^/2020-05-31/distribution/[^/]+/config$',
+        purpose: 'read the distribution config and its ETag before disabling it',
+      },
+      {
+        method: 'PUT',
+        path: '^/2020-05-31/distribution/[^/]+/config$',
+        purpose: 'disable the distribution (If-Match the ETag read)',
+        body: ['CallerReference', 'Enabled'],
+      },
+      {
+        method: 'DELETE',
+        path: '^/2020-05-31/distribution/[^/]+$',
+        purpose: 'delete the disabled, deployed distribution (If-Match its ETag)',
+      },
+    ],
+  },
 };
 
 // --- matching --------------------------------------------------------------------------
@@ -736,6 +837,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
 function matches(entry: WireCall, call: ObservedCall): boolean {
   if (entry.method !== call.method.toUpperCase()) return false;
   if (!new RegExp(entry.path).test(call.path)) return false;
+  if ((entry.target ?? undefined) !== (call.target ?? undefined)) return false;
   const queryKeys = new Set(call.queryKeys ?? []);
   for (const k of entry.query ?? []) if (!queryKeys.has(k)) return false;
   const bodyKeys = call.bodyKeys;
@@ -766,7 +868,8 @@ export function uncoveredEntries(id: EdgeProviderId, calls: readonly ObservedCal
 /** `GET /foo/[^/]+$` as one readable line (the doc table cell). */
 export function wireCallLabel(entry: WireCall): string {
   const q = entry.query?.length ? ` ?${entry.query.join('&')}` : '';
-  return `${entry.path}${q}`;
+  const t = entry.target ? ` X-Amz-Target: ${entry.target}` : '';
+  return `${entry.path}${q}${t}`;
 }
 
 // --- documentation ------------------------------------------------------------------------
