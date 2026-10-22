@@ -326,8 +326,8 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   field — the old tier-level `remnawaveSquadUuid` bind was removed in Phase 5b; node placement
   is per connection mode.)
 
-- **Edges** (`/admin/edges`, `docs/edges.md`; scopes `admin:servers:*` for
-  infrastructure, `admin:settings:*` for the `edge.*` config; no edges route takes the node
+- **Edges** (`/admin/edges`, `docs/edges.md`; scopes `admin:servers:read` /
+  `admin:servers:manage` for infrastructure, `admin:settings:*` for the `edge.*` config; no edges route takes the node
   role's `admin:edges:register`, which is for the Servers by-name routes): origins are
   ANY origin (a backend node, a whole backend server such as Outline, or a manual address) with
   **listeners** (protocol / stream transport / security from a catalogue, names with

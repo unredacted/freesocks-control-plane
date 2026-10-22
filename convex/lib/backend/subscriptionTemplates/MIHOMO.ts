@@ -2,7 +2,7 @@
 export const MIHOMO_YAML = String.raw`mixed-port: 7890
 socks-port: 7891
 redir-port: 7892
-allow-lan: true
+allow-lan: false
 ipv6: true
 mode: rule
 log-level: info

@@ -74,6 +74,31 @@ describe('sweep', () => {
     const left = await t.run((ctx) => ctx.db.query('sniReportCounts').collect());
     expect(left.map((r) => r.day).sort()).toEqual([dayOf(now - 13 * 86_400_000), dayOf(now)]);
   });
+
+  test('more old counts than one page holds all leave in the same run', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      const now = Date.UTC(2026, 5, 30);
+      await t.run(async (ctx) => {
+        for (let i = 0; i < 1200; i++)
+          await ctx.db.insert('sniReportCounts', {
+            name: `n${i}.example`,
+            country: 'IR',
+            day: dayOf(now - 20 * 86_400_000),
+            weight: 1,
+            updatedAt: now,
+          });
+      });
+      await t.mutation(internal.sniReports.sweep, { now });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await t.run((ctx) => ctx.db.query('sniReportCounts').collect())).toEqual([]);
+      const beats = await t.run((ctx) => ctx.db.query('cronHeartbeats').collect());
+      expect(beats.find((b) => b.name === 'sni-report-sweep')?.runCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // --- through the member's report ---------------------------------------------------------------

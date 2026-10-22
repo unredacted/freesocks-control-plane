@@ -3376,7 +3376,11 @@ export default defineSchema({
     since: v.number(),
     byAdminId: v.optional(v.id('adminUsers')),
     updatedAt: v.number(),
-  }).index('by_server', ['backendServerId']),
+  })
+    .index('by_server', ['backendServerId'])
+    // The open holds of a backend (read on every member fetch of an unmanaged node).
+    .index('by_server_released', ['backendServerId', 'released'])
+    .index('by_released_updated', ['released', 'updatedAt']),
 
   // A node rename (docs/servers.md "Renaming a node"): a resumable workflow
   // that renames the backend row through the ledger, every FCP row keyed by
@@ -3635,7 +3639,8 @@ export default defineSchema({
   })
     .index('by_owner', ['ownerKind', 'ownerId'])
     .index('by_server_kind_identity', ['backendServerId', 'kind', 'identity'])
-    .index('by_state', ['state']),
+    .index('by_state', ['state'])
+    .index('by_state_updated', ['state', 'updatedAt']),
 
   // Detector dedupe marks: one contribution per member per detector window,
   // ACROSS origins: the key is a peppered HMAC of the member alone (see

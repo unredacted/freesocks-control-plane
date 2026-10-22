@@ -17,6 +17,7 @@
  */
 import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { internalMutation, type MutationCtx } from './_generated/server';
 import { endpointsFor, type CountryContext } from './lib/edges/assignment';
 import { resolveWhere } from './lib/edges/sni/country';
@@ -132,19 +133,30 @@ export async function attributeReport(
   return names.length;
 }
 
-/** Delete counts older than the window. Bounded per call; the cron calls it every tick. */
+const SWEEP_PAGE = 500;
+
+/**
+ * Delete counts older than the window (daily). Bounded pages, rescheduled
+ * while a page was full: a day can add more rows than one page holds.
+ */
 export const sweep = internalMutation({
-  args: { now: v.optional(v.number()) },
+  args: { now: v.optional(v.number()), rounds: v.optional(v.number()) },
   handler: async (ctx, a) => {
-    await recordHeartbeat(ctx, 'sni-report-sweep');
+    if ((a.rounds ?? 0) === 0) await recordHeartbeat(ctx, 'sni-report-sweep');
     const now = a.now ?? Date.now();
     const { reportWindowDays } = await resolveSniConfig(ctx.db);
     const cutoff = dayOf(now - reportWindowDays * 86_400_000);
     const old = await ctx.db
       .query('sniReportCounts')
       .withIndex('by_day', (q) => q.lt('day', cutoff))
-      .take(500);
+      .take(SWEEP_PAGE);
     for (const row of old) await ctx.db.delete(row._id);
+    // Every deleted row leaves the range, so the walk ends.
+    if (old.length === SWEEP_PAGE)
+      await ctx.scheduler.runAfter(0, internal.sniReports.sweep, {
+        now,
+        rounds: (a.rounds ?? 0) + 1,
+      });
     return { deleted: old.length };
   },
 });

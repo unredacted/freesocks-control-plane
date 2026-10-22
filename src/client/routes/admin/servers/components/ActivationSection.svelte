@@ -1,9 +1,10 @@
 <script lang="ts">
   /**
    * One enrolled node's way to members (docs/servers.md "Node lifecycle"):
-   * its sentence, the isolated test link with its "Works" tick (direct nodes),
-   * the review card with Approve (NodeApprovalCard), and the quiet actions:
-   * finish maintenance. Nothing here reaches a member before the commit.
+   * its sentence, the isolated test links (one per server name) with their
+   * "Works" tick (direct nodes), the review card with Approve
+   * (NodeApprovalCard), and the quiet actions: finish maintenance. Nothing
+   * here reaches a member before the commit.
    *
    * Retiring starts from the header's More menu (NodeActions, "Retire node…");
    * once a retirement exists this section shows its steps (retirementSteps):
@@ -194,7 +195,8 @@
     <div class="bg-card mt-3 space-y-3 rounded-md border p-3">
       <p class="text-sm">
         Scan or copy the test link into a client on the device you test with (it uses FCP's own test
-        account), connect, load a page, then tick Works. Nobody else can see this node yet.
+        account), connect, load a page, then tick Works. A node with several server names has one
+        link per name: test each of them before you tick. Nobody else can see this node yet.
       </p>
       {#if link}
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -206,7 +208,17 @@
           {/if}
         </div>
         {#if !ticked}
-          <TestLink link={link.link} label={`Copy the test link for ${intent.name}`} />
+          {#each link.links as l (l.sni)}
+            {#if link.links.length > 1}
+              <p class="text-sm font-medium break-all">{l.sni}</p>
+            {/if}
+            <TestLink
+              link={l.link}
+              label={link.links.length > 1
+                ? `Copy the test link for ${intent.name} with ${l.sni}`
+                : `Copy the test link for ${intent.name}`}
+            />
+          {/each}
           <Button class="h-11 sm:h-9" disabled={busy} onclick={works}>Works</Button>
         {/if}
       {:else}

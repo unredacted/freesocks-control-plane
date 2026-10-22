@@ -788,6 +788,38 @@ describe('getAccountView subscription URL', () => {
     const view = await t.action(internal.account.getAccountView, { userId });
     expect(view?.subscription?.subToken).toBeNull();
   });
+
+  test('a node-scoped edge-required binding keeps the raw URL and its short id from keys that may land there', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, subId } = await seedSub(t);
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      await ctx.db.insert('edgeDeliveryBindings', {
+        backendServerId: sub.backendServerId!,
+        nodeName: 'node-a',
+        policy: 'edge-required',
+        policyVersion: 1,
+        relaySlug: 'node-a',
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+    });
+    const urlOf = async () => (await t.action(internal.account.getAccountView, { userId }))!;
+    // Not pinned yet: the key may land on the bound node.
+    let view = await urlOf();
+    expect(view.subscription).toMatchObject({ url: '', shortUuid: '', subToken: 'tok_abc' });
+    // Pinned to the bound node: withheld; to another node: handed out.
+    await t.run((ctx) => ctx.db.patch(subId, { pinnedNode: 'node-a' }));
+    view = await urlOf();
+    expect(view.subscription).toMatchObject({ url: '', shortUuid: '', edgeRequired: true });
+    await t.run((ctx) => ctx.db.patch(subId, { pinnedNode: 'node-b' }));
+    view = await urlOf();
+    expect(view.subscription).toMatchObject({
+      url: 'https://panel.internal/sub/short-1',
+      shortUuid: 'short-1',
+      edgeRequired: false,
+    });
+  });
 });
 
 /**

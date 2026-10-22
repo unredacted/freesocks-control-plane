@@ -61,7 +61,7 @@ const DAY = 24 * HOUR;
 export const TICK_MS = 10 * MIN;
 /** A measurement still open this long after it was due is timed out. */
 const RUN_TIMEOUT_MS = 15 * MIN;
-/** Documents one planning pass may read (a read limit is a 500). */
+/** Documents one tick's planning may read, every country together (a read limit is a 500). */
 const MAX_SCAN = 3000;
 /** Measurements of one (name, country) read to refresh its evidence, newest first. */
 const MAX_HISTORY = 40;
@@ -122,14 +122,22 @@ function verdictIn(
   return v === 'reachable' || v === 'unreachable' || v === 'mixed' || v === 'unknown' ? v : null;
 }
 
+/** An address a check may dial, before any country is looked at. */
+interface Dialable {
+  target: Omit<Target, 'verdict' | 'lastBatchAt'>;
+  reachability: { byCountry: Array<{ country: string; verdict: string }> } | undefined;
+  /** An edge's address (per-country checks keep when it was last batched). */
+  edgeId: Id<'edges'> | null;
+}
+
 /**
- * Every address a check may dial, for one country: the published, active L4
- * edges of enabled origins in front of a REALITY listener, and the REALITY
- * listeners of origin nodes that opted into probing (`probeNode`). Nothing
- * else: a standby, a candidate, an L7 front or a fronted origin that did not
- * opt in is never dialled. Stable order (origin slug, pool index).
+ * Every address a check may dial: the published, active L4 edges of enabled
+ * origins in front of a REALITY listener, and the REALITY listeners of origin
+ * nodes that opted into probing (`probeNode`). Nothing else: a standby, a
+ * candidate, an L7 front or a fronted origin that did not opt in is never
+ * dialled. Stable order (origin slug, pool index). The same for every country.
  */
-async function targetsFor(db: Db, country: string): Promise<Target[]> {
+async function dialable(db: Db): Promise<{ countryChecks: boolean; all: Dialable[] }> {
   const countryChecks = (await resolveEdgeConfig(db)).country.enabled;
   const relays = (
     await db
@@ -137,8 +145,7 @@ async function targetsFor(db: Db, country: string): Promise<Target[]> {
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
       .collect()
   ).sort((a, b) => a.slug.localeCompare(b.slug));
-  const out: Target[] = [];
-  const push = (t: Omit<Target, 'key'>) => out.push({ ...t, key: targetKeyOf(t) });
+  const all: Dialable[] = [];
   for (const relay of relays) {
     for (const edgeId of relay.publishedEdgeIds) {
       if (!edgeId) continue;
@@ -149,14 +156,12 @@ async function targetsFor(db: Db, country: string): Promise<Target[]> {
       if (!address) continue;
       const listener = await db.get(edge.listenerId);
       if (!isReality(listener)) continue;
-      push({
-        kind: 'edge',
-        ref: edge._id,
-        address,
-        port: edge.listeners[0]?.edgePort ?? 443,
-        listener,
-        verdict: verdictIn(edge.reachability, country),
-        ...(countryChecks ? { lastBatchAt: await lastBatchAt(db, edge._id, country) } : {}),
+      const port = edge.listeners[0]?.edgePort ?? 443;
+      const t = { kind: 'edge' as const, ref: edge._id, address, port, listener };
+      all.push({
+        target: { ...t, key: targetKeyOf(t) },
+        reachability: edge.reachability,
+        edgeId: edge._id,
       });
     }
     if (relay.probeNode) {
@@ -166,17 +171,40 @@ async function targetsFor(db: Db, country: string): Promise<Target[]> {
         .collect();
       for (const l of listeners.sort((a, b) => a.listenerKey.localeCompare(b.listenerKey))) {
         if (!isReality(l)) continue;
-        push({
-          kind: 'relay',
+        const t = {
+          kind: 'relay' as const,
           ref: relay._id,
           address: relay.originAddress,
           port: l.originPort,
           listener: l,
-          verdict: verdictIn(relay.reachability, country),
+        };
+        all.push({
+          target: { ...t, key: targetKeyOf(t) },
+          reachability: relay.reachability,
+          edgeId: null,
         });
       }
     }
   }
+  return { countryChecks, all };
+}
+
+/** The dialable addresses as seen from one country (`dialable`, read again unless passed). */
+async function targetsFor(
+  db: Db,
+  country: string,
+  d?: Awaited<ReturnType<typeof dialable>>,
+): Promise<Target[]> {
+  const { countryChecks, all } = d ?? (await dialable(db));
+  const out: Target[] = [];
+  for (const x of all)
+    out.push({
+      ...x.target,
+      verdict: verdictIn(x.reachability, country),
+      ...(countryChecks && x.edgeId
+        ? { lastBatchAt: await lastBatchAt(db, x.edgeId, country) }
+        : {}),
+    });
   return out;
 }
 
@@ -377,6 +405,19 @@ async function startBatch(
 }
 
 /**
+ * What one tick's planning shares across its countries: ONE read budget
+ * (`MAX_SCAN`), the dialable addresses, and the names and families already
+ * looked up (a name is the same name from every country).
+ */
+interface TickScan {
+  reads: number;
+  reportWindowDays: number;
+  dial: Awaited<ReturnType<typeof dialable>>;
+  names: Map<string, Doc<'sniNames'> | null>;
+  families: Map<string, boolean>;
+}
+
+/**
  * The cron's one batch for one country. Listeners are scanned from a position
  * that rotates every tick (the scan is bounded; it must not always stop on the
  * same prefix). A name is due when it was not checked from there within the
@@ -390,15 +431,17 @@ async function planForCountry(
   country: string,
   cfg: SniVantageConfig,
   now: number,
+  scan: TickScan,
 ): Promise<BatchPlan | null> {
-  const { reportWindowDays } = await resolveSniConfig(db);
+  if (scan.reads > MAX_SCAN) return null;
   const weights = new Map<string, number>();
-  const reports = await reportCounts(db, country, reportWindowDays, now);
+  const reports = await reportCounts(db, country, scan.reportWindowDays, now);
   for (const c of reports) weights.set(c.name, (weights.get(c.name) ?? 0) + c.weight);
-  let reads = reports.length;
+  scan.reads += reports.length;
   const dueBefore = now - cfg.intervalHours * HOUR;
-  const families = new Map<string, boolean>();
-  const all = oneTargetPerListener(await targetsFor(db, country));
+  const targets = await targetsFor(db, country, scan.dial);
+  if (scan.dial.countryChecks) scan.reads += targets.filter((t) => t.kind === 'edge').length;
+  const all = oneTargetPerListener(targets);
   const carriers = carriersOf(all);
   const seen = new Map<
     string,
@@ -409,13 +452,18 @@ async function planForCountry(
     const candidates: PlanName[] = [];
     const docs = new Map<string, Doc<'sniNames'>>();
     for (const name of activeNames(target.listener)) {
-      if (reads > MAX_SCAN) break;
+      if (scan.reads > MAX_SCAN) break;
       let s = seen.get(name);
       if (!s) {
-        const n = await checkableName(db, name, families);
+        let n = scan.names.get(name);
+        if (n === undefined) {
+          n = await checkableName(db, name, scan.families);
+          scan.names.set(name, n);
+          scan.reads++;
+        }
         s = { n, ev: n ? await evidenceOf(db, name, country) : null };
         seen.set(name, s);
-        reads += 2;
+        if (n) scan.reads++;
       }
       if (!s.n) continue;
       const dueAnywhere = !s.ev || s.ev.lastRequestedAt <= dueBefore;
@@ -423,7 +471,7 @@ async function planForCountry(
       if (dueAnywhere && keys.length > 1 && s.prefers === undefined) {
         const h = await lastByTarget(db, name, country);
         s.prefers = preferredTarget(keys, h.last);
-        reads += h.read + 1;
+        scan.reads += h.read + 1;
       }
       docs.set(name, s.n);
       candidates.push({
@@ -442,7 +490,7 @@ async function planForCountry(
       if (candidates.some((c) => c.due && c.priority && picked.includes(c.name))) return plan;
       first ??= plan;
     }
-    if (reads > MAX_SCAN) break;
+    if (scan.reads > MAX_SCAN) break;
   }
   return first;
 }
@@ -475,8 +523,17 @@ export const tick = internalMutation({
     if (sources.length === 0) return idle('no_source');
     const remaining = cfg.hourlyBudget - (await spentThisHour(ctx.db, now, cfg.hourlyBudget));
     if (remaining <= 0) return idle('budget');
+    // One scan for the whole tick: the countries share its budget (the
+    // rotating order gives each its turn first) and its lookups.
+    const scan: TickScan = {
+      reads: 0,
+      reportWindowDays: sni.reportWindowDays,
+      dial: await dialable(ctx.db),
+      names: new Map(),
+      families: new Map(),
+    };
     for (const country of countriesForTick(countries, now, TICK_MS)) {
-      const plan = await planForCountry(ctx.db, country, cfg, now);
+      const plan = await planForCountry(ctx.db, country, cfg, now, scan);
       if (!plan) continue;
       const names = fitToBudget(plan.names, sources.length, remaining);
       if (names.length === 0) return idle('budget');
