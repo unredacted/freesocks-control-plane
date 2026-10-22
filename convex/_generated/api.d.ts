@@ -43,6 +43,7 @@ import type * as edgeMaintenance from "../edgeMaintenance.js";
 import type * as edgeOperator from "../edgeOperator.js";
 import type * as edgeOriginProbe from "../edgeOriginProbe.js";
 import type * as edgeOriginProbeOps from "../edgeOriginProbeOps.js";
+import type * as edgePlans from "../edgePlans.js";
 import type * as edgeProviderAccounts from "../edgeProviderAccounts.js";
 import type * as edgeProviderCatalog from "../edgeProviderCatalog.js";
 import type * as edgeProviderOps from "../edgeProviderOps.js";
@@ -224,6 +225,7 @@ declare const fullApi: ApiFromModules<{
   edgeOperator: typeof edgeOperator;
   edgeOriginProbe: typeof edgeOriginProbe;
   edgeOriginProbeOps: typeof edgeOriginProbeOps;
+  edgePlans: typeof edgePlans;
   edgeProviderAccounts: typeof edgeProviderAccounts;
   edgeProviderCatalog: typeof edgeProviderCatalog;
   edgeProviderOps: typeof edgeProviderOps;

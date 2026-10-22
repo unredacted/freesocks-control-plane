@@ -65,7 +65,13 @@ import {
 import { releaseTestCredentialsOf } from './edgeTestCredentials';
 import { isCandidateEdge } from './lib/backend/deliveryGate';
 import { assertNoRelayPanelClaim, assertNoRotationOrQuarantine } from './lib/edges/relayGuards';
-import { confirmEndpoint, internalRunsOf } from './edgeVerification';
+import {
+  confirmEndpoint,
+  edgePortsOf,
+  internalRunsOf,
+  rungRowOf,
+  rungRunOf,
+} from './edgeVerification';
 import { listenersOf } from './relayListeners';
 import { accountTested, certificateRefusalFor } from './edgeProviderAccounts';
 import { isTerminalPhase, withProviderAnswer } from './lib/edges/rotation';
@@ -77,7 +83,8 @@ import {
   verificationCurrent,
   verificationStaleReason,
 } from './lib/edges/verification';
-import { partialRungFor } from './lib/edges/verifyRung';
+import { outsideCheckFor } from './lib/edges/verifyRung';
+import { literalFamilies } from './lib/edges/probes/types';
 import {
   edgeLayerOf,
   frontsAllowed,
@@ -243,6 +250,7 @@ const runListenerV = v.object({
   proofRequestedAt: v.optional(v.number()),
   recheckSince: v.optional(v.number()),
   reappliedEdgeId: v.optional(v.id('edges')),
+  notChecked: v.optional(v.array(v.union(v.literal(4), v.literal(6)))),
 });
 const testLinkV = v.object({
   edgeId: v.id('edges'),
@@ -478,6 +486,7 @@ export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
       edgeId: (l.edgeId as string | undefined) ?? null,
       verify: l.verify,
       published: l.published,
+      notChecked: l.notChecked ?? [],
       transport: transportOf(plan, l.listenerKey),
     })),
     // The set's picks, with the plan's words for them.
@@ -715,54 +724,65 @@ export const localVector = internalQuery({
 });
 
 /**
- * The `partial` rung of an L4 standby from the probe evidence on record
- * (lib/edges/verifyRung.ts): outside reachability rows + the newest internal
- * shape run. `verified` is never produced here.
+ * Stage 4's outside check of one L4 address (lib/edges/verifyRung.ts
+ * `outsideCheckFor`): the reachability rows, the newest runs of every source
+ * (in flight or settled) and the internal shape runs, per address family.
  */
-export const rungFor = internalQuery({
+export const outsideCheck = internalQuery({
   args: {
     edgeId: v.id('edges'),
     /** A fresh check ("Check again", a re-apply): only evidence from this time on counts. */
     since: v.optional(v.number()),
+    /** When the stage asked for its own round (absent before it has). */
+    roundSince: v.optional(v.number()),
+    /** The stage's wait is over: a run still in flight is not waited for. */
+    final: v.optional(v.boolean()),
   },
-  handler: async (ctx, { edgeId, since }) => {
+  handler: async (ctx, { edgeId, since, roundSince, final }) => {
+    const gone = {
+      verdict: 'unreachable' as const,
+      notChecked: [] as Array<4 | 6>,
+      providerHealthy: false,
+    };
     const edge = await ctx.db.get(edgeId);
-    if (!edge) return 'unreachable' as const;
+    if (!edge) return gone;
     const listener = await ctx.db.get(edge.listenerId);
-    if (!listener) return 'unreachable' as const;
+    if (!listener) return gone;
     const cfg = await resolveEdgeConfig(ctx.db);
+    const fresh = (at: number | undefined) => since === undefined || (at ?? 0) >= since;
     const reach = await ctx.db
       .query('probeReachability')
       .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', edgeId))
       .collect();
     // The shape check's own runs (their own index range: controls and extra
-    // rounds can never push them out of the window).
-    const runs = await internalRunsOf(ctx.db, edgeId);
-    return partialRungFor(listener, {
-      providerHealthy: providerHealthSatisfies(
-        edge.provider,
-        edge.health,
-        cfg.requireProviderHealth,
-      ),
-      reachability: reach
-        .filter((r) => since === undefined || r.updatedAt >= since)
-        .map((r) => ({
-          country: r.country,
-          source: r.source,
-          verdict: r.verdict,
-          port: r.port,
-        })),
-      probeRuns: runs
-        .filter((r) => since === undefined || (r.requestedAt ?? 0) >= since)
-        .map((r) => ({
-          source: r.source,
-          status: r.status,
-          probeProtocol: r.probeProtocol,
-          results: r.results,
-          requestedAt: r.requestedAt,
-        })),
+    // rounds can never push them out of the window), and the newest runs of
+    // every source for what is still in flight.
+    const runs = new Map<string, Doc<'probeRuns'>>();
+    for (const r of await internalRunsOf(ctx.db, edgeId)) runs.set(r._id, r);
+    for (const r of await ctx.db
+      .query('probeRuns')
+      .withIndex('by_target_requested', (q) =>
+        q.eq('targetKind', 'edge').eq('targetRef', edgeId as string),
+      )
+      .order('desc')
+      .take(50))
+      runs.set(r._id, r);
+    const providerHealthy = providerHealthSatisfies(
+      edge.provider,
+      edge.health,
+      cfg.requireProviderHealth,
+    );
+    const check = outsideCheckFor(listener, {
+      families: literalFamilies(edge.addresses, cfg.render.ipv6Mode !== 'off'),
+      providerHealthy,
+      reachability: reach.filter((r) => fresh(r.updatedAt)).map(rungRowOf),
+      probeRuns: [...runs.values()].filter((r) => fresh(r.requestedAt)).map(rungRunOf),
       agreementVantages: cfg.probe.agreementVantages,
+      ports: edgePortsOf(edge),
+      ...(roundSince !== undefined ? { roundSince } : {}),
+      final: final === true,
     });
+    return { verdict: check.verdict, notChecked: check.notChecked, providerHealthy };
   },
 });
 
@@ -1605,6 +1625,7 @@ export const onRotationTerminal = internalMutation({
     if (rot.phase === 'done' && rot.kind === 'provision' && rot.toEdgeId && entryIdx >= 0) {
       listeners[entryIdx].edgeId = rot.toEdgeId;
       listeners[entryIdx].verify = 'pending';
+      listeners[entryIdx].notChecked = undefined;
       await ctx.db.patch(runId, {
         ...base,
         listeners,
@@ -2018,7 +2039,7 @@ async function stageProvision(ctx: ActionCtx, run: Run): Promise<null> {
           )
         : undefined;
     if (reuse) taken.add(reuse._id as string);
-    return { ...l, edgeId: reuse?._id, verify: 'pending' as const };
+    return { ...l, edgeId: reuse?._id, verify: 'pending' as const, notChecked: undefined };
   });
   const missing = listeners.find((l) => !l.edgeId);
   if (!missing) return advance(ctx, run, { listeners });
@@ -2125,15 +2146,23 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
         });
       }
     }
-    const rung = await ctx.runQuery(internal.edgeSetupRuns.rungFor, {
+    // Per address family (lib/edges/verifyRung.ts `outsideCheckFor`): only a
+    // real refusal is `unreachable`; a family no source could test passes as
+    // not checked, and the operator's own test link still comes first.
+    const overdue =
+      l.probeRequestedAt !== undefined && now - l.probeRequestedAt > VERIFY_TIMEOUT_MS;
+    const check = await ctx.runQuery(internal.edgeSetupRuns.outsideCheck, {
       edgeId: l.edgeId,
       ...(l.recheckSince !== undefined ? { since: l.recheckSince } : {}),
+      ...(l.probeRequestedAt !== undefined ? { roundSince: l.probeRequestedAt } : {}),
+      final: overdue,
     });
-    if (rung === 'partial') {
+    if (check.verdict === 'passed') {
       l.verify = 'partial';
+      l.notChecked = check.notChecked.length > 0 ? check.notChecked : undefined;
       continue;
     }
-    if (rung === 'unreachable') {
+    if (check.verdict === 'unreachable') {
       // Once per address, before the run asks: its configuration saved again
       // (a provider can accept a change and never apply it), then a fresh check.
       if (l.reappliedEdgeId !== l.edgeId) {
@@ -2152,9 +2181,17 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
     if (!l.probeRequestedAt) {
       await ops.requestVerificationProbes(ctx, l.edgeId);
       l.probeRequestedAt = now;
-    } else if (now - l.probeRequestedAt > VERIFY_TIMEOUT_MS) {
+    } else if (overdue) {
+      // Past the wait nothing in flight holds the check: only the provider's
+      // own health does (or an address with no family to probe).
       l.verify = 'unreachable';
-      return needsYou(ctx, run, 'address_unreachable', `${l.listenerKey}:timeout`, { listeners });
+      return needsYou(
+        ctx,
+        run,
+        'address_unreachable',
+        `${l.listenerKey}:${check.providerHealthy ? 'timeout' : 'provider_health'}`,
+        { listeners },
+      );
     }
     waiting = waiting ?? l.listenerKey;
   }
@@ -3206,6 +3243,7 @@ export const retry = internalMutation({
         entry.probeRequestedAt = undefined;
         entry.proofRequestedAt = undefined;
         entry.recheckSince = undefined;
+        entry.notChecked = undefined;
         replaced.push(entry);
       }
       stage = 'provision';
@@ -3220,6 +3258,7 @@ export const retry = internalMutation({
         entry.probeRequestedAt = undefined;
         entry.proofRequestedAt = undefined;
         entry.recheckSince = undefined;
+        entry.notChecked = undefined;
         replaced.push(entry);
       }
       stage = 'provision';
@@ -3231,6 +3270,7 @@ export const retry = internalMutation({
       failed.probeRequestedAt = undefined;
       failed.proofRequestedAt = undefined;
       failed.recheckSince = now;
+      failed.notChecked = undefined;
     } else if (a.acceptPartial && unreachableNeed(r.need?.code) && failed) {
       failed.verify = 'partial';
     } else if (r.stage === 'verify') {

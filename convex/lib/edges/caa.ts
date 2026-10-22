@@ -32,8 +32,20 @@ export const CA_CAA_DOMAINS = {
   certainly: 'certainly.com',
   'lets-encrypt': 'letsencrypt.org',
   globalsign: 'globalsign.com',
+  // Amazon's CA (ACM certificates, a CloudFront front's): the first of the four below.
+  amazon: 'amazon.com',
 } as const;
 export type CaaCertificateAuthority = keyof typeof CA_CAA_DOMAINS;
+
+/**
+ * Further issuer domains a CA answers to: a record naming any of them allows
+ * it. ACM issues under any of `amazon.com`, `amazontrust.com`, `awstrust.com`
+ * and `amazonaws.com`.
+ * Source: https://docs.aws.amazon.com/acm/latest/userguide/setup.md (CAA), 2026-10-22.
+ */
+export const CA_CAA_ALIASES: Partial<Record<CaaCertificateAuthority, readonly string[]>> = {
+  amazon: ['amazontrust.com', 'awstrust.com', 'amazonaws.com'],
+};
 
 /** One CAA record as DNS returns it (flags 128 = critical). */
 export interface CaaRecord {
@@ -120,12 +132,13 @@ export function caaParamsAllow(value: string): boolean {
 }
 
 /**
- * Whether the deciding record set lets `issuer` issue. `records` is the set
- * at ONE name (the first one up the tree that has any).
+ * Whether the deciding record set lets `issuer` issue (any one of them, for a
+ * CA that answers to several domains). `records` is the set at ONE name (the
+ * first one up the tree that has any).
  */
 export function caaSetAllows(
   records: readonly CaaRecord[],
-  issuer: string,
+  issuer: string | readonly string[],
   wildcard: boolean,
 ): boolean {
   const tagOf = (r: CaaRecord) => r.tag.trim().toLowerCase();
@@ -134,8 +147,10 @@ export function caaSetAllows(
   const governing =
     wildcard && wild.length > 0 ? wild : records.filter((r) => tagOf(r) === 'issue');
   if (governing.length === 0) return true;
-  const want = issuer.toLowerCase();
-  return governing.some((r) => caaIssuerOf(r.value) === want && caaParamsAllow(r.value));
+  const want = new Set(
+    (typeof issuer === 'string' ? [issuer] : issuer).map((i) => i.toLowerCase()),
+  );
+  return governing.some((r) => want.has(caaIssuerOf(r.value)) && caaParamsAllow(r.value));
 }
 
 /**
@@ -161,6 +176,10 @@ export async function checkCaa(a: {
   const base = wildcard ? a.name.trim().slice(2) : a.name;
   const issuer =
     CA_CAA_DOMAINS[a.certificateAuthority as CaaCertificateAuthority] ?? a.certificateAuthority;
+  const issuers = [
+    issuer,
+    ...(CA_CAA_ALIASES[a.certificateAuthority as CaaCertificateAuthority] ?? []),
+  ];
   const names = caaWalkNames(base);
   // Too deep to walk to the top: an answer from part of the tree is no answer.
   if (names.length > MAX_CAA_WALK) return { verdict: 'unchecked', issuer, wildcard };
@@ -173,7 +192,7 @@ export async function checkCaa(a: {
     }
     if (records.length === 0) continue;
     return {
-      verdict: caaSetAllows(records, issuer, wildcard) ? 'allows' : 'forbids',
+      verdict: caaSetAllows(records, issuers, wildcard) ? 'allows' : 'forbids',
       issuer,
       wildcard,
       decidedAt: name,

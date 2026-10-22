@@ -46,6 +46,7 @@ export function placeKeyOf(placement: EdgePlacement): string {
       return placement.regionName;
     case 'cloudflare':
     case 'fastly':
+    case 'cloudfront':
       return ANYCAST_PLACE;
   }
 }

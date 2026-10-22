@@ -51,6 +51,7 @@ import { parseIntent } from './lib/edges/intent';
 import { sharedTeardownLockKey, stepLockKey } from './edgeRotations';
 import { setupRunsPass } from './edgeSetupRuns';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
+import { PLANS_PER_TICK } from './lib/edges/pricing';
 import type {
   Discovery,
   EdgeDescription,
@@ -398,6 +399,21 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   } catch (err) {
     report.errors++;
     console.warn(`[edge-reconcile] shared certificates: ${errText(err)}`);
+  }
+
+  // 4f. Plans and prices (docs/edges.md § "Plans and prices"): a few locations
+  // per pass whose plans are a day old are read again (a failed read waits an
+  // hour), so a price change shows before the next edge is created.
+  try {
+    const due = await ctx.runQuery(internal.edgePlans.staleForRefresh, {
+      now,
+      limit: PLANS_PER_TICK,
+    });
+    for (const { accountId, locationId } of due)
+      await ctx.runAction(internal.edgeProviderOps.refreshPlans, { accountId, locationId });
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] plans: ${errText(err)}`);
   }
 
   // 5. Pool upkeep + 6. origin deletes. While the maintenance switch is on,

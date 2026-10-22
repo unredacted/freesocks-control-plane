@@ -13,6 +13,8 @@ import {
   replaceWords,
   setWords,
   providerPickWords,
+  notCheckedWords,
+  runNotCheckedLines,
   runTestItems,
   runTestLines,
   TEST_PROFILE_NOTE,
@@ -221,13 +223,14 @@ describe('runTestLines', () => {
     method: 'test_link' as const,
     binding: { endpoint: `${edgeId}:443`, listenerRevision: 1, configHash: 'h', issuedAt },
   });
-  const listener = (listenerKey: string, edgeId: string | null) => ({
+  const listener = (listenerKey: string, edgeId: string | null, notChecked: Array<4 | 6> = []) => ({
     listenerKey,
     locationId: null,
     layer: 'l4' as const,
     edgeId,
     verify: 'pending' as const,
     published: false,
+    notChecked,
     transport:
       listenerKey === 'a'
         ? {
@@ -267,6 +270,18 @@ describe('runTestLines', () => {
       ],
     });
     expect(done.size).toBe(0);
+  });
+  it('an address family nothing could test is one plain line, no em-dash', () => {
+    expect(notCheckedWords([6])).toBe('Not checked from outside over IPv6');
+    expect(notCheckedWords([4])).toBe('Not checked from outside over IPv4');
+    expect(notCheckedWords([4, 6])).toBe('Not checked from outside');
+    const lines = runNotCheckedLines({
+      listeners: [listener('a', 'e1', [6]), listener('b', 'e2'), listener('c', null, [6])],
+    });
+    expect(lines).toEqual([
+      { key: 'a:e1', text: 'VLESS · raw · REALITY, port 443: not checked from outside over IPv6.' },
+    ]);
+    expect(lines[0]!.text).not.toContain('\u2014');
   });
 });
 

@@ -15,6 +15,7 @@ import {
   type FrontingAccount,
 } from './providers/capabilities';
 import type { EdgeProviderId } from '../edgeProviderIds';
+import { costTieKeys } from './pricing';
 export const ROTATION_PHASES = [
   'select',
   'provisioning',
@@ -308,6 +309,9 @@ export interface AccountCandidate {
   /** The location's own live-edge cap (null / absent = none) and its live count. */
   locationMaxLiveEdges?: number | null;
   locationLiveEdges?: number;
+  /** What one edge here costs a month (lib/edges/pricing.ts; null / absent = not known). */
+  monthlyCost?: number | null;
+  costCurrency?: string | null;
 }
 
 export type AccountPickFailure =
@@ -320,7 +324,8 @@ export type AccountPickFailure =
 /**
  * A trusted location of the provider whose account has capacity + budget (and
  * the location room under its own cap); lowest account priority first, then
- * fewest live edges on the account, then in the location.
+ * the cheaper edge among those priced in the same currency (`costTieKeys`),
+ * then fewest live edges on the account, then in the location.
  */
 export function pickAccount(
   accounts: readonly AccountCandidate[],
@@ -331,19 +336,20 @@ export function pickAccount(
   const qualified = ofProvider.filter((a) => a.qualified);
   if (qualified.length === 0) return { ok: false, code: 'no_qualified_account' };
   // dailyAllocationBudget 0 = unlimited (the same rule `reserveAllocation` applies).
-  const usable = qualified
-    .filter(
-      (a) =>
-        a.liveEdges < a.maxLiveEdges &&
-        (a.locationMaxLiveEdges == null || (a.locationLiveEdges ?? 0) < a.locationMaxLiveEdges) &&
-        (a.dailyAllocationBudget === 0 || a.allocationsToday < a.dailyAllocationBudget),
-    )
-    .sort(
-      (a, b) =>
-        a.priority - b.priority ||
-        a.liveEdges - b.liveEdges ||
-        (a.locationLiveEdges ?? 0) - (b.locationLiveEdges ?? 0),
-    );
+  const usable = qualified.filter(
+    (a) =>
+      a.liveEdges < a.maxLiveEdges &&
+      (a.locationMaxLiveEdges == null || (a.locationLiveEdges ?? 0) < a.locationMaxLiveEdges) &&
+      (a.dailyAllocationBudget === 0 || a.allocationsToday < a.dailyAllocationBudget),
+  );
+  const cost = costTieKeys(usable);
+  usable.sort(
+    (a, b) =>
+      a.priority - b.priority ||
+      cost.get(a)! - cost.get(b)! ||
+      a.liveEdges - b.liveEdges ||
+      (a.locationLiveEdges ?? 0) - (b.locationLiveEdges ?? 0),
+  );
   if (usable.length === 0) return { ok: false, code: 'accounts_exhausted' };
   return { ok: true, account: usable[0] };
 }

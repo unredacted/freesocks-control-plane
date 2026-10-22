@@ -158,6 +158,31 @@ describe('cloudflare dns client: request shapes', () => {
     expect(call.path).toBe(`/client/v4/zones/${cfg.zoneId}/dns_records/gone`);
   });
 
+  test("flattensAllCnames reads the zone's CNAME flattening; a refused read is unknown", async () => {
+    const answer = (value: string) =>
+      jsonRes({
+        result: { id: 'cname_flattening', value, editable: true },
+        success: true,
+        errors: [],
+        messages: [],
+      });
+    let stub = mockFetch(() => answer('flatten_all'));
+    expect(await cloudflareDnsClient(cfg).flattensAllCnames!()).toBe(true);
+    expect((stub.calls[0] as Captured).path).toBe(
+      `/client/v4/zones/${cfg.zoneId}/settings/cname_flattening`,
+    );
+    stub = mockFetch(() => answer('flatten_at_root'));
+    expect(await cloudflareDnsClient(cfg).flattensAllCnames!()).toBe(false);
+    mockFetch(() =>
+      jsonRes(
+        { success: false, errors: [{ code: 9109, message: 'Unauthorized' }], messages: [] },
+        403,
+      ),
+    );
+    expect(await cloudflareDnsClient(cfg).flattensAllCnames!()).toBeNull();
+    void stub;
+  });
+
   test('listCaa reads CAA records at the zone apex', async () => {
     const stub = mockFetch(() =>
       jsonRes({

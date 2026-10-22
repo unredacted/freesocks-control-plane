@@ -119,7 +119,7 @@
         bind:value={priority}
         bind:invalid={badPriority}
         label="Priority"
-        helper="Among accounts that fit, the higher number is tried first."
+        helper="Among accounts that fit, the lower number is tried first; on a tie, the cheaper edge."
       />
     </div>
 

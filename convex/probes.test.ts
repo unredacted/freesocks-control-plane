@@ -638,6 +638,83 @@ describe('relayProbes', () => {
     expect((await t.run((ctx) => ctx.db.get(v6Runs.runIds[0])))!.ipVersion).toBe(6);
   });
 
+  test("no_route runs never push the internal source's real runs out of its health window", async () => {
+    const { t } = await seed();
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      const run = (requestedAt: number, error: string) =>
+        ctx.db.insert('probeRuns', {
+          targetKind: 'custom',
+          targetRef: 'any',
+          source: 'internal',
+          target: '198.51.100.7:443',
+          status: 'failed',
+          trigger: 'cron',
+          requestedAt,
+          finishedAt: requestedAt,
+          results: [],
+          error,
+        });
+      // Three real failures, then far more IPv6 runs FCP's host could not make.
+      for (let i = 0; i < 3; i++) await run(now - 100 * 60_000 + i, 'timeout');
+      for (let i = 0; i < 60; i++) await run(now - 50 * 60_000 + i, 'no_route');
+    });
+    const health = await t.query(internal.probes.sourceHealthView, {});
+    expect(health.sources.find((x) => x.source === 'internal')).toMatchObject({
+      runs: 3,
+      streak: 3,
+      failing: true,
+      lastError: 'timeout',
+    });
+  });
+
+  test('check-host is never asked about an IPv6 literal: it sits that family out, and a target only it would check is refused', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, relayId, edgeId } = await seed();
+    await t.run((ctx) => ctx.db.patch(edgeId, { addresses: { v4: EDGE, v6: '2001:db8::9' } }));
+    const { runIds } = await t.mutation(internal.probes.requestProbes, {
+      target: { kind: 'edge', ref: edgeId },
+      trigger: 'manual',
+      sources: ['checkhost', 'globalping'],
+    });
+    const runs = await t.run(async (ctx) =>
+      Promise.all(runIds.map(async (id) => (await ctx.db.get(id))!)),
+    );
+    expect(runs.map((r) => [r.source, r.ipVersion]).sort()).toEqual([
+      ['checkhost', 4],
+      ['globalping', 4],
+      ['globalping', 6],
+    ]);
+    // An IPv6-only address that check-host alone would check: refused, not an empty round.
+    const { edgeId: v6Only } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      listenerId: (await t.run((ctx) => ctx.db.get(edgeId)))!.listenerId,
+      ipv4: '198.51.100.10',
+      ipv6: '2001:db8::10',
+      publish: true,
+      verified: true,
+    });
+    await t.run((ctx) =>
+      ctx.db.patch(v6Only as Id<'edges'>, { addresses: { v6: '2001:db8::10' } }),
+    );
+    await expect(
+      t.mutation(internal.probes.requestProbes, {
+        target: { kind: 'edge', ref: v6Only },
+        trigger: 'manual',
+        sources: ['checkhost'],
+      }),
+    ).rejects.toThrow(/address family/);
+    // The cron does not keep it due with nothing to run.
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.probe.sources.globalping', 'false');
+      await upsertSettingRow(ctx, 'edge.probe.sources.internal', 'false');
+      await upsertSettingRow(ctx, 'edge.probe.sources.checkhost', 'true');
+    });
+    const plan = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
+    expect(plan.dueTargets.map((d) => d.target.ref)).not.toContain(v6Only);
+    expect(plan.dueTargets.find((d) => d.target.ref === edgeId)).toMatchObject({ cost: 1 });
+  });
+
   test('the hourly budget counts EVERY run of the hour (manual, detector, any state), not only due candidates', async () => {
     __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
     const { t, edgeId } = await seed();

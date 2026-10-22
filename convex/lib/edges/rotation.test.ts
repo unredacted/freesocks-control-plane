@@ -74,6 +74,57 @@ describe('pickAccount', () => {
     expect(pickAccount([acct({})], 'ovh')).toEqual({ ok: false, code: 'no_account_for_provider' });
   });
 
+  test('a priority tie goes to the cheaper edge (same currency, both known); priority still wins', () => {
+    const eur = (id: string, monthlyCost: number | null, over: Partial<AccountCandidate> = {}) =>
+      acct({
+        id,
+        priority: 1,
+        monthlyCost,
+        costCurrency: monthlyCost === null ? null : 'EUR',
+        ...over,
+      });
+    // Cheaper wins the tie even with more live edges.
+    expect(
+      pickAccount([eur('dear', 68.62), eur('cheap', 16.79, { liveEdges: 4 })], 'gcore'),
+    ).toMatchObject({ ok: true, account: { id: 'cheap' } });
+    // A lower priority number is still tried first, whatever it costs.
+    expect(
+      pickAccount([eur('cheap', 1), eur('first', 500, { priority: 0 })], 'gcore'),
+    ).toMatchObject({ ok: true, account: { id: 'first' } });
+    // No price, or another currency: no preference (fewest live edges, as before).
+    expect(
+      pickAccount([eur('busy', 1, { liveEdges: 3 }), eur('idle', null)], 'gcore'),
+    ).toMatchObject({ ok: true, account: { id: 'idle' } });
+    expect(
+      pickAccount(
+        [eur('busy', 1, { liveEdges: 3 }), eur('idle', 50, { costCurrency: 'USD' })],
+        'gcore',
+      ),
+    ).toMatchObject({ ok: true, account: { id: 'idle' } });
+    // Currencies interleaved (EUR 20, USD 5, EUR 10): the cheaper of the two in EUR
+    // still comes before the dearer one, whatever the order they came in.
+    for (const order of [
+      ['eur20', 'usd5', 'eur10'],
+      ['usd5', 'eur20', 'eur10'],
+      ['eur20', 'eur10', 'usd5'],
+    ]) {
+      const byId = {
+        eur20: eur('eur20', 20, { liveEdges: 0 }),
+        usd5: eur('usd5', 5, { costCurrency: 'USD', liveEdges: 2 }),
+        eur10: eur('eur10', 10, { liveEdges: 1 }),
+      } as Record<string, AccountCandidate>;
+      expect(
+        pickAccount(
+          order.map((id) => byId[id]!),
+          'gcore',
+        ),
+      ).toMatchObject({
+        ok: true,
+        account: { id: 'eur10' },
+      });
+    }
+  });
+
   test('a candidate is a location: its own trust and cap count, the account budget too', () => {
     // Two locations of one account: the trusted one with room is picked.
     const r = pickAccount(

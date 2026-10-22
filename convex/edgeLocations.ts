@@ -39,7 +39,7 @@ import {
 } from './lib/edges/locations';
 import { resolveTemplateFor, type TemplateLocation } from './edgeTemplates';
 import { EDGE_TEMPLATES } from './lib/edges/providers/templates';
-import { sizeCheckApplies, sizeProblemOf } from './lib/edges/sizeCheck';
+import { SIZE_NOT_MULTICLOUD_WORDS, sizeCheckApplies, sizeProblemOf } from './lib/edges/sizeCheck';
 import { assertAdmission } from './lib/edges/maintenance';
 import { autoQualifyDecision, type AutoQualifyEvidence } from './lib/edges/autoQualify';
 import { verificationEndpoint } from './lib/edges/verification';
@@ -50,6 +50,8 @@ import {
   sharedCertificateOrderedByFcp,
 } from './lib/edges/sharedCertificate';
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
+import { deletePlansOfLocation, locationCostAdmin, type LocationCostAdmin } from './edgePlans';
+import { sizeKeyOf } from './lib/edges/pricing';
 
 export type Location = Doc<'edgeLocations'>;
 type Account = Doc<'edgeProviderAccounts'>;
@@ -497,7 +499,13 @@ export async function evaluateAutoQualificationForLocation(
 /** Admin-safe view of one location (the placement is admin data: region / project / network ids). */
 export function mapLocationAdmin(
   r: Location,
-  extras: { liveEdges: number; isDefault: boolean; sharedUsers?: number; orderedByFcp?: boolean },
+  extras: {
+    liveEdges: number;
+    isDefault: boolean;
+    sharedUsers?: number;
+    orderedByFcp?: boolean;
+    pricing?: LocationCostAdmin;
+  },
 ) {
   const { type: _t, ...placement } = r.placement as { type: string } & Record<string, unknown>;
   return {
@@ -547,6 +555,8 @@ export function mapLocationAdmin(
           orderedByFcp: extras.orderedByFcp === true,
         }
       : null,
+    // Its plans and prices, and what one edge here costs now (`edgePlans`).
+    pricing: extras.pricing ?? null,
     createdAt: new Date(r.createdAt).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
   };
@@ -557,7 +567,15 @@ export type LocationAdmin = ReturnType<typeof mapLocationAdmin>;
 /** Every location of an account in its admin shape (default first, then oldest first). */
 export async function locationsAdminOf(
   db: DatabaseReader,
-  account: Pick<Account, '_id' | 'defaultLocationId' | 'orderedSharedResources'>,
+  account: Pick<
+    Account,
+    | '_id'
+    | 'provider'
+    | 'defaultTemplateId'
+    | 'defaultLocationId'
+    | 'orderedSharedResources'
+    | 'cost'
+  >,
 ): Promise<LocationAdmin[]> {
   const dflt = await defaultLocationOf(db, account);
   const out: LocationAdmin[] = [];
@@ -572,6 +590,7 @@ export async function locationsAdminOf(
           account.orderedSharedResources,
           r.sharedCertificate,
         ),
+        pricing: await locationCostAdmin({ db }, account, r),
       }),
     );
   }
@@ -718,6 +737,23 @@ function refuseMissingRegional(missing: string[]): void {
     });
 }
 
+/**
+ * A size chosen for a location that cannot carry an FCP node there (a
+ * Scaleway size that takes Scaleway's own servers only) is refused when it is
+ * chosen, in the plan picker's words, before any edge would be planned on it.
+ */
+function refuseSizeOf(
+  location: Pick<Location, 'provider' | 'inventorySnapshot'>,
+  regionalParams: Record<string, string>,
+): void {
+  const key = sizeKeyOf(location.provider);
+  const size = key ? regionalParams[key] : undefined;
+  if (!key || !size) return;
+  const problem = sizeProblemOf(location.provider, { [key]: size }, location.inventorySnapshot);
+  if (problem)
+    throw new ConvexError({ code: `edge.${problem}`, message: SIZE_NOT_MULTICLOUD_WORDS });
+}
+
 export const create = internalMutation({
   args: {
     accountId: v.id('edgeProviderAccounts'),
@@ -735,6 +771,7 @@ export const create = internalMutation({
     if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
     await assertDnsAccountOfPlacement(ctx.db, account.provider, a.placement);
     const regionalParams = regionalParamsOf(account.provider, a.regionalParams);
+    refuseSizeOf({ provider: account.provider, inventorySnapshot: undefined }, regionalParams);
     refuseMissingRegional(
       await missingRegionalValues(ctx.db, account, {
         regionalParams:
@@ -790,6 +827,7 @@ export const update = internalMutation({
     if (a.regionalParams !== undefined) {
       const next = regionalParamsOf(row.provider, a.regionalParams);
       const prev = parseRegionalParams(row.provider, row.regionalParams);
+      if (JSON.stringify(next) !== JSON.stringify(prev)) refuseSizeOf(row, next);
       patch.regionalParams = Object.keys(next).length > 0 ? JSON.stringify(next) : undefined;
       templateMoved ||= JSON.stringify(next) !== JSON.stringify(prev);
     }
@@ -942,6 +980,7 @@ export const remove = internalMutation({
         code: 'edge.shared_certificate_present',
         message: 'This zone still has a shared certificate; remove it first',
       });
+    await deletePlansOfLocation(ctx, id);
     await ctx.db.delete(id);
     if (account && account.defaultLocationId === id) {
       const next = (await locationsOfAccount(ctx.db, account._id))[0];
@@ -1056,7 +1095,11 @@ export const zonesWrittenThrough = internalQuery({
       if (locationId && !z.locationIds.includes(locationId)) z.locationIds.push(locationId);
       zones.set(zoneId, z);
     };
-    for (const provider of ['fastly'] as const) {
+    // Every front that writes its records through a DNS account (Fastly, CloudFront).
+    const writers = (Object.keys(EDGE_PROVIDER_CAPABILITIES) as EdgeProviderId[]).filter(
+      (p) => EDGE_PROVIDER_CAPABILITIES[p].needsDnsAccount,
+    );
+    for (const provider of writers) {
       const rows = await ctx.db
         .query('edgeLocations')
         .withIndex('by_place', (q) => q.eq('provider', provider))

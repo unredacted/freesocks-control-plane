@@ -30,7 +30,7 @@ export interface EdgeProviderMeta {
   addressKind: EdgeAddressKind;
   /** HTTP-carried protocols this front can carry; empty for an L4 forwarder. */
   l7Transports: readonly ListenerStreamTransport[];
-  /** The account needs a DNS account of another provider (Fastly → Cloudflare). */
+  /** The account needs a DNS account of another provider (Fastly, CloudFront → Cloudflare). */
   needsDnsAccount: boolean;
   /** The account can host DNS records for other providers' edges. */
   providesDns: boolean;
@@ -65,6 +65,16 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
   },
   fastly: {
     label: 'Fastly',
+    layer: 'l7',
+    role: 'edge',
+    addressKind: 'hostname',
+    l7Transports: ['ws'],
+    needsDnsAccount: true,
+    providesDns: false,
+    sharedCertificates: true,
+  },
+  cloudfront: {
+    label: 'Amazon CloudFront',
     layer: 'l7',
     role: 'edge',
     addressKind: 'hostname',

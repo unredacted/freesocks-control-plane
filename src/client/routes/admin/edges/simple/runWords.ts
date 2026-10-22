@@ -59,6 +59,31 @@ export function runLineName(
   return label ? `${base ?? 'Address'} in ${label}` : base;
 }
 
+/** "Not checked from outside over IPv6": a family no outside source could test. */
+export function notCheckedWords(families: ReadonlyArray<4 | 6>): string {
+  if (families.includes(4) && families.includes(6)) return 'Not checked from outside';
+  return `Not checked from outside over IPv${families.includes(6) ? 6 : 4}`;
+}
+
+/**
+ * The addresses the outside check passed with a family nothing could test
+ * (FCP's own server has no IPv6, a source takes no IPv6 literal): one line
+ * each, so the gap stays visible without stopping the run.
+ */
+export function runNotCheckedLines(
+  run: Pick<SetupRunAdmin, 'listeners'> & Partial<Pick<SetupRunAdmin, 'picks'>>,
+): Array<{ key: string; text: string }> {
+  return run.listeners
+    .filter((l): l is typeof l & { edgeId: string } => l.edgeId !== null && l.notChecked.length > 0)
+    .map((l) => {
+      const words = notCheckedWords(l.notChecked);
+      return {
+        key: `${l.listenerKey}:${l.edgeId}`,
+        text: `${runLineName(run, l.edgeId, l.listenerKey) ?? 'New address'}: ${words[0]!.toLowerCase()}${words.slice(1)}.`,
+      };
+    });
+}
+
 export function runTestItems(
   run: Pick<SetupRunAdmin, 'testLinks'> & Partial<Pick<SetupRunAdmin, 'listeners' | 'picks'>>,
 ): TestItem[] {

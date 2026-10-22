@@ -308,6 +308,48 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       help: 'Leave empty to use the default configuration of the account.',
     },
   ],
+  cloudfront: [
+    {
+      key: 'accessKeyId',
+      label: 'Access key id (public id)',
+      kind: 'text',
+      step: 'credentials',
+      required: true,
+      placeholder: 'AKIA...',
+      help: 'The public id paired with the secret access key. Not a secret.',
+    },
+    {
+      key: 'dnsAccountId',
+      label: 'DNS account',
+      kind: 'select',
+      step: 'placement',
+      location: true,
+      from: 'dnsAccounts',
+      required: true,
+      help: "A DNS provider account whose zone holds this front's names and the certificate's validation record. Prefer a zone your other CDN's fronts do not use.",
+    },
+    {
+      key: 'zoneId',
+      label: 'DNS zone',
+      kind: 'select',
+      step: 'placement',
+      location: true,
+      from: 'dnsZones',
+      required: true,
+      help: 'A zone the DNS account reaches.',
+    },
+    {
+      key: 'zoneName',
+      label: 'Zone name',
+      kind: 'text',
+      step: 'placement',
+      location: true,
+      required: true,
+      readOnly: true,
+      help: 'Filled from the chosen zone.',
+      placeholder: 'front.example',
+    },
+  ],
 };
 
 /** Secret field names as the server lists them, in words. Unknown names are humanised by the form. */
@@ -318,6 +360,7 @@ export const CREDENTIAL_LABELS: Record<string, string> = {
   applicationSecret: 'Application secret',
   consumerKey: 'Consumer key',
   apiToken: 'API token',
+  secretAccessKey: 'Secret access key',
 };
 
 /** What each provider's token must be allowed to do. */
@@ -326,6 +369,8 @@ export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
     'A user API token or an account API token, scoped to the zone, with Zone Read and Zone DNS Edit. Add Zone Settings Read and SSL and Certificates Read so the test can report the zone settings, and Transform Rules Edit and Origin Rules Edit only if this account will also front traffic.',
   fastly:
     'An API token with the global scope, issued on a dedicated automation user. The account also needs the WebSockets product entitlement.',
+  cloudfront:
+    'An access key of a dedicated IAM user. Its policy allows cloudfront:CreateDistribution, GetDistribution, GetDistributionConfig, UpdateDistribution, DeleteDistribution, ListDistributions, CreateOriginRequestPolicy, ListOriginRequestPolicies and ListDistributionsByOriginRequestPolicyId, and acm:RequestCertificate, DescribeCertificate, ListCertificates and DeleteCertificate in us-east-1. Nothing else: no IAM or Lambda permissions.',
 };
 
 /** The few settings with a sensible value before the operator picks anything. */

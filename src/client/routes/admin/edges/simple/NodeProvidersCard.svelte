@@ -55,6 +55,7 @@
   import type { ProviderSetView } from '@shared/contracts/edges';
   import AdminListState from '../../AdminListState.svelte';
   import CodeNote from '../components/CodeNote.svelte';
+  import EdgeCostLine from '../components/EdgeCostLine.svelte';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
   import { providerLabel } from '../lib/format';
@@ -316,6 +317,7 @@
                 ? ''
                 : '. Not trusted yet: its first tested address trusts it.'}
             </span>
+            <EdgeCostLine accountId={a.accountId} locationId={a.locationId} each />
           </span>
         </label>
       {/each}

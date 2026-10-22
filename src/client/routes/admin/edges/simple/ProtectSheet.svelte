@@ -24,7 +24,11 @@
    *                      LocationPicker and picks the new one; "Add account"
    *                      renders the provider stepper inline (compact). With no
    *                      account at all the stepper opens by itself.
-   *   3. Review          one sentence, the consent for unsupported addresses, one button
+   *                      The plan also says what the picks cost a month before anything
+   *                      is created (each pick's addresses at the size they build, the
+   *                      total per currency, "plus traffic" for a per-GB plan).
+   *   3. Review          one sentence, the monthly cost, the consent for unsupported
+   *                      addresses, one button
    * A created run hands over to ProtectProgress (`runId`), which the URL keeps.
    *
    * The node list is re-read from the backend once each time the sheet opens,
@@ -90,6 +94,7 @@
   import { overrides, pickBase } from '../lib/options';
   import type { Params } from '../templates/params';
   import { planWords, setWords } from './runWords';
+  import { costWords, totalWords } from '../lib/planWords';
 
   interface Props {
     open: boolean;
@@ -371,6 +376,7 @@
       case 'location_capacity_reached':
       case 'project_unresolved':
       case 'size_not_multicloud':
+      case 'account_spend_cap_reached':
         return edgesPaths.provider(id);
       case 'provider_mismatch':
         return plan?.existingRelay
@@ -416,6 +422,19 @@
   const setReady = $derived(
     !!set && set.uncovered.length === 0 && !set.tooLarge && set.problems.length === 0,
   );
+  // What the picks cost a month, before anything is created (per pick, and the total).
+  const costLines = $derived(
+    (set?.cost?.lines ?? [])
+      .filter((c) => c.count > 0)
+      .map((c) => {
+        const label = set?.picks.find((p) => p.locationId === c.locationId)?.label ?? '';
+        const what = `${c.count} address${c.count === 1 ? '' : 'es'}${c.label ? ` on ${c.label}` : ''}`;
+        const asOf =
+          c.source === 'catalog' && c.catalogAsOf ? ` (list price as of ${c.catalogAsOf})` : '';
+        return { id: c.locationId, text: `${label}: ${what}, ${costWords(c.cost)}${asOf}.` };
+      }),
+  );
+  const costTotal = $derived(set?.cost ? totalWords(set.cost.total) : null);
 
   // 3. Review
   const words = $derived(
@@ -973,6 +992,13 @@
                     </p>
                   {/each}
                   {#if setW.reduced}<p class="text-muted-foreground">{setW.reduced}</p>{/if}
+                  {#if costLines.length > 0}
+                    <p class="pt-1 font-medium">Cost</p>
+                    <ul class="text-muted-foreground space-y-0.5 text-xs">
+                      {#each costLines as c (c.id)}<li>{c.text}</li>{/each}
+                    </ul>
+                    {#if costTotal}<p>{costTotal}</p>{/if}
+                  {/if}
                 </div>
               {/if}
               {#if planIssue && step === 'account'}<CodeNote issue={planIssue} />{/if}
@@ -995,6 +1021,9 @@
         {/if}
       {:else if words && plan}
         <p class="text-sm">{words.sentence}</p>
+        {#if costTotal}
+          <p class="text-sm">Cost: {costTotal}</p>
+        {/if}
         {#if plan.modesOff.length > 0}
           <div
             class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"

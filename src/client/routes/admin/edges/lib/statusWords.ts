@@ -271,6 +271,11 @@ export const PROBE_FAILURE_WORDS: Record<ProbeFailureClass, { label: string; sen
   service_error: { label: 'Service error', sentence: 'The service failed on its side.' },
   request_refused: { label: 'Request refused', sentence: 'The service refused the request.' },
   network: { label: 'Not reachable', sentence: 'FCP could not reach the service.' },
+  no_route: {
+    label: 'Not tested',
+    sentence:
+      'FCP’s own server has no route for this address family, so it could not test the address.',
+  },
   error: { label: 'Failed', sentence: 'The run failed for another reason.' },
   no_results: { label: 'Nothing came back', sentence: 'The run finished without a single result.' },
   failed: { label: 'Failed', sentence: 'The run failed without saying why.' },

@@ -67,6 +67,7 @@ export const ATTENTION_RANK = [
   'fleet_rotation_cap',
   'family_rule_disabled',
   'billable_idle',
+  'account_spend_cap',
   'health_stale',
   'pool_rebalance',
   'spare_untested',

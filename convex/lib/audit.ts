@@ -345,6 +345,15 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.provider_account.fronting_changed': ['name', 'provider', 'frontsTraffic', 'liveEdges'],
   // A deploy turned the retired deployment-wide switch into the account's own choice.
   'edge.provider_account.fronting_migrated': ['name', 'provider', 'frontsTraffic'],
+  // What the operator says the account costs (convex/edgePlans.ts): amounts and a currency, never the note.
+  'edge.provider_account.cost_changed': [
+    'name',
+    'provider',
+    'paid',
+    'perEdgeMonthly',
+    'currency',
+    'monthlyCap',
+  ],
   'edge.provider_account.delete': ['name', 'provider'],
   'edge.provider_account.upsert': ['name', 'provider', 'created'],
   // Trust is per location: `placeKey` names it (the provider's region id).

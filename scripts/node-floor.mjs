@@ -20,6 +20,8 @@ const NODE_ACTION_DEPS = [
   '@scaleway/sdk-std',
   'cloudflare',
   'fastly',
+  '@aws-sdk/client-cloudfront',
+  '@aws-sdk/client-acm',
   'superagent',
   'yaml',
 ];

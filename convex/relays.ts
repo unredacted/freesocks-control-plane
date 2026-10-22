@@ -1763,6 +1763,7 @@ export async function checkPublishable(
   const l7Host = l7HostHeaderFor(
     edge.addresses.hostname ?? intent?.hostname,
     (intent?.templateParams as { overrideHost?: unknown } | undefined)?.overrideHost,
+    edge.provider,
   );
   if (edge.provider) {
     if (!protocolCarriedBy(edge.provider, listener, listener.originPort))

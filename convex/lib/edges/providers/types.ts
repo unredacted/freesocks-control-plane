@@ -17,6 +17,7 @@
  */
 import type { z } from 'zod';
 import type { EdgeProviderId } from '../../edgeProviderIds';
+import type { ProviderPlan } from '../pricing';
 
 // --- per-provider config (credentials + settings merged, as the actions see it) ---
 
@@ -93,13 +94,29 @@ export interface FastlyConfig {
   /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
   dns?: CloudflareDnsConfig;
 }
+export interface CloudFrontConfig {
+  type: 'cloudfront';
+  /** The IAM access key's public id (a settings identifier, rotates with the secret). */
+  accessKeyId: string;
+  secretAccessKey: string;
+  /**
+   * Always `wildcard`: every front of the account in one zone serves the
+   * zone's one ACM certificate (`*.<zone>`). A certificate option so the
+   * intent freezes it like Fastly's, which the shared-certificate locks and
+   * watch read.
+   */
+  certificateScope?: 'wildcard';
+  /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
+  dns?: CloudflareDnsConfig;
+}
 export type EdgeProviderConfig =
   | GcoreConfig
   | UpcloudConfig
   | ScalewayConfig
   | OvhConfig
   | CloudflareConfig
-  | FastlyConfig;
+  | FastlyConfig
+  | CloudFrontConfig;
 
 // --- what to build -----------------------------------------------------------------
 
@@ -531,6 +548,13 @@ export interface EdgeProvider<
   reapply?(cfg: Cfg, ledger: Ledger): Promise<ReapplyOutcome>;
   inspect(cfg: Cfg, ledger: Ledger): Promise<InspectResult>;
   inventory(cfg: Cfg): Promise<Inventory>;
+  /**
+   * Load balancer adapters: every size offered at the location on `cfg`, with
+   * its list price, traffic terms and what it accepts (lib/edges/pricing.ts),
+   * from the provider's own price list where it has one, else a dated table.
+   * A read; never creates anything. A CDN adapter has none (never priced).
+   */
+  plans?(cfg: Cfg): Promise<ProviderPlan[]>;
   /**
    * L7 adapters: inspect an existing resource for import (real ids, versions,
    * every hostname it serves, what it dials). The import records exactly these

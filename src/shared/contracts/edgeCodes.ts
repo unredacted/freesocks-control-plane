@@ -181,6 +181,8 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'project_unresolved',
   // a load balancer size that takes only the provider's own servers (lib/edges/sizeCheck.ts)
   'size_not_multicloud',
+  // the account would pass its monthly spend cap (convex/edgePlans.ts, the budget guard)
+  'account_spend_cap_reached',
 ] as const;
 export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
 
@@ -287,6 +289,8 @@ export const ATTENTION_KINDS = [
   // Freedom modes only through edges: a node in a freedom mode's pool that is not behind a
   // live edge of its layer, so its freedom members are not handed it (`FREEDOM_WITHHELD_REASONS`).
   'freedom_node_withheld',
+  // An account at its monthly spend cap: no new edge is created in it (docs/edges.md § "Plans and prices").
+  'account_spend_cap',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -583,6 +587,8 @@ export const SETUP_ACCOUNT_REASONS = [
   'project_unresolved',
   // A load balancer size there that takes only the provider's own servers (lib/edges/sizeCheck.ts).
   'size_not_multicloud',
+  // The account is at (or these addresses would pass) its monthly spend cap (convex/edgePlans.ts).
+  'account_spend_cap_reached',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 
@@ -701,6 +707,8 @@ export const PROBE_FAILURE_CLASSES = [
   'service_error',
   'request_refused',
   'network',
+  // FCP's own host has no route for the address family (no IPv6 on the host).
+  'no_route',
   'error',
   'no_results',
   'failed',

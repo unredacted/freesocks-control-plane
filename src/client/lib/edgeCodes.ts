@@ -187,6 +187,12 @@ const COPY = {
     explain: 'The zone is not active at the provider yet.',
     fix: 'Finish setting up the zone at the provider, then check the location again.',
   },
+  zone_flattens_cnames: {
+    label: 'Zone flattens every CNAME',
+    explain:
+      'The zone answers every CNAME with its target’s addresses (CNAME flattening set to all records), so the certificate authority never sees the validation record a front’s certificate needs.',
+    fix: 'Set CNAME flattening to the zone apex only at the DNS provider, then check the location again.',
+  },
   tls_configuration_missing: {
     label: 'TLS configuration not found',
     explain: 'The Fastly key does not see that TLS configuration.',
@@ -648,8 +654,14 @@ const COPY = {
   origin_port_unsupported: {
     label: 'Origin port not supported',
     explain:
-      'This front reaches the origin only on the scheme’s own port: 443 over TLS, 80 over plain HTTP.',
-    fix: 'Move the origin listener to that port.',
+      'This front cannot dial the origin on that port. A Fastly front reaches it only on the scheme’s own port (443 over TLS, 80 over plain HTTP), a CloudFront front on 80, 443 or any port from 1024.',
+    fix: 'Move the origin listener to a port this front dials.',
+  },
+  origin_not_a_name: {
+    label: 'Origin is an address',
+    explain:
+      'A CloudFront front dials its origin by DNS name, never by IP address, so this origin cannot sit behind it.',
+    fix: 'Give the node a DNS name (its certificate name, over TLS) and register the origin by that name.',
   },
   retest_required: {
     label: 'Test again',
@@ -1052,6 +1064,68 @@ const COPY = {
       'The provider refused the configuration FCP generated for this front, so it was never activated. Trying again would be refused the same way.',
     fix: 'Open the front’s service at the provider: its draft version shows why. Then delete the front.',
   },
+  // CloudFront answers (the adapter's short codes and AWS exception names).
+  alias_in_use: {
+    label: 'Front name taken',
+    explain:
+      'Another CloudFront distribution, in this AWS account or any other, already serves this front name, so CloudFront refused to create one more.',
+    fix: 'Delete this front and protect the node again: the next front gets a new name.',
+  },
+  distribution_disabled: {
+    label: 'Distribution disabled',
+    explain:
+      'The front’s CloudFront distribution was disabled outside FCP, so it carries no member traffic.',
+    fix: 'Enable it again at the provider, or delete the front and build a new one.',
+  },
+  origin_request_policies_full: {
+    label: 'No room in the policies',
+    explain:
+      'Every origin request policy FCP may use in this AWS account already serves 100 distributions, and the account holds no room for another policy (20 at most).',
+    fix: 'Delete fronts this account no longer needs, or remove custom origin request policies nothing uses.',
+  },
+  certificate_listing_truncated: {
+    label: 'Too many certificates',
+    explain:
+      'The AWS account holds more ACM certificates than FCP reads in one look, so it cannot tell whether the zone already has its wildcard and orders none.',
+    fix: 'Delete certificates nothing uses in us-east-1, then try again.',
+  },
+  distribution_shared: {
+    label: 'Distribution serves other names',
+    explain:
+      'This CloudFront distribution also serves other names. FCP deletes what it imports, so it imports a distribution that serves the front name alone.',
+    fix: 'Import a distribution that serves only this front name.',
+  },
+  invalid_viewer_certificate: {
+    label: 'Certificate refused',
+    explain:
+      'CloudFront refused the front’s certificate: it is not issued yet, or it does not cover the front name.',
+    fix: 'Check the zone’s shared certificate on the account page, then try again.',
+  },
+  invalid_client_token_id: {
+    label: 'Access key unknown',
+    explain: 'AWS does not know this access key id: it was deleted, or never existed.',
+    fix: 'Create an access key for the IAM user and enter both halves again.',
+  },
+  signature_does_not_match: {
+    label: 'Secret key wrong',
+    explain: 'AWS knows the access key id, but the secret access key does not belong to it.',
+    fix: 'Enter the secret that was shown with this access key, or create a new key.',
+  },
+  unrecognized_client_exception: {
+    label: 'Access key unknown',
+    explain: 'ACM does not recognise this access key.',
+    fix: 'Create an access key for the IAM user and enter both halves again.',
+  },
+  access_denied: {
+    label: 'Not allowed',
+    explain: 'The IAM user may not call every CloudFront action FCP uses.',
+    fix: 'Add the CloudFront actions the account form lists to the IAM user’s policy, then test again.',
+  },
+  access_denied_exception: {
+    label: 'Not allowed',
+    explain: 'The IAM user may not call every ACM action FCP uses in us-east-1.',
+    fix: 'Add the ACM actions the account form lists to the IAM user’s policy, then test again.',
+  },
   // --- published pool (reserved allocation, capacity, rebalance) -------------------------
   pool_full: {
     label: 'Pool full',
@@ -1223,6 +1297,17 @@ const COPY = {
     label: 'Changed while answering',
     explain:
       'The delivery policy changed while the answer was being built, so it was not sent. The next refresh gets the current one.',
+  },
+  account_spend_cap: {
+    label: 'Monthly spend cap reached',
+    explain:
+      "This account's monthly estimate has reached the spend cap set on it, so FCP creates no new edge in it.",
+    fix: 'Raise the cap on the account, or remove edges it no longer needs.',
+  },
+  account_spend_cap_reached: {
+    label: 'Over the monthly spend cap',
+    explain: 'A new edge here would take the account past the monthly spend cap set on it.',
+    fix: 'Raise the cap on the account, pick another account, or remove an edge.',
   },
   account_budget_unlimited: {
     label: 'No daily spending limit',
@@ -2112,6 +2197,11 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     explain: 'The account has fewer allocations left today than this node needs.',
     fix: 'Wait for tomorrow or raise the budget.',
   },
+  account_spend_cap_reached: {
+    label: 'Spend cap reached',
+    explain: 'These addresses would take the account past the monthly spend cap set on it.',
+    fix: 'Raise the cap on the account, or pick another location.',
+  },
   provider_mismatch: {
     label: 'Other provider pinned',
     explain: 'A listener on this node is pinned to another provider.',
@@ -2252,6 +2342,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'edge.provider_account.delete': 'Provider account deleted',
   'edge.provider_account.qualified': 'Account qualification changed',
   'edge.provider_account.credentials_rotated': 'Account credentials rotated',
+  'edge.provider_account.cost_changed': 'Account cost settings changed',
   'edge.template.create': 'Template created',
   'edge.template.update': 'Template changed',
   'edge.template.delete': 'Template deleted',
