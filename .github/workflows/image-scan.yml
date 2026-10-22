@@ -1,0 +1,152 @@
+# Known CVEs in every image the production stack runs.
+#
+# The update bots keep the pins moving: Dependabot re-pins the base and compose
+# images weekly and the Convex images' Node (docker/convex-node/) daily, and
+# convex-repin.yml the Convex images monthly. None of them looks inside an
+# image. This does: the OS packages of the Ubuntu, Debian and Alpine bases, the
+# language packages (npm trees, the Go modules in Caddy) and the runtimes.
+# Scanner data lags a new CVE by days to weeks, so this backs up the daily Node
+# re-pin rather than replacing it.
+#
+# What to scan comes from docker-compose.stack.yml, never from a list here: each
+# service is built from its Dockerfile and context with the stack's own build
+# args (backend and dashboard are docker/convex-node/ on top of the pinned
+# upstream image) or pulled at its pinned digest. A new service is scanned
+# without touching this file.
+#
+# Grype, not Trivy. The Convex images carry Node as a bare binary at
+# /usr/bin/node that no package manager records. Tried on the pinned backend
+# image in Oct 2026: Grype's binary cataloger read upstream's as node 22.22.2
+# with 15 CVEs and the overlay's as 22.23.4 with none; Trivy reported no Node
+# CVE in either. Grype runs from its digest-pinned image, not through
+# anchore/scan-action: a mutable tag on a scanner action is exactly what was hit
+# in March 2026, when aquasecurity/trivy-action's version tags were force-pushed
+# to a credential stealer. Dependabot does not track `docker run` refs, so bump
+# GRYPE_IMAGE by hand alongside the other tool pins; the vulnerability database
+# is fetched fresh on every run, so an older binary still sees new CVEs.
+#
+# Findings go to code scanning (the Security tab), one category per service.
+# Only CVEs with a released fix are reported (--only-fixed): an unfixed CVE in a
+# vendor image is nothing a change here can act on, and would bury the rest. No
+# run fails on a finding; on a pull request, GitHub's code scanning check flags
+# the alerts the change adds over main's last scan. Runbook: docs/beta-deploy.md
+# § Image vulnerability scan.
+name: Image scan
+
+on:
+  schedule:
+    # Mondays, after Dependabot's 09:00 UTC run and the Convex release watch.
+    - cron: '30 9 * * 1'
+  workflow_dispatch:
+  # A re-pin or Dockerfile change shows its findings before it merges...
+  pull_request:
+    paths:
+      - 'docker/**'
+      - 'docker-compose.stack.yml'
+      - '.github/workflows/image-scan.yml'
+  # ...and main's alerts close when the fixing change merges, not next Monday.
+  push:
+    branches: [main]
+    paths:
+      - 'docker/**'
+      - 'docker-compose.stack.yml'
+      - '.github/workflows/image-scan.yml'
+
+permissions:
+  contents: read
+  # SARIF upload. Dependabot's pull requests need it asked for here: their token
+  # is read-only otherwise.
+  security-events: write
+
+concurrency:
+  group: image-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  services:
+    runs-on: ubuntu-latest
+    outputs:
+      names: ${{ steps.list.outputs.names }}
+    steps:
+      - uses: actions/checkout@v7
+      # --no-interpolate: the stack's env file is not here, and the `:?` guards
+      # on its secrets refuse to render without one.
+      - name: List the stack's services
+        id: list
+        run: |
+          set -euo pipefail
+          names="$(docker compose -f docker-compose.stack.yml config --no-interpolate --format json \
+            | jq -c '.services | keys')"
+          echo "services: $names"
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+
+  scan:
+    needs: services
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.services.outputs.names) }}
+    env:
+      SERVICE: ${{ matrix.service }}
+      GRYPE_IMAGE: anchore/grype:v0.120.1@sha256:e4a44ef45d285b829ce6efe2642980329661bd2d18eab5fc539138d4adaebbbe
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build or pull the image
+        id: image
+        run: |
+          set -euo pipefail
+          svc="$(docker compose -f docker-compose.stack.yml config --no-interpolate --format json \
+            | jq -c --arg s "$SERVICE" '.services[$s]')"
+          if [ "$(jq -r '.build != null' <<< "$svc")" = true ]; then
+            ctx="$(jq -r '.build.context' <<< "$svc")"
+            dockerfile="$(jq -r '.build.dockerfile // "Dockerfile"' <<< "$svc")"
+            # Literal build args pass through, CONVEX_IMAGE among them. Args the
+            # operator's env file fills stay at the Dockerfile default: they are
+            # public keys baked into the SPA, not packages.
+            mapfile -t args < <(jq -r '.build.args // {} | to_entries[]
+              | select(.value != null and (.value | contains("$") | not))
+              | "--build-arg=\(.key)=\(.value)"' <<< "$svc")
+            ref="fcp/$SERVICE:scan"
+            docker build -t "$ref" -f "$ctx/$dockerfile" "${args[@]}" "$ctx"
+          else
+            ref="$(jq -r '.image' <<< "$svc")"
+            docker pull "$ref"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      # The table goes to this log; the SARIF and JSON to the steps below.
+      - name: Scan with Grype
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/grype"
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$RUNNER_TEMP/grype:/out" \
+            "$GRYPE_IMAGE" "docker:$REF" --only-fixed \
+            -o table -o sarif=/out/grype.sarif -o json=/out/grype.json
+
+      - name: Job summary
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          counts="$(jq -r '[.matches[].vulnerability.severity] as $s
+            | [["Critical", "High", "Medium", "Low", "Negligible", "Unknown"][] as $k
+              | ($s | map(select(. == $k)) | length) as $n | select($n > 0) | "\($n) \($k)"]
+            | join(", ")' "$RUNNER_TEMP/grype/grype.json")"
+          echo "- **$SERVICE** \`$REF\`: ${counts:-no fixable CVEs}" >> "$GITHUB_STEP_SUMMARY"
+
+      # A fork's pull request gets a read-only token whatever this file asks
+      # for, so its findings stay in the log and summary above.
+      - name: Upload to code scanning
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ runner.temp }}/grype/grype.sarif
+          # One category per service, so each image's alerts open and close on
+          # their own.
+          category: image/${{ matrix.service }}

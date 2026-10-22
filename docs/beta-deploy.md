@@ -704,6 +704,42 @@ One more drift hazard: the **dev stack** (`docker-compose.yml`) deliberately
 runs `:latest`, so local dev can be _ahead_ of beta/prod — behavior that works
 locally may come from a build the stack does not have yet.
 
+### Image vulnerability scan
+
+`.github/workflows/image-scan.yml` runs Grype over every image
+`docker-compose.stack.yml` runs: the built ones (web, deployer, backup, and the
+backend and dashboard on the Node overlay, with the stack's own build args) and
+the pulled ones (postgres, cap, valkey, keygen). It reads the service list and
+every ref from the stack file, so a new service or a re-pin needs no edit
+there. It runs Mondays after Dependabot, on pull requests and pushes to main
+that touch `docker/**` or the stack file, and on demand
+(`gh workflow run image-scan.yml`). Findings land in the Security tab under
+code scanning, one `image/<service>` category per service; the run's summary
+has the counts.
+
+It complements the update bots rather than replacing them: scanner data lags a
+new CVE by days to weeks, so a Node security release still arrives first as the
+daily Dependabot PR for `docker/convex-node/`. Only CVEs with a released fix are
+reported, and no run fails on one. On a pull request, GitHub's code scanning
+check flags the alerts the change adds over main's last scan. Acting on an
+alert:
+
+- **A built image:** bump the base image (often a Dependabot PR is already
+  open) or the dependency.
+- **A pulled image:** the fix is a newer upstream image: a Dependabot or
+  `convex-repin.yml` PR, or a by-hand re-pin. Nothing in this repo patches it.
+- **`keygen`'s `node`:** keygen is the plain upstream Convex image, so it
+  carries upstream's lagging Node. It runs only `generate_admin_key.sh`, never
+  Node, so dismiss those as "won't fix"; the `backend` and `dashboard` alerts
+  are the ones that count.
+
+Grype was picked because it reads the bare `/usr/bin/node` binary in the Convex
+images; Trivy reports no Node CVE there. Its image is digest-pinned in the
+workflow, where Dependabot does not look: bump it by hand with the other tool
+pins (the vulnerability database is fetched fresh on every run). A service
+removed from the stack keeps its `image/<service>` alerts open until you delete
+that configuration on the code scanning tool status page.
+
 ### Rollback (A4)
 
 Deploys are idempotent and the contract changes are kept additive (backend-first
