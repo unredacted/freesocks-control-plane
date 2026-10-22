@@ -391,8 +391,11 @@ docker compose --env-file .env.docker down -v               # stop + wipe the fc
 ## Backups
 
 ```sh
-bunx convex export --path snapshot.zip
-bunx convex import --replace-all snapshot.zip
+# Outside the checkout: an export holds member data, and anything in the repo
+# directory is in the build context of the stack images.
+mkdir -p -m 700 ~/fcp-snapshots
+bunx convex export --path ~/fcp-snapshots/snapshot.zip
+bunx convex import --replace-all ~/fcp-snapshots/snapshot.zip
 ```
 
 > Pin the `:latest` image tags in `docker-compose.yml` to a specific `:<rev>`

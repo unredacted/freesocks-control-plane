@@ -20,3 +20,14 @@ worker-configuration.d.ts
 wrangler.toml
 wrangler.beta.toml
 data/
+# Database exports, dumps and env captures: member data, live subscription
+# tokens, the account pepper. The deployer image copies the whole context, so a
+# stray one in the checkout would be baked into it. docs/beta-deploy.md writes
+# them outside the checkout; these catch one left behind anyway. `**/` because
+# a bare pattern here only matches at the context root.
+**/snapshots
+**/*.zip
+**/*.sql
+**/*.sql.gz*
+**/*.age
+**/convex-env-*

@@ -57,7 +57,7 @@
       <Table.Head>Where</Table.Head>
       <Table.Head>Layers</Table.Head>
       <Table.Head>Pool</Table.Head>
-      <Table.Head>Health</Table.Head>
+      <Table.Head>Provider check</Table.Head>
       <Table.Head>Qualification</Table.Head>
       <Table.Head>Delivery</Table.Head>
       <Table.Head>Detector</Table.Head>

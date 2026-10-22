@@ -1,13 +1,16 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
+  SCALEWAY_SETTLE,
   ScalewayTemplate,
   __setScalewayApiFactory,
   __setScalewayKeysFactory,
+  __setScalewayPause,
   scalewayApi,
   scalewayProvider,
   scalewayTimings,
 } from './scaleway';
-import type { Ledger, ScalewayConfig } from './types';
+import type { Ledger, ResourceStep, ScalewayConfig, StepOutcome } from './types';
+import { fakeScaleway, type FakeScaleway } from '../testing/fakeScaleway';
 
 afterEach(() => {
   __setScalewayApiFactory(null);
@@ -137,8 +140,13 @@ describe('scaleway: plan + steps', () => {
       ownership: 'created',
       deleteState: 'present',
     });
+    // A new LB is still being built: the step waits for it under the LB's id.
     const lb = await scalewayProvider.runStep(cfg, steps[2], spec, tpl, ledger);
-    expect(lb).toMatchObject({ status: 'done', resources: [{ kind: 'lb', resourceId: 'lb-1' }] });
+    expect(lb).toMatchObject({
+      status: 'requested',
+      opRef: 'settle:lb-1',
+      resources: [{ kind: 'lb', resourceId: 'lb-1' }],
+    });
     expect(api.createLb).toHaveBeenCalledWith(
       expect.objectContaining({
         name: spec.name,
@@ -154,7 +162,10 @@ describe('scaleway: plan + steps', () => {
       ownership: 'created',
       deleteState: 'present',
     });
-    await scalewayProvider.runStep(cfg, steps[3], spec, tpl, ledger);
+    expect(await scalewayProvider.runStep(cfg, steps[3], spec, tpl, ledger)).toMatchObject({
+      status: 'requested',
+      resources: [{ kind: 'backend', resourceId: 'be-1' }],
+    });
     expect(api.createBackend).toHaveBeenCalledWith(
       expect.objectContaining({
         lbId: 'lb-1',
@@ -171,7 +182,10 @@ describe('scaleway: plan + steps', () => {
       ownership: 'created',
       deleteState: 'present',
     });
-    await scalewayProvider.runStep(cfg, steps[4], spec, tpl, ledger);
+    expect(await scalewayProvider.runStep(cfg, steps[4], spec, tpl, ledger)).toMatchObject({
+      status: 'requested',
+      resources: [{ kind: 'frontend', resourceId: 'fe-1' }],
+    });
     expect(api.createFrontend).toHaveBeenCalledWith(
       expect.objectContaining({
         lbId: 'lb-1',
@@ -222,7 +236,8 @@ describe('scaleway: timings on the wire', () => {
         raw,
         body: raw ? JSON.parse(raw) : undefined,
       });
-      return new Response(JSON.stringify({ id: 'x-1' }), {
+      // A ready LB for the settle reads; an id for every create.
+      return new Response(JSON.stringify({ id: 'x-1', status: 'ready' }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -426,6 +441,341 @@ describe('scaleway: options', () => {
     expect(api.createFrontend).toHaveBeenCalledWith(
       expect.objectContaining({ connectionRateLimit: 100 }),
     );
+  });
+});
+
+describe('scaleway: settling between steps', () => {
+  // The fake LB reads `pending` for a while after every change and never
+  // applies a change sent before it is `ready` again (testing/fakeScaleway.ts).
+  const pauses: number[] = [];
+  beforeEach(() => {
+    pauses.length = 0;
+    __setScalewayPause(async (ms) => {
+      pauses.push(ms);
+    });
+  });
+  afterEach(() => __setScalewayPause(null));
+
+  const use = (fake: FakeScaleway) => __setScalewayApiFactory(() => fake.api as never);
+  const steps = scalewayProvider.planProvision(cfg, spec, tpl);
+  const stepOfKind = (kind: string) => steps.find((x) => x.kind === kind)!;
+
+  /** What the rotation records of an outcome (settleOp: resources deduped, startedAt kept). */
+  function record(ledger: Ledger, step: ResourceStep, out: StepOutcome, at = Date.now()): Ledger {
+    const was = ledger.steps.find((x) => x.stepId === step.id);
+    const known = new Set(ledger.resources.map((r) => `${r.kind}:${r.resourceId}`));
+    return {
+      steps: [
+        ...ledger.steps.filter((x) => x.stepId !== step.id),
+        {
+          stepId: step.id,
+          kind: step.kind,
+          resourceName: step.resourceName,
+          state: out.status === 'partial' ? 'unresolved' : out.status,
+          attempt: 1,
+          startedAt: was?.startedAt ?? at,
+        },
+      ],
+      resources: [
+        ...ledger.resources,
+        ...out.resources
+          .filter((r) => !known.has(`${r.kind}:${r.resourceId}`))
+          .map((r) => ({
+            stepId: step.id,
+            kind: r.kind,
+            resourceId: r.resourceId,
+            ownership: r.ownership,
+            deleteState: 'present' as const,
+          })),
+      ],
+    };
+  }
+
+  /** The build the way the rotation drives it: each step run, then polled until done. */
+  async function build(): Promise<{ ledger: Ledger; stoppedOn: StepOutcome | null }> {
+    let ledger: Ledger = { steps: [], resources: [] };
+    for (const step of steps) {
+      let out = await scalewayProvider.runStep(cfg, step, spec, tpl, ledger);
+      ledger = record(ledger, step, out);
+      for (let i = 0; out.status === 'requested'; i++) {
+        if (i > 50) throw new Error(`${step.id} never settled`);
+        out = await scalewayProvider.pollStep!(cfg, step, out.opRef, ledger);
+        ledger = record(ledger, step, out);
+      }
+      if (out.status !== 'done') return { ledger, stoppedOn: out };
+    }
+    return { ledger, stoppedOn: null };
+  }
+
+  /** The ledger of a built edge (IPs, LB, backend, frontend). */
+  const built = (...kinds: Array<[string, string]>): Ledger => ({
+    steps: [],
+    resources: kinds.map(([kind, resourceId]) => ({
+      stepId: kind,
+      kind,
+      resourceId,
+      ownership: 'created' as const,
+      deleteState: 'present' as const,
+    })),
+  });
+
+  test('sent back to back, the backend and frontend are accepted and never applied (what was observed)', async () => {
+    const fake = fakeScaleway({ applyReads: 3 });
+    await fake.api.createLb({ name: spec.name });
+    await fake.api.createBackend({ name: `${spec.name}-backend` });
+    await fake.api.createFrontend({ name: `${spec.name}-frontend`, backendId: 'be-1' });
+    expect(fake.lost()).toEqual(['backend', 'frontend']);
+    expect(fake.answers()).toBe(false);
+  });
+
+  test('every change waits for a ready LB, before and after: nothing is lost and the address answers', async () => {
+    const fake = fakeScaleway({ applyReads: 3 });
+    use(fake);
+    const { ledger, stoppedOn } = await build();
+    expect(stoppedOn).toBeNull();
+    expect(fake.lost()).toEqual([]);
+    expect(fake.answers()).toBe(true);
+    // Each create goes out right after a READY read, and the build ends on one.
+    for (const create of ['createBackend', 'createFrontend']) {
+      const i = fake.calls.indexOf(create);
+      expect(fake.calls[i - 1]).toBe('getLb:ready');
+    }
+    expect(fake.calls.at(-1)).toBe('getLb:ready');
+    expect(fake.calls.filter((c) => c === 'getLb:pending').length).toBeGreaterThanOrEqual(9);
+    // Done steps hold their resources, the LB step its addresses.
+    expect(ledger.steps.every((x) => x.state === 'done')).toBe(true);
+    expect(ledger.resources.map((r) => r.kind)).toEqual([
+      'ip',
+      'ipv6',
+      'lb',
+      'backend',
+      'frontend',
+    ]);
+  });
+
+  test('the LB step is done with its addresses once ready; a poll while it builds asks to be polled again', async () => {
+    const fake = fakeScaleway({ applyReads: 2 });
+    use(fake);
+    const lbStep = stepOfKind('create_lb');
+    await fake.api.createIp({ isIpv6: false, tags: [spec.name] });
+    let ledger = built(['ip', 'ip4-1']);
+    const out = await scalewayProvider.runStep(cfg, lbStep, spec, tpl, ledger);
+    expect(out).toMatchObject({ status: 'requested', opRef: 'settle:lb-1' });
+    ledger = record(ledger, lbStep, out);
+    expect(await scalewayProvider.pollStep!(cfg, lbStep, 'settle:lb-1', ledger)).toEqual({
+      status: 'requested',
+      opRef: 'settle:lb-1',
+      resources: [],
+    });
+    await scalewayProvider.pollStep!(cfg, lbStep, 'settle:lb-1', ledger);
+    expect(await scalewayProvider.pollStep!(cfg, lbStep, 'settle:lb-1', ledger)).toMatchObject({
+      status: 'done',
+      resources: [{ kind: 'lb', resourceId: 'lb-1' }],
+      addresses: { v4: '198.51.100.80' },
+    });
+  });
+
+  test('a backend waits in place for the LB; still busy after the wait, it throws before sending anything', async () => {
+    const fake = fakeScaleway({ applyReads: 0 });
+    use(fake);
+    const step = stepOfKind('create_backend');
+    const ledger = built(['lb', 'lb-1']);
+    fake.busyFor(4);
+    expect(await scalewayProvider.runStep(cfg, step, spec, tpl, ledger)).toMatchObject({
+      status: 'requested',
+      resources: [{ kind: 'backend', resourceId: 'be-1' }],
+    });
+    expect(pauses).toEqual([3000, 3000, 3000, 3000]);
+    expect(fake.lost()).toEqual([]);
+
+    // Busy for longer than the wait in place: nothing is sent, and the throw
+    // is retryable (discovery proves the absence, the step runs again).
+    pauses.length = 0;
+    fake.busyFor(1000);
+    const err = await scalewayProvider.runStep(cfg, step, spec, tpl, ledger).catch((e) => e);
+    expect(err.meta).toMatchObject({ code: 'lb_busy', retryable: true });
+    expect(pauses.reduce((a, b) => a + b, 0)).toBe(SCALEWAY_SETTLE.inStepMs);
+    expect(fake.calls.filter((c) => c === 'createBackend')).toHaveLength(1);
+  });
+
+  test('a frontend waits the same way, and is done only once the LB applied it', async () => {
+    const fake = fakeScaleway({ applyReads: 2 });
+    use(fake);
+    await fake.api.createLb({ name: spec.name });
+    const step = stepOfKind('create_frontend');
+    let ledger = built(['lb', 'lb-1'], ['backend', 'be-1']);
+    const out = await scalewayProvider.runStep(cfg, step, spec, tpl, ledger);
+    expect(fake.calls.slice(-4)).toEqual([
+      'getLb:pending',
+      'getLb:pending',
+      'getLb:ready',
+      'createFrontend',
+    ]);
+    ledger = record(ledger, step, out);
+    expect((await scalewayProvider.pollStep!(cfg, step, 'settle:lb-1', ledger)).status).toBe(
+      'requested',
+    );
+    await scalewayProvider.pollStep!(cfg, step, 'settle:lb-1', ledger);
+    expect(await scalewayProvider.pollStep!(cfg, step, 'settle:lb-1', ledger)).toEqual({
+      status: 'done',
+      resources: [{ kind: 'frontend', resourceId: 'fe-1', ownership: 'created' }],
+    });
+    expect(fake.answers()).toBe(false); // the backend was never sent here
+    expect(fake.lost()).toEqual([]);
+  });
+
+  test('an LB in a state it does not leave stops the run at once, before or after a change', async () => {
+    const fake = fakeScaleway();
+    use(fake);
+    fake.force('error');
+    expect(
+      await scalewayProvider.runStep(
+        cfg,
+        stepOfKind('create_backend'),
+        spec,
+        tpl,
+        built(['lb', 'lb-1']),
+      ),
+    ).toEqual({
+      status: 'partial',
+      resources: [],
+      code: 'lb_unusable',
+      refused: true,
+      detail: 'load balancer status error',
+    });
+    expect(fake.calls).not.toContain('createBackend');
+    const lbStep = stepOfKind('create_lb');
+    const ledger = record(built(), lbStep, {
+      status: 'requested',
+      opRef: 'settle:lb-1',
+      resources: [{ kind: 'lb', resourceId: 'lb-1', ownership: 'created' }],
+    });
+    fake.force('locked');
+    expect(await scalewayProvider.pollStep!(cfg, lbStep, 'settle:lb-1', ledger)).toMatchObject({
+      status: 'partial',
+      code: 'lb_unusable',
+      refused: true,
+    });
+  });
+
+  test("a poll gives up 15 minutes after the step's first request, never sooner", async () => {
+    const fake = fakeScaleway();
+    use(fake);
+    fake.busyFor(1000);
+    const step = stepOfKind('create_backend');
+    const out: StepOutcome = {
+      status: 'requested',
+      opRef: 'settle:lb-1',
+      resources: [{ kind: 'backend', resourceId: 'be-1', ownership: 'created' }],
+    };
+    const startedAgo = (ms: number) => record(built(['lb', 'lb-1']), step, out, Date.now() - ms);
+    expect(
+      (await scalewayProvider.pollStep!(cfg, step, 'settle:lb-1', startedAgo(14 * 60_000))).status,
+    ).toBe('requested');
+    expect(
+      await scalewayProvider.pollStep!(cfg, step, 'settle:lb-1', startedAgo(16 * 60_000)),
+    ).toMatchObject({ status: 'partial', code: 'lb_settle_timeout', refused: true });
+  });
+
+  test("a poll is done only with the step's own resource on the ledger", async () => {
+    use(fakeScaleway());
+    const err = await scalewayProvider.pollStep!(
+      cfg,
+      stepOfKind('create_backend'),
+      'settle:lb-1',
+      built(['lb', 'lb-1']),
+    ).catch((e) => e);
+    expect(err.meta).toMatchObject({ code: 'ledger_incomplete' });
+  });
+
+  test('discovery finds a step only once the LB has applied it', async () => {
+    const fake = fakeScaleway({ applyReads: 1 });
+    use(fake);
+    await fake.api.createLb({ name: spec.name });
+    // The LB listing itself says it is still being built.
+    expect(await scalewayProvider.discover(cfg, stepOfKind('create_lb'), spec, built(), 1)).toEqual(
+      { status: 'unresolved' },
+    );
+    await fake.api.getLb();
+    await fake.api.createBackend({ name: `${spec.name}-backend` });
+    const backendStep = stepOfKind('create_backend');
+    expect(
+      await scalewayProvider.discover(cfg, backendStep, spec, built(['lb', 'lb-1']), 1),
+    ).toEqual({ status: 'unresolved' });
+    expect(
+      await scalewayProvider.discover(cfg, backendStep, spec, built(['lb', 'lb-1']), 2),
+    ).toMatchObject({ status: 'found', resources: [{ kind: 'backend', resourceId: 'be-1' }] });
+  });
+
+  test('reapply saves the frontend again as read, on a ready LB: the lost frontend is served', async () => {
+    const fake = fakeScaleway({ applyReads: 2 });
+    use(fake);
+    // As observed: the frontend went out while the LB was still applying the backend.
+    await fake.api.createLb({ name: spec.name });
+    await fake.api.getLb();
+    await fake.api.getLb();
+    await fake.api.createBackend({ name: `${spec.name}-backend` });
+    await fake.api.createFrontend({
+      name: `${spec.name}-frontend`,
+      inboundPort: 443,
+      backendId: 'be-1',
+      timeoutClient: 600_000,
+      enableHttp3: false,
+      enableAccessLogs: false,
+    });
+    expect(fake.answers()).toBe(false);
+    const update = vi.spyOn(fake.api, 'updateFrontend');
+    const ledger = built(['lb', 'lb-1'], ['backend', 'be-1'], ['frontend', 'fe-1']);
+    expect(await scalewayProvider.reapply!(cfg, ledger)).toEqual({
+      status: 'sent',
+      settled: true,
+    });
+    expect(update).toHaveBeenCalledWith({
+      frontendId: 'fe-1',
+      name: `${spec.name}-frontend`,
+      inboundPort: 443,
+      backendId: 'be-1',
+      enableHttp3: false,
+      timeoutClient: 600_000,
+      enableAccessLogs: false,
+    });
+    // It waited for the LB before and after the save.
+    expect(fake.calls.slice(-8)).toEqual([
+      'getLb:pending',
+      'getLb:pending',
+      'getLb:ready',
+      'getFrontend',
+      'updateFrontend',
+      'getLb:pending',
+      'getLb:pending',
+      'getLb:ready',
+    ]);
+    expect(fake.answers()).toBe(true);
+    expect(fake.lost()).toEqual([]);
+  });
+
+  test('reapply sends nothing while the LB is busy or stuck, or with no frontend', async () => {
+    const fake = fakeScaleway();
+    use(fake);
+    await fake.api.createLb({ name: spec.name });
+    await fake.api.createFrontend({ name: `${spec.name}-frontend`, backendId: 'be-1' });
+    const update = vi.spyOn(fake.api, 'updateFrontend');
+    const ledger = built(['lb', 'lb-1'], ['backend', 'be-1'], ['frontend', 'fe-1']);
+    fake.busyFor(1000);
+    expect(await scalewayProvider.reapply!(cfg, ledger)).toEqual({
+      status: 'skipped',
+      code: 'lb_busy',
+    });
+    fake.force('locked');
+    expect(await scalewayProvider.reapply!(cfg, ledger)).toEqual({
+      status: 'skipped',
+      code: 'lb_unusable',
+    });
+    expect(await scalewayProvider.reapply!(cfg, built(['lb', 'lb-1']))).toEqual({
+      status: 'skipped',
+      code: 'no_frontend',
+    });
+    expect(update).not.toHaveBeenCalled();
   });
 });
 
