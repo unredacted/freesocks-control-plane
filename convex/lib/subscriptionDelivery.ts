@@ -226,10 +226,12 @@ export async function deliverBody(
 ): Promise<DeliveryOutcome> {
   const { sub, fetched, now } = input;
   // Every edge-required refusal is counted per reason (deliveryRefusals.ts):
-  // dark members must be visible to the operator. Counting never changes the answer.
+  // dark members must be visible to the operator. Counting never changes the
+  // answer, nor delays it: the write is scheduled, not awaited, so a burst of
+  // refusals never waits on writes conflicting over the shared counter rows.
   const refuse = async (reason: string): Promise<DeliveryOutcome> => {
     try {
-      await ctx.runMutation(internal.deliveryRefusals.record, { reason });
+      await ctx.scheduler.runAfter(0, internal.deliveryRefusals.record, { reason });
     } catch {
       /* the counter is best effort */
     }

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import YAML from 'yaml';
 import {
   SUBSCRIPTION_TEMPLATES,
   TEMPLATE_FAMILIES,
@@ -11,6 +12,26 @@ import {
   templatesOutdated,
 } from './index';
 import { SINGBOX_JSON } from './SINGBOX';
+
+describe('the local proxy of every template FCP ships', () => {
+  test('answers the device only, never others on its network', () => {
+    // An open LAN port is an unauthenticated proxy: anyone on a shared network
+    // could use the member's tunnel or fingerprint the device.
+    for (const f of TEMPLATE_FAMILIES) {
+      const d = SUBSCRIPTION_TEMPLATES[f];
+      if (d.kind === 'yaml') {
+        const doc = YAML.parse(d.body) as Record<string, unknown>;
+        expect(doc['allow-lan'] ?? false, f).toBe(false);
+        if (doc['external-controller'] !== undefined)
+          expect(String(doc['external-controller']), f).toMatch(/^127\.0\.0\.1:/);
+      } else {
+        const inbounds = (d.body as { inbounds?: { listen?: string }[] }).inbounds ?? [];
+        for (const i of inbounds)
+          if (i.listen !== undefined) expect(['127.0.0.1', '::1'], f).toContain(i.listen);
+      }
+    }
+  });
+});
 
 describe('subscription templates', () => {
   test('every family has a body and the YAML ones keep the splice anchors byte-exact', () => {

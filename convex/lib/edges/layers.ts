@@ -21,7 +21,7 @@
  * and emitted by assignment, so a flip and a render never disagree.
  */
 import type { ListenerLayerExclusion } from '../../../src/shared/contracts/edgeProtocolIds';
-import type { EdgeLayer } from './providers/capabilities';
+import { EDGE_PROVIDER_CAPABILITIES, type EdgeLayer } from './providers/capabilities';
 import {
   protocolIsHttpTransport,
   protocolL7Proof,
@@ -76,7 +76,7 @@ export interface ListenerLayers {
 /**
  * The Host header an L7 front sends the origin: the fronted hostname, or the
  * literal `'origin'` when the front passes the origin's own address through
- * (Fastly's `overrideHost: 'origin'`). `undefined` = not decided yet (the
+ * (Fastly's `overrideHost: 'origin'`, every CloudFront front). `undefined` = not decided yet (the
  * hostname is minted when the edge is planned).
  */
 export type L7HostHeader = string | 'origin';
@@ -108,8 +108,17 @@ export function l7HostAccepted(ot: OriginTransport, l7Host?: L7HostHeader): bool
 export function l7HostHeaderFor(
   hostname: string | null | undefined,
   overrideHost?: unknown,
+  provider?: string | null,
 ): L7HostHeader | undefined {
   if (overrideHost === 'origin') return 'origin';
+  // A provider that always sends the origin's own name (capability `originHostHeader`).
+  if (
+    provider &&
+    provider in EDGE_PROVIDER_CAPABILITIES &&
+    EDGE_PROVIDER_CAPABILITIES[provider as keyof typeof EDGE_PROVIDER_CAPABILITIES]
+      .originHostHeader === 'origin'
+  )
+    return 'origin';
   return hostname ?? undefined;
 }
 

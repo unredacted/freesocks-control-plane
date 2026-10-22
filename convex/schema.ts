@@ -122,6 +122,7 @@ const relayProviderCredentials = v.union(
   v.object({ type: v.literal('ovh'), applicationSecret: v.string(), consumerKey: v.string() }),
   v.object({ type: v.literal('cloudflare'), apiToken: v.string() }),
   v.object({ type: v.literal('fastly'), apiToken: v.string() }),
+  v.object({ type: v.literal('cloudfront'), secretAccessKey: v.string() }),
 );
 // Account settings: credential identifiers and intent defaults. WHERE an
 // account's edges live is never here: it is a location
@@ -167,6 +168,10 @@ const relayProviderSettings = v.union(
     // A new front's domain: versionless (Domain Management, absent) or classic.
     domainModel: v.optional(v.union(v.literal('versionless'), v.literal('classic'))),
   }),
+  v.object({
+    type: v.literal('cloudfront'),
+    accessKeyId: v.string(), // the IAM access key's public id; not a secret
+  }),
 );
 // Where an edge's resources live (`lib/edges/accountSettings.ts`
 // EDGE_PLACEMENT_SCHEMAS validates every new one). A CDN front's keys are
@@ -207,6 +212,12 @@ const relayEdgePlacement = v.union(
     zoneId: v.optional(v.string()),
     zoneName: v.optional(v.string()),
     tlsConfigurationId: v.optional(v.string()),
+  }),
+  v.object({
+    type: v.literal('cloudfront'),
+    dnsAccountId: v.optional(v.string()),
+    zoneId: v.optional(v.string()),
+    zoneName: v.optional(v.string()),
   }),
 );
 // Layers an edge can be: an L4 forwarder (address = IP literal) or an L7 CDN
@@ -3379,7 +3390,11 @@ export default defineSchema({
     since: v.number(),
     byAdminId: v.optional(v.id('adminUsers')),
     updatedAt: v.number(),
-  }).index('by_server', ['backendServerId']),
+  })
+    .index('by_server', ['backendServerId'])
+    // The open holds of a backend (read on every member fetch of an unmanaged node).
+    .index('by_server_released', ['backendServerId', 'released'])
+    .index('by_released_updated', ['released', 'updatedAt']),
 
   // A node rename (docs/servers.md "Renaming a node"): a resumable workflow
   // that renames the backend row through the ledger, every FCP row keyed by
@@ -3638,7 +3653,8 @@ export default defineSchema({
   })
     .index('by_owner', ['ownerKind', 'ownerId'])
     .index('by_server_kind_identity', ['backendServerId', 'kind', 'identity'])
-    .index('by_state', ['state']),
+    .index('by_state', ['state'])
+    .index('by_state_updated', ['state', 'updatedAt']),
 
   // Detector dedupe marks: one contribution per member per detector window,
   // ACROSS origins: the key is a peppered HMAC of the member alone (see

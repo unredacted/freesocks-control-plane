@@ -231,8 +231,9 @@ crons.daily(
   {},
 );
 // The servers and edges workflow rows (ledger ops, name rollouts, setup and
-// activation runs, Host hides, port changes): terminal rows past their window,
-// never one something still reads (convex/retention.ts).
+// activation runs, Host hides, port changes, maintenance holds, obligations):
+// terminal rows past their window, never one something still reads
+// (convex/retention.ts).
 crons.daily(
   'retention-panel-ops',
   { hourUTC: 5, minuteUTC: 5 },
@@ -267,6 +268,18 @@ crons.daily(
   'retention-port-changes',
   { hourUTC: 5, minuteUTC: 30 },
   internal.retention.sweepPortChanges,
+  {},
+);
+crons.daily(
+  'retention-maintenance-holds',
+  { hourUTC: 5, minuteUTC: 40 },
+  internal.retention.sweepMaintenanceHolds,
+  {},
+);
+crons.daily(
+  'retention-obligations',
+  { hourUTC: 5, minuteUTC: 45 },
+  internal.retention.sweepObligations,
   {},
 );
 

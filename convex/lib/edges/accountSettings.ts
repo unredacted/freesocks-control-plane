@@ -68,6 +68,13 @@ export const EDGE_SETTINGS_SCHEMAS = {
     // An account property, not a node's choice: it stays a setting.
     domainModel: z.enum(['versionless', 'classic']).optional(),
   }),
+  // L7: CloudFront distributions with ACM certificates. The IAM access key id
+  // is the public half of the key pair (a credential identifier); the DNS
+  // account and zone a front's records live in are its location's.
+  cloudfront: z.object({
+    type: z.literal('cloudfront'),
+    accessKeyId: z.string().regex(/^AKIA[A-Z0-9]{16}$/, 'access key id like AKIAXXXXXXXXXXXXXXXX'),
+  }),
 } as const;
 
 /** A DNS zone id as the zone's provider issues it (Cloudflare: 32 hex characters). */
@@ -127,6 +134,13 @@ export const EDGE_PLACEMENT_SCHEMAS = {
     // Absent = the Fastly account's default TLS configuration.
     tlsConfigurationId: z.string().min(1).max(64).optional(),
   }),
+  cloudfront: z.object({
+    type: z.literal('cloudfront'),
+    // An edgeProviderAccounts id of a DNS provider (Cloudflare today).
+    dnsAccountId: z.string().min(1).max(64),
+    zoneId: ZONE_ID,
+    zoneName: ZONE_NAME,
+  }),
 } as const;
 
 export type EdgePlacementFor<P extends EdgeProviderId> = z.infer<
@@ -145,6 +159,7 @@ export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> =
   ovh: ['applicationSecret', 'consumerKey'],
   cloudflare: ['apiToken'],
   fastly: ['apiToken'],
+  cloudfront: ['secretAccessKey'],
 };
 
 /** Placement fields per provider: on a LOCATION (and frozen on each edge), never on the account. */
@@ -155,6 +170,7 @@ export const EDGE_PLACEMENT_SETTINGS: Record<EdgeProviderId, readonly string[]> 
   ovh: ['serviceName', 'regionName', 'networkId', 'subnetId', 'gatewayId'],
   cloudflare: ['zoneId', 'zoneName'],
   fastly: ['dnsAccountId', 'zoneId', 'zoneName', 'tlsConfigurationId'],
+  cloudfront: ['dnsAccountId', 'zoneId', 'zoneName'],
 };
 
 /**
@@ -175,6 +191,7 @@ export const EDGE_OBSERVED_PLACEMENT: Record<
   ovh: {},
   cloudflare: {},
   fastly: {},
+  cloudfront: {},
 };
 
 /** Account settings that still LOCATE every edge of the account: locked while any non-destroyed edge references it. */
@@ -187,6 +204,7 @@ export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> =
   ovh: ['endpoint'],
   cloudflare: [],
   fastly: [],
+  cloudfront: [],
 };
 
 /** Defaults frozen into each new edge's provisionIntent (L7); a change never moves an existing edge. */
@@ -197,6 +215,7 @@ export const EDGE_INTENT_DEFAULT_SETTINGS: Record<EdgeProviderId, readonly strin
   ovh: [],
   cloudflare: [],
   fastly: ['domainModel'],
+  cloudfront: [],
 };
 
 /**
@@ -215,6 +234,7 @@ export const EDGE_RETEST_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   ovh: [],
   cloudflare: [],
   fastly: [],
+  cloudfront: [],
 };
 
 /**
@@ -246,6 +266,7 @@ export const EDGE_INTENT_FACTS: Record<
   cloudflare: {},
   // A versionless (Domain Management) domain instead of a version's domain.
   fastly: { domainModel: { planned: 'versionless', legacy: 'classic' } },
+  cloudfront: {},
 };
 
 /**
@@ -260,6 +281,7 @@ export const EDGE_LEGACY_OPTION_SETTINGS: Record<EdgeProviderId, readonly string
   ovh: [],
   cloudflare: [],
   fastly: ['certificateAuthority', 'certificateScope'],
+  cloudfront: [],
 };
 
 /** The option defaults a settings payload (or a stored row) still carries the old way. */
@@ -278,6 +300,7 @@ export const EDGE_CREDENTIAL_IDENTIFIER_FIELDS: Record<EdgeProviderId, readonly 
   ovh: ['applicationKey'],
   cloudflare: ['accountId'],
   fastly: [],
+  cloudfront: ['accessKeyId'],
 };
 
 /**
@@ -294,6 +317,7 @@ export const EDGE_LEGACY_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
   ovh: [],
   cloudflare: ['zoneId', 'zoneName'],
   fastly: ['dnsAccountId', 'tlsConfigurationId'],
+  cloudfront: [],
 };
 
 /** The legacy keys a stored settings object still carries (usually none). */

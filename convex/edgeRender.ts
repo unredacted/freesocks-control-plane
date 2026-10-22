@@ -370,6 +370,29 @@ export const deliveryPolicy = internalQuery({
 });
 
 /**
+ * Whether a key's raw backend URL serves an edge-required place: a delivery
+ * binding covers the node it is pinned to (or its whole backend). A key not
+ * pinned yet (a newly issued one) may land on any node of its backend, so a
+ * binding of any node there counts too.
+ */
+export const rawUrlEdgeRequired = internalQuery({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }): Promise<boolean> => {
+    const sub = await ctx.db.get(subscriptionId);
+    const sid = sub?.backendServerId;
+    if (!sid) return false;
+    if (await deliveryBindingFor(ctx.db, sid, sub.pinnedNode ?? undefined)) return true;
+    if (sub.pinnedNode) return false;
+    // One binding per bound node of this backend: operator-scale.
+    const bindings = await ctx.db
+      .query('edgeDeliveryBindings')
+      .withIndex('by_server_node', (q) => q.eq('backendServerId', sid))
+      .collect();
+    return bindings.some((b) => b.state === 'active');
+  },
+});
+
+/**
  * Cache token for a subscription's place: `<policyVersion>[:g<gate>]:<epoch>`
  * while the place is edge-required (the epoch is the origin's, or -1 when the
  * binding has no live origin or rendering is off), `g<gate>` for an unbound

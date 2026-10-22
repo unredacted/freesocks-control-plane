@@ -29,7 +29,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { appendRunEvent } from './lib/edges/setupRuns';
-import { fastlyCertificateLockKey } from './lib/edges/lockKeys';
+import { cloudFrontPolicyLockKey, fastlyCertificateLockKey } from './lib/edges/lockKeys';
 import { assertNoRelayPanelClaim } from './lib/edges/relayGuards';
 import {
   EDGE_PLUMBING,
@@ -3314,6 +3314,10 @@ export function stepLockKey(edge: Edge, stepKind: string): string | null {
     edge.accountId
   )
     return fastlyCertificateLockKey(edge.accountId, intent.zoneId);
+  // A CloudFront distribution takes a place in one of the account's shared
+  // origin request policies (100 each): counting and attaching serialise.
+  if (stepKind === 'create_service' && edge.provider === 'cloudfront' && edge.accountId)
+    return cloudFrontPolicyLockKey(edge.accountId);
   // Both Cloudflare rules (the origin port and the header removals) live in
   // the zone's entry point ruleset of their phase.
   if (stepKind !== 'create_origin_rule' && stepKind !== 'create_header_rule') return null;

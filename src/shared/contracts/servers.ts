@@ -725,7 +725,10 @@ export type ActivationReview = z.infer<typeof ActivationReview>;
 
 /** The isolated direct test link and the binding its confirmation must echo. */
 export const DirectTestLink = z.object({
+  /** The first name's link (`links[0]`). */
   link: z.string(),
+  /** One link per server name the node serves: the tick covers all of them. */
+  links: z.array(z.object({ sni: z.string(), link: z.string() })),
   binding: z.object({
     intentId: z.string(),
     transportUuid: z.string(),
@@ -735,6 +738,8 @@ export const DirectTestLink = z.object({
     authRevision: z.string().nullable(),
     params: z.object({
       sni: z.string(),
+      // Every name the links cover, in the transport's order.
+      names: z.array(z.string()),
       fingerprint: z.string(),
       shortIdRef: z.number(),
       publicKey: z.string(),
