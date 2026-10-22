@@ -15,8 +15,9 @@
    * carries on by itself once the approval lands.
    *
    * At `try_it` each tick is saved on its own (`continue` with that one
-   * confirmation) and "Doesn't work" replaces that one address (`retry
-   * {tryAnotherAddress, edgeId}`); the run moves on once every line works. A
+   * confirmation) and "Doesn't work", once confirmed, replaces that one address
+   * (`retry {tryAnotherAddress, edgeId}`; refused, nothing removed, when no
+   * new address could be created now); the run moves on once every line works. A
    * paused (quarantined) node shows the plain PausedCard; the Live card offers
    * automatic protection while it is off.
    *
@@ -429,6 +430,7 @@
           locked={act.isPending}
           onWorks={(item) => void works(item)}
           onFails={(item) => void fails(item)}
+          confirmFails
         />
         {#if buttons.hint}<p class="text-muted-foreground text-xs">{buttons.hint}</p>{/if}
       {:else if need.code === 'review_changed'}

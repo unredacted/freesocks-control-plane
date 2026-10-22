@@ -4,6 +4,7 @@
  * Exports:
  *   TestItem, runTestItems(run)      the test card's lines from a run's `testLinks`
  *   runTestLines(run)                every line of the card, the ones already ticked included
+ *   replaceWords(item)               the "Doesn't work" confirmation: the address it removes and replaces
  *   needButtons(code)                the one button (at most one secondary, and a quiet third) of an interruption
  *   automationOn(config)             the four switches `POST automation` sets, read back as one
  *   automationState(config), automationNote(state)   what those switches mean apart
@@ -114,6 +115,21 @@ export function runTestLines(
     if (ticked) done.add(edgeId);
   }
   return { items, done };
+}
+
+/**
+ * The "Doesn't work" confirmation of one test line: it names the address (and
+ * its transport when known) and says it is removed and replaced, for good.
+ */
+export function replaceWords(item: Pick<TestItem, 'name' | 'endpoint'>): {
+  title: string;
+  body: string;
+} {
+  const what = item.name ? `${item.name} at ${item.endpoint}` : item.endpoint;
+  return {
+    title: `Replace ${item.endpoint}?`,
+    body: `${what} is removed at the provider and a new address is created in its place, to test here again. A removed address cannot be brought back. If no new address can be created now, nothing is removed.`,
+  };
 }
 
 export type NeedAction =

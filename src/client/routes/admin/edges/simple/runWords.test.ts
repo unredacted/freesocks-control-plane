@@ -10,6 +10,7 @@ import {
   nodeAutomationWords,
   spareInUseWords,
   planWords,
+  replaceWords,
   setWords,
   providerPickWords,
   runTestItems,
@@ -55,6 +56,21 @@ describe('needButtons', () => {
     const approve = needButtons('node_not_approved');
     expect(approve.primary).toEqual({ label: 'Approve go-live', action: 'approve' });
     expect(approve.secondary).toBeUndefined();
+  });
+});
+
+describe('replaceWords', () => {
+  it('names the address and its transport, and says it is removed and replaced for good', () => {
+    const w = replaceWords({ name: 'REALITY in Region B', endpoint: '198.51.100.80:443' });
+    expect(w.title).toBe('Replace 198.51.100.80:443?');
+    expect(w.body).toContain('REALITY in Region B at 198.51.100.80:443 is removed');
+    expect(w.body).toContain('a new address is created in its place');
+    expect(w.body).toContain('cannot be brought back');
+    expect(w.body).toContain('nothing is removed');
+    expect(replaceWords({ name: null, endpoint: '198.51.100.80:443' }).body).toMatch(
+      /^198\.51\.100\.80:443 is removed/,
+    );
+    for (const s of [w.title, w.body]) expect(s).not.toContain('—');
   });
 });
 

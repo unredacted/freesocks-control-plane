@@ -46,7 +46,13 @@ import {
   resolveEdgeConfig,
   type EdgeConfig,
 } from './lib/edgeConfig';
-import { edgeFitsPick, publicationApproval, startRotation } from './edgeRotations';
+import {
+  collectStartBlockers,
+  edgeFitsPick,
+  publicationApproval,
+  selectionContext,
+  startRotation,
+} from './edgeRotations';
 import {
   claimDeliveryBinding,
   deliveryBindingFor,
@@ -2953,7 +2959,9 @@ export const wakeForApproval = internalMutation({
  * becomes a no-op), reusing everything that exists. Options answer the card's
  * secondary buttons: `tryAnotherAddress` destroys the unreachable standby and
  * re-provisions that listener only (at `try_it`, `edgeId` names the one line
- * that does not work; without it every unconfirmed line is replaced);
+ * that does not work; without it every unconfirmed line is replaced), and
+ * only when the replacement could start now: otherwise nothing is cancelled
+ * (`edge.replacement_cannot_start`, `assertReplacementCanStart`);
  * `checkAgain` checks the same unreachable address afresh (only evidence from
  * now on counts) and goes on if it now passes;
  * `acceptPartial` goes on with the rung as it is; `accountId` names another
@@ -3148,6 +3156,8 @@ export const retry = internalMutation({
         code: 'validation',
         message: 'Check again answers an address the outside check stopped on',
       });
+    // The entries whose address "Doesn't work" / "Try another address" cancels.
+    const replaced: RunListener[] = [];
     if (a.tryAnotherAddress && r.need?.code === 'try_it') {
       // "Doesn't work": the named line's candidate (or, without a name, every
       // L4 candidate the operator has NOT confirmed) is destroyed and
@@ -3171,6 +3181,7 @@ export const retry = internalMutation({
         entry.probeRequestedAt = undefined;
         entry.proofRequestedAt = undefined;
         entry.recheckSince = undefined;
+        replaced.push(entry);
       }
       stage = 'provision';
     } else if (a.tryAnotherAddress && unreachableNeed(r.need?.code) && failed) {
@@ -3184,6 +3195,7 @@ export const retry = internalMutation({
         entry.probeRequestedAt = undefined;
         entry.proofRequestedAt = undefined;
         entry.recheckSince = undefined;
+        replaced.push(entry);
       }
       stage = 'provision';
     } else if (a.checkAgain && failed) {
@@ -3199,6 +3211,10 @@ export const retry = internalMutation({
     } else if (r.stage === 'verify') {
       for (const l of listeners) if (l.verify === 'unreachable') l.verify = 'pending';
     }
+    // A replacement that could not start now loses nothing: this throws, and
+    // the cancel above rolls back with the rest of the retry.
+    for (const entry of replaced)
+      await assertReplacementCanStart(ctx, { ...r, picks }, entry, listeners);
     // Re-entering a stage that provisions is new work: held by a freeze. A
     // run at the card or past it keeps finishing what it was admitted for.
     if (STAGE_INDEX[stage] <= STAGE_INDEX.provision) await assertAdmission(ctx.db, 'setup.start');
@@ -3239,6 +3255,83 @@ export const retry = internalMutation({
     return { ok: true as const, generation: r.generation + 1, stage };
   },
 });
+
+/** Start refusals the provision stage rides out (it waits and polls), never a reason to keep. */
+const REPLACEMENT_WAITS: ReadonlySet<string> = new Set(['edge.busy', 'edge.concurrency']);
+
+/**
+ * Whether the provision that replaces `entry`'s address could start now, read
+ * in the SAME transaction as the cancel of the old address (so it sees the
+ * slot that cancel frees): the rotation's own start guards (maintenance, a
+ * quarantine, a restore) and its selection for the entry's pick (the
+ * account's daily budget, its live cap, the location's cap, the account
+ * switched off or untested...). A refusal throws
+ * `edge.replacement_cannot_start` with the reason, and the whole retry rolls
+ * back: the old address stays on the card, nothing is cancelled. Nothing is
+ * started when the stage would reuse a live address of the same pick instead
+ * (a protect run's spare), so then there is nothing to check. A replacement
+ * that starts and fails later (the provider) still costs the old address.
+ */
+async function assertReplacementCanStart(
+  ctx: MutationCtx,
+  r: Run,
+  entry: RunListener,
+  listeners: RunListener[],
+): Promise<void> {
+  if (!r.relayId) return;
+  const listener = (await listenersOf(ctx, r.relayId)).find(
+    (l) => l.listenerKey === entry.listenerKey && !l.retired,
+  );
+  // The stage itself stops on a listener that is gone.
+  if (!listener) return;
+  const pick = pickOfTarget(r, entry);
+  const locationId = entry.locationId ?? pick.locationId ?? undefined;
+  if (r.kind !== 'reprotect') {
+    const held = new Set(listeners.map((l) => l.edgeId as string | undefined).filter(Boolean));
+    const reusable = (await liveEdgesOfRelay(ctx.db, r.relayId)).some(
+      (e) =>
+        !held.has(e._id as string) &&
+        e.listenerId === listener._id &&
+        LIVE_CANDIDATE.has(e.status) &&
+        (e.publication === 'unpublished' || e.publication === 'published') &&
+        e.accountId === pick.accountId &&
+        (!locationId || (e.locationId ?? null) === locationId),
+    );
+    if (reusable) return;
+  }
+  // Exactly what the provision stage would start (startStageRotation).
+  const args = {
+    relayId: r.relayId,
+    kind: 'provision' as const,
+    trigger: 'api' as const,
+    listenerId: listener._id,
+    requestedAccountId: pick.accountId ?? undefined,
+    requestedLocationId: locationId,
+    allowUnqualified: true,
+    publishOnDone: false,
+    setupRun: { runId: r._id, generation: r.generation + 1 },
+  };
+  const refuse = (reason: string): never => {
+    throw new ConvexError({ code: 'edge.replacement_cannot_start', message: reason });
+  };
+  const g = await collectStartBlockers(ctx, args);
+  const blocker = g.blockers.find((b) => !REPLACEMENT_WAITS.has(b.code));
+  if (blocker) refuse(blocker.message);
+  if (!g.origin || !g.cfg) return;
+  const sel = await selectionContext(ctx, args, g.origin, null, g.cfg);
+  const failure = !sel.listener
+    ? (sel.accountFailure ?? 'no_compatible_listener')
+    : !sel.standbyId && (!sel.account || !sel.template)
+      ? (sel.accountFailure ?? 'no_account')
+      : null;
+  if (failure) refuse(reasonWords(failure));
+}
+
+/** A selection failure code as a short reason (`account_budget_exhausted` -> "Account budget exhausted"). */
+function reasonWords(code: string): string {
+  const words = code.replace(/_/g, ' ');
+  return words[0]!.toUpperCase() + words.slice(1);
+}
 
 /**
  * A failed re-protect may claim its origin again only while the origin still

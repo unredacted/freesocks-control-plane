@@ -1606,6 +1606,13 @@ const REFUSAL_COPY = {
     explain: 'The hostname is not in the zone of the picked location.',
     fix: 'Pick the location whose zone holds the hostname.',
   },
+  // "Doesn't work" / "Try another address" when no new address could be made now.
+  replacement_cannot_start: {
+    label: 'No new address now',
+    explain: 'No new address can be created now, so this one was kept and nothing was removed.',
+    fix: "Check the account's daily budget and limits, and that new work is not paused, then try again.",
+    reasonFromServer: true,
+  },
 } as const satisfies Record<string, CodeCopy>;
 
 export const EDGE_REFUSAL_COPY: Record<string, CodeCopy> = REFUSAL_COPY;

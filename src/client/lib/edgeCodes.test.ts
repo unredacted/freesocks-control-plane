@@ -165,6 +165,7 @@ describe('EDGE_REFUSAL_COPY', () => {
     'location_unusable',
     'dns_account_unusable',
     'hostname_not_in_zone',
+    'replacement_cannot_start',
   ];
 
   test('every refusal the pages meet is worded, and is part of the shared table', () => {
@@ -179,7 +180,11 @@ describe('EDGE_REFUSAL_COPY', () => {
     const fromServer = Object.entries(EDGE_REFUSAL_COPY)
       .filter(([, e]) => e.reasonFromServer)
       .map(([code]) => code);
-    expect(fromServer.sort()).toEqual(['dns_account_unusable', 'location_unusable']);
+    expect(fromServer.sort()).toEqual([
+      'dns_account_unusable',
+      'location_unusable',
+      'replacement_cannot_start',
+    ]);
     for (const code of fromServer) expect(codeFix(code)).toBeTruthy();
   });
 

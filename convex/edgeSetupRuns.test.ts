@@ -1251,6 +1251,102 @@ describe('edgeSetupRuns: one line does not work', () => {
   });
 });
 
+describe("edgeSetupRuns: Doesn't work when no new address can be made", () => {
+  /** The run at its test card, with the one address it built. */
+  async function atTheCard(opts: Parameters<typeof seed>[0] = {}) {
+    const w = await seed(opts);
+    const { runId } = await startRun(w.t, w.serverId, w.accountId);
+    const r = await pump(w.t, runId, settled);
+    return { ...w, runId, r };
+  }
+  const edgeRow = (t: T, id: string) => t.run((ctx) => ctx.db.get(id as Id<'edges'>));
+  /** The account's daily budget is what it already used today. */
+  const budgetUsedUp = (t: T, accountId: Id<'edgeProviderAccounts'>) =>
+    t.run(async (ctx) => {
+      const a = (await ctx.db.get(accountId))!;
+      expect(a.allocationsToday).toBeGreaterThan(0);
+      await ctx.db.patch(accountId, { dailyAllocationBudget: a.allocationsToday });
+    });
+
+  test('a used-up daily budget refuses it and keeps the address; with budget again it replaces', async () => {
+    const { t, world, accountId, runId, r } = await atTheCard();
+    expect(r.need?.code).toBe('try_it');
+    const edgeId = r.testLinks![0]!.edgeId;
+    await budgetUsedUp(t, accountId);
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, {
+        runId,
+        tryAnotherAddress: true,
+        edgeId: edgeId as Id<'edges'>,
+      }),
+    ).rejects.toThrow(/replacement_cannot_start.*Account budget exhausted/);
+    // Nothing moved: the same card, the same address, still live.
+    const after = await run(t, runId);
+    expect(after).toMatchObject({ state: 'needs_you', generation: r.generation });
+    expect(after.need?.code).toBe('try_it');
+    expect(after.testLinks!.map((l) => l.edgeId)).toEqual([edgeId]);
+    expect(after.listeners[0]!.edgeId).toBe(edgeId);
+    expect((await edgeRow(t, edgeId))!.status).toBe('active');
+    expect(world.lbCreates()).toBe(1);
+    // With budget again, "Doesn't work" replaces it.
+    await t.run((ctx) => ctx.db.patch(accountId, { dailyAllocationBudget: 0 }));
+    await t.mutation(internal.edgeSetupRuns.retry, {
+      runId,
+      tryAnotherAddress: true,
+      edgeId: edgeId as Id<'edges'>,
+    });
+    const next = await pump(t, runId, settled);
+    expect(next.need?.code).toBe('try_it');
+    expect(next.testLinks![0]!.edgeId).not.toBe(edgeId);
+    expect((await edgeRow(t, edgeId))!.status).toBe('cancelled');
+    expect(world.lbCreates()).toBe(2);
+  });
+
+  test('a freeze refuses it at the card in its own words, removing nothing', async () => {
+    const { t, runId, r } = await atTheCard();
+    const edgeId = r.testLinks![0]!.edgeId;
+    await t.mutation(internal.edgeMaintenance.freeze, { reason: 'test' });
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, {
+        runId,
+        tryAnotherAddress: true,
+        edgeId: edgeId as Id<'edges'>,
+      }),
+    ).rejects.toThrow(/replacement_cannot_start.*maintenance/);
+    expect((await edgeRow(t, edgeId))!.status).toBe('active');
+    expect((await run(t, runId)).need?.code).toBe('try_it');
+  });
+
+  test('an account at its live cap refuses it too: a cancelled address counts until it is destroyed', async () => {
+    const { t, world, accountId, runId, r } = await atTheCard();
+    const edgeId = r.testLinks![0]!.edgeId;
+    await t.run((ctx) => ctx.db.patch(accountId, { maxLiveEdges: 1 }));
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, {
+        runId,
+        tryAnotherAddress: true,
+        edgeId: edgeId as Id<'edges'>,
+      }),
+    ).rejects.toThrow(/replacement_cannot_start.*Account capacity reached/);
+    expect((await edgeRow(t, edgeId))!.status).toBe('active');
+    expect(world.lbCreates()).toBe(1);
+  });
+
+  test('"Try another address" on an unreachable address is kept the same way', async () => {
+    const { t, accountId, runId, r } = await atTheCard({ evidence: () => 'unreachable' });
+    expect(r.need?.code).toBe('address_unreachable');
+    const edgeId = r.listeners[0]!.edgeId!;
+    await budgetUsedUp(t, accountId);
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, { runId, tryAnotherAddress: true }),
+    ).rejects.toThrow(/replacement_cannot_start/);
+    const after = await run(t, runId);
+    expect(after.need?.code).toBe('address_unreachable');
+    expect(after.listeners[0]).toMatchObject({ edgeId, verify: 'unreachable' });
+    expect((await edgeRow(t, edgeId))!.status).toBe('active');
+  });
+});
+
 describe('edgeSetupRuns: unsupported transport with active users (case 3)', () => {
   test('without consent the run finishes unbound; with consent the approved uuid is hidden; a Host added after review interrupts', async () => {
     const { t, serverId, accountId, calls, setHideResult } = await seed({
