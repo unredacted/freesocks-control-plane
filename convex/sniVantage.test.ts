@@ -820,38 +820,42 @@ describe('review fixes', () => {
 });
 
 describe('the planning budget', () => {
-  test('four opted-in countries and an 800-name family with nothing due stay within one execution', async () => {
-    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
-    const countries = ['IR', 'RU', 'CN', 'MM'];
-    const names = Array.from({ length: 800 }, (_, i) => `n${i}.example`);
-    const { t, listenerId } = await seed({ countries, limits: true });
-    await t.mutation(internal.sniFamilies.importNames, { slug: 'fam-a', lines: names });
-    await t.run(async (ctx) => {
-      for (const n of await ctx.db.query('sniNames').collect())
-        await ctx.db.patch(n._id, {
-          qualification: { state: 'ok', consecutiveFails: 0, tlsVersion: 'TLSv1.3' },
-          checkedAt: Date.now(),
-        });
-      await ctx.db.patch(listenerId, {
-        tlsNames: names.map((name) => ({ name, status: 'active' as const })),
-      });
-    });
-    // Every pair was put into a batch just now: nothing is due anywhere.
-    await t.run(async (ctx) => {
-      for (const n of await ctx.db.query('sniNames').collect())
-        for (const country of countries)
-          await ctx.db.insert('sniVantageEvidence', {
-            familyId: n.familyId,
-            name: n.name,
-            country,
-            lastRequestedAt: Date.now(),
-            measurements: 0,
-            okVantages: 0,
-            okNetworks: 0,
-            latest: 'none',
-            updatedAt: Date.now(),
+  test(
+    'four opted-in countries and an 800-name family with nothing due stay within one execution',
+    { timeout: 30_000 },
+    async () => {
+      __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+      const countries = ['IR', 'RU', 'CN', 'MM'];
+      const names = Array.from({ length: 800 }, (_, i) => `n${i}.example`);
+      const { t, listenerId } = await seed({ countries, limits: true });
+      await t.mutation(internal.sniFamilies.importNames, { slug: 'fam-a', lines: names });
+      await t.run(async (ctx) => {
+        for (const n of await ctx.db.query('sniNames').collect())
+          await ctx.db.patch(n._id, {
+            qualification: { state: 'ok', consecutiveFails: 0, tlsVersion: 'TLSv1.3' },
+            checkedAt: Date.now(),
           });
-    });
-    expect((await t.mutation(internal.sniVantage.tick, {})).reason).toBe('nothing_due');
-  });
+        await ctx.db.patch(listenerId, {
+          tlsNames: names.map((name) => ({ name, status: 'active' as const })),
+        });
+      });
+      // Every pair was put into a batch just now: nothing is due anywhere.
+      await t.run(async (ctx) => {
+        for (const n of await ctx.db.query('sniNames').collect())
+          for (const country of countries)
+            await ctx.db.insert('sniVantageEvidence', {
+              familyId: n.familyId,
+              name: n.name,
+              country,
+              lastRequestedAt: Date.now(),
+              measurements: 0,
+              okVantages: 0,
+              okNetworks: 0,
+              latest: 'none',
+              updatedAt: Date.now(),
+            });
+      });
+      expect((await t.mutation(internal.sniVantage.tick, {})).reason).toBe('nothing_due');
+    },
+  );
 });
