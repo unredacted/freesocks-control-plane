@@ -161,5 +161,7 @@ export const LISTENER_LAYER_EXCLUSIONS = [
   'protocol_not_http_transport',
   'l7_proof_unsupported',
   'no_udp_provider',
+  // A WebSocket node's HTTP transport: never behind a load balancer (lib/edges/websocketNode.ts).
+  'l4_not_for_websocket',
 ] as const;
 export type ListenerLayerExclusion = (typeof LISTENER_LAYER_EXCLUSIONS)[number];

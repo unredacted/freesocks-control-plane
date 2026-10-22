@@ -143,6 +143,15 @@ export function defaultProviderFor(
   return ids.find(fits) ?? ids.find((id) => EDGE_PROVIDER_META[id].role === 'edge') ?? ids[0]!;
 }
 
+/**
+ * Whether a provider may give a node new addresses: a WebSocket node takes no
+ * load balancer (members would send the node's own name; the server refuses
+ * one with `l4_not_for_websocket`). An unknown provider id is left to the server.
+ */
+export function frontsNode(provider: string, websocketNode: boolean): boolean {
+  return !websocketNode || EDGE_PROVIDER_META[provider as EdgeProviderId]?.layer !== 'l4';
+}
+
 /** The DNS providers FCP supports today, by name ("Cloudflare"). */
 export function dnsProviderNames(ids: readonly EdgeProviderId[]): string[] {
   return ids

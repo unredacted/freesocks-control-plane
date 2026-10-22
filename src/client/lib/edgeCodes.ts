@@ -900,6 +900,12 @@ const COPY = {
     explain: 'An active server name is not covered by the origin certificate.',
     fix: 'Add the name to the certificate or retire it on the listener.',
   },
+  l4_not_for_websocket: {
+    label: 'No load balancer for WebSocket',
+    explain:
+      "A load balancer cannot front a WebSocket node: members would send the node's own name, which certificate logs list and one block takes out.",
+    fix: 'Use a CDN.',
+  },
   // --- delivery unavailable -------------------------------------------------------------
   relay_missing: {
     label: 'Origin missing',
@@ -961,6 +967,18 @@ const COPY = {
   no_load_signal: {
     label: 'No load signal',
     explain: 'This origin kind reports no user load, so the detector uses reports and probes only.',
+  },
+  // Why a node's transports have no backup at another provider (`reduced_resilience`).
+  one_group: {
+    label: 'One provider',
+    explain: 'Every location that carries these transports is at one provider.',
+    fix: "Add a location of another provider to this node: another provider's load balancer works for these transports.",
+  },
+  second_cdn_needed: {
+    label: 'Needs a second CDN',
+    explain:
+      'Only a CDN can front these transports (a load balancer cannot front a WebSocket node), and every location that carries them is at one CDN.',
+    fix: 'Add a second CDN account, at a provider other than the one in use, and a zone of it to this node.',
   },
   version_invalid: {
     label: 'Configuration refused',
@@ -1976,6 +1994,12 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Zone mode not read',
     explain: "The zone's encryption mode was never read.",
     fix: 'Check the zone again from the provider page.',
+  },
+  l4_not_for_websocket: {
+    label: 'Not for a WebSocket node',
+    explain:
+      "A load balancer cannot front a WebSocket node: members would send the node's own name.",
+    fix: 'Use a CDN account.',
   },
 };
 

@@ -46,6 +46,7 @@ import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
 import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
+import { L4_NOT_FOR_WEBSOCKET, l4BarredFor, websocketNodeOf } from './lib/edges/websocketNode';
 import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRuns';
 import type {
   SetupPlanAccount,
@@ -219,6 +220,12 @@ async function planContextOf(
     // address is the MANAGEMENT one, and a loopback WebSocket behind Caddy is
     // only frontable through the ingress.
     const enrolled = await enrolledOriginOf(ctx, backendServerId, node.name);
+    // A WebSocket node: no load balancer fronts its transport (lib/edges/websocketNode.ts).
+    const websocketNode = await websocketNodeOf(ctx.db, {
+      kind: 'panel-node',
+      backendServerId,
+      nodeName: node.name,
+    });
     // The modes this backend serves, by transport tag, with whether members can pick them.
     const setup = await ctx.db
       .query('panelSetups')
@@ -242,6 +249,7 @@ async function planContextOf(
         port: node.port ?? null,
       },
       enrolled,
+      websocketNode,
       modes,
       relay: relay
         ? {
@@ -315,6 +323,7 @@ function accountCompatibility(
   required: SetupPlanInbound[],
   relay: PlanContext['relay'],
   dnsProvidersFront: boolean,
+  websocketNode: boolean,
 ): SetupPlanAccount {
   const reasons: string[] = [];
   const layer = edgeLayerOf(a.provider);
@@ -325,6 +334,8 @@ function accountCompatibility(
   const carries: string[] = [];
   let portOnly = false;
   let scoped = false;
+  // A load balancer for a WebSocket node's transport, however its probe went.
+  let barred = false;
   // A transport the account WOULD carry had the origin answered its probe:
   // `retry` when another look may answer, `final` when the address itself
   // rules it out (private or none).
@@ -339,6 +350,10 @@ function accountCompatibility(
     const scope = relay?.providerScopes.find((s) => s.listenerKey === inb.listenerKey);
     if (scope && scope.provider !== a.provider) {
       scoped = true;
+      continue;
+    }
+    if (layer === 'l4' && l4BarredFor(proto, websocketNode)) {
+      barred = true;
       continue;
     }
     const eligible = accountsForSlot([a], {
@@ -378,14 +393,19 @@ function accountCompatibility(
     reasons.push(
       scoped
         ? 'provider_mismatch'
-        : unanswered === 'retry'
-          ? 'origin_unreachable'
-          : unanswered === 'final'
-            ? 'origin_not_public'
-            : portOnly
-              ? 'origin_port_not_carried'
-              : 'layer_mismatch',
+        : barred
+          ? 'l4_not_for_websocket'
+          : unanswered === 'retry'
+            ? 'origin_unreachable'
+            : unanswered === 'final'
+              ? 'origin_not_public'
+              : portOnly
+                ? 'origin_port_not_carried'
+                : 'layer_mismatch',
     );
+  // A load balancer for a WebSocket node: nothing done to the account or its
+  // locations changes that, so it is the one reason given, for each of them.
+  const websocketOnly = carries.length === 0 && barred && !scoped;
   // Room for one address: what a pick really gets is the set's cover, summed
   // per account and location over its targets (`setOfPicks`).
   const need = 1;
@@ -394,10 +414,13 @@ function accountCompatibility(
     reasons.push('account_budget_exhausted');
   const locations = a.locations.map((loc) => {
     const why: string[] = [];
-    if (!loc.enabled) why.push('location_disabled');
-    if (loc.placeProblem) why.push(loc.placeProblem);
-    if (loc.maxLiveEdges !== null && loc.maxLiveEdges - loc.live < need)
-      why.push('location_capacity_reached');
+    if (websocketOnly) why.push('l4_not_for_websocket');
+    else {
+      if (!loc.enabled) why.push('location_disabled');
+      if (loc.placeProblem) why.push(loc.placeProblem);
+      if (loc.maxLiveEdges !== null && loc.maxLiveEdges - loc.live < need)
+        why.push('location_capacity_reached');
+    }
     return {
       id: loc.id,
       label: loc.label,
@@ -416,7 +439,7 @@ function accountCompatibility(
     provider: a.provider,
     layer,
     compatible: reasons.length === 0,
-    reasons: [...new Set(reasons)],
+    reasons: websocketOnly ? ['l4_not_for_websocket'] : [...new Set(reasons)],
     locations,
     carries,
   };
@@ -431,6 +454,10 @@ function accountCompatibility(
  */
 /** What a run cannot be created with: a transport no pick carries, a set too large, a pick that cannot be used. */
 export function refuseSet(set: SetupPlanSet): void {
+  // A load balancer picked for a WebSocket node: refused in its own words (it
+  // is why its transport is left uncovered).
+  if (set.problems.some((p) => p.reason.replace(/^edge\./, '') === 'l4_not_for_websocket'))
+    throw new ConvexError({ code: 'edge.l4_not_for_websocket', message: L4_NOT_FOR_WEBSOCKET });
   if (set.uncovered.length > 0)
     throw new ConvexError({
       code: 'edge.set_uncovered_listener',
@@ -462,18 +489,25 @@ async function applyPickChecks(
   ctx: ActionCtx,
   set: SetupPlanSet,
   pickOptions: Record<string, unknown> | undefined,
-  realityL4: boolean,
+  node: { realityL4: boolean; websocketNode: boolean },
 ): Promise<void> {
   const checked = await ctx.runQuery(internal.edgeSetupPlan.checkPicks, {
     picks: set.picks.map((p) => ({
       locationId: p.locationId as Id<'edgeLocations'>,
       options: pickOptions?.[p.locationId] ?? {},
     })),
-    realityL4,
+    realityL4: node.realityL4,
+    websocketNode: node.websocketNode,
   });
   for (const r of checked) {
     const pick = set.picks.find((p) => p.locationId === r.locationId);
     if (!pick) continue;
+    // The plan already said so for this pick (its account's own reason).
+    if (
+      !r.ok &&
+      set.problems.some((p) => p.locationId === r.locationId && `edge.${p.reason}` === r.code)
+    )
+      continue;
     if (r.ok && r.certificateToCheck) {
       // A certificate the location's check never covered (another authority,
       // the wildcard): the zone's CAA records are read for it now.
@@ -512,6 +546,8 @@ export const checkPicks = internalQuery({
     picks: v.array(v.object({ locationId: v.id('edgeLocations'), options: v.any() })),
     /** The node serves a REALITY transport (an HTTP health check would fail on it). */
     realityL4: v.optional(v.boolean()),
+    /** The node is a WebSocket node (a load balancer is refused, lib/edges/websocketNode.ts). */
+    websocketNode: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const out: Array<
@@ -533,6 +569,7 @@ export const checkPicks = internalQuery({
       }
       const r = await checkPickOptions(ctx, location, account, p.options, {
         realityL4: a.realityL4,
+        websocketNode: a.websocketNode,
       });
       out.push(
         r.ok
@@ -735,10 +772,16 @@ export async function buildPlan(
   const candidates = applyOriginProbes(
     mapped.candidates,
     withVerifiedIngress(outcomes, c.enrolled),
+    { websocketNode: c.websocketNode },
   );
   const planInbounds: SetupPlanInbound[] = [];
   for (const cand of candidates) {
-    const frontable = cand.layers.layers.length > 0 && !cand.needsName;
+    // A WebSocket node's transport whose origin did not answer is L7-only and
+    // has no layer yet: it is still the transport to protect, so every CDN
+    // account reads "could not reach the origin" rather than "cannot carry".
+    const awaitingProbe =
+      cand.layers.excluded.l4 === 'l4_not_for_websocket' && !!cand.probe && !cand.probe.ok;
+    const frontable = (cand.layers.layers.length > 0 || awaitingProbe) && !cand.needsName;
     planInbounds.push({
       listenerKey: cand.listenerSpec.listenerKey,
       sourceTag: cand.sourceTag,
@@ -809,13 +852,17 @@ export async function buildPlan(
     })),
   ];
   const accounts = c.accounts.map((acct) =>
-    accountCompatibility(acct, required, c.relay, c.dnsProvidersFront),
+    accountCompatibility(acct, required, c.relay, c.dnsProvidersFront, c.websocketNode),
   );
   const set =
     args.picks && args.picks.length > 0
       ? setOfPicks(args.picks, accounts, required, c.accounts)
       : undefined;
-  if (set) await applyPickChecks(ctx, set, args.pickOptions, servesReality(required));
+  if (set)
+    await applyPickChecks(ctx, set, args.pickOptions, {
+      realityL4: servesReality(required),
+      websocketNode: c.websocketNode,
+    });
   const plan: SetupPlanSnapshot = {
     backendServerId: a.backendServerId as string,
     backend: c.backend,
@@ -951,6 +998,8 @@ export const create = internalAction({
       const account = a.accountId
         ? plan.accounts.find((x) => x.id === (a.accountId as string))
         : plan.accounts.find((x) => x.locations?.some((l) => l.id === (a.locationId as string)));
+      if (account?.reasons.includes('l4_not_for_websocket'))
+        throw new ConvexError({ code: 'edge.l4_not_for_websocket', message: L4_NOT_FOR_WEBSOCKET });
       const location = a.locationId
         ? account?.locations?.find((l) => l.id === (a.locationId as string))
         : account?.locations?.find((l) => l.isDefault && l.compatible);
@@ -965,7 +1014,10 @@ export const create = internalAction({
         nodeUuid: a.nodeUuid,
       });
       set = setOfPicks([location.id], plan.accounts, required, context.accounts);
-      await applyPickChecks(ctx, set, undefined, servesReality(required));
+      await applyPickChecks(ctx, set, undefined, {
+        realityL4: servesReality(required),
+        websocketNode: context.websocketNode,
+      });
       plan.set = set;
     }
     refuseSet(set);

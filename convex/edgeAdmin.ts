@@ -47,6 +47,7 @@ import {
   scheduleMirrorRefresh,
 } from './relays';
 import { hostSniOf, listenerRemark, listenersOf, mapListenerAdmin } from './relayListeners';
+import { websocketNodeOf } from './lib/edges/websocketNode';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { protocolLabel } from './lib/edges/protocols';
 import { destroyedPatch, mapEdgeAdmin } from './edges';
@@ -404,6 +405,7 @@ export const relayBySlugView = internalQuery({
     const endpoints = await publishedEndpoints(ctx, origin);
     const plan = await connectionPlan(ctx, origin, endpoints);
     const udp = udpProviderAvailable();
+    const websocketNode = await websocketNodeOf(ctx.db, origin.origin);
     return {
       relay: {
         id: origin._id as string,
@@ -420,7 +422,7 @@ export const relayBySlugView = internalQuery({
       },
       listeners: listeners
         .map((l) => {
-          const m = mapListenerAdmin(l, { udpProviderAvailable: udp });
+          const m = mapListenerAdmin(l, { udpProviderAvailable: udp, websocketNode });
           return {
             listenerKey: m.listenerKey,
             protocol: m.protocol,
@@ -459,12 +461,13 @@ export const relayListenersView = internalQuery({
     if (!origin) return null;
     const listeners = await listenersOf(ctx, relayId);
     const udp = udpProviderAvailable();
+    const websocketNode = await websocketNodeOf(ctx.db, origin.origin);
     const endpoints = await publishedEndpoints(ctx, origin);
     const plan = await connectionPlan(ctx, origin, endpoints);
     return {
       listeners: listeners
         .map((l) => ({
-          ...mapListenerAdmin(l, { udpProviderAvailable: udp }),
+          ...mapListenerAdmin(l, { udpProviderAvailable: udp, websocketNode }),
           label: protocolLabel(l),
         }))
         .sort((a, b) => a.listenerKey.localeCompare(b.listenerKey)),

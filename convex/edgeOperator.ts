@@ -92,6 +92,7 @@ import { modeRefOf } from './nodeIntents';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { setStateOf } from './lib/edges/setState';
+import { websocketNodeOf } from './lib/edges/websocketNode';
 import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
 import type { RelayOrigin } from './lib/edges/origin';
@@ -158,6 +159,8 @@ interface ListenerLike {
     originTransport?: Listener['originTransport'];
     tlsNames?: string[];
   } | null;
+  /** The listener's node is a WebSocket node (lib/edges/websocketNode.ts). */
+  websocketNode?: boolean;
 }
 
 function udpProviderAvailable(): boolean {
@@ -172,7 +175,10 @@ function listenerFacts(l: ListenerLike): SetupInput['listeners'][number] {
   };
   const valid = isValidListenerCombo(l.proto);
   const layers = valid
-    ? listenerLayers(like, { udpProviderAvailable: udpProviderAvailable() })
+    ? listenerLayers(like, {
+        udpProviderAvailable: udpProviderAvailable(),
+        websocketNode: l.websocketNode,
+      })
     : { layers: [], excluded: {} };
   const names = l.row ? activeNames(l.row).length : (l.draft?.tlsNames ?? []).length;
   return {
@@ -212,7 +218,10 @@ async function accountFacts(
         originTransport: l.draft?.originTransport ?? undefined,
         tlsNames: (l.draft?.tlsNames ?? []).map((name) => ({ name, status: 'active' as const })),
       };
-      const layers = listenerLayers(like, { udpProviderAvailable: udp }).layers;
+      const layers = listenerLayers(like, {
+        udpProviderAvailable: udp,
+        websocketNode: l.websocketNode,
+      }).layers;
       const originPort = l.row?.originPort ?? l.draft?.originPort;
       if (
         accountsForSlot([a], {
@@ -367,7 +376,9 @@ async function relayFacts(
   listeners: ListenerLike[];
 }> {
   const listenerRows = await listenersOf(ctx, relay._id);
+  const websocketNode = await websocketNodeOf(ctx.db, relay.origin);
   const listeners: ListenerLike[] = listenerRows.map((l) => ({
+    websocketNode,
     key: l.listenerKey,
     proto: { protocol: l.protocol, streamTransport: l.streamTransport, security: l.security },
     row: l,
@@ -1491,6 +1502,12 @@ export const attention = internalQuery({
           });
         }
         const reduced = setState.requirement.reduced;
+        // A transport no load balancer may front (a WebSocket node's, above all:
+        // lib/edges/websocketNode.ts) is backed up elsewhere only by a second CDN.
+        const first = setState.listeners.find((l) => l.listenerKey === reduced[0]?.listenerKey);
+        const cdnOnly =
+          !!first &&
+          !listenerLayers(first, { websocketNode: setState.websocketNode }).layers.includes('l4');
         if (reduced.length > 0)
           items.push({
             ...base(relay),
@@ -1498,7 +1515,7 @@ export const attention = internalQuery({
             kind: 'reduced_resilience',
             severity: 'info',
             listenerKey: reduced[0]!.listenerKey,
-            code: 'one_group',
+            code: cdnOnly ? 'second_cdn_needed' : 'one_group',
             facts: { count: reduced.length },
             action: 'open_relay',
             since: null,

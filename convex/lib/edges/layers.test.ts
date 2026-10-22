@@ -224,6 +224,53 @@ describe('listenerLayers', () => {
     });
     expect(r.layers).toEqual(['l4']);
   });
+
+  // --- a WebSocket node (lib/edges/websocketNode.ts) ---------------------------------
+  test("a WebSocket node's HTTP transport is L7 only, however well its certificate covers the name", () => {
+    const listener = {
+      ...WS,
+      originTransport: httpsOrigin({ certNames: ['origin.example.org'] }),
+      tlsNames: names('origin.example.org'),
+    };
+    // Elsewhere the same listener is both layers.
+    expect(listenerLayers(listener).layers).toEqual(['l4', 'l7']);
+    const r = listenerLayers(listener, { websocketNode: true });
+    expect(r.layers).toEqual(['l7']);
+    expect(r.excluded.l4).toBe('l4_not_for_websocket');
+    expect(listenerAllowsLayer(listener, 'l4', { websocketNode: true })).toBe(false);
+    // Before its origin answered a probe it has no layer at all (never L4-only).
+    const unprobed = listenerLayers(
+      { ...WS, tlsNames: names('origin.example.org') },
+      {
+        websocketNode: true,
+      },
+    );
+    expect(unprobed.layers).toEqual([]);
+    expect(unprobed.excluded.l4).toBe('l4_not_for_websocket');
+    // A plaintext origin keeps its own reason; the rule bars nothing but HTTP transports.
+    expect(
+      listenerLayers(
+        { ...WS, originTransport: httpsOrigin({ scheme: 'http' }) },
+        {
+          websocketNode: true,
+        },
+      ).excluded.l4,
+    ).toBe('origin_plaintext');
+    expect(
+      listenerLayers(
+        { ...REALITY, originTransport: httpsOrigin(), tlsNames: names('a.example.org') },
+        { websocketNode: true },
+      ).layers,
+    ).toEqual(['l4']);
+    expect(
+      listenerLayers(
+        { ...REALITY, tlsNames: names('a.example.org') },
+        {
+          websocketNode: true,
+        },
+      ).layers,
+    ).toEqual(['l4']);
+  });
 });
 
 describe('zoneModeCarriesOrigin', () => {

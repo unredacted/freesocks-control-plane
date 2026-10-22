@@ -21,6 +21,7 @@ import type { OriginProbeOutcome } from './lib/edges/originProbe';
 import { protocolIsHttpTransport } from './lib/edges/protocols';
 import { listenersOf } from './relayListeners';
 import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
+import { websocketNodeOf } from './lib/edges/websocketNode';
 
 export interface ProbedInboundCandidate extends TransportCandidate {
   originTransport: OriginTransport | null;
@@ -83,6 +84,11 @@ export const nodeContext = internalQuery({
       relaySlug: relay?.slug ?? null,
       ingress: enrolled?.ingress ?? null,
       enrolled: enrolled ? { acceptsAnyHost: enrolled.acceptsAnyHost } : null,
+      websocketNode: await websocketNodeOf(ctx.db, {
+        kind: 'panel-node',
+        backendServerId,
+        nodeName: node.name,
+      }),
     };
   },
 });
@@ -108,11 +114,13 @@ export function originProbeTargets(
  * Fold the probe outcomes back into the candidates: `originTransport` on the
  * spec where the probe succeeded and the layers recomputed from it (pure;
  * shared with the setup plan so a WS / HTTP-upgrade / gRPC origin can be
- * offered an L7 account through the guided flow too).
+ * offered an L7 account through the guided flow too). A WebSocket node's
+ * HTTP transports are never L4-frontable (lib/edges/websocketNode.ts).
  */
 export function applyOriginProbes(
   candidates: readonly TransportCandidate[],
   outcomes: readonly OriginProbeOutcome[],
+  opts: { websocketNode?: boolean } = {},
 ): ProbedInboundCandidate[] {
   const byKey = new Map(outcomes.map((o) => [o.listenerKey, o]));
   return candidates.map((cand) => {
@@ -124,13 +132,16 @@ export function applyOriginProbes(
       listenerSpec: spec,
       originTransport,
       probe: o ? { ok: !!o.originTransport, reason: o.reason ?? null } : null,
-      layers: listenerLayers({
-        protocol: spec.protocol,
-        streamTransport: spec.streamTransport,
-        security: spec.security,
-        tlsNames: (spec.tlsNames ?? []).map((name) => ({ name, status: 'active' as const })),
-        originTransport,
-      }),
+      layers: listenerLayers(
+        {
+          protocol: spec.protocol,
+          streamTransport: spec.streamTransport,
+          security: spec.security,
+          tlsNames: (spec.tlsNames ?? []).map((name) => ({ name, status: 'active' as const })),
+          originTransport,
+        },
+        { websocketNode: opts.websocketNode },
+      ),
     };
   });
 }
@@ -157,6 +168,7 @@ export const inboundCandidates = internalAction({
     const candidates = applyOriginProbes(
       mapped.candidates,
       withVerifiedIngress(outcomes, c.enrolled),
+      { websocketNode: c.websocketNode },
     );
     return {
       node: c.node,

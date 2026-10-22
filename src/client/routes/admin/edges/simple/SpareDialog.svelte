@@ -42,6 +42,7 @@
     relayProvidersQuery,
     templatesQuery,
   } from '@client/lib/edgesApi';
+  import { frontsNode } from '@client/lib/edgeProviderMeta';
   import PickOptions from './PickOptions.svelte';
   import { overrides, pickBase } from '../lib/options';
   import { asParams, deepEqual, type Params } from '../templates/params';
@@ -80,7 +81,12 @@
     id: () => relay.id,
     poll: false,
   });
-  const picks = $derived((setQ.data?.picks ?? []).filter((p) => p.usable));
+  // A WebSocket node's load balancer (one from before) gets no new address.
+  const picks = $derived(
+    (setQ.data?.picks ?? []).filter(
+      (p) => p.usable && frontsNode(p.provider, setQ.data?.websocketNode ?? false),
+    ),
+  );
   // Options for this one address, at a named location: the node's there to start with.
   const providersQ = providersQuery();
   const templatesQ = templatesQuery();

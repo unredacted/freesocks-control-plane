@@ -343,9 +343,13 @@
   });
   // The layers that carry at least one chosen transport: a pick of a set need
   // not carry them all, so a new account of either layer can be one of them.
+  // A transport whose origin did not answer its probe would be a CDN's once it
+  // does (a WebSocket node's has no other layer).
   const neededLayers = $derived.by((): EdgeLayer[] | undefined => {
     if (required.length === 0) return undefined;
-    return (['l4', 'l7'] as const).filter((l) => required.some((i) => i.layers.includes(l)));
+    return (['l4', 'l7'] as const).filter((l) =>
+      required.some((i) => i.layers.includes(l) || (l === 'l7' && !!i.probeFailed)),
+    );
   });
   // Remnawave's "XX" (no country set) names no country.
   const nodeCountry = $derived(countryLabel(pickedNode?.countryCode));

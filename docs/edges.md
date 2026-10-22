@@ -284,7 +284,9 @@ carries the probe's reason. The setup plan asks a target that got no answer agai
 asked again), and when it never answers the plan says so: the inbound carries `probeFailed` and
 an L7 account that would carry it reads `origin_unreachable` ("Couldn't reach the origin. Try
 again", which plans again) instead of `layer_mismatch`, or `origin_not_public` when the probe
-refused the address outright (private or none: checking again gives the same answer). For an **enrolled** node the plan reads the node from its intent
+refused the address outright (private or none: checking again gives the same answer). A
+WebSocket node's transport (§ Layers) is never L4-only: without an answer it has no layer yet,
+stays the transport to protect, and every L4 account reads `l4_not_for_websocket`. For an **enrolled** node the plan reads the node from its intent
 (`nodeIntents.enrolledOriginOf`: the origin name plus the ingress), and the Host-header answer
 comes from the node's verified ingress, not the probe: the `ingress_verified` evidence recorded at
 `machine_ready` with `settings.ingress.hostHeader: 'any'` gives `acceptsHostHeader: any`
@@ -303,6 +305,25 @@ listener from the **complete** member-to-origin chain, never from the protocol n
 | Origin speaks HTTPS, HTTP transport without an authenticated proof (`l7_proof_unsupported`)                                                                                                   | yes                                  |     |
 | Origin speaks HTTPS, `reality` / raw `tls` / `none`                                                                                                                                           | yes                                  |     |
 | UDP listener                                                                                                                                                                                  | only with a provider declaring `udp` |     |
+| A **WebSocket node**'s HTTP transport (an enrolled node whose mode is fronted by CDNs only, shape `{transport: 'ws', fronting: 'edge-l7'}`), whatever its certificate covers                  | never (`l4_not_for_websocket`)       | yes |
+
+**WebSocket nodes take no load balancer** (`convex/lib/edges/websocketNode.ts`:
+`websocketNodeOf(db, origin)`, `l4BarredFor(listener, websocketNode)`; the rule is
+`listenerLayers(listener, {websocketNode})`). A WebSocket node's Caddy terminates TLS for its
+origin name, the one name its public certificate covers. Behind a load balancer a member's TLS
+would go straight to that Caddy, so the member would have to send the origin name as its server
+name: a name in public certificate logs that resolves to the node, where one block of it takes
+out every load-balancer address the node has. (An L4 pool member must also be an address, and a
+WebSocket node's origin is a name.) So an L4 account or location is not offered and not accepted
+for such a listener anywhere: the protect plan (the account and each of its locations read
+`l4_not_for_websocket`, alone), `create` and its picks (`checkPicks` / `checkPickOptions` refuse
+`edge.l4_not_for_websocket`), Protect again and adding a location (`startReprotect`, the set's
+`change` and its `available` list), switching a run's pick (`retry`), a named account, location
+or spare at a rotation start, automatic selection (no L4 account is eligible, no L4 spare is a
+standby), and publication (`checkPublishable` answers `l4_not_for_websocket`). The set's view
+says `websocketNode`, so the node page offers CDN accounts only. An L4 edge or pick such a node
+already has (none is expected) is left as it is: never destroyed, never chosen for new work,
+never published. A WebSocket node's backup at another provider is a second CDN.
 
 `hostTargetFor(edge, proto, selectedSni)` is the single source of the Host tuple the backend
 Host and the renderer share: L7 → `{ hostname, 443, sni: hostname, host: hostname }`; L4 HTTP
@@ -2512,7 +2533,11 @@ server, a node from before sets) keeps the old rule: any trusted location.
   the listener's provider or account scope names it (`carries`, `setState.ts`); a switched-off
   location or a disabled or untested account carries nothing. A listener whose carriers make
   fewer than two groups is **reduced** (`one_group`): reported in the plan, the review, the run,
-  the node's card and an info attention item `reduced_resilience`, never hidden.
+  the node's card and an info attention item `reduced_resilience`, never hidden. The item's
+  code says what fixes it: `one_group` when a load balancer can front the transport (a location
+  of another provider, its load balancer included, gives the backup), `second_cdn_needed` when
+  only a CDN can (a WebSocket node's transport, § Layers): a second CDN account, at a provider
+  other than the one in use, and a zone of it on the node.
 
 **The cover**: the fewest new (listener, pick) targets that meet the requirement given what is
 published: the listener demand left, plus every pick without an address, minus the targets
@@ -2560,7 +2585,8 @@ provisioning); otherwise the reason is reported (`single_key`, `backup_disabled`
 **Editing a set** (`POST relays/{id}/providers`, the node page's card): adding a location to a
 live enrolled node starts an `add` re-protect run (new addresses in the added location, tested,
 reviewed when the location is a new shape, rehearsed against the whole future pool, committed);
-elsewhere the set is saved and the operator adds a spare there and puts it in use. Removing one
+elsewhere the set is saved and the operator adds a spare there and puts it in use. A load
+balancer is refused for a WebSocket node (`edge.l4_not_for_websocket`, § Layers). Removing one
 is refused unless the SURVIVORS (published, active, addressed edges outside the removed pick
 whose verification is current) still serve every transport and meet the requirement the
 remaining picks make (`edge.set_would_uncover`); then its addresses drain, its spares are

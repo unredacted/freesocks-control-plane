@@ -175,6 +175,8 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'fleet_daily_cap',
   // selection on an enrolled node: nothing fits the shape it was approved for
   'outside_approved_shape',
+  // a load balancer for a WebSocket node's transport (lib/edges/websocketNode.ts)
+  'l4_not_for_websocket',
 ] as const;
 export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
 
@@ -318,6 +320,7 @@ export const LAYER_EXCLUSION_CODES = [
   'cert_not_public',
   'cert_name_uncovered',
   'no_udp_provider',
+  'l4_not_for_websocket',
 ] as const;
 export type LayerExclusionCode = (typeof LAYER_EXCLUSION_CODES)[number];
 
@@ -541,6 +544,8 @@ export const SETUP_ACCOUNT_REASONS = [
   'dns_account_missing',
   'dns_account_disabled',
   'zone_mode_unknown',
+  // A load balancer offered for a WebSocket node (lib/edges/websocketNode.ts).
+  'l4_not_for_websocket',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 

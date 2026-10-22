@@ -21,6 +21,7 @@ import { edgeMs, MAX_COVERAGE_LISTENERS, resolveEdgeConfig } from './lib/edgeCon
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { listenerLayers } from './lib/edges/layers';
+import { websocketNodeOf } from './lib/edges/websocketNode';
 import { assertAdmission } from './lib/edges/maintenance';
 import { ensurePoolCapacity } from './lib/edges/poolCapacity';
 import {
@@ -147,8 +148,14 @@ export function hostSniOf(l: Pick<Listener, 'tlsNames'>): string | null {
   return (active.find((n) => !n.blockedIn || n.blockedIn.length === 0) ?? active[0])?.name ?? null;
 }
 
-export function mapListenerAdmin(l: Listener, opts: { udpProviderAvailable?: boolean } = {}) {
-  const layers = listenerLayers(l, { udpProviderAvailable: opts.udpProviderAvailable });
+export function mapListenerAdmin(
+  l: Listener,
+  opts: { udpProviderAvailable?: boolean; websocketNode?: boolean } = {},
+) {
+  const layers = listenerLayers(l, {
+    udpProviderAvailable: opts.udpProviderAvailable,
+    websocketNode: opts.websocketNode,
+  });
   return {
     id: l._id as string,
     relayId: l.relayId as string,
@@ -206,8 +213,10 @@ export const listByRelay = internalQuery({
   args: { relayId: v.id('relays') },
   handler: async (ctx, { relayId }) => {
     const rows = await listenersOf(ctx, relayId);
+    const relay = await ctx.db.get(relayId);
+    const websocketNode = relay ? await websocketNodeOf(ctx.db, relay.origin) : false;
     return rows
-      .map((l) => mapListenerAdmin(l))
+      .map((l) => mapListenerAdmin(l, { websocketNode }))
       .sort((a, b) => a.listenerKey.localeCompare(b.listenerKey));
   },
 });

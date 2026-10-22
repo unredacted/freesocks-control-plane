@@ -10,7 +10,9 @@
    * the node's transports, and makes a new one from any account (another
    * region, or any DNS zone a CDN account reaches: `LocationPicker`); on a
    * live enrolled node adding one starts a run (new addresses, tested, reviewed
-   * when they are a new place) whose progress opens.
+   * when they are a new place) whose progress opens. A WebSocket node is
+   * offered CDN accounts only: a load balancer cannot front it (one it had
+   * from before reads "Not used").
    * "Remove" drains that location's addresses, refused while what is left
    * elsewhere would not serve every transport with a tested address.
    * "Change options" protects the node again with other provider options at
@@ -41,7 +43,8 @@
   import OptionFields from '../templates/OptionFields.svelte';
   import { asParams, type Params } from '../templates/params';
   import { optionSummary, overrides, pickBase } from '../lib/options';
-  import { EDGE_PROVIDER_META } from '@client/lib/edgeProviderMeta';
+  import { EDGE_PROVIDER_META, frontsNode } from '@client/lib/edgeProviderMeta';
+  import { codeExplain } from '@client/lib/edgeCodes';
   import LocationPicker from '../forms/LocationPicker.svelte';
   import type { ProviderSetView } from '@shared/contracts/edges';
   import AdminListState from '../../AdminListState.svelte';
@@ -75,7 +78,12 @@
   /** The account a new location is being made in (the dialog's "New location"). */
   let newIn = $state<string | null>(null);
   const providers = providersQuery();
-  const accounts = $derived((providers.data?.accounts ?? []).filter((a) => a.enabled));
+  const websocketNode = $derived(view?.websocketNode ?? false);
+  const accounts = $derived(
+    (providers.data?.accounts ?? []).filter(
+      (a) => a.enabled && frontsNode(a.provider, websocketNode),
+    ),
+  );
   const newAccount = $derived(accounts.find((a) => a.id === newIn) ?? null);
   function onNewLocation(id: string) {
     newIn = null;
@@ -167,10 +175,15 @@
                   >
                   {#if !p.qualified}<Badge variant="muted">Not trusted yet</Badge>{/if}
                   {#if !p.usable}<Badge variant="warning">Off</Badge>{/if}
+                  {#if !frontsNode(p.provider, websocketNode)}
+                    <Badge variant="muted" title={codeExplain('l4_not_for_websocket')}
+                      >Not used</Badge
+                    >
+                  {/if}
                 </p>
                 <p class="text-muted-foreground text-xs">{line?.counts}</p>
                 {#if line?.cooling}<p class="text-xs">{line.cooling}</p>{/if}
-                {#if o}
+                {#if o && frontsNode(p.provider, websocketNode)}
                   {@const said = optionSummary(o.fields, o.chosen)}
                   <p class="text-muted-foreground text-xs">
                     {said.length > 0 ? `Options: ${said.join(', ')}.` : "The location's defaults."}
@@ -227,6 +240,9 @@
       <Dialog.Description>
         The node gets addresses there too. A location at another provider gives members a backup
         elsewhere. New addresses are tested before members get them.
+        {#if websocketNode}
+          A WebSocket node takes CDN locations only: a load balancer cannot front it.
+        {/if}
       </Dialog.Description>
     </Dialog.Header>
     <fieldset class="space-y-1.5">
