@@ -275,6 +275,9 @@ export const ATTENTION_KINDS = [
   'certificate_waiting',
   // The node's newest guided setup run failed and nothing replaced it (its sheet has Try again).
   'setup_run_failed',
+  // Freedom modes only through edges: a node in a freedom mode's pool that is not behind a
+  // live edge of its layer, so its freedom members are not handed it (`FREEDOM_WITHHELD_REASONS`).
+  'freedom_node_withheld',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -312,6 +315,20 @@ export const ATTENTION_ACTIONS = [
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 
+/**
+ * Why a node in a freedom mode's pool is withheld from that mode's members while freedom
+ * modes are only served through edges (lib/edges/freedomDelivery.ts): FCP does not enroll it
+ * and no edge covers it; it is enrolled and no edge covers it; an origin covers it but has no
+ * live edge of the mode's layer; its mode is set up `direct` on its backend.
+ */
+export const FREEDOM_WITHHELD_REASONS = [
+  'withheld_unmanaged',
+  'withheld_unprotected',
+  'withheld_no_edge',
+  'withheld_direct_mode',
+] as const;
+export type FreedomWithheldReason = (typeof FREEDOM_WITHHELD_REASONS)[number];
+
 /** Why a listener cannot be fronted by a layer (lib/edges/layers.ts). */
 export const LAYER_EXCLUSION_CODES = [
   'protocol_not_http_transport',
@@ -344,6 +361,9 @@ export const DELIVERY_UNAVAILABLE_CODES = [
   'family_disabled',
   // the format's renderer could not rewrite the body for another reason
   'render_failed',
+  // a freedom-family key at a node no live edge covers, while freedom modes are only served
+  // through edges (`edge.freedom.edgesOnly`)
+  'node_unprotected',
 ] as const;
 export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number];
 

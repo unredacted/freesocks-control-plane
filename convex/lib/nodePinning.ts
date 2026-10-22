@@ -145,23 +145,36 @@ function fnv1a(s: string): number {
   return h >>> 0;
 }
 
-/** The node a pin key maps to (highest rendezvous score wins). */
 /** One node, or several (the node a key was pinned to before, plus every node whose delivery gate is closed). */
 export type ExcludeNodes = string | readonly string[] | undefined;
+
+/**
+ * The nodes that may serve this key at all (freedom modes only through edges:
+ * the nodes an edge covers, lib/edges/freedomDelivery.ts). The pick is made
+ * among them while one is in the body; otherwise among every node, and the
+ * delivery policy refuses what cannot serve.
+ */
+export type ServableNode = ((node: string) => boolean) | undefined;
 
 function excludedSet(ex: ExcludeNodes): Set<string> {
   return new Set(typeof ex === 'string' ? [ex] : (ex ?? []));
 }
 
+/** The node a pin key maps to (highest rendezvous score wins). */
 export function pickNode(
   pinKey: string,
   nodes: string[],
   excludeNode?: ExcludeNodes,
+  servable?: ServableNode,
 ): string | null {
   let pool = nodes;
+  if (servable) {
+    const usable = nodes.filter(servable);
+    if (usable.length > 0) pool = usable;
+  }
   const ex = excludedSet(excludeNode);
   if (ex.size > 0) {
-    const filtered = nodes.filter((n) => !ex.has(n));
+    const filtered = pool.filter((n) => !ex.has(n));
     // Exclusion never empties the pool (a single-node fleet still serves; a
     // gated node that is the only one is refused by the delivery policy, not here).
     if (filtered.length > 0) pool = filtered;
@@ -187,7 +200,9 @@ export interface PinResult {
  * Filter mode group-wide subscription content down to the lines of the single node
  * `pinKey` maps to. `excludeNode` (the node the key was PREVIOUSLY pinned to,
  * e.g. before a regenerate) is avoided when others exist, so a regenerated
- * key lands on a different node. Returns the (possibly re-encoded) content
+ * key lands on a different node. `servable`, when given, narrows the pick to
+ * the nodes that may serve the key while one of them is in the body (before
+ * `excludeNode` is applied). Returns the (possibly re-encoded) content
  * unchanged when there is nothing to filter (unknown format, zero nodes, or
  * a single node — which is still REPORTED as the pin) or on any parse error,
  * plus the node that was picked (null when no node could be identified).
@@ -196,6 +211,7 @@ export function pinSubscriptionToNode(
   content: string,
   pinKey: string,
   excludeNode?: ExcludeNodes,
+  servable?: ServableNode,
 ): PinResult {
   try {
     const trimmed = content.trim();
@@ -204,13 +220,13 @@ export function pinSubscriptionToNode(
     // JSON bodies: pin sing-box configs by outbound tag; anything else JSON
     // (v2ray-json, an error envelope) passes through verbatim.
     if (trimmed.startsWith('{')) {
-      return finish(content, pinSingboxConfig(trimmed, pinKey, excludeNode));
+      return finish(content, pinSingboxConfig(trimmed, pinKey, excludeNode, servable));
     }
     // HTML landing pages pass through — no pinning is defined for them.
     if (trimmed.startsWith('<')) return { content, node: null };
     // Clash / Mihomo YAML: pin by proxy name.
     if (/^proxies:/m.test(trimmed) || /^proxy-groups:/m.test(trimmed)) {
-      return finish(content, pinClashConfig(trimmed, pinKey, excludeNode));
+      return finish(content, pinClashConfig(trimmed, pinKey, excludeNode, servable));
     }
 
     // Subscription bodies are commonly base64-encoded line lists; decode when
@@ -247,7 +263,7 @@ export function pinSubscriptionToNode(
     // Exactly one node: the body IS that node's; report it, content verbatim.
     if (byNode.size === 1) return { content, node: [...byNode.keys()][0] };
 
-    const chosen = pickNode(pinKey, [...byNode.keys()], excludeNode);
+    const chosen = pickNode(pinKey, [...byNode.keys()], excludeNode, servable);
     if (!chosen) return { content, node: null };
 
     const out = [...passthrough, ...(byNode.get(chosen) ?? [])].join('\n');
@@ -371,8 +387,9 @@ function chooseAndDrop(
   byNode: Map<string, string[]>,
   pinKey: string,
   excludeNode?: ExcludeNodes,
+  servable?: ServableNode,
 ): { chosen: string; dropped: Set<string> } | null {
-  const chosen = pickNode(pinKey, [...byNode.keys()], excludeNode);
+  const chosen = pickNode(pinKey, [...byNode.keys()], excludeNode, servable);
   if (!chosen) return null;
   const dropped = new Set<string>();
   for (const [node, names] of byNode) {
@@ -393,7 +410,12 @@ function chooseAndDrop(
  * rules) after pruning. Emitting a broken config is the one unacceptable
  * outcome; the whole-fleet fallback merely weakens endpoint hygiene.
  */
-function pinSingboxConfig(trimmed: string, pinKey: string, excludeNode?: ExcludeNodes): ConfigPin {
+function pinSingboxConfig(
+  trimmed: string,
+  pinKey: string,
+  excludeNode?: ExcludeNodes,
+  servable?: ServableNode,
+): ConfigPin {
   let cfg: unknown;
   try {
     cfg = JSON.parse(trimmed);
@@ -408,7 +430,7 @@ function pinSingboxConfig(trimmed: string, pinKey: string, excludeNode?: Exclude
   if (!byNode || byNode.size === 0) return null;
   if (byNode.size === 1) return { node: [...byNode.keys()][0] };
 
-  const pick = chooseAndDrop(byNode, pinKey, excludeNode);
+  const pick = chooseAndDrop(byNode, pinKey, excludeNode, servable);
   if (!pick) return null;
   const { chosen, dropped } = pick;
 
@@ -445,7 +467,12 @@ function pinSingboxConfig(trimmed: string, pinKey: string, excludeNode?: Exclude
  * an empty group or a surviving reference. Comments are lost in the YAML round
  * trip (the backend's template comments are operator notes, not client input).
  */
-function pinClashConfig(trimmed: string, pinKey: string, excludeNode?: ExcludeNodes): ConfigPin {
+function pinClashConfig(
+  trimmed: string,
+  pinKey: string,
+  excludeNode?: ExcludeNodes,
+  servable?: ServableNode,
+): ConfigPin {
   let doc: unknown;
   try {
     doc = YAML.parse(trimmed);
@@ -460,7 +487,7 @@ function pinClashConfig(trimmed: string, pinKey: string, excludeNode?: ExcludeNo
   if (!byNode || byNode.size === 0) return null;
   if (byNode.size === 1) return { node: [...byNode.keys()][0] };
 
-  const pick = chooseAndDrop(byNode, pinKey, excludeNode);
+  const pick = chooseAndDrop(byNode, pinKey, excludeNode, servable);
   if (!pick) return null;
   const { chosen, dropped } = pick;
 

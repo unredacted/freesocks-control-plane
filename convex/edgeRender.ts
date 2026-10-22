@@ -48,6 +48,8 @@ import { deliveryBindingFor, relayForBackendNode } from './relays';
 import { listenersOf } from './relayListeners';
 import { resolveSniConfig } from './lib/sniConfig';
 import { resolveWhere } from './lib/edges/sni/country';
+import { freedomEdgesOnly, freedomHoldOf, type NodeProtection } from './lib/edges/freedomDelivery';
+import type { EdgeLayer } from '../src/shared/contracts/edges';
 
 const familyValidator = v.union(
   ...(RENDER_CLIENT_FAMILIES.map((f) => v.literal(f)) as [
@@ -297,6 +299,12 @@ export interface DeliveryPolicy {
    * under an older gate is never served under a newer one.
    */
   gate: NodeGate;
+  /**
+   * Freedom modes are only served through edges (lib/edges/freedomDelivery.ts):
+   * at a place no binding covers, a freedom-family key is answered
+   * `node_unprotected`, and the place's token says the switch is on.
+   */
+  freedomEdgesOnly: boolean;
 }
 
 /**
@@ -311,9 +319,17 @@ export async function deliveryPolicyFor(
   nodeName: string | undefined,
 ): Promise<DeliveryPolicy> {
   const gate = await nodeGateFor(ctx, backendServerId, nodeName);
+  const edgesOnly = await freedomEdgesOnly(ctx.db);
   const binding = await deliveryBindingFor(ctx.db, backendServerId, nodeName);
   if (!binding)
-    return { required: false, bindingVersion: null, relayId: null, relaySlug: null, gate };
+    return {
+      required: false,
+      bindingVersion: null,
+      relayId: null,
+      relaySlug: null,
+      gate,
+      freedomEdgesOnly: edgesOnly,
+    };
   const relay = await relayForBackendNode(ctx.db, backendServerId, nodeName);
   return {
     required: true,
@@ -321,7 +337,30 @@ export async function deliveryPolicyFor(
     relayId: relay?._id ?? null,
     relaySlug: binding.relaySlug,
     gate,
+    freedomEdgesOnly: edgesOnly,
   };
+}
+
+/**
+ * What covers a node for freedom delivery (lib/edges/freedomDelivery.ts): the
+ * binding the delivery policy reads at its place, and the layers of the live
+ * edges the origin it renders through hands out members right now (none while
+ * the origin is missing or off, or rendering is off).
+ */
+export async function protectionAt(
+  ctx: { db: QueryCtx['db'] },
+  backendServerId: Id<'backendServers'>,
+  nodeName: string | undefined,
+): Promise<NodeProtection> {
+  const binding = await deliveryBindingFor(ctx.db, backendServerId, nodeName);
+  const layers = new Set<EdgeLayer>();
+  if (!binding) return { bound: false, layers };
+  const relay = await relayForBackendNode(ctx.db, backendServerId, nodeName);
+  if (relay && relay.enabled && (await renderEnabled(ctx))) {
+    const { published } = await publishedEdgesOf(ctx, relay, { kind: 'member' });
+    for (const p of published) layers.add(p.layer ?? 'l4');
+  }
+  return { bound: true, layers };
 }
 
 export const deliveryPolicy = internalQuery({
@@ -334,17 +373,29 @@ export const deliveryPolicy = internalQuery({
  * Cache token for a subscription's place: `<policyVersion>[:g<gate>]:<epoch>`
  * while the place is edge-required (the epoch is the origin's, or -1 when the
  * binding has no live origin or rendering is off), `g<gate>` for an unbound
- * place with a managed node, null for a place with neither (raw delivery).
+ * place with a managed node or a closed gate, followed by `:f` (or `f` alone)
+ * while freedom modes are only served through edges, null for an unbound place
+ * with none of these (raw delivery).
  */
 async function epochTokenFor(
   ctx: { db: QueryCtx['db'] },
   policy: DeliveryPolicy,
 ): Promise<{ token: string | null; relay: Doc<'relays'> | null }> {
   // A place with a managed node carries the gate in its token even under raw
-  // delivery, so a gate change re-keys the cache; a place with none keeps the
-  // null token (no origin, no gate: nothing to re-key on).
-  const gate = policy.gate.disposition !== null ? `g${gateToken(policy.gate)}` : null;
-  if (!policy.required) return { token: gate, relay: null };
+  // delivery, so a gate change re-keys the cache; so does an unmanaged node an
+  // open maintenance hold closes (a body cached before the hold must not be
+  // served from the cache while it holds). A place with neither keeps the null
+  // token (no origin, no gate: nothing to re-key on).
+  const gate =
+    policy.gate.disposition !== null || policy.gate.state === 'blocked'
+      ? `g${gateToken(policy.gate)}`
+      : null;
+  if (!policy.required) {
+    // Freedom modes only through edges: a freedom-family key is answered
+    // nothing here, so a body cached before the switch moved never answers it.
+    const parts = [...(gate ? [gate] : []), ...(policy.freedomEdgesOnly ? ['f'] : [])];
+    return { token: parts.length > 0 ? parts.join(':') : null, relay: null };
+  }
   const relay = policy.relayId ? await ctx.db.get(policy.relayId) : null;
   const renderOn = await renderEnabled(ctx);
   return {
@@ -428,7 +479,8 @@ export type SubscriptionRenderDecision =
         | 'no_render_key'
         | 'node_gated'
         | 'policy_moved'
-        | 'family_disabled';
+        | 'family_disabled'
+        | 'node_unprotected';
       relaySlug: string | null;
     };
 
@@ -454,7 +506,13 @@ export const decideForSubscription = internalQuery({
     // resolved to a node that is not live reaches no member.
     if (policy.gate.state === 'blocked')
       return { kind: 'unavailable', reason: 'node_gated', relaySlug: policy.relaySlug };
-    if (!policy.required) return { kind: 'raw' };
+    if (!policy.required) {
+      // Freedom modes only through edges: a freedom-family key is never handed
+      // a node no binding covers (its own address), whatever the body says.
+      if (policy.freedomEdgesOnly && (await freedomHoldOf(ctx.db, sub, node)))
+        return { kind: 'unavailable', reason: 'node_unprotected', relaySlug: null };
+      return { kind: 'raw' };
+    }
     const relay = policy.relayId ? await ctx.db.get(policy.relayId) : null;
     if (!relay)
       return { kind: 'unavailable', reason: 'relay_missing', relaySlug: policy.relaySlug };
