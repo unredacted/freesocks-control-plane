@@ -4,7 +4,7 @@
  * Exports:
  *   TestItem, runTestItems(run)      the test card's lines from a run's `testLinks`
  *   runTestLines(run)                every line of the card, the ones already ticked included
- *   needButtons(code)                the one button (and at most one secondary) of an interruption
+ *   needButtons(code)                the one button (at most one secondary, and a quiet third) of an interruption
  *   automationOn(config)             the four switches `POST automation` sets, read back as one
  *   automationState(config), automationNote(state)   what those switches mean apart
  *   nodeAutomationWords(config, node)  the node page's automatic-replacement card
@@ -119,6 +119,7 @@ export function runTestLines(
 export type NeedAction =
   | 'retry'
   | 'retry_another_address'
+  | 'check_again'
   | 'accept_partial'
   | 'choose_account'
   | 'test_account'
@@ -138,13 +139,18 @@ export interface NeedButton {
 export interface NeedButtons {
   primary: NeedButton;
   secondary?: NeedButton;
+  /** A quiet third choice (a link under the buttons): only where the card has three ways on. */
+  more?: NeedButton;
   /** A sentence instead of a second button. */
   hint?: string;
 }
 
 const B = (label: string, action: NeedAction): NeedButton => ({ label, action });
 
-/** One card, one sentence, one button, at most one secondary (plan 1.3). */
+/**
+ * One card, one sentence, one button, at most one secondary (plan 1.3). The
+ * two cards the outside check stops on also offer the check again, quietly.
+ */
 export function needButtons(code: string): NeedButtons {
   switch (code) {
     case 'account_untested':
@@ -167,9 +173,12 @@ export function needButtons(code: string): NeedButtons {
         secondary: B('Choose another account', 'choose_account'),
       };
     case 'address_unreachable':
+      // A new load balancer can take a while to answer: the same address,
+      // checked afresh, before a new one is bought.
       return {
-        primary: B('Try another address', 'retry_another_address'),
-        secondary: B('Go live anyway', 'accept_partial'),
+        primary: B('Check again', 'check_again'),
+        secondary: B('Try another address', 'retry_another_address'),
+        more: B('Go live anyway', 'accept_partial'),
       };
     case 'blocked_in':
       // Its first check found the address blocked in a censored country while
@@ -177,6 +186,7 @@ export function needButtons(code: string): NeedButtons {
       return {
         primary: B('Try another address', 'retry_another_address'),
         secondary: B('Use it anyway', 'accept_partial'),
+        more: B('Check again', 'check_again'),
         hint: 'A new address may land in a range that country does not block.',
       };
     case 'try_it':

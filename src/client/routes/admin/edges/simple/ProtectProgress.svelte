@@ -4,6 +4,11 @@
    * from the latest event, and the interruption card (one sentence, one button,
    * at most one secondary) when the run needs you. Polls the run every 3 s.
    *
+   * The two cards the outside check stops on (`address_unreachable`,
+   * `blocked_in`) also offer a quiet third way on: "Check again" (`retry
+   * {checkAgain}`) checks the same address afresh and the run carries on if it
+   * now passes; "Go live anyway" where checking again is the first choice.
+   *
    * An enrolled node's run parks at publish (`node_not_approved`) until its
    * go-live is approved: the card then holds the node's approval card
    * (NodeApprovalCard, the same one the Servers node page shows), and the run
@@ -210,6 +215,8 @@
         return retry();
       case 'retry_another_address':
         return retry({ tryAnotherAddress: true });
+      case 'check_again':
+        return retry({ checkAgain: true });
       case 'accept_partial':
         return retry({ acceptPartial: true });
       case 'choose_account':
@@ -599,6 +606,17 @@
               onclick={() => perform(buttons.secondary!.action)}
             >
               {buttons.secondary.label}
+            </Button>
+          {/if}
+          {#if buttons.more}
+            <Button
+              size="sm"
+              variant="link"
+              class="h-11 px-1 sm:h-7"
+              disabled={act.isPending}
+              onclick={() => perform(buttons.more!.action)}
+            >
+              {buttons.more.label}
             </Button>
           {/if}
         </div>

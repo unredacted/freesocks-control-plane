@@ -123,6 +123,10 @@ async function seed(
     failCreateAt?: number;
     /** Lands a per-country round with the verification probes (the nth request, from 1). */
     countryRound?: (t: T, edgeId: Id<'edges'>, nth: number) => Promise<void>;
+    /** What the nth verification round finds (default: the address is partial). */
+    evidence?: (nth: number) => 'partial' | 'unreachable';
+    /** What saving an address again answers (default: its provider has nothing to save). */
+    reapply?: StageOps['reapplyEdge'];
   } = {},
 ) {
   vi.useFakeTimers();
@@ -152,6 +156,7 @@ async function seed(
     hide: [] as Array<{ approvedUuids: string[] }>,
     restore: [] as string[],
     probes: [] as string[],
+    reapplied: [] as string[],
   };
   let hideResult: Partial<Awaited<ReturnType<StageOps['hideHosts']>>> = {};
   let hideStatus: Partial<Awaited<ReturnType<StageOps['hideStatus']>>> = {};
@@ -161,8 +166,16 @@ async function seed(
     ensureCredential: async () => ({ ok: true, reused: false }),
     requestVerificationProbes: async (_ctx, edgeId) => {
       calls.probes.push(edgeId as string);
-      await landPartialEvidence(t, edgeId);
+      if ((opts.evidence?.(calls.probes.length) ?? 'partial') === 'partial')
+        await landPartialEvidence(t, edgeId);
+      else await landUnreachableEvidence(t, edgeId);
       if (opts.countryRound) await opts.countryRound(t, edgeId, calls.probes.length);
+    },
+    reapplyEdge: async (ctx, edgeId) => {
+      calls.reapplied.push(edgeId as string);
+      return opts.reapply
+        ? opts.reapply(ctx, edgeId)
+        : { status: 'skipped' as const, code: 'not_offered' as const };
     },
     runFrontProof: async () => ({ ok: false, code: 'unsupported_protocol' }),
     buildTestLink: async (ctx, edgeId) => {
@@ -283,6 +296,51 @@ async function landPartialEvidence(t: T, edgeId: Id<'edges'>) {
       requestedAt: now,
       finishedAt: now,
       results: [{ country: 'XX', vantageClass: 'datacenter', ok: true }],
+    });
+  });
+}
+
+/**
+ * The probe round "lands" on a dead address (a load balancer resetting every
+ * connection): both outside vantages unreachable, the internal shape run fails.
+ */
+async function landUnreachableEvidence(t: T, edgeId: Id<'edges'>) {
+  await t.run(async (ctx) => {
+    const edge = (await ctx.db.get(edgeId))!;
+    const listener = (await ctx.db.get(edge.listenerId))!;
+    const now = Date.now();
+    for (const country of ['DE', 'FR']) {
+      await ctx.db.insert('probeReachability', {
+        targetKind: 'edge',
+        targetRef: edgeId as string,
+        country,
+        source: 'globalping',
+        ipVersion: 4,
+        addressKind: 'ip',
+        probeProtocol: 'tcp',
+        port: listener.originPort,
+        okCount: 0,
+        failCount: 1,
+        lastFailAt: now,
+        verdict: 'unreachable',
+        updatedAt: now,
+      });
+    }
+    await ctx.db.insert('probeRuns', {
+      targetKind: 'edge',
+      targetRef: edgeId as string,
+      source: 'internal',
+      target: `${edge.addresses.v4}:${listener.originPort}`,
+      port: listener.originPort,
+      ipVersion: 4,
+      addressKind: 'ip',
+      probeProtocol: listener.security === 'none' ? 'tcp' : 'tls-sni',
+      requestedFamily: 4,
+      status: 'finished',
+      trigger: 'qualification',
+      requestedAt: now,
+      finishedAt: now,
+      results: [{ country: 'XX', vantageClass: 'datacenter', ok: false }],
     });
   });
 }
@@ -726,6 +784,107 @@ describe('edgeSetupRuns: per-country checks before use', () => {
     const { runId } = await startRun(t, serverId, accountId);
     const r = await pump(t, runId, settled);
     expect(r.need?.code).toBe('try_it');
+  });
+});
+
+describe('edgeSetupRuns: an address the outside check finds unreachable', () => {
+  const sent: StageOps['reapplyEdge'] = async () => ({ status: 'sent', settled: true });
+
+  test('it is saved again at its provider once, checked afresh, and the run goes on when it now passes', async () => {
+    const { t, world, serverId, accountId, calls } = await seed({
+      evidence: (nth) => (nth === 1 ? 'unreachable' : 'partial'),
+      reapply: sent,
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    const edgeId = r.listeners[0]!.edgeId!;
+    // Once, for this address, then a second round that counted only its own evidence.
+    expect(calls.reapplied).toEqual([edgeId]);
+    expect(calls.probes).toEqual([edgeId, edgeId]);
+    expect(r.listeners[0]).toMatchObject({ verify: 'partial', reappliedEdgeId: edgeId });
+    expect(r.events.find((e) => e.code === 'reapplied')).toMatchObject({
+      level: 'info',
+      detail: r.listeners[0]!.listenerKey,
+    });
+    // The same address: nothing new was bought.
+    expect(world.lbCreates()).toBe(1);
+  });
+
+  test('still unreachable after it: the card asks, and Check again checks the same address afresh', async () => {
+    const { t, world, serverId, accountId, calls } = await seed({
+      evidence: (nth) => (nth <= 2 ? 'unreachable' : 'partial'),
+      reapply: sent,
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.need).toMatchObject({ code: 'address_unreachable' });
+    const edgeId = r.listeners[0]!.edgeId!;
+    expect(r.listeners[0]!.verify).toBe('unreachable');
+    expect(calls.probes).toHaveLength(2);
+    // A run of the earlier check still in flight: the fresh check waits for it,
+    // so a verdict it brings in late is never counted as fresh.
+    const inflight = await t.run((ctx) =>
+      ctx.db.insert('probeRuns', {
+        targetKind: 'edge',
+        targetRef: edgeId as string,
+        source: 'globalping',
+        target: '198.51.100.9:443',
+        status: 'running',
+        trigger: 'qualification',
+        requestedAt: Date.now(),
+        results: [],
+      }),
+    );
+    await t.mutation(internal.edgeSetupRuns.retry, { runId, checkAgain: true });
+    r = await pumpFine(t, runId, (x) => x.state === 'waiting');
+    for (let i = 0; i < 5; i++) {
+      await vi.runOnlyPendingTimersAsync();
+      await t.finishInProgressScheduledFunctions();
+    }
+    expect(calls.probes).toHaveLength(2);
+    await t.run((ctx) => ctx.db.patch(inflight, { status: 'finished', finishedAt: Date.now() }));
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.listeners[0]).toMatchObject({ edgeId, verify: 'partial' });
+    expect(calls.probes).toHaveLength(3);
+    // The address is saved again once only, and no other one was bought.
+    expect(calls.reapplied).toEqual([edgeId]);
+    expect(world.lbCreates()).toBe(1);
+  });
+
+  test('a provider with nothing to save again asks at once; Check again that fails asks again', async () => {
+    const { t, serverId, accountId, calls } = await seed({ evidence: () => 'unreachable' });
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('address_unreachable');
+    expect(calls.reapplied).toHaveLength(1);
+    expect(calls.probes).toHaveLength(1);
+    expect(r.events.some((e) => e.code === 'reapplied')).toBe(false);
+    await t.mutation(internal.edgeSetupRuns.retry, { runId, checkAgain: true });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('address_unreachable');
+    expect(calls.probes).toHaveLength(2);
+    expect(calls.reapplied).toHaveLength(1);
+  });
+
+  test('busy, or the call failed: still one fresh check; Check again answers only the check cards', async () => {
+    const { t, serverId, accountId, calls } = await seed({
+      evidence: (nth) => (nth === 1 ? 'unreachable' : 'partial'),
+      reapply: async () => {
+        throw new ConvexError({ code: 'ScalewayError', message: 'unknown outcome' });
+      },
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.events.find((e) => e.code === 'reapplied')?.detail).toBe(
+      `${r.listeners[0]!.listenerKey}: ScalewayError`,
+    );
+    expect(calls.probes).toHaveLength(2);
+    await expect(
+      t.mutation(internal.edgeSetupRuns.retry, { runId, checkAgain: true }),
+    ).rejects.toThrow(/Check again/);
   });
 });
 

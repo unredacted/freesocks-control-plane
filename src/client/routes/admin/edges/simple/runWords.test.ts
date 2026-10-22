@@ -21,7 +21,12 @@ describe('needButtons', () => {
     for (const code of SETUP_RUN_NEEDS) {
       const b = needButtons(code);
       expect(b.primary.label.trim()).toBeTruthy();
-      for (const s of [b.primary.label, b.secondary?.label ?? '', b.hint ?? '']) {
+      for (const s of [
+        b.primary.label,
+        b.secondary?.label ?? '',
+        b.more?.label ?? '',
+        b.hint ?? '',
+      ]) {
         expect(s).not.toContain('—');
         expect(s).not.toContain('/api/');
       }
@@ -30,7 +35,20 @@ describe('needButtons', () => {
       primary: { action: 'continue' },
       secondary: { action: 'retry_another_address' },
     });
-    expect(needButtons('address_unreachable').secondary?.action).toBe('accept_partial');
+    // The outside check's two cards also check the same address afresh.
+    expect(needButtons('address_unreachable')).toMatchObject({
+      primary: { label: 'Check again', action: 'check_again' },
+      secondary: { action: 'retry_another_address' },
+      more: { label: 'Go live anyway', action: 'accept_partial' },
+    });
+    expect(needButtons('blocked_in')).toMatchObject({
+      primary: { action: 'retry_another_address' },
+      more: { label: 'Check again', action: 'check_again' },
+    });
+    // Every other card keeps one button and at most one secondary.
+    for (const code of SETUP_RUN_NEEDS)
+      if (code !== 'address_unreachable' && code !== 'blocked_in')
+        expect(needButtons(code).more).toBeUndefined();
     expect(needButtons('hide_failed').hint).toMatch(/backend yourself/);
     expect(needButtons('whatever').primary.action).toBe('retry');
     // Approving go-live is the one way on: no retry that would only park the run again.

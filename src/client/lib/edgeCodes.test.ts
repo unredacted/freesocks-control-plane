@@ -22,6 +22,10 @@ import {
 import {
   ATTENTION_ACTION_LABELS,
   EDGE_CODE_COPY,
+  EDGE_HEALTH_LABELS,
+  OUTSIDE_REACH_LABELS,
+  outsideReachOf,
+  outsideReachTone,
   EDGE_REFUSAL_COPY,
   EDGE_STATUS_LABELS,
   INBOUND_UNSUPPORTED_COPY,
@@ -352,6 +356,28 @@ describe('phase, status and step maps', () => {
     for (const id of SETUP_STEP_IDS) expect(SETUP_STEP_TITLES[id]).toBeTruthy();
     for (const s of SETUP_STEP_STATUSES) expect(SETUP_STATUS_LABELS[s]).toBeTruthy();
     for (const a of ATTENTION_ACTIONS) expect(ATTENTION_ACTION_LABELS[a]).toBeTruthy();
+  });
+
+  test("health is the provider's own check; reachability from outside has words of its own", () => {
+    // A load balancer whose backend check passes can still reset every connection.
+    for (const label of Object.values(EDGE_HEALTH_LABELS)) {
+      expect(label).toMatch(/provider/i);
+      expect(label).not.toMatch(/online/i);
+      expect(label).not.toContain(EM_DASH);
+    }
+    for (const label of Object.values(OUTSIDE_REACH_LABELS)) expect(label).not.toContain(EM_DASH);
+    const at = (...verdicts: string[]) => ({
+      byCountry: verdicts.map((verdict, i) => ({ country: `C${i}`, verdict })),
+    });
+    expect(outsideReachOf(null)).toBe('unchecked');
+    expect(outsideReachOf(at())).toBe('unchecked');
+    expect(outsideReachOf(at('unknown'))).toBe('unchecked');
+    expect(outsideReachOf(at('reachable', 'reachable', 'unknown'))).toBe('reachable');
+    expect(outsideReachOf(at('unreachable', 'unreachable'))).toBe('unreachable');
+    expect(outsideReachOf(at('reachable', 'unreachable'))).toBe('partly');
+    expect(outsideReachOf(at('mixed'))).toBe('partly');
+    expect(outsideReachTone('unreachable')).toBe('danger');
+    expect(outsideReachTone('unchecked')).toBe('muted');
   });
 
   test('audit actions map to words with a fallback', () => {

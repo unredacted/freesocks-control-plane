@@ -101,6 +101,7 @@ import { SETUP_RUN_STAGES, type SetupRunStage } from '../src/shared/contracts/ed
 import type { HideResult, HideStatus } from './edgeHostHides';
 import type { RehearsalResult } from './edgeRehearsal';
 import type { TestLinkResult } from './edgeTestLinks';
+import type { ReapplyOutcome } from './lib/edges/providers/types';
 import {
   activatingRunFor,
   activationVectorFor,
@@ -234,6 +235,8 @@ const runListenerV = v.object({
   published: v.boolean(),
   probeRequestedAt: v.optional(v.number()),
   proofRequestedAt: v.optional(v.number()),
+  recheckSince: v.optional(v.number()),
+  reappliedEdgeId: v.optional(v.id('edges')),
 });
 const testLinkV = v.object({
   edgeId: v.id('edges'),
@@ -281,6 +284,8 @@ const eventV = v.object({
 // --- the seam to the other subsystems --------------------------------------------------------------
 
 type QueryRunner = { runQuery: ActionCtx['runQuery'] };
+/** What saving an address again did; `not_offered` when its provider has nothing to save again. */
+export type ReapplyResult = ReapplyOutcome | { status: 'skipped'; code: 'not_offered' };
 
 export interface StageOps {
   ensureCredential(
@@ -288,6 +293,8 @@ export interface StageOps {
     a: { relayId: Id<'relays'>; purpose: 'qualification' | 'rehearsal' },
   ): Promise<{ ok: boolean; code?: string; reused: boolean }>;
   requestVerificationProbes(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<void>;
+  /** Save an address's configuration again, unchanged (edgeProviderOps.reapply). */
+  reapplyEdge(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<ReapplyResult>;
   runFrontProof(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<{ ok: boolean; code: string | null }>;
   buildTestLink(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<TestLinkResult>;
   hideHosts(
@@ -322,6 +329,15 @@ const defaultOps: StageOps = {
     await ctx.runMutation(internal.probes.requestProbes, {
       target: { kind: 'edge', ref: edgeId as string },
       trigger: 'qualification',
+    });
+  },
+  reapplyEdge: async (ctx, edgeId) => {
+    const edge = await ctx.runQuery(internal.edges.get, { id: edgeId });
+    if (!edge?.accountId || !edge.managed) return { status: 'skipped', code: 'not_offered' };
+    return ctx.runAction(internal.edgeProviderOps.reapply, {
+      accountId: edge.accountId,
+      edgeId,
+      ledger: { steps: edge.steps, resources: edge.resources },
     });
   },
   runFrontProof: (ctx, edgeId) => ctx.runAction(internal.frontQualifyOps.run, { edgeId }),
@@ -698,8 +714,12 @@ export const localVector = internalQuery({
  * shape run. `verified` is never produced here.
  */
 export const rungFor = internalQuery({
-  args: { edgeId: v.id('edges') },
-  handler: async (ctx, { edgeId }) => {
+  args: {
+    edgeId: v.id('edges'),
+    /** A fresh check ("Check again", a re-apply): only evidence from this time on counts. */
+    since: v.optional(v.number()),
+  },
+  handler: async (ctx, { edgeId, since }) => {
     const edge = await ctx.db.get(edgeId);
     if (!edge) return 'unreachable' as const;
     const listener = await ctx.db.get(edge.listenerId);
@@ -718,21 +738,40 @@ export const rungFor = internalQuery({
         edge.health,
         cfg.requireProviderHealth,
       ),
-      reachability: reach.map((r) => ({
-        country: r.country,
-        source: r.source,
-        verdict: r.verdict,
-        port: r.port,
-      })),
-      probeRuns: runs.map((r) => ({
-        source: r.source,
-        status: r.status,
-        probeProtocol: r.probeProtocol,
-        results: r.results,
-        requestedAt: r.requestedAt,
-      })),
+      reachability: reach
+        .filter((r) => since === undefined || r.updatedAt >= since)
+        .map((r) => ({
+          country: r.country,
+          source: r.source,
+          verdict: r.verdict,
+          port: r.port,
+        })),
+      probeRuns: runs
+        .filter((r) => since === undefined || (r.requestedAt ?? 0) >= since)
+        .map((r) => ({
+          source: r.source,
+          status: r.status,
+          probeProtocol: r.probeProtocol,
+          results: r.results,
+          requestedAt: r.requestedAt,
+        })),
       agreementVantages: cfg.probe.agreementVantages,
     });
+  },
+});
+
+/** Whether a probe run of the address is still requested or running (its newest 50). */
+export const probesInFlight = internalQuery({
+  args: { edgeId: v.id('edges') },
+  handler: async (ctx, { edgeId }) => {
+    const recent = await ctx.db
+      .query('probeRuns')
+      .withIndex('by_target_requested', (q) =>
+        q.eq('targetKind', 'edge').eq('targetRef', edgeId as string),
+      )
+      .order('desc')
+      .take(50);
+    return recent.some((r) => r.status === 'requested' || r.status === 'running');
   },
 });
 
@@ -2036,6 +2075,16 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
         },
       );
     }
+    // A fresh check ("Check again", a re-apply) starts once the earlier
+    // check's runs have all landed: a verdict one of them brought in after
+    // `recheckSince` would count as fresh. It counts from its own request.
+    if (l.recheckSince !== undefined && !l.probeRequestedAt) {
+      if (await ctx.runQuery(internal.edgeSetupRuns.probesInFlight, { edgeId: l.edgeId })) {
+        waiting = waiting ?? l.listenerKey;
+        continue;
+      }
+      l.recheckSince = now;
+    }
     // Per-country checks (edgeCountry.ts): this stage asks for the address's
     // round from every checked country ITSELF, before the rung is looked at:
     // evidence already on record (a reused spare, background probes) may make
@@ -2067,12 +2116,27 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
         });
       }
     }
-    const rung = await ctx.runQuery(internal.edgeSetupRuns.rungFor, { edgeId: l.edgeId });
+    const rung = await ctx.runQuery(internal.edgeSetupRuns.rungFor, {
+      edgeId: l.edgeId,
+      ...(l.recheckSince !== undefined ? { since: l.recheckSince } : {}),
+    });
     if (rung === 'partial') {
       l.verify = 'partial';
       continue;
     }
     if (rung === 'unreachable') {
+      // Once per address, before the run asks: its configuration saved again
+      // (a provider can accept a change and never apply it), then a fresh check.
+      if (l.reappliedEdgeId !== l.edgeId) {
+        const event = await reapplyOnce(ctx, l, now);
+        if (event)
+          return tr(ctx, run, {
+            state: 'waiting',
+            event,
+            listeners,
+            scheduleMs: EDGE_PLUMBING.pollMs,
+          });
+      }
       l.verify = 'unreachable';
       return needsYou(ctx, run, 'address_unreachable', l.listenerKey, { listeners });
     }
@@ -2087,6 +2151,42 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
   }
   if (waiting) return waitPoll(ctx, run, c.cfg, `probes ${waiting}`, { listeners });
   return advance(ctx, run, { listeners });
+}
+
+/**
+ * The one retry an unreachable new address gets before stage 4 asks
+ * (`EdgeProvider.reapply`): its configuration saved again, unchanged, then a
+ * fresh outside check that counts only evidence from now on. Marks the entry
+ * (`reappliedEdgeId`) whatever happens, so it is never tried twice. Returns the
+ * run event to log, or null when nothing could change and the run asks now
+ * (no such step at the provider, nothing to save, a load balancer that will
+ * not apply anything).
+ */
+async function reapplyOnce(
+  ctx: ActionCtx,
+  l: RunListener,
+  now: number,
+): Promise<{ level: 'info'; code: 'reapplied'; detail: string } | null> {
+  if (!l.edgeId) return null;
+  l.reappliedEdgeId = l.edgeId;
+  let note: string;
+  try {
+    const res = await ops.reapplyEdge(ctx, l.edgeId);
+    // Still applying an earlier change: nothing was sent, but a fresh check is
+    // worth its once as much as after a save.
+    if (res.status === 'skipped' && res.code !== 'lb_busy') return null;
+    note = res.status === 'sent' ? (res.settled ? '' : 'still applying') : res.code;
+  } catch (err) {
+    // Whether it went out is unknown: the fresh check tells.
+    note = errCode(err).code;
+  }
+  l.probeRequestedAt = undefined;
+  l.recheckSince = now;
+  return {
+    level: 'info',
+    code: 'reapplied',
+    detail: note ? `${l.listenerKey}: ${note}` : l.listenerKey,
+  };
 }
 
 // --- stage 4b: try it -----------------------------------------------------------------------------------
@@ -2854,6 +2954,8 @@ export const wakeForApproval = internalMutation({
  * secondary buttons: `tryAnotherAddress` destroys the unreachable standby and
  * re-provisions that listener only (at `try_it`, `edgeId` names the one line
  * that does not work; without it every unconfirmed line is replaced);
+ * `checkAgain` checks the same unreachable address afresh (only evidence from
+ * now on counts) and goes on if it now passes;
  * `acceptPartial` goes on with the rung as it is; `accountId` names another
  * compatible account and `locationId` another location (of it, or of the
  * run's account): the run's pick.
@@ -2863,6 +2965,7 @@ export const retry = internalMutation({
     runId: v.id('edgeSetupRuns'),
     tryAnotherAddress: v.optional(v.boolean()),
     edgeId: v.optional(v.id('edges')),
+    checkAgain: v.optional(v.boolean()),
     acceptPartial: v.optional(v.boolean()),
     accountId: v.optional(v.id('edgeProviderAccounts')),
     locationId: v.optional(v.id('edgeLocations')),
@@ -3040,6 +3143,11 @@ export const retry = internalMutation({
       });
     if (a.edgeId && !listeners.some((l) => l.layer === 'l4' && l.edgeId === a.edgeId))
       throw new ConvexError({ code: 'validation', message: 'Not an address this run is testing' });
+    if (a.checkAgain && !(unreachableNeed(r.need?.code) && failed))
+      throw new ConvexError({
+        code: 'validation',
+        message: 'Check again answers an address the outside check stopped on',
+      });
     if (a.tryAnotherAddress && r.need?.code === 'try_it') {
       // "Doesn't work": the named line's candidate (or, without a name, every
       // L4 candidate the operator has NOT confirmed) is destroyed and
@@ -3062,6 +3170,7 @@ export const retry = internalMutation({
         entry.verify = 'pending';
         entry.probeRequestedAt = undefined;
         entry.proofRequestedAt = undefined;
+        entry.recheckSince = undefined;
       }
       stage = 'provision';
     } else if (a.tryAnotherAddress && unreachableNeed(r.need?.code) && failed) {
@@ -3074,8 +3183,17 @@ export const retry = internalMutation({
         entry.verify = 'pending';
         entry.probeRequestedAt = undefined;
         entry.proofRequestedAt = undefined;
+        entry.recheckSince = undefined;
       }
       stage = 'provision';
+    } else if (a.checkAgain && failed) {
+      // The same address, a fresh outside check: an L4 address counts only
+      // evidence from now on (stage 4 waits for the earlier runs to land
+      // first), an L7 front runs its proof again.
+      failed.verify = 'pending';
+      failed.probeRequestedAt = undefined;
+      failed.proofRequestedAt = undefined;
+      failed.recheckSince = now;
     } else if (a.acceptPartial && unreachableNeed(r.need?.code) && failed) {
       failed.verify = 'partial';
     } else if (r.stage === 'verify') {
