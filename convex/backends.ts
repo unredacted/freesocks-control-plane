@@ -9,12 +9,14 @@
  *
  *  - issueUser dispatches on the tier's backend TYPE, picks an active instance of
  *    that type, and returns the chosen `backendServerId` (persisted on the sub).
- *  - get/update/reset/delete resolve the instance from the subscription row by
- *    `backendUserId`; the passed `backend` is vestigial (the resolved instance is
- *    authoritative) and kept only to avoid churning call sites.
- *  - delete + fetchContent also accept a `backendServerId` hint for the points in
- *    the saga where the subscription row does not exist yet (issuance compensation
- *    + the S3 mirror fetch).
+ *  - get/update/reset/status/delete resolve the instance from the subscription
+ *    row by `backendUserId`; the passed `backend` is vestigial (the resolved
+ *    instance is authoritative) and kept only to avoid churning call sites.
+ *  - every per-user op also accepts a `backendServerId` hint for a key with no
+ *    subscription row (issuance compensation, the origin's qualification
+ *    account, a temporary test key); fetchContent takes the instance outright.
+ *    A key nothing resolves is refused (`backend.key_unresolved`): a read never
+ *    invents a state for it and a write never reports a change it did not make.
  *
  *  - `backendUserId` crosses this layer in two forms: the STORED form (what the
  *    subscription row, audit payloads and every caller hold — globally unique)
@@ -86,9 +88,29 @@ const updatePatch = v.object({
   status: v.optional(v.union(v.literal('active'), v.literal('disabled'))),
 });
 
-/** The instance hosting an existing key (resolved from its subscription row). */
-async function resolveInstanceByKey(ctx: ActionCtx, backendUserId: string) {
-  return ctx.runQuery(internal.backendServers.resolveKeyServer, { backendUserId });
+/** Names the instance of a key that has no subscription row (see resolveKeyServer). */
+const serverHint = v.optional(v.id('backendServers'));
+
+/**
+ * The instance hosting an existing key (backendServers.resolveKeyServer).
+ * Throws `backend.key_unresolved` when nothing names one; the message carries
+ * no identifier.
+ */
+async function resolveInstanceByKey(
+  ctx: ActionCtx,
+  backendUserId: string,
+  backendServerId?: Id<'backendServers'>,
+): Promise<Doc<'backendServers'>> {
+  const server = await ctx.runQuery(internal.backendServers.resolveKeyServer, {
+    backendUserId,
+    ...(backendServerId ? { backendServerId } : {}),
+  });
+  if (!server)
+    throw new ConvexError({
+      code: 'backend.key_unresolved',
+      message: 'No backend instance is known for this key',
+    });
+  return server;
 }
 
 export const issueUser = internalAction({
@@ -171,22 +193,17 @@ export const issueUser = internalAction({
   },
 });
 
+/**
+ * A key's live state. An unresolvable key throws `backend.key_unresolved`
+ * instead of answering a made-up "active, nothing used": every caller reads in
+ * a try and keeps its own tolerance (the member's /account serves its
+ * degraded `unknown` state, the admin view shows no live state).
+ */
 export const getUser = internalAction({
-  args: { backend: backendId, backendUserId: v.string() },
-  handler: async (ctx, { backendUserId }): Promise<UserState> => {
+  args: { backend: backendId, backendUserId: v.string(), backendServerId: serverHint },
+  handler: async (ctx, { backendUserId, backendServerId }): Promise<UserState> => {
     if (mockBackendEnabled()) return mockGetUser();
-    const server = await resolveInstanceByKey(ctx, backendUserId);
-    if (!server) {
-      // READ-path tolerance: an unresolved key (e.g. row mid-write) shouldn't
-      // crash /account; return a sentinel "active/unknown" state.
-      return {
-        trafficLimitBytes: null,
-        usedTrafficBytes: 0,
-        expireAt: null,
-        status: 'active',
-        devices: [],
-      };
-    }
+    const server = await resolveInstanceByKey(ctx, backendUserId, backendServerId);
     return PROVIDERS[server.backend].get(
       server.config as BackendConfig,
       toProviderUserId(backendUserId),
@@ -195,11 +212,15 @@ export const getUser = internalAction({
 });
 
 export const updateUser = internalAction({
-  args: { backend: backendId, backendUserId: v.string(), patch: updatePatch },
-  handler: async (ctx, { backendUserId, patch }) => {
+  args: {
+    backend: backendId,
+    backendUserId: v.string(),
+    patch: updatePatch,
+    backendServerId: serverHint,
+  },
+  handler: async (ctx, { backendUserId, patch, backendServerId }) => {
     if (mockBackendEnabled()) return null;
-    const server = await resolveInstanceByKey(ctx, backendUserId);
-    if (!server) throw new Error('Subscription key not resolvable to a backend instance');
+    const server = await resolveInstanceByKey(ctx, backendUserId, backendServerId);
     await PROVIDERS[server.backend].update(
       server.config as BackendConfig,
       toProviderUserId(backendUserId),
@@ -210,11 +231,10 @@ export const updateUser = internalAction({
 });
 
 export const resetUserTraffic = internalAction({
-  args: { backend: backendId, backendUserId: v.string() },
-  handler: async (ctx, { backendUserId }) => {
+  args: { backend: backendId, backendUserId: v.string(), backendServerId: serverHint },
+  handler: async (ctx, { backendUserId, backendServerId }) => {
     if (mockBackendEnabled()) return null;
-    const server = await resolveInstanceByKey(ctx, backendUserId);
-    if (!server) return null;
+    const server = await resolveInstanceByKey(ctx, backendUserId, backendServerId);
     await PROVIDERS[server.backend].resetTraffic(
       server.config as BackendConfig,
       toProviderUserId(backendUserId),
@@ -223,35 +243,17 @@ export const resetUserTraffic = internalAction({
   },
 });
 
+/**
+ * Remove a key. A backend user that is already gone is success (the provider
+ * treats its 404 so); a key whose INSTANCE cannot be resolved is not: the
+ * teardown sagas would record a clean removal and orphan the backend account,
+ * so it throws and the caller's retry/audit path engages.
+ */
 export const deleteUser = internalAction({
-  args: {
-    backend: backendId,
-    backendUserId: v.string(),
-    // Hint for the issuance-compensation path, where no subscription row exists
-    // yet to resolve the instance from.
-    backendServerId: v.optional(v.id('backendServers')),
-  },
+  args: { backend: backendId, backendUserId: v.string(), backendServerId: serverHint },
   handler: async (ctx, { backendUserId, backendServerId }) => {
     if (mockBackendEnabled()) return null;
-    if (backendServerId) {
-      // An explicit hint that fails to resolve (the instance row was deleted
-      // out from under a live key) must NOT silently succeed — the saga would
-      // record a clean teardown and orphan the backend account. Throw so the
-      // caller's retry/audit path engages.
-      const hinted = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
-      if (!hinted) {
-        throw new Error(
-          `Backend instance ${backendServerId} not found for key teardown (possible orphan)`,
-        );
-      }
-      await PROVIDERS[hinted.backend].remove(
-        hinted.config as BackendConfig,
-        toProviderUserId(backendUserId),
-      );
-      return null;
-    }
-    const server = await resolveInstanceByKey(ctx, backendUserId);
-    if (!server) return null; // already gone / no instance recorded
+    const server = await resolveInstanceByKey(ctx, backendUserId, backendServerId);
     await PROVIDERS[server.backend].remove(
       server.config as BackendConfig,
       toProviderUserId(backendUserId),
@@ -300,7 +302,6 @@ export const revokeDevice = internalAction({
   handler: async (ctx, { backendUserId, hwid }): Promise<null> => {
     if (mockBackendEnabled()) return null;
     const server = await resolveInstanceByKey(ctx, backendUserId);
-    if (!server) throw new Error('Subscription key not resolvable to a backend instance');
     const provider = PROVIDERS[server.backend];
     if (!provider.removeDevice) {
       throw new Error(`${server.backend} does not support device management`);
@@ -317,11 +318,15 @@ export const revokeDevice = internalAction({
 // Enable/disable a user via the backend's dedicated status action (Remnawave's
 // /actions/{enable|disable}), decoupled from the field-update `updateUser` path.
 export const setUserStatus = internalAction({
-  args: { backend: backendId, backendUserId: v.string(), active: v.boolean() },
-  handler: async (ctx, { backendUserId, active }): Promise<null> => {
+  args: {
+    backend: backendId,
+    backendUserId: v.string(),
+    active: v.boolean(),
+    backendServerId: serverHint,
+  },
+  handler: async (ctx, { backendUserId, active, backendServerId }): Promise<null> => {
     if (mockBackendEnabled()) return null;
-    const server = await resolveInstanceByKey(ctx, backendUserId);
-    if (!server) throw new Error('Subscription key not resolvable to a backend instance');
+    const server = await resolveInstanceByKey(ctx, backendUserId, backendServerId);
     const provider = PROVIDERS[server.backend];
     if (!provider.setStatus) {
       throw new Error(`${server.backend} does not support status changes`);
@@ -368,11 +373,10 @@ export const getUserUsage = internalAction({
   args: { backend: backendId, backendUserId: v.string(), days: v.optional(v.number()) },
   handler: async (ctx, { backendUserId, days }): Promise<UsageSeries | null> => {
     if (mockBackendEnabled()) return null;
-    const server = await resolveInstanceByKey(ctx, backendUserId);
-    if (!server) return null;
-    const provider = PROVIDERS[server.backend];
-    if (!provider.getUserUsage) return null;
     try {
+      const server = await resolveInstanceByKey(ctx, backendUserId);
+      const provider = PROVIDERS[server.backend];
+      if (!provider.getUserUsage) return null;
       return await provider.getUserUsage(
         server.config as BackendConfig,
         toProviderUserId(backendUserId),

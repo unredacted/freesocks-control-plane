@@ -3,8 +3,9 @@
    * One isolated test link, ready to try from a real client: the link as a QR
    * code (scan it with the phone you test on), a 44px "Copy link" button, which
    * catalog apps take a single link, and the full link behind "Show the full
-   * link". Shared by the edge test card (TestCard) and the direct node's test
-   * card on Servers, so the two never drift.
+   * link", and the note that the profile is for a short test only
+   * (TEST_PROFILE_NOTE). Shared by the edge test card (TestCard) and the
+   * direct node's test card on Servers, so the two never drift.
    *
    * Props:
    *   link: string    the test link
@@ -16,6 +17,7 @@
   import { configQuery } from '@client/lib/queries';
   import { shareLinkApps } from '@client/lib/appLinks';
   import CopyButton from '../components/CopyButton.svelte';
+  import { TEST_PROFILE_NOTE } from './runWords';
 
   let { link, label }: { link: string; label: string } = $props();
 
@@ -35,6 +37,7 @@
         Import it into any app that takes a single link.
       {/if}
     </p>
+    <p class="text-muted-foreground text-xs">{TEST_PROFILE_NOTE}</p>
     <Collapsible.Root>
       <Collapsible.Trigger
         class="group text-muted-foreground hover:text-foreground flex min-h-11 items-center gap-1 text-xs sm:min-h-0"

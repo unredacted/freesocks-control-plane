@@ -9,12 +9,16 @@
  * no usable qualification credential fails loudly rather than being skipped.
  */
 import { convexTest } from 'convex-test';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { qualificationVerdict } from './lib/edges/intent';
 import { seedEdgeFixture, wsListener } from './lib/edges/testing/fixtures';
+import { fakePanel, type FakePanelUser } from './lib/edges/testing/fakePanel';
+import { __setFrontChecker } from './frontQualifyOps';
+import type { FrontCheckResult } from './lib/edges/frontCheck';
+import { QUALIFICATION_TRAFFIC_LIMIT_BYTES } from './relayQualification';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -251,6 +255,33 @@ describe('frontQualify.record', () => {
   });
 });
 
+/** The origin's qualification account as it lives on the fake backend (its 2.x uuid stored on the origin). */
+async function qualificationAccount(
+  t: ReturnType<typeof convexTest>,
+  panel: ReturnType<typeof fakePanel>,
+  relayId: Id<'relays'>,
+): Promise<FakePanelUser> {
+  const user: FakePanelUser = {
+    uuid: '00000000-0000-4000-8000-0000000000a1',
+    shortUuid: 'short-q',
+    username: 'fcp-qualify-node-one-abcd1234',
+    vlessUuid: '00000000-0000-4000-8000-0000000000b1',
+    trojanPassword: 'trojan-pw',
+    subscriptionUrl: 'https://panel.example/api/sub/short-q',
+    status: 'ACTIVE',
+    usedTrafficBytes: 0,
+    trafficLimitBytes: QUALIFICATION_TRAFFIC_LIMIT_BYTES,
+  };
+  panel.users.set(user.username, user);
+  await t.run((ctx) => ctx.db.patch(relayId, { qualificationBackendUserId: user.uuid }));
+  return user;
+}
+
+afterEach(() => {
+  __setFrontChecker(null);
+  vi.unstubAllGlobals();
+});
+
 describe('frontQualifyOps.run', () => {
   test('an origin with no qualification account records the refusal', async () => {
     const t = convexTest(schema, modules);
@@ -286,6 +317,46 @@ describe('frontQualifyOps.run', () => {
       ok: false,
       code: 'unsupported_protocol',
     });
+  });
+
+  test('a used-up qualification account is reset and re-enabled before the session opens', async () => {
+    const panel = fakePanel();
+    const t = convexTest(schema, modules);
+    const { edgeId, relayId } = await seed(t, { qualificationUserId: UUID });
+    const user = await qualificationAccount(t, panel, relayId);
+    // A test profile left connected in a client: the backend limited the account.
+    user.status = 'LIMITED';
+    user.usedTrafficBytes = 706906753;
+    let statusAtSession: string | null = null;
+    __setFrontChecker(async () => {
+      statusAtSession = user.status;
+      return passing(Date.now()) as FrontCheckResult;
+    });
+    expect(await t.action(internal.frontQualifyOps.run, { edgeId })).toEqual({
+      ok: true,
+      code: null,
+    });
+    expect(statusAtSession).toBe('ACTIVE');
+    expect(user.usedTrafficBytes).toBe(0);
+  });
+
+  test('an account the backend will not reset is named, and no session is sent on it', async () => {
+    const panel = fakePanel();
+    const t = convexTest(schema, modules);
+    const { edgeId, relayId } = await seed(t, { qualificationUserId: UUID });
+    const user = await qualificationAccount(t, panel, relayId);
+    user.status = 'LIMITED';
+    user.usedTrafficBytes = 706906753;
+    panel.failResetWith = 500;
+    const checker = vi.fn(async () => passing(Date.now()) as FrontCheckResult);
+    __setFrontChecker(checker);
+    expect(await t.action(internal.frontQualifyOps.run, { edgeId })).toEqual({
+      ok: false,
+      code: 'test_account_used_up',
+    });
+    expect(checker).not.toHaveBeenCalled();
+    const edge = await t.run((ctx) => ctx.db.get(edgeId));
+    expect(edge!.frontQualification).toMatchObject({ ok: false, code: 'test_account_used_up' });
   });
 
   test('a missing edge never reaches the network', async () => {

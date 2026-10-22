@@ -546,6 +546,8 @@ export const SETUP_RUN_NEEDS = [
   'resilience_short',
   // Per-country checks: the new address's first round finds it blocked in a checked country.
   'blocked_in',
+  // The origin's test account is used up and its reset failed: no test link or proof can use it.
+  'test_account_used_up',
 ] as const;
 export type SetupRunNeed = (typeof SETUP_RUN_NEEDS)[number];
 

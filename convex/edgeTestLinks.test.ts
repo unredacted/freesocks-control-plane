@@ -59,10 +59,19 @@ function realisticBody(uuid: string, lines: string[] = []): string {
   ].join('\n');
 }
 
+/** What the backend serves an account it has limited: a placeholder, no real entry. */
+const LIMITED_BODY =
+  'vless://00000000-0000-4000-8000-000000000000@0.0.0.0:1?encryption=none&type=tcp#Subscription%20limited';
+
 async function seed(opts: { hosts?: FakePanelHost[]; extraLines?: string[] } = {}) {
   const panel = fakePanel({
     hosts: opts.hosts ?? [directHost()],
-    body: (u) => (u ? realisticBody(u.vlessUuid, opts.extraLines) : null),
+    body: (u) =>
+      u
+        ? u.status === 'ACTIVE'
+          ? realisticBody(u.vlessUuid, opts.extraLines)
+          : LIMITED_BODY
+        : null,
   });
   const t = convexTest(schema, modules);
   const fx = await seedEdgeFixture(t);
@@ -181,6 +190,34 @@ describe('the isolated test link', () => {
     // The name reached no listener: a test link hands nothing to members.
     const listeners = await t.run((ctx) => ctx.db.query('relayListeners').collect());
     expect(JSON.stringify(listeners)).not.toContain('never-handed-out.example');
+  });
+
+  test('a used-up test account is reset (and re-enabled) before the body is fetched; one the backend will not reset is named, never a dead link', async () => {
+    const { t, panel, edgeId } = await seed();
+    await t.action(internal.edgeTestLinks.build, { edgeId }); // mints the account
+    const user = [...panel.users.values()][0]!;
+    // A test profile left connected in a client: the backend limited the account.
+    user.status = 'LIMITED';
+    user.usedTrafficBytes = 706906753;
+    panel.calls.length = 0;
+    const r = await t.action(internal.edgeTestLinks.build, { edgeId });
+    expect(r.link.split('\n').filter(Boolean)).toHaveLength(1);
+    expect(r.link).not.toContain('0.0.0.0');
+    const order = panel.calls.map((c) => `${c.method} ${c.path}`);
+    const reset = order.indexOf(`POST /api/users/${user.uuid}/actions/reset-traffic`);
+    const enable = order.indexOf(`POST /api/users/${user.uuid}/actions/enable`);
+    const body = order.findIndex((x) => x.startsWith('GET /api/sub/'));
+    expect(reset).toBeGreaterThanOrEqual(0);
+    expect(enable).toBeGreaterThan(reset);
+    expect(body).toBeGreaterThan(enable);
+
+    // Used up again, and the backend refuses the reset: the reason, not a link.
+    user.status = 'LIMITED';
+    user.usedTrafficBytes = 706906753;
+    panel.failResetWith = 500;
+    await expect(t.action(internal.edgeTestLinks.build, { edgeId })).rejects.toThrow(
+      /edge\.test_account_used_up.*used up and could not be reset/,
+    );
   });
 
   test('an ambiguous body (two direct Hosts on the transport at the origin) is refused; a body with no entry for the transport too', async () => {

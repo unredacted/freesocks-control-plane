@@ -1505,6 +1505,12 @@ const REFUSAL_COPY = {
     explain: 'The node has no usable placement to mint the test credential on.',
     fix: 'Choose the connection mode whose placement covers this node.',
   },
+  test_account_used_up: {
+    label: 'Test account used up',
+    explain:
+      'The test account is used up and could not be reset, so no test link can be made with it. A test profile left connected in a client uses it up.',
+    fix: 'Remove old test profiles from your clients, then try again.',
+  },
   credential_unresolved: {
     label: 'Credential still settling',
     explain:
@@ -2109,6 +2115,12 @@ export const SETUP_RUN_NEED_COPY: Record<SetupRunNeed, CodeCopy> = {
       'Import each test link into a client (it uses a test account of its own), connect, load a page, then answer Works or Doesn’t work.',
     fix: 'Works (Doesn’t work).',
   },
+  test_account_used_up: {
+    label: 'Test account used up',
+    explain:
+      'The test account is used up and could not be reset, so a test link or check made with it would not connect. A test profile left connected in a client uses it up.',
+    fix: 'Remove old test profiles from your clients, then try again.',
+  },
   review_changed: {
     label: 'Hosts changed',
     explain: 'The backend now has unsupported Hosts the review did not show.',
@@ -2300,6 +2312,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'relay.host.adopt_requested': 'Host adoption requested',
   'relay.host.released': 'Backend Host released',
   'relay.qualification_credential': 'Qualification credential changed',
+  'relay.qualification_reset': 'Test account reset',
   'edge.published': 'Edge published',
   'edge.unpublished': 'Edge unpublished',
   'edge.rotated': 'Edge replaced',

@@ -1046,8 +1046,9 @@ export const deactivateIdleFree = internalAction({
                 });
               } catch (err) {
                 // Backend-side 404 = the key is already gone; fall through and
-                // reclaim the FCP side. Anything else (unreachable backend) must
-                // NOT reclaim on missing evidence — skip until the next run.
+                // reclaim the FCP side. Anything else (unreachable backend, a key
+                // no instance resolves: `backend.key_unresolved`) must NOT
+                // reclaim on missing evidence — skip until the next run.
                 if (!/\b404\b/.test(String(err))) continue;
               }
               const onlineMs = state?.onlineAt ? Date.parse(state.onlineAt) : NaN;

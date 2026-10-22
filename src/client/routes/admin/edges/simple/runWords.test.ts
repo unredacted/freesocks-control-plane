@@ -17,6 +17,7 @@ import {
   runNotCheckedLines,
   runTestItems,
   runTestLines,
+  TEST_PROFILE_NOTE,
 } from './runWords';
 
 describe('needButtons', () => {
@@ -53,11 +54,24 @@ describe('needButtons', () => {
       if (code !== 'address_unreachable' && code !== 'blocked_in')
         expect(needButtons(code).more).toBeUndefined();
     expect(needButtons('hide_failed').hint).toMatch(/backend yourself/);
+    // FCP resets the test account on every try: "Try again" re-enters the card.
+    expect(needButtons('test_account_used_up')).toEqual({
+      primary: { label: 'Try again', action: 'retry' },
+    });
     expect(needButtons('whatever').primary.action).toBe('retry');
     // Approving go-live is the one way on: no retry that would only park the run again.
     const approve = needButtons('node_not_approved');
     expect(approve.primary).toEqual({ label: 'Approve go-live', action: 'approve' });
     expect(approve.secondary).toBeUndefined();
+  });
+});
+
+describe('TEST_PROFILE_NOTE', () => {
+  it('says the profile is for a short test and is removed after, in plain words', () => {
+    expect(TEST_PROFILE_NOTE).toMatch(/short test only/);
+    expect(TEST_PROFILE_NOTE).toMatch(/Remove this profile from the client/);
+    expect(TEST_PROFILE_NOTE).not.toContain('—');
+    expect(TEST_PROFILE_NOTE).not.toContain('/api/');
   });
 });
 

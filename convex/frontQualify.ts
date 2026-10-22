@@ -120,6 +120,7 @@ export const context = internalQuery({
           ? { kind: 'vless', uuid: credentialId }
           : null;
     return {
+      relayId: g.relay._id,
       hostname: g.intent.hostname,
       provider: g.edge.provider ?? null,
       proto,

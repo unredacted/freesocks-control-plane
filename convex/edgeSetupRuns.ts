@@ -2091,6 +2091,9 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
       }
       if (proof.code === 'no_qualification_credential' || proof.code === 'placement')
         return needsYou(ctx, run, 'choose_mode', proof.code, { listeners });
+      // The proof could not run: the front itself may be fine.
+      if (proof.code === 'test_account_used_up')
+        return needsYou(ctx, run, 'test_account_used_up', undefined, { listeners });
       l.verify = 'unreachable';
       return needsYou(
         ctx,
@@ -2287,6 +2290,16 @@ async function relayContextOf(ctx: ActionCtx, run: Run) {
   return ctx.runQuery(internal.edgeSetupRuns.relayContext, { runId: run._id });
 }
 
+/**
+ * The test links come from the origin's test account, which is reset first
+ * when it is used up (edgeTestCredentials.ensure -> relayQualification.keepUsable).
+ * A reset that failed is the card's reason (`test_account_used_up`, retried by
+ * "Try again"), never a link that cannot connect and never a failed run.
+ */
+function testAccountUsedUp(err: unknown): boolean {
+  return errCode(err).code === 'edge.test_account_used_up';
+}
+
 async function stageTryIt(ctx: ActionCtx, run: Run): Promise<null> {
   const c = await relayContextOf(ctx, run);
   if (!c)
@@ -2294,7 +2307,13 @@ async function stageTryIt(ctx: ActionCtx, run: Run): Promise<null> {
       state: 'failed',
       need: { code: 'provider_failed', detail: 'relay_missing' },
     });
-  const links = await pendingTestLinks(ctx, run, c);
+  let links: NonNullable<Run['testLinks']>;
+  try {
+    links = await pendingTestLinks(ctx, run, c);
+  } catch (err) {
+    if (testAccountUsedUp(err)) return needsYou(ctx, run, 'test_account_used_up');
+    throw err;
+  }
   if (links.length === 0) {
     const listeners = run.listeners.map((l) =>
       l.layer === 'l4' && vOf(c, l)?.current ? { ...l, verify: 'verified' as const } : l,
@@ -2394,7 +2413,13 @@ async function stageHide(ctx: ActionCtx, run: Run): Promise<null> {
   // it to the card).
   const stale = run.listeners.filter((l) => l.layer === 'l4' && !vOf(c, l)?.current);
   if (stale.length > 0) {
-    const links = await pendingTestLinks(ctx, run, c);
+    let links: NonNullable<Run['testLinks']>;
+    try {
+      links = await pendingTestLinks(ctx, run, c);
+    } catch (err) {
+      if (testAccountUsedUp(err)) return needsYou(ctx, run, 'test_account_used_up');
+      throw err;
+    }
     const detail = stale.every((l) => vOf(c, l)?.keyChanged)
       ? 'reality_key_changed'
       : `retest ${stale.map((l) => l.listenerKey).join(',')}`;

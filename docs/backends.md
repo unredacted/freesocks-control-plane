@@ -64,7 +64,8 @@ accessKeyDelivery}>`. Domain code branches on these flags, never on backend-id l
 
 3. **The generic instance module** `convex/backendServers.ts` (internal queries/mutations): the
    scored pool pick (`pickCandidatesForIssue`, filtered by backend type), key->instance resolution
-   (`resolveKeyServer` via `subscriptions.backendServerId`), `bumpKeyCount`, the per-type
+   (`resolveKeyServer`: the instance the caller names, else `subscriptions.backendServerId`, else
+   the instance a scoped id `<backendServerId>:<id>` names), `bumpKeyCount`, the per-type
    `healthcheck` action (cron), and `markHealthy`. This is shared by all types.
 
 4. **The dispatch** `convex/backends.ts` (the `internalAction`s). It resolves an instance, then calls
@@ -75,16 +76,26 @@ accessKeyDelivery}>`. Domain code branches on these flags, never on backend-id l
      instance of that type from the scored pool (random among the top candidates; the CSPRNG pick
      lives in the action, not the query), issues, bumps the instance's key count, and returns the
      chosen `backendServerId` (the saga persists it on the subscription).
-   - `getUser` / `updateUser` / `resetUserTraffic` resolve the instance from the subscription row by
-     `backendUserId`. The passed `backend` arg is vestigial (the resolved instance is authoritative).
-   - `deleteUser` + `fetchSubscriptionContent` also accept a `backendServerId` hint for the points in
-     the saga where no subscription row exists yet (issuance compensation + the S3 mirror fetch).
+   - `getUser` / `updateUser` / `resetUserTraffic` / `setUserStatus` / `deleteUser` resolve the
+     instance from the subscription row by `backendUserId`. The passed `backend` arg is vestigial
+     (the resolved instance is authoritative).
+   - Each of them also accepts a `backendServerId` hint for a key with no subscription row
+     (issuance compensation, the origin's qualification account, a temporary test key); a hint
+     that disagrees with a scoped id's own instance resolves nothing (the same integer on another
+     backend is a different user). `fetchSubscriptionContent` takes the instance outright.
+   - A key nothing resolves is refused with `backend.key_unresolved` (no identifier in the
+     message): `getUser` never answers a made-up state for it, and a write never returns as if it
+     had changed something. `deleteUser` still treats a backend user that is already gone (404) as
+     success; an unresolvable INSTANCE is not "gone", so the tombstone sweep retries it and then
+     abandons it with the `subscription.tombstone_abandoned` audit.
 
 The contract stays permissive about per-type differences: `issueUser` takes a superset `spec` and
 each provider applies what it supports (Outline drops `hwidDeviceLimit` / `trafficLimitStrategy` /
 the opaque `placement` handle); `updateUser` is a sparse PATCH; `getUser` returns a normalized `UserState`
-and the read path is fault-tolerant (an unresolved key returns a sentinel `active/unknown` state
-rather than 500-ing `/account`); `fetchSubscriptionContent` lets each type decide what "content" is
+and the read path is fault-tolerant at its callers (every `getUser` caller reads in a try: the
+member's `/account` serves its degraded `unknown` state, the admin user view shows no live state,
+the usage carryover issues at the full tier limit, the idle-free sweep skips the key until the next
+run); `fetchSubscriptionContent` lets each type decide what "content" is
 and is only called when S3 mirroring is on.
 
 A dev **mock backend** (double-gated: `DEV_MOCK_BACKEND=true` AND `ENVIRONMENT=development`,

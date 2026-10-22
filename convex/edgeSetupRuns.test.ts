@@ -127,6 +127,8 @@ async function seed(
     evidence?: (nth: number) => Evidence;
     /** What saving an address again answers (default: its provider has nothing to save). */
     reapply?: StageOps['reapplyEdge'];
+    /** Thrown by the test-link builder instead of a link while it returns one. */
+    testLinkError?: () => Error | null;
   } = {},
 ) {
   vi.useFakeTimers();
@@ -180,6 +182,8 @@ async function seed(
     },
     runFrontProof: async () => ({ ok: false, code: 'unsupported_protocol' }),
     buildTestLink: async (ctx, edgeId) => {
+      const refused = opts.testLinkError?.();
+      if (refused) throw refused;
       const b = await ctx.runQuery(internal.edgeVerification.binding, { edgeId });
       if (!b) throw new Error('no binding');
       return {
@@ -1352,6 +1356,43 @@ describe('edgeSetupRuns: one line does not work', () => {
     await tickAll(t, runId);
     r = await pump(t, runId, settled);
     expect(r.state).toBe('done');
+  });
+});
+
+describe('edgeSetupRuns: a used-up test account', () => {
+  test('a test account the backend will not reset is the card, not a dead link or a failed run; Try again brings the links back', async () => {
+    // What edgeTestLinks.build throws when relayQualification.keepUsable could
+    // not reset the origin's test account (edgeTestLinks.test.ts covers the reset).
+    let usedUp = true;
+    const { t, serverId, accountId } = await seed({
+      testLinkError: () =>
+        usedUp
+          ? new ConvexError({
+              code: 'edge.test_account_used_up',
+              message: 'The test account is used up and could not be reset',
+            })
+          : null,
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.stage).toBe('try_it');
+    expect(r.state).toBe('needs_you');
+    expect(r.need).toMatchObject({ code: 'test_account_used_up' });
+    expect(r.testLinks ?? []).toEqual([]);
+    // The candidate is kept: nothing was wrong with the address.
+    const edgeId = r.listeners[0]!.edgeId!;
+    expect((await t.run((ctx) => ctx.db.get(edgeId)))!.status).not.toBe('cancelled');
+    expect((await audits(t, 'edge.setup_run.needs_operator')).at(-1)?.payload).toMatchObject({
+      code: 'test_account_used_up',
+    });
+
+    // The account is usable again (reset, or old test profiles removed): Try again.
+    usedUp = false;
+    await t.mutation(internal.edgeSetupRuns.retry, { runId });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.testLinks).toHaveLength(1);
+    expect(r.listeners[0]!.edgeId).toBe(edgeId);
   });
 });
 

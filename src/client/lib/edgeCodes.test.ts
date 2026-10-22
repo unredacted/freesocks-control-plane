@@ -142,6 +142,7 @@ describe('EDGE_REFUSAL_COPY', () => {
     'test_link_render_failed',
     'use_manual_setup',
     'choose_mode',
+    'test_account_used_up',
     'credential_unresolved',
     'node_unknown',
     'node_address_unknown',
@@ -258,6 +259,10 @@ describe('guided setup run vocabularies', () => {
   test('every need has exactly one button and an unknown need is humanised', () => {
     for (const code of SETUP_RUN_NEEDS) expect(SETUP_RUN_NEED_COPY[code].fix).toBeTruthy();
     expect(setupRunNeedCopy('try_it').label).toBe('Try each address');
+    // A test account that could not be reset says so, in the run card's words.
+    expect(setupRunNeedCopy('test_account_used_up').explain).toMatch(
+      /^The test account is used up and could not be reset/,
+    );
     expect(setupRunNeedCopy('node_not_approved').label).toBe('Approve go-live');
     expect(codeLabel('publish_held')).toBe('Waiting for go-live approval');
     expect(setupRunNeedCopy('brand_new_need').label).toBe('Brand new need');
