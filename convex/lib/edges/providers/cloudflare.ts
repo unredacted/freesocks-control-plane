@@ -303,8 +303,10 @@ interface RawRuleset {
 
 async function getOriginPhase(cfg: CloudflareConfig, step: string): Promise<RawRuleset | null> {
   try {
-    const phase = await cfCall(step, () =>
-      cloudflareClient(cfg).rulesets.phases.get(ORIGIN_PHASE, { zone_id: cfg.zoneId }),
+    const phase = await cfCall(
+      step,
+      () => cloudflareClient(cfg).rulesets.phases.get(ORIGIN_PHASE, { zone_id: cfg.zoneId }),
+      [cfg.apiToken],
     );
     return phase as unknown as RawRuleset;
   } catch (e) {
@@ -338,12 +340,15 @@ async function certificateReadiness(
   hostname: string,
 ): Promise<{ state: ReadinessState; packs: CertPack[] }> {
   try {
-    const page = await cfCall('describe-cert', () =>
-      cloudflareClient(cfg).ssl.certificatePacks.list({
-        zone_id: cfg.zoneId,
-        status: 'all',
-        per_page: 50,
-      }),
+    const page = await cfCall(
+      'describe-cert',
+      () =>
+        cloudflareClient(cfg).ssl.certificatePacks.list({
+          zone_id: cfg.zoneId,
+          status: 'all',
+          per_page: 50,
+        }),
+      [cfg.apiToken],
     );
     const packs = (page.result as unknown as CertPack[]) ?? [];
     const wildcard = `*.${normalizeDnsName(cfg.zoneName)}`;
@@ -368,8 +373,10 @@ async function zoneSetting(
   step: string,
 ): Promise<string | null> {
   try {
-    const setting = await cfCall(step, () =>
-      cloudflareClient(cfg).zones.settings.get(id, { zone_id: cfg.zoneId }),
+    const setting = await cfCall(
+      step,
+      () => cloudflareClient(cfg).zones.settings.get(id, { zone_id: cfg.zoneId }),
+      [cfg.apiToken],
     );
     const value = (setting as unknown as { value?: unknown }).value;
     return typeof value === 'string' ? value : null;
@@ -623,23 +630,29 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
           // No entry point ruleset for the phase yet: creating it with our one
           // rule IS the create. The zone lock the orchestrator holds is what
           // keeps a concurrent edge from replacing a ruleset created meanwhile.
-          const created = await cfCall(step.id, () =>
-            cloudflareClient(cfg).rulesets.phases.update(ORIGIN_PHASE, {
-              zone_id: cfg.zoneId,
-              name: 'default',
-              rules: [rule as never],
-            }),
+          const created = await cfCall(
+            step.id,
+            () =>
+              cloudflareClient(cfg).rulesets.phases.update(ORIGIN_PHASE, {
+                zone_id: cfg.zoneId,
+                name: 'default',
+                rules: [rule as never],
+              }),
+            [cfg.apiToken],
           );
           ruleset = created as unknown as RawRuleset;
         } else {
-          const updated = await cfCall(step.id, () =>
-            cloudflareClient(cfg).rulesets.rules.create(
-              phase.id as string,
-              {
-                zone_id: cfg.zoneId,
-                ...rule,
-              } as never,
-            ),
+          const updated = await cfCall(
+            step.id,
+            () =>
+              cloudflareClient(cfg).rulesets.rules.create(
+                phase.id as string,
+                {
+                  zone_id: cfg.zoneId,
+                  ...rule,
+                } as never,
+              ),
+            [cfg.apiToken],
           );
           ruleset = updated as unknown as RawRuleset;
         }
@@ -836,8 +849,10 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
     }> = [];
     const MAX_PAGES = 10;
     for (let page = 1; page <= MAX_PAGES; page++) {
-      const res = await cfCall('inventory', () =>
-        client.dns.records.list({ zone_id: cfg.zoneId, proxied: true, page, per_page: 100 }),
+      const res = await cfCall(
+        'inventory',
+        () => client.dns.records.list({ zone_id: cfg.zoneId, proxied: true, page, per_page: 100 }),
+        [cfg.apiToken],
       );
       const batch = res.result as unknown as typeof rows;
       rows.push(...batch);
@@ -938,12 +953,15 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
         if (typeof rulesetId !== 'string' || rulesetId.length === 0)
           return { status: 'unresolved' };
         try {
-          await cfCall('destroy', () =>
-            // ruleID first, then the params carrying ruleset_id + zone_id.
-            cloudflareClient(cfg).rulesets.rules.delete(r.resourceId, {
-              ruleset_id: rulesetId,
-              zone_id: cfg.zoneId,
-            }),
+          await cfCall(
+            'destroy',
+            () =>
+              // ruleID first, then the params carrying ruleset_id + zone_id.
+              cloudflareClient(cfg).rulesets.rules.delete(r.resourceId, {
+                ruleset_id: rulesetId,
+                zone_id: cfg.zoneId,
+              }),
+            [cfg.apiToken],
           );
         } catch (e) {
           if (!isCloudflareNotFound(e)) throw e;

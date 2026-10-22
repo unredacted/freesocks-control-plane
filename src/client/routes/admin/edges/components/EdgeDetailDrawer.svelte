@@ -27,7 +27,8 @@
   import { Progress } from '@client/components/ui/progress';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Badge } from '@client/components/ui/badge';
-  import { edgeErrorMessage } from '../lib/edgeErrors';
+  import { liveRefreshFailure } from '../lib/edgeErrors';
+  import InlineError from '@client/components/InlineError.svelte';
   import {
     edgeCountriesQuery,
     edgeDetailQuery,
@@ -45,6 +46,7 @@
   import KeyValue from './KeyValue.svelte';
   import { optionSummary } from '../lib/options';
   import CodeNote from './CodeNote.svelte';
+  import ProviderAnswer from './ProviderAnswer.svelte';
   import EdgeCountryActions from './EdgeCountryActions.svelte';
   import { anyCountryCheckPending } from '../lib/countryCheckRequests';
   import { edgeHasCountryData } from '../lib/countryChecks';
@@ -100,6 +102,8 @@
     globalsign: 'GlobalSign',
   };
 
+  // A failed refresh is shown in the live section itself (not a toast): the
+  // operator is looking right at it, and it stays until the next try.
   const refresh = createMutation(() => ({
     mutationFn: (id: string) => refreshEdgeLive(id),
     onSuccess: (data, id) => {
@@ -107,8 +111,10 @@
       invalidateEdge(qc, id);
       toast.success(data.live ? 'Live snapshot refreshed' : 'The provider returned no snapshot');
     },
-    onError: (e) => toast.error(edgeErrorMessage(e)),
   }));
+  const refreshError = $derived(
+    refresh.isError && refresh.variables === edgeId ? liveRefreshFailure(refresh.error) : null,
+  );
 
   const when = (iso: string | null | undefined): string =>
     iso ? `${relativeTime(iso)} (${new Date(iso).toLocaleString()})` : '';
@@ -282,6 +288,7 @@
             }}
             tone="blocker"
           />
+          <ProviderAnswer detail={edge.failure.detail} names />
         {/if}
 
         <KeyValue title="Identity" rows={identityRows} hideEmpty />
@@ -445,6 +452,9 @@
               </Button>
             {/snippet}
           </KeyValue>
+          {#if refreshError}
+            <InlineError message={refreshError} />
+          {/if}
           {#if live}
             {#if live.summary.members.length > 0}
               <div>

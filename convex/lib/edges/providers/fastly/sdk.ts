@@ -44,7 +44,13 @@ import {
   type FastlyHttpInfo,
   type FastlyPlugin,
 } from 'fastly';
-import { EdgeProviderError, capturesErrorDetail, redactErrorDetail } from '../http';
+import {
+  EdgeProviderError,
+  capturesErrorDetail,
+  isRefusal,
+  redactErrorDetail,
+  withRefusal,
+} from '../http';
 import type { FastlyConfig } from '../types';
 
 /** The one origin the SDK's generated methods target. Also the redirect-safety pin. */
@@ -148,6 +154,7 @@ const DomainCheck = z.array(z.unknown());
 /** `GET .../version/{n}/validate` answers `{status:'ok'}` or `{status:'error', msg, errors}`. */
 const VersionValidation = z.looseObject({
   status: z.string().optional(),
+  msg: z.string().nullish(),
   errors: z.array(z.unknown()).nullish(),
 });
 
@@ -290,21 +297,25 @@ export function toFastlyError(
     inner.code === 'ECONNABORTED' ||
     inner.code === 'ETIMEDOUT' ||
     inner.name === 'AbortError';
-  return new EdgeProviderError(
+  const diagnostic = capturesErrorDetail(step);
+  const said =
+    (!diagnostic && !isRefusal(status)) || body === undefined || body === null
+      ? undefined
+      : redactErrorDetail(typeof body === 'string' ? body : JSON.stringify(body), secrets);
+  const out = new EdgeProviderError(
     `fastly ${status ?? (timedOut ? 'timeout' : 'error')} on ${step}${code ? ` (${code})` : ''}`,
     {
       provider: 'fastly',
       step,
       status,
       code,
-      detail:
-        !capturesErrorDetail(step) || body === undefined || body === null
-          ? undefined
-          : redactErrorDetail(typeof body === 'string' ? body : JSON.stringify(body), secrets),
+      detail: diagnostic ? said : undefined,
       retryable: timedOut || status === 429 || (status !== undefined && status >= 500),
       timedOut,
     },
   );
+  // A refusal of any other call: its words held aside for the ops layer (http.ts).
+  return diagnostic ? out : withRefusal(out, said);
 }
 
 export function isFastlyNotFound(err: unknown): boolean {
@@ -344,7 +355,7 @@ function newClient(cfg: FastlyConfig, basePath: string | undefined, extra: Fastl
 }
 
 /** Reads the RAW body (never the SDK model) and validates it. */
-async function call<T>(
+async function callFastly<T>(
   step: string,
   schema: z.ZodType<T>,
   fn: () => Promise<FastlyHttpInfo>,
@@ -399,7 +410,10 @@ export interface FastlyApi {
     version: number,
     patch: { comment: string },
   ): Promise<FastlyVersion>;
-  validateServiceVersion(serviceId: string, version: number): Promise<{ status?: string }>;
+  validateServiceVersion(
+    serviceId: string,
+    version: number,
+  ): Promise<{ status?: string; msg?: string | null; errors?: unknown[] | null }>;
   activateServiceVersion(serviceId: string, version: number): Promise<FastlyVersion>;
   deactivateServiceVersion(serviceId: string, version: number): Promise<FastlyVersion>;
   // backend / snippet / domain
@@ -501,6 +515,14 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
   const tlsConfigs = new TlsConfigurationsApi(client);
   const tokens = new TokensApi(client);
   const customer = new CustomerApi(client);
+  // A refusal on any call keeps Fastly's answer (`meta.detail`): the token is
+  // redacted from every one of them, not only from the diagnostic calls.
+  const call = <T>(
+    step: string,
+    schema: z.ZodType<T>,
+    fn: () => Promise<FastlyHttpInfo>,
+    secrets: string[] = [],
+  ): Promise<T> => callFastly(step, schema, fn, [cfg.apiToken, ...secrets]);
   /**
    * `deleteTlsSub` has no `force` option in the SDK, and a subscription with an
    * enabled domain cannot be destroyed without it. A dedicated client whose

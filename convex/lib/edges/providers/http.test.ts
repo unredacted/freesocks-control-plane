@@ -4,6 +4,8 @@ import {
   extractErrorCode,
   providerFetch,
   redactErrorDetail,
+  refusalOf,
+  scrubNames,
   EdgeProviderError,
   MAX_RESPONSE_BYTES,
   toProviderError,
@@ -194,11 +196,58 @@ describe('error detail (the provider answer, for the admin)', () => {
     expect(m.detail).not.toContain('2001:db8::7');
   });
 
-  test('a provisioning step never captures the answer', async () => {
-    expect((await failing('lb')).detail).toBeUndefined();
-    expect(toProviderError('scaleway', 'ip4', { status: 403, message: 'x' }).meta.detail).toBe(
+  test('a provisioning step keeps a refusal (4xx) aside, redacted, never on the error; an outage keeps nothing', async () => {
+    mockFetch(() =>
+      jsonRes({ message: 'region 112 refused SECRET_HEADER from 192.0.2.9 / 2001:db8::7' }, 400),
+    );
+    let err: unknown;
+    try {
+      await providerFetch(args({ step: 'lb' }));
+    } catch (e) {
+      err = e;
+    }
+    // The error itself stays body-free: nothing a log line or JSON could show.
+    expect((err as EdgeProviderError).meta.detail).toBeUndefined();
+    expect(errorBlob(err)).not.toContain('region 112');
+    expect(JSON.stringify(err)).not.toContain('region 112');
+    const said = refusalOf(err)!;
+    expect(said).toContain('region 112 refused');
+    expect(said).not.toContain('SECRET_HEADER');
+    expect(said).not.toContain('192.0.2.9');
+    expect(said).not.toContain('2001:db8::7');
+    mockFetch(() => jsonRes({ message: 'upstream SECRET_HEADER down' }, 503));
+    try {
+      await providerFetch(args());
+    } catch (e) {
+      err = e;
+    }
+    expect(refusalOf(err)).toBeUndefined();
+    expect(refusalOf(toProviderError('scaleway', 'ip4', { status: 500, message: 'x' }))).toBe(
       undefined,
     );
+    expect(
+      refusalOf(toProviderError('scaleway', 'ip4', { name: 'TimeoutError', message: 'slow' })),
+    ).toBeUndefined();
+  });
+
+  test('an SDK refusal keeps its message and the rest of its JSON body, redacted, aside', () => {
+    const err = Object.assign(new Error('http error 400: server_ip refused for 198.51.100.7'), {
+      status: 400,
+      name: 'ScalewayError',
+      body: {
+        message: 'server_ip refused for 198.51.100.7',
+        type: 'invalid_request_error',
+        help_message: 'key SECRET_SCW_KEY_1 may not',
+      },
+    });
+    const wrapped = toProviderError('scaleway', 'backend', err, ['SECRET_SCW_KEY_1']);
+    expect(wrapped.meta.detail).toBeUndefined();
+    const d = refusalOf(wrapped)!;
+    expect(d).toContain('server_ip refused for [address]');
+    expect(d).toContain('invalid_request_error');
+    expect(d).toContain('may not');
+    expect(d).not.toContain('SECRET_SCW_KEY_1');
+    expect(d).not.toContain('198.51.100.7');
   });
 
   test('redaction replaces extra secrets and caps the length', () => {
@@ -210,5 +259,31 @@ describe('error detail (the provider answer, for the admin)', () => {
     // A credential too short to replace safely suppresses the whole answer.
     expect(redactErrorDetail('invalid token secret1', ['secret1'])).toBeUndefined();
     expect(redactErrorDetail('invalid token', ['Bearer abc'])).toBeUndefined();
+  });
+});
+
+describe('scrubNames: a create step refusal, before it leaves the action', () => {
+  test('replaces every name without regard to case, the longest first', () => {
+    expect(
+      scrubNames('no record Front-1.Example.org in example.org for fcp-relay-o1-ab-backend', [
+        'example.org',
+        'front-1.example.org',
+        'fcp-relay-o1-ab',
+      ]),
+    ).toBe('no record [name] in [name] for [name]-backend');
+  });
+
+  test('a capped detail ending inside a name loses that fragment too', () => {
+    const capped = redactErrorDetail(`${'x '.repeat(298)}front-1.example.org refused`)!;
+    expect(capped.endsWith('…')).toBe(true);
+    const out = scrubNames(capped, ['front-1.example.org'])!;
+    expect(out).not.toMatch(/fr…$/);
+    expect(out.endsWith('…')).toBe(true);
+    expect(out).not.toContain('fr');
+  });
+
+  test('short names are left alone; nothing left is no detail', () => {
+    expect(scrubNames('a b refused', ['a', 'b'])).toBe('a b refused');
+    expect(scrubNames(undefined, ['x'])).toBeUndefined();
   });
 });

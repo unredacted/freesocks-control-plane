@@ -13,6 +13,7 @@
  *   edgeErrorMessage(err)                 one line for a toast / inline error (refusal codes
  *                                         and a throttled call read as explain + fix, or
  *                                         explain + the server's reason when it names one)
+ *   liveRefreshFailure(err)               a failed "Refresh live", in words for the live section
  */
 import { ApiCallError } from '../../../../lib/api';
 import { apiErrorMessage } from '../../../../lib/errors';
@@ -88,4 +89,9 @@ export function edgeErrorMessage(err: unknown): string {
   }
   const fix = codeFix(code);
   return fix ? `${codeLabel(code)}. ${fix}` : `${codeLabel(code)}.`;
+}
+
+/** A failed "Refresh live": the provider could not be read, and why. */
+export function liveRefreshFailure(err: unknown): string {
+  return `The provider could not be read just now. ${asSentence(edgeErrorMessage(err))}`.trim();
 }

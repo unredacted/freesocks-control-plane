@@ -63,7 +63,7 @@ import { assertNoRelayPanelClaim, assertNoRotationOrQuarantine } from './lib/edg
 import { confirmEndpoint, internalRunsOf } from './edgeVerification';
 import { listenersOf } from './relayListeners';
 import { accountTested, certificateRefusalFor } from './edgeProviderAccounts';
-import { isTerminalPhase } from './lib/edges/rotation';
+import { isTerminalPhase, withProviderAnswer } from './lib/edges/rotation';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
 import { defaultLocationOf } from './edgeLocations';
 import {
@@ -438,7 +438,13 @@ export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
     locationId: (runPick(r).locationId as string | null) ?? null,
     stage: r.stage,
     state: r.state,
-    need: r.need ? { code: r.need.code, detail: r.need.detail ?? null } : null,
+    need: r.need
+      ? {
+          code: r.need.code,
+          detail: r.need.detail ?? null,
+          providerAnswer: r.need.providerAnswer ?? null,
+        }
+      : null,
     generation: r.generation,
     planRevision: r.planRevision,
     keepDirect: r.keepDirect === true,
@@ -1590,13 +1596,21 @@ export const onRotationTerminal = internalMutation({
       await scheduleStep(ctx, runId, 0);
       return { acted: true as const, reason: 'published' };
     }
-    // Anything else is an interruption at this stage.
+    // Anything else is an interruption at this stage. A create the provider
+    // refused brings its words along (the edge's `failure.detail`, redacted and
+    // scrubbed of its names), so the sheet can say why.
+    const created = rot.createdEdgeId ? await ctx.db.get(rot.createdEdgeId) : null;
+    const providerAnswer = created?.failure?.detail;
     const need =
       rot.phase === 'done' && rot.kind === 'publish'
         ? { code: 'coverage_incomplete', detail: `${key}: ${outcome}` }
         : rot.phase === 'quarantined'
           ? { code: 'quarantined', detail: rot.events.at(-1)?.detail }
-          : { code: 'provider_failed', detail: `${key ?? ''}: ${outcome}`.trim() };
+          : {
+              code: 'provider_failed',
+              detail: `${key ?? ''}: ${outcome}`.trim(),
+              ...(providerAnswer ? { providerAnswer } : {}),
+            };
     const state = need.code === 'provider_failed' ? 'failed' : 'needs_you';
     await ctx.db.patch(runId, {
       ...base,
@@ -1607,7 +1621,10 @@ export const onRotationTerminal = internalMutation({
         at: now,
         level: 'error',
         code: `rotation_${rot.phase}`,
-        detail: `${key ?? ''}: ${outcome}`.trim(),
+        detail: withProviderAnswer(
+          `${key ?? ''}: ${outcome}`.trim(),
+          need.code === 'provider_failed' ? providerAnswer : undefined,
+        ),
       }),
     });
     const after = (await ctx.db.get(runId))!;

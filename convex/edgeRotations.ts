@@ -95,6 +95,8 @@ import {
   ROLLBACK_ON_CANCEL_PHASES,
   ROTATION_PHASES,
   TERMINAL_PHASES,
+  nextFailure,
+  withProviderAnswer,
   type AccountCandidate,
   type RotationEvent,
   type SetLocationCandidate,
@@ -109,6 +111,7 @@ import {
 } from './lib/edges/protocols';
 import { hostTargetFor, listenerLayers, zoneModeCarriesOrigin } from './lib/edges/layers';
 import { L4_NOT_FOR_WEBSOCKET, l4BarredFor, websocketNodeOf } from './lib/edges/websocketNode';
+import { SIZE_NOT_MULTICLOUD_WORDS, sizeCheckApplies, sizeProblemOf } from './lib/edges/sizeCheck';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
 // The freshness window the DETECTOR scores on is the one this gate accepts
 // evidence on: one rule, imported, never a second copy of "two intervals".
@@ -731,6 +734,22 @@ export async function collectStartBlockers(
             ? 'The account’s shared certificate failed to issue'
             : 'The zone’s wildcard is covered by a certificate this account would not order',
       );
+    // The size it would build with (template, regional values, the node's
+    // options): one that takes only the provider's own servers is refused
+    // here, never paid for and then refused at the backend step.
+    if (acct && zone && sizeCheckApplies(acct.provider)) {
+      const built = await resolveBuildFor(
+        ctx,
+        acct.provider,
+        a.requestedTemplateId ?? null,
+        acct.defaultTemplateId ?? null,
+        acct._id,
+        zone,
+        choices,
+      );
+      const size = sizeProblemOf(acct.provider, built.params, zone.inventorySnapshot);
+      if (size) push(`edge.${size}`, SIZE_NOT_MULTICLOUD_WORDS);
+    }
   }
   if (listenerId) {
     const listener = await ctx.db.get(listenerId);
@@ -1504,7 +1523,8 @@ export const advance = internalMutation({
             await ctx.db.patch(created, {
               status: 'failed',
               statusChangedAt: now,
-              failure: { step: r.phase, code: event.code },
+              // The provider's last answer stays (`nextFailure`): it is why the run ended.
+              failure: nextFailure(e.failure, { step: r.phase, code: event.code }),
               // A failed edge waits on nothing any more (the code is the failure now).
               waiting: undefined,
               updatedAt: now,
@@ -3012,6 +3032,10 @@ export async function selectionContext(
     );
     if (rotation.requestedTemplateId && template.id !== rotation.requestedTemplateId)
       return failure('template_not_found');
+    // A size that takes only the provider's own servers (Scaleway's standard
+    // ones): refused before anything billable is created.
+    const size = sizeProblemOf(a.provider, template.params, where.inventorySnapshot);
+    if (size) return failure(size);
     if (
       !(await fitsApproval(
         a._id as string,
@@ -3032,6 +3056,7 @@ export async function selectionContext(
   const keyOfLocation = new Map<string, string>();
   let outsideShape = 0;
   let certificateRefused: string | null = null;
+  let sizeRefused: string | null = null;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
@@ -3054,6 +3079,23 @@ export async function selectionContext(
       // refused check, its DNS account off, an unread encryption mode; a
       // Scaleway location with no project to create in).
       if (!loc.enabled || (await placeProblemOf(ctx.db, a, loc))) continue;
+      // A size there that takes only the provider's own servers is never picked.
+      if (sizeCheckApplies(a.provider)) {
+        const built = await resolveBuildFor(
+          ctx,
+          a.provider,
+          null,
+          a.defaultTemplateId ?? null,
+          a._id,
+          loc,
+          await choicesFor(ctx, rotation, origin, loc._id),
+        );
+        const size = sizeProblemOf(a.provider, built.params, loc.inventorySnapshot);
+        if (size) {
+          sizeRefused = sizeRefused ?? size;
+          continue;
+        }
+      }
       keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
       if (underApproval) {
         const tpl = await resolveBuildFor(
@@ -3155,7 +3197,9 @@ export async function selectionContext(
           ? 'outside_approved_shape'
           : candidates.length === 0 && certificateRefused
             ? certificateRefused
-            : picked.code,
+            : candidates.length === 0 && sizeRefused
+              ? sizeRefused
+              : picked.code,
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
@@ -3293,11 +3337,14 @@ function resourceStepOf(s: Edge['steps'][number]): ResourceStep {
  * as `ConvexError<EdgeProviderOpsFailure>` (edgeProviderOps.ts), so the code,
  * HTTP status and retry/timeout flags are read from `err.data`; a plain Error
  * (a backend call, a mutation refusal) contributes only its body-free message.
+ * `answer`: the provider's own words on a refused create step (redacted and
+ * scrubbed of the edge's names before it left the action), when it sent any.
  */
 function errCode(err: unknown): {
   code: string;
   detail: string;
   status?: number;
+  answer?: string;
   retryable: boolean;
   timedOut: boolean;
 } {
@@ -3307,6 +3354,7 @@ function errCode(err: unknown): {
           code?: string;
           message?: string;
           status?: number;
+          detail?: string;
           retryable?: boolean;
           timedOut?: boolean;
         }
@@ -3317,6 +3365,7 @@ function errCode(err: unknown): {
       code: d.code ?? 'error',
       detail: `${d.status ?? ''} ${d.message ?? ''}`.trim().slice(0, 120),
       status: d.status,
+      ...(typeof d.detail === 'string' && d.detail ? { answer: d.detail } : {}),
       retryable: d.retryable === true,
       timedOut: d.timedOut === true,
     };
@@ -3761,14 +3810,18 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       await settle(opId, {
         stepPatch: { stepId: pending.stepId, state: 'needs_operator', started: true },
         addResources: out.resources,
-        failure: { step: pending.stepId, code: out.code },
+        failure: {
+          step: pending.stepId,
+          code: out.code,
+          ...(out.detail ? { detail: out.detail } : {}),
+        },
         waiting: null,
         status: 'needs_operator',
       });
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
         code: out.code ?? 'step_refused',
-        detail: pending.stepId,
+        detail: withProviderAnswer(pending.stepId, out.detail),
         rollback: false,
       });
     } else {
@@ -3779,7 +3832,11 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       await settle(opId, {
         stepPatch: { stepId: pending.stepId, state: 'unresolved', started: true },
         addResources: out.resources,
-        failure: { step: pending.stepId, code: out.code },
+        failure: {
+          step: pending.stepId,
+          code: out.code,
+          ...(out.detail ? { detail: out.detail } : {}),
+        },
         waiting: null,
       });
       await advanceCall(ctx, r._id, sv, {
@@ -3850,15 +3907,23 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       } catch (err) {
         // The lock is deliberately NOT released: the write's outcome is
         // unknown, and the discovery pass that resolves it releases it.
-        const { code, detail } = errCode(err);
+        const { code, detail, status, answer } = errCode(err);
         await settle(cl.opId, {
           stepPatch: { stepId: pending.stepId, state: 'unresolved', started: true },
-          failure: { step: pending.stepId, code },
+          failure: {
+            step: pending.stepId,
+            code,
+            ...(status !== undefined ? { status } : {}),
+            ...(answer ? { detail: answer } : {}),
+          },
         });
         await advanceCall(ctx, r._id, sv, {
           type: 'progress',
           delayMs: poll,
-          detail: `step ${pending.stepId} threw: ${code} ${detail}`.trim(),
+          detail: withProviderAnswer(
+            `step ${pending.stepId} threw: ${code} ${detail}`.trim(),
+            answer,
+          ),
           countPoll: true,
         });
         return;
@@ -3890,15 +3955,23 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           edgeId: edge._id,
         });
       } catch (err) {
-        const { code, detail } = errCode(err);
+        const { code, detail, status, answer } = errCode(err);
         await settle(cl.opId, {
           stepPatch: { stepId: pending.stepId, state: 'unresolved' },
-          failure: { step: pending.stepId, code },
+          failure: {
+            step: pending.stepId,
+            code,
+            ...(status !== undefined ? { status } : {}),
+            ...(answer ? { detail: answer } : {}),
+          },
         });
         await advanceCall(ctx, r._id, sv, {
           type: 'progress',
           delayMs: poll,
-          detail: `poll ${pending.stepId} threw: ${code} ${detail}`.trim(),
+          detail: withProviderAnswer(
+            `poll ${pending.stepId} threw: ${code} ${detail}`.trim(),
+            answer,
+          ),
           countPoll: true,
         });
         return;
@@ -4074,7 +4147,7 @@ async function settleEdgeOp(
     }>;
     addresses?: { v4?: string; v6?: string };
     status?: string;
-    failure?: { step: string; code?: string; status?: number };
+    failure?: { step: string; code?: string; status?: number; detail?: string };
     waiting?: { step: string; code: string } | null;
   },
 ) {
