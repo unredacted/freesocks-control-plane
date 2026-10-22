@@ -97,7 +97,7 @@
       accountId: string;
       accountName: string;
       provider: ProviderSetView['regions'][number]['provider'];
-      regions: Array<{ id: string; label: string }>;
+      regions: Array<{ id: string; label: string; project?: string }>;
     }> = [];
     for (const r of view?.regions ?? []) {
       let g = out.find((x) => x.accountId === r.accountId);
@@ -110,7 +110,7 @@
         };
         out.push(g);
       }
-      g.regions.push({ id: r.regionId, label: r.label });
+      g.regions.push({ id: r.regionId, label: r.label, project: r.project });
     }
     return out;
   });

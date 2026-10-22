@@ -183,7 +183,10 @@ async function planContextOf(
     > = {};
     // The regions each load balancer account's key reaches that are no location
     // of it yet: a pick of one creates the location (the catalog is the menu).
-    const accountRegions: Record<string, Array<{ id: string; label: string }>> = {};
+    const accountRegions: Record<
+      string,
+      Array<{ id: string; label: string; project?: string }>
+    > = {};
     for (const a of accounts) {
       accountLive[a._id as string] = (await liveEdgesOfAccount(ctx.db, a._id)).filter(
         (e) => e.managed,

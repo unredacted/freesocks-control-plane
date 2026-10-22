@@ -4,9 +4,9 @@
    * it yet (its catalog, as the server offers them), each one pickable where a
    * node's addresses are chosen: the protect sheet and a node's "Add a
    * location". Picking a region creates the location then
-   * (`POST …/locations {placement: {region}, fill: true}`): the server
-   * completes the project and, where one is needed, the private network and
-   * subnet from what the key reaches. No credential test runs again, and the
+   * (`POST …/locations {placement: {region, project}, fill: true}`), in the
+   * project the region was listed in: the server completes the rest, where
+   * one is needed the private network and subnet, from what the key reaches. No credential test runs again, and the
    * new location is untrusted until its first tested address.
    *
    * "Change options" opens the location form on that region with those
@@ -22,7 +22,7 @@
    * Props:
    *   accountId: string
    *   provider: EdgeProviderId
-   *   regions: Array<{ id, label }>
+   *   regions: Array<{ id, label, project? }>   project: the one it was listed in
    *   onPicked: (locationId: string) => void    the location made (or found) for the region
    *   onRefreshed?: () => void                  the list was listed again (ask the server again)
    *   nodeCountry?: string | null               the node's country, for the region hint
@@ -46,7 +46,7 @@
   interface Props {
     accountId: string;
     provider: EdgeProviderId;
-    regions: ReadonlyArray<{ id: string; label: string }>;
+    regions: ReadonlyArray<{ id: string; label: string; project?: string }>;
     onPicked: (locationId: string) => void;
     onRefreshed?: () => void;
     nodeCountry?: string | null;
@@ -68,10 +68,11 @@
   /** Refusals that a choice in the location form answers: the form opens on them. */
   const ASKS: ReadonlySet<string> = new Set(['location_options_needed', 'template_value_required']);
 
+  type Region = Props['regions'][number];
   const pick = createMutation(() => ({
-    mutationFn: (regionId: string) =>
+    mutationFn: (r: Region) =>
       createProviderLocation(accountId, {
-        placement: regionPlacement(provider, regionId) ?? {},
+        placement: regionPlacement(provider, r.id, r.project) ?? {},
         fill: true,
       }),
     onSuccess: (r) => {
@@ -79,9 +80,9 @@
       toast.success(r.created ? 'Location added' : 'This location already exists');
       onPicked(r.id);
     },
-    onError: (e, regionId) => {
+    onError: (e, r) => {
       // What the key reaches leaves a choice open (no network there, no size): ask for it.
-      if (ASKS.has(edgeErrorCode(e) ?? '')) changing = regionId;
+      if (ASKS.has(edgeErrorCode(e) ?? '')) changing = r.id;
     },
   }));
   const askCode = $derived(pick.isError ? edgeErrorCode(pick.error) : null);
@@ -112,7 +113,8 @@
   {/if}
   <ul class="space-y-1.5">
     {#each regions as r (r.id)}
-      {@const adding = pick.isPending && pick.variables === r.id}
+      {@const mine = pick.variables?.id === r.id}
+      {@const adding = pick.isPending && mine}
       <li>
         <div class="flex items-start gap-2 rounded-md border border-dashed px-2 py-1.5">
           <label class="flex min-w-0 flex-1 cursor-pointer items-start gap-2">
@@ -122,7 +124,7 @@
               checked={adding}
               disabled={disabled || pick.isPending}
               onchange={(e) => {
-                if (e.currentTarget.checked) pick.mutate(r.id);
+                if (e.currentTarget.checked) pick.mutate(r);
               }}
             />
             <span class="min-w-0 flex-1">
@@ -140,7 +142,7 @@
             onclick={() => (changing = changing === r.id ? null : r.id)}>Change options</button
           >
         </div>
-        {#if pick.isError && pick.variables === r.id && changing !== r.id}
+        {#if pick.isError && mine && changing !== r.id}
           {@const issue = edgeErrorIssue(pick.error)}
           <div class="pt-1 pl-7">
             {#if issue}<CodeNote {issue} />{:else}<InlineError
@@ -150,7 +152,7 @@
         {/if}
         {#if changing === r.id}
           <div class="mt-1.5 rounded-md border p-3">
-            {#if asked && pick.variables === r.id}
+            {#if asked && mine}
               <p class="mb-2 text-sm" role="status">
                 {askCode === 'template_value_required'
                   ? 'Choose the balancer size for this region: the template names none.'
@@ -163,6 +165,7 @@
                 {provider}
                 {nodeCountry}
                 region={r.id}
+                project={r.project ?? null}
                 {onCreated}
                 onCancel={() => (changing = null)}
               />

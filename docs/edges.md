@@ -2451,9 +2451,10 @@ burned zone.
 zones, regions, projects, TLS configurations), listed by `edgeProviderOps.refreshCatalog`
 after a passing credential test or rotation, on `POST providers/{id}/catalog/refresh`
 (throttled), and when a picker finds it older than 12 hours (`GET providers/{id}/catalog`).
-Cloudflare zones are listed page by page up to 1,000 (`truncated` past that); an OVH key with
-no project chosen lists the regions of its first project. A failed listing keeps the last items
-and records why. The catalog is a menu, never an authority: creating a location asks the
+Cloudflare zones are listed page by page up to 1,000 (`truncated` past that). A provider whose
+regions depend on the project (Gcore, OVH) lists them in the project a region pick creates in:
+the one every location of the account uses, else the key's first; each region names it
+(`facts.project`). A failed listing keeps the last items and records why. The catalog is a menu, never an authority: creating a location asks the
 provider again.
 
 **An account is its credentials.** Every provider's account, a load balancer's included, may be
@@ -2462,7 +2463,9 @@ application key and endpoint) and nothing else: the account form's first locatio
 for all of them, all of it or none of it, and its credential test takes no placement (below).
 Such an account has no location until one is picked where a node's addresses are chosen. The
 old single-place shape (a zone, or a DNS account, among the settings) still makes its first
-location, and a Fastly payload naming only its DNS account takes that account's zone.
+location, and a Fastly payload naming only its DNS account takes that account's zone. The
+account form sends a load balancer's first location only once its region (or another
+value it needs) is chosen: a project, a network or a gateway alone is not sent.
 
 **Picking a region.** A load balancer account's regions that are no location of it yet (its
 catalog's `regions`, minus the place keys of every location it has, switched on or not:
@@ -2470,12 +2473,12 @@ catalog's `regions`, minus the place keys of every location it has, switched on 
 (`SetupPlanAccount.regions`) and a node's provider card (`GET relays/{id}/providers` `regions`).
 An account with no usable location is offered by them and is not `no_location`; a load balancer
 account cannot help a WebSocket node, so it offers none there. Picking one creates the location
-at that moment, `POST providers/{id}/locations {placement: {<region key>: id}, fill: true}`
-(the region key is Gcore `regionId`, UpCloud and Scaleway `zone`, OVH `regionName`), then
-picks it. `fill` completes the placement from what the key reaches
-(`lib/edges/placementDefaults.ts`, never replacing a value the request names): the project is
-the one every other location of the account uses, else the first the key lists (Gcore
-`projectId`, OVH `serviceName`); OVH's private network and subnet are the first listed network
+at that moment, `POST providers/{id}/locations {placement: {<region key>: id, <project key>:
+project}, fill: true}` (the region key is Gcore `regionId`, UpCloud and Scaleway `zone`, OVH
+`regionName`; the project is the one the region was listed in), then picks it. `fill` completes the placement from what the key reaches
+(`lib/edges/placementDefaults.ts`, never replacing a value the request names): a project the
+request leaves out is the one every other location of the account uses, else the first the key
+lists (Gcore `projectId`, OVH `serviceName`); OVH's private network and subnet are the first listed network
 with a subnet serving the region and its first subnet (asked with the project and the region);
 Gcore's network stays empty (a public address); a Scaleway Project id stays empty (the key's
 default, § "A placement value with a provider default"). A value no default fills is refused

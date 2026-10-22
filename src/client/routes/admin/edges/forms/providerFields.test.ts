@@ -9,6 +9,7 @@ import {
   optionsFor,
   placementBody,
   regionPlacement,
+  settingsBody,
 } from './providerFields';
 
 describe('provider fields: a place is a location, a CDN zone included', () => {
@@ -66,8 +67,33 @@ describe('provider fields: a place is a location, a CDN zone included', () => {
     expect(regionPlacement('ovh', 'GRA9')).toEqual({ regionName: 'GRA9' });
     expect(regionPlacement('upcloud', 'de-fra1')).toEqual({ zone: 'de-fra1' });
     expect(regionPlacement('scaleway', 'fr-par-1')).toEqual({ zone: 'fr-par-1' });
+    // With the project it was listed in, where the provider has projects.
+    expect(regionPlacement('gcore', '7', '12')).toEqual({ regionId: 7, projectId: 12 });
+    expect(regionPlacement('ovh', 'GRA9', 'svc-b')).toEqual({
+      regionName: 'GRA9',
+      serviceName: 'svc-b',
+    });
+    expect(regionPlacement('upcloud', 'de-fra1', 'ignored')).toEqual({ zone: 'de-fra1' });
     // A CDN's place is a zone: picked in the location form.
     expect(regionPlacement('cloudflare', 'x')).toBeNull();
+  });
+
+  test('an optional location value alone is not sent as a first location', () => {
+    const opts = { firstLocation: true };
+    // A Project id with no zone, a network with no region, a gateway alone: no place.
+    expect(settingsBody('scaleway', { accessKey: 'SCW', projectId: 'p-1' }, opts)).toEqual({
+      accessKey: 'SCW',
+    });
+    expect(settingsBody('gcore', { networkId: 'net-1', subnetId: 'sub-1' }, opts)).toEqual({});
+    expect(
+      settingsBody('ovh', { applicationKey: 'ak', endpoint: 'ovh-eu', gatewayId: 'gw' }, opts),
+    ).toEqual({ applicationKey: 'ak', endpoint: 'ovh-eu' });
+    // Started by its region, the whole location goes.
+    expect(
+      settingsBody('scaleway', { accessKey: 'SCW', zone: 'fr-par-1', projectId: 'p-1' }, opts),
+    ).toEqual({ accessKey: 'SCW', zone: 'fr-par-1', projectId: 'p-1' });
+    // Anything else (a discovery) sends what the form holds.
+    expect(settingsBody('gcore', { networkId: 'net-1' })).toEqual({ networkId: 'net-1' });
   });
 
   test("a load balancer's optional first location: no single project or region is picked for the operator", () => {

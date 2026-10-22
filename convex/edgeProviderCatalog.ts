@@ -109,19 +109,25 @@ export async function listedZone(
  * The regions a load balancer account's key reaches that are not one of its
  * locations yet (`placeKeys`: every location it has, switched on or not): what
  * the protect sheet and a node's "Add a location" offer, the location being
- * created when one is picked. Empty for a CDN account (its place is a zone,
- * added in the location form) and for a catalog never listed.
+ * created when one is picked. Each names the project it was listed in, where
+ * the provider has projects (`project`): the pick creates its location there.
+ * Empty for a CDN account (its place is a zone, added in the location form)
+ * and for a catalog never listed.
  */
 export async function regionOffersOf(
   db: DatabaseReader,
   account: Pick<Doc<'edgeProviderAccounts'>, '_id' | 'provider'>,
   placeKeys: readonly string[],
-): Promise<Array<{ id: string; label: string }>> {
+): Promise<Array<{ id: string; label: string; project?: string }>> {
   if (!pickableByRegion(account.provider)) return [];
   const taken = new Set(placeKeys);
   return (await catalogOf(db, account._id, 'regions')).items
     .filter((r) => !taken.has(r.id))
-    .map((r) => ({ id: r.id, label: r.label }));
+    .map((r) => ({
+      id: r.id,
+      label: r.label,
+      ...(r.facts?.project ? { project: r.facts.project } : {}),
+    }));
 }
 
 /** When the account's catalog was last refreshed (any kind), or null. */

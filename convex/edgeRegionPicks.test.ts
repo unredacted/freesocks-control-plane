@@ -23,6 +23,7 @@ import {
   seedEdgeFixture,
 } from './lib/edges/testing/fixtures';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
+import { regionOffersOf } from './edgeProviderCatalog';
 import type { BackendTransport } from './lib/backends/types';
 import { completePlacement, networkDefault, projectDefault } from './lib/edges/placementDefaults';
 import { setupVetoNow } from './lib/edges/scoring';
@@ -152,6 +153,105 @@ describe('a load balancer account of credentials alone', () => {
       expect(await locationsOf(t, id)).toEqual([]);
     },
   );
+});
+
+/** OVH with two projects: an account working in the second one lists ITS regions. */
+const ovhTwoProjects = (c: Captured) => {
+  const p = c.path.replace(/^\/1\.0/, '');
+  if (p === '/auth/time') return jsonRes(1_700_000_000);
+  if (p === '/cloud/project') return jsonRes(['svc-a', 'svc-b']);
+  if (p === '/cloud/project/svc-a' || p === '/cloud/project/svc-b') return jsonRes({});
+  if (p === '/cloud/project/svc-a/region') return jsonRes(['GRA9', 'SBG5']);
+  if (p === '/cloud/project/svc-b/region') return jsonRes(['BHS5', 'WAW1']);
+  if (p === '/cloud/project/svc-b/network/private')
+    return jsonRes([
+      { id: 'pn-9', name: 'vrack-b', regions: [{ region: 'BHS5' }, { region: 'WAW1' }] },
+    ]);
+  if (p === '/cloud/project/svc-b/network/private/pn-9/subnet')
+    return jsonRes([
+      { id: 'sn-9', cidr: '10.9.0.0/24', ipPools: [{ region: 'BHS5' }, { region: 'WAW1' }] },
+    ]);
+  if (p.endsWith('/loadbalancing/flavor')) return jsonRes([]);
+  return jsonRes({}, 404);
+};
+
+describe('the regions offered are the ones of the project a pick creates in', () => {
+  const catalogOffers = async (t: T, accountId: Id<'edgeProviderAccounts'>) =>
+    (
+      (await t.query(internal.edgeProviderCatalog.view, { accountId })).kinds.regions?.items ?? []
+    ).map((r) => [r.id, r.facts?.project]);
+
+  test("an account working in another project lists that project's regions, each naming it", async () => {
+    const t = convexTest(schema, modules);
+    const id = await createAccount(t, {
+      provider: 'ovh',
+      name: 'o',
+      settings: { applicationKey: 'ak', endpoint: 'ovh-eu' },
+      credentials: { applicationSecret: 'as', consumerKey: 'ck' },
+    });
+    mockFetch(ovhTwoProjects);
+    // No location yet: the key's first project.
+    await t.action(internal.edgeProviderOps.refreshCatalog, { accountId: id, force: true });
+    expect(await catalogOffers(t, id)).toEqual([
+      ['GRA9', 'svc-a'],
+      ['SBG5', 'svc-a'],
+    ]);
+    // Working in the second project: its regions, not the first project's.
+    await t.mutation(internal.edgeLocations.create, {
+      accountId: id,
+      placement: { serviceName: 'svc-b', regionName: 'BHS5', networkId: 'pn-9', subnetId: 'sn-9' },
+      regionalParams: { flavorId: 'flavor-small' },
+    });
+    await t.action(internal.edgeProviderOps.refreshCatalog, { accountId: id, force: true });
+    expect(await catalogOffers(t, id)).toEqual([
+      ['BHS5', 'svc-b'],
+      ['WAW1', 'svc-b'],
+    ]);
+    // A pick names the project it was offered in: the location is made there.
+    const made = await t.action(internal.edgeProviderOps.createLocation, {
+      accountId: id,
+      placement: { regionName: 'WAW1', serviceName: 'svc-b' },
+      fill: true,
+      regionalParams: { flavorId: 'flavor-small' },
+    });
+    expect((await locationsOf(t, id)).find((l) => l.id === made.id)).toMatchObject({
+      placement: { serviceName: 'svc-b', regionName: 'WAW1', networkId: 'pn-9', subnetId: 'sn-9' },
+    });
+  });
+
+  test("gcore regions name the project they were probed in; the plan's offer carries it", async () => {
+    const t = convexTest(schema, modules);
+    const id = await createAccount(t, {
+      provider: 'gcore',
+      name: 'g',
+      settings: {},
+      credentials: { apiKey: 'k' },
+    });
+    const stub = mockFetch(gcoreApi);
+    await t.action(internal.edgeProviderOps.refreshCatalog, { accountId: id, force: true });
+    expect(await catalogOffers(t, id)).toEqual([
+      ['22', '11'],
+      ['33', '11'],
+    ]);
+    // Its locations all in the second project: the probes ask in it.
+    await t.mutation(internal.edgeLocations.create, {
+      accountId: id,
+      placement: { projectId: 12, regionId: 22 },
+    });
+    stub.calls.length = 0;
+    await t.action(internal.edgeProviderOps.refreshCatalog, { accountId: id, force: true });
+    expect(await catalogOffers(t, id)).toEqual([
+      ['22', '12'],
+      ['33', '12'],
+    ]);
+    const probes = stub.calls.filter((c) => c.path.startsWith('/cloud/v1/loadbalancers/'));
+    expect(probes.length).toBeGreaterThan(0);
+    for (const c of probes) expect(c.path).toMatch(/^\/cloud\/v1\/loadbalancers\/12\//);
+    const offers = await t.run(async (ctx) =>
+      regionOffersOf(ctx.db, (await ctx.db.get(id))!, ['22']),
+    );
+    expect(offers).toEqual([{ id: '33', label: 'Region two', project: '12' }]);
+  });
 });
 
 describe('a region picked creates its location, completed from what the key reaches', () => {

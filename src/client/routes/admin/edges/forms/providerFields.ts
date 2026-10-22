@@ -25,6 +25,7 @@
  *   PROVIDER_FIELDS, CREDENTIAL_LABELS, CREDENTIAL_HELP, DEFAULT_SETTINGS
  *   fieldsFor(provider, step), optionsFor(field, ctx), settingsBody(provider, values)
  *   missingRequired(provider, values, step?, opts?), applyDiscovery(provider, values, ctx, opts?)
+ *   locationStarted(provider, values)
  *   locationFields, hasLocations, placementBody, regionLabelOf, regionPlacement
  */
 import type {
@@ -370,18 +371,25 @@ export function placementBody(
 }
 
 /**
- * A location named by its region alone (a region the key reaches, picked when a
- * node is protected): the region's key with its id, a number where the adapter
- * wants one. The server completes the rest (`fill`). Null for a provider with
- * no region field (a CDN: its place is a zone).
+ * A location named by its region (a region the key reaches, picked when a node
+ * is protected) and the project it was listed in, when the provider has
+ * projects: their keys with their ids, numbers where the adapter wants them.
+ * The server completes the rest (`fill`). Null for a provider with no region
+ * field (a CDN: its place is a zone).
  */
 export function regionPlacement(
   provider: EdgeProviderId,
   regionId: string,
+  project?: string,
 ): Record<string, unknown> | null {
-  const f = locationFields(provider).find((x) => x.from === 'regions');
+  const fields = locationFields(provider);
+  const f = fields.find((x) => x.from === 'regions');
   if (!f) return null;
-  return { [f.key]: f.numeric ? Number(regionId) : regionId };
+  const p = project ? fields.find((x) => x.from === 'projects') : undefined;
+  return {
+    [f.key]: f.numeric ? Number(regionId) : regionId,
+    ...(p && project ? { [p.key]: p.numeric ? Number(project) : project } : {}),
+  };
 }
 
 /** The provider's name for the chosen region or zone (the location's label). */
@@ -433,13 +441,30 @@ export function optionsFor(
   }
 }
 
-/** The settings object the server validates (numbers where the adapter wants them, blanks dropped). */
+/**
+ * Whether the account form's optional first location is started: by a field it
+ * needs (an optional one alone, a project id or a network, starts nothing).
+ */
+export function locationStarted(provider: EdgeProviderId, values: Record<string, string>): boolean {
+  return locationFields(provider).some(
+    (f) => f.required && !f.readOnly && (values[f.key] ?? '').trim() !== '',
+  );
+}
+
+/**
+ * The settings object the server validates (numbers where the adapter wants them, blanks dropped).
+ * `firstLocation`: the account form's create, which leaves out a first location it never
+ * started (`locationStarted`), so an optional location value alone is not sent as a place.
+ */
 export function settingsBody(
   provider: EdgeProviderId,
   values: Record<string, string>,
+  opts: { firstLocation?: boolean } = {},
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  const skipLocation = opts.firstLocation === true && !locationStarted(provider, values);
   for (const f of PROVIDER_FIELDS[provider]) {
+    if (skipLocation && f.location) continue;
     const raw = (values[f.key] ?? '').trim();
     if (!raw) continue;
     out[f.key] = f.numeric ? Number(raw) : raw;
@@ -456,11 +481,8 @@ export function missingRequired(
 ): string[] {
   const filled = (f: ProviderField) => (values[f.key] ?? '').trim() !== '';
   // The account form's first location is optional for every provider: all of
-  // it or none of it. It is started by a field it needs (an optional one alone
-  // starts nothing).
-  const skipLocation =
-    opts.firstLocation === true &&
-    !locationFields(provider).some((f) => f.required && !f.readOnly && filled(f));
+  // it or none of it (`locationStarted`).
+  const skipLocation = opts.firstLocation === true && !locationStarted(provider, values);
   return fieldsFor(provider, step)
     .filter((f) => f.required && !filled(f) && !(skipLocation && f.location))
     .map((f) => f.label);

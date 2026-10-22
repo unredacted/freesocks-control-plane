@@ -305,7 +305,7 @@
       const { id } = await createProvider({
         provider,
         name: name.trim(),
-        settings: settingsBody(provider, values),
+        settings: settingsBody(provider, values, { firstLocation: true }),
         locationLabel: regionLabelOf(provider, values, discovered),
         credentials: cleanCredentials(),
         maxLiveEdges,

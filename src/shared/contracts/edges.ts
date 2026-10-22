@@ -2214,8 +2214,13 @@ export const SetupPlanAccount = z.object({
   locations: z.array(SetupPlanLocation).default([]),
   /** The required transports it can front (a pick of a set need not carry them all). */
   carries: z.array(z.string()).default([]),
-  /** Regions its key reaches that are no location yet: picking one creates it (load balancers). */
-  regions: z.array(z.object({ id: z.string(), label: z.string() })).default([]),
+  /**
+   * Regions its key reaches that are no location yet: picking one creates it (load balancers),
+   * in the project it was listed in (`project`, where the provider has projects).
+   */
+  regions: z
+    .array(z.object({ id: z.string(), label: z.string(), project: z.string().optional() }))
+    .default([]),
 });
 
 /** `GET relays/{id}/providers`: the node's provider set as its Providers card shows it. */
@@ -2289,6 +2294,8 @@ export const ProviderSetView = z.object({
         provider: EdgeProviderId,
         regionId: z.string(),
         label: z.string(),
+        /** The project the region was listed in (the pick creates there). */
+        project: z.string().optional(),
         carries: z.array(z.string()),
       }),
     )

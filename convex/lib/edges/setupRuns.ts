@@ -203,7 +203,7 @@ export interface SetupPlanAccount {
    * one creates the location (`createLocation` with `fill`). Load balancer
    * accounts only; absent on runs from before.
    */
-  regions?: Array<{ id: string; label: string }>;
+  regions?: Array<{ id: string; label: string; project?: string }>;
 }
 
 /** One pick of a chosen set, as the plan shows it. */

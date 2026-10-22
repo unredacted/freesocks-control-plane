@@ -9,7 +9,9 @@
  *  - `REGION_KEYS`: the placement key a region's id goes in (a load balancer
  *    provider's; a CDN's place is a zone, picked in the location form);
  *  - `projectDefault`: the project the account's other locations all use,
- *    else the only, else the first one the key lists;
+ *    else the only, else the first one the key lists. The catalog lists its
+ *    regions in that same project and tags each with it (`facts.project`), so
+ *    a pick creates its location where the region was offered;
  *  - `networkDefault`: where a provider needs a private network (OVH), the
  *    first listed network with a subnet in the region, and its first subnet.
  *    Gcore's network stays empty (a public address);
@@ -48,6 +50,16 @@ const NETWORK_REQUIRED: ReadonlySet<EdgeProviderId> = new Set(['ovh']);
 const NUMERIC_KEYS: Partial<Record<EdgeProviderId, readonly string[]>> = {
   gcore: ['projectId', 'regionId'],
 };
+
+/** The placement value naming a project (a number where the adapter wants one); {} without projects. */
+export function projectPlacement(
+  provider: EdgeProviderId,
+  project: string,
+): Record<string, unknown> {
+  const key = PROJECT_KEYS[provider];
+  if (!key) return {};
+  return { [key]: NUMERIC_KEYS[provider]?.includes(key) ? Number(project) : project };
+}
 
 /** Whether a region alone can name a location of this provider (a load balancer provider). */
 export function pickableByRegion(provider: EdgeProviderId): boolean {

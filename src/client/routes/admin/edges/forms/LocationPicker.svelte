@@ -15,10 +15,11 @@
    * old or on Refresh), and the server checks the zone with the provider before
    * it saves the location.
    *
-   * Started from a region the key reaches (`region`, the "Change options" of a
-   * region picked when a node is protected), the form opens with that region
-   * and what the server would complete it with (`locationOptions` with
-   * `defaults`: the project, OVH's network and subnet), every value changeable.
+   * Started from a region the key reaches (`region`, and the `project` it was
+   * listed in: the "Change options" of a region picked when a node is
+   * protected), the form opens with them and what the server would complete
+   * the place with (`locationOptions` with `defaults`: the project when none is
+   * named, OVH's network and subnet), every value changeable.
    *
    * Props:
    *   accountId: string
@@ -27,6 +28,7 @@
    *   onCancel?: () => void
    *   nodeCountry?: string | null    the node's country, for the region hint
    *   region?: string | null         start from this region, its defaults filled in
+   *   project?: string | null        ...in this project (the one the region was listed in)
    */
   import { untrack } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -68,6 +70,7 @@
     onCancel?: () => void;
     nodeCountry?: string | null;
     region?: string | null;
+    project?: string | null;
   }
   let {
     accountId,
@@ -76,6 +79,7 @@
     onCancel,
     nodeCountry = null,
     region = null,
+    project = null,
   }: Props = $props();
 
   const uid = $props.id();
@@ -201,7 +205,7 @@
   }));
   untrack(() => {
     if (cdn) return;
-    const start = region ? regionPlacement(provider, region) : null;
+    const start = region ? regionPlacement(provider, region, project ?? undefined) : null;
     load.mutate(start ? { placement: start, defaults: true } : { placement: {} });
   });
 

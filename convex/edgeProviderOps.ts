@@ -56,10 +56,13 @@ import {
 } from './lib/edges/accountSettings';
 import { placeKeyOf } from './lib/edges/locations';
 import {
+  PROJECT_KEYS,
   completePlacement,
   needsNetwork,
   needsProject,
   pickableByRegion,
+  projectDefault,
+  projectPlacement,
 } from './lib/edges/placementDefaults';
 import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choices';
 import { EDGE_CERTIFICATE_OPTIONS, certificateKeysOf } from './lib/edges/providers/templates';
@@ -931,7 +934,10 @@ export const checkLocation = internalAction({
 
 /**
  * List what the account's credentials reach (its catalog: zones, regions,
- * projects, TLS configurations) and store it. A refresh within
+ * projects, TLS configurations) and store it. A provider whose regions depend
+ * on the project (Gcore, OVH) lists them in the project a region pick creates
+ * in (the one the account's locations all use, else the key's first:
+ * `projectDefault`), and each region names it (`facts.project`). A refresh within
  * `CATALOG_REFRESH_FLOOR_MS` of the last one does nothing (`fresh`), so a
  * picker opening on several screens costs one listing.
  */
@@ -946,9 +952,24 @@ export const refreshCatalog = internalAction({
       const last = await ctx.runQuery(internal.edgeProviderCatalog.refreshedAt, { accountId });
       if (!force && last !== null && Date.now() - last < CATALOG_REFRESH_FLOOR_MS)
         return { refreshed: false };
-      const { provider, cfg } = await loadAdapter(ctx, accountId, undefined, seen);
+      const { provider, cfg, providerId } = await loadAdapter(ctx, accountId, undefined, seen);
       if (!provider.discoverOptions) return { refreshed: false };
-      const found = await provider.discoverOptions(cfg as never);
+      const projects = PROJECT_KEYS[providerId] !== undefined;
+      const own = projects
+        ? projectDefault(
+            providerId,
+            undefined,
+            (await ctx.runQuery(internal.edgeLocations.listForAccount, { accountId })).map(
+              (l) => l.placement as Record<string, unknown>,
+            ),
+          )
+        : null;
+      const found = await provider.discoverOptions({
+        ...cfg,
+        ...(own ? projectPlacement(providerId, own) : {}),
+      } as never);
+      // The project the regions were listed in (the adapter's own fallback is the key's first).
+      const listedIn = projects ? (own ?? found.projects?.[0]?.id ?? null) : null;
       const lists: Array<{
         kind: CatalogKind;
         items: Array<{ id: string; label: string; facts?: Record<string, string> }>;
@@ -969,11 +990,17 @@ export const refreshCatalog = internalAction({
         if (!items) continue;
         lists.push({
           kind,
-          items: items.map((i) => ({
-            id: String(i.id),
-            label: i.label,
-            ...(i.facts ? { facts: i.facts } : {}),
-          })),
+          items: items.map((i) => {
+            const facts = {
+              ...(i.facts ?? {}),
+              ...(kind === 'regions' && listedIn ? { project: listedIn } : {}),
+            };
+            return {
+              id: String(i.id),
+              label: i.label,
+              ...(Object.keys(facts).length > 0 ? { facts } : {}),
+            };
+          }),
           ...(found.truncated?.includes(kind) ? { truncated: true } : {}),
         });
       }

@@ -131,6 +131,7 @@ export const view = internalQuery({
             provider: account.provider,
             regionId: r.id,
             label: r.label,
+            ...(r.project ? { project: r.project } : {}),
             carries: carriedHere,
           });
       for (const location of locations) {
