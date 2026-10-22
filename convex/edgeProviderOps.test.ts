@@ -850,7 +850,8 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
       proto: WS,
       zoneSslMode: 'full',
     });
-    expect(steps.map((s) => s.kind)).toEqual(['create_dns_record']);
+    // The header rule closes every plan (the member's address kept from the node).
+    expect(steps.map((s) => s.kind)).toEqual(['create_dns_record', 'create_header_rule']);
     const flexible = await t.action(internal.edgeProviderOps.planProvision, {
       accountId: cfId,
       spec: l7Spec({
@@ -866,7 +867,7 @@ describe('edgeProviderOps: L7 plan-time refusals', () => {
       proto: WS,
       zoneSslMode: 'flexible',
     });
-    expect(flexible.map((s) => s.kind)).toEqual(['create_dns_record']);
+    expect(flexible.map((s) => s.kind)).toEqual(['create_dns_record', 'create_header_rule']);
   });
 
   test('an adapter with no adoption inspection refuses the import instead of guessing', async () => {

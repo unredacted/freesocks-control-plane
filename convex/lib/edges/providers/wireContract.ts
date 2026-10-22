@@ -433,6 +433,14 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
           'location check: zone encryption mode and WebSockets setting (recorded, not required)',
       },
       {
+        // Source: developers.cloudflare.com/ssl/edge-certificates/additional-options/minimum-tls/,
+        // /network/pseudo-ipv4/, /network/ip-geolocation/, 2026-10-21.
+        method: 'GET',
+        path: '^/client/v4/zones/[^/]+/settings/(min_tls_version|pseudo_ipv4|ip_geolocation)$',
+        purpose:
+          'location check of a fronting account: lowest TLS version, Pseudo IPv4 and IP geolocation (recorded, never changed)',
+      },
+      {
         method: 'POST',
         path: '^/client/v4/zones/[^/]+/dns_records$',
         purpose:
@@ -475,20 +483,37 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         body: ['rules'],
       },
       {
+        // Source: developers.cloudflare.com/rules/transform/request-header-modification/create-api/,
+        // 2026-10-21.
+        method: 'GET',
+        path: '^/client/v4/zones/[^/]+/rulesets/phases/http_request_late_transform/entrypoint$',
+        purpose:
+          'read the request-header Transform Rules entry point (404 = none yet), and the rule an imported hostname already carries',
+      },
+      {
+        method: 'PUT',
+        path: '^/client/v4/zones/[^/]+/rulesets/phases/http_request_late_transform/entrypoint$',
+        purpose:
+          "bootstrap that entry point with our one header rule (the member's address removed for one hostname), under the zone lock",
+        body: ['rules'],
+      },
+      {
         method: 'POST',
         path: '^/client/v4/zones/[^/]+/rulesets/[^/]+/rules$',
-        purpose: 'add the destination-port origin rule, recovered by its ref',
+        purpose:
+          "add the destination-port origin rule or the hostname's header rule, recovered by its ref",
         body: ['action', 'action_parameters', 'expression', 'ref'],
       },
       {
         method: 'DELETE',
         path: '^/client/v4/zones/[^/]+/rulesets/[^/]+/rules/[^/]+$',
-        purpose: 'delete the origin rule',
+        purpose: 'delete the origin rule or the header rule',
       },
       {
         method: 'GET',
         path: '^/client/v4/zones/[^/]+/ssl/certificate_packs$',
-        purpose: 'certificate readiness for the minted hostname',
+        purpose:
+          "certificate readiness for the minted hostname; a fronting account's location check reads the zone's wildcard",
       },
     ],
   },

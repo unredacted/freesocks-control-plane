@@ -1046,6 +1046,8 @@ export const CloudflareTemplate = z.object({
   // Options added with provider options: optional, the adapter applies the default.
   answerFamily: z.enum(['both', 'ipv4', 'ipv6']).optional(),
   recordTags: RECORD_TAGS.optional(),
+  /** Absent (every front planned before the option too) = the header rule removes the member's address. */
+  forwardClientAddress: z.boolean().optional(),
 });
 export type CloudflareTemplateParams = z.infer<typeof CloudflareTemplate>;
 
@@ -1096,6 +1098,16 @@ export const CLOUDFLARE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     help: "Needed when the node does not listen on the encryption mode's default port (an Origin Rule; 10 on a Free zone).",
     wire: { resource: 'origin_rule', field: 'action_parameters.origin.port', manual: true },
     live: 'in_place',
+  },
+  {
+    key: 'forwardClientAddress',
+    label: "Pass the member's address to the node",
+    type: 'boolean',
+    group: 'Request',
+    default: false,
+    help: "Off (the default): a Transform Rule for the front's name removes CF-Connecting-IP before the node sees the request. Cloudflare still sends X-Forwarded-For with the member's address, which no rule can remove: the node removes it. On adds no rule.",
+    wire: { resource: 'header_rule', field: 'action_parameters.headers', manual: true },
+    live: 'rebuild',
   },
 ];
 

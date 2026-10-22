@@ -247,14 +247,19 @@ describe('origin capability record ⇔ adapters', () => {
     },
   );
 
-  test('a DNS provider (role dns) hosts DNS and fronts only while the switch allows', () => {
+  test('a DNS provider (role dns) hosts DNS and fronts only when its account is set to front', () => {
     for (const id of EDGE_PROVIDER_IDS) {
       const caps = EDGE_PROVIDER_CAPABILITIES[id];
       if (caps.role === 'dns') {
         expect(caps.providesDns).toBe(true);
-        expect(frontsAllowed(id, false)).toBe(false);
-        expect(frontsAllowed(id, true)).toBe(true);
-      } else expect(frontsAllowed(id, false)).toBe(true);
+        expect(frontsAllowed({ provider: id })).toBe(false);
+        expect(frontsAllowed({ provider: id, frontsTraffic: false })).toBe(false);
+        expect(frontsAllowed({ provider: id, frontsTraffic: true })).toBe(true);
+      } else {
+        // An edge provider's account always fronts, whatever the row says.
+        expect(frontsAllowed({ provider: id })).toBe(true);
+        expect(frontsAllowed({ provider: id, frontsTraffic: false })).toBe(true);
+      }
       // A provider that needs a DNS account is itself an edge provider.
       if (caps.needsDnsAccount) expect(caps.role).toBe('edge');
     }

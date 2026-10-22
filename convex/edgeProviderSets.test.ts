@@ -11,6 +11,7 @@ import {
   adoptL4Edge,
   createAccount,
   seedEdgeFixture,
+  setFrontsTraffic,
   wsListener,
 } from './lib/edges/testing/fixtures';
 import { setPicksOf, setStateOf } from './lib/edges/setState';
@@ -56,7 +57,7 @@ describe('provider set view and state', () => {
       observed: { zoneSslMode: 'full', websockets: 'on' },
     });
     const l4Location = await locationOf(fx.accountId);
-    // A set picked while the switch was on.
+    // A set picked while the DNS account was set to DNS and fronting.
     await t.run((c) =>
       c.db.patch(fx.relayId, {
         providerSet: [
@@ -72,7 +73,7 @@ describe('provider set view and state', () => {
           p.usable,
         ]),
       );
-    // Off (the default): the DNS pick carries nothing and is never offered.
+    // DNS only (the default): the DNS pick carries nothing and is never offered.
     expect(await usable()).toEqual([
       ['upcloud', true],
       ['cloudflare', false],
@@ -80,10 +81,8 @@ describe('provider set view and state', () => {
     await t.run((c) => c.db.patch(fx.relayId, { providerSet: undefined }));
     const view = await t.query(internal.edgeProviderSets.view, { relayId: fx.relayId });
     expect(view!.available.some((a) => a.accountId === dns)).toBe(false);
-    // On: both are usable again.
-    await t.mutation(internal.edgeAdmin.patchConfig, {
-      patch: { l7: { dnsProvidersFront: true } },
-    });
+    // DNS and fronting: both are usable again.
+    await setFrontsTraffic(t, dns, true);
     const viewOn = await t.query(internal.edgeProviderSets.view, { relayId: fx.relayId });
     expect(viewOn!.available.some((a) => a.accountId === dns)).toBe(true);
     await t.run((c) =>

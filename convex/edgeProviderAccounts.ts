@@ -35,7 +35,14 @@ import {
   type EdgeCredentials,
   type EdgeSettings,
 } from './lib/edges/accountSettings';
-import { EDGE_PROVIDER_CAPABILITIES, edgeLayerOf } from './lib/edges/providers/capabilities';
+import {
+  EDGE_PROVIDER_CAPABILITIES,
+  edgeLayerOf,
+  edgeRoleOf,
+  frontsAllowed,
+} from './lib/edges/providers/capabilities';
+import { LEGACY_DNS_PROVIDERS_FRONT_KEY } from './lib/edgeConfig';
+import { upsertSettingRow } from './appSettings';
 import {
   optionChanges,
   parseOptionValues,
@@ -127,6 +134,9 @@ export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>, locations: Locat
     defaultLocationId: dflt?.id ?? null,
     locations,
     enabled: r.enabled,
+    // What the account is for: an edge provider's always fronts; a DNS
+    // provider's fronts member traffic only when set to DNS and fronting.
+    frontsTraffic: frontsAllowed(r),
     qualified: locations.some((l) => l.enabled && l.qualified),
     qualifiedTemplateHash: dflt?.qualifiedTemplateHash ?? null,
     // How the trust was taken (never the endpoint itself: ids + dates only).
@@ -182,6 +192,8 @@ export interface RelayAccountWithSecret {
   /** The certificate option defaults as stored (JSON; `accountOptionDefaultsOf` reads them). */
   optionDefaults?: string;
   enabled: boolean;
+  /** Whether the account fronts member traffic (`frontsAllowed`: a DNS account set to DNS and fronting). */
+  frontsTraffic: boolean;
   defaultTemplateId: Id<'edgeTemplates'> | null;
   /** Row version for compare-and-set writes (a rotation applies only to the row it tested). */
   updatedAt: number;
@@ -200,6 +212,7 @@ function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
     settings: r.settings as EdgeSettings,
     ...(r.optionDefaults !== undefined ? { optionDefaults: r.optionDefaults } : {}),
     enabled: r.enabled,
+    frontsTraffic: frontsAllowed(r),
     defaultTemplateId: r.defaultTemplateId ?? null,
     updatedAt: r.updatedAt,
     apiFailures: r.apiFailures ?? 0,
@@ -269,8 +282,22 @@ const upsertArgs = {
   defaultTemplateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
   /** Defaults for the provider's certificate options (lib/edges/providers/options.ts). */
   optionDefaults: v.optional(v.any()),
+  /** A DNS provider's account: DNS and fronting (true) or DNS only (false, the default). */
+  frontsTraffic: v.optional(v.boolean()),
   actorAdminId: v.optional(v.id('adminUsers')),
 };
+
+/**
+ * Whether an account fronts is a choice for a DNS provider's account only (an
+ * edge provider's always fronts): `false` there is refused rather than stored.
+ */
+function checkFrontingChoice(provider: EdgeProviderId, frontsTraffic: boolean | undefined): void {
+  if (frontsTraffic === false && edgeRoleOf(provider) !== 'dns')
+    throw new ConvexError({
+      code: 'validation',
+      message: "Only a DNS provider's account chooses whether it fronts traffic",
+    });
+}
 
 function checkLimits(a: {
   dailyAllocationBudget?: number;
@@ -617,6 +644,7 @@ export const create = internalMutation({
   handler: async (ctx, a) => {
     checkName(a.name);
     checkLimits(a);
+    checkFrontingChoice(a.provider, a.frontsTraffic);
     await assertAdmission(ctx.db, 'provider.write');
     const dup = await ctx.db
       .query('edgeProviderAccounts')
@@ -678,6 +706,9 @@ export const create = internalMutation({
       optionDefaults: storedOptions(optionDefaults),
       defaultTemplateId: a.defaultTemplateId ?? undefined,
       enabled: a.enabled ?? true,
+      // A new DNS account is DNS only unless the operator chose otherwise; the
+      // choice is always stored, so the deploy step never reads it as unset.
+      ...(edgeRoleOf(a.provider) === 'dns' ? { frontsTraffic: a.frontsTraffic === true } : {}),
       priority: a.priority ?? 0,
       dailyAllocationBudget: a.dailyAllocationBudget ?? 10,
       allocationsToday: 0,
@@ -690,7 +721,11 @@ export const create = internalMutation({
       action: 'edge.provider_account.create',
       targetType: 'edge_provider_account',
       targetId: id,
-      payload: { name: a.name, provider: a.provider },
+      payload: {
+        name: a.name,
+        provider: a.provider,
+        ...(edgeRoleOf(a.provider) === 'dns' ? { frontsTraffic: a.frontsTraffic === true } : {}),
+      },
     });
     let locationId: Id<'edgeLocations'> | null = null;
     if (initialPlacement) {
@@ -722,12 +757,15 @@ export const update = internalMutation({
     defaultTemplateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     /** The account's certificate option defaults, whole (replaces the stored set). */
     optionDefaults: v.optional(v.any()),
+    /** A DNS provider's account: DNS and fronting (true) or DNS only (false). */
+    frontsTraffic: v.optional(v.boolean()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
     checkLimits(a);
+    checkFrontingChoice(row.provider, a.frontsTraffic);
     // An account stored with no daily limit (0, allowed before) keeps it only
     // until its next edit: any edit must set a budget too. Switching it off is
     // the one exception, so an operator can always stop it at once.
@@ -741,6 +779,7 @@ export const update = internalMutation({
         a.maxLiveEdges,
         a.defaultTemplateId,
         a.optionDefaults,
+        a.frontsTraffic,
       ].every((x) => x === undefined);
     if (a.dailyAllocationBudget === undefined && !onlySwitchingOff)
       checkLimits({ dailyAllocationBudget: row.dailyAllocationBudget });
@@ -861,6 +900,16 @@ export const update = internalMutation({
       credentialsChanged = !settingsEqual(creds.credentials, row.credentials);
     }
     if (a.enabled !== undefined) patch.enabled = a.enabled;
+    // DNS only <-> DNS and fronting (a DNS provider's account). Edges that
+    // exist are kept either way. Starting to front is like a settings change
+    // for trust: the account's locations are trusted again only by a proven
+    // front, after a credential test that ran the fronting checks.
+    const frontingBefore = frontsAllowed(row);
+    const frontingChanged =
+      a.frontsTraffic !== undefined &&
+      edgeRoleOf(row.provider) === 'dns' &&
+      a.frontsTraffic !== frontingBefore;
+    if (frontingChanged) patch.frontsTraffic = a.frontsTraffic;
     if (a.priority !== undefined) patch.priority = a.priority;
     if (a.dailyAllocationBudget !== undefined)
       patch.dailyAllocationBudget = a.dailyAllocationBudget;
@@ -883,7 +932,8 @@ export const update = internalMutation({
     // The certificate defaults decide what a node protected from now on (and a
     // pick from before options) gets: a change is untrusted like a settings change.
     if (optionsChanged) settingsChanged = true;
-    if (credentialsChanged || settingsChanged) patch.credentialsChangedAt = Date.now();
+    if (credentialsChanged || settingsChanged || (frontingChanged && a.frontsTraffic))
+      patch.credentialsChangedAt = Date.now();
     // What the certificate checks of the last test answered for (the CAA
     // records for this CA and scope, the shared certificate in this zone) no
     // longer applies once those settings move: the account is untested until
@@ -906,7 +956,7 @@ export const update = internalMutation({
     await ctx.db.patch(a.id, patch);
     const fresh = (await ctx.db.get(a.id))!;
     let requalify = 0;
-    if (credentialsChanged || settingsChanged)
+    if (credentialsChanged || settingsChanged || (frontingChanged && a.frontsTraffic))
       requalify += await untrustAccountLocations(ctx, fresh, {
         actorAdminId: a.actorAdminId,
         releaseHolds: true,
@@ -928,6 +978,21 @@ export const update = internalMutation({
       targetId: a.id,
       payload: { name: patch.name ?? row.name, provider: row.provider },
     });
+    if (frontingChanged)
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: a.actorAdminId ?? undefined,
+        action: 'edge.provider_account.fronting_changed',
+        targetType: 'edge_provider_account',
+        targetId: a.id,
+        payload: {
+          name: patch.name ?? row.name,
+          provider: row.provider,
+          frontsTraffic: a.frontsTraffic === true,
+          // Its edges that exist stay as they are: how many, for the record.
+          liveEdges: (await liveEdgesOfAccount(ctx.db, a.id)).length,
+        },
+      });
     if (optionsChanged)
       await writeAuditLog(ctx, {
         actorType: 'admin',
@@ -1561,5 +1626,72 @@ export const migrateOptionDefaults = internalMutation({
       if (changed) await ctx.db.patch(relay._id, { providerSet: next });
     }
     return { moved, picks };
+  },
+});
+
+/**
+ * Deploy step (seedCutover), idempotent: the deployment-wide switch that let
+ * every DNS provider's account front traffic (`edge.l7.dnsProvidersFront`)
+ * becomes each DNS account's own choice. A DNS account that has none yet
+ * (`frontsTraffic` unset: every one created before this deploy) takes the
+ * switch's stored value, on or off (absent = off, its default), so what fronts
+ * and what does not stays exactly as it was; trust and `credentialsChangedAt`
+ * are untouched. Then the switch row is deleted: nothing reads it any more,
+ * and a new account always stores its choice, so a later run finds nothing to
+ * do. `restoreDnsFrontingForRollback` undoes it before an older build.
+ */
+export const migrateDnsFronting = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', LEGACY_DNS_PROVIDERS_FRONT_KEY))
+      .unique();
+    // The value as the old build read it: JSON `true` is on, anything else off.
+    let fronts = false;
+    try {
+      fronts = row ? JSON.parse(row.value) === true : false;
+    } catch {
+      fronts = false;
+    }
+    let migrated = 0;
+    for (const a of await ctx.db.query('edgeProviderAccounts').collect()) {
+      if (edgeRoleOf(a.provider) !== 'dns' || a.frontsTraffic !== undefined) continue;
+      await ctx.db.patch(a._id, { frontsTraffic: fronts });
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'edge.provider_account.fronting_migrated',
+        targetType: 'edge_provider_account',
+        targetId: a._id,
+        payload: { name: a.name, provider: a.provider, frontsTraffic: fronts },
+      });
+      migrated++;
+    }
+    if (row) await ctx.db.delete(row._id);
+    return { migrated, switchWas: row ? fronts : null };
+  },
+});
+
+/**
+ * Rollback helper: run BEFORE deploying a build from before per-account
+ * fronting. That build's schema has no `frontsTraffic` (Convex refuses it while
+ * a row holds the field) and reads the deployment-wide switch instead, so the
+ * field is removed from every account and the switch is written back: on when
+ * any DNS account was set to DNS and fronting (the old build then lets every
+ * DNS account front, the nearest it can come), off otherwise.
+ */
+export const restoreDnsFrontingForRollback = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let anyFronts = false;
+    let cleared = 0;
+    for (const a of await ctx.db.query('edgeProviderAccounts').collect()) {
+      if (a.frontsTraffic === undefined) continue;
+      if (edgeRoleOf(a.provider) === 'dns' && a.frontsTraffic) anyFronts = true;
+      await ctx.db.patch(a._id, { frontsTraffic: undefined });
+      cleared++;
+    }
+    await upsertSettingRow(ctx, LEGACY_DNS_PROVIDERS_FRONT_KEY, anyFronts ? 'true' : 'false');
+    return { cleared, switchOn: anyFronts };
   },
 });

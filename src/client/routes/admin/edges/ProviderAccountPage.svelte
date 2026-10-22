@@ -22,7 +22,11 @@
   import * as Tabs from '@client/components/ui/tabs';
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '../../../lib/api';
-  import { DNS_ACCOUNT_BLURB, EDGE_PROVIDER_META } from '../../../lib/edgeProviderMeta';
+  import {
+    DNS_ACCOUNT_BLURB,
+    DNS_ACCOUNT_USES,
+    EDGE_PROVIDER_META,
+  } from '../../../lib/edgeProviderMeta';
   import { router } from '../../../stores/router.svelte';
   import { searchParam } from '../../../lib/urlState.svelte';
   import {
@@ -157,6 +161,22 @@
     domainsChoice = null;
   }
 
+  // --- what a DNS account does (DNS only, or DNS and fronting) ------------------------------------------
+  const isDnsAccount = $derived(a ? EDGE_PROVIDER_META[a.provider].role === 'dns' : false);
+  const useNow = $derived<'dns' | 'front'>(a?.frontsTraffic ? 'front' : 'dns');
+  let useChoice = $state<'dns' | 'front' | null>(null);
+  let useOpen = $state(false);
+  async function saveUse() {
+    if (!a || !useChoice) return;
+    const fronts = useChoice === 'front';
+    await updateProvider(a.id, { frontsTraffic: fronts });
+    invalidateProviders(qc);
+    toast.success(fronts ? 'This account now fronts traffic too' : 'This account is DNS only now');
+    useChoice = null;
+    // The fronting checks of its zones (certificate, CAA, encryption mode) run with a test.
+    if (fronts) acct.test.mutate(a.id);
+  }
+
   // --- dialogs ---------------------------------------------------------------------------------------
   let qualifyOpen = $state(false);
   let rotateOpen = $state(false);
@@ -192,7 +212,7 @@
   <SectionHeader
     title={a.name}
     description={EDGE_PROVIDER_META[a.provider].role === 'dns'
-      ? `${providerLabel(a.provider)} DNS account. ${DNS_ACCOUNT_BLURB}`
+      ? `${providerLabel(a.provider)} account: ${DNS_ACCOUNT_USES[useNow].label}. ${DNS_ACCOUNT_BLURB}`
       : `${providerLabel(a.provider)} account. Credentials, settings, inventory and qualification.`}
     back={{ href: edgesPaths.providers(), label: 'Providers' }}
   >
@@ -337,6 +357,55 @@
       </div>
 
       <ReachCard account={a} dnsAccountsExist={!needsDns || dnsAccountsExist} />
+
+      {#if isDnsAccount}
+        <Card>
+          <CardHeader>
+            <CardTitle class="text-base">What this account does</CardTitle>
+            <CardDescription>
+              A DNS account holds the records FCP writes for other fronts. It can also front member
+              traffic itself, through its zones.
+            </CardDescription>
+          </CardHeader>
+          <CardContent class="space-y-4">
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="max-w-md flex-1 space-y-1.5">
+                <Label for="acct-dns-use">This account is</Label>
+                <Select.Root
+                  type="single"
+                  value={useChoice ?? useNow}
+                  onValueChange={(v) => {
+                    const next = v === 'front' ? 'front' : 'dns';
+                    useChoice = next === useNow ? null : next;
+                  }}
+                >
+                  <Select.Trigger id="acct-dns-use" class="w-full">
+                    {DNS_ACCOUNT_USES[useChoice ?? useNow].label}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Item value="dns" label={DNS_ACCOUNT_USES.dns.label}>
+                      {DNS_ACCOUNT_USES.dns.label}
+                    </Select.Item>
+                    <Select.Item value="front" label={DNS_ACCOUNT_USES.front.label}>
+                      {DNS_ACCOUNT_USES.front.label}
+                    </Select.Item>
+                  </Select.Content>
+                </Select.Root>
+              </div>
+              <Button disabled={useChoice === null} onclick={() => (useOpen = true)}>Change</Button>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              {DNS_ACCOUNT_USES[useChoice ?? useNow].detail}
+            </p>
+            {#if useNow === 'front' || useChoice === 'front'}
+              <p class="text-xs text-muted-foreground">
+                The CDN still sends the member's address to the node in X-Forwarded-For, which no
+                rule can remove there: the node removes it before the proxy sees the request.
+              </p>
+            {/if}
+          </CardContent>
+        </Card>
+      {/if}
 
       {#if certificateFields.length > 0}
         <OptionDefaultsCard account={a} fields={certificateFields}>
@@ -513,6 +582,17 @@
   />
   <RenameDialog bind:open={renameOpen} account={a} taken={others.map((x) => x.name)} />
   <RotateCredentialsDialog bind:open={rotateOpen} account={a} {credentialFields} />
+  <ConfirmDialog
+    bind:open={useOpen}
+    title={useChoice === 'front'
+      ? 'Let this account front traffic?'
+      : 'Make this account DNS only?'}
+    body={useChoice === 'front'
+      ? 'Nodes can then be protected through its zones. Its zones are checked with a credential test right away, and its locations are trusted again by their first proven front. Fronts it already has are kept.'
+      : 'It gets no new fronts and its spares do not go live. Fronts that carry members now are kept until they are replaced or deleted. The records it holds for other fronts are not touched.'}
+    confirmLabel={useChoice === 'front' ? 'Front traffic too' : 'DNS only'}
+    onConfirm={saveUse}
+  />
   <ConfirmDialog
     bind:open={domainsOpen}
     title="Change how fronts get their names?"

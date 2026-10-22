@@ -328,9 +328,8 @@ beforeAll(async () => {
   // seam), and L7 accounts may be picked by the run (automatic L7 selection is
   // an operator switch, off by default).
   __setEdgePlumbingForTests({ pollMs: 5_000 });
-  // The L7 front here is a Cloudflare account, a DNS provider: it fronts only with the switch on.
   await t.mutation(internal.edgeAdmin.patchConfig, {
-    patch: { l7: { autoSelect: true, dnsProvidersFront: true } },
+    patch: { l7: { autoSelect: true } },
   });
 
   // The REALITY family: the stack's target serves every name it lists.
@@ -401,12 +400,14 @@ beforeAll(async () => {
     dailyAllocationBudget: 30,
   });
   await t.mutation(internal.edgeProviderAccounts.recordTest, { id: l4, ok: true });
+  // The L7 front here is a Cloudflare account, a DNS provider: set to DNS and fronting.
   const l7 = await createAccount(t, {
     provider: 'cloudflare',
     name: 'ec-l7',
     maxLiveEdges: 20,
     dailyAllocationBudget: 30,
     settings: { zoneId: 'ec'.padEnd(32, '0'), zoneName: env.l7Zone },
+    frontsTraffic: true,
   });
   await t.mutation(internal.edgeProviderAccounts.recordTest, { id: l7, ok: true });
   // The zone's facts, as the zone location's check observed them.
@@ -1014,11 +1015,27 @@ describe.skipIf(!ENABLED)(
                 });
               }
               await connectThrough(engine, served, edge, node.addr.origin);
-              if (key === 'ws')
+              if (key === 'ws') {
                 // The node's ingress saw the FRONT, never the member.
                 expect(accessLog('ingress').some((e) => e.remoteIp.startsWith('203.0.113.'))).toBe(
                   false,
                 );
+                // What the front sent it (docs/edges.md "Cloudflare fronts"):
+                // FCP's header rule removed CF-Connecting-IP for the front's
+                // name; X-Forwarded-For, which no rule removes at Cloudflare,
+                // still carries the member's address for the node to drop.
+                // (This front's own requests: the wiring stage's hand-written front sends it.)
+                const upgrades = accessLog('ingress').filter(
+                  (e) => e.uri === env.wsPath && e.host === edge.address,
+                );
+                expect(upgrades.length).toBeGreaterThan(0);
+                expect(upgrades.some((e) => 'Cf-Connecting-Ip' in e.headers)).toBe(false);
+                expect(
+                  upgrades.some((e) =>
+                    (e.headers['X-Forwarded-For'] ?? []).some((v) => v.includes(ADDR.client)),
+                  ),
+                ).toBe(true);
+              }
             });
 
         // A provider set of two locations (docs/edges.md "Provider sets"): the

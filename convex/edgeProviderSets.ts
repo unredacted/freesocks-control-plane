@@ -23,7 +23,7 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { MAX_DESIRED_PUBLISHED, dnsProvidersFrontOf } from './lib/edgeConfig';
+import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
 import { edgeLayerOf, frontsAllowed } from './lib/edges/providers/capabilities';
 import { L4_NOT_FOR_WEBSOCKET, l4BarredForAll, websocketNodeOf } from './lib/edges/websocketNode';
 import { assertAdmission } from './lib/edges/maintenance';
@@ -104,10 +104,9 @@ export const view = internalQuery({
       };
     });
     const available = [];
-    const dnsFront = await dnsProvidersFrontOf(ctx.db);
     for (const account of await ctx.db.query('edgeProviderAccounts').collect()) {
       if (!account.enabled || !account.lastTestOkAt || account.lastTestError) continue;
-      if (!frontsAllowed(account.provider, dnsFront)) continue;
+      if (!frontsAllowed(account)) continue;
       for (const location of await locationsOfAccount(ctx.db, account._id)) {
         if (!location.enabled || picks.some((p) => p.locationId === location._id)) continue;
         const row = { account, location };

@@ -26,9 +26,12 @@ import {
   FIXTURE_CONFIG_PROFILE,
   insertPanelServer,
   registerRelay,
+  setFrontsTraffic,
   wsListener,
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
+
+import { stepLockKey } from './edgeRotations';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -182,8 +185,6 @@ async function seed(opts: { autoSelect?: boolean; zoneSslMode?: string } = {}) {
     for (const [key, value] of [
       ['edge.enabled', 'true'],
       ['edge.l7.autoSelect', opts.autoSelect ? 'true' : 'false'],
-      // The front here is a Cloudflare account, a DNS provider: let it front.
-      ['edge.l7.dnsProvidersFront', 'true'],
     ] as const) {
       await ctx.db.insert('appSettings', { key, value, updatedAt: Date.now() });
     }
@@ -193,6 +194,8 @@ async function seed(opts: { autoSelect?: boolean; zoneSslMode?: string } = {}) {
     name: 'acct-cf',
     settings: { zoneId: 'a'.repeat(32), zoneName: ZONE },
     credentials: { apiToken: 'cf' },
+    // The front here is a Cloudflare account, a DNS provider: let it front.
+    frontsTraffic: true,
   });
   await t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true });
   // The zone's encryption mode is what the zone location's check OBSERVED;
@@ -642,9 +645,7 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
       observed: { zoneSslMode: 'full', websockets: 'on' },
     });
     // The default: Cloudflare is a DNS provider, not a front.
-    await t.mutation(internal.edgeAdmin.patchConfig, {
-      patch: { l7: { dnsProvidersFront: false } },
-    });
+    await setFrontsTraffic(t, accountId, false);
     const named = await t.mutation(internal.edgeRotations.start, {
       relayId,
       kind: 'provision',
@@ -694,11 +695,9 @@ describe('edgeRotations: the L7 automatic-selection gate', () => {
     await t.run((ctx) => ctx.db.patch(relayId, { publishedEdgeIds: [published] }));
     const check = () =>
       t.run(async (ctx) => checkPublishable(ctx, (await ctx.db.get(spare))!, false));
-    // On (this seed): the spare is judged on its own merits (it has no proof yet).
+    // DNS and fronting (this seed): the spare is judged on its own merits (it has no proof yet).
     expect((await check()).code).not.toBe('dns_account_not_fronting');
-    await t.mutation(internal.edgeAdmin.patchConfig, {
-      patch: { l7: { dnsProvidersFront: false } },
-    });
+    await setFrontsTraffic(t, accountId, false);
     expect(await check()).toEqual({ ok: false, code: 'dns_account_not_fronting' });
     // A direct publish is refused at the start, never at the provider.
     await expect(
@@ -1361,6 +1360,92 @@ describe('edgeRotations: a certificate that waits says what it waits on', () => 
     expect(edge.failure).toMatchObject({ code: 'tls_caa_conflict' });
     expect(edge.waiting).toBeUndefined();
   });
+
+  /**
+   * An L7 adapter whose steps are all done at once and whose DESCRIBE waits on
+   * the zone's certificate (a Cloudflare zone's edge certificate): these codes,
+   * one per look, then active.
+   */
+  function describeWaitingL7(looks: Array<string | null>) {
+    let look = 0;
+    const provider = {
+      id: 'cloudflare',
+      templateSchema: z.object({}).passthrough(),
+      templateFields: [],
+      defaultTemplate: {},
+      testCredentials: async () => ({ ok: true }),
+      planProvision: (_cfg: unknown, spec: EdgeSpec) => [
+        {
+          id: 'dns',
+          kind: 'create_dns_record',
+          resourceName: spec.name,
+          discoverability: 'by_name',
+        },
+      ],
+      runStep: async (_cfg: unknown, _step: unknown, spec: EdgeSpec) => ({
+        status: 'done',
+        resources: [{ kind: 'dns_record', resourceId: 'rec-1', ownership: 'created' }],
+        addresses: { hostname: spec.hostname },
+      }),
+      discover: async () => ({ status: 'unresolved' }),
+      describe: async () => {
+        const code = looks[Math.min(look++, looks.length - 1)] ?? null;
+        return code
+          ? {
+              state: 'pending',
+              addresses: { hostname: 'x.example.org' },
+              health: 'unknown',
+              code,
+              readiness: { dns: 'ready', certificate: 'pending' },
+            }
+          : {
+              state: 'active',
+              addresses: { hostname: 'x.example.org' },
+              health: 'unknown',
+              readiness: { dns: 'ready', certificate: 'ready' },
+            };
+      },
+      inspect: async () => ({ summary: { addresses: {}, members: [], listeners: [] }, raw: {} }),
+      inventory: async () => ({ loadBalancers: [], ips: [], flavors: [] }),
+      planDestroy: () => [],
+      runDestroy: async () => ({ status: 'confirmed_gone' }),
+    } as unknown as EdgeProvider;
+    __setEdgeProviderForTests('cloudflare', provider);
+  }
+
+  test('a certificate the zone still issues once every step is done waits the same way', async () => {
+    vi.useFakeTimers();
+    describeWaitingL7(['edge_certificate_pending', 'edge_certificate_pending', null]);
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    const { t, relayId, listenerId } = await seed();
+    const rotationId = await startProvision(t, relayId, listenerId);
+    const held = (await stepUntil(t, rotationId, (e) => !!e?.waiting))!;
+    expect(held.waiting).toMatchObject({ step: 'certificate', code: 'edge_certificate_pending' });
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.find((i) => i.kind === 'certificate_waiting')).toMatchObject({
+      edgeId: held._id,
+      code: 'edge_certificate_pending',
+    });
+    const active = await stepUntil(t, rotationId, (e) => e?.status !== 'provisioning');
+    expect(active!.waiting).toBeUndefined();
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    // Logged once, not once per look.
+    expect(r.events.filter((e) => e.code === 'edge_certificate_pending')).toHaveLength(1);
+  });
+
+  test('a front that never gets its certificate times out with that reason', async () => {
+    vi.useFakeTimers();
+    describeWaitingL7(['edge_certificate_missing']);
+    fakePanel();
+    __setFrontChecker(async () => ({ ok: true, steps: [], checkedAt: Date.now() }));
+    const { t, relayId, listenerId } = await seed();
+    const rotationId = await startProvision(t, relayId, listenerId);
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('failed');
+    expect(r.outcome).toBe('edge_certificate_missing');
+  });
 });
 
 describe('edgeRotations: a configuration the provider refuses ends the run on its code', () => {
@@ -1503,5 +1588,15 @@ describe('edgeRotations: a front that could get no certificate is never planned'
     expect(r.phase).toBe('failed');
     expect(r.outcome).toBe('caa_forbids_ca');
     expect(adapter.seen.filter((s) => s.call === 'runStep')).toEqual([]);
+  });
+});
+
+describe('edgeRotations: the zone lock of a Cloudflare rule', () => {
+  test('both rules (origin port, header removals) serialise on the zone', () => {
+    const intent = { hostname: `front.${ZONE}`, zoneId: 'z1', originTransport: {} };
+    const edge = { provisionIntent: JSON.stringify(intent), accountId: 'a1' } as never;
+    expect(stepLockKey(edge, 'create_origin_rule')).toBe('cloudflare-zone:z1');
+    expect(stepLockKey(edge, 'create_header_rule')).toBe('cloudflare-zone:z1');
+    expect(stepLockKey(edge, 'create_dns_record')).toBeNull();
   });
 });

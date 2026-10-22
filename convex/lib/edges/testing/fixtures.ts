@@ -187,6 +187,8 @@ export async function createAccount(
     dailyAllocationBudget?: number;
     settings?: Record<string, unknown>;
     credentials?: Record<string, unknown>;
+    /** A DNS provider's account (Cloudflare): DNS and fronting. Absent = DNS only. */
+    frontsTraffic?: boolean;
   } = {},
 ): Promise<Id<'edgeProviderAccounts'>> {
   const provider = opts.provider ?? 'gcore';
@@ -229,10 +231,23 @@ export async function createAccount(
     ...(opts.dailyAllocationBudget !== undefined
       ? { dailyAllocationBudget: opts.dailyAllocationBudget }
       : {}),
+    ...(opts.frontsTraffic !== undefined ? { frontsTraffic: opts.frontsTraffic } : {}),
   });
   if (opts.qualified)
     await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
   return id;
+}
+
+/**
+ * Switch a DNS account between DNS only and DNS and fronting as a row write,
+ * leaving its trust as it is (the admin update untrusts on the way on).
+ */
+export async function setFrontsTraffic(
+  t: T,
+  id: Id<'edgeProviderAccounts'>,
+  frontsTraffic: boolean,
+): Promise<void> {
+  await t.run((ctx) => ctx.db.patch(id, { frontsTraffic }));
 }
 
 /**

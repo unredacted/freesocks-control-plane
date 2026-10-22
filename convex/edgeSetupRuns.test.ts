@@ -21,6 +21,7 @@ import {
   createAccount,
   insertPanelServer,
   registerRelay,
+  setFrontsTraffic,
 } from './lib/edges/testing/fixtures';
 import { __setStageOpsForTests, approvedDarkCohorts, type StageOps } from './edgeSetupRuns';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
@@ -457,9 +458,7 @@ describe('edgeSetupPlan', () => {
         approvedHideUuids: [],
       }),
     ).rejects.toThrow(/account_incompatible/);
-    await t.mutation(internal.edgeAdmin.patchConfig, {
-      patch: { l7: { dnsProvidersFront: true } },
-    });
+    await setFrontsTraffic(t, dns, true);
     const on = await planFor(t, serverId);
     expect(on.accounts.map((a) => a.id).sort()).toEqual([accountId, dns].sort());
   });

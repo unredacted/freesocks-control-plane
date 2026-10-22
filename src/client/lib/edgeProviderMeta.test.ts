@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { EDGE_PROVIDER_IDS } from '../../shared/contracts/edges';
 import {
   DNS_ACCOUNT_BLURB,
+  DNS_ACCOUNT_USES,
+  accountFronts,
   EDGE_PROVIDER_META,
   addressLine,
   defaultProviderFor,
@@ -75,8 +77,20 @@ describe('edge provider meta', () => {
 
   it('names the supported DNS providers and says what a DNS account does', () => {
     expect(dnsProviderNames(EDGE_PROVIDER_IDS)).toEqual(['Cloudflare']);
-    expect(DNS_ACCOUNT_BLURB).toMatch(/never member traffic/);
+    expect(DNS_ACCOUNT_BLURB).toMatch(/no member traffic unless it is set to DNS and fronting/);
     for (const g of providerGroups(EDGE_PROVIDER_IDS)) expect(g.blurb).not.toMatch(/\u2014/);
+    for (const u of Object.values(DNS_ACCOUNT_USES)) {
+      expect(u.label).not.toMatch(/\u2014/);
+      expect(u.detail).not.toMatch(/\u2014/);
+    }
+  });
+
+  it('an account fronts unless it is a DNS account set to DNS only', () => {
+    expect(accountFronts({ provider: 'fastly' })).toBe(true);
+    expect(accountFronts({ provider: 'upcloud', frontsTraffic: false })).toBe(true);
+    expect(accountFronts({ provider: 'cloudflare' })).toBe(false);
+    expect(accountFronts({ provider: 'cloudflare', frontsTraffic: false })).toBe(false);
+    expect(accountFronts({ provider: 'cloudflare', frontsTraffic: true })).toBe(true);
   });
 
   it('an add-account form opens on an edge provider the caller can use, never a DNS provider', () => {

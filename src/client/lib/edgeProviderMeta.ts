@@ -18,7 +18,7 @@ export type EdgeAddressKind = 'ip' | 'hostname';
 /**
  * What an account of the provider is for (`role` in capabilities.ts): `edge`
  * fronts member traffic, `dns` holds the records FCP writes for L7 fronts and
- * fronts nothing unless Settings lets DNS accounts front.
+ * fronts nothing unless the account is set to DNS and fronting.
  */
 export type EdgeProviderRole = 'edge' | 'dns';
 
@@ -77,7 +77,30 @@ export const EDGE_PROVIDER_META: Record<EdgeProviderId, EdgeProviderMeta> = {
 
 /** What a DNS account does, in one sentence (picker, account form, badges). */
 export const DNS_ACCOUNT_BLURB =
-  'A DNS account holds the records FCP writes for L7 fronts (their certificate challenge and traffic name), never member traffic.';
+  'A DNS account holds the records FCP writes for L7 fronts (their certificate challenge and traffic name). It carries no member traffic unless it is set to DNS and fronting.';
+
+/** The two things a DNS account can be for, as the account form and page name them. */
+export const DNS_ACCOUNT_USES = {
+  dns: {
+    label: 'DNS only',
+    detail:
+      'Holds the records FCP writes for other fronts. It never carries member traffic. The default.',
+  },
+  front: {
+    label: 'DNS and fronting',
+    detail:
+      'Also a CDN front: nodes can be protected through its zones, as with any L7 provider. Read its terms first: they may not allow proxy traffic.',
+  },
+} as const;
+
+/**
+ * Whether an account fronts member traffic: an edge provider's always does, a
+ * DNS provider's only when set to DNS and fronting (`frontsTraffic`).
+ */
+export function accountFronts(a: { provider: string; frontsTraffic?: boolean }): boolean {
+  const meta = EDGE_PROVIDER_META[a.provider as EdgeProviderId];
+  return meta?.role !== 'dns' || a.frontsTraffic === true;
+}
 
 /** The provider picker's groups, in order: what each kind of account is for. */
 export type ProviderGroupId = 'l4' | 'l7' | 'dns';

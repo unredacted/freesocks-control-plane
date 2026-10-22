@@ -1226,6 +1226,11 @@ export default defineSchema({
     // had a single fixed location, else the first one added).
     defaultLocationId: v.optional(v.id('edgeLocations')),
     enabled: v.boolean(),
+    // A DNS provider's account (capability role `dns`): true = DNS and
+    // fronting (it may front member traffic too), false = DNS only. Read only
+    // for that role (an edge provider's account always fronts). Absent on a row
+    // `migrateDnsFronting` has not reached yet, which reads as DNS only.
+    frontsTraffic: v.optional(v.boolean()),
     // When the credentials or locating settings last changed (an edit, not a
     // keep-qualification rotation): auto-trust needs a test AFTER this.
     credentialsChangedAt: v.optional(v.number()),

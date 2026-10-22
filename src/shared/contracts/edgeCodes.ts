@@ -154,7 +154,7 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'account_disabled',
   'account_untested',
   'account_incompatible',
-  // a DNS account named while `edge.l7.dnsProvidersFront` is off
+  // a DNS account named while it is set to DNS only
   'dns_account_not_fronting',
   'account_budget_exhausted',
   'account_capacity_reached',
@@ -204,8 +204,15 @@ export const L7_CERTIFICATE_CODES = [
   'certificate_expiring',
   // the zone's wildcard is covered by a certificate the account would not order
   'shared_certificate_ambiguous',
+  // a Cloudflare zone's edge certificate (`*.<zone>`) is still being issued, or none is on its way
+  'edge_certificate_pending',
+  'edge_certificate_missing',
 ] as const;
 export type L7CertificateCode = (typeof L7_CERTIFICATE_CODES)[number];
+
+export function isL7CertificateCode(code: unknown): code is L7CertificateCode {
+  return (L7_CERTIFICATE_CODES as readonly unknown[]).includes(code);
+}
 
 /** Things that will not stop the operation but the operator should know. */
 export const PREFLIGHT_WARNING_CODES = [

@@ -63,7 +63,11 @@ import {
   __setScalewayKeysFactory,
 } from './scaleway';
 import { ovhProvider, __resetOvhSkewCache } from './ovh';
-import { cloudflareProvider, __setCloudflareApiFactory } from './cloudflare';
+import {
+  cloudflareProvider,
+  __setCloudflareApiFactory,
+  __setCloudflareCaaLookup,
+} from './cloudflare';
 import { cloudflareApi } from './dns/cloudflareDns';
 import { fastlyProvider, __setFastlyCaaLookup, __setFastlyDnsClientFactory } from './fastly';
 import { __setFastlyBasePath } from './fastly/sdk';
@@ -922,10 +926,13 @@ describe('wire contract: ovh', () => {
 describe('wire contract: cloudflare', () => {
   afterEach(() => {
     __setCloudflareApiFactory(null);
+    __setCloudflareCaaLookup(null);
     vi.unstubAllGlobals();
   });
 
   const ZONE = '023e105f4ecef8ad9ca31a8372d0c353';
+  const HEADER_RULESET = '5d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a';
+  const HEADER_RULE_ID = 'b2c3d4e5f60718293a4b5c6d7e8f90a1';
   const HOSTNAME = 'k7m2x9qp4n3f.example.net';
   const NAME = 'fcp-relay-o1-0badf00d';
   const RULESET = '3c0b456bc2aa443089c5f40defb5fdc9';
@@ -957,9 +964,27 @@ describe('wire contract: cloudflare', () => {
     return rest;
   };
 
-  function route(over: { phaseMissing?: boolean; accountToken?: boolean } = {}) {
+  function route(
+    over: { phaseMissing?: boolean; accountToken?: boolean; sslStrict?: boolean } = {},
+  ) {
     return (c: Captured): Response => {
       const p = c.path;
+      if (p.endsWith('/settings/ssl') && over.sslStrict) {
+        const ssl = fx('setting_ssl.json') as { result: Record<string, unknown> };
+        return jsonRes({ ...ssl, result: { ...ssl.result, value: 'strict' } });
+      }
+      for (const id of ['min_tls_version', 'pseudo_ipv4', 'ip_geolocation'])
+        if (p.endsWith(`/settings/${id}`)) return jsonRes(fx(`setting_${id}.json`));
+      if (p.endsWith('/rulesets/phases/http_request_late_transform/entrypoint')) {
+        if (c.method === 'PUT') return jsonRes(fx('ruleset_header_phase.json'));
+        return over.phaseMissing
+          ? jsonRes(fx('error_record_not_found.json'), 404)
+          : jsonRes(fx('ruleset_header_phase.json'));
+      }
+      if (p.includes(`/rulesets/${HEADER_RULESET}/rules`))
+        return c.method === 'POST'
+          ? jsonRes(fx('ruleset_header_phase.json'))
+          : jsonRes({ result: null, success: true });
       if (p.endsWith('/user/tokens/verify'))
         return over.accountToken
           ? jsonRes(fx('error_invalid_token.json'), 401)
@@ -1006,9 +1031,30 @@ describe('wire contract: cloudflare', () => {
     await cloudflareProvider.discoverOptions!({ apiToken: cfg.apiToken });
     // A zone location is checked on its own: the zone, its mode and WebSockets.
     expect(await cloudflareProvider.checkLocation!(cfg)).toMatchObject({ ok: true });
+    // A fronting account's zone also: what a front needs (Full (strict), the
+    // zone's wildcard certificate, CAA) and the settings that put more of the
+    // member on the request.
+    stub.route(route({ sslStrict: true }));
+    __setCloudflareCaaLookup(async () => []);
+    expect(await cloudflareProvider.checkLocation!({ ...cfg, frontsTraffic: true })).toMatchObject({
+      ok: true,
+      observed: {
+        zoneSslMode: 'strict',
+        edgeCertificate: 'active',
+        caa: 'no_records',
+        minTlsVersion: '1.2',
+        pseudoIpv4: 'off',
+        ipGeolocation: 'on',
+      },
+    });
+    stub.route(route());
 
     const steps = cloudflareProvider.planProvision(cfg, spec, tpl);
-    expect(steps.map((s) => s.kind)).toEqual(['create_dns_record', 'create_origin_rule']);
+    expect(steps.map((s) => s.kind)).toEqual([
+      'create_dns_record',
+      'create_origin_rule',
+      'create_header_rule',
+    ]);
     let ledger: Ledger = { steps: [], resources: [] };
     for (const step of steps) {
       const out = await cloudflareProvider.runStep(cfg, step, spec, tpl, ledger);
@@ -1026,22 +1072,30 @@ describe('wire contract: cloudflare', () => {
     // The import path: an existing record read back as adoptable children.
     const adopted = await cloudflareProvider.inspectForAdoption!(cfg, RECORD_ID, HOSTNAME);
     expect(adopted).toMatchObject({ hostname: HOSTNAME, shared: false, content: ORIGIN_IP });
-    // Both deletes are synchronous and idempotent (no confirmDestroyed).
+    expect(adopted.resources.map((r) => r.kind)).toEqual([
+      'dns_record',
+      'origin_rule',
+      'header_rule',
+    ]);
+    // Every delete is synchronous and idempotent (no confirmDestroyed).
     expect(await destroyAll(cloudflareProvider as never, cfg as never, ledger)).toEqual([
+      'header_rule',
       'origin_rule',
       'dns_record',
     ]);
 
-    // A zone with no origin-rules entry point yet: the bootstrap PUT.
+    // A zone with no entry point for either phase yet: the bootstrap PUTs.
     stub.route(route({ phaseMissing: true }));
-    const ruleStep = steps[1];
-    const bootstrapped = await cloudflareProvider.runStep(cfg, ruleStep, spec, tpl, ledger);
-    expect(bootstrapped.status).toBe('done');
-    expect(
-      stub.calls.some(
-        (c) => c.method === 'PUT' && c.path.endsWith('/phases/http_request_origin/entrypoint'),
-      ),
-    ).toBe(true);
+    for (const ruleStep of steps.slice(1)) {
+      const bootstrapped = await cloudflareProvider.runStep(cfg, ruleStep, spec, tpl, ledger);
+      expect(bootstrapped.status).toBe('done');
+    }
+    for (const phase of ['http_request_origin', 'http_request_late_transform'])
+      expect(
+        stub.calls.some(
+          (c) => c.method === 'PUT' && c.path.endsWith(`/phases/${phase}/entrypoint`),
+        ),
+      ).toBe(true);
 
     expectContractCovered('cloudflare', fromCaptured(stub.calls));
     expect(stub.calls.every((c) => c.headers.authorization === `Bearer ${cfg.apiToken}`)).toBe(
@@ -1051,8 +1105,21 @@ describe('wire contract: cloudflare', () => {
     const rulePost = stub.calls.find((c) => c.method === 'POST' && c.path.endsWith('/rules'));
     expect((rulePost!.body as { ref?: string }).ref).toBe(NAME);
     expect(rulePost!.path).toContain(`/rulesets/${RULESET}/rules`);
-    const del = stub.calls.find((c) => c.method === 'DELETE' && c.path.includes('/rules/'));
-    expect(del!.path.endsWith(`/rules/${RULE_ID}`)).toBe(true);
+    const dels = stub.calls.filter((c) => c.method === 'DELETE' && c.path.includes('/rules/'));
+    expect(dels.map((c) => c.path.slice(c.path.lastIndexOf('/') + 1))).toEqual([
+      HEADER_RULE_ID,
+      RULE_ID,
+    ]);
+    // The header rule removes the member's address for this hostname only.
+    const headerPost = stub.calls.find(
+      (c) => c.method === 'POST' && c.path.includes(`/rulesets/${HEADER_RULESET}/rules`),
+    );
+    expect(headerPost!.body).toMatchObject({
+      action: 'rewrite',
+      expression: `(http.host eq "${HOSTNAME}")`,
+      ref: NAME,
+      action_parameters: { headers: { 'cf-connecting-ip': { operation: 'remove' } } },
+    });
   });
 
   test('an allocating call is never retried and never replayed after a lost response', async () => {

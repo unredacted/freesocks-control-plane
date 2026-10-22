@@ -320,7 +320,7 @@ export const CREDENTIAL_LABELS: Record<string, string> = {
 /** What each provider's token must be allowed to do. */
 export const CREDENTIAL_HELP: Partial<Record<EdgeProviderId, string>> = {
   cloudflare:
-    'A user API token or an account API token, scoped to the zone, with Zone Read and Zone DNS Edit. Add Zone Settings Read and SSL and Certificates Read so the test can report the zone settings, and Origin Rules Edit only if this account will also front traffic.',
+    'A user API token or an account API token, scoped to the zone, with Zone Read and Zone DNS Edit. Add Zone Settings Read and SSL and Certificates Read so the test can report the zone settings, and Transform Rules Edit and Origin Rules Edit only if this account will also front traffic.',
   fastly:
     'An API token with the global scope, issued on a dedicated automation user. The account also needs the WebSockets product entitlement.',
 };
