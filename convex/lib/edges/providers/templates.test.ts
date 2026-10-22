@@ -8,6 +8,7 @@ import {
   certificateKeysOf,
   checkBuiltParams,
   contextProblems,
+  durationMs,
   optionFieldsOf,
   validateAccountOptionDefaults,
   validatePickOptions,
@@ -193,6 +194,21 @@ describe('provider rules on writes', () => {
         },
       }),
     ).toEqual([]);
+  });
+
+  it('a stored duration converts to whole milliseconds, exactly', () => {
+    expect(durationMs('5s')).toBe(5000);
+    expect(durationMs('600s')).toBe(600_000);
+    expect(durationMs('2.5s')).toBe(2500);
+    expect(durationMs('0.1s')).toBe(100);
+    expect(durationMs('0.001s')).toBe(1);
+    expect(durationMs('250ms')).toBe(250);
+    expect(durationMs('1.5m')).toBe(90_000);
+    expect(durationMs('0.25h')).toBe(900_000);
+    // Not a whole number of milliseconds, or no duration at all.
+    expect(durationMs('1.5ms')).toBeNull();
+    for (const bad of ['5', 's', '5 s', '-5s', '0.0005s', '5sec', ''])
+      expect(durationMs(bad)).toBeNull();
   });
 });
 

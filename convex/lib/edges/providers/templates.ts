@@ -512,9 +512,28 @@ export const UPCLOUD_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
 // --- Scaleway ----------------------------------------------------------------------
 
 /** A duration as stored; decimals read back since provider options (`0.5s`). */
-const DURATION = /^\d{1,7}(\.\d{1,3})?(ms|s|m|h)$/;
+const DURATION = /^(\d{1,7})(?:\.(\d{1,3}))?(ms|s|m|h)$/;
 /** What Scaleway documents and its own SDKs send: seconds, with an `s` (written values). */
 const SECONDS = /^\d{1,7}(\.\d{1,3})?s$/;
+
+const UNIT_MS = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 } as const;
+
+/**
+ * A stored duration in whole milliseconds (`2.5s` is 2500), worked out on the
+ * digits rather than in floating point, so `0.1s` is 100 and not
+ * 100.00000000000001. Null when the value is no duration or not a whole number
+ * of milliseconds (`1.5ms`); a written value (`SECONDS`) is always whole.
+ */
+export function durationMs(value: string): number | null {
+  const m = DURATION.exec(value);
+  if (!m) return null;
+  const unit = UNIT_MS[m[3] as keyof typeof UNIT_MS];
+  const frac = m[2] ?? '';
+  const fracUnits = Number(frac || '0') * unit;
+  const scale = 10 ** frac.length;
+  if (fracUnits % scale !== 0) return null;
+  return Number(m[1]) * unit + fracUnits / scale;
+}
 
 export const ScalewayTemplate = z.object({
   type: z.string().min(1).max(32).default('LB-S'),

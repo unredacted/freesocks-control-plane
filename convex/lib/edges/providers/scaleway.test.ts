@@ -3,7 +3,9 @@ import {
   ScalewayTemplate,
   __setScalewayApiFactory,
   __setScalewayKeysFactory,
+  scalewayApi,
   scalewayProvider,
+  scalewayTimings,
 } from './scaleway';
 import type { Ledger, ScalewayConfig } from './types';
 
@@ -175,9 +177,177 @@ describe('scaleway: plan + steps', () => {
         lbId: 'lb-1',
         inboundPort: 443,
         backendId: 'be-1',
-        timeoutClient: '600s',
+        timeoutClient: 600_000,
       }),
     );
+  });
+});
+
+describe('scaleway: timings on the wire', () => {
+  // The real SDK over a recording fetch, so what is asserted is the JSON the API reads.
+  const sdkCfg: ScalewayConfig = {
+    ...cfg,
+    // The SDK refuses a secret key or a project that is not a UUID.
+    secretKey: '99999999-8888-4777-8666-555555555555',
+    projectId: '11111111-2222-4333-8444-555555555555',
+  };
+  // A distinct value per field, so each one is seen landing in its own place.
+  const t = ScalewayTemplate.parse({
+    timeoutClient: '600s',
+    timeoutServer: '300s',
+    timeoutConnect: '4.5s',
+    timeoutTunnel: '3600s',
+    timeoutQueue: '2.5s',
+    healthCheck: {
+      checkDelay: '5s',
+      checkTimeout: '0.75s',
+      checkMaxRetries: 3,
+      transientCheckDelay: '0.5s',
+    },
+  });
+  // int64 milliseconds (the Go SDK's marshaler.Duration).
+  const BACKEND_MS = { timeout_server: 300_000, timeout_connect: 4500, timeout_tunnel: 3_600_000 };
+  const HEALTH_CHECK_MS = { check_delay: 5000, check_timeout: 750 };
+  // Protobuf durations (the Go SDK's scw.Duration): strings in seconds.
+  const BACKEND_DURATION = { timeout_queue: '2.5s' };
+  const HEALTH_CHECK_DURATION = { transient_check_delay: '0.5s' };
+
+  function recorder() {
+    const calls: Array<{ method: string; path: string; raw: string; body: unknown }> = [];
+    const fetchImpl = (async (req: Request) => {
+      const raw = await req.text();
+      calls.push({
+        method: req.method,
+        path: new URL(req.url).pathname,
+        raw,
+        body: raw ? JSON.parse(raw) : undefined,
+      });
+      return new Response(JSON.stringify({ id: 'x-1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const sent = (method: string, path: RegExp) => {
+      const hit = calls.find((c) => c.method === method && path.test(c.path));
+      if (!hit) throw new Error(`no ${method} ${path} was sent`);
+      return hit;
+    };
+    return { fetchImpl, sent };
+  }
+
+  const ledgerWith = (...kinds: Array<[string, string]>): Ledger => ({
+    steps: [],
+    resources: kinds.map(([kind, resourceId]) => ({
+      stepId: kind,
+      kind,
+      resourceId,
+      ownership: 'created' as const,
+      deleteState: 'present' as const,
+    })),
+  });
+
+  test('create: the six int64 fields carry JSON integers in milliseconds, the two durations stay strings', async () => {
+    const { fetchImpl, sent } = recorder();
+    __setScalewayApiFactory((c) => scalewayApi(c, fetchImpl));
+    const steps = scalewayProvider.planProvision(sdkCfg, spec, t);
+    const step = (kind: string) => steps.find((s) => s.kind === kind)!;
+    await scalewayProvider.runStep(
+      sdkCfg,
+      step('create_backend'),
+      spec,
+      t,
+      ledgerWith(['lb', 'lb-1']),
+    );
+    await scalewayProvider.runStep(
+      sdkCfg,
+      step('create_frontend'),
+      spec,
+      t,
+      ledgerWith(['lb', 'lb-1'], ['backend', 'be-1']),
+    );
+
+    const backend = sent('POST', /\/lbs\/lb-1\/backends$/);
+    expect(backend.body).toMatchObject({
+      ...BACKEND_MS,
+      ...BACKEND_DURATION,
+      health_check: { ...HEALTH_CHECK_MS, ...HEALTH_CHECK_DURATION, check_max_retries: 3 },
+    });
+    // A bare integer in the text, never a quoted one (the refused `"5s"` sat here).
+    expect(backend.raw).toContain('"check_delay":5000');
+    expect(backend.raw).toContain('"timeout_server":300000');
+    const frontend = sent('POST', /\/lbs\/lb-1\/frontends$/);
+    expect(frontend.body).toMatchObject({ timeout_client: 600_000 });
+    expect(frontend.raw).toContain('"timeout_client":600000');
+  });
+
+  test('update: the same builder puts the same encoding on the backend, health check and frontend updates', async () => {
+    // FCP never changes a live edge today (a new one is built); this pins the
+    // SDK's update marshalling for when it does.
+    const { fetchImpl, sent } = recorder();
+    const api = scalewayApi(sdkCfg, fetchImpl);
+    const w = scalewayTimings(t, 'update');
+    await api.updateBackend({
+      backendId: 'be-1',
+      name: `${spec.name}-backend`,
+      forwardProtocol: 'tcp',
+      forwardPort: 443,
+      forwardPortAlgorithm: t.forwardPortAlgorithm,
+      stickySessions: 'none',
+      stickySessionsCookieName: '',
+      ...w.backend,
+    });
+    await api.updateHealthCheck({
+      backendId: 'be-1',
+      port: 443,
+      checkMaxRetries: t.healthCheck.checkMaxRetries,
+      checkSendProxy: false,
+      tcpConfig: {},
+      ...w.healthCheck,
+    });
+    await api.updateFrontend({
+      frontendId: 'fe-1',
+      name: `${spec.name}-frontend`,
+      inboundPort: 443,
+      backendId: 'be-1',
+      enableHttp3: false,
+      ...w.frontend,
+    });
+
+    expect(sent('PUT', /\/backends\/be-1$/).body).toMatchObject({
+      ...BACKEND_MS,
+      ...BACKEND_DURATION,
+    });
+    expect(sent('PUT', /\/backends\/be-1\/healthcheck$/).body).toMatchObject({
+      ...HEALTH_CHECK_MS,
+      ...HEALTH_CHECK_DURATION,
+    });
+    expect(sent('PUT', /\/frontends\/fe-1$/).body).toMatchObject({ timeout_client: 600_000 });
+  });
+
+  test('defaults go out in milliseconds; unset durations are not sent', async () => {
+    const w = scalewayTimings(tpl, 'plan');
+    expect(w).toEqual({
+      backend: { timeoutServer: 600_000, timeoutConnect: 5000, timeoutTunnel: 3_600_000 },
+      healthCheck: { checkDelay: 5000, checkTimeout: 3000 },
+      frontend: { timeoutClient: 600_000 },
+    });
+  });
+
+  test('a stored value that is not whole milliseconds refuses the plan, before anything is created', () => {
+    const odd = ScalewayTemplate.parse({ timeoutConnect: '1.5ms' });
+    expect(() => scalewayProvider.planProvision(sdkCfg, spec, odd)).toThrow(
+      expect.objectContaining({
+        meta: expect.objectContaining({ code: 'template_invalid', retryable: false }),
+      }),
+    );
+    // A stored duration in another unit is sent in the unit each field takes.
+    const legacy = ScalewayTemplate.parse({
+      timeoutQueue: '1500ms',
+      healthCheck: { checkDelay: '1m', checkTimeout: '3s', checkMaxRetries: 3 },
+    });
+    const w = scalewayTimings(legacy, 'plan');
+    expect(w.backend.timeoutQueue).toBe('1.5s');
+    expect(w.healthCheck.checkDelay).toBe(60_000);
   });
 });
 
