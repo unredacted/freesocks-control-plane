@@ -75,7 +75,14 @@ import type {
   CloudflareDnsConfig,
 } from './types';
 import { firstResource, metaOf, resourcesOfKind, stepOf } from './types';
-import { EdgeProviderError, credentialTestFailure, noteDiscoverError } from './http';
+import {
+  EdgeProviderError,
+  credentialTestFailure,
+  noteDiscoverError,
+  redactErrorDetail,
+  refusalOf,
+  withRefusal,
+} from './http';
 import { acmeChallengeName, normalizeZoneName } from '../hostname';
 import { addressFamily } from '../ip';
 import { certCovers } from '../layers';
@@ -1779,10 +1786,13 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         } catch (e) {
           // A 4xx here is an account entitlement problem, not a transient fault.
           if (e instanceof EdgeProviderError && e.meta.status && e.meta.status < 500)
-            throw refusal(
-              step.id,
-              'websockets_not_entitled',
-              'the account cannot enable the WebSockets product',
+            throw withRefusal(
+              refusal(
+                step.id,
+                'websockets_not_entitled',
+                'the account cannot enable the WebSockets product',
+              ),
+              refusalOf(e),
             );
           throw e;
         }
@@ -1795,10 +1805,22 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         const svc = serviceOf(ledger);
         const validation = await api.validateServiceVersion(svc.id, svc.version);
         // The draft does not compile (a protected header, say): validating it
-        // again changes nothing. Fastly's own words stay with the draft
-        // version, where the operator reads them; FCP keeps only the code.
-        if (validation.status !== 'ok')
-          return { status: 'partial', resources: [], code: 'version_invalid', refused: true };
+        // again changes nothing. Fastly's own words come along (redacted here,
+        // the edge's names scrubbed by the ops layer) for the operator to read.
+        if (validation.status !== 'ok') {
+          const said = [validation.msg, ...(validation.errors ?? [])]
+            .map((x) => (typeof x === 'string' ? x : x ? JSON.stringify(x) : ''))
+            .filter(Boolean)
+            .join('; ');
+          const detail = said ? redactErrorDetail(said, [cfg.apiToken]) : undefined;
+          return {
+            status: 'partial',
+            resources: [],
+            code: 'version_invalid',
+            refused: true,
+            ...(detail ? { detail } : {}),
+          };
+        }
         await api.activateServiceVersion(svc.id, svc.version);
         return {
           status: 'done',

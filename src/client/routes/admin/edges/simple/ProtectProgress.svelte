@@ -65,6 +65,7 @@
   import NodeApprovalCard from '../../servers/components/NodeApprovalCard.svelte';
   import { serversPaths } from '../../servers/lib/routes';
   import CodeNote from '../components/CodeNote.svelte';
+  import ProviderAnswer from '../components/ProviderAnswer.svelte';
   import { edgeCountryLines } from '../lib/countryChecks';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { edgesPaths } from '../lib/routes';
@@ -388,6 +389,7 @@
     {#if run.need?.detail}
       <CodeNote compact tone="warning" issue={{ code: run.need.detail }} />
     {/if}
+    <ProviderAnswer detail={run.need?.providerAnswer} names />
     <div class="flex gap-2">
       <Button disabled={act.isPending} onclick={() => retry()}>Try again</Button>
     </div>
@@ -404,6 +406,9 @@
       {#if need.code !== 'try_it'}<p>{needCopy.explain}</p>{/if}
       {#if need.code === 'provider_failed' && need.detail}
         <CodeNote compact tone="warning" issue={{ code: need.detail }} />
+      {/if}
+      {#if need.code === 'provider_failed'}
+        <ProviderAnswer detail={need.providerAnswer} names />
       {/if}
 
       {#if need.code === 'try_it'}

@@ -909,7 +909,13 @@ export const EdgeAdmin = z.object({
     .nullable(),
   destroyAttempts: z.number(),
   failure: z
-    .object({ step: z.string(), code: z.string().optional(), status: z.number().optional() })
+    .object({
+      step: z.string(),
+      code: z.string().optional(),
+      status: z.number().optional(),
+      /** The provider's own words on the refusal (redacted, the edge's names scrubbed). */
+      detail: z.string().optional(),
+    })
     .nullable(),
   burnedAt: isoN,
   drainUntil: isoN,
@@ -2371,7 +2377,14 @@ export const SetupRunAdmin = z.object({
   stage: SetupRunStage,
   state: SetupRunState,
   /** The interruption (`SETUP_RUN_NEEDS`) when `state === 'needs_you'`. */
-  need: z.object({ code: z.string(), detail: z.string().nullable() }).nullable(),
+  need: z
+    .object({
+      code: z.string(),
+      detail: z.string().nullable(),
+      /** The provider's own words on the refused create that ended the run (redacted). */
+      providerAnswer: z.string().nullable().default(null),
+    })
+    .nullable(),
   generation: z.number(),
   planRevision: z.number(),
   keepDirect: z.boolean(),

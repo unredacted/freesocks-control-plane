@@ -425,11 +425,13 @@ describe('scaleway: discovery / describe / destroy', () => {
     });
     const steps = scalewayProvider.planProvision(cfg, spec, tpl);
     const empty: Ledger = { steps: [], resources: [] };
+    // With the provider's own words (redacted; the ops layer scrubs the edge's names).
     expect(await scalewayProvider.runStep(cfg, steps[0], spec, tpl, empty)).toEqual({
       status: 'partial',
       resources: [],
       code: 'ip_allocation_refused',
       refused: true,
+      detail: 'invalid argument(s): project_id is required',
     });
     // A provider fault is not a refusal: it is thrown, and the step is looked for again.
     api.createIp = vi.fn(async () => {

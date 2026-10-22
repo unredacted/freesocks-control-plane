@@ -2493,7 +2493,26 @@ still passes its test, but a location with neither reads `project_unresolved` (`
 the plan, selection and the set judge it so) and is not offered until it names a Project id, so
 nothing fails at provisioning; the adapter refuses a create with no project rather than send
 it. A Scaleway 400 on an address allocation ends the run at once as `ip_allocation_refused`
-(the same arguments would be refused again).
+(the same arguments would be refused again), with the provider's words (§ "The provider's
+answer").
+
+**Scaleway sizes** (`convex/lib/edges/sizeCheck.ts`). Only Scaleway's multi-cloud load
+balancer sizes accept a backend server hosted outside Scaleway; the standard ones (LB-S,
+LB-GP-M) take Scaleway resources only ("Only certain Load Balancer types (L and XL) allow you
+to add non-Scaleway resources as backend servers",
+https://www.scaleway.com/en/docs/load-balancer/troubleshooting/configuration/, read
+2026-10-21), and would refuse an FCP node's backend after the load balancer is built and
+billed. An FCP node always counts as outside Scaleway. The effective size (the template, the
+location's regional value, the node's own option) is checked before anything is created and
+refused as `size_not_multicloud`: the place's reason in the plan (`sizeProblemOfLocation`, the
+protect sheet greys the location), a pick's options (`checkPickOptions`), a set naming it
+(`refuseSet`), a rotation naming it (`collectStartBlockers`, so preflight too), and selection
+(named: `accountFailure`; automatic: never picked). Which sizes are multi-cloud is the
+provider's own answer: the location's last inventory pull keeps each size's
+`LbType.multicloud` flag (an older pull: its "(multi-cloud)" label); a location never pulled,
+or a size its list does not name, falls back to the documented LB-GP-L and LB-GP-XL, and
+anything else is refused. The default template keeps LB-S: set the location's size (or the
+node's) to a multi-cloud one.
 
 **Trust is per location.** `qualified`, `qualification`, `qualifiedTemplateHash` and
 `autoQualifyHold` live on the location; the account's `qualified` in the admin projection means
@@ -2628,17 +2647,48 @@ dashes and underscores). Edges reference the account by id, so `PATCH …/provid
 page). Names stay unique.
 
 **The provider's answer.** A provider error's message carries the HTTP status and a short
-code, never the response body: bodies of provisioning calls echo origins and fronted
-hostnames. The exception is the calls an admin makes by hand before anything exists, the
-credential test and the account form's listings (`DIAGNOSTIC_STEPS` in
-`convex/lib/edges/providers/http.ts`). Those requests carry no origin and no hostname, so
-their error keeps `meta.detail`: the provider's answer with address literals and the
-credential replaced, capped at 600 characters (a credential under 8 characters cannot be
-replaced safely, so the answer is withheld entirely). It is returned by `test-credentials` and
-`rotate-credentials` (`detail`), by `discover` (`errorDetails`, per failed list), stored as
-`edgeProviderAccounts.lastTestErrorDetail` until the next passing test, and shown folded away
-under "Show the provider's answer". It never enters a thrown message, a log line or an audit
-row. A new adapter gets this by naming its test and listing steps from that set.
+code, never the response body. The provider's own words are kept, made safe
+(`redactErrorDetail` in `convex/lib/edges/providers/http.ts`: address literals and every
+credential replaced, whitespace collapsed, capped at 600 characters; a credential under 8
+characters cannot be replaced safely, so the answer is withheld entirely), in two cases:
+
+- **The calls an admin makes by hand before anything exists**, whatever the answer: the
+  credential test and the account form's listings (`DIAGNOSTIC_STEPS`), as the error's
+  `meta.detail` (those requests carry no origin and no hostname). It is returned by
+  `test-credentials` and `rotate-credentials` (`detail`), by `discover` (`errorDetails`, per
+  failed list), stored as `edgeProviderAccounts.lastTestErrorDetail` until the next passing
+  test, and shown folded away under "Show the provider's answer". A new adapter gets this by
+  naming its test and listing steps from that set.
+- **A refusal (any 4xx) of any other call**, on every adapter: the shared HTTP helper
+  (`providerFetch`), an SDK error (`toProviderError`: the message and the rest of a JSON body
+  the SDK kept, as Scaleway's generic `ScalewayError` does), Fastly's SDK (`toFastlyError`,
+  and the validation words of a draft that does not compile) and Cloudflare's
+  (`cloudflareError`). Every call redacts its own credential (the Fastly and Cloudflare clients
+  pass their token on every call). A refusal of a provisioning call can echo what the request
+  carried, so it is never on the error object (no property a log line or `JSON.stringify`
+  could show): it is held aside (`withRefusal` / `refusalOf`, a WeakMap entry), and leaves the
+  provider action only from a CREATE step (`runStep`, `pollStep`,
+  `planProvision`) and only after `scrubNames` replaced every name the edge is known by: its
+  resource names, fronted hostname, origin addresses and certificate names, zone, and what its
+  ledger recorded under a naming key (matched without regard to case; a capped answer ending
+  inside a name loses that fragment too). `toOpsFailure` carries it as
+  `EdgeProviderOpsFailure.detail`; a refused outcome (`StepOutcome.detail`, a Scaleway address
+  the provider refused, a Fastly draft that does not compile) is scrubbed the same way. Every
+  other call (describe, discovery, destroy) drops it. The rotation appends it to the step's
+  event ("... The provider answered: ..."; event details keep up to 800 characters), the edge
+  keeps it as `failure.detail` (a later failure with no answer of its own, such as
+  `step_retries_exhausted`, keeps the last one: `nextFailure`), and a run the refusal ended
+  carries it as `need.providerAnswer`. The edge's detail, the "What FCP saw" dialog and the
+  run's failure card show it folded away like a test answer.
+
+It never enters a thrown message, a log line or an audit row.
+
+**Live at the provider.** "Refresh live" on an edge (`POST edges/{id}/live/refresh`) runs the
+adapter's `inspect`; an SDK adapter answers with class values Convex cannot return (Scaleway's
+SDK turns every timestamp into a `Date`), so `edgeProviderOps` passes every `inspect` and
+`describe` answer through `jsonSafe` (`convex/lib/edges/jsonSafe.ts`: a `Date` becomes its ISO
+string, `undefined` and functions are dropped, a key Convex refuses is dropped, a cycle is
+cut). A refresh that fails is shown in the live section itself, in words, until the next try.
 
 **Offered regions.** A provider's region listing can include regions the account cannot use.
 The Gcore adapter keeps only `ACTIVE` regions and, once it knows a project, asks each one for

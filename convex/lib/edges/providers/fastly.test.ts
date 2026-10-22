@@ -926,11 +926,13 @@ describe('fastly: provisioning', () => {
     const step = fastlyProvider
       .planProvision(cfg, spec, tpl)
       .find((s) => s.kind === 'activate_version')!;
+    // Fastly's own words come along (redacted; the ops layer scrubs the edge's names).
     expect(await fastlyProvider.runStep(cfg, step, spec, tpl, ledger)).toEqual({
       status: 'partial',
       resources: [],
       code: 'version_invalid',
       refused: true,
+      detail: 'Version validation failed; no backend',
     });
     expect(r.calls.some((c) => c.path.endsWith('/activate'))).toBe(false);
   });

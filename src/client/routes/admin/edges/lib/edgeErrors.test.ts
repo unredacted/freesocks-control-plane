@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../../lib/errors', () => ({ apiErrorMessage: () => 'shared copy' }));
 
 import { ApiCallError } from '../../../../lib/api';
-import { EdgeRefusalError, edgeErrorMessage } from './edgeErrors';
+import { EdgeRefusalError, edgeErrorMessage, liveRefreshFailure } from './edgeErrors';
 
 describe('edgeErrorMessage', () => {
   const refused = (code: string, status = 409) =>
@@ -49,5 +49,19 @@ describe('edgeErrorMessage', () => {
 
   it('keeps label plus fix for the status codes', () => {
     expect(edgeErrorMessage(refused('edge.pool_empty'))).toBe('Pool empty. Publish an edge.');
+  });
+});
+
+describe('liveRefreshFailure', () => {
+  it('says the provider could not be read, then why, with no dash', () => {
+    const line = liveRefreshFailure(
+      new ApiCallError(400, { error: { code: 'edge.unmanaged', message: 'x' } }),
+    );
+    expect(line.startsWith('The provider could not be read just now. ')).toBe(true);
+    expect(line).not.toMatch(/\u2014|\u2013/);
+    // Anything else (a provider code, the generic 400) still reads as a sentence.
+    expect(
+      liveRefreshFailure(new ApiCallError(400, { error: { code: 'admin.error', message: 'm' } })),
+    ).toBe('The provider could not be read just now. Shared copy.');
   });
 });
