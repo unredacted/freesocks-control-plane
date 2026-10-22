@@ -46,6 +46,7 @@ import {
   locationsOfAccount,
   sizeProblemOfLocation,
 } from './edgeLocations';
+import { regionOffersOf } from './edgeProviderCatalog';
 import { placeProblemOf } from './lib/edges/l7Place';
 import { SIZE_NOT_MULTICLOUD, SIZE_NOT_MULTICLOUD_WORDS } from './lib/edges/sizeCheck';
 import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
@@ -186,6 +187,12 @@ async function planContextOf(
         certificateRefusal: string | null;
       }>
     > = {};
+    // The regions each load balancer account's key reaches that are no location
+    // of it yet: a pick of one creates the location (the catalog is the menu).
+    const accountRegions: Record<
+      string,
+      Array<{ id: string; label: string; project?: string }>
+    > = {};
     for (const a of accounts) {
       accountLive[a._id as string] = (await liveEdgesOfAccount(ctx.db, a._id)).filter(
         (e) => e.managed,
@@ -213,6 +220,11 @@ async function planContextOf(
           certificateRefusal: certificateRefusalOf(a, loc),
         });
       accountLocations[a._id as string] = rows;
+      accountRegions[a._id as string] = await regionOffersOf(
+        ctx.db,
+        a,
+        rows.map((r) => r.placeKey),
+      );
     }
     const runs = await ctx.db
       .query('edgeSetupRuns')
@@ -298,6 +310,7 @@ async function planContextOf(
         allocationsToday: a.allocationsDayKey === todayKey() ? a.allocationsToday : 0,
         settings: a.settings as Record<string, unknown>,
         locations: accountLocations[a._id as string] ?? [],
+        regions: accountRegions[a._id as string] ?? [],
       })),
       renderEnabled: cfg.render.enabled,
       familiesDisabled: RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled),
@@ -328,9 +341,12 @@ function modesOffOf(
  * set covers them between its picks): the account is compatible when it can
  * front at least one required transport, and `carries` names which. Its
  * locations are judged on their own (an untrusted one is offered: its first
- * tested address trusts it); an account with no usable location cannot be
- * picked yet. Capacity here is room for one address; the set's own check sums
- * what each pick gets over its targets.
+ * tested address trusts it). An account with no usable location is still
+ * offered when its key reaches a region that is no location yet (`regions`,
+ * its catalog): picking one creates the location, untrusted like any new one.
+ * With neither it cannot be picked yet (`no_location`). Capacity here is room
+ * for one address; the set's own check sums what each pick gets over its
+ * targets.
  */
 function accountCompatibility(
   a: PlanContext['accounts'][number],
@@ -442,7 +458,9 @@ function accountCompatibility(
       certificateRefusal: loc.certificateRefusal,
     };
   });
-  if (!locations.some((l) => l.compatible)) reasons.push('no_location');
+  // Nothing done to a load balancer account helps a WebSocket node: no region either.
+  const regions = websocketOnly ? [] : a.regions;
+  if (!locations.some((l) => l.compatible) && regions.length === 0) reasons.push('no_location');
   return {
     id: a.id,
     name: a.name,
@@ -452,6 +470,7 @@ function accountCompatibility(
     reasons: websocketOnly ? ['l4_not_for_websocket'] : [...new Set(reasons)],
     locations,
     carries,
+    regions,
   };
 }
 

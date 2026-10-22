@@ -18,6 +18,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { isTerminalPhase } from './lib/edges/rotation';
+import { setupVetoNow } from './lib/edges/scoring';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import {
   MAX_DESIRED_PUBLISHED,
@@ -96,6 +97,7 @@ import {
   bumpEpochAndRefresh,
   liveEdgesOfRelay,
   scheduleMirrorRefresh,
+  setupRunLiveOn,
 } from './lib/edges/relayGuards';
 import {
   activeNames,
@@ -403,8 +405,23 @@ export async function dropEdgeFromPool(
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const NODE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
-export function mapRelayAdmin(r: Doc<'relays'>, cfg: EdgeConfig) {
+/**
+ * The admin view of one origin. `setupRunLive` (whether a guided setup run is
+ * working on it now, null when the caller did not look) keeps the detector's
+ * setup veto true between its passes (`setupVetoNow`): a run that failed or
+ * was cancelled does not leave "Owned by a setup run" behind.
+ */
+export function mapRelayAdmin(
+  r: Doc<'relays'>,
+  cfg: EdgeConfig,
+  setupRunLive: boolean | null = null,
+) {
   const policy = originPolicy(r, cfg);
+  const storedVeto = r.suspicion?.veto ?? null;
+  const veto = setupVetoNow(storedVeto, {
+    setupOwned: r.setupOwned === true,
+    runLive: setupRunLive,
+  });
   return {
     id: r._id as string,
     slug: r.slug,
@@ -479,6 +496,14 @@ export function mapRelayAdmin(r: Doc<'relays'>, cfg: EdgeConfig) {
     suspicion: r.suspicion
       ? {
           ...r.suspicion,
+          veto,
+          hint:
+            r.suspicion.hint && veto !== storedVeto
+              ? r.suspicion.hint.replace(
+                  `; automatic rotation held (${storedVeto})`,
+                  veto ? `; automatic rotation held (${veto})` : '',
+                )
+              : r.suspicion.hint,
           edgeEvidence: r.suspicion.edgeEvidence.map((e) => ({ ...e, edgeId: e.edgeId as string })),
           firstSeenAt: r.suspicion.firstSeenAt
             ? new Date(r.suspicion.firstSeenAt).toISOString()
@@ -500,9 +525,12 @@ export const listForAdmin = internalQuery({
   args: {},
   handler: async (ctx) => {
     const cfg = await resolveEdgeConfig(ctx.db);
-    return (await ctx.db.query('relays').collect())
-      .sort((a, b) => a.slug.localeCompare(b.slug))
-      .map((r) => mapRelayAdmin(r, cfg));
+    const rows = (await ctx.db.query('relays').collect()).sort((a, b) =>
+      a.slug.localeCompare(b.slug),
+    );
+    const out = [];
+    for (const r of rows) out.push(mapRelayAdmin(r, cfg, await setupRunLiveOn(ctx.db, r)));
+    return out;
   },
 });
 

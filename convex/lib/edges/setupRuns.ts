@@ -199,6 +199,12 @@ export interface SetupPlanAccount {
   locations?: SetupPlanLocation[];
   /** The required transports it can front (a pick need not carry them all). */
   carries?: string[];
+  /**
+   * Regions its key reaches that are not a location yet (its catalog): picking
+   * one creates the location (`createLocation` with `fill`). Load balancer
+   * accounts only; absent on runs from before.
+   */
+  regions?: Array<{ id: string; label: string; project?: string }>;
 }
 
 /** One pick of a chosen set, as the plan shows it. */

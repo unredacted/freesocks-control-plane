@@ -56,6 +56,7 @@ import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
 import { EDGE_NEW_ACCOUNT_OPTION_DEFAULTS, optionFieldsOf } from './lib/edges/providers/templates';
 import { defaultsOf } from './lib/edges/providers/options';
 import { EDGE_PROVIDER_IDS } from './lib/edgeProviderIds';
+import { setupRunLiveOn } from './lib/edges/relayGuards';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 
@@ -138,7 +139,7 @@ export const summary = internalQuery({
         }
       }
       out.push({
-        relay: mapRelayAdmin(o, cfg),
+        relay: mapRelayAdmin(o, cfg, await setupRunLiveOn(ctx.db, o)),
         pool,
         standbys: edges.filter((e) => e.status === 'active' && e.publication === 'unpublished')
           .length,

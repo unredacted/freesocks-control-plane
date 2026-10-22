@@ -15,11 +15,15 @@
    *                      transports with no backup at another provider. Each
    *                      location says how it fares from each checked country
    *                      (Works, Blocked, Some addresses blocked, Not checked
-   *                      yet, with age), read live. "Add a
-   *                      location" renders LocationPicker and picks the new one;
-   *                      "Add account" renders the provider stepper inline
-   *                      (compact). With no account at all the stepper opens by
-   *                      itself.
+   *                      yet, with age), read live. A load balancer account
+   *                      also lists the regions its key reaches that are no
+   *                      location yet (`RegionPicks`): picking one creates the
+   *                      location and picks it, so an account added with its
+   *                      credentials alone is used from here. "Add a location"
+   *                      (a CDN's zone, or a region no list offers) renders
+   *                      LocationPicker and picks the new one; "Add account"
+   *                      renders the provider stepper inline (compact). With no
+   *                      account at all the stepper opens by itself.
    *   3. Review          one sentence, the consent for unsupported addresses, one button
    * A created run hands over to ProtectProgress (`runId`), which the URL keeps.
    *
@@ -59,6 +63,7 @@
     planSetupRun,
     providersQuery,
     refreshNodeCandidates,
+    refreshProviderCatalog,
     templatesQuery,
   } from '@client/lib/edgesApi';
   import { adminModeName } from '@client/lib/connectionModeCopy';
@@ -71,6 +76,7 @@
   import CodeNote from '../components/CodeNote.svelte';
   import ProviderAccountStepper from '../forms/ProviderAccountStepper.svelte';
   import LocationPicker from '../forms/LocationPicker.svelte';
+  import RegionPicks from '../forms/RegionPicks.svelte';
   import { hasLocations } from '../forms/providerFields';
   import { locationGrades, locationGroupKey } from '../lib/countryChecks';
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
@@ -376,8 +382,15 @@
   }
   const reasonLabel = (r: string): string =>
     (SETUP_ACCOUNT_REASON_COPY as Record<string, { label: string }>)[r]?.label ?? r;
-  function onAccountCreated() {
+  async function onAccountCreated(id: string) {
     addingAccount = false;
+    // What the new key reaches is listed after its test: listed now (once), so
+    // the plan offers its regions the first time it judges the account.
+    try {
+      await refreshProviderCatalog(id);
+    } catch {
+      // The plan still offers the account; its list can be refreshed there.
+    }
     // The plan judges accounts: re-read it so the new one appears with its verdict.
     replan();
   }
@@ -775,6 +788,20 @@
                               onclick={() => (addingLocationFor = a.id)}
                               >{a.layer === 'l7' ? 'Add a zone' : 'Add a location'}</button
                             >
+                            {#if a.layer === 'l4'}
+                              <!-- No region is listed for it yet: listing again may offer some. -->
+                              <div class="pt-1">
+                                <RegionPicks
+                                  accountId={a.id}
+                                  provider={a.provider}
+                                  regions={a.regions}
+                                  {nodeCountry}
+                                  disabled={planM.isPending}
+                                  onPicked={onLocationCreated}
+                                  onRefreshed={replan}
+                                />
+                              </div>
+                            {/if}
                           {:else if r === 'origin_unreachable'}
                             <!-- The origin did not answer its probe: planning again asks again. -->
                             <button
@@ -881,7 +908,19 @@
                         </li>
                       {/each}
                     </ul>
-                    {#if hasLocations(a.provider) && addingLocationFor !== a.id}
+                    {#if a.regions.length > 0}
+                      <div class="px-3 pb-3">
+                        <RegionPicks
+                          accountId={a.id}
+                          provider={a.provider}
+                          regions={a.regions}
+                          {nodeCountry}
+                          disabled={planM.isPending}
+                          onPicked={onLocationCreated}
+                          onRefreshed={replan}
+                        />
+                      </div>
+                    {:else if hasLocations(a.provider) && addingLocationFor !== a.id}
                       <Button
                         variant="ghost"
                         size="sm"

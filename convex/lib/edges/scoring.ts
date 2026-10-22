@@ -344,6 +344,27 @@ export type AutoRotateVeto =
   | 'country_scoped'
   | 'country_wide';
 
+/** The vetoes that describe who owns the origin's pool (a guided setup), not the evidence. */
+const SETUP_VETOES: ReadonlySet<string> = new Set(['setup_owned', 'not_live']);
+
+/**
+ * A stored veto as of NOW. The detector records its veto on each pass, but a
+ * setup run can end between passes (or no pass may come: the origin switched
+ * off, edges frozen), so a read reports the ownership as it stands: no setup
+ * owns the origin any more, no setup veto (the next pass judges the rest); an
+ * owner with a run working is `setup_owned`, one without is `not_live`.
+ * `runLive` null: not known here, the stored veto stands while it is owned.
+ */
+export function setupVetoNow(
+  veto: string | null,
+  now: { setupOwned: boolean; runLive: boolean | null },
+): string | null {
+  if (!veto || !SETUP_VETOES.has(veto)) return veto;
+  if (!now.setupOwned) return null;
+  if (now.runLive === null) return veto;
+  return now.runLive ? 'setup_owned' : 'not_live';
+}
+
 /** What the steering vetoes read (delivery by country on); absent = no such veto. */
 export interface SteeringInput {
   /** The origin's published edges as the assignment sees them (per-country state included). */

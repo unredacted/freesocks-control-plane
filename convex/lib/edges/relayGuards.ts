@@ -42,18 +42,26 @@ export async function liveEdgesOfRelay(
  * by hand there is the recovery `require-edges` documents.
  */
 export async function assertNoRunningSetup(db: DatabaseReader, origin: Doc<'relays'>) {
-  if (!origin.setupOwned || !origin.backendServerId || !origin.nodeName) return;
+  if (await setupRunLiveOn(db, origin))
+    throw new ConvexError({
+      code: 'edge.setup_owned',
+      message: 'A guided setup run is working on this origin; let it finish or cancel it',
+    });
+}
+
+/** Whether a guided setup run is working on a setup-owned origin now (false when none owns it). */
+export async function setupRunLiveOn(
+  db: DatabaseReader,
+  origin: Pick<Doc<'relays'>, 'setupOwned' | 'backendServerId' | 'nodeName'>,
+): Promise<boolean> {
+  if (!origin.setupOwned || !origin.backendServerId || !origin.nodeName) return false;
   const runs = await db
     .query('edgeSetupRuns')
     .withIndex('by_origin', (q) =>
       q.eq('backendServerId', origin.backendServerId!).eq('nodeName', origin.nodeName!),
     )
     .collect(); // a node's runs: operator-scale
-  if (runs.some((r) => !isTerminalRunState(r.state)))
-    throw new ConvexError({
-      code: 'edge.setup_owned',
-      message: 'A guided setup run is working on this origin; let it finish or cancel it',
-    });
+  return runs.some((r) => !isTerminalRunState(r.state));
 }
 
 /** Nothing bypasses a quarantine (docs/edges.md): the operator resolves it first. */

@@ -107,6 +107,7 @@ import {
   type StatusRunFacts,
 } from './lib/edges/originStatus';
 import { isTerminalRunState } from './lib/edges/setupRuns';
+import { setupRunLiveOn } from './lib/edges/relayGuards';
 
 type Db = QueryCtx['db'];
 type Relay = Doc<'relays'>;
@@ -2475,7 +2476,9 @@ export const relayLookup = internalQuery({
       .query('relays')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
-    return relay ? mapRelayAdmin(relay, await resolveEdgeConfig(ctx.db)) : null;
+    return relay
+      ? mapRelayAdmin(relay, await resolveEdgeConfig(ctx.db), await setupRunLiveOn(ctx.db, relay))
+      : null;
   },
 });
 

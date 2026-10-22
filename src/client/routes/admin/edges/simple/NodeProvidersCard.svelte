@@ -6,13 +6,18 @@
    * Then what members miss (a transport with no backup at another provider,
    * one whose locations all cool, one no location carries).
    *
+   * A location that holds an address of the node outside its set (the spare
+   * of a re-protect that failed: the set changes only when a run goes live)
+   * is listed under "Also has addresses at", saying why.
+   *
    * Change: "Add a location" lists the locations that carry at least one of
-   * the node's transports, and makes a new one from any account (another
-   * region, or any DNS zone a CDN account reaches: `LocationPicker`); on a
-   * live enrolled node adding one starts a run (new addresses, tested, reviewed
-   * when they are a new place) whose progress opens. A WebSocket node is
-   * offered CDN accounts only: a load balancer cannot front it (one it had
-   * from before reads "Not used").
+   * the node's transports, the regions a load balancer account reaches that
+   * are no location yet (`RegionPicks`: picking one makes the location), and
+   * makes a new one from any account (another region, or any DNS zone a CDN
+   * account reaches: `LocationPicker`); on a live enrolled node adding one
+   * starts a run (new addresses, tested, reviewed when they are a new place)
+   * whose progress opens. A WebSocket node is offered CDN accounts only: a
+   * load balancer cannot front it (one it had from before reads "Not used").
    * "Remove" drains that location's addresses, refused while what is left
    * elsewhere would not serve every transport with a tested address.
    * "Change options" protects the node again with other provider options at
@@ -46,6 +51,7 @@
   import { EDGE_PROVIDER_META, accountFronts, frontsNode } from '@client/lib/edgeProviderMeta';
   import { codeExplain } from '@client/lib/edgeCodes';
   import LocationPicker from '../forms/LocationPicker.svelte';
+  import RegionPicks from '../forms/RegionPicks.svelte';
   import type { ProviderSetView } from '@shared/contracts/edges';
   import AdminListState from '../../AdminListState.svelte';
   import CodeNote from '../components/CodeNote.svelte';
@@ -85,6 +91,29 @@
     ),
   );
   const newAccount = $derived(accounts.find((a) => a.id === newIn) ?? null);
+  /** The regions offered, by account (each account's own list). */
+  const regionGroups = $derived.by(() => {
+    const out: Array<{
+      accountId: string;
+      accountName: string;
+      provider: ProviderSetView['regions'][number]['provider'];
+      regions: Array<{ id: string; label: string; project?: string }>;
+    }> = [];
+    for (const r of view?.regions ?? []) {
+      let g = out.find((x) => x.accountId === r.accountId);
+      if (!g) {
+        g = {
+          accountId: r.accountId,
+          accountName: r.accountName,
+          provider: r.provider,
+          regions: [],
+        };
+        out.push(g);
+      }
+      g.regions.push({ id: r.regionId, label: r.label, project: r.project });
+    }
+    return out;
+  });
   function onNewLocation(id: string) {
     newIn = null;
     invalidateRelay(qc, relay.slug);
@@ -214,6 +243,26 @@
           {/each}
         </ul>
       {/if}
+      {#if view.outside.length > 0}
+        <div class="space-y-1 border-t pt-2">
+          <p class="text-sm font-medium">Also has addresses at</p>
+          <ul class="space-y-1">
+            {#each view.outside as o (o.locationId)}
+              {@const line = words.outside.find((x) => x.locationId === o.locationId)}
+              <li class="space-y-0.5">
+                <p class="flex flex-wrap items-center gap-2 text-sm">
+                  {o.label}
+                  <span class="text-muted-foreground"
+                    >{o.accountName}, {providerLabel(o.provider)}</span
+                  >
+                  {#if !o.qualified}<Badge variant="muted">Not trusted yet</Badge>{/if}
+                </p>
+                <p class="text-muted-foreground text-xs">{line?.counts} {line?.why}</p>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
       {#each words.notes as note (note)}
         <p class="text-muted-foreground text-sm">{note}</p>
       {/each}
@@ -270,12 +319,28 @@
           </span>
         </label>
       {/each}
-      {#if (view?.available ?? []).length === 0}
+      {#if (view?.available ?? []).length === 0 && regionGroups.length === 0}
         <p class="text-muted-foreground text-sm">
           No other location carries a transport of this node yet. Make one below.
         </p>
       {/if}
     </fieldset>
+    {#each regionGroups as g (g.accountId)}
+      <div class="space-y-1">
+        <p class="text-sm font-medium">
+          {g.accountName}
+          <span class="text-muted-foreground font-normal">{providerLabel(g.provider)}</span>
+        </p>
+        <RegionPicks
+          accountId={g.accountId}
+          provider={g.provider}
+          regions={g.regions}
+          disabled={change.isPending}
+          onPicked={onNewLocation}
+          onRefreshed={() => invalidateRelay(qc, relay.slug)}
+        />
+      </div>
+    {/each}
     <div class="space-y-2 border-t pt-3">
       <div class="space-y-1.5">
         <Label for={`${uid}-new-in`}>New location in</Label>
