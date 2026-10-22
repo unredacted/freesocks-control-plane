@@ -165,6 +165,18 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'providers' && b && c === 'locations' && d && parts[4] === 'check' && !parts[5]) {
     return 'admin.edges.provider-call';
   }
+  // Reading a location's plans again asks the provider (or its public catalog) for prices.
+  if (
+    a === 'providers' &&
+    b &&
+    c === 'locations' &&
+    d &&
+    parts[4] === 'plans' &&
+    parts[5] === 'refresh' &&
+    !parts[6]
+  ) {
+    return 'admin.edges.provider-call';
+  }
   // Listing what an account reaches (its zones, regions, TLS configurations).
   if (a === 'providers' && b && c === 'catalog' && d === 'refresh' && !parts[4]) {
     return 'admin.edges.provider-call';
@@ -915,6 +927,15 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
             ...act,
           }),
         );
+      // Read this place's plans and prices again (docs/edges.md § "Plans and prices").
+      if (d && parts[4] === 'plans' && parts[5] === 'refresh' && !parts[6])
+        return json(
+          await ctx.runAction(internal.edgeProviderOps.refreshPlans, {
+            accountId,
+            locationId: id<'edgeLocations'>(d),
+            force: true,
+          }),
+        );
       // Ask the provider about this place again (a zone's encryption mode).
       if (d && parts[4] === 'check' && !parts[5])
         return json(
@@ -939,6 +960,15 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       return json(
         await ctx.runAction(internal.edgeProviderOps.refreshCatalog, {
           accountId: id<'edgeProviderAccounts'>(b),
+        }),
+      );
+    // What the operator says the account costs (`cost: null` = the default), and its cap.
+    if (c === 'cost' && !d)
+      return json(
+        await ctx.runMutation(internal.edgePlans.setAccountCost, {
+          id: id<'edgeProviderAccounts'>(b),
+          cost: (body.cost ?? null) as never,
+          ...act,
         }),
       );
     if (c === 'rotate-credentials' && !d) {

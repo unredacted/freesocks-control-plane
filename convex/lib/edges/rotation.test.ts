@@ -74,6 +74,35 @@ describe('pickAccount', () => {
     expect(pickAccount([acct({})], 'ovh')).toEqual({ ok: false, code: 'no_account_for_provider' });
   });
 
+  test('a priority tie goes to the cheaper edge (same currency, both known); priority still wins', () => {
+    const eur = (id: string, monthlyCost: number | null, over: Partial<AccountCandidate> = {}) =>
+      acct({
+        id,
+        priority: 1,
+        monthlyCost,
+        costCurrency: monthlyCost === null ? null : 'EUR',
+        ...over,
+      });
+    // Cheaper wins the tie even with more live edges.
+    expect(
+      pickAccount([eur('dear', 68.62), eur('cheap', 16.79, { liveEdges: 4 })], 'gcore'),
+    ).toMatchObject({ ok: true, account: { id: 'cheap' } });
+    // A lower priority number is still tried first, whatever it costs.
+    expect(
+      pickAccount([eur('cheap', 1), eur('first', 500, { priority: 0 })], 'gcore'),
+    ).toMatchObject({ ok: true, account: { id: 'first' } });
+    // No price, or another currency: no preference (fewest live edges, as before).
+    expect(
+      pickAccount([eur('busy', 1, { liveEdges: 3 }), eur('idle', null)], 'gcore'),
+    ).toMatchObject({ ok: true, account: { id: 'idle' } });
+    expect(
+      pickAccount(
+        [eur('busy', 1, { liveEdges: 3 }), eur('idle', 50, { costCurrency: 'USD' })],
+        'gcore',
+      ),
+    ).toMatchObject({ ok: true, account: { id: 'idle' } });
+  });
+
   test('a candidate is a location: its own trust and cap count, the account budget too', () => {
     // Two locations of one account: the trusted one with room is picked.
     const r = pickAccount(

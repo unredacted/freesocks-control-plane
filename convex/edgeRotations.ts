@@ -151,6 +151,8 @@ import {
 } from './nodeActivation';
 import type { PublicationShape } from './lib/backend/activation';
 import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './edgeLocations';
+import { SPEND_CAP_REACHED, capRefusal, edgeCostAt, spendOf } from './edgePlans';
+import { atCap, passesCap, sizeKeyOf, sizeOf } from './lib/edges/pricing';
 import { l7PlaceOf, placeProblemOf } from './lib/edges/l7Place';
 
 type Rotation = Doc<'edgeRotations'>;
@@ -739,7 +741,10 @@ export async function collectStartBlockers(
     // The size it would build with (template, regional values, the node's
     // options): one that takes only the provider's own servers is refused
     // here, never paid for and then refused at the backend step.
-    if (acct && zone && sizeCheckApplies(acct.provider)) {
+    // And an account with a monthly cap that this edge would pass (the
+    // budget guard) is refused the same way.
+    const capped = typeof acct?.cost?.monthlyCap === 'number';
+    if (acct && zone && (sizeCheckApplies(acct.provider) || capped)) {
       const built = await resolveBuildFor(
         ctx,
         acct.provider,
@@ -749,8 +754,14 @@ export async function collectStartBlockers(
         zone,
         choices,
       );
-      const size = sizeProblemOf(acct.provider, built.params, zone.inventorySnapshot);
+      const size = sizeCheckApplies(acct.provider)
+        ? sizeProblemOf(acct.provider, built.params, zone.inventorySnapshot)
+        : null;
       if (size) push(`edge.${size}`, SIZE_NOT_MULTICLOUD_WORDS);
+      const each = (await edgeCostAt(ctx.db, acct, zone._id, sizeOf(acct.provider, built.params)))
+        .cost;
+      if (capped && (await capRefusal(ctx, acct, each)))
+        push(`edge.${SPEND_CAP_REACHED}`, 'The account would pass its monthly spend cap');
     }
   }
   if (listenerId) {
@@ -1734,6 +1745,7 @@ export const commitSelection = internalMutation({
         nameNonce: a.nameNonce,
         layer,
         provisionIntent,
+        planSize: sizeOf(account.provider, a.templateParams as Record<string, unknown> | undefined),
       });
     } catch (err) {
       const code =
@@ -3037,6 +3049,13 @@ export async function selectionContext(
     // ones): refused before anything billable is created.
     const size = sizeProblemOf(a.provider, template.params, where.inventorySnapshot);
     if (size) return failure(size);
+    // The budget guard: an edge here must not take the account past its monthly cap.
+    const spendCap = await capRefusal(
+      ctx,
+      a,
+      (await edgeCostAt(ctx.db, a, where._id, sizeOf(a.provider, template.params))).cost,
+    );
+    if (spendCap) return failure(spendCap);
     if (
       !(await fitsApproval(
         a._id as string,
@@ -3058,12 +3077,15 @@ export async function selectionContext(
   let outsideShape = 0;
   let certificateRefused: string | null = null;
   let sizeRefused: string | null = null;
+  let spendRefused: string | null = null;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
     // Same rule as the insert-time capacity check: observe-only edges were not
     // provisioned by FCP and never consume its allocation.
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
+    // The account's monthly estimate, when it has a cap (the budget guard).
+    const spend = typeof a.cost?.monthlyCap === 'number' ? await spendOf(ctx, a) : null;
     for (const loc of await locationsOfAccount(ctx.db, a._id)) {
       // A zone where this front could not get its certificate is never picked.
       const certificate = certificateRefusalFor(
@@ -3080,22 +3102,31 @@ export async function selectionContext(
       // refused check, its DNS account off, an unread encryption mode; a
       // Scaleway location with no project to create in).
       if (!loc.enabled || (await placeProblemOf(ctx.db, a, loc))) continue;
+      // What an edge here builds (a load balancer's size: its check and its cost).
+      const built = sizeKeyOf(a.provider)
+        ? await resolveBuildFor(
+            ctx,
+            a.provider,
+            null,
+            a.defaultTemplateId ?? null,
+            a._id,
+            loc,
+            await choicesFor(ctx, rotation, origin, loc._id),
+          )
+        : null;
       // A size there that takes only the provider's own servers is never picked.
-      if (sizeCheckApplies(a.provider)) {
-        const built = await resolveBuildFor(
-          ctx,
-          a.provider,
-          null,
-          a.defaultTemplateId ?? null,
-          a._id,
-          loc,
-          await choicesFor(ctx, rotation, origin, loc._id),
-        );
+      if (built && sizeCheckApplies(a.provider)) {
         const size = sizeProblemOf(a.provider, built.params, loc.inventorySnapshot);
         if (size) {
           sizeRefused = sizeRefused ?? size;
           continue;
         }
+      }
+      const cost = (await edgeCostAt(ctx.db, a, loc._id, sizeOf(a.provider, built?.params))).cost;
+      // Nor one whose edge would take the account past its monthly cap.
+      if (spend && (atCap(spend) || passesCap(spend, cost, 1))) {
+        spendRefused = spendRefused ?? SPEND_CAP_REACHED;
+        continue;
       }
       keyOfLocation.set(loc._id as string, locationKeyOf(a.provider, loc.placeKey));
       if (underApproval) {
@@ -3132,6 +3163,8 @@ export async function selectionContext(
         liveEdges: live,
         locationMaxLiveEdges: loc.maxLiveEdges ?? null,
         locationLiveEdges: await liveCountForLocation(ctx.db, loc),
+        monthlyCost: cost.monthly,
+        costCurrency: cost.currency,
       });
     }
   }
@@ -3200,7 +3233,9 @@ export async function selectionContext(
             ? certificateRefused
             : candidates.length === 0 && sizeRefused
               ? sizeRefused
-              : picked.code,
+              : candidates.length === 0 && spendRefused
+                ? spendRefused
+                : picked.code,
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;

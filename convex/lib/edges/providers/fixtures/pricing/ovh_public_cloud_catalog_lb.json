@@ -1,0 +1,463 @@
+{
+  "catalogId": 9694,
+  "locale": {
+    "currencyCode": "EUR",
+    "subsidiary": "FR",
+    "taxRate": 20
+  },
+  "plans": [],
+  "products": [],
+  "addons": [
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-l.month.consumption",
+      "invoiceName": "Octavia Loadbalancer - Large",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-l",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one month",
+          "interval": 1,
+          "intervalUnit": "month",
+          "mode": "default",
+          "price": 4000000000,
+          "tax": 800000000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": [],
+        "technical": {
+          "bandwidth": {
+            "level": 2000
+          },
+          "connectionPerSeconds": {
+            "total": 1000
+          },
+          "name": "large",
+          "requestPerSeconds": {
+            "total": 40000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-m.month.consumption",
+      "invoiceName": "Octavia Loadbalancer - Medium",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-m",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one month",
+          "interval": 1,
+          "intervalUnit": "month",
+          "mode": "default",
+          "price": 1500000000,
+          "tax": 300000000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": [],
+        "technical": {
+          "bandwidth": {
+            "level": 500
+          },
+          "connectionPerSeconds": {
+            "total": 500
+          },
+          "name": "medium",
+          "requestPerSeconds": {
+            "total": 20000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-s.month.consumption",
+      "invoiceName": "Octavia Loadbalancer - Small",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-s",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one month",
+          "interval": 1,
+          "intervalUnit": "month",
+          "mode": "default",
+          "price": 600000000,
+          "tax": 120000000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": [],
+        "technical": {
+          "bandwidth": {
+            "level": 200
+          },
+          "connectionPerSeconds": {
+            "total": 250
+          },
+          "name": "small",
+          "requestPerSeconds": {
+            "total": 10000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-xl.month.consumption",
+      "invoiceName": "Octavia Loadbalancer - XL",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-xl",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one month",
+          "interval": 1,
+          "intervalUnit": "month",
+          "mode": "default",
+          "price": 15000000000,
+          "tax": 3000000000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": [],
+        "technical": {
+          "bandwidth": {
+            "level": 4000
+          },
+          "connectionPerSeconds": {
+            "total": 2000
+          },
+          "name": "xl",
+          "requestPerSeconds": {
+            "total": 80000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "floatingip.floatingip.hour.consumption.3AZ",
+      "invoiceName": "Public Cloud Floating IP",
+      "product": "publiccloud-floatingip-floatingip",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 270000,
+          "tax": 54000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"]
+      }
+    },
+    {
+      "planCode": "floatingip.floatingip.hour.consumption",
+      "invoiceName": "Public Cloud Floating IP",
+      "product": "publiccloud-floatingip-floatingip",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 270000,
+          "tax": 54000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"]
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-l.hour.consumption.3AZ",
+      "invoiceName": "Octavia Loadbalancer - Large",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-l",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 5560000,
+          "tax": 1112000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"],
+        "technical": {
+          "bandwidth": {
+            "level": 2000
+          },
+          "connectionPerSeconds": {
+            "total": 1000
+          },
+          "name": "large",
+          "requestPerSeconds": {
+            "total": 40000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-l.hour.consumption",
+      "invoiceName": "Octavia Loadbalancer - Large",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-l",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 5560000,
+          "tax": 1112000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"],
+        "technical": {
+          "bandwidth": {
+            "level": 2000
+          },
+          "connectionPerSeconds": {
+            "total": 1000
+          },
+          "name": "large",
+          "requestPerSeconds": {
+            "total": 40000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-m.hour.consumption.3AZ",
+      "invoiceName": "Octavia Loadbalancer - Medium",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-m",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 2080000,
+          "tax": 416000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"],
+        "technical": {
+          "bandwidth": {
+            "level": 500
+          },
+          "connectionPerSeconds": {
+            "total": 500
+          },
+          "name": "medium",
+          "requestPerSeconds": {
+            "total": 20000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-m.hour.consumption",
+      "invoiceName": "Octavia Loadbalancer - Medium",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-m",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 2080000,
+          "tax": 416000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"],
+        "technical": {
+          "bandwidth": {
+            "level": 500
+          },
+          "connectionPerSeconds": {
+            "total": 500
+          },
+          "name": "medium",
+          "requestPerSeconds": {
+            "total": 20000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-s.hour.consumption.3AZ",
+      "invoiceName": "Octavia Loadbalancer - Small",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-s",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 830000,
+          "tax": 166000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"],
+        "technical": {
+          "bandwidth": {
+            "level": 200
+          },
+          "connectionPerSeconds": {
+            "total": 250
+          },
+          "name": "small",
+          "requestPerSeconds": {
+            "total": 10000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-s.hour.consumption",
+      "invoiceName": "Octavia Loadbalancer - Small",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-s",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 830000,
+          "tax": 166000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"],
+        "technical": {
+          "bandwidth": {
+            "level": 200
+          },
+          "connectionPerSeconds": {
+            "total": 250
+          },
+          "name": "small",
+          "requestPerSeconds": {
+            "total": 10000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-xl.hour.consumption.3AZ",
+      "invoiceName": "Octavia Loadbalancer - XL",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-xl",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 20830000,
+          "tax": 4166000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"],
+        "technical": {
+          "bandwidth": {
+            "level": 4000
+          },
+          "connectionPerSeconds": {
+            "total": 2000
+          },
+          "name": "xl",
+          "requestPerSeconds": {
+            "total": 80000,
+            "unit": "req/s"
+          }
+        }
+      }
+    },
+    {
+      "planCode": "octavia-loadbalancer.loadbalancer-xl.hour.consumption",
+      "invoiceName": "Octavia Loadbalancer - XL",
+      "product": "publiccloud-octavia-loadbalancer-loadbalancer-xl",
+      "pricingType": "consumption",
+      "pricings": [
+        {
+          "capacities": ["consumption"],
+          "description": "price for one hour",
+          "interval": 0,
+          "intervalUnit": "none",
+          "mode": "default",
+          "price": 20830000,
+          "tax": 4166000,
+          "type": "consumption"
+        }
+      ],
+      "blobs": {
+        "tags": ["active"],
+        "technical": {
+          "bandwidth": {
+            "level": 4000
+          },
+          "connectionPerSeconds": {
+            "total": 2000
+          },
+          "name": "xl",
+          "requestPerSeconds": {
+            "total": 80000,
+            "unit": "req/s"
+          }
+        }
+      }
+    }
+  ],
+  "planFamilies": []
+}

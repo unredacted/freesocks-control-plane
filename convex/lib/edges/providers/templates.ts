@@ -373,6 +373,7 @@ export const UPCLOUD_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     key: 'plan',
     label: 'Plan',
     type: 'string',
+    regional: true,
     group: 'Load balancer',
     prominent: true,
     from: 'flavors',

@@ -2,8 +2,9 @@
   /**
    * Add a location to a stored account: where its edges are created (region or
    * zone, the project, the private network where the provider needs one), and
-   * the load balancer flavor of that region when the template's own is not
-   * offered there. The lists come live from the provider with the account's
+   * its plan: the load balancer size of that region, each offered with its
+   * price, traffic terms and bandwidth (a size that cannot carry an FCP node is
+   * refused). The lists come live from the provider with the account's
    * stored credentials (`POST providers/{id}/locations/options`); the server
    * checks the region is offered to this key before it saves the location, and
    * the same place twice is the same location.
@@ -62,6 +63,8 @@
     type ProviderField,
   } from './providerFields';
   import { catalogStale, zoneChoices } from './zones';
+  import { planOptionLabel, planRefused, type PlanLike } from '../lib/planWords';
+  import PlanFacts from '../components/PlanFacts.svelte';
 
   interface Props {
     accountId: string;
@@ -178,6 +181,23 @@
       .filter((f) => f.regional)
       .map((f) => ({ key: f.key, label: f.label, templateValue: String(params[f.key] ?? '') }));
   });
+  /**
+   * The sizes of the chosen region with their prices (the plan picker), read
+   * live with the region; a provider that prices none offers its flavors.
+   */
+  const sizeChoices = $derived.by((): Array<{ id: string; label: string; plan?: PlanLike }> => {
+    const plans = discovered?.plans ?? [];
+    if (plans.length > 0) return plans.map((p) => ({ id: p.size, label: p.label, plan: p }));
+    return (discovered?.flavors ?? []).map((f) => ({ id: f.id, label: f.label }));
+  });
+  /** A refused size (one that takes the provider's own servers only) cannot be chosen. */
+  const sizeRefused = $derived(
+    regionalFields.some((f) => {
+      const value = (regional[f.key] ?? '').trim() || f.templateValue;
+      const plan = sizeChoices.find((o) => o.id.toLowerCase() === value.toLowerCase())?.plan;
+      return !!plan && planRefused(plan);
+    }),
+  );
   /** A regional value the template leaves empty must be chosen here. */
   const regionalMissing = $derived(
     regionalFields.filter((f) => !f.templateValue && !(regional[f.key] ?? '').trim()),
@@ -359,8 +379,11 @@
       {@render fieldInput(f)}
     {/each}
     {#each regionalFields as rf (rf.key)}
-      {@const flavors = discovered?.flavors ?? []}
+      {@const flavors = sizeChoices}
       {@const current = regional[rf.key] ?? ''}
+      {@const shownPlan = flavors.find(
+        (o) => o.id.toLowerCase() === (current || rf.templateValue).toLowerCase(),
+      )?.plan}
       <div class="space-y-1.5">
         <Label for={`${uid}-r-${rf.key}`}>{rf.label} in this region</Label>
         {#if flavors.length > 0}
@@ -385,10 +408,16 @@
                 </Select.Item>
               {/if}
               {#each flavors as o (o.id)}
-                <Select.Item value={o.id} label={o.label}>{o.label}</Select.Item>
+                <Select.Item
+                  value={o.id}
+                  label={o.label}
+                  disabled={!!o.plan && planRefused(o.plan) && o.id !== current}
+                  >{o.plan ? planOptionLabel(o.plan) : o.label}</Select.Item
+                >
               {/each}
             </Select.Content>
           </Select.Root>
+          {#if shownPlan}<PlanFacts plan={shownPlan} />{/if}
         {:else}
           <Input
             id={`${uid}-r-${rf.key}`}
@@ -400,7 +429,7 @@
           />
         {/if}
         <p class="text-muted-foreground text-xs">
-          A flavor is offered per region. {rf.templateValue
+          The plan sets what each address here costs and carries. {rf.templateValue
             ? "Leave the template's when this region offers it."
             : 'The template names none, so choose the one to use here.'}
         </p>
@@ -420,6 +449,11 @@
       </p>
     </div>
   </div>
+  {#if tried && sizeRefused}
+    <p class="text-destructive text-sm" role="alert">
+      That plan takes the provider's own servers only: choose a multi-cloud one.
+    </p>
+  {/if}
   {#if tried && (missing.length > 0 || regionalMissing.length > 0)}
     <p class="text-destructive text-sm" role="alert">
       Still needed: {[...missing, ...regionalMissing.map((r) => r.label)].join(', ')}.
@@ -434,7 +468,7 @@
       disabled={create.isPending || (!cdn && load.isPending)}
       onclick={() => {
         tried = true;
-        if (missing.length === 0 && regionalMissing.length === 0) create.mutate();
+        if (missing.length === 0 && regionalMissing.length === 0 && !sizeRefused) create.mutate();
       }}
     >
       {create.isPending

@@ -36,6 +36,15 @@ afterEach(() => {
   __setEdgePlumbingForTests(null);
 });
 
+/**
+ * The provider calls the cron makes about an EDGE (discovery, describe,
+ * destroy): its read of each location's plans and prices (step 4f, a day old
+ * at most) says nothing about the edge and is left out.
+ */
+const PRICE_READ = /\/lbflavors\/|\/pricing\/|^\/1\.3\/(price|load-balancer\/plans)$/;
+const edgeCalls = <C extends { path: string }>(calls: readonly C[], prefix: string): C[] =>
+  calls.filter((c) => c.path.startsWith(prefix) && !PRICE_READ.test(c.path));
+
 const ORIGIN = '203.0.113.10';
 const INBOUND_U = '22222222-2222-4222-8222-222222222222';
 const INBOUND_G = '33333333-3333-4333-8333-333333333333';
@@ -374,7 +383,7 @@ describe('edgeReconcile', () => {
     const r = await run(s.t);
     expect(r.described).toBe(0);
     expect(r.dropped).toBe(0);
-    expect(world.stub.calls.filter((c) => c.path.startsWith('/1.3/'))).toHaveLength(0);
+    expect(edgeCalls(world.stub.calls, '/1.3/')).toHaveLength(0);
     expect((await s.t.query(internal.relays.get, { id: s.relayId }))!.publishedEdgeIds).toEqual([
       edgeId,
     ]);
@@ -409,11 +418,9 @@ describe('edgeReconcile', () => {
     expect(edge.steps[0].state).toBe('done');
     expect(edge.status).toBe('failed');
     // Only the LIST (discovery) was called; never a POST.
-    expect(
-      world.stub.calls
-        .filter((c) => c.path.startsWith('/1.3/'))
-        .map((c) => `${c.method} ${c.path}`),
-    ).toEqual(['GET /1.3/load-balancer']);
+    expect(edgeCalls(world.stub.calls, '/1.3/').map((c) => `${c.method} ${c.path}`)).toEqual([
+      'GET /1.3/load-balancer',
+    ]);
     // Nothing to delete: destroying and destroyed in the same pass.
     const r2 = await run(s.t);
     expect(r2.destroying).toBe(1);
@@ -825,11 +832,7 @@ describe('edgeReconcile', () => {
     expect(edge.steps[0].state).toBe('done');
     expect(edge.steps[0].discoverAttempts).toBeUndefined();
     // Only LISTs, never a POST.
-    expect(stub.calls.filter((c) => c.path.startsWith('/cloud/')).map((c) => c.method)).toEqual([
-      'GET',
-      'GET',
-      'GET',
-    ]);
+    expect(edgeCalls(stub.calls, '/cloud/').map((c) => c.method)).toEqual(['GET', 'GET', 'GET']);
   });
 
   test('a sync-delete provider is confirmed by re-issuing the delete, never by assuming it landed', async () => {
@@ -990,7 +993,7 @@ describe('edgeReconcile', () => {
     expect(e.status).toBe('needs_operator');
     expect(e.failure?.code).toBe('destroy_attempts_exhausted');
     // The adapter never called the provider for a kind it does not know.
-    expect(stub.calls.filter((c) => c.path.startsWith('/cloud/'))).toHaveLength(0);
+    expect(edgeCalls(stub.calls, '/cloud/')).toHaveLength(0);
   });
 
   test('a udp listener is refused at planning, before any provider call', async () => {

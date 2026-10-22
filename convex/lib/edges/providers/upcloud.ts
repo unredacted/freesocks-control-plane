@@ -47,6 +47,7 @@ import {
   type UpcloudTemplateParams,
 } from './templates';
 import { wireBody } from './options';
+import type { ProviderPlan } from '../pricing';
 
 const BASE = 'https://api.upcloud.com/1.3';
 
@@ -136,8 +137,29 @@ const ZoneList = z.object({
   }),
 });
 const Plans = z
-  .object({ plans: z.array(z.object({ name: z.string() }).passthrough()).default([]) })
+  .object({
+    plans: z
+      .array(
+        z
+          .object({
+            name: z.string(),
+            server_number: z.number().nullish(),
+            per_server_max_sessions: z.number().nullish(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
   .passthrough();
+/** `GET /1.3/price`: per zone, every priced item as `{ amount, price }` (price in cents an hour). */
+const PriceList = z
+  .object({
+    prices: z
+      .object({ zone: z.array(z.record(z.string(), z.unknown())).default([]) })
+      .passthrough(),
+  })
+  .passthrough();
+const PriceItem = z.object({ amount: z.number().nullish(), price: z.number() }).passthrough();
 
 // --- helpers -------------------------------------------------------------------------
 
@@ -498,6 +520,22 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
     };
   },
 
+  /**
+   * Every load balancer plan with its price: the account's price list for the
+   * location's zone (`GET /1.3/price`, cents an hour in the account's billing
+   * currency) where it names the plan, else the dated table of the pricing
+   * page (`UPCLOUD_LB_PRICES`). UpCloud charges no data transfer for a load
+   * balancer.
+   */
+  async plans(cfg) {
+    const [plans, prices] = await Promise.all([
+      up(cfg, 'plans', 'GET', `/load-balancer/plans`, Plans),
+      up(cfg, 'plans', 'GET', `/price`, PriceList).catch(() => null),
+    ]);
+    const zone = prices?.prices.zone.find((z) => z.name === cfg.zone) ?? null;
+    return plans.plans.map((p) => upcloudPlanOf(p, zone));
+  },
+
   planDestroy: (_cfg, ledger) => orderByKind(ledger, UPCLOUD_DESTROY_ORDER),
 
   /**
@@ -534,3 +572,89 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
 
 /** The floating IP is delegated to the service: the service goes first. */
 const UPCLOUD_DESTROY_ORDER = ['lb', 'floating_ip'] as const;
+
+/**
+ * The managed load balancer plans of the pricing page, per month (UpCloud's
+ * own figures, "estimates based on a 30-day month"), for a price list that
+ * does not name the plan: https://upcloud.com/pricing/ (read 2026-10-22).
+ */
+export const UPCLOUD_LB_PRICES = {
+  asOf: '2026-10-22',
+  currency: 'EUR',
+  monthly: {
+    essentials: 0,
+    development: 10,
+    'production-small': 30,
+    'production-medium': 75,
+  } as Record<string, number>,
+} as const;
+
+/**
+ * The price list's item for a plan. UpCloud documents the list's shape but not
+ * the key of a load balancer plan, so the plan's name is matched in the keys a
+ * load balancer item can have (case, `-` and `_` aside).
+ */
+function priceItemOf(
+  zone: Record<string, unknown> | null,
+  plan: string,
+): { amount: number; price: number } | null {
+  if (!zone) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/-/g, '_');
+  const name = norm(plan);
+  const wanted = new Set(
+    ['managed_load_balancer', 'managed_loadbalancer', 'load_balancer', 'loadbalancer'].map(
+      (p) => `${p}_${name}`,
+    ),
+  );
+  for (const [key, raw] of Object.entries(zone)) {
+    if (!wanted.has(norm(key))) continue;
+    const item = PriceItem.safeParse(raw);
+    if (item.success) return { amount: item.data.amount ?? 1, price: item.data.price };
+  }
+  return null;
+}
+
+/**
+ * One plan of `GET /load-balancer/plans` as a plan, priced from the zone's
+ * price list (cents an hour; the list names no currency, it is the account's
+ * billing one, read as EUR, UpCloud's default) or the pricing page's table
+ * (exported for tests).
+ */
+export function upcloudPlanOf(
+  p: z.infer<typeof Plans>['plans'][number],
+  zone: Record<string, unknown> | null,
+): ProviderPlan {
+  const nodes = typeof p.server_number === 'number' ? p.server_number : null;
+  const sessions = typeof p.per_server_max_sessions === 'number' ? p.per_server_max_sessions : null;
+  const facts = [
+    nodes !== null ? `${nodes} node${nodes === 1 ? '' : 's'}` : null,
+    sessions !== null ? `${sessions.toLocaleString('en-US')} sessions each` : null,
+  ].filter(Boolean);
+  const base = {
+    size: p.name,
+    label: facts.length > 0 ? `${p.name} (${facts.join(', ')})` : p.name,
+    traffic: { kind: 'unlimited' as const },
+    bandwidthMbps: null,
+    acceptsOutsideNode: null,
+  };
+  const item = priceItemOf(zone, p.name);
+  if (item)
+    return {
+      ...base,
+      perHour: item.price / 100 / Math.max(1, item.amount),
+      perMonth: null,
+      currency: 'EUR',
+      source: 'api',
+    };
+  const listed = UPCLOUD_LB_PRICES.monthly[p.name.toLowerCase()];
+  if (listed !== undefined)
+    return {
+      ...base,
+      perHour: null,
+      perMonth: listed,
+      currency: UPCLOUD_LB_PRICES.currency,
+      source: 'catalog',
+      catalogAsOf: UPCLOUD_LB_PRICES.asOf,
+    };
+  return { ...base, perHour: null, perMonth: null, currency: null, source: 'api' };
+}

@@ -1,7 +1,9 @@
 <script lang="ts">
   /**
    * An account's locations: where its edges are created. One row per
-   * location with its trust, its addresses and its cost note; actions to add
+   * location with its trust, its addresses, its plan (a load balancer's size,
+   * with what one address there costs: `PlanDialog` changes it, Refresh prices
+   * reads them again) and its cost note; actions to add
    * one (`LocationPicker`), trust or untrust one (trust is per location: a
    * new region is trusted by its first tested address), switch one off, make
    * one the default the pickers preselect, or remove one nothing uses. A CDN
@@ -35,10 +37,14 @@
     checkProviderLocation,
     deleteProviderLocation,
     invalidateProviders,
+    providersQuery,
     qualifyProviderLocation,
+    refreshLocationPlans,
     removeSharedCertificate,
     updateProviderLocation,
   } from '../../../../lib/edgesApi';
+  import PlanDialog from './PlanDialog.svelte';
+  import { costWords, sourceWords, trafficWords } from '../lib/planWords';
   import { EDGE_PROVIDER_META } from '../../../../lib/edgeProviderMeta';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import { edgeErrorMessage } from '../lib/edgeErrors';
@@ -113,6 +119,24 @@
     const id = l.placement.dnsAccountId;
     return typeof id === 'string' ? (accountNames[id] ?? id) : null;
   }
+  // The provider's size field (`from: 'flavors'`): what a location's plan is chosen in.
+  const providers = providersQuery();
+  const sizeKey = $derived(
+    providers.data?.optionSchemas[account.provider]?.fields.find((f) => f.from === 'flavors')
+      ?.key ?? null,
+  );
+  let planFor = $state<EdgeLocationAdmin | null>(null);
+  let planOpen = $state(false);
+  const prices = createMutation(() => ({
+    mutationFn: (id: string) => refreshLocationPlans(account.id, id),
+    onSuccess: (r) => {
+      invalidateProviders(qc);
+      if (r.error) toast.error(`The prices could not be read (${r.error})`);
+      else toast.success(r.refreshed ? 'Prices read again' : 'Prices were just read');
+    },
+    onError: (err: unknown) => toast.error(edgeErrorMessage(err)),
+  }));
+
   let adding = $state(false);
   let trusting = $state<EdgeLocationAdmin | null>(null);
   let trustOpen = $state(false);
@@ -220,6 +244,27 @@
                 </p>
               {/if}
             {/if}
+            {#if !zones && l.pricing}
+              {@const pr = l.pricing}
+              <p class="text-xs">
+                Plan {pr.plan?.label ?? pr.size ?? 'not set'}: {costWords(pr.cost)}.
+                {#if pr.plan}<span class="text-muted-foreground"
+                    >{trafficWords(pr.plan.traffic)}. {sourceWords(pr.plan)}.</span
+                  >{:else if pr.plans.length === 0}<span class="text-muted-foreground"
+                    >{pr.plansAt
+                      ? 'The provider listed no plans here.'
+                      : 'Prices not read yet.'}</span
+                  >{/if}
+              </p>
+              {#if pr.plansError}
+                <p class="text-muted-foreground text-xs">
+                  The last price read failed ({pr.plansError}); the prices shown are the ones read
+                  before.
+                </p>
+              {/if}
+            {:else if zones && l.pricing}
+              <p class="text-xs">{costWords(l.pricing.cost)}.</p>
+            {/if}
             {#if l.costNote}<p class="text-xs">{l.costNote}</p>{/if}
             {#if Object.keys(l.regionalParams).length > 0}
               <p class="text-muted-foreground font-mono text-xs">
@@ -250,6 +295,30 @@
                 onclick={() => check.mutate(l.id)}
               >
                 {check.isPending && check.variables === l.id ? 'Checking' : 'Check again'}
+              </Button>
+            {/if}
+            {#if !zones && sizeKey}
+              <Button
+                size="sm"
+                variant="outline"
+                class="h-11 sm:h-8"
+                onclick={() => {
+                  planFor = l;
+                  planOpen = true;
+                }}
+              >
+                Change plan
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                class="h-11 sm:h-8"
+                disabled={prices.isPending}
+                onclick={() => prices.mutate(l.id)}
+              >
+                {prices.isPending && prices.variables === l.id
+                  ? 'Reading prices'
+                  : 'Refresh prices'}
               </Button>
             {/if}
             {#if places}
@@ -319,6 +388,8 @@
     {/if}
   </Dialog.Content>
 </Dialog.Root>
+
+<PlanDialog bind:open={planOpen} {account} location={planFor} {sizeKey} />
 
 <QualifyDialog
   bind:open={trustOpen}

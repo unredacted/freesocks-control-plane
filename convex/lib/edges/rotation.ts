@@ -15,6 +15,7 @@ import {
   type FrontingAccount,
 } from './providers/capabilities';
 import type { EdgeProviderId } from '../edgeProviderIds';
+import { cheaperFirst } from './pricing';
 export const ROTATION_PHASES = [
   'select',
   'provisioning',
@@ -308,6 +309,9 @@ export interface AccountCandidate {
   /** The location's own live-edge cap (null / absent = none) and its live count. */
   locationMaxLiveEdges?: number | null;
   locationLiveEdges?: number;
+  /** What one edge here costs a month (lib/edges/pricing.ts; null / absent = not known). */
+  monthlyCost?: number | null;
+  costCurrency?: string | null;
 }
 
 export type AccountPickFailure =
@@ -320,7 +324,8 @@ export type AccountPickFailure =
 /**
  * A trusted location of the provider whose account has capacity + budget (and
  * the location room under its own cap); lowest account priority first, then
- * fewest live edges on the account, then in the location.
+ * the cheaper edge (same currency, both known: `cheaperFirst`), then fewest
+ * live edges on the account, then in the location.
  */
 export function pickAccount(
   accounts: readonly AccountCandidate[],
@@ -341,6 +346,7 @@ export function pickAccount(
     .sort(
       (a, b) =>
         a.priority - b.priority ||
+        cheaperFirst(a, b) ||
         a.liveEdges - b.liveEdges ||
         (a.locationLiveEdges ?? 0) - (b.locationLiveEdges ?? 0),
     );

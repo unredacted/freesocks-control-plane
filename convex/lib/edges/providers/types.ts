@@ -17,6 +17,7 @@
  */
 import type { z } from 'zod';
 import type { EdgeProviderId } from '../../edgeProviderIds';
+import type { ProviderPlan } from '../pricing';
 
 // --- per-provider config (credentials + settings merged, as the actions see it) ---
 
@@ -511,6 +512,13 @@ export interface EdgeProvider<
   describe(cfg: Cfg, ledger: Ledger): Promise<EdgeDescription>;
   inspect(cfg: Cfg, ledger: Ledger): Promise<InspectResult>;
   inventory(cfg: Cfg): Promise<Inventory>;
+  /**
+   * Load balancer adapters: every size offered at the location on `cfg`, with
+   * its list price, traffic terms and what it accepts (lib/edges/pricing.ts),
+   * from the provider's own price list where it has one, else a dated table.
+   * A read; never creates anything. A CDN adapter has none (never priced).
+   */
+  plans?(cfg: Cfg): Promise<ProviderPlan[]>;
   /**
    * L7 adapters: inspect an existing resource for import (real ids, versions,
    * every hostname it serves, what it dials). The import records exactly these

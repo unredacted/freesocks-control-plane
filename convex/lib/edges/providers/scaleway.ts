@@ -45,7 +45,15 @@ import type {
   StepOutcome,
 } from './types';
 import { firstResource, orderByKind, resourcesOfKind } from './types';
-import { EdgeProviderError, toProviderError, credentialTestFailure, refusalOf } from './http';
+import { z } from 'zod';
+import {
+  EdgeProviderError,
+  toProviderError,
+  credentialTestFailure,
+  providerFetch,
+  refusalOf,
+} from './http';
+import type { ProviderPlan } from '../pricing';
 import { addressFamily } from '../ip';
 import {
   ScalewayTemplate,
@@ -128,6 +136,169 @@ let apiFactory: (cfg: ScalewayConfig) => ZonedApi = (cfg) => scalewayApi(cfg);
 /** Test seam: replace the SDK client factory. */
 export function __setScalewayApiFactory(f: ((cfg: ScalewayConfig) => ZonedApi) | null): void {
   apiFactory = f ?? ((cfg) => scalewayApi(cfg));
+}
+
+/**
+ * The public product catalog (`GET /product-catalog/v2alpha1/public-catalog/products`,
+ * no authentication; an alpha API): every load balancer offer of a zone with
+ * its retail price per node an hour, its bandwidth and whether it takes a
+ * server outside Scaleway. A small HTTP client (no SDK covers it).
+ */
+export interface ScalewayLbOffer {
+  type: string;
+  perHour: number;
+  currency: string;
+  bandwidthMbps: number | null;
+  multicloud: boolean | null;
+}
+export interface ScalewayCatalogApi {
+  loadBalancerOffers(zone: string): Promise<ScalewayLbOffer[]>;
+}
+
+const CATALOG_URL = 'https://api.scaleway.com/product-catalog/v2alpha1/public-catalog/products';
+const CatalogProducts = z
+  .object({
+    products: z
+      .array(
+        z
+          .object({
+            product: z.string().nullish(),
+            locality: z.object({ zone: z.string().nullish() }).passthrough().nullish(),
+            price: z
+              .object({
+                retail_price: z
+                  .object({
+                    currency_code: z.string().nullish(),
+                    units: z.union([z.number(), z.string()]).nullish(),
+                    nanos: z.number().nullish(),
+                  })
+                  .passthrough()
+                  .nullish(),
+              })
+              .passthrough()
+              .nullish(),
+            properties: z
+              .object({
+                load_balancer: z
+                  .object({
+                    node: z
+                      .object({
+                        offer_id: z.string().nullish(),
+                        multi_cloud_provider: z.boolean().nullish(),
+                        bandwidth: z.number().nullish(),
+                      })
+                      .passthrough()
+                      .nullish(),
+                  })
+                  .passthrough()
+                  .nullish(),
+              })
+              .passthrough()
+              .nullish(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+
+/** The catalog's load balancer nodes of one zone (exported for tests). */
+export function scalewayOffersOf(
+  raw: z.infer<typeof CatalogProducts>,
+  zone: string,
+): ScalewayLbOffer[] {
+  return raw.products.flatMap((p) => {
+    const node = p.properties?.load_balancer?.node;
+    const price = p.price?.retail_price;
+    if (!node?.offer_id || !p.product || !price?.currency_code) return [];
+    if (p.locality?.zone && p.locality.zone !== zone) return [];
+    const units = Number(price.units ?? 0);
+    if (!Number.isFinite(units)) return [];
+    return [
+      {
+        type: p.product,
+        perHour: units + (price.nanos ?? 0) / 1e9,
+        currency: price.currency_code.toUpperCase(),
+        bandwidthMbps: typeof node.bandwidth === 'number' ? node.bandwidth / 1e6 : null,
+        multicloud:
+          typeof node.multi_cloud_provider === 'boolean' ? node.multi_cloud_provider : null,
+      },
+    ];
+  });
+}
+
+function scalewayCatalog(): ScalewayCatalogApi {
+  return {
+    loadBalancerOffers: async (zone) =>
+      scalewayOffersOf(
+        await providerFetch({
+          provider: 'scaleway',
+          step: 'plans',
+          url: `${CATALOG_URL}?product_types=load_balancer&zone=${encodeURIComponent(zone)}&page_size=100`,
+          method: 'GET',
+          headers: {},
+          schema: CatalogProducts,
+        }),
+        zone,
+      ),
+  };
+}
+
+let catalogFactory: () => ScalewayCatalogApi = () => scalewayCatalog();
+/** Test seam: replace the product catalog client. */
+export function __setScalewayCatalogFactory(f: (() => ScalewayCatalogApi) | null): void {
+  catalogFactory = f ?? (() => scalewayCatalog());
+}
+
+/**
+ * The load balancer offers of the pricing page, for a zone the catalog does not
+ * answer for: €/hour before tax, bandwidth, unlimited traffic, and which ones
+ * are multi-cloud. https://www.scaleway.com/en/pricing/network/ (read 2026-10-22).
+ */
+export const SCALEWAY_LB_PRICES = {
+  asOf: '2026-10-22',
+  currency: 'EUR',
+  types: [
+    { type: 'LB-S', perHour: 0.023, bandwidthMbps: 200, multicloud: false },
+    { type: 'LB-GP-M', perHour: 0.054, bandwidthMbps: 500, multicloud: false },
+    { type: 'LB-GP-L', perHour: 0.094, bandwidthMbps: 1000, multicloud: true },
+    { type: 'LB-GP-XL', perHour: 0.941, bandwidthMbps: 4000, multicloud: true },
+  ],
+} as const;
+
+/**
+ * The plans of the dated table, for the sizes the zone lists (`listLbTypes`:
+ * its own multi-cloud flag and bandwidth win), or every size of the table when
+ * the list could not be read (exported for tests).
+ */
+export function scalewayTablePlans(
+  types: ReadonlyArray<{ name: string; bandwidth?: number; multicloud?: boolean }> | null,
+): ProviderPlan[] {
+  type Listed = { name: string; bandwidth?: number; multicloud?: boolean };
+  const listed: readonly Listed[] =
+    types && types.length > 0 ? types : SCALEWAY_LB_PRICES.types.map((t) => ({ name: t.type }));
+  return listed.map((t) => {
+    const row = SCALEWAY_LB_PRICES.types.find(
+      (x) => x.type.toLowerCase() === t.name.trim().toLowerCase(),
+    );
+    const bandwidth =
+      typeof t.bandwidth === 'number' && t.bandwidth > 0
+        ? t.bandwidth / 1e6
+        : (row?.bandwidthMbps ?? null);
+    return {
+      size: t.name,
+      label: t.name,
+      perHour: row?.perHour ?? null,
+      perMonth: null,
+      currency: row ? SCALEWAY_LB_PRICES.currency : null,
+      traffic: { kind: 'unlimited' },
+      bandwidthMbps: bandwidth,
+      acceptsOutsideNode:
+        typeof t.multicloud === 'boolean' ? t.multicloud : (row?.multicloud ?? null),
+      source: 'catalog',
+      ...(row ? { catalogAsOf: SCALEWAY_LB_PRICES.asOf } : {}),
+    };
+  });
 }
 
 let keysFactory: (cfg: ScalewayConfig) => ScalewayKeysApi = (cfg) => scalewayKeys(cfg);
@@ -645,6 +816,36 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         multicloud: t.multicloud === true,
       })),
     };
+  },
+
+  /**
+   * Every load balancer offer of the zone with its price: the public product
+   * catalog (per node an hour), else the zone's size list priced from the
+   * dated table of the pricing page (`SCALEWAY_LB_PRICES`). Traffic is not
+   * charged; only the multi-cloud offers take a node outside Scaleway.
+   */
+  async plans(cfg) {
+    try {
+      const offers = await catalogFactory().loadBalancerOffers(cfg.zone);
+      if (offers.length > 0)
+        return offers.map((o) => ({
+          size: o.type,
+          label: o.type,
+          perHour: o.perHour,
+          perMonth: null,
+          currency: o.currency,
+          traffic: { kind: 'unlimited' },
+          bandwidthMbps: o.bandwidthMbps,
+          acceptsOutsideNode: o.multicloud,
+          source: 'api',
+        }));
+    } catch {
+      // The catalog is an alpha API: the dated table answers instead.
+    }
+    const types = await sdk(cfg, 'plans', () => apiFactory(cfg).listLbTypes({}).all()).catch(
+      () => null,
+    );
+    return scalewayTablePlans(types);
   },
 
   planDestroy: (_cfg, ledger) => orderByKind(ledger, SCALEWAY_DESTROY_ORDER),

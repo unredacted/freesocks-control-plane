@@ -1197,6 +1197,17 @@ const COPY = {
     explain:
       'The delivery policy changed while the answer was being built, so it was not sent. The next refresh gets the current one.',
   },
+  account_spend_cap: {
+    label: 'Monthly spend cap reached',
+    explain:
+      "This account's monthly estimate has reached the spend cap set on it, so FCP creates no new edge in it.",
+    fix: 'Raise the cap on the account, or remove edges it no longer needs.',
+  },
+  account_spend_cap_reached: {
+    label: 'Over the monthly spend cap',
+    explain: 'A new edge here would take the account past the monthly spend cap set on it.',
+    fix: 'Raise the cap on the account, pick another account, or remove an edge.',
+  },
   account_budget_unlimited: {
     label: 'No daily spending limit',
     explain:
@@ -2019,6 +2030,11 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     explain: 'The account has fewer allocations left today than this node needs.',
     fix: 'Wait for tomorrow or raise the budget.',
   },
+  account_spend_cap_reached: {
+    label: 'Spend cap reached',
+    explain: 'These addresses would take the account past the monthly spend cap set on it.',
+    fix: 'Raise the cap on the account, or pick another location.',
+  },
   provider_mismatch: {
     label: 'Other provider pinned',
     explain: 'A listener on this node is pinned to another provider.',
@@ -2158,6 +2174,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'edge.provider_account.delete': 'Provider account deleted',
   'edge.provider_account.qualified': 'Account qualification changed',
   'edge.provider_account.credentials_rotated': 'Account credentials rotated',
+  'edge.provider_account.cost_changed': 'Account cost settings changed',
   'edge.template.create': 'Template created',
   'edge.template.update': 'Template changed',
   'edge.template.delete': 'Template deleted',

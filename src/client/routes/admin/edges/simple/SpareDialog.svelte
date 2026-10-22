@@ -47,6 +47,7 @@
   import { overrides, pickBase } from '../lib/options';
   import { asParams, deepEqual, type Params } from '../templates/params';
   import CodeNote from '../components/CodeNote.svelte';
+  import EdgeCostLine from '../components/EdgeCostLine.svelte';
   import AdminListState from '../../AdminListState.svelte';
   import ActionConfirm from '../relay/ActionConfirm.svelte';
   import { assertEdgeOk } from '../lib/edgeErrors';
@@ -248,6 +249,13 @@
     </div>
   {/if}
   {#if !renew}
+    <!-- What the new address costs a month, before it is created. -->
+    <EdgeCostLine
+      accountId={where
+        ? (picks.find((p) => p.locationId === where)?.accountId ?? null)
+        : (preflight.data?.wouldSelect?.accountId ?? null)}
+      locationId={where || (preflight.data?.wouldSelect?.locationId ?? null)}
+    />
     {#if preflight.isPending}
       <Skeleton class="h-9 w-full" />
     {:else if preflight.isError}

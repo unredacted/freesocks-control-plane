@@ -52,6 +52,115 @@ const TrustRecord = z
   .nullable()
   .default(null);
 
+// --- plans and prices (docs/edges.md § "Plans and prices") ------------------------
+
+/** What a plan's traffic costs (`unlimited`, `included` GB then `perGb`, `per_gb`, `unknown`). */
+export const EdgePlanTraffic = z.object({
+  kind: z.enum(['unlimited', 'included', 'per_gb', 'unknown']),
+  includedGb: z.number().nullable().default(null),
+  perGb: z.number().nullable().default(null),
+});
+export type EdgePlanTraffic = z.infer<typeof EdgePlanTraffic>;
+
+/**
+ * One load balancer size at one location (convex/edgePlans.ts `planAdmin`):
+ * its list price (`perMonth` = the provider's monthly figure, else hourly ×
+ * 730), traffic terms, bandwidth, whether it takes a node outside the
+ * provider, and why FCP refuses it there (`refusal`: `size_not_multicloud`).
+ */
+export const EdgePlanAdmin = z.object({
+  size: z.string(),
+  label: z.string(),
+  perHour: z.number().nullable(),
+  perMonth: z.number().nullable(),
+  currency: z.string().nullable(),
+  traffic: EdgePlanTraffic,
+  bandwidthMbps: z.number().nullable(),
+  acceptsOutsideNode: z.boolean().nullable(),
+  refusal: z.string().nullable().default(null),
+  /** `api`: the provider's own price list; `catalog`: FCP's dated table (`catalogAsOf`). */
+  source: z.enum(['api', 'catalog']),
+  catalogAsOf: z.string().nullable().default(null),
+  pricedAt: iso,
+});
+export type EdgePlanAdmin = z.infer<typeof EdgePlanAdmin>;
+
+/** What one edge costs a month (lib/edges/pricing.ts `EdgeCost`): what is paid, next to the list price. */
+export const EdgeCostView = z.object({
+  /** Null: not known (no price read, or a CDN account with none set). */
+  monthly: z.number().nullable(),
+  currency: z.string().nullable(),
+  /** `list` price, `free` (credits), the operator's `amount`, or `unset` (a CDN with none set). */
+  basis: z.enum(['list', 'free', 'amount', 'unset']),
+  /** Traffic is charged on top (per GB, or past an allowance). */
+  plusTraffic: z.boolean(),
+  listMonthly: z.number().nullable(),
+  listCurrency: z.string().nullable(),
+});
+export type EdgeCostView = z.infer<typeof EdgeCostView>;
+
+/** A location's plans, and what one edge there costs with the size it builds now. */
+export const EdgeLocationPricing = z.object({
+  /** The size the location builds (its template and regional values); null for a CDN. */
+  size: z.string().nullable(),
+  plan: EdgePlanAdmin.nullable(),
+  cost: EdgeCostView,
+  plans: z.array(EdgePlanAdmin).default([]),
+  plansAt: isoN,
+  plansError: z.string().nullable().default(null),
+});
+export type EdgeLocationPricing = z.infer<typeof EdgeLocationPricing>;
+
+/** Monthly amounts per currency; `unpriced` edges have no known cost. */
+export const EdgeCostTotal = z.object({
+  totals: z.array(z.object({ currency: z.string(), monthly: z.number() })),
+  unpriced: z.number(),
+  plusTraffic: z.boolean(),
+});
+export type EdgeCostTotal = z.infer<typeof EdgeCostTotal>;
+
+/** What the operator says an account costs, and its monthly estimate over its live edges. */
+export const EdgeAccountCost = z.object({
+  /** Null: the default (a load balancer account pays the list price; a CDN has none set). */
+  paid: z.enum(['list', 'free', 'amount']).nullable(),
+  perEdgeMonthly: z.number().nullable(),
+  currency: z.string().nullable(),
+  note: z.string().nullable(),
+  /** The monthly cap that stops new edges (null: none, the default). */
+  monthlyCap: z.number().nullable(),
+  spend: EdgeCostTotal.extend({
+    edges: z.number(),
+    /** The estimate in the cap's currency. */
+    monthly: z.number(),
+    atCap: z.boolean(),
+  }),
+});
+export type EdgeAccountCost = z.infer<typeof EdgeAccountCost>;
+
+/** `POST …/providers/{id}/cost {cost}`: what the account costs (`null` = back to the default). */
+export const EdgeAccountCostRequest = z.object({
+  cost: z
+    .object({
+      paid: z.enum(['list', 'free', 'amount']),
+      perEdgeMonthly: z.number().min(0).max(1_000_000).optional(),
+      currency: z
+        .string()
+        .regex(/^[A-Z]{3}$/)
+        .optional(),
+      note: z.string().max(120).optional(),
+      monthlyCap: z.number().positive().max(1_000_000).optional(),
+    })
+    .nullable(),
+});
+export type EdgeAccountCostRequest = z.infer<typeof EdgeAccountCostRequest>;
+
+/** `POST …/providers/{id}/locations/{locationId}/plans/refresh`: the plans read again. */
+export const EdgePlansRefreshResponse = z.object({
+  refreshed: z.boolean(),
+  error: z.string().nullable(),
+});
+export type EdgePlansRefreshResponse = z.infer<typeof EdgePlansRefreshResponse>;
+
 /**
  * One account's place to create edges in (docs/edges.md § "Provider accounts
  * and locations"): the placement (region / zone / project / network, or a
@@ -100,6 +209,8 @@ export const EdgeLocationAdmin = z.object({
     })
     .nullable()
     .default(null),
+  /** Its plans and prices, and what one edge here costs now. */
+  pricing: EdgeLocationPricing.nullable().default(null),
   createdAt: iso,
   updatedAt: iso,
 });
@@ -202,6 +313,8 @@ export const EdgeProviderAccountAdmin = z.object({
     .default(null),
   /** Dev only: the adapter behind this account is the in-memory fake (never true outside development). */
   fake: z.boolean().default(false),
+  /** What the operator says the account costs, and its monthly estimate. */
+  cost: EdgeAccountCost.nullable().default(null),
   createdAt: iso,
   updatedAt: iso,
 });
@@ -348,6 +461,23 @@ export const EdgeDiscoverResponse = z.object({
   defaults: z.record(z.string(), z.unknown()).optional(),
   /** With `defaults`: the placement keys no default could fill. */
   missing: z.array(z.string()).optional(),
+  /** The location form: the chosen region's plans, read live (lib/edges/pricing.ts `ProviderPlan`). */
+  plans: z
+    .array(
+      z.object({
+        size: z.string(),
+        label: z.string(),
+        perHour: z.number().nullable(),
+        perMonth: z.number().nullable(),
+        currency: z.string().nullable(),
+        traffic: EdgePlanTraffic,
+        bandwidthMbps: z.number().nullable(),
+        acceptsOutsideNode: z.boolean().nullable(),
+        source: z.enum(['api', 'catalog']),
+        catalogAsOf: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 export type EdgeDiscoverResponse = z.infer<typeof EdgeDiscoverResponse>;
 
@@ -2349,6 +2479,24 @@ export const SetupPlanSet = z.object({
   problems: z.array(
     z.object({ locationId: z.string(), reason: z.string(), detail: z.string().optional() }),
   ),
+  /** What the run creates costs a month, before anything exists (per pick, and the total). */
+  cost: z
+    .object({
+      lines: z.array(
+        z.object({
+          locationId: z.string(),
+          count: z.number(),
+          size: z.string().nullable(),
+          label: z.string().nullable(),
+          cost: EdgeCostView,
+          source: z.enum(['api', 'catalog']).nullable(),
+          catalogAsOf: z.string().nullable(),
+          pricedAt: isoN,
+        }),
+      ),
+      total: EdgeCostTotal,
+    })
+    .optional(),
 });
 export type SetupPlanSet = z.infer<typeof SetupPlanSet>;
 
