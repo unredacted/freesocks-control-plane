@@ -47,6 +47,12 @@ export interface DeliverySubscription extends CountryFields {
    * a guess this request writes is applied only while it is still current.
    */
   countryRev?: number | null;
+  /**
+   * The row's `deliveryRev` this request read: a pin it records (and the
+   * caller's cache write and delivery stamp) only land while the key has not
+   * moved in place since (subscriptions.ts `invalidateDelivery`).
+   */
+  deliveryRev?: number;
 }
 
 export interface MemberLocation {
@@ -239,6 +245,7 @@ export async function deliverBody(
     await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
       subscriptionId: sub.subscriptionId,
       node: fetched.pinnedNode,
+      deliveryRev: sub.deliveryRev,
     });
   }
   // The country rules are the place's: a body that resolved to another node

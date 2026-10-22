@@ -43,6 +43,28 @@ export interface MirrorValidation {
 }
 
 /**
+ * The mirror barrier's token for one upload (convex/mirrorUploads.ts): the
+ * delivery token of the place the body resolved to (`edgeRender.epochFor`)
+ * and the key's own `deliveryRev`, so an in-place mode or server switch that
+ * lands while the object is written leaves the obligation open like any
+ * policy move (subscriptions.ts `invalidateDelivery`).
+ */
+async function mirrorToken(
+  ctx: ActionCtx,
+  subscriptionId: Id<'subscriptions'>,
+  backendServerId: Id<'backendServers'> | null | undefined,
+  node: string | undefined,
+): Promise<string> {
+  const [place, rev] = await Promise.all([
+    backendServerId
+      ? ctx.runQuery(internal.edgeRender.epochFor, { backendServerId, nodeName: node })
+      : Promise.resolve(null),
+    ctx.runQuery(internal.subscriptions.deliveryRevOf, { subscriptionId }),
+  ]);
+  return `r${rev ?? '-'}|${place ?? ''}`;
+}
+
+/**
  * Origin rendering for a mirror body under the EDGE-REQUIRED policy
  * (docs/edges.md): a mirror serves the same rendered endpoints as the fronted
  * route (link-list family: no User-Agent here). Returns the body to upload, the
@@ -306,12 +328,7 @@ export const provisionMirror = internalAction({
     // The delivery token the body is rendered under: re-read after the upload
     // (the mirror barrier below).
     const tokenOf = () =>
-      context.backendServerId
-        ? ctx.runQuery(internal.edgeRender.epochFor, {
-            backendServerId: context.backendServerId,
-            nodeName: fetched.pinnedNode ?? undefined,
-          })
-        : Promise.resolve(null);
+      mirrorToken(ctx, context.subscriptionId, context.backendServerId, fetched.pinnedNode);
     const tokenBefore = await tokenOf();
     // The first upload is rendered like every later refresh: a mirror must
     // never hold the template entries (the origin / index-0 address) until the
@@ -383,12 +400,14 @@ export const provisionMirror = internalAction({
       await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
         subscriptionId: context.subscriptionId,
         node: fetched.pinnedNode,
+        deliveryRev: context.deliveryRev,
       });
     }
     await ctx.runMutation(internal.subscriptions.markMirrorRefreshed, {
       subscriptionId: context.subscriptionId,
       contentAt,
       renderedEpoch: rendered.renderedEpoch,
+      deliveryRev: context.deliveryRev,
     });
     // Settled only if nothing moved while the object was written; otherwise
     // the repair pass re-renders it under the policy that holds now.
@@ -538,19 +557,16 @@ async function refreshOneSubMirrors(
       await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
         subscriptionId: sub.id,
         node: fetched.pinnedNode,
+        deliveryRev: sub.deliveryRev,
       });
     };
     // The delivery token is read before the render and again before the upload:
-    // a policy that moved meanwhile (a node gate, a rotation) means this body
-    // was rendered under an older policy, and it never reaches the object; the
-    // next refresh renders under the new one (docs/servers.md "Node lifecycle").
+    // a policy that moved meanwhile (a node gate, a rotation, the key's own
+    // mode or server switch) means this body was rendered under an older
+    // policy, and it never reaches the object; the next refresh renders under
+    // the new one (docs/servers.md "Node lifecycle").
     const tokenOf = () =>
-      sub.backendServerId
-        ? ctx.runQuery(internal.edgeRender.epochFor, {
-            backendServerId: sub.backendServerId,
-            nodeName: fetched.pinnedNode ?? undefined,
-          })
-        : Promise.resolve(null);
+      mirrorToken(ctx, sub.id, sub.backendServerId, fetched.pinnedNode ?? undefined);
     const tokenBefore = await tokenOf();
     // Origin rendering (docs/edges.md): a mirror serves the same rendered
     // endpoints as the fronted route (link-list family: no User-Agent here).
@@ -571,6 +587,7 @@ async function refreshOneSubMirrors(
         subscriptionId: sub.id,
         contentAt,
         renderedEpoch: rendered.renderedEpoch,
+        deliveryRev: sub.deliveryRev,
       });
     if ((await tokenOf()) !== tokenBefore) return false;
     const hash = await sha256Hex(content);

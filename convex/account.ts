@@ -1182,6 +1182,12 @@ export const switchMode = internalAction({
           });
           return reissue();
         }
+        // The backend serves the new mode now: the same token must stop handing
+        // out the old one at once (bodies, pin, render snapshot, mirrors),
+        // including what a fetch in flight across the PATCH stored meanwhile.
+        await ctx.runMutation(internal.subscriptions.placementApplied, {
+          subscriptionId: oldSub._id,
+        });
         await ctx.runMutation(internal.users.setConnectionMode, { userId, modeId: target });
         if (tier.isDefaultFree) {
           await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
@@ -1510,9 +1516,12 @@ export const switchServer = internalAction({
           });
           return reissue();
         }
-        // (2) also rotate the pin: the new mode group may still serve several nodes.
-        const leftNode = await ctx.runMutation(internal.subscriptions.rotateNodePin, {
+        // (2) also rotate the pin: the new mode group may still serve several
+        // nodes. With it goes everything stored from the old group, a fetch in
+        // flight across the PATCH included (subscriptions.placementApplied).
+        const leftNode = await ctx.runMutation(internal.subscriptions.placementApplied, {
           subscriptionId: oldSub._id,
+          rotatePin: true,
         });
         await audit({
           inPlace: true,

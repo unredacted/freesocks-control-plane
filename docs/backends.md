@@ -506,7 +506,10 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   re-sends _that_ placement — it never re-picks (a legacy row with none resolves
   deterministically, pinned to its recorded backend) — so renewals/downgrades can't thrash a live
   key across nodes. Only **regenerate** / **switch-mode** / **switch-backend**
-  re-pick.
+  re-pick. A switch made in place (the same key moved to another mode group) drops what the
+  key was delivered from the old group once the PATCH has landed: cached bodies, pin, render
+  snapshot, mirror hash; the mirrors are re-rendered at once (docs/edges.md "A key that moves
+  in place").
 - **Multi-backend pairing (2026-07-16):** a mode's pool may span several backends, and
   a mode group UUID only exists on its own backend — so issuance resolves the
   **(placement, backend) pair together** (`resolvePlacementTarget`): each pool mode group

@@ -786,6 +786,12 @@ export default defineSchema({
     // subscription at regenerate) — excluded from the pin pick when others
     // exist, so a regenerated key lands on a different node.
     excludeNode: v.optional(v.string()),
+    // Bumped whenever what this key should carry moves IN PLACE (a mode or
+    // server switch that keeps the row, a pin rotation): the cached bodies, the
+    // pin, the render snapshot and the mirror hash go with it, and a request
+    // that read an older revision writes none of them back
+    // (subscriptions.ts `invalidateDelivery`).
+    deliveryRev: v.optional(v.number()),
     state: subscriptionState,
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),

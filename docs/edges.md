@@ -771,6 +771,22 @@ re-renders once on a move, and answers `policy_moved` on a second move. Only bod
 are cached. Creating an origin therefore takes members on that origin dark until an edge is
 published and rendering is on; the setup flow says so.
 
+**A key that moves in place.** A connection-mode switch or a server switch that keeps the key
+(the same row, backend user and `/sub` token) and a pin rotation change what the key should carry
+without changing its token, so nothing stored from before may answer it
+(`subscriptions.invalidateDelivery`). Once the backend serves the new group (its PATCH has
+landed, `subscriptions.placementApplied`), or when the pin is rotated, the row drops its cached
+bodies, its pin (the route reads the cache token at the STORED pin, so a body of the old node
+would still match it), its render snapshot and epoch, and its mirror content hash; its mirrors are
+rendered again at once (`storage.refreshMirrorsForSubscription`), not at the next sweep; and
+`subscriptions.deliveryRev` moves. A request that read the row before (one in flight across the
+switch, holding the old group's body) then writes none of it back: the cache write, the delivery
+stamp, the pin and the mirror stamps all compare the revision, and the mirror barrier's token
+carries it, so an upload that outlives the switch is repaired like any policy move. The next
+fetch, for every client family, renders for the new placement and node. A re-issue (regenerate,
+switch-backend, or a switch that cannot be made in place) starts a new row with none of this, and
+schedules the same mirror refresh when it carries the token.
+
 ### Freedom modes only through edges
 
 One switch, `edge.freedom.edgesOnly` (Admin → Edges → Settings, the "Freedom modes only through
