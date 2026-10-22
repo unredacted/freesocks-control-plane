@@ -6,11 +6,13 @@
    *                         what the credentials can see (projects, regions or zones,
    *                         networks); nothing is stored yet, the lists stay in form state.
    *                         A refused connection stays on this step with the reason.
-   *   2. Placement, limits  what the provider answered, the account's FIRST location (where
-   *                         its edges are created, picked from those lists), the DNS
-   *                         account for a provider that needs one, and the spending
-   *                         limits. More locations are added on the account page or
-   *                         when a node is protected (`LocationPicker`).
+   *   2. Placement, limits  what the provider answered, optionally the account's FIRST
+   *                         location (where its edges are created, picked from those
+   *                         lists; for every provider an account may be its credentials
+   *                         alone), the DNS account for a provider that needs one, and
+   *                         the spending limits. Locations are otherwise made when a node
+   *                         is protected (the regions the key reaches, `RegionPicks`) or
+   *                         on the account page (`LocationPicker`).
    * Creating the account runs the credential test right away, so the caller gets
    * a tested account (or the reason the test failed).
    *
@@ -79,8 +81,6 @@
     applyDiscovery,
     credentialLabel,
     fieldsFor,
-    firstLocationOptional,
-    hasLocations,
     missingRequired,
     optionsFor,
     regionLabelOf,
@@ -200,8 +200,8 @@
   const placementMissing = $derived(
     missingRequired(provider, values, 'placement', { firstLocation: true }),
   );
-  /** A CDN account is its token: its first zone may be picked here or when a node is protected. */
-  const locationOptional = $derived(firstLocationOptional(provider));
+  /** A CDN's place is a zone, a load balancer's a region (the step's words). */
+  const placeWord = $derived(meta.layer === 'l7' ? 'zone' : 'location');
   const dnsAccounts = $derived(accounts.filter((a) => EDGE_PROVIDER_META[a.provider].providesDns));
   const needsDnsFirst = $derived(meta.needsDnsAccount && dnsAccounts.length === 0);
   /** "Add a DNS account first": back to the credentials, on the (first) DNS provider. */
@@ -369,28 +369,17 @@
       },
       {
         id: 'placement',
-        title: locationOptional
-          ? compact
-            ? 'Settings and a first zone'
-            : 'Settings, a first zone and limits'
-          : hasLocations(provider)
+        title: compact
+          ? `Settings and a first ${placeWord}`
+          : `Settings, a first ${placeWord} and limits`,
+        description:
+          meta.layer === 'l7'
             ? compact
-              ? 'First location'
-              : 'First location and limits'
+              ? 'Optionally a first zone to front in. Any zone the token reaches can be picked when a node is protected.'
+              : 'Optionally a first zone to front in (any zone the token reaches can be picked when a node is protected), and how many this account may run.'
             : compact
-              ? 'Settings'
-              : 'Settings and limits',
-        description: locationOptional
-          ? compact
-            ? 'Optionally a first zone to front in. Any zone the token reaches can be picked when a node is protected.'
-            : 'Optionally a first zone to front in (any zone the token reaches can be picked when a node is protected), and how many this account may run.'
-          : hasLocations(provider)
-            ? compact
-              ? 'Where its first addresses are created. Add more locations later.'
-              : 'Where its first edges are created (add more locations later), and how many this account may run.'
-            : compact
-              ? 'Where its addresses are created.'
-              : 'Where its edges are created, and how many this account may run.',
+              ? 'Optionally where its first addresses are created. Any region the key reaches can be picked when a node is protected.'
+              : 'Optionally where its first addresses are created (any region the key reaches can be picked when a node is protected), and how many this account may run.',
         status: status('placement'),
         ...(step !== 'placement' ? { note: 'after connecting' } : {}),
       },
@@ -683,11 +672,11 @@
             </Button>
           {/if}
         </div>
-        {#if locationOptional}
-          <p class="text-muted-foreground text-sm">
-            A first zone is optional: leave the zone empty to add the account alone.
-          </p>
-        {/if}
+        <p class="text-muted-foreground text-sm">
+          {meta.layer === 'l7'
+            ? 'A first zone is optional: leave the zone empty to add the account alone.'
+            : 'A first location is optional: leave the region empty to add the account alone. The regions it reaches are offered when you protect a node.'}
+        </p>
         {#if needsDnsFirst}
           <CodeNote
             tone="warning"

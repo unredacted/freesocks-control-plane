@@ -104,9 +104,15 @@ export const EdgeLocationAdmin = z.object({
 export type EdgeLocationAdmin = z.infer<typeof EdgeLocationAdmin>;
 export const EdgeLocationList = z.array(EdgeLocationAdmin);
 
-/** POST …/providers/{id}/locations: add a location (a placement the provider offers this key). */
+/**
+ * POST …/providers/{id}/locations: add a location (a placement the provider
+ * offers this key). `fill`: a placement naming its region is completed from
+ * what the key reaches (the project, a private network where one is needed);
+ * a value no default fills is `edge.location_options_needed`.
+ */
 export const EdgeLocationCreateRequest = z.object({
   placement: z.record(z.string(), z.unknown()),
+  fill: z.boolean().optional(),
   regionalParams: z.record(z.string(), z.string()).optional(),
   maxLiveEdges: z.number().int().min(1).max(200).optional(),
   costNote: z.string().max(120).optional(),
@@ -331,6 +337,10 @@ export const EdgeDiscoverResponse = z.object({
   errorDetails: z.record(z.string(), z.string()).optional(),
   /** Lists that stopped at their cap (more exist than are listed). */
   truncated: z.array(z.string()).optional(),
+  /** Location options asked with `defaults`: the region's pick, completed (project, network). */
+  defaults: z.record(z.string(), z.unknown()).optional(),
+  /** With `defaults`: the placement keys no default could fill. */
+  missing: z.array(z.string()).optional(),
 });
 export type EdgeDiscoverResponse = z.infer<typeof EdgeDiscoverResponse>;
 
@@ -2204,6 +2214,8 @@ export const SetupPlanAccount = z.object({
   locations: z.array(SetupPlanLocation).default([]),
   /** The required transports it can front (a pick of a set need not carry them all). */
   carries: z.array(z.string()).default([]),
+  /** Regions its key reaches that are no location yet: picking one creates it (load balancers). */
+  regions: z.array(z.object({ id: z.string(), label: z.string() })).default([]),
 });
 
 /** `GET relays/{id}/providers`: the node's provider set as its Providers card shows it. */
@@ -2231,6 +2243,25 @@ export const ProviderSetView = z.object({
       options: z.record(z.string(), z.unknown()).nullable().default(null),
     }),
   ),
+  /**
+   * Locations holding an address of this node (in use or spare) that are not in
+   * its set: the set changes only when a run goes live, so a re-protect that
+   * failed leaves its new spare outside it.
+   */
+  outside: z
+    .array(
+      z.object({
+        locationId: z.string(),
+        accountId: z.string(),
+        accountName: z.string(),
+        provider: z.string(),
+        label: z.string(),
+        qualified: z.boolean(),
+        inUse: z.number(),
+        spare: z.number(),
+      }),
+    )
+    .default([]),
   /** Transports with no backup in another failure domain. */
   reduced: z.array(z.object({ listenerKey: z.string(), reason: z.literal('one_group') })),
   coolingOnly: z.array(z.string()),
@@ -2249,6 +2280,19 @@ export const ProviderSetView = z.object({
       carries: z.array(z.string()),
     }),
   ),
+  /** Regions a load balancer account reaches that are no location yet: picking one creates it. */
+  regions: z
+    .array(
+      z.object({
+        accountId: z.string(),
+        accountName: z.string(),
+        provider: EdgeProviderId,
+        regionId: z.string(),
+        label: z.string(),
+        carries: z.array(z.string()),
+      }),
+    )
+    .default([]),
 });
 export type ProviderSetView = z.infer<typeof ProviderSetView>;
 

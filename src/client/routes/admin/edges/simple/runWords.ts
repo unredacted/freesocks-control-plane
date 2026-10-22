@@ -473,16 +473,23 @@ export function runPickLines(
     });
 }
 
-/** A node's provider set in words (the node page's card): per location, then what members miss. */
+/**
+ * A node's provider set in words (the node page's card): per location, then the
+ * locations that hold one of its addresses outside the set (`outside`: the set
+ * changes only when a run goes live, so the spare of a re-protect that failed
+ * sits there), then what members miss.
+ */
 export function providerPickWords(
   view: Pick<
     ProviderSetView,
     'picks' | 'reduced' | 'coolingOnly' | 'uncarried' | 'deficit' | 'hasSet'
-  >,
+  > &
+    Partial<Pick<ProviderSetView, 'outside'>>,
   nameOf: (listenerKey: string) => string = (k) => k,
   now: number = Date.now(),
 ): {
   picks: Array<{ locationId: string; counts: string; cooling: string | null }>;
+  outside: Array<{ locationId: string; counts: string; why: string }>;
   notes: string[];
 } {
   const picks = view.picks.map((p) => {
@@ -498,6 +505,14 @@ export function providerPickWords(
           : null,
     };
   });
+  const outside = (view.outside ?? []).map((o) => ({
+    locationId: o.locationId,
+    counts: `${o.inUse} in use, ${o.spare} spare.`,
+    why:
+      o.inUse > 0
+        ? "Not one of this node's locations, though members are given its address here. The node's locations change only when a run goes live."
+        : "Not one of this node's locations: a run that did not go live, or a spare added by hand, left it here. The node's locations change only when a run goes live: add this location to keep it, or delete the spare.",
+  }));
   const names = (keys: string[]) => [...new Set(keys)].map(nameOf).join(', ');
   const notes: string[] = [];
   if (view.uncarried.length > 0)
@@ -512,5 +527,5 @@ export function providerPickWords(
     notes.push(
       `${plural(view.deficit, 'address is', 'addresses are')} still missing; automatic upkeep adds ${view.deficit === 1 ? 'it' : 'them'}.`,
     );
-  return { picks, notes };
+  return { picks, outside, notes };
 }

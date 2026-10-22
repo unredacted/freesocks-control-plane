@@ -396,6 +396,37 @@ describe('providerPickWords', () => {
       'Members on REALITY have no backup at another provider.',
       '1 address is still missing; automatic upkeep adds it.',
     ]);
+    expect(w.outside).toEqual([]);
+  });
+
+  it("names a location outside the node's set, and why a failed run's spare is there", () => {
+    const w = providerPickWords({
+      hasSet: true,
+      picks: [],
+      outside: [
+        {
+          locationId: 'y',
+          accountId: 'b',
+          accountName: 'Acct B',
+          provider: 'globex',
+          label: 'Region B',
+          qualified: false,
+          inUse: 0,
+          spare: 1,
+        },
+      ],
+      reduced: [],
+      coolingOnly: [],
+      uncarried: [],
+      deficit: 0,
+    });
+    expect(w.outside).toEqual([
+      {
+        locationId: 'y',
+        counts: '0 in use, 1 spare.',
+        why: expect.stringMatching(/a run that did not go live.*change only when a run goes live/),
+      },
+    ]);
   });
 });
 

@@ -1459,6 +1459,12 @@ const REFUSAL_COPY = {
     explain: 'The provider could not be asked whether it offers that place to this account.',
     fix: 'Try again in a moment.',
   },
+  location_options_needed: {
+    label: 'Choose the rest of the location',
+    explain:
+      'A region was picked, but what the account reaches names no project or private network to use there.',
+    fix: 'Open Change options and choose them.',
+  },
   location_in_use: {
     label: 'Location still in use',
     explain: 'An address still lives in this location, or a protected node uses it.',

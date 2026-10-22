@@ -867,12 +867,14 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     if (c === 'locations') {
       const accountId = id<'edgeProviderAccounts'>(b);
       // The location form's lists: regions this key can use, then networks,
-      // subnets and flavors once a region is chosen.
+      // subnets and flavors once a region is chosen (`defaults`: a region's
+      // pick, completed the way creating it with `fill` would).
       if (d === 'options' && !parts[4])
         return json(
           await ctx.runAction(internal.edgeProviderOps.locationOptions, {
             accountId,
             placement: body.placement ?? {},
+            ...(body.defaults === true ? { defaults: true } : {}),
           }),
         );
       if (!d)
@@ -880,6 +882,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           await ctx.runAction(internal.edgeProviderOps.createLocation, {
             accountId,
             placement: body.placement ?? {},
+            ...(body.fill === true ? { fill: true } : {}),
             ...(body.regionalParams !== undefined ? { regionalParams: body.regionalParams } : {}),
             ...(typeof body.maxLiveEdges === 'number' ? { maxLiveEdges: body.maxLiveEdges } : {}),
             ...(typeof body.costNote === 'string' ? { costNote: body.costNote } : {}),

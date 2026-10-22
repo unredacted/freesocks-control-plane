@@ -3,12 +3,12 @@ import { EDGE_PROVIDER_IDS } from '@shared/contracts/edges';
 import {
   PROVIDER_FIELDS,
   applyDiscovery,
-  firstLocationOptional,
   hasLocations,
   locationFields,
   missingRequired,
   optionsFor,
   placementBody,
+  regionPlacement,
 } from './providerFields';
 
 describe('provider fields: a place is a location, a CDN zone included', () => {
@@ -29,9 +29,7 @@ describe('provider fields: a place is a location, a CDN zone included', () => {
     expect(locationFields('fastly').some((f) => f.key === 'certificateAuthority')).toBe(false);
   });
 
-  test("a CDN account's first zone is optional, all of it or none of it; a region is not", () => {
-    expect(firstLocationOptional('cloudflare')).toBe(true);
-    expect(firstLocationOptional('upcloud')).toBe(false);
+  test("every account's first location is optional, all of it or none of it", () => {
     const opts = { firstLocation: true };
     // The form starts from the provider's defaults (a Fastly account's domain kind).
     const fastlyDefaults = { domainModel: 'versionless' };
@@ -41,9 +39,49 @@ describe('provider fields: a place is a location, a CDN zone included', () => {
     expect(
       missingRequired('fastly', { ...fastlyDefaults, dnsAccountId: 'acct-dns' }, 'placement', opts),
     ).toEqual(['DNS zone', 'Zone name']);
-    expect(missingRequired('upcloud', {}, 'placement', opts)).toEqual(['Zone']);
-    // The location form itself always needs the zone.
+    // A load balancer account too: its credentials alone are an account.
+    expect(missingRequired('upcloud', {}, 'placement', opts)).toEqual([]);
+    expect(missingRequired('gcore', {}, 'placement', opts)).toEqual([]);
+    expect(missingRequired('scaleway', { accessKey: 'SCW' }, 'placement', opts)).toEqual([]);
+    expect(missingRequired('ovh', { endpoint: 'ovh-eu' }, 'placement', opts)).toEqual([]);
+    // Started by a region, the rest of that location is needed.
+    expect(missingRequired('gcore', { regionId: '7' }, 'placement', opts)).toEqual(['Project']);
+    expect(missingRequired('ovh', { regionName: 'GRA9' }, 'placement', opts)).toEqual([
+      'Public Cloud project',
+      'Private network',
+      'Subnet',
+    ]);
+    // The credential step still needs its identifiers.
+    expect(missingRequired('ovh', {}, 'credentials', opts)).toEqual([
+      'Application key (public id)',
+      'API endpoint',
+    ]);
+    // The location form itself always needs the place.
     expect(missingRequired('cloudflare', {})).toContain('DNS zone');
+    expect(missingRequired('upcloud', {})).toEqual(['Zone']);
+  });
+
+  test('a region the key reaches names a location by its region alone (a number where the adapter wants one)', () => {
+    expect(regionPlacement('gcore', '7')).toEqual({ regionId: 7 });
+    expect(regionPlacement('ovh', 'GRA9')).toEqual({ regionName: 'GRA9' });
+    expect(regionPlacement('upcloud', 'de-fra1')).toEqual({ zone: 'de-fra1' });
+    expect(regionPlacement('scaleway', 'fr-par-1')).toEqual({ zone: 'fr-par-1' });
+    // A CDN's place is a zone: picked in the location form.
+    expect(regionPlacement('cloudflare', 'x')).toBeNull();
+  });
+
+  test("a load balancer's optional first location: no single project or region is picked for the operator", () => {
+    const one = applyDiscovery(
+      'gcore',
+      {},
+      {
+        discovered: { projects: [{ id: '1', label: 'p' }], regions: [{ id: '7', label: 'r' }] },
+        accounts: [],
+      },
+      { firstLocation: true },
+    );
+    expect(one.projectId).toBeUndefined();
+    expect(one.regionId).toBeUndefined();
   });
 
   test("a front's zone list is its DNS account's; a pick fills the zone name", () => {

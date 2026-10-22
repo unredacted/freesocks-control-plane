@@ -425,6 +425,8 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
   /**
    * Projects need only the keys; regions and private networks (with their
    * subnets, filtered to the chosen region when one is set) need the project.
+   * With no project chosen yet the regions are those of the first project
+   * listed (an account of credentials alone still lists where it can go).
    */
   async discoverOptions(
     partial: Partial<OvhConfig> & Record<string, unknown>,
@@ -452,12 +454,15 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
     } catch (e) {
       noteDiscoverError(out, 'projects', e);
     }
-    if (cfg.serviceName) {
+    const regionProject = cfg.serviceName || out.projects?.[0]?.id;
+    if (regionProject) {
       try {
-        out.regions = await ovhRegions(cfg);
+        out.regions = await ovhRegions({ ...cfg, serviceName: regionProject });
       } catch (e) {
         noteDiscoverError(out, 'regions', e);
       }
+    }
+    if (cfg.serviceName) {
       try {
         const nets = await ovh(
           cfg,

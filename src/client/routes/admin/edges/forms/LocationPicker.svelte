@@ -15,12 +15,18 @@
    * old or on Refresh), and the server checks the zone with the provider before
    * it saves the location.
    *
+   * Started from a region the key reaches (`region`, the "Change options" of a
+   * region picked when a node is protected), the form opens with that region
+   * and what the server would complete it with (`locationOptions` with
+   * `defaults`: the project, OVH's network and subnet), every value changeable.
+   *
    * Props:
    *   accountId: string
    *   provider: EdgeProviderId
    *   onCreated: (locationId: string) => void
    *   onCancel?: () => void
    *   nodeCountry?: string | null    the node's country, for the region hint
+   *   region?: string | null         start from this region, its defaults filled in
    */
   import { untrack } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -50,6 +56,7 @@
     missingRequired,
     optionsFor,
     placementBody,
+    regionPlacement,
     type ProviderField,
   } from './providerFields';
   import { catalogStale, zoneChoices } from './zones';
@@ -60,8 +67,16 @@
     onCreated: (locationId: string) => void;
     onCancel?: () => void;
     nodeCountry?: string | null;
+    region?: string | null;
   }
-  let { accountId, provider, onCreated, onCancel, nodeCountry = null }: Props = $props();
+  let {
+    accountId,
+    provider,
+    onCreated,
+    onCancel,
+    nodeCountry = null,
+    region = null,
+  }: Props = $props();
 
   const uid = $props.id();
   const qc = useQueryClient();
@@ -165,11 +180,15 @@
   );
 
   const load = createMutation(() => ({
-    mutationFn: (placement: Record<string, unknown>) => locationOptions(accountId, placement),
+    mutationFn: (v: { placement: Record<string, unknown>; defaults?: boolean }) =>
+      locationOptions(accountId, v.placement, { defaults: v.defaults }),
     onSuccess: (r) => {
       discovered = r;
-      // Pre-select a list with one choice; drop a choice the new lists no longer offer.
+      // A region's defaults (asked once, at the start) fill what is still empty.
       const next = { ...values };
+      for (const [k, v] of Object.entries(r.defaults ?? {}))
+        if (!next[k] && v !== undefined && v !== null && v !== '') next[k] = String(v);
+      // Pre-select a list with one choice; drop a choice the new lists no longer offer.
       for (const f of fields) {
         if (f.kind !== 'select') continue;
         const opts = optionsFor(f, { discovered: r, accounts: [], values: next });
@@ -181,7 +200,9 @@
     },
   }));
   untrack(() => {
-    if (!cdn) load.mutate({});
+    if (cdn) return;
+    const start = region ? regionPlacement(provider, region) : null;
+    load.mutate(start ? { placement: start, defaults: true } : { placement: {} });
   });
 
   function onFieldChange(f: ProviderField, value: string) {
@@ -196,7 +217,8 @@
     }
     values = next;
     // The networks, subnets and flavors of a region depend on the project and the region.
-    if (f.from === 'projects' || f.from === 'regions') load.mutate(placementBody(provider, values));
+    if (f.from === 'projects' || f.from === 'regions')
+      load.mutate({ placement: placementBody(provider, values) });
   }
 
   const create = createMutation(() => ({

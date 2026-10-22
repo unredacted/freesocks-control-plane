@@ -55,6 +55,12 @@ import {
   EDGE_PLACEMENT_SETTINGS,
 } from './lib/edges/accountSettings';
 import { placeKeyOf } from './lib/edges/locations';
+import {
+  completePlacement,
+  needsNetwork,
+  needsProject,
+  pickableByRegion,
+} from './lib/edges/placementDefaults';
 import { accountOptionDefaultsOf, certificateValuesFor } from './lib/edges/choices';
 import { EDGE_CERTIFICATE_OPTIONS, certificateKeysOf } from './lib/edges/providers/templates';
 import { defaultsOf } from './lib/edges/providers/options';
@@ -1214,21 +1220,95 @@ export const discoverOptions = internalAction({
  * (project, region, network), through the adapter's discovery. Regions come
  * back as the key can use them; networks, subnets and flavors once a region
  * is chosen. Nothing is stored.
+ *
+ * With `defaults` (a region picked when a node is protected, its options
+ * opened before the location exists): the placement is completed the way a
+ * pick by region would be (`completeRegionPick`), returned as `defaults`
+ * with what could not be chosen (`missing`), and the lists are those of the
+ * completed placement.
  */
 export const locationOptions = internalAction({
-  args: { accountId: v.id('edgeProviderAccounts'), placement: v.optional(v.any()) },
-  handler: (ctx, a): Promise<DiscoverResult> =>
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    placement: v.optional(v.any()),
+    defaults: v.optional(v.boolean()),
+  },
+  handler: (
+    ctx,
+    a,
+  ): Promise<DiscoverResult & { defaults?: Record<string, unknown>; missing?: string[] }> =>
     tracked(ctx, a.accountId, async (seen) => {
-      const { provider, cfg } = await loadAdapter(ctx, a.accountId, undefined, seen);
+      const { provider, cfg, providerId } = await loadAdapter(ctx, a.accountId, undefined, seen);
       if (!provider.discoverOptions) return {};
       const chosen = Object.fromEntries(
         Object.entries((a.placement as Record<string, unknown> | undefined) ?? {}).filter(
           ([k, v]) => k !== 'type' && v !== undefined && v !== null && v !== '',
         ),
       );
-      return provider.discoverOptions({ ...cfg, ...chosen } as never);
+      if (!a.defaults) return provider.discoverOptions({ ...cfg, ...chosen } as never);
+      const filled = await completeRegionPick(ctx, a.accountId, providerId, provider, cfg, chosen);
+      const lists =
+        filled.found ?? (await provider.discoverOptions({ ...cfg, ...filled.placement } as never));
+      return { ...lists, defaults: filled.placement, missing: filled.missing };
     }),
 });
+
+/**
+ * A placement that names its region and maybe little else, completed from
+ * what the key reaches (lib/edges/placementDefaults.ts): the project (the
+ * account's own when its other locations agree on one, else the first the key
+ * lists) and, where the provider needs one, the private network and subnet
+ * that serve the region. `found` is the listing asked with the project and
+ * the region when one was made (it also says whether the region is offered).
+ * A project listing that failed with no project to fall back on is
+ * `edge.location_unchecked`.
+ */
+async function completeRegionPick(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  providerId: EdgeProviderId,
+  provider: EdgeProvider,
+  cfg: EdgeProviderConfig,
+  chosen: Record<string, unknown>,
+): Promise<{
+  placement: Record<string, unknown>;
+  missing: string[];
+  found: DiscoverResult | null;
+}> {
+  if (!pickableByRegion(providerId) || !provider.discoverOptions)
+    return { placement: chosen, missing: [], found: null };
+  const discover = async (where: Record<string, unknown>): Promise<DiscoverResult> => {
+    try {
+      return await provider.discoverOptions!({ ...cfg, ...where } as never);
+    } catch {
+      return { errors: { projects: 'error', regions: 'error', networks: 'error' } };
+    }
+  };
+  const placements = (await ctx.runQuery(internal.edgeLocations.listForAccount, { accountId })).map(
+    (l) => l.placement as Record<string, unknown>,
+  );
+  let projects: DiscoverResult['projects'];
+  let projectsFailed = false;
+  if (needsProject(providerId, chosen)) {
+    const listed = await discover({});
+    projectsFailed = !!listed.errors?.projects || !listed.projects;
+    projects = projectsFailed ? undefined : listed.projects;
+  }
+  let filled = completePlacement(providerId, chosen, { projects }, placements);
+  if (projectsFailed && needsProject(providerId, filled.placement))
+    throw new ConvexError({
+      code: 'edge.location_unchecked',
+      message: 'The provider did not list its projects; try again',
+    });
+  let found: DiscoverResult | null = null;
+  // The networks of a region are listed once its project and region are known.
+  const networkOnly = filled.missing.every((k) => k === 'networkId' || k === 'subnetId');
+  if (needsNetwork(providerId, filled.placement) && networkOnly) {
+    found = await discover(filled.placement);
+    filled = completePlacement(providerId, filled.placement, { networks: found.networks });
+  }
+  return { ...filled, found };
+}
 
 /**
  * A CDN place's own state, which a check reports while the key still reaches
@@ -1260,11 +1340,17 @@ const LOCATION_REFUSALS: Record<string, string> = {
  * `edge.location_unchecked`, never a guess), and its name becomes the label.
  * Creating a location the account already has returns it. Its inventory is
  * pulled at once (fail-soft).
+ *
+ * `fill` (a region picked when a node is protected or given another
+ * location): a placement naming its region is completed from what the key
+ * reaches (`completeRegionPick`); a value no default fills is refused
+ * `edge.location_options_needed`, naming it, so the form can ask for it.
  */
 export const createLocation = internalAction({
   args: {
     accountId: v.id('edgeProviderAccounts'),
     placement: v.any(),
+    fill: v.optional(v.boolean()),
     regionalParams: v.optional(v.any()),
     maxLiveEdges: v.optional(v.number()),
     costNote: v.optional(v.string()),
@@ -1275,8 +1361,21 @@ export const createLocation = internalAction({
       id: a.accountId,
     });
     if (!acct) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
-    const raw = { ...((a.placement as Record<string, unknown> | undefined) ?? {}) };
+    let raw = { ...((a.placement as Record<string, unknown> | undefined) ?? {}) };
     const provider = edgeProviderFor(acct.provider);
+    let filledLists: DiscoverResult | null = null;
+    if (a.fill) {
+      const { cfg } = await loadAdapter(ctx, a.accountId);
+      const filled = await completeRegionPick(ctx, a.accountId, acct.provider, provider, cfg, raw);
+      if (filled.missing.length > 0)
+        throw new ConvexError({
+          code: 'edge.location_options_needed',
+          message: `Choose ${filled.missing.join(', ')} for this location`,
+          missing: filled.missing,
+        });
+      raw = filled.placement;
+      filledLists = filled.found;
+    }
     /** A CDN place checked with the credentials that will use it (its zone, a front's DNS account, TLS configuration). */
     const checkPlace = async (placement: Record<string, unknown>): Promise<LocationCheckResult> => {
       try {
@@ -1338,13 +1437,17 @@ export const createLocation = internalAction({
       label = check.label;
       observed = check.observed;
     } else if (provider.discoverOptions) {
-      const { cfg } = await loadAdapter(ctx, a.accountId);
       const { type: _t, ...where } = parsed.placement as Record<string, unknown>;
+      // A filled pick may already hold the listing made with this project and region.
       let found: DiscoverResult;
-      try {
-        found = await provider.discoverOptions({ ...cfg, ...where } as never);
-      } catch {
-        found = { errors: { regions: 'error' } };
+      if (filledLists?.regions && !filledLists.errors?.regions) found = filledLists;
+      else {
+        const { cfg } = await loadAdapter(ctx, a.accountId);
+        try {
+          found = await provider.discoverOptions({ ...cfg, ...where } as never);
+        } catch {
+          found = { errors: { regions: 'error' } };
+        }
       }
       if (found.errors?.regions || !found.regions)
         throw new ConvexError({

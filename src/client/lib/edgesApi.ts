@@ -429,11 +429,18 @@ export const qualifyProvider = (id: string, qualified: boolean) =>
 
 export const fetchProviderLocations = (accountId: string) =>
   apiClient.get(`${BASE}/providers/${enc(accountId)}/locations`, EdgeLocationList);
-/** The location form's choices for a stored account: regions, then networks and flavors of the chosen one. */
-export const locationOptions = (accountId: string, placement: Record<string, unknown> = {}) =>
+/**
+ * The location form's choices for a stored account: regions, then networks and flavors of the
+ * chosen one. `defaults`: a picked region's placement completed (`defaults`, `missing`).
+ */
+export const locationOptions = (
+  accountId: string,
+  placement: Record<string, unknown> = {},
+  opts: { defaults?: boolean } = {},
+) =>
   apiClient.post(
     `${BASE}/providers/${enc(accountId)}/locations/options`,
-    { placement },
+    { placement, ...(opts.defaults ? { defaults: true } : {}) },
     EdgeDiscoverResponse,
   );
 /** Add a location (the provider must offer the region to this key); the same place twice is one location. */

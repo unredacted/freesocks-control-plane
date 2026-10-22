@@ -15,15 +15,17 @@
  *    network, or a CDN's DNS zone, the DNS account a front writes through and
  *    its TLS configuration): an account is the whole provider account, a
  *    location is where its edges live (docs/edges.md § "Provider accounts and
- *    locations"). The account form's placement step names the account's first
- *    location with them (optional for a CDN); the location form
- *    (`LocationPicker`) adds more.
+ *    locations"). The account form's placement step may name the account's
+ *    first location with them, never must: an account is its credentials, and
+ *    a location is chosen when a node is protected or an address added
+ *    (`RegionPicks` offers the regions the key reaches). The location form
+ *    (`LocationPicker`) adds any other.
  *
  * Exports:
  *   PROVIDER_FIELDS, CREDENTIAL_LABELS, CREDENTIAL_HELP, DEFAULT_SETTINGS
  *   fieldsFor(provider, step), optionsFor(field, ctx), settingsBody(provider, values)
  *   missingRequired(provider, values, step?, opts?), applyDiscovery(provider, values, ctx, opts?)
- *   locationFields, hasLocations, firstLocationOptional, placementBody, regionLabelOf
+ *   locationFields, hasLocations, placementBody, regionLabelOf, regionPlacement
  */
 import type {
   EdgeDiscoverResponse,
@@ -353,15 +355,6 @@ export function hasLocations(provider: EdgeProviderId): boolean {
   return locationFields(provider).length > 0;
 }
 
-/**
- * Whether the account form may leave its first location out: a CDN account
- * is its token (its zones are picked when a node is protected); a load
- * balancer account names the region it starts in.
- */
-export function firstLocationOptional(provider: EdgeProviderId): boolean {
-  return EDGE_PROVIDER_META[provider].layer === 'l7';
-}
-
 /** Only the location's keys of the form values (numbers where the adapter wants them). */
 export function placementBody(
   provider: EdgeProviderId,
@@ -374,6 +367,21 @@ export function placementBody(
     out[f.key] = f.numeric ? Number(raw) : raw;
   }
   return out;
+}
+
+/**
+ * A location named by its region alone (a region the key reaches, picked when a
+ * node is protected): the region's key with its id, a number where the adapter
+ * wants one. The server completes the rest (`fill`). Null for a provider with
+ * no region field (a CDN: its place is a zone).
+ */
+export function regionPlacement(
+  provider: EdgeProviderId,
+  regionId: string,
+): Record<string, unknown> | null {
+  const f = locationFields(provider).find((x) => x.from === 'regions');
+  if (!f) return null;
+  return { [f.key]: f.numeric ? Number(regionId) : regionId };
 }
 
 /** The provider's name for the chosen region or zone (the location's label). */
@@ -447,11 +455,11 @@ export function missingRequired(
   opts: { firstLocation?: boolean } = {},
 ): string[] {
   const filled = (f: ProviderField) => (values[f.key] ?? '').trim() !== '';
-  // The account form's optional first location: all of it or none of it. It
-  // is started by a field it needs (an optional one alone starts nothing).
+  // The account form's first location is optional for every provider: all of
+  // it or none of it. It is started by a field it needs (an optional one alone
+  // starts nothing).
   const skipLocation =
     opts.firstLocation === true &&
-    firstLocationOptional(provider) &&
     !locationFields(provider).some((f) => f.required && !f.readOnly && filled(f));
   return fieldsFor(provider, step)
     .filter((f) => f.required && !filled(f) && !(skipLocation && f.location))
@@ -472,8 +480,7 @@ export function applyDiscovery(
   const next = { ...values };
   // The account form's optional first location is the operator's to start:
   // a single choice is never picked for them.
-  const pickFor = (f: ProviderField) =>
-    !(opts.firstLocation === true && f.location && firstLocationOptional(provider));
+  const pickFor = (f: ProviderField) => !(opts.firstLocation === true && f.location);
   for (const f of PROVIDER_FIELDS[provider]) {
     if (f.kind !== 'select' || f.from === 'fixed') continue;
     const choices = optionsFor(f, { ...ctx, values: next });

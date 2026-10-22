@@ -150,6 +150,7 @@ describe('EDGE_REFUSAL_COPY', () => {
     'location_capacity',
     'location_not_offered',
     'location_unchecked',
+    'location_options_needed',
     'location_in_use',
     'placement_on_location',
     'template_value_required',

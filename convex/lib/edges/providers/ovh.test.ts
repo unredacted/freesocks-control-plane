@@ -539,7 +539,7 @@ describe('ovh: polling, discovery, describe, destroy', () => {
     });
   });
 
-  test('discoverOptions: projects from the keys; regions + private networks (subnets filtered to the region) once a project is set', async () => {
+  test('discoverOptions: projects from the keys (with the regions of the first one); private networks (subnets filtered to the region) once a project is set', async () => {
     mockFetch(
       withTime((c) => {
         if (c.path === '/1.0/cloud/project') return jsonRes(['svc-a']);
@@ -566,7 +566,12 @@ describe('ovh: polling, discovery, describe, destroy', () => {
       endpoint: 'ovh-eu',
     });
     expect(keysOnly.projects).toEqual([{ id: 'svc-a', label: 'Prod (svc-a)' }]);
-    expect(keysOnly.regions).toBeUndefined();
+    // Credentials alone still say where the account can go: its first project's regions.
+    expect(keysOnly.regions).toEqual([
+      { id: 'GRA9', label: 'GRA9' },
+      { id: 'SBG5', label: 'SBG5' },
+    ]);
+    expect(keysOnly.networks).toBeUndefined();
     const withProject = await ovhProvider.discoverOptions!({
       ...cfg,
       serviceName: 'svc-a',

@@ -42,6 +42,7 @@ function optionsOfPick(
 }
 import { carries, coolingOf, publishedRefOf, setPicksOf, setStateOf } from './lib/edges/setState';
 import { locationsOfAccount } from './edgeLocations';
+import { regionOffersOf } from './edgeProviderCatalog';
 import type { PublishedRef } from './lib/edges/providerSet';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { needsEndpointVerification, verificationCurrent } from './lib/edges/verification';
@@ -60,7 +61,12 @@ const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
  * unpublished) on this origin, whether it cools and until when; the
  * transports with no backup elsewhere; and the locations that could be added
  * (switched on, of an enabled and tested account, carrying at least one of
- * the node's transports: never a load balancer for a WebSocket node). Names
+ * the node's transports: never a load balancer for a WebSocket node), and the
+ * regions such a load balancer account's key reaches that are no location
+ * yet (`regions`: picking one creates the location). `outside` names the
+ * locations that hold an address of this origin in use or spare but are not
+ * in its set: the set changes only when a run goes live, so a re-protect that
+ * failed leaves its new spare there, outside the set it never changed. Names
  * are admin-only.
  */
 export const view = internalQuery({
@@ -104,11 +110,30 @@ export const view = internalQuery({
       };
     });
     const available = [];
+    const regions = [];
     const dnsFront = await dnsProvidersFrontOf(ctx.db);
     for (const account of await ctx.db.query('edgeProviderAccounts').collect()) {
       if (!account.enabled || !account.lastTestOkAt || account.lastTestError) continue;
       if (!frontsAllowed(account.provider, dnsFront)) continue;
-      for (const location of await locationsOfAccount(ctx.db, account._id)) {
+      const locations = await locationsOfAccount(ctx.db, account._id);
+      const carriedHere = state.listeners
+        .filter((l) => carries({ account }, l, { websocketNode: state.websocketNode }))
+        .map((l) => l.listenerKey);
+      if (carriedHere.length > 0)
+        for (const r of await regionOffersOf(
+          ctx.db,
+          account,
+          locations.map((l) => l.placeKey),
+        ))
+          regions.push({
+            accountId: account._id as string,
+            accountName: account.name,
+            provider: account.provider,
+            regionId: r.id,
+            label: r.label,
+            carries: carriedHere,
+          });
+      for (const location of locations) {
         if (!location.enabled || picks.some((p) => p.locationId === location._id)) continue;
         const row = { account, location };
         const carried = state.listeners
@@ -126,15 +151,47 @@ export const view = internalQuery({
         });
       }
     }
+    // Where this origin's other addresses live: not in its set.
+    const outside = [];
+    const outsideIds = [
+      ...new Set(
+        edges
+          .filter((e) => e.locationId && !picks.some((p) => p.locationId === e.locationId))
+          .map((e) => e.locationId!),
+      ),
+    ];
+    for (const locationId of outsideIds) {
+      const mine = edges.filter((e) => e.locationId === locationId);
+      const inUse = mine.filter((e) => e.publication === 'published').length;
+      const spare = mine.filter(
+        (e) => e.publication === 'unpublished' && e.status === 'active',
+      ).length;
+      if (inUse + spare === 0) continue;
+      const location = await ctx.db.get(locationId);
+      const account = location ? await ctx.db.get(location.accountId) : null;
+      if (!location || !account) continue;
+      outside.push({
+        locationId: locationId as string,
+        accountId: account._id as string,
+        accountName: account.name,
+        provider: account.provider,
+        label: location.label,
+        qualified: location.qualified,
+        inUse,
+        spare,
+      });
+    }
     return {
       hasSet: !!relay.providerSet,
       websocketNode: state.websocketNode,
       picks,
+      outside,
       reduced: state.requirement.reduced,
       coolingOnly: state.requirement.coolingOnly,
       uncarried: state.requirement.uncarried,
       deficit: state.deficit,
       available,
+      regions,
     };
   },
 });

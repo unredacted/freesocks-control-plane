@@ -17,6 +17,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { CATALOG_STALE_MS, type CatalogKind } from './lib/edges/catalog';
+import { pickableByRegion } from './lib/edges/placementDefaults';
 
 /** Most entries kept per kind (a Cloudflare listing stops at 1,000 zones). */
 const MAX_ITEMS = 1000;
@@ -102,6 +103,25 @@ export async function listedZone(
   zoneId: string,
 ): Promise<CatalogItem | null> {
   return (await catalogOf(db, accountId, 'zones')).items.find((z) => z.id === zoneId) ?? null;
+}
+
+/**
+ * The regions a load balancer account's key reaches that are not one of its
+ * locations yet (`placeKeys`: every location it has, switched on or not): what
+ * the protect sheet and a node's "Add a location" offer, the location being
+ * created when one is picked. Empty for a CDN account (its place is a zone,
+ * added in the location form) and for a catalog never listed.
+ */
+export async function regionOffersOf(
+  db: DatabaseReader,
+  account: Pick<Doc<'edgeProviderAccounts'>, '_id' | 'provider'>,
+  placeKeys: readonly string[],
+): Promise<Array<{ id: string; label: string }>> {
+  if (!pickableByRegion(account.provider)) return [];
+  const taken = new Set(placeKeys);
+  return (await catalogOf(db, account._id, 'regions')).items
+    .filter((r) => !taken.has(r.id))
+    .map((r) => ({ id: r.id, label: r.label }));
 }
 
 /** When the account's catalog was last refreshed (any kind), or null. */

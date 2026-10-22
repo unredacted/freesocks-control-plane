@@ -915,7 +915,7 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `POST relays/{id}/require-edges`                                 | Starts a guided run for a deferred origin (it never binds by itself): the SAME activation policy. Every published L4 edge without a current confirmation comes back as `pending[]` (the node page renders the `try_it` card) instead of a binding; with nothing pending the run starts at the rehearsal and goes live through stage 8. Refuses `edge.not_deferred`, `edge.coverage_incomplete`, `edge.setup_run_active`, `edge.busy`, `edge.quarantined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `POST relays/{id}/serve-direct`                                  | "Serve this node directly again": the restore workflow with purpose `release_requirement` (binding released before any direct Host is re-enabled; edges and listeners kept). Refuses `edge.quarantined`, `edge.setup_owned`, `edge.restore_in_progress` and `edge.not_edge_required`. See § "Operations safety".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `POST relays/{id}/reprotect`                                     | "Protect again" for a live, bound, enrolled node: a re-protect run (`kind: 'reprotect'`, `mode` `replace_all` or `add`) that keeps the committed delivery until go-live and drops only its candidates on cancel. Refuses `edge.reprotect_not_bound`, `edge.reprotect_not_enrolled`, `edge.reprotect_no_room` and the usual run refusals. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `GET relays/{id}/providers`                                      | The node's provider set (§ "Provider sets"): each pick with its addresses in use and spare, whether it cools and until when, the transports with no backup at another provider, the deficit, and the locations that could be added.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `GET relays/{id}/providers`                                      | The node's provider set (§ "Provider sets"): each pick with its addresses in use and spare, whether it cools and until when, the locations outside the set that hold one of its addresses (`outside`), the transports with no backup at another provider, the deficit, the locations that could be added, and the regions a load balancer account reaches that are no location yet (`regions`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `POST relays/{id}/providers {add?, remove?}`                     | Edit the set: adding a location to a live enrolled node starts an `add` re-protect run (the response names it); elsewhere the set is saved. Removing one drains its addresses, refused (`edge.set_would_uncover`) unless the tested survivors elsewhere still serve every transport and meet the remaining requirement. Refused under a setup run, a rotation, quarantine, a restore or the freeze; at most 6 picks (`edge.set_too_large`). Audited `edge.relay.providers_changed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `POST edges/{id}/test-link`                                      | The isolated test link for an L4 candidate (throttled: fetches the test credential's body and the backend Hosts): the candidate connection only, plus the binding the confirmation must echo. See § "Publication".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `GET relays/inbound-candidates?backendServerId=&nodeUuid=`       | Discovery with the origin probe applied (throttled): the node's transports as listener candidates, `originTransport` filled where probed, `unsupported` with reasons. Registers nothing. See § "Listener catalogue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -1079,8 +1079,9 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   More), the per-node
   "Replace addresses automatically" switch (origin `autoRotate`, captioned when the global
   switch is off), "Where its addresses come from" (`NodeProvidersCard`: each pick with its
-  addresses in use and spare, cooling, untrusted; what members miss; Add a location and Remove,
-  § "Provider sets"; Replace and Add a spare take a "Where" choice), "Recent activity" (the
+  addresses in use and spare, cooling, untrusted; a location outside the set that holds one of
+  its addresses; what members miss; Add a location, with the regions an account reaches, and
+  Remove, § "Provider sets"; Replace and Add a spare take a "Where" choice), "Recent activity" (the
   timeline through `plainAuditActionLabel`), and More: add
   a spare address, **Protect again** (an enrolled node live behind edges: a re-protect run, see
   "Guided setup runs"; the primary action while the node waits to be protected again), Origin
@@ -1864,7 +1865,13 @@ The detector's load and node-online signals exist only for a `panel-node` origin
 kinds there is no node signal at all: the load score is 0 (`no_load_signal`) and the online bit
 is unknown, so `node_offline` never applies. The "manageable Host" veto applies only to `hostMode: operator`; a
 `setupOwned` origin (a guided setup in progress) is vetoed `setup_owned` right after the
-auto-rotate gates, before any evidence is weighed.
+auto-rotate gates, before any evidence is weighed, while a run works on it, and `not_live`
+once none does (a first protection that stopped short keeps its origin owned). The veto is the
+detector's last pass; a run can end between passes (or no pass come, with the origin switched
+off or edges frozen), so the origin read reports the setup vetoes as the ownership stands
+(`setupVetoNow` in `mapRelayAdmin`): no owner, no setup veto; an owner with no run working,
+`not_live`. A re-protect that failed hands its origin back, so its page no longer reads "Owned
+by a setup run".
 
 **The countries a detector start answers to.** Every detector start records the countries its
 evaluation's evidence named for the target (`edgeRotations.affectedCountries`). The L7
@@ -2444,11 +2451,43 @@ burned zone.
 zones, regions, projects, TLS configurations), listed by `edgeProviderOps.refreshCatalog`
 after a passing credential test or rotation, on `POST providers/{id}/catalog/refresh`
 (throttled), and when a picker finds it older than 12 hours (`GET providers/{id}/catalog`).
-Cloudflare zones are listed page by page up to 1,000 (`truncated` past that). A failed listing
-keeps the last items and records why. The catalog is a menu, never an authority: creating a
-location asks the provider again. An account may be created with credentials alone; the old
-single-place shape (a zone, or a DNS account, among the settings) still makes its first
+Cloudflare zones are listed page by page up to 1,000 (`truncated` past that); an OVH key with
+no project chosen lists the regions of its first project. A failed listing keeps the last items
+and records why. The catalog is a menu, never an authority: creating a location asks the
+provider again.
+
+**An account is its credentials.** Every provider's account, a load balancer's included, may be
+created with credentials (and the identifiers each request needs: a Scaleway access key, an OVH
+application key and endpoint) and nothing else: the account form's first location is optional
+for all of them, all of it or none of it, and its credential test takes no placement (below).
+Such an account has no location until one is picked where a node's addresses are chosen. The
+old single-place shape (a zone, or a DNS account, among the settings) still makes its first
 location, and a Fastly payload naming only its DNS account takes that account's zone.
+
+**Picking a region.** A load balancer account's regions that are no location of it yet (its
+catalog's `regions`, minus the place keys of every location it has, switched on or not:
+`edgeProviderCatalog.regionOffersOf`) are offered where a location is chosen: the protect plan
+(`SetupPlanAccount.regions`) and a node's provider card (`GET relays/{id}/providers` `regions`).
+An account with no usable location is offered by them and is not `no_location`; a load balancer
+account cannot help a WebSocket node, so it offers none there. Picking one creates the location
+at that moment, `POST providers/{id}/locations {placement: {<region key>: id}, fill: true}`
+(the region key is Gcore `regionId`, UpCloud and Scaleway `zone`, OVH `regionName`), then
+picks it. `fill` completes the placement from what the key reaches
+(`lib/edges/placementDefaults.ts`, never replacing a value the request names): the project is
+the one every other location of the account uses, else the first the key lists (Gcore
+`projectId`, OVH `serviceName`); OVH's private network and subnet are the first listed network
+with a subnet serving the region and its first subnet (asked with the project and the region);
+Gcore's network stays empty (a public address); a Scaleway Project id stays empty (the key's
+default, § "A placement value with a provider default"). A value no default fills is refused
+`edge.location_options_needed` (its keys in the error's `missing`), a project listing that
+failed with no project to fall back on `edge.location_unchecked`, and a balancer size the
+template leaves to the region (the OVH flavor) `edge.template_value_required`: a size is never
+guessed. The rest is a location create as below: the provider is asked whether it offers the
+region to this key, the region's name becomes the label, no credential test runs again, and the
+new location is untrusted until its first tested address. `POST …/locations/options {placement,
+defaults: true}` answers what that pick would be (`defaults`, `missing`) with the lists for it:
+the "Change options" form (`RegionPicks` then `LocationPicker` with `region`) opens on it, and
+opens by itself on either refusal. A CDN's place is a zone, added in the location form.
 
 **Adding one.** `POST providers/{id}/locations/options {placement?}` lists what the stored
 credentials can use (regions, projects, networks, subnets, the load balancer flavors of a
@@ -2607,6 +2646,15 @@ is refused unless the SURVIVORS (published, active, addressed edges outside the 
 whose verification is current) still serve every transport and meet the requirement the
 remaining picks make (`edge.set_would_uncover`); then its addresses drain, its spares are
 cancelled, and `desiredPublished` keeps room for the survivors plus what the set still lacks.
+The card's **Add a location** also offers the regions a load balancer account reaches that are
+no location yet (§ "Provider accounts and locations", "Picking a region").
+
+**Addresses outside the set.** The set changes only when a run goes live (`providerSetAfter`),
+so a re-protect that fails leaves the set as it was, and a spare it made in a location the set
+never took stays there (a retry reuses it). This is by design: the node's committed delivery
+never moved. The view names such locations (`outside`: a location holding one of the origin's
+addresses in use or spare, not in its set) and the card lists them under "Also has addresses
+at", saying why; adding the location to the set, or deleting the spare, resolves it.
 
 **Re-protect** (§ Guided setup runs): `replace_all` covers the whole requirement fresh; `add`
 covers what a larger set lacks. Every enrolled run's activation records a **delivery snapshot**
