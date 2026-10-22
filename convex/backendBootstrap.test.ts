@@ -1681,14 +1681,27 @@ describe('an address belongs to exactly one node', () => {
     expect(ownsAddress('node-a', addressRemark('node-a-west', 'decoy-a.example'))).toBe(false);
     expect(ownsAddress('node-a-west', addressRemark('node-a', 'decoy-a.example'))).toBe(false);
     // Whatever remark it carries, an address the node has recorded is its own
-    // (an adopted node's were named by whoever made them).
+    // (an adopted node's were named by whoever made them). One it has not
+    // recorded is its own only on its transport, under the remark FCP gives
+    // one of its names: anything else starting with its name is the operator's.
+    const own = { configProfileInboundUuid: 't-reality' };
     const hosts = [
-      { hostUuid: 'h1', remark: 'anything at all' },
-      { hostUuid: 'h2', remark: addressRemark('node-a', 'www.decoy-a.example') },
-      { hostUuid: 'h3', remark: addressRemark('node-a-west', 'decoy-a.example') },
+      { hostUuid: 'h1', remark: 'anything at all', configProfileInboundUuid: 't-ws' },
+      { hostUuid: 'h2', remark: addressRemark('node-a', 'www.decoy-a.example'), ...own },
+      { hostUuid: 'h3', remark: addressRemark('node-a-west', 'decoy-a.example'), ...own },
+      { hostUuid: 'h4', remark: 'node-a | cdn', ...own },
+      {
+        hostUuid: 'h5',
+        remark: addressRemark('node-a', 'decoy-a.example'),
+        configProfileInboundUuid: 't-ws',
+      },
     ];
-    expect(
-      addressesOf({ name: 'node-a', addressUuids: ['h1'] }, hosts).map((h) => h.hostUuid),
-    ).toEqual(['h1', 'h2']);
+    const transport = {
+      uuid: 't-reality',
+      serverNames: ['decoy-a.example', 'www.decoy-a.example'],
+    };
+    const intent = { name: 'node-a', addressUuids: ['h1'] };
+    expect(addressesOf(intent, hosts, transport).map((h) => h.hostUuid)).toEqual(['h1', 'h2']);
+    expect(addressesOf(intent, hosts, null).map((h) => h.hostUuid)).toEqual(['h1']);
   });
 });

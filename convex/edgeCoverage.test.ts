@@ -554,6 +554,6 @@ describe('the automation switch', () => {
     expect(await setting('edge.standbyPerListener')).toBe(1);
     // The route is a settings write, like `config`.
     expect(scopeFor(['automation'], 'POST')).toBe('admin:settings:write');
-    expect(scopeFor(['relays', 'r', 'rebalance'], 'POST')).toBe('admin:servers:write');
+    expect(scopeFor(['relays', 'r', 'rebalance'], 'POST')).toBe('admin:servers:manage');
   });
 });

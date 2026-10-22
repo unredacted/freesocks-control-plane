@@ -57,6 +57,13 @@ const DAY = 24 * 60 * 60_000;
 /** Rows one expiry pass handles per step before it schedules itself again. */
 const EXPIRY_PAGE = 200;
 const MAX_EXPIRY_ROUNDS = 20;
+/**
+ * (group, country) pairs one expiry step regrades, and edges whose copied
+ * state it rewrites (5 reads each): the rest continue in their own
+ * transaction (`settleExpiry`), so a run stays inside one execution's reads.
+ */
+const PAIRS_PER_STEP = 50;
+const EDGES_PER_STEP = 200;
 
 type Evidence = Doc<'edgeCountryEvidence'>;
 
@@ -323,7 +330,12 @@ export async function settleRoundIfDone(
     await auditState(ctx, edge, country, 'address', t, address.reason ?? null);
     changed.push(country);
   }
-  for (const country of changed) await refreshGroup(ctx, groupKey, country, now);
+  // A group whose grade moved in several countries refreshes its edges once.
+  let moved = false;
+  for (const country of changed) moved = (await regradeGroup(ctx, groupKey, country, now)) || moved;
+  if (moved)
+    for (const e of await edgesOfGroup(ctx.db, groupKey))
+      await refreshEdgeCountryState(ctx, e._id, now);
   await refreshEdgeCountryState(ctx, edge._id, now);
 }
 
@@ -420,18 +432,25 @@ export async function lastBatchAt(
 
 // --- groups and the effective state -----------------------------------------------------------------
 
-/** The active edges of a group (operator-scale: one read of the active edges). */
-async function edgesOfGroup(db: DatabaseReader, groupKey: string): Promise<Doc<'edges'>[]> {
+/** The active edges (operator-scale: one bounded read). */
+const activeEdges = (db: DatabaseReader) =>
+  db
+    .query('edges')
+    .withIndex('by_status', (q) => q.eq('status', 'active'))
+    .take(2000);
+
+/** The active edges of a group; `active` when the caller already read them. */
+async function edgesOfGroup(
+  db: DatabaseReader,
+  groupKey: string,
+  active?: Doc<'edges'>[],
+): Promise<Doc<'edges'>[]> {
   const [head, rest] = [groupKey.split(':')[0], groupKey.slice(groupKey.indexOf(':') + 1)];
   if (head === 'adopted' || head === 'edge') {
     const e = await db.get(rest as Id<'edges'>);
     return e ? [e] : [];
   }
-  const active = await db
-    .query('edges')
-    .withIndex('by_status', (q) => q.eq('status', 'active'))
-    .take(2000);
-  return active.filter((e) => countryGroupKey(e) === groupKey);
+  return (active ?? (await activeEdges(db))).filter((e) => countryGroupKey(e) === groupKey);
 }
 
 /** Regrade one (group, country); when the grade moved, every edge of the group is refreshed. */
@@ -441,6 +460,18 @@ async function refreshGroup(
   country: string,
   now: number,
 ): Promise<void> {
+  if (await regradeGroup(ctx, groupKey, country, now))
+    for (const e of await edgesOfGroup(ctx.db, groupKey))
+      await refreshEdgeCountryState(ctx, e._id, now);
+}
+
+/** Regrade one (group, country). True when its state moved (the group's edges need a refresh). */
+async function regradeGroup(
+  ctx: MutationCtx,
+  groupKey: string,
+  country: string,
+  now: number,
+): Promise<boolean> {
   const rows = await ctx.db
     .query('edgeCountryEvidence')
     .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey).eq('country', country))
@@ -463,7 +494,7 @@ async function refreshGroup(
       prev.counts.edges === g.counts.edges &&
       prev.counts.proven === g.counts.proven &&
       prev.counts.blocked === g.counts.blocked;
-    if (same) return;
+    if (same) return false;
     const row = {
       groupKey,
       country,
@@ -475,9 +506,7 @@ async function refreshGroup(
     if (prev) await ctx.db.replace(prev._id, row);
     else await ctx.db.insert('countryGroupGrades', row);
   }
-  if ((prev?.state ?? 'unknown') !== (rows.length === 0 ? 'unknown' : g.state))
-    for (const e of await edgesOfGroup(ctx.db, groupKey))
-      await refreshEdgeCountryState(ctx, e._id, now);
+  return (prev?.state ?? 'unknown') !== (rows.length === 0 ? 'unknown' : g.state);
 }
 
 /**
@@ -770,22 +799,58 @@ export const expire = internalMutation({
       .withIndex('by_until', (q) => q.gte('until', 0).lte('until', now))
       .take(EXPIRY_PAGE);
     for (const g of grades) groups.add(`${g.groupKey}|${g.country}`);
-    for (const k of groups) {
-      const i = k.lastIndexOf('|');
-      await refreshGroup(ctx, k.slice(0, i), k.slice(i + 1), now);
-    }
     // An edge whose copied state carries an entry past its expiry (a mark or a
     // grade moved elsewhere, or a pass was missed) is rewritten too.
-    for (const e of await ctx.db
-      .query('edges')
-      .withIndex('by_status', (q) => q.eq('status', 'active'))
-      .take(2000))
+    const active = await activeEdges(ctx.db);
+    for (const e of active)
       if ((e.countryState?.byCountry ?? []).some((c) => c.until !== undefined && c.until <= now))
         edges.add(e._id);
-    for (const id of edges) await refreshEdgeCountryState(ctx, id, now);
+    await settleGroupsAndEdges(ctx, [...groups], [...edges], now, active);
     if (full && rounds < MAX_EXPIRY_ROUNDS)
       await ctx.scheduler.runAfter(0, internal.edgeCountry.expire, { now, rounds: rounds + 1 });
     return { expired: due.length, deleted: stale.length };
+  },
+});
+
+/**
+ * Regrade the (group, country) pairs, then rewrite the copied state of every
+ * edge they moved and of `edges`, each edge once. A bounded step per
+ * transaction: the rest continue in `settleExpiry`, the edges only once every
+ * pair is regraded (an edge reads its group's grades).
+ */
+async function settleGroupsAndEdges(
+  ctx: MutationCtx,
+  pairs: readonly string[],
+  edgeIds: readonly Id<'edges'>[],
+  now: number,
+  active?: Doc<'edges'>[],
+): Promise<void> {
+  const edges = new Set(edgeIds);
+  for (const k of pairs.slice(0, PAIRS_PER_STEP)) {
+    const i = k.lastIndexOf('|');
+    const groupKey = k.slice(0, i);
+    if (!(await regradeGroup(ctx, groupKey, k.slice(i + 1), now))) continue;
+    active ??= await activeEdges(ctx.db);
+    for (const e of await edgesOfGroup(ctx.db, groupKey, active)) edges.add(e._id);
+  }
+  const rest = pairs.slice(PAIRS_PER_STEP);
+  const ids = [...edges];
+  if (rest.length === 0)
+    for (const id of ids.splice(0, EDGES_PER_STEP)) await refreshEdgeCountryState(ctx, id, now);
+  if (rest.length > 0 || ids.length > 0)
+    await ctx.scheduler.runAfter(0, internal.edgeCountry.settleExpiry, {
+      pairs: rest,
+      edgeIds: ids,
+      now,
+    });
+}
+
+/** The rest of an expiry run's regrades and refreshes (`settleGroupsAndEdges`). */
+export const settleExpiry = internalMutation({
+  args: { pairs: v.array(v.string()), edgeIds: v.array(v.id('edges')), now: v.number() },
+  handler: async (ctx, a) => {
+    await settleGroupsAndEdges(ctx, a.pairs, a.edgeIds, a.now);
+    return null;
   },
 });
 

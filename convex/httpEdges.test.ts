@@ -353,25 +353,25 @@ describe('origin admin routes', () => {
     expect(scopeFor(['summary'], 'GET')).toBe('admin:servers:read');
     expect(scopeFor(['render', 'preview'], 'POST')).toBe('admin:servers:read');
     expect(scopeFor(['templates', 'validate'], 'POST')).toBe('admin:servers:read');
-    expect(scopeFor(['templates'], 'POST')).toBe('admin:servers:write');
-    expect(scopeFor(['templates', 'ensure-defaults'], 'POST')).toBe('admin:servers:write');
-    expect(scopeFor(['render', 'preview', 'x'], 'POST')).toBe('admin:servers:write');
-    expect(scopeFor(['providers', 'a'], 'PATCH')).toBe('admin:servers:write');
-    expect(scopeFor(['providers', 'a', 'rotate-credentials'], 'POST')).toBe('admin:servers:write');
-    expect(scopeFor(['relays', 'r'], 'DELETE')).toBe('admin:servers:write');
-    expect(scopeFor(['relays', 'r', 'listeners'], 'POST')).toBe('admin:servers:write');
+    expect(scopeFor(['templates'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['templates', 'ensure-defaults'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['render', 'preview', 'x'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['providers', 'a'], 'PATCH')).toBe('admin:servers:manage');
+    expect(scopeFor(['providers', 'a', 'rotate-credentials'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['relays', 'r'], 'DELETE')).toBe('admin:servers:manage');
+    expect(scopeFor(['relays', 'r', 'listeners'], 'POST')).toBe('admin:servers:manage');
     expect(scopeFor(['relays', 'r', 'listeners'], 'GET')).toBe('admin:servers:read');
-    expect(scopeFor(['listeners', 'retire-name'], 'POST')).toBe('admin:servers:write');
-    // Qualifying writes a verdict onto the edge: a write scope, not a read one.
-    expect(scopeFor(['edges', 'e1', 'qualify'], 'POST')).toBe('admin:servers:write');
-    // Guided setup runs: reads under the read scope, the plan (a backend call) and every verb under write.
+    expect(scopeFor(['listeners', 'retire-name'], 'POST')).toBe('admin:servers:manage');
+    // Qualifying writes a verdict onto the edge: the write scope, not a read one.
+    expect(scopeFor(['edges', 'e1', 'qualify'], 'POST')).toBe('admin:servers:manage');
+    // Guided setup runs: reads under the read scope, the plan (a backend call) and every verb under manage.
     expect(scopeFor(['setup-runs'], 'GET')).toBe('admin:servers:read');
     expect(scopeFor(['setup-runs', 'run1'], 'GET')).toBe('admin:servers:read');
-    expect(scopeFor(['setup-runs', 'plan'], 'POST')).toBe('admin:servers:write');
-    expect(scopeFor(['setup-runs'], 'POST')).toBe('admin:servers:write');
-    expect(scopeFor(['setup-runs', 'run1', 'continue'], 'POST')).toBe('admin:servers:write');
-    expect(scopeFor(['relays', 'r1', 'require-edges'], 'POST')).toBe('admin:servers:write');
-    expect(scopeFor(['relays', 'r1', 'reprotect'], 'POST')).toBe('admin:servers:write');
+    expect(scopeFor(['setup-runs', 'plan'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['setup-runs'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['setup-runs', 'run1', 'continue'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['relays', 'r1', 'require-edges'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['relays', 'r1', 'reprotect'], 'POST')).toBe('admin:servers:manage');
     // The by-slug view is a plain read: the register scope is accepted nowhere under the prefix.
     expect(scopeFor(['relays', 'by-slug', 'n'], 'GET')).toBe('admin:servers:read');
     for (const [parts, method] of [
@@ -507,6 +507,25 @@ describe('origin admin routes', () => {
     expect(
       (await bearerCall(t, await token(t, ['admin:settings:read']))('GET', '%63onfig')).status,
     ).toBe(200);
+  });
+
+  // The node role's fleet token holds servers:write: it must never change a
+  // backend, an account or an origin, nor create anything billed, from here.
+  test('scopes pinned: the fleet scope servers:write writes nothing here; servers:manage does', async () => {
+    const { t, accountId, relayId } = await fixture();
+    const fleet = bearerCall(t, await token(t, ['admin:servers:read', 'admin:servers:write']));
+    expect((await fleet('PATCH', `providers/${accountId}`, { name: 'renamed' })).status).toBe(401);
+    expect((await fleet('POST', `relays/${relayId}/listeners`, LISTENER_U)).status).toBe(401);
+    expect((await fleet('POST', 'templates/ensure-defaults', {})).status).toBe(401);
+    expect((await fleet('DELETE', `relays/${relayId}?disposition=keep-dark`)).status).toBe(401);
+    expect((await fleet('POST', 'sni/bindings/b1/rollout', {})).status).toBe(401);
+    // Reads stay with the read scope it also holds.
+    expect((await fleet('GET', `relays/${relayId}/listeners`)).status).toBe(200);
+
+    const manager = bearerCall(t, await token(t, ['admin:servers:manage']));
+    expect((await manager('PATCH', `providers/${accountId}`, { name: 'renamed' })).status).toBe(
+      200,
+    );
   });
 
   test('the retired by-slug registration: PUT answers 404 and creates nothing; DELETE and the listener routes under it are gone too', async () => {

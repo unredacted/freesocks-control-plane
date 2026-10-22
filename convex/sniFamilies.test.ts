@@ -392,6 +392,6 @@ describe('audit and scopes', () => {
     expect(scopeFor(['sni', 'config'], 'PATCH')).toBe('admin:settings:write');
     expect(scopeFor(['sni', 'config'], 'GET')).toBe('admin:settings:read');
     expect(scopeFor(['sni', 'families'], 'GET')).toBe('admin:servers:read');
-    expect(scopeFor(['sni', 'families', 'x', 'names'], 'POST')).toBe('admin:servers:write');
+    expect(scopeFor(['sni', 'families', 'x', 'names'], 'POST')).toBe('admin:servers:manage');
   });
 });

@@ -413,15 +413,18 @@ export const sweepEdgeRotations = internalMutation({
 
 // --- the servers and edges workflow tables ---------------------------------------------------------
 //
-// Ledger ops, name rollouts, setup runs, activation runs, Host hides and port
-// changes all accrue a row per action and are read by index, never swept by
-// their own modules. Each sweep deletes TERMINAL rows past a window (90 days by
-// default) and keeps every row something still reads: the cursor steps past a
-// kept row, so a run of them never stalls the drain (a row left at a page
-// boundary is seen again the next day). Not swept, by design: node renames and
-// their aliases (a former name stays reserved and keeps resolving), mirror
-// upload records (one open row per object, deleted when settled) and the vantage
-// tables (`sniVantage.sweep` keeps its own window).
+// Ledger ops, name rollouts, setup runs, activation runs, Host hides, port
+// changes, maintenance holds and obligations all accrue a row per action and are
+// read by index, never swept by their own modules. Each sweep deletes TERMINAL
+// rows past a window (90 days by default) and keeps every row something still
+// reads: the cursor steps past a kept row, so a run of them never stalls the
+// drain (a row left at a page boundary is seen again the next day). Not swept,
+// by design: node renames and their aliases (a former name stays reserved and
+// keeps resolving), a node's retirement (its intent points at it and keeps the
+// name reserved; one row per node ever retired), the ownership rows (a
+// tombstone is what refuses re-creating an object removed on purpose; one row
+// per backend object), mirror upload records (one open row per object, deleted
+// when settled) and the vantage tables (`sniVantage.sweep` keeps its own window).
 
 const WORKFLOW_PAGE = 100;
 const cursorArg = v.optional(v.object({ i: v.number(), after: v.number() }));
@@ -753,6 +756,76 @@ export const sweepPortChanges = internalMutation({
     );
     await chain('retention-port-changes', rounds, next, (args) =>
       ctx.scheduler.runAfter(0, internal.retention.sweepPortChanges, args),
+    );
+    return { removed };
+  },
+});
+
+/**
+ * Released maintenance holds past MAINTENANCE_HOLD_RETENTION_DAYS (90). The gate
+ * reads only open holds and an open hold is never swept, whatever its age; the
+ * audit log keeps the transition and its release.
+ */
+export const sweepMaintenanceHolds = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
+    await recordHeartbeat(ctx, 'retention-maintenance-holds');
+    const cutoff = Date.now() - num('MAINTENANCE_HOLD_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? WORKFLOW_PAGE;
+    const rows = await ctx.db
+      .query('panelMaintenanceHolds')
+      .withIndex('by_released_updated', (q) => q.eq('released', true).lt('updatedAt', cutoff))
+      .take(page);
+    for (const r of rows) await ctx.db.delete(r._id);
+    if (rows.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-maintenance-holds] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(0, internal.retention.sweepMaintenanceHolds, {
+          rounds: n + 1,
+        });
+    }
+    return { removed: rows.length };
+  },
+});
+
+const OBLIGATION_SETTLED = ['confirmed', 'failed'] as const;
+
+/**
+ * Settled obligations past OBLIGATION_RETENTION_DAYS (90). An outstanding one
+ * (pending, sent, unresolved) blocks its identity and is never swept. Kept: a
+ * confirmed create of an origin name's DNS record, which is how FCP knows the
+ * record is its own (the node's retirement withdraws it by that row; a
+ * withdrawn record's row is settled `failed` and goes).
+ */
+export const sweepObligations = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()), cursor: cursorArg },
+  handler: async (ctx, { limit, rounds, cursor }) => {
+    await recordHeartbeat(ctx, 'retention-obligations');
+    const cutoff = Date.now() - num('OBLIGATION_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? WORKFLOW_PAGE;
+    const c = cursor ?? { i: 0, after: 0 };
+    const rows = await ctx.db
+      .query('backendObligations')
+      .withIndex('by_state_updated', (q) =>
+        q.eq('state', OBLIGATION_SETTLED[c.i]).gt('updatedAt', c.after).lt('updatedAt', cutoff),
+      )
+      .take(page);
+    let removed = 0;
+    for (const o of rows) {
+      if (o.kind === 'dns.record' && o.verb === 'create' && o.state === 'confirmed') continue;
+      await ctx.db.delete(o._id);
+      removed++;
+    }
+    const next = nextCursor(
+      c,
+      OBLIGATION_SETTLED.length,
+      rows.length === page,
+      rows.at(-1)?.updatedAt ?? 0,
+    );
+    await chain('retention-obligations', rounds, next, (args) =>
+      ctx.scheduler.runAfter(0, internal.retention.sweepObligations, args),
     );
     return { removed };
   },
