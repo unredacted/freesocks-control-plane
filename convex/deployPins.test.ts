@@ -38,6 +38,8 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 const stack = read('../docker-compose.stack.yml');
+const devCompose = read('../docker-compose.yml');
+const envBetaExample = read('../.env.beta.example');
 const backupDockerfile = read('../docker/backup.Dockerfile');
 const webDockerfile = read('../docker/web.Dockerfile');
 const deployDockerfile = read('../docker/deploy.Dockerfile');
@@ -63,11 +65,69 @@ function ignoreLines(text: string): string[] {
  */
 const EXPORT_PATTERNS = ['snapshots', '*.zip', '*.sql', '*.sql.gz*', '*.age', 'convex-env-*'];
 
-/** One service's block in docker-compose.stack.yml (up to the next top-level key). */
-function serviceBlock(name: string): string {
-  const m = stack.match(new RegExp(`^  ${name}:\\n((?:(?:    .*)?\\n)*)`, 'm'));
+/** One service's block in a compose file (up to the next top-level key). */
+function serviceBlock(name: string, compose = stack): string {
+  const m = compose.match(new RegExp(`^  ${name}:\\n((?:(?:    .*)?\\n)*)`, 'm'));
   return m?.[1] ?? '';
 }
+
+/**
+ * Backend log targets that print a request URI at INFO, and so a member's
+ * subscription token (`/api/v1/sub/<subToken>`). Named in the backend source at
+ * the pinned release: `convex-cloud-http` is the access line
+ * (crates/common/src/http/mod.rs, `log_http_access`); `common::http` is the
+ * module-path target of `stats_middleware: matched_path is None, uri: …`, which
+ * fires for every HTTP action request because the site proxy's router is
+ * fallback-only. docs/privacy.md §4.
+ */
+const URI_LOG_TARGETS = ['convex-cloud-http', 'common::http'];
+
+/**
+ * The level a `RUST_LOG` value gives one target, the way tracing-subscriber's
+ * EnvFilter resolves it: the longest directive whose target is a prefix of it
+ * (a plain string prefix, so `common=warn` covers `common::http`), else the
+ * bare default level. A repeated target keeps its LAST value: EnvFilter's
+ * directive set replaces an equal directive rather than keeping the first.
+ */
+function rustLogLevel(rustLog: string, target: string): string {
+  let level = 'error'; // EnvFilter's default when no bare level is given
+  let matched = -1;
+  for (const directive of rustLog.split(',').map((d) => d.trim())) {
+    const eq = directive.lastIndexOf('=');
+    const [prefix, value] =
+      eq < 0 ? ['', directive] : [directive.slice(0, eq), directive.slice(eq + 1)];
+    if (target.startsWith(prefix) && prefix.length >= matched) {
+      level = value.toLowerCase();
+      matched = prefix.length;
+    }
+  }
+  return level;
+}
+
+/** True when `RUST_LOG` keeps every URI-printing target below INFO. */
+function silencesRequestUris(rustLog: string): boolean {
+  return URI_LOG_TARGETS.every((t) => ['warn', 'error', 'off'].includes(rustLogLevel(rustLog, t)));
+}
+
+/** Values the check must accept / refuse. Pins its coverage. */
+const RUST_LOG_CASES = {
+  quiet: [
+    'info,convex-cloud-http=warn,common::http=warn',
+    'warn',
+    'error,convex-cloud-http=error',
+    'info,common=warn,convex-cloud-http=off', // a parent prefix covers common::http
+    'warn,common::http=info,common::http=warn', // the later duplicate wins
+  ],
+  leaky: [
+    'info,convex-cloud-http=warn', // the default until Oct 2026: common::http logged every URI
+    'info,common::http=warn', // access line back on
+    'warn,common::http=info',
+    'info,common::http::fetch=warn', // a child module does not cover its parent
+    'info',
+    'warn,common::http=warn,common::http=info', // the later duplicate wins
+    'warn,info', // so does a later bare level
+  ],
+};
 
 /** Every `FROM <ref>` in a Dockerfile, stage aliases stripped. */
 function fromRefs(dockerfile: string): string[] {
@@ -357,6 +417,44 @@ describe('cross-file image pins', () => {
       nodeBase,
       'docker/convex-node/Dockerfile must pin node:<x.y.z>-<variant>@sha256:<digest>',
     ).toMatch(/^node:\d+\.\d+\.\d+-[a-z0-9.-]+@sha256:[0-9a-f]{64}$/);
+  });
+});
+
+describe('backend log privacy', () => {
+  test('the RUST_LOG check accepts and refuses what it claims to', () => {
+    for (const value of RUST_LOG_CASES.quiet) {
+      expect(silencesRequestUris(value), `should accept: ${value}`).toBe(true);
+    }
+    for (const value of RUST_LOG_CASES.leaky) {
+      expect(silencesRequestUris(value), `should refuse: ${value}`).toBe(false);
+    }
+  });
+
+  test('every backend RUST_LOG default keeps request URIs out of the log', () => {
+    // The pre-Oct-2026 default silenced only the access line; common::http kept
+    // writing `uri: /api/v1/sub/<subToken>` for every member request, and the
+    // documented `grep 'GET /api'` check could not see it. The operator-facing
+    // copy in .env.beta.example counts too: uncommenting a stale one re-leaks.
+    const defaults: [string, string | undefined][] = [
+      [
+        'docker-compose.stack.yml (backend)',
+        serviceBlock('backend').match(/^\s+- RUST_LOG=\$\{RUST_LOG:-(.+)\}$/m)?.[1],
+      ],
+      [
+        'docker-compose.yml (backend)',
+        serviceBlock('backend', devCompose).match(/^\s+- RUST_LOG=\$\{RUST_LOG:-(.+)\}$/m)?.[1],
+      ],
+      ['.env.beta.example', envBetaExample.match(/^#\s*RUST_LOG=(\S+)$/m)?.[1]],
+    ];
+    for (const [where, value] of defaults) {
+      expect(value, `no RUST_LOG default found in ${where}`).toBeTruthy();
+      expect(
+        silencesRequestUris(value!),
+        `${where} sets RUST_LOG=${value}, which logs request URIs (member subscription ` +
+          `tokens) at INFO. Keep ${URI_LOG_TARGETS.map((t) => `${t}=warn`).join(' and ')}, ` +
+          'or use plain `warn`. docs/privacy.md §4.',
+      ).toBe(true);
+    }
   });
 });
 
