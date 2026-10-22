@@ -1255,6 +1255,7 @@ http.route({
       regionSeenFirstAt: sub.regionSeenFirstAt,
       regionSeenAt: sub.regionSeenAt,
       countryRev: sub.countryRev ?? 0,
+      deliveryRev: sub.deliveryRev ?? 0,
     };
     const location = await locateMember(ctx, place, req);
     const { edgeToken, sensitive, located } = location;
@@ -1278,6 +1279,7 @@ http.route({
         contentAt: fresh.at,
         renderedEpoch: fresh.renderedEpoch ?? null,
         render: fresh.render ?? null,
+        deliveryRev: place.deliveryRev,
       });
       // fresh + same format → cache hit
       return (await subscriptionResponse(await memberNamed(fresh), { hints, ifNoneMatch }))
@@ -1300,6 +1302,7 @@ http.route({
             contentAt: held.at,
             renderedEpoch: held.renderedEpoch ?? null,
             render: held.render ?? null,
+            deliveryRev: place.deliveryRev,
           });
           return answer.response;
         }
@@ -1364,6 +1367,9 @@ http.route({
         await ctx.runMutation(internal.subscriptions.writeContentCache, {
           subscriptionId: sub._id,
           entry: JSON.stringify(entry),
+          // A key that moved in place meanwhile (a mode or server switch)
+          // never gets this body back: it is the old placement's.
+          deliveryRev: place.deliveryRev,
         });
       }
       // Every successful delivery is stamped (miss AND hwid'd path) — the
@@ -1374,6 +1380,7 @@ http.route({
         contentAt: now,
         renderedEpoch,
         render: renderSnapshot,
+        deliveryRev: place.deliveryRev,
       });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       // An inferred country shaped this body: it is this member's, here, now.
@@ -1403,6 +1410,7 @@ http.route({
           contentAt: stale.at,
           renderedEpoch: stale.renderedEpoch ?? null,
           render: stale.render ?? null,
+          deliveryRev: place.deliveryRev,
         });
         return (await subscriptionResponse(await memberNamed(stale), { hints, ifNoneMatch }))
           .response;
