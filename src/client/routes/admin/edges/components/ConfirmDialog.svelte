@@ -18,13 +18,19 @@
    *       Returning nothing leaves closing to the caller (set `open = false`).
    *   onCancel?: () => void
    *   children?: Snippet
+   *
+   * It never grows past the window: the title and the buttons stay put and
+   * what is between them scrolls (lib/dialogLayout.ts). A failed confirm brings
+   * the first field marked invalid into view, else its error.
    */
-  import type { Snippet } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import * as AlertDialog from '@client/components/ui/alert-dialog';
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import InlineError from '@client/components/InlineError.svelte';
   import { edgeErrorMessage } from '../lib/edgeErrors';
+  import { CONFIRM_BODY, CONFIRM_FIT } from '../lib/dialogLayout';
+  import { focusFirstInvalid } from '../lib/focusInvalid';
 
   interface Props {
     open: boolean;
@@ -59,6 +65,8 @@
   let typedValue = $state('');
   let selfBusy = $state(false);
   let selfError = $state<unknown>(null);
+  let bodyEl = $state<HTMLElement | null>(null);
+  let errorEl = $state<HTMLElement | null>(null);
 
   const working = $derived(busy || selfBusy);
   const typedOk = $derived(!typed || typedValue.trim() === typed);
@@ -83,6 +91,8 @@
         open = false;
       } catch (e) {
         selfError = e;
+        await tick();
+        if (!focusFirstInvalid(bodyEl)) errorEl?.scrollIntoView({ block: 'nearest' });
       } finally {
         selfBusy = false;
       }
@@ -101,41 +111,46 @@
     }
   }}
 >
-  <AlertDialog.Content>
-    <AlertDialog.Header>
+  <AlertDialog.Content class={CONFIRM_FIT}>
+    <AlertDialog.Header class="shrink-0">
       <AlertDialog.Title>{title}</AlertDialog.Title>
       {#if body}
         <AlertDialog.Description>{body}</AlertDialog.Description>
       {/if}
     </AlertDialog.Header>
-    {#if children}
-      <div class="text-sm">{@render children()}</div>
-    {/if}
-    {#if typed}
-      <div class="space-y-1.5">
-        <Label for={`${uid}-typed`}>
-          Type <span class="font-mono font-semibold">{typed}</span> to confirm
-        </Label>
-        <Input
-          id={`${uid}-typed`}
-          bind:value={typedValue}
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck={false}
-          disabled={working}
-          onkeydown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              void confirm();
-            }
-          }}
-        />
+    {#if children || typed || (shownError !== null && shownError !== undefined)}
+      <!-- Between the title and the buttons: scrolls when it outgrows the window. -->
+      <div bind:this={bodyEl} data-slot="confirm-body" class={CONFIRM_BODY}>
+        {#if children}
+          <div class="text-sm">{@render children()}</div>
+        {/if}
+        {#if typed}
+          <div class="space-y-1.5">
+            <Label for={`${uid}-typed`}>
+              Type <span class="font-mono font-semibold">{typed}</span> to confirm
+            </Label>
+            <Input
+              id={`${uid}-typed`}
+              bind:value={typedValue}
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck={false}
+              disabled={working}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void confirm();
+                }
+              }}
+            />
+          </div>
+        {/if}
+        {#if shownError !== null && shownError !== undefined}
+          <div bind:this={errorEl}><InlineError message={edgeErrorMessage(shownError)} /></div>
+        {/if}
       </div>
     {/if}
-    {#if shownError !== null && shownError !== undefined}
-      <InlineError message={edgeErrorMessage(shownError)} />
-    {/if}
-    <AlertDialog.Footer>
+    <AlertDialog.Footer class="shrink-0">
       <AlertDialog.Cancel disabled={working}>{cancelLabel}</AlertDialog.Cancel>
       <AlertDialog.Action
         variant={danger ? 'destructive' : 'default'}

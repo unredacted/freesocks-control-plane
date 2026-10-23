@@ -3892,7 +3892,15 @@ inherits cannot be built there; options sent with the old single-location select
 **Refusals and audit.** `edge.option_unknown` (not an option of the provider),
 `edge.option_invalid` (a value or a rule, in words), `edge.option_not_here` (a tuning option
 on the account, a certificate one in a template). The plan reports them per pick
-(`set.problems[].detail`). `edge.provider_account.options_changed` records which keys
+(`set.problems[].detail`). "In words" means the field's label and the problem in plain words
+("Healthy after: at most 10", `issueWords`), never the schema library's text; a rule written in
+words keeps its message. The forms check the bounds the schema states (`describeFields` lays
+`min`, `max`, `pattern` and `maxItems` on each descriptor) before anything is sent: a value out
+of them says so under its field (`fieldProblem`), and submitting focuses the first such field
+and names it in the dialog's error instead of sending. An edges dialog never grows past the
+window (`lib/dialogLayout.ts`, pinned by a test): the confirm dialog keeps its title and buttons
+put and scrolls its body; any other dialog scrolls inside the window with its footer stuck to
+its bottom edge. `edge.provider_account.options_changed` records which keys
 changed, with values for choices, numbers and switches only;
 `edge.provider_account.options_migrated` the deploy move; rotation starts carry `optionKeys`.
 A change of an account's certificate defaults untrusts its locations like a settings change.

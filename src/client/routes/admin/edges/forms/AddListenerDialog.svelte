@@ -12,6 +12,7 @@
    *   existing?: RelayListenerAdmin | null    edit this listener (key locked)
    *   onSaved: () => void
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { untrack } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -93,7 +94,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-2xl`}>
     <Dialog.Header>
       <Dialog.Title
         >{existing ? `Edit listener ${existing.listenerKey}` : 'Add a listener'}</Dialog.Title
@@ -133,7 +134,7 @@
       {:else if save.error}
         <InlineError message={edgeErrorMessage(save.error)} />
       {/if}
-      <Dialog.Footer>
+      <Dialog.Footer class={STICKY_FOOTER}>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
         <Button type="submit" disabled={save.isPending}>
           {save.isPending ? 'Saving' : existing ? 'Save listener' : 'Add listener'}

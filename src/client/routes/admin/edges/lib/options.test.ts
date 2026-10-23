@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { EdgeTemplateField } from '../../../../../shared/contracts/edges';
 import {
   deepMerge,
+  fieldProblem,
   groupsOf,
   kvToText,
+  optionProblems,
   optionSummary,
   overrides,
   pickBase,
+  problemLine,
   textToKv,
   valueWords,
   visibleFields,
@@ -140,5 +143,43 @@ describe('pickBase fallback', () => {
       null,
     );
     expect(base.size).toBe('early');
+  });
+});
+
+describe('option problems beside their field', () => {
+  const healthy: EdgeTemplateField = {
+    key: 'healthMonitor.maxRetries',
+    label: 'Healthy after',
+    type: 'number',
+    min: 1,
+    max: 10,
+  };
+  it('fieldProblem: the bound in plain words, nothing for an inherited value', () => {
+    expect(fieldProblem(healthy, 11)).toBe('at most 10');
+    expect(fieldProblem(healthy, 0)).toBe('at least 1');
+    expect(fieldProblem(healthy, 5)).toBeNull();
+    expect(fieldProblem(healthy, undefined)).toBeNull();
+    expect(fieldProblem(healthy, Number.NaN)).toBe('a number');
+    expect(fieldProblem({ type: 'string', pattern: '^[a-z]+$' }, 'A1')).toBe(
+      'not in the expected form',
+    );
+    expect(fieldProblem({ type: 'string', pattern: '^[a-z]+$' }, '')).toBeNull();
+    expect(fieldProblem({ type: 'string-list', maxItems: 1 }, ['a', 'b'])).toBe('at most 1 entry');
+  });
+  it('optionProblems: only shown fields with a chosen value, worded as one line each', () => {
+    const fields: EdgeTemplateField[] = [
+      healthy,
+      { key: 'other', label: 'Other', type: 'number', max: 3 },
+      { key: 'gated', label: 'Gated', type: 'number', max: 1, when: { key: 'on', in: [true] } },
+    ];
+    const problems = optionProblems(fields, {
+      healthMonitor: { maxRetries: 11 },
+      gated: 5,
+    });
+    expect(problems).toEqual([
+      { key: 'healthMonitor.maxRetries', label: 'Healthy after', words: 'at most 10' },
+    ]);
+    expect(problems.map(problemLine)).toEqual(['Healthy after: at most 10.']);
+    for (const line of problems.map(problemLine)) expect(line).not.toMatch(/—|[<>]=?/);
   });
 });

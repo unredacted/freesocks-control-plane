@@ -9,6 +9,7 @@
    *   account: EdgeProviderAccountAdmin
    *   taken: string[]                    the names of the other accounts
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
@@ -62,7 +63,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content>
+  <Dialog.Content class={DIALOG_FIT}>
     <Dialog.Header>
       <Dialog.Title>Rename {account.name}</Dialog.Title>
       <Dialog.Description>
@@ -85,7 +86,7 @@
         {/if}
       </div>
       {#if refusal}<InlineError message={refusal} />{/if}
-      <Dialog.Footer>
+      <Dialog.Footer class={STICKY_FOOTER}>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
         <Button type="submit" disabled={!canSubmit || rename.isPending}>
           {rename.isPending ? 'Saving' : 'Rename'}

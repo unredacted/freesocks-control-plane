@@ -10,6 +10,7 @@
    * Props: open (bindable); relay; listeners; accounts; listenerKey? (preselect);
    *        onImported(edgeId)
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import type {
@@ -181,7 +182,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-xl`}>
     <Dialog.Header>
       <Dialog.Title>Import an existing front</Dialog.Title>
       <Dialog.Description>
@@ -426,7 +427,7 @@
       {#if save.error}
         <InlineError message={edgeErrorMessage(save.error)} />
       {/if}
-      <Dialog.Footer>
+      <Dialog.Footer class={STICKY_FOOTER}>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
         <Button type="submit" disabled={save.isPending}>
           {save.isPending ? 'Importing…' : 'Import'}

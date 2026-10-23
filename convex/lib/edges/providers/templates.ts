@@ -1733,9 +1733,10 @@ export function validateTemplateParams(
   if (res.success) return { ok: true, params: res.data };
   return {
     ok: false,
+    // `path: words`: the template editor names the field by its path.
     issues: res.error.issues
       .slice(0, 10)
-      .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
+      .map((i) => `${i.path.join('.') || '(root)'}: ${issueWords(i as SchemaIssue)}`),
   };
 }
 
@@ -1878,14 +1879,72 @@ function labelOf(provider: EdgeProviderId): (key: string) => string {
   return (key) => fields.find((f) => f.key === key)?.label ?? key;
 }
 
-function issuesInWords(
-  provider: EdgeProviderId,
-  issues: readonly { path: PropertyKey[]; message: string }[],
-): string[] {
+/** The parts of a schema issue its words read (zod's issue shapes). */
+export interface SchemaIssue {
+  path: PropertyKey[];
+  code: string;
+  message: string;
+  origin?: string;
+  maximum?: number | bigint;
+  minimum?: number | bigint;
+  inclusive?: boolean;
+  expected?: string;
+  values?: readonly unknown[];
+  divisor?: number | bigint;
+}
+
+const EXPECTED_WORDS: Record<string, string> = {
+  int: 'a whole number',
+  number: 'a number',
+  string: 'text',
+  boolean: 'on or off',
+  array: 'a list',
+  object: 'a set of values',
+  record: 'a set of values',
+};
+
+/**
+ * What is wrong with one value, in plain words and without the field ("at
+ * most 10", "a whole number"), never the schema library's own text ("Too big:
+ * expected number to be <=10"). A rule written in words (a refinement) keeps
+ * its message.
+ */
+export function issueWords(i: Omit<SchemaIssue, 'path'>): string {
+  const n = (v: number | bigint | undefined) => String(v ?? '');
+  const items = (v: number | bigint | undefined) => (Number(v) === 1 ? 'entry' : 'entries');
+  switch (i.code) {
+    case 'too_big':
+      if (i.origin === 'string') return `at most ${n(i.maximum)} characters`;
+      if (i.origin === 'array' || i.origin === 'set')
+        return `at most ${n(i.maximum)} ${items(i.maximum)}`;
+      return i.inclusive === false ? `less than ${n(i.maximum)}` : `at most ${n(i.maximum)}`;
+    case 'too_small':
+      if (i.origin === 'string')
+        return Number(i.minimum) <= 1 ? 'required' : `at least ${n(i.minimum)} characters`;
+      if (i.origin === 'array' || i.origin === 'set')
+        return `at least ${n(i.minimum)} ${items(i.minimum)}`;
+      return i.inclusive === false ? `more than ${n(i.minimum)}` : `at least ${n(i.minimum)}`;
+    case 'invalid_type':
+      if (/received undefined$/.test(i.message)) return 'required';
+      return EXPECTED_WORDS[i.expected ?? ''] ?? 'not a valid value';
+    case 'invalid_value':
+      return i.values && i.values.length > 0
+        ? `one of ${i.values.map(String).join(', ')}`
+        : 'not a valid value';
+    case 'invalid_format':
+      return 'not in the expected form';
+    case 'not_multiple_of':
+      return `a multiple of ${n(i.divisor)}`;
+    default:
+      return i.message;
+  }
+}
+
+function issuesInWords(provider: EdgeProviderId, issues: readonly SchemaIssue[]): string[] {
   const label = labelOf(provider);
   return issues
     .slice(0, 10)
-    .map((i) => `${i.path.length > 0 ? label(i.path.join('.')) : '(root)'}: ${i.message}`);
+    .map((i) => `${i.path.length > 0 ? label(i.path.join('.')) : '(root)'}: ${issueWords(i)}`);
 }
 
 /** A template being SAVED: the read schema, no certificate option, and the provider's write rules. */

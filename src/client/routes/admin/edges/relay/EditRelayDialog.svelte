@@ -9,6 +9,7 @@
    *
    * Props: open (bindable); origin
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import type { OriginAdmin } from '@shared/contracts/edges';
@@ -167,7 +168,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-xl`}>
     <Dialog.Header>
       <Dialog.Title>Edit relay {relay.slug}</Dialog.Title>
       <Dialog.Description>
@@ -320,7 +321,7 @@
       {#if save.error}
         <InlineError message={edgeErrorMessage(save.error)} />
       {/if}
-      <Dialog.Footer>
+      <Dialog.Footer class={STICKY_FOOTER}>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
         <Button type="submit" disabled={!dirty || anyInvalid || save.isPending}>
           {save.isPending ? 'Saving…' : dirty ? 'Save changes' : 'Nothing changed'}

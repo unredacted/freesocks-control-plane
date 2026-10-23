@@ -21,7 +21,12 @@
    * Where: Automatic (the dry run's own choice, said in words), or one location
    * of the node's set for the transport Automatic would pick. A named location
    * offers "Options for this address" (prefilled with the node's options there);
-   * an address built with other options is never taken by automatic work.
+   * an address built with other options is never taken by automatic work. An
+   * option out of its bounds says so beside the field; Add a spare then sends
+   * nothing and focuses that field (ActionConfirm), its words in the error.
+   *
+   * The dialog never grows past the window: its body scrolls, the buttons stay
+   * in view (components/ConfirmDialog.svelte).
    *
    * Props:
    *   open (bindable); relay; renew?: { edgeId, listenerId, listenerKey } | null
@@ -49,13 +54,13 @@
   } from '@client/lib/edgesApi';
   import { frontsNode } from '@client/lib/edgeProviderMeta';
   import PickOptions from './PickOptions.svelte';
-  import { overrides, pickBase } from '../lib/options';
+  import { optionProblems, overrides, pickBase, problemLine } from '../lib/options';
   import { asParams, deepEqual, type Params } from '../templates/params';
   import CodeNote from '../components/CodeNote.svelte';
   import EdgeCostLine from '../components/EdgeCostLine.svelte';
   import AdminListState from '../../AdminListState.svelte';
   import ActionConfirm from '../relay/ActionConfirm.svelte';
-  import { assertEdgeOk } from '../lib/edgeErrors';
+  import { assertEdgeOk, InputProblemError } from '../lib/edgeErrors';
   import { spareInUseWords } from './runWords';
 
   interface Props {
@@ -167,6 +172,12 @@
   let destroyed = $state<string | null>(null);
   async function run(): Promise<void> {
     if (!renew) {
+      // Options out of their bounds: nothing is sent, the field says why.
+      const problems =
+        where && whereOptions
+          ? optionProblems(whereOptions.fields, oneOff ?? whereOptions.chosen, whereOptions.base)
+          : [];
+      if (problems.length > 0) throw new InputProblemError(problems.map(problemLine).join(' '));
       await provisionRelay(
         relay.id,
         where && autoListener
