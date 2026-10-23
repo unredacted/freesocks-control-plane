@@ -172,9 +172,28 @@ describe('provider rules on writes', () => {
   it('OVH takes IPv4 ranges only; an IPv4-only Gcore edge too', () => {
     expect(
       issues('ovh', { flavorId: 'f', allowedCidrs: ['192.0.2.0/24', '2001:db8::/32'] }),
-    ).toEqual(['Allowed client ranges: "2001:db8::/32" is not an IPv4 range']);
+    ).toEqual(['Allowed client ranges: "2001:db8::/32" is not an IPv4 range, like 192.0.2.0/24']);
     expect(issues('gcore', { ipFamily: 'ipv4', allowedCidrs: ['2001:db8::/32'] })).toHaveLength(1);
     expect(issues('gcore', { ipFamily: 'dual', allowedCidrs: ['2001:db8::/32'] })).toEqual([]);
+  });
+
+  it('a range written from an address inside it is refused with the range to write (Gcore, OVH)', () => {
+    // Gcore answered such a range with a bare `400 validation-error`.
+    expect(
+      issues('gcore', { allowedCidrs: ['192.0.2.10/24', '2001:db8::1/64', '198.51.100.0/24'] }),
+    ).toEqual([
+      'Allowed client ranges: "192.0.2.10/24" starts inside its range: write it as 192.0.2.0/24',
+      'Allowed client ranges: "2001:db8::1/64" starts inside its range: write it as 2001:db8::/64',
+    ]);
+    expect(issues('ovh', { flavorId: 'f', allowedCidrs: ['203.0.113.7/30'] })).toEqual([
+      'Allowed client ranges: "203.0.113.7/30" starts inside its range: write it as 203.0.113.4/30',
+    ]);
+    // A single address (/32, /128) is its own range; what is no range at all says so.
+    expect(issues('gcore', { allowedCidrs: ['192.0.2.10/32', '2001:db8::1/128'] })).toEqual([]);
+    expect(issues('gcore', { allowedCidrs: ['192.0.2.0/33', 'office'] })).toEqual([
+      'Allowed client ranges: "192.0.2.0/33" is not an address range, like 192.0.2.0/24',
+      'Allowed client ranges: "office" is not an address range, like 192.0.2.0/24',
+    ]);
   });
 
   it('tag and label shapes the providers refuse are refused on save', () => {

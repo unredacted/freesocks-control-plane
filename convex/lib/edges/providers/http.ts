@@ -24,6 +24,7 @@
  */
 import type { z } from 'zod';
 import type { EdgeProviderId } from '../../edgeProviderIds';
+import type { ChildResource, StepOutcome } from './types';
 
 export interface RelayProviderErrorMeta {
   provider: EdgeProviderId;
@@ -61,6 +62,46 @@ export const capturesErrorDetail = (step: string): boolean => DIAGNOSTIC_STEPS.h
 /** Whether an answer is the provider REFUSING the call (its own reason, not an outage). */
 export const isRefusal = (status: number | undefined): boolean =>
   status !== undefined && status >= 400 && status < 500;
+
+/**
+ * Client answers a create gets that are not the provider's last word on it:
+ * not found (404: a create that names what an earlier step made can be answered
+ * so while the provider catches up), a timeout (408), a conflict (409: what was
+ * asked for may exist already, which discovery settles), a failed precondition,
+ * a lock or an early answer (412, 423, 425: a state that passes) and rate
+ * limiting (429).
+ */
+const PASSING_CLIENT_STATUSES = new Set([404, 408, 409, 412, 423, 425, 429]);
+
+/**
+ * Whether a create's failure is the provider refusing it for good (a 4xx that
+ * is none of the above: a validation error, a forbidden call, a quota): the
+ * same request would be refused the same way, so retrying it cannot help.
+ */
+export function isDefiniteRefusal(err: unknown): err is EdgeProviderError {
+  if (!(err instanceof EdgeProviderError)) return false;
+  const s = err.meta.status;
+  return s !== undefined && isRefusal(s) && !PASSING_CLIENT_STATUSES.has(s);
+}
+
+/**
+ * A create step the provider refused for good (`isDefiniteRefusal`), as a known
+ * outcome: the run stops at once on `code` and the edge needs an operator,
+ * instead of sending the same request until `step_retries_exhausted`. The
+ * provider's own words travel as `detail` (the ops layer scrubs the edge's
+ * names from them before they leave the action). `resources`: what the step
+ * built before the refused call. Null for any other failure (a 5xx, a timeout,
+ * a conflict), which the caller rethrows: its outcome is unknown.
+ */
+export function refusedCreate(
+  err: unknown,
+  code: string,
+  resources: ChildResource[] = [],
+): StepOutcome | null {
+  if (!isDefiniteRefusal(err)) return null;
+  const detail = refusalOf(err);
+  return { status: 'partial', resources, code, refused: true, ...(detail ? { detail } : {}) };
+}
 
 /**
  * The provider's redacted words on a refused call that is not a diagnostic one,

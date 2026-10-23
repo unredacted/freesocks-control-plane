@@ -7,7 +7,9 @@
  * creates the LB with its TCP listener + pool + health monitor inline and
  * returns `{ tasks: [id] }`; the task is polled at `GET /cloud/v1/tasks/{id}`
  * and reports every created resource id (LB, and a floating IP when the
- * template asks for a private VIP). Deletes are tasks too.
+ * template asks for a private VIP). Deletes are tasks too. A create the API
+ * refuses for good (a 4xx such as `400 validation-error`) built nothing: the run
+ * stops on `create_refused` with the provider's words (`refusedCreate`).
  *
  * Discovery: the LB list is filtered by our deterministic name. The list
  * includes PENDING_CREATE balancers, so a repeated absence (>= 2 quiet looks
@@ -48,6 +50,7 @@ import {
   EdgeProviderError,
   credentialTestFailure,
   noteDiscoverError,
+  refusedCreate,
 } from './http';
 import { addressFamily, isPublicIpLiteral } from '../ip';
 import type { ProviderPlan } from '../pricing';
@@ -461,14 +464,23 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
 
   async runStep(cfg, step, spec, tpl) {
     if (step.kind !== 'create_lb') throw unknownStep(step);
-    const res = await gcore(
-      cfg,
-      step.id,
-      'POST',
-      `/cloud/v1/loadbalancers/${scope(cfg)}`,
-      Tasks,
-      gcoreLbBody(cfg, spec, tpl),
-    );
+    let res: z.infer<typeof Tasks>;
+    try {
+      res = await gcore(
+        cfg,
+        step.id,
+        'POST',
+        `/cloud/v1/loadbalancers/${scope(cfg)}`,
+        Tasks,
+        gcoreLbBody(cfg, spec, tpl),
+      );
+    } catch (e) {
+      // One request builds everything: a refused one (`400 validation-error`
+      // on a setting) built nothing and would be refused again.
+      const refused = refusedCreate(e, 'create_refused');
+      if (refused) return refused;
+      throw e;
+    }
     return { status: 'requested', opRef: res.tasks[0], resources: [] };
   },
 

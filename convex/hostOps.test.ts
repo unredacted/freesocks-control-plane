@@ -627,12 +627,13 @@ describe('hostOps: the actions against a backend', () => {
 });
 
 describe('hostOps: pendingListeners + reconcileHosts', () => {
-  test('nothing pending: an empty list, a no-op pass, no backend call', async () => {
+  test('nothing pending: an empty list, a no-op pass, no Host write', async () => {
     const world = fakePanel();
     const { t } = await seed();
     expect(await t.query(internal.hostOps.pendingListeners, {})).toEqual([]);
     expect(await t.action(internal.hostOps.reconcileHosts, {})).toEqual({ looked: 0, deleted: 0 });
-    expect(world.calls()).toEqual([]);
+    // Only the bound origin's direct-Host look reads the listing.
+    expect(world.calls()).toEqual(['GET /api/hosts']);
   });
 
   test('an EXPIRED unresolved create gets a discovery look; a live one and a present live Host do not', async () => {
@@ -649,7 +650,8 @@ describe('hostOps: pendingListeners + reconcileHosts', () => {
       { kind: 'discover', listenerId, opId: claim.opId, backendServerId: serverId },
     ]);
     expect(await t.action(internal.hostOps.reconcileHosts, {})).toEqual({ looked: 1, deleted: 0 });
-    expect(world.calls()).toEqual(['GET /api/hosts']);
+    // The discovery look, then the bound origin's direct-Host look.
+    expect(world.calls()).toEqual(['GET /api/hosts', 'GET /api/hosts']);
     // The look found the Host: present, and nothing is pending any more.
     expect((await listener(t, listenerId)).host).toMatchObject({
       state: 'present',
@@ -674,7 +676,12 @@ describe('hostOps: pendingListeners + reconcileHosts', () => {
     ]);
     // Pass 1: the DELETE is accepted but the backend still lists the Host: not deleted.
     expect(await t.action(internal.hostOps.reconcileHosts, {})).toEqual({ looked: 0, deleted: 0 });
-    expect(world.calls()).toEqual([`DELETE /api/hosts/${HOST_UUID}`, 'GET /api/hosts']);
+    // The read-back, then the bound origin's direct-Host look.
+    expect(world.calls()).toEqual([
+      `DELETE /api/hosts/${HOST_UUID}`,
+      'GET /api/hosts',
+      'GET /api/hosts',
+    ]);
     expect((await listener(t, listenerId)).host).toMatchObject({
       state: 'present',
       op: { kind: 'delete' },

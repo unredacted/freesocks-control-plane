@@ -276,13 +276,18 @@ describe('applyEdgeRender: the node by any of its addresses', () => {
       );
       expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'leak_detected' });
     }
-    // An entry elsewhere still passes through.
+    // An entry elsewhere is no leak: the body is served, without that entry
+    // (on the listener's transport and at no edge, FCP cannot place it).
     const other = [realityLink, direct('198.51.100.99', 'other')].join('\n');
-    expect(
-      applyEdgeRender(rctx([edgeA], { nodeAddresses: ['2001:db8::10'] }), other, key(1), {
-        now: NOW,
-      }).delivery,
-    ).toEqual({ kind: 'serve' });
+    const served = applyEdgeRender(
+      rctx([edgeA], { nodeAddresses: ['2001:db8::10'] }),
+      other,
+      key(1),
+      { now: NOW },
+    );
+    expect(served.delivery).toEqual({ kind: 'serve' });
+    expect(served.withheld).toEqual(['other']);
+    expect(served.body).not.toContain('198.51.100.99');
   });
 
   test("an edge at one of the node's addresses is never handed out", () => {
@@ -293,5 +298,143 @@ describe('applyEdgeRender: the node by any of its addresses', () => {
       { now: NOW },
     );
     expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'leak_detected' });
+  });
+});
+
+describe('applyEdgeRender: an entry FCP cannot place on a covered transport', () => {
+  // A Host added on the node's own transport that dials it by a name FCP never
+  // resolved: neither the template, nor an edge, nor a known node address.
+  const BY_NAME = 'node-a.wildcard.example.net';
+  const realityAt = (address: string, remark: string) =>
+    `vless://${UUID}@${address}:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=target.example&fp=chrome&pbk=PUBKEY&sid=abcd&type=tcp#${encodeURIComponent(remark)}`;
+  const wsAt = (address: string, remark: string) =>
+    `vless://${UUID}@${address}:443?encryption=none&security=tls&sni=cdn.example&type=ws&host=cdn.example&path=%2Fws#${encodeURIComponent(remark)}`;
+  const edgeB: PublishedEdge = {
+    ...edgeA,
+    edgeId: 'eB',
+    poolIndex: 1,
+    provider: 'upcloud',
+    addresses: { v4: '203.0.113.30' },
+  };
+
+  test('links: a retained by-name entry on the listener transport is left out and reported; the body is served', () => {
+    const body = [realityLink, realityAt(BY_NAME, `${NODE}-direct`)].join('\n');
+    for (let i = 0; i < 20; i++) {
+      const out = applyEdgeRender(rctx([edgeA]), body, key(i), { now: NOW });
+      expect(out.delivery).toEqual({ kind: 'serve' });
+      expect(out.body).not.toContain(BY_NAME);
+      expect(out.body).toContain('203.0.113.10');
+      expect(out.withheld).toEqual([`${NODE}-direct`]);
+    }
+  });
+
+  test('links: an entry on a transport no listener covers passes, and so does one at an edge of the origin', () => {
+    const body = [
+      realityLink,
+      wsAt(BY_NAME, `${NODE}-ws`),
+      realityAt('203.0.113.30', 'by-hand-front'),
+    ].join('\n');
+    const out = applyEdgeRender(rctx([edgeA, edgeB]), body, key(1), { now: NOW });
+    expect(out.delivery).toEqual({ kind: 'serve' });
+    expect(out.body).toContain(`${BY_NAME}:443`);
+    expect(out.body).toContain('by-hand-front');
+    expect(out.withheld).toBeUndefined();
+  });
+
+  test('a known node address is still refused outright, never quietly left out', () => {
+    const body = [realityLink, realityAt(BY_NAME, `${NODE}-direct`)].join('\n');
+    const out = applyEdgeRender(rctx([edgeA], { nodeAddresses: [BY_NAME] }), body, key(1), {
+      now: NOW,
+    });
+    expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'leak_detected' });
+  });
+
+  test('sing-box: the outbound goes from every group, a default and a route rule naming it', () => {
+    const direct = `${NODE}-direct`;
+    const body = JSON.stringify({
+      outbounds: [
+        {
+          type: 'selector',
+          tag: 'proxy',
+          outbounds: [REALITY_REMARK, direct, `${NODE}-ws`],
+          default: direct,
+        },
+        {
+          type: 'vless',
+          tag: REALITY_REMARK,
+          server: ORIGIN,
+          server_port: 443,
+          uuid: UUID,
+          tls: { enabled: true, server_name: 'target.example', reality: { enabled: true } },
+        },
+        {
+          type: 'vless',
+          tag: direct,
+          server: BY_NAME,
+          server_port: 443,
+          uuid: UUID,
+          tls: { enabled: true, server_name: 'target.example', reality: { enabled: true } },
+        },
+        {
+          type: 'vless',
+          tag: `${NODE}-ws`,
+          server: BY_NAME,
+          server_port: 443,
+          uuid: UUID,
+          tls: { enabled: true, server_name: 'cdn.example' },
+          transport: { type: 'ws', path: '/ws' },
+        },
+        { type: 'direct', tag: 'direct' },
+      ],
+      route: { rules: [{ domain: ['example.org'], outbound: direct }], final: 'proxy' },
+    });
+    const out = applyEdgeRender(
+      rctx([edgeA], { rule: effectiveRule(cfg, defaultClientRule('singbox')) }),
+      body,
+      key(3),
+      { now: NOW },
+    );
+    expect(out.delivery).toEqual({ kind: 'serve' });
+    expect(out.withheld).toEqual([direct]);
+    const doc = JSON.parse(out.body) as {
+      outbounds: Array<{ tag: string; server?: string; outbounds?: string[]; default?: string }>;
+      route: { rules: Array<{ outbound: string }> };
+    };
+    const tags = doc.outbounds.map((o) => o.tag);
+    expect(tags).not.toContain(direct);
+    // The WebSocket entry is on a transport no listener covers: it stays.
+    expect(tags).toContain(`${NODE}-ws`);
+    const proxy = doc.outbounds.find((o) => o.tag === 'proxy')!;
+    expect(proxy.outbounds).not.toContain(direct);
+    expect(proxy.default).not.toBe(direct);
+    expect(doc.route.rules[0]!.outbound).not.toBe(direct);
+    expect(doc.outbounds.filter((o) => o.server === BY_NAME).map((o) => o.tag)).toEqual([
+      `${NODE}-ws`,
+    ]);
+  });
+
+  test('Clash: the proxy goes from every group and rule naming it', () => {
+    const direct = `${NODE}-direct`;
+    const body = [
+      'proxies:',
+      `  - { name: ${REALITY_REMARK}, type: vless, server: ${ORIGIN}, port: 443, uuid: ${UUID}, network: tcp, tls: true, servername: target.example, reality-opts: { public-key: P } }`,
+      `  - { name: ${direct}, type: vless, server: ${BY_NAME}, port: 443, uuid: ${UUID}, network: tcp, tls: true, servername: target.example, reality-opts: { public-key: P } }`,
+      'proxy-groups:',
+      `  - { name: Proxy, type: select, proxies: [${REALITY_REMARK}, ${direct}] }`,
+      'rules:',
+      `  - DOMAIN-SUFFIX,example.org,${direct}`,
+      '  - MATCH,Proxy',
+    ].join('\n');
+    const out = applyEdgeRender(
+      rctx([edgeA], { rule: effectiveRule(cfg, defaultClientRule('mihomo')) }),
+      body,
+      key(5),
+      { now: NOW },
+    );
+    expect(out.delivery).toEqual({ kind: 'serve' });
+    expect(out.withheld).toEqual([direct]);
+    expect(out.body).not.toContain(BY_NAME);
+    expect(out.body).not.toContain(direct);
+    expect(out.body).toContain('203.0.113.10');
   });
 });

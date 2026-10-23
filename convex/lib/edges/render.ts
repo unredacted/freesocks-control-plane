@@ -8,7 +8,9 @@
  * with `applied:false`, with no emitted endpoint, or with ANY outgoing entry
  * still at the origin address is not a body a member may receive. The verdict
  * is returned as `delivery`; the DB half (edgeRender.ts) turns anything but
- * `serve` into an unavailable response.
+ * `serve` into an unavailable response. An entry FCP cannot place (on a covered
+ * transport, at neither an edge nor an address the node is known by) is left
+ * out of the body instead (`withheld`), and the operator is told.
  */
 import { RENDER_CLIENT_FAMILIES, type ClientRenderRule, type EdgeConfig } from '../edgeConfig';
 import { edgeHostname, type AssignedEndpoint, type DeliveryPath } from './assignment';
@@ -280,6 +282,15 @@ export interface RenderResult extends RenderOutput {
   delivery: DeliveryVerdict;
 }
 
+/** Every address an origin's edges answer on (IPv4, IPv6, an L7 front's hostname). */
+export function edgeAddressesOf(
+  edges: ReadonlyArray<{ addresses: { v4?: string; v6?: string; hostname?: string } }>,
+): string[] {
+  return edges.flatMap((e) =>
+    [e.addresses.v4, e.addresses.v6, e.addresses.hostname].filter((a): a is string => !!a),
+  );
+}
+
 /**
  * Render one body; picks the renderer from the body's shape and judges the
  * result under the edge-required policy.
@@ -298,6 +309,13 @@ export function renderEdgeEndpoints(args: {
   originAddress: string;
   /** Other addresses the node is known by (its other family, a name): never served either. */
   nodeAddresses?: readonly string[];
+  /**
+   * Every address of the origin's edges (`edgeAddressesOf`). Given, a retained
+   * entry on a covered transport at none of them (and not the node by an
+   * address FCP knows, which the leak check refuses) is left out of the body
+   * (`withheld`): FCP cannot tell it from the node by a name it never saw.
+   */
+  edgeAddresses?: readonly string[];
   deliveryStyle?: DeliveryStyle;
 }): RenderResult {
   const rule0 = ruleForDelivery(args.rule, args.deliveryStyle ?? 'subscription');
@@ -328,7 +346,20 @@ export function renderEdgeEndpoints(args: {
     args.nodeAddresses,
   );
   if (entries.length === 0) return unavailable(leaked > 0 ? 'leak_detected' : 'empty_pool');
-  const input = { body: args.body, matchers: args.matchers, endpoints: entries, rule };
+  const edgeAddresses = args.edgeAddresses;
+  const input = {
+    body: args.body,
+    matchers: args.matchers,
+    endpoints: entries,
+    rule,
+    ...(edgeAddresses
+      ? {
+          withholds: (address: string) =>
+            !isNodeAddress(address, args.originAddress, args.nodeAddresses) &&
+            !edgeAddresses.some((a) => sameAddress(address, a)),
+        }
+      : {}),
+  };
   const out =
     format === 'links'
       ? renderLinks(input)

@@ -13,7 +13,8 @@
  * Removing a template never leaves a dangling reference: `rules` targets
  * (`MATCH,<name>`), other groups and any other mention are rewritten to the
  * rendered fallback or pruned structurally (`refs.ts`), never by returning the
- * original body.
+ * original body. A proxy the caller withholds (`RenderInput.withholds`) goes
+ * the same way.
  */
 import YAML from 'yaml';
 import { sameAddress } from '../hosts';
@@ -24,6 +25,7 @@ import {
   orderEndpoints,
   resolveMatchers,
   templateIdentities,
+  withheldEntries,
   type MatchableEntry,
   type RenderInput,
   type RenderMatcher,
@@ -132,6 +134,16 @@ export function renderClash(input: RenderInput): RenderOutput {
   for (const t of templateObjs) if (typeof t.name === 'string') templateSet.add(t.name);
   const isTemplate = (p: Obj) =>
     templateObjs.has(p) || (typeof p.name === 'string' && templateSet.has(p.name));
+  // Proxies edge-required delivery leaves out; their names go from every group
+  // and rule with them (unless a proxy that stays has the same name).
+  const withheld = withheldEntries(entries, input.matchers, isTemplate, input.withholds);
+  const withheldObjs = new Set(withheld.map((w) => w.entry));
+  const withheldNames = new Set(
+    withheld.map((w) => w.identity).filter((n): n is string => n !== null),
+  );
+  for (const p of proxies)
+    if (isObj(p) && !withheldObjs.has(p) && typeof p.name === 'string')
+      withheldNames.delete(p.name);
 
   const taken = new Set<string>();
   for (const p of proxies) {
@@ -197,6 +209,7 @@ export function renderClash(input: RenderInput): RenderOutput {
   const nextProxies: unknown[] = [];
   let inserted = false;
   for (const p of proxies) {
+    if (isObj(p) && withheldObjs.has(p)) continue;
     if (isObj(p) && isTemplate(p)) {
       if (!inserted) {
         inserted = true;
@@ -214,6 +227,7 @@ export function renderClash(input: RenderInput): RenderOutput {
     const members: unknown[] = [];
     let swapped = false;
     for (const m of g.proxies) {
+      if (typeof m === 'string' && withheldNames.has(m)) continue;
       if (typeof m === 'string' && templateSet.has(m)) {
         if (!swapped) {
           swapped = true;
@@ -245,16 +259,21 @@ export function renderClash(input: RenderInput): RenderOutput {
     });
   }
   const stringify = (d: unknown) => YAML.stringify(d, { lineWidth: 0 });
-  if (!input.rule.dropTemplateEntries) {
+  const withheldOut = withheld.length > 0 ? { withheld: withheld.map((w) => w.identity) } : {};
+  if (!input.rule.dropTemplateEntries && withheldNames.size === 0) {
     return {
       body: stringify({ ...doc, proxies: nextProxies, 'proxy-groups': nextGroups }),
       applied: true,
       emitted: emitted.length,
       listeners: matches,
+      ...withheldOut,
     };
   }
 
-  const removed = new Set<string>(templateSet);
+  const removed = new Set<string>([
+    ...(input.rule.dropTemplateEntries ? templateSet : []),
+    ...withheldNames,
+  ]);
   let list = nextGroups;
   for (let changed = true; changed; ) {
     changed = false;
@@ -294,6 +313,7 @@ export function renderClash(input: RenderInput): RenderOutput {
     ...(dropOnly ? { reason: 'templates_dropped' } : {}),
     emitted: emitted.length,
     listeners: matches,
+    ...withheldOut,
   };
 }
 

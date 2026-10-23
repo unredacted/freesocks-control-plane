@@ -11,7 +11,9 @@
  * `GET /cloud/project/{sn}/operation/{id}`. The children the compound call
  * mints (floating IP, gateway) are ledgered as soon as they are discoverable:
  * the poll that sees the operation complete looks them up by their FCP names,
- * and describe()/discover() adopt any the ledger still lacks.
+ * and describe()/discover() adopt any the ledger still lacks. A create the API
+ * refuses for good (a 4xx) started no operation: the run stops on
+ * `create_refused` with the provider's words (`refusedCreate`).
  *
  * Discovery: balancers are listed by our deterministic name; absence is
  * confirmed only after >= 2 quiet looks AND `discoverySettleMs` since the step
@@ -45,6 +47,7 @@ import {
   EdgeProviderError,
   credentialTestFailure,
   noteDiscoverError,
+  refusedCreate,
 } from './http';
 import { OVH_ENDPOINTS, ovhSignedHeaders } from './ovhSign';
 import { OvhTemplate, OVH_TEMPLATE_FIELDS, type OvhTemplateParams } from './templates';
@@ -527,14 +530,25 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
         retryable: false,
         timedOut: false,
       });
-    const op = await ovh(
-      cfg,
-      step.id,
-      'POST',
-      `${base(cfg)}/loadbalancing/loadbalancer`,
-      Operation,
-      ovhLbBody(cfg, spec, tpl),
-    );
+    let op: z.infer<typeof Operation>;
+    try {
+      op = await ovh(
+        cfg,
+        step.id,
+        'POST',
+        `${base(cfg)}/loadbalancing/loadbalancer`,
+        Operation,
+        ovhLbBody(cfg, spec, tpl),
+      );
+    } catch (e) {
+      // One request builds everything: refused for good, it built nothing. A
+      // request signed with a stale clock (`QUERY_TIME_OUT`) is not a refusal
+      // of what it asked for.
+      const stale = e instanceof EdgeProviderError && e.meta.code === 'QUERY_TIME_OUT';
+      const refused = stale ? null : refusedCreate(e, 'create_refused');
+      if (refused) return refused;
+      throw e;
+    }
     return { status: 'requested', opRef: op.id, resources: [] };
   },
 

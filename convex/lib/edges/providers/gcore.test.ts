@@ -135,6 +135,42 @@ describe('gcore: provisioning steps', () => {
     expect(stub.calls[0].headers.authorization).toBe('APIKey SECRET_GCORE_KEY');
   });
 
+  test('a create Gcore refuses for good (400 validation-error) stops the run with its words; a conflict, a rate limit, a fault or a timeout stay unknown', async () => {
+    const [step] = gcoreProvider.planProvision(cfg, spec, tpl);
+    const refusal = {
+      error_code: 'validation-error',
+      message: '1 input is not valid',
+      errors: [{ loc: 'listeners.0.allowed_cidrs.0', msg: '192.0.2.10/24 has host bits set' }],
+    };
+    mockFetch(() => jsonRes(refusal, 400));
+    const out = await gcoreProvider.runStep(cfg, step, spec, tpl, emptyLedger);
+    expect(out).toMatchObject({
+      status: 'partial',
+      resources: [],
+      code: 'create_refused',
+      refused: true,
+    });
+    const detail = out.status === 'partial' ? (out.detail ?? '') : '';
+    expect(detail).toContain('1 input is not valid');
+    expect(detail).toContain('has host bits set');
+    // Address literals and the key never travel.
+    expect(detail).not.toContain('192.0.2.10');
+    expect(detail).not.toContain('SECRET_GCORE_KEY');
+    for (const status of [408, 409, 429, 500, 503]) {
+      mockFetch(() => jsonRes({ message: 'try later' }, status));
+      const err = await gcoreProvider.runStep(cfg, step, spec, tpl, emptyLedger).catch((e) => e);
+      expect(err.meta.status).toBe(status);
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+      }),
+    );
+    const timedOut = await gcoreProvider.runStep(cfg, step, spec, tpl, emptyLedger).catch((e) => e);
+    expect(timedOut.meta).toMatchObject({ timedOut: true });
+  });
+
   test('pollStep maps FINISHED → done with every created resource, ERROR → partial, else requested', async () => {
     const [step] = gcoreProvider.planProvision(cfg, spec, tpl);
     mockFetch(() =>

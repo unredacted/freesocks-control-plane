@@ -29,6 +29,7 @@ import type { Id } from '../_generated/dataModel';
 import type { CountryContext } from './edges/assignment';
 import { classifyClient } from './edges/clientFamilies';
 import { applyEdgeRender } from './edges/renderPipeline';
+import { withheldNoteDue } from './edges/withheld';
 import type { ResolvedWhere } from './edges/sni/country';
 import { resolveClientIp, resolveCountry } from './http';
 import { memberWhere, nextGuess, steeringCountry, type CountryFields } from './memberCountry';
@@ -206,6 +207,29 @@ export type DeliveryOutcome =
   | { kind: 'refuse'; reason: string };
 
 /**
+ * Tell the operator a render left entries out (`PipelineResult.withheld`):
+ * scheduled, never awaited, at most once a minute per origin (the decision
+ * carries when it was last noted), and best effort like the refusal counter.
+ */
+export async function noteWithheldEntries(
+  ctx: Pick<ActionCtx, 'scheduler'>,
+  rctx: { relayId: Id<'relays'>; withheldNotedAt: number | null },
+  withheld: ReadonlyArray<string | null> | undefined,
+  now: number,
+): Promise<void> {
+  if (!withheld || withheld.length === 0 || !withheldNoteDue(rctx.withheldNotedAt, now)) return;
+  try {
+    await ctx.scheduler.runAfter(0, internal.edgeHostHides.noteWithheld, {
+      relayId: rctx.relayId,
+      count: withheld.length,
+      remarks: withheld.filter((r): r is string => r !== null),
+    });
+  } catch {
+    /* the note is best effort */
+  }
+}
+
+/**
  * Decide, render and relabel one fetched body. A place an origin covers gets a
  * rendered body that passed every check, or a refusal (a `DELIVERY_UNAVAILABLE_CODES`
  * reason, counted per reason here); a place none covers passes through. The
@@ -303,6 +327,7 @@ export async function deliverBody(
           edgeCountry: location.edgeCountry,
         });
         if (out.delivery.kind !== 'serve') return refuse(out.delivery.reason);
+        await noteWithheldEntries(ctx, rctx, out.withheld, now);
         body = out.body;
         epoch = rctx.epoch;
         passValidUntil = out.validUntil;

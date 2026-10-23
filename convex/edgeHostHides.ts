@@ -47,6 +47,7 @@ import {
   type DirectHostContext,
 } from './lib/edges/directHosts';
 import { relayRemarkRegex, sameAddress } from './lib/edges/hosts';
+import { withheldFresh, withheldNoteDue } from './lib/edges/withheld';
 import { deliveryBindingFor } from './relays';
 import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
 import { listenerRemark, listenersOf } from './relayListeners';
@@ -168,6 +169,8 @@ export interface HideContext {
   nodeName: string | null;
   /** Deployed, enabled, non-retired listeners with a backend transport. */
   listenerInboundUuids: string[];
+  /** The backend config profiles those transports belong to (the node's own). */
+  configProfileUuids: string[];
   fcpRemarks: string[];
   legacyHostUuids: string[];
   bound: boolean;
@@ -194,6 +197,7 @@ async function hideContext(
     backendServerId: relay.backendServerId,
     nodeName: relay.nodeName ?? null,
     listenerInboundUuids: live.map((l) => l.panelBinding!.configProfileInboundUuid),
+    configProfileUuids: [...new Set(live.map((l) => l.panelBinding!.configProfileUuid))],
     fcpRemarks,
     legacyHostUuids,
     bound: !!binding && binding.relaySlug === relay.slug,
@@ -519,19 +523,72 @@ export const setDirectHostAlert = internalMutation({
   },
 });
 
-/** Origins the reconcile direct-Host check looks at: bound, guided (hide rows), not deleting, no restore. */
-export const boundGuidedRelays = internalQuery({
+/** Names kept per note (an entry's name is its backend Host remark). */
+const MAX_WITHHELD_REMARKS = 20;
+
+/**
+ * A member render left entries out (`RenderOutput.withheld`: on a covered
+ * transport, at an address FCP cannot place, so possibly the node by a name it
+ * never saw): kept on the origin so attention `direct_host_reappeared` stays
+ * raised while renders keep doing so, and lapses `WITHHELD_ALERT_MS` after the
+ * last note (lib/edges/withheld.ts). Audited when a stretch begins. Never an
+ * address: names only.
+ */
+export const noteWithheld = internalMutation({
+  args: { relayId: v.id('relays'), count: v.number(), remarks: v.array(v.string()) },
+  handler: async (ctx, { relayId, count, remarks }) => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay) return null;
+    const now = Date.now();
+    const prev = relay.withheldEntries;
+    if (prev && !withheldNoteDue(prev.at, now)) return null;
+    const kept = [...new Set(remarks)].slice(0, MAX_WITHHELD_REMARKS);
+    const ongoing = withheldFresh(prev, now);
+    await ctx.db.patch(relayId, {
+      withheldEntries: { at: now, since: ongoing ? prev.since : now, count, remarks: kept },
+    });
+    if (!ongoing)
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'edge.render.withheld',
+        targetType: 'relay',
+        targetId: relayId,
+        payload: { relaySlug: relay.slug, count, remarks: kept },
+      });
+    return null;
+  },
+});
+
+/** Rollback (docs/edges.md "Deploy notes"): the older schema has no `withheldEntries`. */
+export const clearWithheldForRollback = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let cleared = 0;
+    for (const relay of await ctx.db.query('relays').collect()) {
+      // small operator table
+      if (!relay.withheldEntries) continue;
+      await ctx.db.patch(relay._id, { withheldEntries: undefined });
+      cleared++;
+    }
+    return { cleared };
+  },
+});
+
+/**
+ * Origins the reconcile direct-Host check looks at: every BOUND origin whose
+ * Hosts FCP can read (a backend server, a Host mode other than `none`),
+ * enabled, not deleting, no restore running. Whether it ever hid a Host does
+ * not matter: a node whose Hosts FCP built itself has no hide row, and a
+ * direct Host added to it after go-live must be seen all the same.
+ */
+export const boundRelays = internalQuery({
   args: {},
   handler: async (ctx): Promise<Id<'relays'>[]> => {
     const relays = await ctx.db.query('relays').collect(); // small operator table
     const out: Id<'relays'>[] = [];
     for (const relay of relays) {
       if (relay.deleting || relay.restore || !relay.enabled || !relay.backendServerId) continue;
-      const anyRow = await ctx.db
-        .query('edgeHostHides')
-        .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
-        .first();
-      if (!anyRow) continue;
+      if (relay.hostMode === 'none') continue;
       const binding = await deliveryBindingFor(
         ctx.db,
         relay.backendServerId,
@@ -572,7 +629,10 @@ function liveOf(h: BackendHost | undefined) {
  * discovered transports), plus the listeners' own transports, plus the transport of
  * every Host that dials the origin address (the address IS the node, so a Host
  * pointing at it belongs to the node whatever transport it sits on). No backend
- * transport discovery is needed here.
+ * transport discovery is needed here. Without discovered transports (the
+ * reconcile's look), every transport of the node's own config profiles counts
+ * too: a Host added there by a name is then looked up, and is the node only
+ * when the name answers with one of its addresses.
  */
 function nodeInbounds(
   c: HideContext,
@@ -581,11 +641,13 @@ function nodeInbounds(
 ): string[] {
   const set = new Set(c.listenerInboundUuids.map((u) => u.toLowerCase()));
   if (known) for (const u of known) set.add(u.toLowerCase());
+  const profiles = new Set(c.configProfileUuids.map((u) => u.toLowerCase()));
   for (const h of hosts) {
     const inbound = h.inbound?.configProfileInboundUuid;
+    if (!inbound) continue;
     if (
-      inbound &&
-      [c.relay.originAddress, ...c.alsoAddresses].some((a) => sameAddress(h.address, a))
+      [c.relay.originAddress, ...c.alsoAddresses].some((a) => sameAddress(h.address, a)) ||
+      (!known && profiles.has(h.inbound?.configProfileUuid?.toLowerCase() ?? ''))
     )
       set.add(inbound.toLowerCase());
   }
@@ -915,87 +977,100 @@ export const observe = internalAction({
 });
 
 /**
- * The reconcile check for BOUND guided origins (the observation boundary's
- * "caught afterwards"): a direct Host that reappeared is re-hidden when it is
- * covered by a listener or was approved before (a hide row exists for it);
- * otherwise attention `direct_host_reappeared` is raised. Suppressed while the
- * origin's restore workflow runs (`boundGuidedRelays` excludes it).
+ * The reconcile check for every BOUND origin (the observation boundary's
+ * "caught afterwards"; `boundRelays`): a direct Host that reappeared, or was
+ * added after go-live, is hidden when it is covered by a listener or was
+ * approved before (a hide row exists for it); otherwise attention
+ * `direct_host_reappeared` is raised. Suppressed while the origin's restore
+ * workflow runs. One origin that cannot be looked at never stops the others.
  */
 export const reobserveDirect = internalAction({
   args: {},
   handler: async (ctx): Promise<{ relays: number; rehidden: number; alerted: number }> => {
-    const ids = await ctx.runQuery(internal.edgeHostHides.boundGuidedRelays, {});
+    const ids = await ctx.runQuery(internal.edgeHostHides.boundRelays, {});
     const report = { relays: 0, rehidden: 0, alerted: 0 };
     for (const relayId of ids) {
-      const c0 = await ctx.runQuery(internal.edgeHostHides.context, { relayId });
-      if (!c0 || c0.relay.restore) continue;
-      let hosts: BackendHost[];
       try {
-        hosts = await listPanelHosts(ctx, c0.backendServerId);
-      } catch {
-        continue;
-      }
-      report.relays++;
-      let c: HideContext;
-      try {
-        c = await withNodeNames(ctx, c0, hosts, nodeInbounds(c0, hosts, undefined));
+        const one = await reobserveOne(ctx, relayId);
+        if (!one) continue;
+        report.relays++;
+        report.rehidden += one.rehidden;
+        if (one.alerted) report.alerted++;
       } catch (err) {
-        if ((err as ConvexError<{ code?: string }>).data?.code !== TOO_MANY_HOST_NAMES) throw err;
-        // Too many names to check: every Host that could be the node is raised
-        // for the operator rather than assumed not to be.
-        const unchecked = nodeNameHosts(
-          hosts,
-          directContextOf(c0, nodeInbounds(c0, hosts, undefined)),
-        ).filter((h) => !h.isDisabled);
-        await ctx.runMutation(internal.edgeHostHides.setDirectHostAlert, {
-          relayId,
-          hosts: unchecked.map((h) => ({
-            uuid: h.uuid,
-            remark: h.remark,
-            inboundUuid: h.inbound?.configProfileInboundUuid ?? null,
-          })),
-        });
-        report.alerted++;
-        continue;
+        console.warn(
+          `[edge-reconcile] direct hosts of one origin: ${err instanceof Error ? err.name : 'error'}`,
+        );
       }
-      const st = await ctx.runQuery(internal.edgeHostHides.status, { relayId });
-      const approved = new Set(
-        st.rows.filter((r) => r.intent === 'disable').map((r) => r.hostUuid),
-      );
-      const known = nodeInbounds(c, hosts, undefined);
-      const dctx = directContextOf(c, known, conventionRemarks(hosts, c.nodeName));
-      const enabledDirect = hosts.filter((h) => !h.isDisabled && isDirectHost(h, dctx));
-      const covered = new Set(c.listenerInboundUuids.map((u) => u.toLowerCase()));
-      const alerts: Array<{ uuid: string; remark: string; inboundUuid: string | null }> = [];
-      const remarks: string[] = [];
-      for (const h of enabledDirect) {
-        const d = toDirectHost(h);
-        if (covered.has(d.inboundUuid.toLowerCase()) || approved.has(h.uuid)) {
-          const out = await writeHostBit(ctx, {
-            relayId,
-            backendServerId: c.backendServerId,
-            host: h,
-            intent: 'disable',
-          });
-          if (out === 'confirmed') {
-            report.rehidden++;
-            remarks.push(h.remark);
-          } else if (out === 'failed')
-            alerts.push({ uuid: h.uuid, remark: h.remark, inboundUuid: d.inboundUuid });
-        } else alerts.push({ uuid: h.uuid, remark: h.remark, inboundUuid: d.inboundUuid || null });
-      }
-      if (remarks.length > 0)
-        await ctx.runMutation(internal.edgeHostHides.recordHidden, {
-          relayId,
-          remarks,
-          rehidden: true,
-        });
-      await ctx.runMutation(internal.edgeHostHides.setDirectHostAlert, { relayId, hosts: alerts });
-      if (alerts.length > 0) report.alerted++;
     }
     return report;
   },
 });
+
+/** One bound origin's look; null when its Hosts could not be read (unknown is not an observation). */
+async function reobserveOne(
+  ctx: ActionCtx,
+  relayId: Id<'relays'>,
+): Promise<{ rehidden: number; alerted: boolean } | null> {
+  const c0 = await ctx.runQuery(internal.edgeHostHides.context, { relayId });
+  if (!c0 || c0.relay.restore) return null;
+  let hosts: BackendHost[];
+  try {
+    hosts = await listPanelHosts(ctx, c0.backendServerId);
+  } catch {
+    return null;
+  }
+  let c: HideContext;
+  try {
+    c = await withNodeNames(ctx, c0, hosts, nodeInbounds(c0, hosts, undefined));
+  } catch (err) {
+    if ((err as ConvexError<{ code?: string }>).data?.code !== TOO_MANY_HOST_NAMES) throw err;
+    // Too many names to check: every Host that could be the node is raised
+    // for the operator rather than assumed not to be.
+    const unchecked = nodeNameHosts(
+      hosts,
+      directContextOf(c0, nodeInbounds(c0, hosts, undefined)),
+    ).filter((h) => !h.isDisabled);
+    await ctx.runMutation(internal.edgeHostHides.setDirectHostAlert, {
+      relayId,
+      hosts: unchecked.map((h) => ({
+        uuid: h.uuid,
+        remark: h.remark,
+        inboundUuid: h.inbound?.configProfileInboundUuid ?? null,
+      })),
+    });
+    return { rehidden: 0, alerted: true };
+  }
+  const st = await ctx.runQuery(internal.edgeHostHides.status, { relayId });
+  const approved = new Set(st.rows.filter((r) => r.intent === 'disable').map((r) => r.hostUuid));
+  const known = nodeInbounds(c, hosts, undefined);
+  const dctx = directContextOf(c, known, conventionRemarks(hosts, c.nodeName));
+  const enabledDirect = hosts.filter((h) => !h.isDisabled && isDirectHost(h, dctx));
+  const covered = new Set(c.listenerInboundUuids.map((u) => u.toLowerCase()));
+  const alerts: Array<{ uuid: string; remark: string; inboundUuid: string | null }> = [];
+  const remarks: string[] = [];
+  for (const h of enabledDirect) {
+    const d = toDirectHost(h);
+    if (covered.has(d.inboundUuid.toLowerCase()) || approved.has(h.uuid)) {
+      const out = await writeHostBit(ctx, {
+        relayId,
+        backendServerId: c.backendServerId,
+        host: h,
+        intent: 'disable',
+      });
+      if (out === 'confirmed') remarks.push(h.remark);
+      else if (out === 'failed')
+        alerts.push({ uuid: h.uuid, remark: h.remark, inboundUuid: d.inboundUuid });
+    } else alerts.push({ uuid: h.uuid, remark: h.remark, inboundUuid: d.inboundUuid || null });
+  }
+  if (remarks.length > 0)
+    await ctx.runMutation(internal.edgeHostHides.recordHidden, {
+      relayId,
+      remarks,
+      rehidden: true,
+    });
+  await ctx.runMutation(internal.edgeHostHides.setDirectHostAlert, { relayId, hosts: alerts });
+  return { rehidden: remarks.length, alerted: alerts.length > 0 };
+}
 
 /**
  * The restore phase's work on ONE confirmed disable row: re-observe; still

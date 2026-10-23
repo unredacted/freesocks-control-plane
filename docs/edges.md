@@ -761,7 +761,19 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    backup when the first stops working (`hero.relayBackupHint`).
    An L7 edge renders as ONE entry (its hostname). A backend that hands out a single access
    key (Outline) renders in **single-key** style: one entry, no backup, no auto group;
-5. checks every outgoing entry, emitted AND retained, against the node by any of its
+5. leaves out every RETAINED entry FCP cannot place: one that speaks what a listener speaks
+   (its scheme, transport and security agree with a listener's) and is neither a template
+   entry nor at an address of one of the origin's published edges, nor at an address the node
+   is known by (the next check refuses those). Such an entry may be the node by a name no look
+   has resolved yet, a Host added since the last pass of the reconcile check, so it never
+   leaves: link lines are dropped, sing-box outbounds and Clash proxies are removed with every
+   group membership, default and rule naming them (the same pruning as a dropped template).
+   The body is still served. The render notes it on the origin (`edgeHostHides.noteWithheld`,
+   scheduled, at most once a minute per origin: `relays.withheldEntries`, the entries' names,
+   never an address), which keeps attention `direct_host_reappeared` raised for 15 minutes
+   after the last note (`lib/edges/withheld.ts`) and is audited `edge.render.withheld` when a
+   stretch begins. An entry on a transport no listener speaks passes as before;
+6. checks every outgoing entry, emitted AND retained, against the node by any of its
    addresses (the origin and the node's address set below, IPs compared as the address they
    are, however written: `leak_detected`), and persists an **eligibility snapshot** (`subscriptions.lastRender`:
    epoch, family, resolved listeners, primary/backup edge) that the member's connection labels
@@ -1395,7 +1407,9 @@ resolve to the node (`relays.nodeAddresses`). IP literals compare as the address
 (`canonicalIp`: `2001:db8:0:0::10` is `2001:db8::10`, `::ffff:192.0.2.10` is `192.0.2.10`).
 The plan, the hide, the rehearsal's Host observations and the re-observation resolve (A and
 AAAA, `nodeIntentOps.resolveNames`) EVERY name a Host on the node's transports dials that would
-make it a direct Host if it were the node: past 200 names one look refuses
+make it a direct Host if it were the node (a look with no discovered transports, the reconcile's
+re-observation among them, counts every transport of the node's own config profiles, so a Host
+added there by a name is looked up whatever transport it sits on): past 200 names one look refuses
 (`edge.too_many_host_names`: the plan and the hide stop, the re-observation raises those Hosts as
 `direct_host_reappeared`) rather than leave one unchecked; a name answering with one of the node's addresses is the node, and so
 is everything it answers (its other family). Such names are kept on the origin once found (the
@@ -1420,13 +1434,19 @@ back as `reviewChanged`), `status`, `settle` (reconcile-driven), `observe` (a ha
 the node's direct + FCP Hosts with their disabled bit, for the rehearsal's observation
 boundary). Audited `edge.host.hidden` (counts + remarks, never an address).
 
-**Reconcile check for bound guided origins** (`hostOps.reconcileHosts` → `reobserveDirect`):
+**Reconcile check for every bound origin** (`hostOps.reconcileHosts` → `reobserveDirect`):
 delivery is fail-closed, so a direct Host re-enabled or added behind FCP's back makes every
-render `leak_detected` (503) rather than leak the origin. The pass re-observes the direct Hosts
-of every bound origin with hide rows: a covered or previously approved one is **re-hidden**
-(audited `edge.host.hidden` with `rehidden`); any other raises attention
-`direct_host_reappeared` (critical, `relays.directHostAlert`, cleared when the next pass sees
-none). Both are suppressed while a restore workflow runs.
+render `leak_detected` (503) rather than leak the origin, and an entry the render cannot place
+is left out (§ "Rendering"). The pass re-observes the direct Hosts of EVERY bound origin
+(`boundRelays`: enabled, not deleting, no restore running, a backend server, a Host mode other
+than `none`, an active delivery binding for its slug), whether or not it ever hid a Host: a node
+whose Hosts FCP built itself has no hide row, and a direct Host added to it after go-live, by
+address or by a name that resolves to it, is caught all the same. A covered or previously
+approved one is **hidden** (audited `edge.host.hidden` with `rehidden`); any other raises
+attention `direct_host_reappeared` (critical, `relays.directHostAlert`, cleared when the next
+pass sees none). Both are suppressed while a restore workflow runs. An origin whose Hosts cannot
+be read is skipped for that pass (unknown is not an observation), and one that fails does not
+stop the others.
 
 **The restore workflow** (`relays.restore {purpose, phase, ...}`, `convex/edgeRestore.ts`;
 `edgeRestore.step` advances one phase, and each `edge-reconcile` tick chains steps until a phase
@@ -1515,7 +1535,20 @@ any point, and never writes twice what it cannot prove:
   refused the same way: the run fails on that code at once, the edge (not only the step) needs
   an operator, so its `needs_operator` attention stays raised while its billed resources
   exist, and what was built stays so the operator can read the provider's reason at the
-  provider (FCP keeps only the code).
+  provider. **A create the provider refuses for good** is such a step on every adapter
+  (`refusedCreate`, `providers/http.ts`): a 4xx answer to the create call (a validation error,
+  a forbidden call, a quota), but never 404, 408, 409, 412, 423, 425 or 429 (what was asked
+  for may exist already, or the state passes) and never a 5xx, a timeout or a network error,
+  which stay unknown and go to discovery. It ends the run at once on `create_refused`
+  (Scaleway's address allocation on `ip_allocation_refused`, Cloudflare's header rule on
+  `header_rule_forbidden`, Fastly's WebSockets product on `websockets_not_entitled`, CloudFront's
+  distribution on its own codes) with the provider's words, scrubbed (§ "The provider's
+  answer"), instead of sending the same request until `step_retries_exhausted`. Each adapter
+  applies it only where the refused call is the step's one create, so nothing built by the
+  step is left off the ledger: Gcore's and OVH's compound create, each UpCloud and Scaleway
+  step, Cloudflare's record and rules, Fastly's service, backend, snippets, domain, certificate
+  and records, CloudFront's records. An OVH request signed with a clock it no longer accepts
+  (`QUERY_TIME_OUT`) is not a refusal of what it asked for.
 - **Hosts.** The Host plan is captured **per listener** from the live listing; when FCP owns the
   Hosts and none exists for the listener yet, the flip CREATES it through the Host state
   machine. The forward write is claimed before it is sent (`forwardWriteAttempted`), so a write
@@ -1552,7 +1585,7 @@ matches the live rows (`edgeVerification.reconcilePartialRungs`: a re-addressed 
 changed listener no probe has settled on since); settles edges with unknown outcomes by
 discovery; refreshes provider health; renews L7 proofs; re-observes unresolved Host operations
 and deletes the FCP-owned Hosts of retired listeners and deleting origins (read-back confirmed);
-settles the direct-Host hide ledger and re-observes the direct Hosts of bound guided origins;
+settles the direct-Host hide ledger and re-observes the direct Hosts of every bound origin;
 advances each restore workflow until a phase must wait; removes expired or released temporary
 test keys (`edgeTestCredentials.sweep`, bounded retries, then attention `test_key_cleanup`);
 reads the plans and prices of up to two locations a day old (§ "Plans and prices");
@@ -2926,9 +2959,10 @@ project differs never sends that edge's discovery, describe or destroy to anothe
 still passes its test, but a location with neither reads `project_unresolved` (`placeProblemOf`:
 the plan, selection and the set judge it so) and is not offered until it names a Project id, so
 nothing fails at provisioning; the adapter refuses a create with no project rather than send
-it. A Scaleway 400 on an address allocation ends the run at once as `ip_allocation_refused`
-(the same arguments would be refused again), with the provider's words (§ "The provider's
-answer").
+it. A Scaleway refusal for good (a 400, a quota) on an address allocation ends the run at once
+as `ip_allocation_refused`, and on the load balancer, backend or frontend as `create_refused`
+(the same arguments would be refused again; a busy LB's 409 or 412 is not one), with the
+provider's words (§ "The provider's answer").
 
 **Scaleway sizes** (`convex/lib/edges/sizeCheck.ts`). Only Scaleway's multi-cloud load
 balancer sizes accept a backend server hosted outside Scaleway; the standard ones (LB-S,
@@ -3733,7 +3767,12 @@ allocates anything):
   credential test (`observedSettings.zonePlan`); a zone never tested since is not refused here.
 
 Write rules (on a template or a pick, `WRITE_CHECKS`) also cover Fastly: the lowest backend TLS
-version may not be above the highest, and keepalive timings need keepalive on.
+version may not be above the highest, and keepalive timings need keepalive on. **Allowed client
+ranges** (Gcore, OVH) must be ranges (`parseCidr`, `lib/edges/ip.ts`; IPv4 only on OVH and on
+an IPv4-only Gcore edge) written from where they start: `192.0.2.10/24` is refused with the
+range to write (`192.0.2.0/24`), since Gcore answers such a range with a bare
+`400 validation-error`. A template saved before the rule still parses; its create is then
+refused at once (`create_refused`) with the provider's words.
 
 **The member's address at a Fastly front.** Fastly sets `Fastly-Client-IP` and adds the
 member's address to `X-Forwarded-For` on the incoming request, before any VCL runs (its header
@@ -4247,6 +4286,22 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Every bound origin re-observed, unplaced entries left out, refusals for good** add one
+optional field (`relays.withheldEntries`): one deploy, no migration, no env change. From the
+first reconcile pass after the deploy, every bound origin's Hosts are listed each pass (one
+listing per origin, plus a name lookup for each Host on the node's config profiles that dials a
+name), and a direct Host found on a node that never hid one is hidden (covered) or raised
+(uncovered) like any other. Member renders on a bound node leave out an entry on a covered
+transport at an address that is neither an edge nor the node by a known address, and raise
+`direct_host_reappeared` for it: a Host an operator added by hand on a protected node's
+transport (a front FCP does not manage, say) stops reaching members, and the attention names it.
+A mirror rendered before the deploy keeps its body until its next render (the six-hourly sweep,
+or at once when its origin's epoch moves, as a recorded node name does). A provider's refusal for good of a create now ends the run at once (`create_refused`); a saved
+template whose allowed client range starts inside its range is refused when it is next saved.
+To roll back, run `edgeHostHides:clearWithheldForRollback` with no arguments right before
+deploying the older build: its schema has no such field, so a push refuses any origin that holds
+one (a render may note one again in between; run it again if the push is refused).
 
 **Sustained unreachability** adds optional fields only (`probeReachability.failStreak`,
 `failStreakSince`, `streakNetworks`; `neverReached` on each country of a reachability summary;

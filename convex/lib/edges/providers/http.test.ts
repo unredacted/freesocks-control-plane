@@ -8,6 +8,8 @@ import {
   scrubNames,
   EdgeProviderError,
   MAX_RESPONSE_BYTES,
+  isDefiniteRefusal,
+  refusedCreate,
   toProviderError,
 } from './http';
 import { errorBlob, jsonRes, mockFetch } from '../testing/mockFetch';
@@ -146,6 +148,42 @@ describe('providerFetch', () => {
     expect((err as Error).message).toContain('schema mismatch');
     expect((err as Error).message).toContain('[ok]');
     expect((err as Error).message).not.toContain('yes-secret-value');
+  });
+});
+
+describe('refusedCreate: a create the provider refused for good', () => {
+  const failure = (status: number | undefined, timedOut = false) =>
+    new EdgeProviderError('x', {
+      provider: 'gcore',
+      step: 'lb',
+      status,
+      retryable: false,
+      timedOut,
+    });
+
+  test('a validation error, a forbidden call or a quota; never a conflict, a wait, a fault or a timeout', () => {
+    for (const status of [400, 401, 402, 403, 413, 422])
+      expect(isDefiniteRefusal(failure(status))).toBe(true);
+    for (const status of [404, 408, 409, 412, 423, 425, 429, 500, 502, 503])
+      expect(isDefiniteRefusal(failure(status))).toBe(false);
+    expect(isDefiniteRefusal(failure(undefined, true))).toBe(false);
+    expect(isDefiniteRefusal(new Error('boom'))).toBe(false);
+  });
+
+  test("the outcome stops the run on the code with the provider's words held aside", async () => {
+    mockFetch(() =>
+      jsonRes({ message: '1 input is not valid', error_code: 'validation-error' }, 400),
+    );
+    const err = await providerFetch(args()).catch((e: unknown) => e);
+    expect(refusedCreate(err, 'create_refused')).toEqual({
+      status: 'partial',
+      resources: [],
+      code: 'create_refused',
+      refused: true,
+      detail: expect.stringContaining('1 input is not valid'),
+    });
+    mockFetch(() => jsonRes({ message: 'busy' }, 409));
+    expect(refusedCreate(await providerFetch(args()).catch((e: unknown) => e), 'x')).toBeNull();
   });
 });
 

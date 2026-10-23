@@ -26,6 +26,11 @@
  * `reapply` saves the frontend again unchanged, for a guided run whose
  * outside check finds the new address unreachable.
  *
+ * Refusals: each step is one create, so one Scaleway refuses for good (a 4xx
+ * such as invalid arguments or a quota; not a busy LB's 409 or 412) made
+ * nothing: the run stops at once on `ip_allocation_refused` or
+ * `create_refused` with the provider's words (`createOrRefused`, `refusedCreate`).
+ *
  * Discovery: every resource carries our deterministic name or tag and the
  * listings are authoritative, so each step answers found / confirmed_absent
  * (absent only on a second quiet look: a lost create may not be listed yet).
@@ -73,7 +78,7 @@ import {
   toProviderError,
   credentialTestFailure,
   providerFetch,
-  refusalOf,
+  refusedCreate,
 } from './http';
 import type { ProviderPlan } from '../pricing';
 import { addressFamily } from '../ip';
@@ -399,6 +404,26 @@ async function sdk<T>(cfg: ScalewayConfig, step: string, fn: () => Promise<T>): 
   }
 }
 
+/**
+ * A create through the SDK: what it made, or the provider's refusal for good
+ * as a known outcome (`refusedCreate`: the run stops on `code` with the
+ * provider's words). Any other failure throws: its outcome is unknown.
+ */
+async function createOrRefused<T>(
+  cfg: ScalewayConfig,
+  step: string,
+  fn: () => Promise<T>,
+  code = 'create_refused',
+): Promise<{ value: T } | { refused: StepOutcome }> {
+  try {
+    return { value: await sdk(cfg, step, fn) };
+  } catch (e) {
+    const refused = refusedCreate(e, code);
+    if (refused) return { refused };
+    throw e;
+  }
+}
+
 function isNotFound(e: unknown): boolean {
   return e instanceof EdgeProviderError && e.meta.status === 404;
 }
@@ -676,30 +701,23 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         if (!cfg.projectId)
           return { status: 'partial', resources: [], code: 'project_unresolved', refused: true };
         const projectId = cfg.projectId;
-        let ip;
-        try {
-          ip = await sdk(cfg, step.id, () =>
+        // Scaleway refused the arguments (a 400, a quota): the same call would
+        // be refused again, so the run stops on a known code at once instead of
+        // retrying the step until it gives up.
+        const made = await createOrRefused(
+          cfg,
+          step.id,
+          () =>
             api.createIp({
               projectId,
               isIpv6,
               tags: [spec.name],
               ...(tpl.reverse ? { reverse: tpl.reverse } : {}),
             }),
-          );
-        } catch (e) {
-          // Scaleway refused the arguments (400): the same call would be
-          // refused again, so the run stops on a known code at once instead
-          // of retrying the step until it gives up.
-          if (e instanceof EdgeProviderError && e.meta.status === 400)
-            return {
-              status: 'partial',
-              resources: [],
-              code: 'ip_allocation_refused',
-              refused: true,
-              ...(refusalOf(e) ? { detail: refusalOf(e) } : {}),
-            };
-          throw e;
-        }
+          'ip_allocation_refused',
+        );
+        if ('refused' in made) return made.refused;
+        const ip = made.value;
         return {
           status: 'done',
           resources: [
@@ -717,7 +735,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         const ipIds = [...resourcesOfKind(ledger, 'ip'), ...resourcesOfKind(ledger, 'ipv6')].map(
           (r) => r.resourceId,
         );
-        const lb = await sdk(cfg, step.id, () =>
+        const made = await createOrRefused(cfg, step.id, () =>
           api.createLb({
             name: spec.name,
             description: tpl.description ?? 'origin edge',
@@ -728,6 +746,8 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             tags: [spec.name, ...tpl.tags],
           }),
         );
+        if ('refused' in made) return made.refused;
+        const lb = made.value;
         const created = { kind: 'lb', resourceId: lb.id, ownership: 'created' as const };
         // A new LB is still being built: the backend waits for it (`pollStep`).
         return lbSettleOf(lb.status) === 'ready'
@@ -740,7 +760,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         const timings = scalewayTimings(tpl, step.id);
         const busy = await readyForChange(cfg, api, lb.resourceId, step);
         if (busy) return busy;
-        const backend = await sdk(cfg, step.id, () =>
+        const made = await createOrRefused(cfg, step.id, () =>
           api.createBackend({
             lbId: lb.resourceId,
             name: step.resourceName,
@@ -766,11 +786,12 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             ...(tpl.maxRetries !== undefined ? { maxRetries: tpl.maxRetries } : {}),
           }),
         );
+        if ('refused' in made) return made.refused;
         // The LB applies the backend next: the frontend must not go before it has.
         return {
           status: 'requested',
           opRef: settleRef(lb.resourceId),
-          resources: [{ kind: 'backend', resourceId: backend.id, ownership: 'created' }],
+          resources: [{ kind: 'backend', resourceId: made.value.id, ownership: 'created' }],
         };
       }
       case 'create_frontend': {
@@ -780,7 +801,7 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
         const { frontend: timings } = scalewayTimings(tpl, step.id);
         const busy = await readyForChange(cfg, api, lb.resourceId, step);
         if (busy) return busy;
-        const frontend = await sdk(cfg, step.id, () =>
+        const made = await createOrRefused(cfg, step.id, () =>
           api.createFrontend({
             lbId: lb.resourceId,
             name: step.resourceName,
@@ -792,11 +813,12 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
             ...(tpl.connectionRateLimit ? { connectionRateLimit: tpl.connectionRateLimit } : {}),
           }),
         );
+        if ('refused' in made) return made.refused;
         // Done only once the LB has applied it: members are sent nowhere before that.
         return {
           status: 'requested',
           opRef: settleRef(lb.resourceId),
-          resources: [{ kind: 'frontend', resourceId: frontend.id, ownership: 'created' }],
+          resources: [{ kind: 'frontend', resourceId: made.value.id, ownership: 'created' }],
         };
       }
       default:

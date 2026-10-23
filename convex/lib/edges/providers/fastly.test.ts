@@ -966,10 +966,48 @@ describe('fastly: provisioning', () => {
     const step = fastlyProvider
       .planProvision(cfg, spec, tpl)
       .find((s) => s.kind === 'enable_product')!;
-    const err = await fastlyProvider.runStep(cfg, step, spec, tpl, ledger).catch((e) => e);
-    expect(err.meta.code).toBe('websockets_not_entitled');
-    expect(errorBlob(err)).not.toContain(ORIGIN);
-    expect(errorBlob(err)).not.toContain('SECRET_FASTLY_TOKEN');
+    // Refused for good: the run stops at once on the code, with Fastly's words
+    // (the token never among them; the ops layer scrubs the edge's names, the
+    // origin's included, before they leave the action).
+    const out = await fastlyProvider.runStep(cfg, step, spec, tpl, ledger);
+    expect(out).toMatchObject({
+      status: 'partial',
+      resources: [],
+      code: 'websockets_not_entitled',
+      refused: true,
+    });
+    expect(out.status === 'partial' && out.detail).toContain('Forbidden');
+    expect(JSON.stringify(out)).not.toContain('SECRET_FASTLY_TOKEN');
+  });
+
+  test('a create Fastly refuses for good stops the run with its words; a conflict stays unknown', async () => {
+    await serve((c) =>
+      c.method === 'POST' && c.path === '/service'
+        ? { status: 400, body: { msg: 'Bad request', detail: 'Invalid service type' } }
+        : defaultReply(c),
+    );
+    const step = fastlyProvider
+      .planProvision(cfg, spec, tpl)
+      .find((s) => s.kind === 'create_service')!;
+    const empty = { steps: [], resources: [] };
+    expect(await fastlyProvider.runStep(cfg, step, spec, tpl, empty)).toMatchObject({
+      status: 'partial',
+      resources: [],
+      code: 'create_refused',
+      refused: true,
+      detail: expect.stringContaining('Invalid service type'),
+    });
+    // A conflict (what was asked for may exist) and a fault are not refusals.
+    for (const status of [409, 503]) {
+      await rec!.close();
+      await serve((c) =>
+        c.method === 'POST' && c.path === '/service'
+          ? { status, body: { msg: 'Duplicate record' } }
+          : defaultReply(c),
+      );
+      const err = await fastlyProvider.runStep(cfg, step, spec, tpl, empty).catch((e) => e);
+      expect(err.meta.status).toBe(status);
+    }
   });
 });
 

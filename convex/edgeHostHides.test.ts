@@ -815,3 +815,149 @@ describe('cohorts', () => {
     expect(other).toEqual({ cohorts: [], next: null });
   });
 });
+
+describe('a protected node whose Hosts FCP built itself (no hide rows) is looked at too', () => {
+  afterEach(() => __setNameResolutionForTests(null));
+  const LATE = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1';
+  const BY_NAME = 'node-one.wildcard.example.net';
+  /** The backend holds FCP's template Host only: nothing was ever hidden. */
+  const fcpOnly = () => panelHosts().filter((h) => h.uuid === FCP_UUID);
+  const added = (address: string, inboundUuid = FIXTURE_INBOUND): AddressRow => ({
+    uuid: LATE,
+    remark: `${FIXTURE_NODE}-added`,
+    address,
+    port: 443,
+    sni: 'target.example',
+    isDisabled: false,
+    inbound: inbound(inboundUuid),
+  });
+  const resolveByName = () =>
+    __setNameResolutionForTests(async (name) =>
+      name === BY_NAME ? { v4: [FIXTURE_ORIGIN], v6: [] } : { v4: ['198.51.100.200'], v6: [] },
+    );
+
+  test('a direct Host added after go-live by literal address on a covered transport is hidden by the next pass', async () => {
+    const { t, panel, relayId, rows, download, relay } = await world({ hosts: fcpOnly() });
+    expect(await rows()).toEqual([]);
+    panel.hosts.push(added(FIXTURE_ORIGIN));
+    // Fail-closed meanwhile: the node's own address is never served.
+    expect((await download()).reason).toBe('leak_detected');
+    await t.action(internal.hostOps.reconcileHosts, {});
+    expect(panel.find(LATE).isDisabled).toBe(true);
+    expect((await rows()).map((r) => [r.hostUuid, r.state])).toEqual([[LATE, 'confirmed']]);
+    expect((await relay()).directHostAlert).toBeUndefined();
+    const ok = await download();
+    expect(ok.status).toBe(200);
+    expect(ok.body).not.toContain(FIXTURE_ORIGIN);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.filter((a) => a.action === 'edge.host.hidden').at(-1)?.payload).toMatchObject({
+      rehidden: true,
+      remarks: [`${FIXTURE_NODE}-added`],
+    });
+    // The same check never touches it again while it stays hidden.
+    const before = panel.patches.length;
+    await t.action(internal.edgeHostHides.reobserveDirect, {});
+    expect(panel.patches).toHaveLength(before);
+    void relayId;
+  });
+
+  test('one added by a name that resolves to the node: left out of every body until the next pass hides it', async () => {
+    vi.useFakeTimers();
+    resolveByName();
+    const { t, panel, relayId, download, relay } = await world({ hosts: fcpOnly() });
+    panel.hosts.push(added(BY_NAME));
+    // Before any look: the render cannot resolve the name, so it leaves the
+    // entry out (the body is served) and raises the direct-Host attention.
+    const early = await download();
+    expect(early.status).toBe(200);
+    expect(early.body).not.toContain(BY_NAME);
+    expect(early.body).toContain(EDGE_A);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await relay()).withheldEntries).toMatchObject({
+      count: 1,
+      remarks: [`${FIXTURE_NODE}-added`],
+    });
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.find((i) => i.kind === 'direct_host_reappeared')).toMatchObject({
+      severity: 'critical',
+      relaySlug: FIXTURE_NODE,
+      facts: { count: 1, remarks: [`${FIXTURE_NODE}-added`] },
+    });
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const withheld = audit.filter((a) => a.action === 'edge.render.withheld');
+    expect(withheld).toHaveLength(1);
+    expect(JSON.stringify(withheld[0]!.payload)).not.toContain(BY_NAME);
+    // The pass resolves the name, keeps it as the node's, and hides the Host.
+    await t.action(internal.hostOps.reconcileHosts, {});
+    expect(panel.find(LATE).isDisabled).toBe(true);
+    expect((await relay()).nodeAddresses).toEqual([BY_NAME]);
+    const ok = await download();
+    expect(ok.status).toBe(200);
+    expect(ok.body).not.toContain(BY_NAME);
+    // Re-enabled behind FCP's back now that the name is known: refused outright.
+    panel.find(LATE).isDisabled = false;
+    expect((await download()).reason).toBe('leak_detected');
+    void relayId;
+  });
+
+  test('on a transport no listener covers, by address or by name, it is raised for the operator instead', async () => {
+    resolveByName();
+    for (const address of [FIXTURE_ORIGIN, BY_NAME]) {
+      const { t, panel, relay } = await world({ hosts: fcpOnly() });
+      panel.hosts.push(added(address, WS_INBOUND));
+      await t.action(internal.hostOps.reconcileHosts, {});
+      expect(panel.patches.filter((p) => p.uuid === LATE)).toEqual([]);
+      expect(panel.find(LATE).isDisabled).toBe(false);
+      expect((await relay()).directHostAlert?.hosts.map((h) => h.uuid)).toEqual([LATE]);
+      const attention = await t.query(internal.edgeOperator.attention, {});
+      expect(attention.items.find((i) => i.kind === 'direct_host_reappeared')).toMatchObject({
+        facts: { count: 1, remarks: [`${FIXTURE_NODE}-added`] },
+      });
+    }
+  });
+
+  test('an origin that is not bound, or has no Hosts to read, is not looked at', async () => {
+    const { t, panel, relayId } = await world({ hosts: fcpOnly(), deferred: true });
+    panel.hosts.push(added(FIXTURE_ORIGIN));
+    expect(await t.action(internal.edgeHostHides.reobserveDirect, {})).toEqual({
+      relays: 0,
+      rehidden: 0,
+      alerted: 0,
+    });
+    expect(panel.find(LATE).isDisabled).toBe(false);
+    await t.run((ctx) => ctx.db.patch(relayId, { hostMode: 'none' }));
+    expect(await t.query(internal.edgeHostHides.boundRelays, {})).toEqual([]);
+  });
+});
+
+describe('the direct-Host attention from a render note lapses on its own', () => {
+  test('a note keeps it raised for a while after the last render that left something out', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const { t, relayId } = await world({ hosts: panelHosts().filter((h) => h.uuid === FCP_UUID) });
+    await t.mutation(internal.edgeHostHides.noteWithheld, {
+      relayId,
+      count: 2,
+      remarks: ['a-host'],
+    });
+    const kinds = async () =>
+      (await t.query(internal.edgeOperator.attention, {})).items.map((i) => i.kind);
+    expect(await kinds()).toContain('direct_host_reappeared');
+    const item = (await t.query(internal.edgeOperator.attention, {})).items.find(
+      (i) => i.kind === 'direct_host_reappeared',
+    );
+    // One named, one without a name.
+    expect(item?.facts).toEqual({ count: 2, remarks: ['a-host'] });
+    // A second note inside the minute writes nothing (each is a write).
+    vi.setSystemTime(NOW + 30_000);
+    await t.mutation(internal.edgeHostHides.noteWithheld, { relayId, count: 1, remarks: [] });
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.withheldEntries?.count).toBe(2);
+    vi.setSystemTime(NOW + 16 * 60_000);
+    expect(await kinds()).not.toContain('direct_host_reappeared');
+    // Rollback: the older schema has no such field.
+    expect(await t.mutation(internal.edgeHostHides.clearWithheldForRollback, {})).toEqual({
+      cleared: 1,
+    });
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.withheldEntries).toBeUndefined();
+  });
+});

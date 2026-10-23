@@ -22,6 +22,10 @@
  * Destroy order is by kind: the service first, then the floating IP delegated
  * to it. The API exposes no per-member health, so a running service reports
  * `unknown` (never `online`) — see `memberHealth` in capabilities.ts.
+ *
+ * Each step is one request, so a create the API refuses for good (a 4xx
+ * validation error, a quota) built nothing: the run stops on `create_refused`
+ * with the provider's words (`refusedCreate`).
  */
 import { z } from 'zod';
 import type {
@@ -43,6 +47,7 @@ import {
   EdgeProviderError,
   credentialTestFailure,
   noteDiscoverError,
+  refusedCreate,
 } from './http';
 import {
   EDGE_TEMPLATES,
@@ -395,23 +400,30 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
   async runStep(cfg, step, spec, tpl, ledger): Promise<StepOutcome> {
     switch (step.kind) {
       case 'create_lb': {
-        const lb = await up(
-          cfg,
-          step.id,
-          'POST',
-          `/load-balancer`,
-          Lb,
-          upcloudLbBody(cfg, spec, tpl),
-        );
+        let lb: z.infer<typeof Lb>;
+        try {
+          lb = await up(cfg, step.id, 'POST', `/load-balancer`, Lb, upcloudLbBody(cfg, spec, tpl));
+        } catch (e) {
+          const refused = refusedCreate(e, 'create_refused');
+          if (refused) return refused;
+          throw e;
+        }
         return {
           status: 'done',
           resources: [{ kind: 'lb', resourceId: lb.uuid, ownership: 'created' }],
         };
       }
       case 'allocate_ip': {
-        const res = await up(cfg, step.id, 'POST', `/ip_address`, FloatingIpCreate, {
-          ip_address: { zone: cfg.zone, floating: 'yes', family: 'IPv4' },
-        });
+        let res: z.infer<typeof FloatingIpCreate>;
+        try {
+          res = await up(cfg, step.id, 'POST', `/ip_address`, FloatingIpCreate, {
+            ip_address: { zone: cfg.zone, floating: 'yes', family: 'IPv4' },
+          });
+        } catch (e) {
+          const refused = refusedCreate(e, 'create_refused');
+          if (refused) return refused;
+          throw e;
+        }
         const address = res.ip_address.address;
         return {
           status: 'done',
@@ -432,16 +444,22 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
             retryable: false,
             timedOut: false,
           });
-        await up(
-          cfg,
-          step.id,
-          'POST',
-          `/load-balancer/${encodeURIComponent(lb.resourceId)}/ip-addresses`,
-          z.unknown(),
-          // The address and the service network it listens on (the public one
-          // the create body names).
-          { address: ip.resourceId, network_name: 'public' },
-        );
+        try {
+          await up(
+            cfg,
+            step.id,
+            'POST',
+            `/load-balancer/${encodeURIComponent(lb.resourceId)}/ip-addresses`,
+            z.unknown(),
+            // The address and the service network it listens on (the public one
+            // the create body names).
+            { address: ip.resourceId, network_name: 'public' },
+          );
+        } catch (e) {
+          const refused = refusedCreate(e, 'create_refused');
+          if (refused) return refused;
+          throw e;
+        }
         return { status: 'done', resources: [], addresses: { v4: ip.resourceId } };
       }
       default:

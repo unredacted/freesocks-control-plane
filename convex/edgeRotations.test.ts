@@ -2155,6 +2155,69 @@ describe('edgeRotations: a provision step that keeps failing', () => {
     expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!.status).toBe('destroyed');
   });
 
+  test('a create the provider refuses for good ends the run at once, with its words, and is never sent again', async () => {
+    vi.useFakeTimers();
+    let lbCreates = 0;
+    mockFetch((c) => {
+      if (new URL(c.url).hostname === 'panel.example') {
+        if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: [] });
+        return jsonRes({ message: 'not found' }, 404);
+      }
+      if (c.path === '/1.3/load-balancer' && c.method === 'POST') {
+        lbCreates++;
+        return jsonRes(
+          {
+            error: {
+              error_code: 'INVALID_FIELD',
+              error_message: 'Allowed range 192.0.2.10/24 is not a valid network address.',
+            },
+          },
+          400,
+        );
+      }
+      if (c.path === '/1.3/load-balancer' && c.method === 'GET') return jsonRes([]);
+      return jsonRes({ message: 'not found' }, 404);
+    });
+    // A key long enough to be redacted in place (a shorter one keeps no words at all).
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    await createAccount(t, {
+      provider: 'upcloud',
+      name: 'acct-u',
+      qualified: true,
+      credentials: { token: 'SECRET_UPCLOUD_TOKEN' },
+    });
+    const { relayId } = await registerRelay(t, { listeners: [listenerU()] });
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      publishOnDone: false,
+    });
+    await drain(t, rotationId);
+    // One request: the same one would be refused the same way.
+    expect(lbCreates).toBe(1);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('failed');
+    expect(r.outcome).toBe('create_refused');
+    expect(r.events.some((e) => e.code === 'step_retries_exhausted')).toBe(false);
+    const error = r.events.find((e) => e.level === 'error');
+    expect(error).toMatchObject({ code: 'create_refused' });
+    expect(error?.detail).toContain('is not a valid network address');
+    // The edge needs the operator at once, with the provider's reason, never an address.
+    const edge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    expect(edge.status).toBe('needs_operator');
+    expect(edge.failure).toMatchObject({ step: 'lb', code: 'create_refused' });
+    expect(edge.failure?.detail).toContain('is not a valid network address');
+    expect(JSON.stringify([r.events, edge.failure])).not.toContain('192.0.2.10');
+    expect(edge.resources).toEqual([]);
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.find((i) => i.kind === 'needs_operator')).toMatchObject({
+      edgeId: edge._id,
+      code: 'create_refused',
+    });
+  });
+
   test('automatic upkeep does not provision again right after its provision failed', async () => {
     vi.useFakeTimers();
     const w = ipNeverAllocates();

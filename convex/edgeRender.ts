@@ -488,6 +488,8 @@ export interface SubscriptionRenderContext extends EdgeRenderContext {
    * not freedom-family, or the member chose a country.
    */
   storedAvoidBlockedIn: string[];
+  /** When a render last noted entries it left out on this origin (`edgeHostHides.noteWithheld`). */
+  withheldNotedAt: number | null;
 }
 
 export type SubscriptionRenderDecision =
@@ -592,6 +594,7 @@ export const decideForSubscription = internalQuery({
         originAddress: relay.originAddress,
         nodeAddresses: await nodeAddressesOf(ctx, relay),
         deliveryStyle: await deliveryStyleOf(ctx, sub.backendServerId),
+        withheldNotedAt: relay.withheldEntries?.at ?? null,
       },
     };
   },

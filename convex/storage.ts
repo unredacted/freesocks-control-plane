@@ -28,6 +28,7 @@ import type { MirrorContext } from './subscriptions';
 import type { ActiveMirrorPage } from './subscriptions';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import { relabelMemberEntries } from './lib/memberEntryNames';
+import { noteWithheldEntries } from './lib/subscriptionDelivery';
 import type { Id } from './_generated/dataModel';
 
 /** The body a mirror holds when its place is edge-required and nothing can render. */
@@ -141,6 +142,7 @@ async function renderMirrorEndpoints(
     avoidBlockedIn: rctx.storedAvoidBlockedIn,
   });
   if (out.delivery.kind !== 'serve') return stub(rctx.epoch);
+  await noteWithheldEntries(ctx, rctx, out.withheld, Date.now());
   return {
     content: out.body,
     renderedEpoch: rctx.epoch,

@@ -13,7 +13,8 @@
  * of its tag (route rules, `route.final`, DNS/outbound `detour`s, group
  * `default`s) is rewritten to the rendered fallback or pruned structurally
  * (`refs.ts`), so the config stays valid instead of falling back to the
- * original body, which would hand the template's address back out.
+ * original body, which would hand the template's address back out. An
+ * outbound the caller withholds (`RenderInput.withholds`) goes the same way.
  */
 import { sameAddress } from '../hosts';
 import { codecFor, type ListenerProto } from '../protocols';
@@ -23,6 +24,7 @@ import {
   orderEndpoints,
   resolveMatchers,
   templateIdentities,
+  withheldEntries,
   type MatchableEntry,
   type RenderInput,
   type RenderMatcher,
@@ -126,6 +128,16 @@ export function renderSingbox(input: RenderInput): RenderOutput {
   const templateObjs = new Set(templates.values());
   const isTemplate = (ob: Obj) =>
     templateObjs.has(ob) || (typeof ob.tag === 'string' && templateSet.has(ob.tag));
+  // Outbounds edge-required delivery leaves out; their tags go from every group
+  // and reference with them (unless an outbound that stays holds the same tag).
+  const withheld = withheldEntries(entries, input.matchers, isTemplate, input.withholds);
+  const withheldObjs = new Set(withheld.map((w) => w.entry));
+  const withheldTags = new Set(
+    withheld.map((w) => w.identity).filter((t): t is string => t !== null),
+  );
+  for (const ob of outbounds)
+    if (isObj(ob) && !withheldObjs.has(ob) && typeof ob.tag === 'string')
+      withheldTags.delete(ob.tag);
 
   const taken = new Set<string>();
   let autoGroupIsGroup = false;
@@ -198,6 +210,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
       continue;
     }
     const tag = typeof ob.tag === 'string' ? ob.tag : null;
+    if (withheldObjs.has(ob)) continue;
     if (isTemplate(ob)) {
       if (!inserted) {
         inserted = true;
@@ -211,6 +224,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
       const members: unknown[] = [];
       let swapped = false;
       for (const m of ob.outbounds) {
+        if (typeof m === 'string' && withheldTags.has(m)) continue;
         if (typeof m === 'string' && templateSet.has(m)) {
           if (!swapped) {
             swapped = true;
@@ -260,19 +274,25 @@ export function renderSingbox(input: RenderInput): RenderOutput {
       interrupt_exist_connections: false,
     });
   }
-  if (!input.rule.dropTemplateEntries) {
+  const withheldOut = withheld.length > 0 ? { withheld: withheld.map((w) => w.identity) } : {};
+  if (!input.rule.dropTemplateEntries && withheldTags.size === 0) {
     return {
       body: JSON.stringify({ ...cfg, outbounds: next }),
       applied: true,
       emitted: emitted.length,
       listeners: matches,
+      ...withheldOut,
     };
   }
 
-  // Templates were removed: nothing may still reference them. Groups left
-  // without members go too, and so does anything that pointed at them
-  // (iterate until stable; a selector of only dropped tags cascades).
-  const removed = new Set<string>(templateSet);
+  // Templates (or withheld outbounds) were removed: nothing may still
+  // reference them. Groups left without members go too, and so does anything
+  // that pointed at them (iterate until stable; a selector of only dropped
+  // tags cascades).
+  const removed = new Set<string>([
+    ...(input.rule.dropTemplateEntries ? templateSet : []),
+    ...withheldTags,
+  ]);
   let list = next;
   for (let changed = true; changed; ) {
     changed = false;
@@ -303,6 +323,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
     ...(dropOnly ? { reason: 'templates_dropped' } : {}),
     emitted: emitted.length,
     listeners: matches,
+    ...withheldOut,
   };
 }
 
