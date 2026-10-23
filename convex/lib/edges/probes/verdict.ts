@@ -202,9 +202,10 @@ export function sustainedBlock(
  *    (`sustainedBlock`; never the IPv6 path, never a check that could not test);
  *  - the address is reached from ELSEWHERE (another country's fresh verdict is
  *    `reachable`): one nobody reaches is broken, not blocked;
- *  - ANOTHER address of the same node is reached from THAT country (fresh): the
- *    vantages there work, and the node's protocol gets through. A vantage
- *    outage, or a block on the protocol, fails every address alike.
+ *  - ANOTHER address of the same node and listener (`siblings`) is reached from
+ *    THAT country (fresh): the vantages there work, and the listener's port and
+ *    protocol get through. A vantage outage, or a block on the protocol, fails
+ *    every such address alike.
  *
  * An outage (the node offline, the address's own internal check failing, its
  * provider down) is the caller's veto, as for any probe evidence.

@@ -145,7 +145,10 @@ async function groupBlockedIn(
  * The country-wide guard: a censor does not block every provider at once, an
  * outage or a probe problem does. When this round's block would make at least
  * `countryWideShare` of the edges checked there within the window blocked,
- * across enough groups and edges, the new block is held as unknown.
+ * across enough groups and edges, the new block is held as unknown. A block
+ * counts whether a round decided it or sustained unreachability keeps it
+ * (`never_reached`: its rounds alone may decide nothing, so their result is
+ * not `blocked`).
  */
 async function countryWideHold(
   db: DatabaseReader,
@@ -164,7 +167,11 @@ async function countryWideHold(
     )
     .collect();
   const others = rows.filter((r) => r.edgeId !== edgeId);
-  const blocked = others.filter((r) => r.lastRound?.result === 'blocked');
+  const blocked = others.filter(
+    (r) =>
+      r.lastRound?.result === 'blocked' ||
+      (r.address.state === 'blocked' && r.address.reason === 'never_reached'),
+  );
   const edges = others.length + 1;
   const blockedEdges = blocked.length + 1;
   const groups = new Set([groupKey, ...blocked.map((r) => r.groupKey)]);
@@ -355,8 +362,8 @@ export async function settleRoundIfDone(
 /**
  * The checked countries an edge is sustained-unreachable from
  * (lib/edges/probes/sustained.ts), against the other live addresses of its
- * node. Nothing during an outage: the node offline, the address's provider
- * reporting it offline, or FCP's own check of it failing.
+ * node on the same listener. Nothing during an outage: the node offline, the
+ * address's provider reporting it offline, or FCP's own check of it failing.
  */
 export async function sustainedIn(
   db: DatabaseReader,

@@ -11,7 +11,7 @@ import type { EdgeConfig } from '../../edgeConfig';
 import { probeStaleAfterMs } from '../scoring';
 import { sustainedCountries, type SummaryCountry, type Verdict } from './verdict';
 
-type SummaryHolder = Pick<Doc<'edges'>, '_id' | 'reachability'>;
+type SummaryHolder = Pick<Doc<'edges'>, '_id' | 'listenerId' | 'reachability'>;
 
 function summaryOf(e: SummaryHolder): SummaryCountry[] {
   return (e.reachability?.byCountry ?? []).map((c) => ({
@@ -25,9 +25,12 @@ function summaryOf(e: SummaryHolder): SummaryCountry[] {
 
 /**
  * The listed countries (`cfg.probe.countries`) `edge` is sustained-unreachable
- * from, against `siblings` (the other live addresses of its node; the edge
- * itself is ignored if passed). Only fresh verdicts count (two probe
- * intervals, like every probe evidence); nothing while probes are off.
+ * from, against `siblings` (the other live addresses of its node). Only those
+ * of the SAME listener corroborate: another listener may sit on another port
+ * or speak another transport, so its reaching a country says nothing about
+ * this one's protocol getting through (the edge itself is ignored if passed).
+ * Only fresh verdicts count (two probe intervals, like every probe evidence);
+ * nothing while probes are off.
  */
 export function sustainedCountriesOf(
   edge: SummaryHolder,
@@ -39,7 +42,7 @@ export function sustainedCountriesOf(
   const staleAfterMs = probeStaleAfterMs(cfg.probe);
   return sustainedCountries(
     summaryOf(edge),
-    siblings.filter((s) => s._id !== edge._id).map(summaryOf),
+    siblings.filter((s) => s._id !== edge._id && s.listenerId === edge.listenerId).map(summaryOf),
     cfg.probe.countries,
     {
       checks: cfg.detect.sustainedChecks,

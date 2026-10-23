@@ -212,7 +212,8 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
   const edges: EdgeProbeState[] = [];
   const published: Array<{ edgeId: string; poolIndex: number }> = [];
   // Every live address of the node, published or not: sustained
-  // unreachability needs another one reached from the same country.
+  // unreachability needs another one of the same listener reached from the
+  // same country.
   const live = await liveEdgesOfRelay(ctx.db, relayId);
   for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
     const id = origin.publishedEdgeIds[i];

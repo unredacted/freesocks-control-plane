@@ -2164,8 +2164,9 @@ can tell the two apart.
   (`address_unreachable`, after the one re-apply).
 - **blocked**: refused, but only from countries on the censored-country list, while the address
   is reached over that family from elsewhere (FCP's own shape check, or another country), and
-  the node's other addresses do not fail from those countries too (where every one of them with
-  fresh evidence fails, the vantages or the protocol are the problem, and it stays refused).
+  the node's other addresses of the same listener do not fail from those countries too (where
+  every one of them with fresh evidence fails, the vantages or the listener's port or protocol
+  are the problem, and it stays refused).
   Every listed country is read on its own, with or without the per-country checks: the address
   stops at `blocked_in` naming them ("Try another address", "Use it anyway", "Check again"),
   with no re-apply (saving the same configuration again never unblocks an address in a
@@ -2217,9 +2218,10 @@ ways:
     not test (§ "Probe sources and verdicts") is never stored, so it adds nothing;
   - the address is reached from ELSEWHERE (another country's fresh verdict is `reachable`): one
     no country reaches is broken, not blocked, whatever FCP's own host says;
-  - ANOTHER live address of the same node is reached from THAT country (fresh): the vantages
-    there work and the node's protocol gets through. A vantage outage fails every address alike,
-    and so does a block on the protocol.
+  - ANOTHER live address of the same node AND the same listener is reached from THAT country
+    (fresh): the vantages there work and the listener's port and protocol get through. An
+    address of another listener proves neither (another port, another transport). A vantage
+    outage fails every such address alike, and so does a block on the protocol.
 
   The outage vetoes apply as to any probe evidence: the node offline (`node_offline`), FCP's own
   check of the address failing or its provider reporting it offline (`edge_outage`), every
@@ -2326,7 +2328,9 @@ with `delivery.country.steer` on (next section).
   **Country-wide guard:** a block that would make at least 80 % of the edges checked in
   that country within 2 hours blocked, across at least 2 groups and 3 edges, is held as
   `unknown` (`country_wide`): a censor does not block every provider at once, an outage or a
-  probe problem does.
+  probe problem does. An edge counts as blocked there for the guard when its round there came
+  back blocked or sustained unreachability keeps it blocked (`never_reached`, whose rounds alone
+  may decide nothing).
 - **The handshake track** (`edgeCountryEvidence.handshake`) reads the checks from inside a
   country: a finished batch in which no name got through (`path`, from at least the name
   checks' `minVantages` on `minNetworks`; a service measures every name of a batch from the

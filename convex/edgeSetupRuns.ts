@@ -776,11 +776,14 @@ export const outsideCheck = internalQuery({
     );
     // Every listed country is read on its own: a refusal from listed countries
     // alone, while the address works from elsewhere, is a block there
-    // (`blocked_in`), unless the node's other addresses fail there too (the
-    // vantages there, or the protocol, are the problem: not this address).
+    // (`blocked_in`), unless the node's other addresses of the same listener
+    // fail there too (the vantages there, or the listener's port or protocol,
+    // are the problem: not this address).
     const now = Date.now();
     const staleAfterMs = probeStaleAfterMs(cfg.probe);
-    const siblings = (await liveEdgesOfRelay(ctx.db, edge.relayId)).filter((e) => e._id !== edgeId);
+    const siblings = (await liveEdgesOfRelay(ctx.db, edge.relayId)).filter(
+      (e) => e._id !== edgeId && e.listenerId === edge.listenerId,
+    );
     const siblingsFailIn = cfg.probe.countries.filter((country) => {
       const seen = siblings.flatMap((e) =>
         (e.reachability?.byCountry ?? []).filter(

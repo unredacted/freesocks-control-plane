@@ -115,9 +115,10 @@ describe('sustainedCountriesOf (stored edges)', () => {
     ...EDGE_DEFAULTS,
     probe: { ...EDGE_DEFAULTS.probe, enabled: true, countries: ['CN', 'IR'] },
   };
-  const edge = (id: string, byCountry: SummaryCountry[]) =>
+  const edge = (id: string, byCountry: SummaryCountry[], listenerId = 'l-reality') =>
     ({
       _id: id,
+      listenerId,
       reachability: {
         byCountry: byCountry.map((c) => ({ okVantages: 0, failVantages: 0, ...c })),
         updatedAt: NOW,
@@ -138,6 +139,12 @@ describe('sustainedCountriesOf (stored edges)', () => {
     expect(
       sustainedCountriesOf(a, [b], { ...cfg, detect: { ...cfg.detect, sustainedChecks: 50 } }, NOW),
     ).toEqual([]);
+  });
+
+  test('only an address of the SAME listener corroborates: another port or transport proves nothing', () => {
+    const otherListener = edge('c', [at('CN', 'reachable'), at('IR', 'reachable')], 'l-ws');
+    expect(sustainedCountriesOf(a, [otherListener], cfg, NOW)).toEqual([]);
+    expect(sustainedCountriesOf(a, [otherListener, b], cfg, NOW)).toEqual(['CN']);
   });
 
   test('an outage is the address itself: provider offline, or FCP’s own check failing', () => {

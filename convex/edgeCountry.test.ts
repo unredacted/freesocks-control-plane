@@ -726,6 +726,62 @@ describe('edgeCountry: an address never reached from a country (sustained unreac
     expect(unsteered).toContain(edgeId);
   });
 
+  test('blocks kept by sustained unreachability count towards the country-wide guard', async () => {
+    __setGlobalpingFactory(() => fakeFailingFromIr([EDGE]));
+    const { t, relayId, listenerId, edgeId, pass } = await node();
+    // Two more addresses (spares, never probed here) already blocked in IR by
+    // sustained unreachability: their own rounds there were thin (`unknown`).
+    await t.run((ctx) => ctx.db.patch(relayId, { desiredPublished: 5 }));
+    for (const ipv4 of ['198.51.100.23', '198.51.100.24']) {
+      const { edgeId: spare } = await t.mutation(internal.relays.adoptEdge, {
+        relayId,
+        listenerId,
+        ipv4,
+        publish: false,
+        verified: true,
+      });
+      await t.run((ctx) =>
+        ctx.db.insert('edgeCountryEvidence', {
+          edgeId: spare as Id<'edges'>,
+          relayId,
+          groupKey: `adopted:${spare}`,
+          country: 'IR',
+          address: {
+            state: 'blocked',
+            reason: 'never_reached',
+            decidedAt: Date.now(),
+            until: Date.now() + DAY,
+            blockedRounds: 0,
+          },
+          handshake: { state: 'none', pathBatches: [] },
+          combined: 'blocked',
+          lastRound: {
+            roundId: `r-${spare}`,
+            at: Date.now(),
+            result: 'unknown',
+            reason: 'too_few',
+            ok: 0,
+            fail: 1,
+            networks: 1,
+            controlsOk: 2,
+          },
+          lastRoundAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+      );
+    }
+    // Three of the five addresses checked there blocked at once, across three
+    // groups: past a guard share of one half, the new block is held.
+    __setEdgePlumbingForTests({ countryWideShare: 0.5 });
+    await pass(0);
+    await pass(20);
+    await pass(40);
+    expect((await evidence(t, edgeId, 'IR'))!.address).toMatchObject({
+      state: 'unknown',
+      reason: 'country_wide',
+    });
+  });
+
   test('every address of the node failing from there (a vantage outage) blocks none of them', async () => {
     const { t, edgeId, others, pass } = await node();
     __setGlobalpingFactory(() => fakeFailingFromIr([EDGE, '198.51.100.21', '198.51.100.22']));
