@@ -610,7 +610,7 @@
 <ConfirmDialog
   bind:open={adoptOpen}
   title="Adopt this backend?"
-  body="It already has nodes or addresses. FCP becomes its writer: the profile is adopted as it is (keys untouched), groups an earlier setup named are renamed in place, and nothing a member holds changes."
+  body="It already has nodes or addresses. FCP becomes its writer: the profile is adopted as it is (keys untouched), groups an earlier setup named are renamed in place, and no group loses a transport its members are served on (the setup stops instead). FCP's subscription templates replace the backend's: members' apps take FCP's settings at their next refresh, and some pick their server again once."
   typed={slug}
   confirmLabel="Adopt"
   danger

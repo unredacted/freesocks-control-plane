@@ -474,6 +474,61 @@ describe('setting up a fresh backend', () => {
     expect(audit.some((a) => a.action === 'servers.setup.group_renamed')).toBe(true);
   });
 
+  // Members of a group hold what its transports serve: an adoption takes none
+  // of that away. The group is left as it is and the operator decides.
+  test('adopting never takes a transport members are served on out of their group', async () => {
+    const { t, serverId, panel } = await seed();
+    panel.nodes.push({
+      uuid: UUID(1),
+      name: 'legacy',
+      address: '192.0.2.5',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: { activeConfigProfileUuid: UUID(2), activeInbounds: [] },
+    });
+    const legacyGroup = {
+      uuid: UUID(3),
+      name: 'FreeSocks-Reality',
+      inbounds: [{ uuid: UUID(9), tag: 'VLESS_OLD' }],
+    };
+    panel.squads.push(legacyGroup);
+    // A Host serves the group's transport: its members are given that entry.
+    panel.hosts.push({
+      uuid: UUID(4),
+      remark: 'legacy-ws',
+      address: '192.0.2.5',
+      port: 443,
+      inbound: { configProfileUuid: UUID(2), configProfileInboundUuid: UUID(9) },
+      isDisabled: false,
+    });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    const row = await runSetup(t, serverId, { ...setupInput, adopt: true });
+    expect(row).toMatchObject({
+      state: 'failed',
+      code: 'servers.adopt_group_narrows:privacy-reality',
+      step: 'groups',
+    });
+    expect(panel.writes.filter((w) => w.call.includes('/api/internal-squads'))).toEqual([]);
+    expect(panel.squads.find((s) => s.uuid === legacyGroup.uuid)).toMatchObject({
+      name: 'FreeSocks-Reality',
+      inbounds: [{ uuid: UUID(9) }],
+    });
+
+    // Once nothing serves it any more, the group is the mode's alone.
+    panel.hosts[0]!.isDisabled = true;
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    const again = await runSetup(t, serverId, { ...setupInput, adopt: true });
+    expect(again.state).toBe('ready');
+    const direct = again.modes!.find((m) => m.slug === 'privacy-reality')!;
+    expect(
+      panel.squads
+        .find((x) => x.uuid === legacyGroup.uuid)!
+        .inbounds.map((i: { uuid: string }) => i.uuid),
+    ).toEqual([direct.transport!.uuid]);
+  });
+
   // A tag is unique per profile, never per backend: another profile reusing a
   // conventional tag must not make an unambiguous binding fail.
   test('a second profile reusing a transport tag does not stop the family binding', async () => {
@@ -1199,6 +1254,268 @@ describe("a front node's origin name", () => {
       state: 'pending',
       code: 'servers.node_offline',
     });
+  });
+
+  /** Live, as a committed go-live leaves it. */
+  const makeLive = (t: T, intentId: Id<'panelNodeIntents'>) =>
+    t.run(async (ctx) => {
+      const i = (await ctx.db.get(intentId))!;
+      await ctx.db.patch(intentId, {
+        activation: { ...i.activation, stage: 'live' },
+        delivery: {
+          ...i.delivery,
+          disposition: 'live',
+          acceptingAssignments: true,
+          exposure: { ...i.delivery.exposure, everLive: true },
+        },
+        approved: {
+          machineRevision: i.machineRevision,
+          configRevision: i.configRevision ?? '',
+          authRevision: i.authRevision,
+          deliveryRevision: i.deliveryRevision ?? '',
+          reviewHash: 'approved',
+          approvedAt: Date.now(),
+          committed: { hostUuids: [], edgeIds: [] },
+        },
+      });
+    });
+  const putAt = (t: T, serverId: Id<'backendServers'>, v4: string) =>
+    t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: NAME,
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4 },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+
+  // Whoever holds the node's token could otherwise move where the edges send
+  // members: an endpoint that moves under a live node is taken out first.
+  test('a live node reported at another address closes before its origin record moves, and is verified again', async () => {
+    const { t, serverId, panel } = await frontNode();
+    __setFrontIngressCheckForTests(async () => ingressOk);
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    await t.mutation(internal.nodeIntents.applied, {
+      intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      certificateReady: true,
+    });
+    await runIntent(t, intentId);
+    await makeLive(t, intentId);
+    expect((await gateOfNode(t, { backendServerId: serverId, nodeName: NAME })).state).toBe('open');
+
+    await putAt(t, serverId, '198.51.100.66');
+    const after = await runIntent(t, intentId);
+    expect(after.delivery.disposition).toBe('unavailable');
+    expect(after.maintenance?.reason).toBe('drift');
+    expect((await gateOfNode(t, { backendServerId: serverId, nodeName: NAME })).state).toBe(
+      'blocked',
+    );
+    // The gate closed in the report's own transaction, before the record was rewritten.
+    const obligations = await t.run((ctx) => ctx.db.query('backendObligations').collect());
+    const moved = obligations.find(
+      (o) => o.kind === 'dns.record' && o.verb === 'create' && o.intent.includes('198.51.100.66'),
+    )!;
+    expect(moved.createdAt).toBeGreaterThanOrEqual(after.maintenance!.since);
+    expect(panel.zone).toMatchObject([{ type: 'A', name: HOST, content: '198.51.100.66' }]);
+    // What was proved at the old address no longer holds: the role applies the
+    // new revision, the machine is checked again, and only an approval reopens it.
+    expect(after.machineRevision).toBe(2);
+    expect(
+      after.activation.evidence.filter((e) => e.machineRevision === after.machineRevision),
+    ).toEqual([]);
+    expect(after.activation.stage).toBe('bootstrap_available');
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(
+      audit
+        .filter((a) => a.action === 'servers.node.drift')
+        .map((a) => (a.payload as { kind: string }).kind),
+    ).toEqual(['endpoint']);
+  });
+
+  // A retirement takes the node away from every attempt that read it before.
+  test('an attempt in flight when the node is retired records nothing, and nothing brings the node back', async () => {
+    const { t, serverId, panel } = await frontNode();
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    expect(panel.zone).toHaveLength(1);
+    // An attempt holds the lease (a reconcile in flight).
+    const inFlight = await t.run(async (ctx) => {
+      const i = (await ctx.db.get(intentId))!;
+      await ctx.db.patch(intentId, { claim: { attemptId: 'A', expiresAt: Date.now() + 600_000 } });
+      return { intentId, generation: i.generation, attemptId: 'A' };
+    });
+    await t.mutation(internal.nodeIntents.requestRetirement, { intentId, requestedBy: 'admin' });
+    // It ends as reconcile's stop() does: fenced, the node stays retiring.
+    expect(
+      await t.mutation(internal.nodeIntents.progress, {
+        ...inFlight,
+        patch: { state: 'pending', code: 'servers.origin_not_resolving', release: true },
+      }),
+    ).toEqual({ ok: false });
+    // Nor may it open a record write.
+    const opened = await t.mutation(internal.backendObligations.open, {
+      backendServerId: serverId,
+      ownerKind: 'intent',
+      ownerId: intentId,
+      ownerGeneration: inFlight.generation,
+      attemptId: 'A',
+      kind: 'dns.record',
+      identity: `A:${HOST}`,
+      verb: 'create',
+      ownership: 'created',
+      intent: JSON.stringify({ type: 'A', name: HOST, content: V4 }),
+    });
+    expect(opened.ok).toBe(false);
+    expect((await t.run((ctx) => ctx.db.get(intentId)))!.state).toBe('retiring');
+    expect((await t.query(internal.nodeIntents.stale, { now: Date.now() })).intents).not.toContain(
+      intentId,
+    );
+    await expect(t.action(internal.nodeIntents.bootstrap, { intentId })).rejects.toThrow(
+      /node_retiring/,
+    );
+    // The ladder withdraws the record; the sweep's resume reconciles nothing.
+    for (let i = 0; i < 100; i++) await new Promise((r) => setTimeout(r, 5));
+    const r = (await t.run((ctx) => ctx.db.query('panelRetirements').collect()))[0]!;
+    expect(r.step).toBe('panel_row');
+    expect(panel.zone).toEqual([]);
+    expect(await t.mutation(internal.nodeIntents.resume, { intentId })).toBe(false);
+    for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(panel.zone).toEqual([]);
+  });
+
+  test('a record written with an account since replaced (same zone) and removed is still withdrawn', async () => {
+    const { t, serverId, panel } = await seed();
+    const acct = await createAccount(t, { provider: 'cloudflare', name: 'dns' });
+    await runSetup(t, serverId, { ...setupInput, originDns: { accountId: acct } });
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    expect(panel.zone).toHaveLength(1);
+    // Another account holding the same zone replaces the first, which goes.
+    const acct2 = await createAccount(t, { provider: 'cloudflare', name: 'dns-2' });
+    expect(
+      await t.mutation(internal.backendSetup.start, {
+        backendServerId: serverId,
+        input: { ...setupInput, originDns: { accountId: acct2 } },
+      }),
+    ).toMatchObject({ state: 'ready', started: false });
+    await t.mutation(internal.edgeProviderAccounts.remove, { id: acct });
+    await t.mutation(internal.nodeIntents.requestRetirement, { intentId, requestedBy: 'admin' });
+    for (let i = 0; i < 100; i++) await new Promise((r) => setTimeout(r, 5));
+    const r = (await t.run((ctx) => ctx.db.query('panelRetirements').collect()))[0]!;
+    expect(r.code).not.toBe('servers.obligation_unresolved');
+    expect(r.step).toBe('panel_row');
+    expect(panel.zone).toEqual([]);
+  });
+
+  test('a node given a hostname of its own drops the managed record it had', async () => {
+    const { t, serverId, panel } = await frontNode();
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    expect(panel.zone).toHaveLength(1);
+    await t.mutation(internal.nodeIntents.patchSettings, {
+      intentId,
+      patch: { explicitHostname: 'own.example.net' },
+    });
+    await runIntent(t, intentId);
+    expect(panel.zone).toEqual([]);
+    const owned = (await t.run((ctx) => ctx.db.query('backendObligations').collect())).filter(
+      (o) => o.kind === 'dns.record' && o.verb === 'create' && o.state === 'confirmed',
+    );
+    expect(owned).toEqual([]);
+  });
+
+  // A record write whose answer was lost may still have landed: it is not
+  // forgotten because the name it was for is no longer wanted.
+  test('a managed record whose write was never settled is withdrawn too, once its attempt is over', async () => {
+    const { t, serverId, panel } = await frontNode();
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    expect(panel.zone).toHaveLength(1);
+    // The create landed, but its answer was lost: the write is still `sent`.
+    const unsettled = (await t.run((ctx) => ctx.db.query('backendObligations').collect())).find(
+      (o) => o.kind === 'dns.record' && o.verb === 'create',
+    )!;
+    await t.run((ctx) => ctx.db.patch(unsettled._id, { state: 'sent' }));
+    await t.mutation(internal.nodeIntents.patchSettings, {
+      intentId,
+      patch: { explicitHostname: 'own.example.net' },
+    });
+    // While the attempt that sent it could still be running, it is waited for.
+    expect(await runIntent(t, intentId)).toMatchObject({
+      state: 'pending',
+      code: 'servers.obligation_unresolved',
+    });
+    expect(panel.zone).toHaveLength(1);
+    // Once it cannot be, it is looked for by name and marker, and withdrawn.
+    await t.run((ctx) => ctx.db.patch(unsettled._id, { updatedAt: Date.now() - 11 * 60_000 }));
+    await t.mutation(internal.nodeIntents.resume, { intentId });
+    await runIntent(t, intentId);
+    expect(panel.zone).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(unsettled._id)))!).toMatchObject({
+      state: 'failed',
+      code: 'withdrawn',
+    });
+  });
+
+  // A write an attempt of the node sent before the retirement may land after
+  // it: the ladder waits for it, then removes what it made.
+  test('a retirement waits for a node write already sent, then removes what it made', async () => {
+    const { t, serverId, panel } = await seed();
+    await runSetup(t, serverId);
+    // The backend takes the node create, but does not show the node yet.
+    const held: any[] = [];
+    const inner = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: string | URL, init: RequestInit = {}) => {
+      const res = await inner(input, init);
+      const url = new URL(typeof input === 'string' ? input : input.toString());
+      if (url.pathname === '/api/nodes' && (init.method ?? 'GET').toUpperCase() === 'POST')
+        held.push(...panel.nodes.splice(0));
+      return res;
+    });
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-b',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.11', port: 2222 },
+        publicIps: { v4: '203.0.113.11' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    expect(await runIntent(t, intentId)).toMatchObject({
+      state: 'pending',
+      code: 'servers.op_running',
+    });
+    expect(held).toHaveLength(1);
+    await t.mutation(internal.nodeIntents.requestRetirement, { intentId, requestedBy: 'admin' });
+    for (let i = 0; i < 100; i++) await new Promise((r) => setTimeout(r, 5));
+    const retirement = async () =>
+      (await t.run((ctx) => ctx.db.query('panelRetirements').collect()))[0]!;
+    expect(await retirement()).toMatchObject({
+      stage: 'draining',
+      step: 'addresses',
+      code: 'servers.op_running',
+    });
+
+    // The node shows up: the write settles, and the ladder removes the row.
+    panel.nodes.push(...held);
+    const op = (await t.run((ctx) => ctx.db.query('panelOps').collect())).find(
+      (o) => o.kind === 'node' && o.verb === 'create',
+    )!;
+    expect(await t.action(internal.backendWrites.run, { opId: op._id })).toEqual({ open: false });
+    const { retirementId } = { retirementId: (await retirement())._id };
+    await t.action(internal.nodeRetirement.advance, { retirementId });
+    expect(panel.writes.some((w) => w.call === `DELETE /api/nodes/${held[0].uuid}`)).toBe(true);
+    // Its own removal still waits at the backend row, not behind itself.
+    await t.action(internal.nodeRetirement.advance, { retirementId });
+    expect((await retirement()).step).toBe('panel_row');
   });
 
   test("the role's report fences an attempt that looked at the machine before it", async () => {

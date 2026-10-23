@@ -284,7 +284,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.rename_host_refused':
     'The backend refused to rename one of its addresses. Fix what it refused, then press Retry.',
   'servers.node_rename_foreign_hosts':
-    'An origin in front of this node uses Hosts the operator writes. Their remarks name the node, and they are not changed from here.',
+    'Hosts the operator named carry this node: an origin in front of it uses Hosts the operator writes, or it was adopted with them. Their remarks name the node, and they are not changed from here.',
   'servers.node_name_origin':
     'An origin in front of this node keeps its name as a DNS label: lower-case letters, digits and dashes only.',
   'servers.node_name_too_long':
@@ -341,6 +341,8 @@ const ERROR_WORDS: Record<string, string> = {
     'A set-up backend keeps its profile: its nodes run it. Keep the profile name as it is.',
   'servers.setup_mode_kept':
     'A mode stays as it was set up, since nodes and members rely on it. Add a new mode instead.',
+  'servers.adopt_group_narrows':
+    "A mode's group already grants its members another transport that a Host serves, and setting up would take that away from them. Take the transport out of the group yourself, or move those members to another group, then set up again.",
   'servers.setup_mode_drifted':
     "A mode's group changed on the backend since it was set up (it no longer carries exactly its transport). Look at it under Mode groups, then change the setup.",
   'servers.setup_transport_missing':
@@ -390,7 +392,9 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.panel_not_set_up': 'Set up this backend first.',
   'servers.node_retiring': 'This node is being retired.',
   'servers.not_retiring': 'This node is not being retired.',
-  'servers.retirement_stage': 'The node is not at that point of its retirement yet.',
+  'servers.retirement_stage': 'The node is not at that point of its retirement.',
+  'servers.node_adopted':
+    'This node was adopted as it was. The node role does not run its machine.',
   'servers.mode_change_needs_admin':
     'A node keeps its mode. Change it from here, then run the role again.',
   'servers.node_exists_unowned':
@@ -492,7 +496,14 @@ export function stageWords(i: {
 }): { dot: Dot; sentence: string } {
   if (i.retirement) {
     const s = i.retirement.stage;
-    if (s === 'needs_admin') return { dot: 'amber', sentence: 'Retiring. Needs your decision.' };
+    // A role's request leaves the node serving until the admin decides.
+    if (s === 'needs_admin')
+      return i.disposition === 'retiring'
+        ? { dot: 'amber', sentence: 'Retiring. Needs your decision.' }
+        : {
+            dot: 'amber',
+            sentence: 'The node role asked to retire it. It serves members until you decide.',
+          };
     if (s === 'ready_to_wipe')
       return { dot: 'grey', sentence: 'Retired here. Waiting for the machine to be wiped.' };
     if (s === 'retired') return { dot: 'grey', sentence: 'Retired.' };
@@ -610,13 +621,18 @@ export function retireConfirmWords(i: { adopted: boolean }): string {
  * (`code`); a stage after `draining` speaks for itself.
  */
 export function retirementSteps(
-  i: { adopted: boolean; retirement: RetirementLike },
+  i: { adopted: boolean; retirement: RetirementLike; disposition?: string },
   now: number = Date.now(),
 ): RetireStep[] {
   const r = i.retirement;
+  // A role's request is decided first: the node is closed only once it is. A
+  // request an earlier release recorded closed it at once (it is `retiring`).
+  const asked = r.decision || r.stage === 'needs_admin';
+  const closedFirst = r.stage === 'needs_admin' && i.disposition === 'retiring';
   const keys = [
+    ...(asked && !closedFirst ? ['decision'] : []),
     'closed',
-    ...(r.decision || r.stage === 'needs_admin' ? ['decision'] : []),
+    ...(closedFirst ? ['decision'] : []),
     'edges',
     'addresses',
     'dns',
@@ -655,7 +671,9 @@ export function retirementSteps(
   const started = r.since ? ` (this step started ${ago(now - Date.parse(r.since))})` : '';
   const why = (): string => {
     if (current === 'decision')
-      return 'The node role asked to retire it. Decide below: members on it get the unavailable answer either way.';
+      return closedFirst
+        ? 'The node role asked to retire it, and members on it already get the unavailable answer. Decide below.'
+        : 'The node role asked to retire it, and it serves members meanwhile. Retire it (members on it get the unavailable answer from then on), or reject the request.';
     if (current === 'wipe')
       return i.adopted
         ? 'FCP never ran this machine. Stop and clean it up yourself, then choose The machine is gone.'

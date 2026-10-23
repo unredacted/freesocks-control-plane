@@ -16,6 +16,8 @@ import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { cloudflareDnsClient } from './lib/edges/providers/dns/cloudflareDns';
+import { CLAIM_LEASE_MS } from './lib/backend/fencing';
+import { blocksIdentity } from './lib/backend/obligations';
 import {
   originMarker,
   planRecord,
@@ -42,10 +44,42 @@ export const ensureOriginDns = internalAction({
     const c = await ctx.runQuery(internal.nodeIntents.loadForRun, f);
     if (!c) return { state: 'none' };
     const zone = c.setup.originDns;
-    if (!zone || c.intent.settings.originHostnameSource !== 'managed' || !c.hostname)
+    const managed = !!zone && c.intent.settings.originHostnameSource === 'managed' && !!c.hostname;
+    // The marker names the node as it was enrolled: a rename never makes FCP's
+    // own record read as somebody else's.
+    const marker = originMarker(c.server.slug, c.intent.formerNames?.[0] ?? c.intent.name);
+    const desired: DesiredRecord[] = [];
+    if (managed && c.intent.observed.publicIps.v4)
+      desired.push({ type: 'A', name: c.hostname!, content: c.intent.observed.publicIps.v4 });
+    if (managed && c.intent.settings.publishV6 && c.intent.observed.publicIps.v6)
+      desired.push({ type: 'AAAA', name: c.hostname!, content: c.intent.observed.publicIps.v6 });
+
+    // A record FCP owns, or may have written, that is no longer desired (v6
+    // withdrawn, an address family gone from the observations, the node given
+    // a hostname of its own) is deleted first, so what resolves is exactly
+    // what is desired.
+    const owned = await ctx.runQuery(internal.backendObligations.listForOwner, {
+      ownerKind: 'intent',
+      ownerId: f.intentId,
+    });
+    let withdrawn = false;
+    for (const o of owned) {
+      if (desired.some((d) => `${d.type}:${d.name}` === o.identity)) continue;
+      const out = await withdrawHeld(ctx, o);
+      if (out === 'unresolved') return { state: 'unresolved' };
+      if (out === 'removed') withdrawn = true;
+    }
+    if (!managed) {
+      if (withdrawn)
+        await ctx.runMutation(internal.nodeIntents.progress, {
+          ...f,
+          patch: { origin: { hostname: c.hostname, address: c.originAddress, dns: 'none' } },
+        });
       return { state: 'none' };
+    }
+    const z = zone!;
     const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
-      id: zone.accountId,
+      id: z.accountId,
     });
     const apiToken = (acct?.credentials as { apiToken?: string } | undefined)?.apiToken;
     if (!acct || !apiToken) {
@@ -57,32 +91,10 @@ export const ensureOriginDns = internalAction({
     }
     const client = cloudflareDnsClient({
       apiToken,
-      zoneId: zone.zoneId,
-      zoneName: zone.zoneName,
-      accountId: zone.accountId,
+      zoneId: z.zoneId,
+      zoneName: z.zoneName,
+      accountId: z.accountId,
     });
-    // The marker names the node as it was enrolled: a rename never makes FCP's
-    // own record read as somebody else's.
-    const marker = originMarker(c.server.slug, c.intent.formerNames?.[0] ?? c.intent.name);
-    const desired: DesiredRecord[] = [];
-    if (c.intent.observed.publicIps.v4)
-      desired.push({ type: 'A', name: c.hostname, content: c.intent.observed.publicIps.v4 });
-    if (c.intent.settings.publishV6 && c.intent.observed.publicIps.v6)
-      desired.push({ type: 'AAAA', name: c.hostname, content: c.intent.observed.publicIps.v6 });
-
-    // A record FCP owns for a family no longer desired (v6 withdrawn, an
-    // address family gone from the observations) is deleted first, so what
-    // resolves is exactly what is desired.
-    const owned = await ctx.runQuery(internal.backendObligations.listForOwner, {
-      ownerKind: 'intent',
-      ownerId: f.intentId,
-    });
-    let withdrawn = false;
-    for (const o of owned) {
-      if (!ownsRecord(o) || desired.some((d) => `${d.type}:${d.name}` === o.identity)) continue;
-      if ((await withdrawRecord(ctx, o)) === 'unresolved') return { state: 'unresolved' };
-      withdrawn = true;
-    }
     if (desired.length === 0) return { state: 'none' };
 
     let created = false;
@@ -146,7 +158,7 @@ export const ensureOriginDns = internalAction({
           verb: 'delete',
           ownership: 'created',
           intent: JSON.stringify({ ...d, deleteId: plan.deleteId }),
-          dns: { ...zone, marker, recordId: plan.deleteId },
+          dns: { ...z, marker, recordId: plan.deleteId },
         });
         if (!del.ok) return { state: 'unresolved' };
         await ctx.runMutation(internal.backendObligations.mark, { id: del.id, state: 'sent' });
@@ -184,7 +196,7 @@ export const ensureOriginDns = internalAction({
         verb: 'create',
         ownership: 'created',
         intent: JSON.stringify(d),
-        dns: { ...zone, marker },
+        dns: { ...z, marker },
       });
       if (!ob.ok) return { state: 'unresolved' };
       await ctx.runMutation(internal.backendObligations.mark, { id: ob.id, state: 'sent' });
@@ -235,23 +247,45 @@ function ownsRecord(o: Obligation): boolean {
 }
 
 /**
- * Delete a record an obligation owns. Ownership (the marker) is re-checked on
- * the obligation's OWN account and zone, never the setup's current one; a
+ * The client an obligation's record is reached with: in the obligation's OWN
+ * zone, through its own account or, once that account is gone (another account
+ * holding the same zone replaced it, and it was removed), through the account
+ * the backend's setup uses for that zone now. Whichever account wrote a
+ * record, the marker is what makes it FCP's.
+ */
+async function clientFor(ctx: ActionCtx, o: Obligation) {
+  const d = o.dns!;
+  const tokenOf = async (id: string) =>
+    (
+      (
+        await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
+          id: id as Id<'edgeProviderAccounts'>,
+        })
+      )?.credentials as { apiToken?: string } | undefined
+    )?.apiToken;
+  let accountId: string = d.accountId;
+  let apiToken = await tokenOf(accountId);
+  if (!apiToken) {
+    const now = await ctx.runQuery(internal.nodeIntents.originZoneOf, {
+      backendServerId: o.backendServerId,
+    });
+    if (!now || now.zoneId !== d.zoneId) return null;
+    accountId = now.accountId;
+    apiToken = await tokenOf(accountId);
+  }
+  if (!apiToken) return null;
+  return cloudflareDnsClient({ apiToken, zoneId: d.zoneId, zoneName: d.zoneName, accountId });
+}
+
+/**
+ * Delete a record an obligation owns. Ownership (the marker) is re-checked in
+ * the obligation's OWN zone (`clientFor`), never the setup's current one; a
  * record already gone counts as withdrawn.
  */
 async function withdrawRecord(ctx: ActionCtx, o: Obligation): Promise<'removed' | 'unresolved'> {
   const d = o.dns!;
-  const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
-    id: d.accountId as Id<'edgeProviderAccounts'>,
-  });
-  const apiToken = (acct?.credentials as { apiToken?: string } | undefined)?.apiToken;
-  if (!apiToken) return 'unresolved';
-  const client = cloudflareDnsClient({
-    apiToken,
-    zoneId: d.zoneId,
-    zoneName: d.zoneName,
-    accountId: d.accountId,
-  });
+  const client = await clientFor(ctx, o);
+  if (!client) return 'unresolved';
   const rec = await client.getRecord(d.recordId!);
   if (rec && rec.comment !== d.marker) return 'unresolved';
   if (rec) {
@@ -269,7 +303,46 @@ async function withdrawRecord(ctx: ActionCtx, o: Obligation): Promise<'removed' 
   return 'removed';
 }
 
-/** Delete the origin records an intent's obligations own (retirement). Ownership re-checked first. */
+/**
+ * A record write whose outcome was never settled (its attempt died, or its
+ * answer was lost): whatever landed under the name with FCP's marker is
+ * deleted, and the write is settled as withdrawn.
+ */
+async function withdrawUnsettled(ctx: ActionCtx, o: Obligation): Promise<'removed' | 'unresolved'> {
+  const client = await clientFor(ctx, o);
+  if (!client) return 'unresolved';
+  const want = JSON.parse(o.intent) as { type: string; name: string };
+  try {
+    for (const r of await client.findRecordsByName(want.name))
+      if (r.type === want.type && r.comment === o.dns!.marker) await client.deleteRecord(r.id);
+  } catch {
+    return 'unresolved';
+  }
+  await ctx.runMutation(internal.backendObligations.mark, {
+    id: o._id,
+    state: 'failed',
+    code: 'withdrawn',
+  });
+  return 'removed';
+}
+
+/**
+ * Withdraw what one obligation of a node may hold in DNS: the record it owns
+ * (ownership re-checked first), or, for a record write never settled, what
+ * landed. Such a write may land yet while the attempt that opened it can still
+ * be running (a lease): it is waited for, then looked for by name and marker.
+ * Null: it holds nothing.
+ */
+async function withdrawHeld(
+  ctx: ActionCtx,
+  o: Obligation,
+): Promise<'removed' | 'unresolved' | null> {
+  if (ownsRecord(o)) return withdrawRecord(ctx, o);
+  if (o.kind !== 'dns.record' || !o.dns || !blocksIdentity(o)) return null;
+  return Date.now() - o.updatedAt < CLAIM_LEASE_MS ? 'unresolved' : withdrawUnsettled(ctx, o);
+}
+
+/** Delete the origin records an intent's obligations hold (retirement): `withdrawHeld`, each. */
 export const withdrawOriginDns = internalAction({
   args: { intentId: v.id('panelNodeIntents') },
   handler: async (ctx, { intentId }): Promise<{ removed: number; unresolved: number }> => {
@@ -280,9 +353,9 @@ export const withdrawOriginDns = internalAction({
     let removed = 0;
     let unresolved = 0;
     for (const o of rows) {
-      if (!ownsRecord(o)) continue;
-      if ((await withdrawRecord(ctx, o)) === 'removed') removed++;
-      else unresolved++;
+      const out = await withdrawHeld(ctx, o);
+      if (out === 'removed') removed++;
+      else if (out === 'unresolved') unresolved++;
     }
     return { removed, unresolved };
   },
