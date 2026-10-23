@@ -1,0 +1,32 @@
+{
+  "prices": {
+    "zone": [
+      {
+        "firewall": { "amount": 1, "price": 0.56 },
+        "io_request_maxiops": { "amount": 1000000, "price": 0 },
+        "ipv4_address": { "amount": 1, "price": 0.336 },
+        "managed_load_balancer_development": { "amount": 1, "price": 1.4881 },
+        "managed_load_balancer_essentials": { "amount": 1, "price": 0 },
+        "managed_load_balancer_production-medium": { "amount": 1, "price": 11.1607 },
+        "managed_load_balancer_production-small": { "amount": 1, "price": 4.4643 },
+        "name": "zz-zone1",
+        "network_private_vlan": { "amount": 1, "price": 0.694 },
+        "public_ipv4_bandwidth_out": { "amount": 1, "price": 1 },
+        "server_core": { "amount": 1, "price": 1.12 },
+        "server_memory": { "amount": 256, "price": 0.14 },
+        "server_plan_1xCPU-1GB": { "amount": 1, "price": 1.0416 },
+        "server_plan_1xCPU-2GB": { "amount": 1, "price": 1.488 },
+        "storage_maxiops": { "amount": 1, "price": 0.031 }
+      },
+      {
+        "firewall": { "amount": 1, "price": 0.56 },
+        "ipv4_address": { "amount": 1, "price": 0.336 },
+        "managed_load_balancer_development": { "amount": 1, "price": 1.6369 },
+        "managed_load_balancer_production-small": { "amount": 1, "price": 4.9107 },
+        "name": "zz-zone2",
+        "server_core": { "amount": 1, "price": 1.12 },
+        "server_plan_1xCPU-1GB": { "amount": 1, "price": 1.0416 }
+      }
+    ]
+  }
+}

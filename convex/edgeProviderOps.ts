@@ -241,13 +241,19 @@ async function run<R>(fn: () => Promise<R>, names?: string[]): Promise<R> {
  * opposed to FCP refusing a request or the provider refusing it for a reason
  * the caller handles (a 404 in discovery, a 409 on create): a timeout or a
  * network error, a 5xx, a refused credential (401 / 403), rate limiting (429),
- * or an answer the adapter could not read. Null = not a provider fault.
+ * or an answer the adapter could not read (`schema_mismatch`, or an adapter's
+ * own word for one: `plan_list_unreadable`). Null = not a provider fault.
  */
 export function apiFailureCode(err: unknown): string | null {
   if (!(err instanceof EdgeProviderError)) return null;
   const m = err.meta;
   if (m.timedOut) return 'timeout';
-  if (m.code === 'schema_mismatch' || m.code === 'redirect_refused') return m.code;
+  if (
+    m.code === 'schema_mismatch' ||
+    m.code === 'plan_list_unreadable' ||
+    m.code === 'redirect_refused'
+  )
+    return m.code;
   if (m.status === undefined) return m.code ? null : 'network';
   if (m.status >= 500 || m.status === 401 || m.status === 403 || m.status === 429)
     return String(m.status);

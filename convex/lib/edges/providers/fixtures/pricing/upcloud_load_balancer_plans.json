@@ -1,0 +1,6 @@
+[
+  { "name": "development", "per_server_max_sessions": 1000, "server_number": 1 },
+  { "name": "production-small", "per_server_max_sessions": 50000, "server_number": 2 },
+  { "name": "production-medium", "per_server_max_sessions": 50000, "server_number": 5 },
+  { "name": "essentials", "per_server_max_sessions": 1000, "server_number": 1 }
+]

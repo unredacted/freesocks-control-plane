@@ -131,9 +131,24 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
 
   // --- L4: UpCloud managed load balancers ---------------------------------------------
   upcloud: {
-    source: 'https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16',
+    source:
+      'https://developers.upcloud.com/1.3/ (Managed Load Balancer, Pricing, Accounts), 2026-10-22',
     calls: [
-      { method: 'GET', path: '^/1\\.3/account$', purpose: 'credential test' },
+      {
+        method: 'GET',
+        path: '^/1\\.3/account$',
+        purpose: "credential test; the key's own username (price read)",
+      },
+      {
+        method: 'GET',
+        path: '^/1\\.3/account/details/[^/]+$',
+        purpose: "the account's billing currency, the price list's (price read)",
+      },
+      {
+        method: 'GET',
+        path: '^/1\\.3/price$',
+        purpose: 'the price list, per zone, in cents an hour (price read)',
+      },
       { method: 'GET', path: '^/1\\.3/zone$', purpose: 'location form: the zones' },
       {
         method: 'POST',
@@ -150,7 +165,8 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/1\\.3/load-balancer/plans$',
-        purpose: 'list the service plans (inventory)',
+        purpose: 'list the service plans, page by page (inventory and price read)',
+        query: ['limit', 'offset'],
       },
       {
         method: 'GET',

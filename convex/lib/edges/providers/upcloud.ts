@@ -140,33 +140,37 @@ const ZoneList = z.object({
       .default([]),
   }),
 });
-const Plans = z
+/**
+ * One plan of `GET /1.3/load-balancer/plans`, which answers a bare JSON array
+ * (paged: `limit` 10 by default, at most 100). Only `name` is needed; the
+ * label's facts are kept when they are numbers, and fields UpCloud adds are
+ * carried along unread.
+ */
+const PlanRow = z
   .object({
-    plans: z
-      .array(
-        z
-          .object({
-            name: z.string(),
-            server_number: z.number().nullish(),
-            per_server_max_sessions: z.number().nullish(),
-          })
-          .passthrough(),
-      )
-      .default([]),
+    name: z.string().trim().min(1),
+    server_number: z.number().nullish().catch(null),
+    per_server_max_sessions: z.number().nullish().catch(null),
   })
   .passthrough();
-/** `GET /1.3/price`: per zone, every priced item as `{ amount, price }` (price in cents an hour). */
+export type UpcloudPlanRow = z.infer<typeof PlanRow>;
+/**
+ * `GET /1.3/price`: `prices.zone[]`, one object per zone, its `name` and every
+ * priced item as `{ amount, price }` (price in cents an hour for `amount`
+ * units). A zone entry of another shape is skipped, not fatal.
+ */
 const PriceList = z
   .object({
     prices: z
       .object({
-        zone: z.array(z.record(z.string(), z.unknown())).default([]),
+        zone: z.array(z.unknown()).default([]),
         /** Not in UpCloud's documented example; taken when an answer carries it. */
-        currency: z.string().nullish(),
+        currency: z.string().nullish().catch(null),
       })
       .passthrough(),
   })
   .passthrough();
+const PriceZone = z.object({ name: z.string() }).catchall(z.unknown());
 /** `GET /1.3/account` (the key's own account) and `GET /1.3/account/details/{username}` (its currency). */
 const AccountSelf = z
   .object({ account: z.object({ username: z.string() }).passthrough() })
@@ -174,7 +178,9 @@ const AccountSelf = z
 const AccountDetails = z
   .object({ account: z.object({ currency: z.string().nullish() }).passthrough() })
   .passthrough();
-const PriceItem = z.object({ amount: z.number().nullish(), price: z.number() }).passthrough();
+const PriceItem = z
+  .object({ amount: z.number().nullish().catch(null), price: z.number() })
+  .passthrough();
 
 // --- helpers -------------------------------------------------------------------------
 
@@ -280,6 +286,45 @@ async function listLbs(cfg: UpcloudConfig, step: string): Promise<z.infer<typeof
       `/load-balancer?limit=${LB_PAGE}&offset=${offset}`,
       LbList,
     );
+    out.push(...page);
+    if (page.length < LB_PAGE) return out;
+  }
+}
+
+/**
+ * The plan list's answer as plans (exported for tests): a list of named
+ * plans, else `plan_list_unreadable` saying what is missing. A size is never
+ * guessed from an answer that does not name it.
+ */
+export function upcloudPlanListOf(answer: unknown, step = 'plans'): UpcloudPlanRow[] {
+  const unreadable = (why: string) =>
+    new EdgeProviderError(`upcloud plan list unreadable on ${step}: ${why}`, {
+      provider: 'upcloud',
+      step,
+      code: 'plan_list_unreadable',
+      retryable: false,
+      timedOut: false,
+    });
+  if (!Array.isArray(answer)) throw unreadable('the answer is not a list');
+  return answer.map((raw, i) => {
+    const row = PlanRow.safeParse(raw);
+    if (!row.success) throw unreadable(`plan ${i + 1} has no name`);
+    return row.data;
+  });
+}
+
+/** Every load balancer plan, page by page (the list answers 10 unless asked for more). */
+async function listPlans(cfg: UpcloudConfig, step: string): Promise<UpcloudPlanRow[]> {
+  const out: UpcloudPlanRow[] = [];
+  for (let offset = 0; ; offset += LB_PAGE) {
+    const answer = await up(
+      cfg,
+      step,
+      'GET',
+      `/load-balancer/plans?limit=${LB_PAGE}&offset=${offset}`,
+      z.unknown(),
+    );
+    const page = upcloudPlanListOf(answer, step);
     out.push(...page);
     if (page.length < LB_PAGE) return out;
   }
@@ -539,7 +584,9 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
       up(cfg, 'inventory', 'GET', `/ip_address`, IpAddressList).catch(() => ({
         ip_addresses: { ip_address: [] },
       })),
-      up(cfg, 'inventory', 'GET', `/load-balancer/plans`, Plans).catch(() => ({ plans: [] })),
+      // A plan list that cannot be read leaves the size picker empty; the
+      // price read that follows the pull records why (`plansError`).
+      listPlans(cfg, 'inventory').catch(() => []),
     ]);
     // The listings cover the whole account; an inventory is one location's
     // (its zone), so a resource of another zone belongs to another location.
@@ -558,7 +605,7 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
         .filter((ip) => inZone(ip.zone))
         .filter((ip) => (ip.floating ?? '').toLowerCase() === 'yes')
         .map((ip) => ({ id: ip.address, address: ip.address, attachedTo: ip.server ?? null })),
-      flavors: plans.plans.map((p) => ({ id: p.name, label: p.name })),
+      flavors: plans.map((p) => ({ id: p.name, label: p.name })),
     };
   },
 
@@ -567,24 +614,35 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
    * location's zone (`GET /1.3/price`, cents an hour in the account's billing
    * currency, which the list does not name: read from the account's details)
    * where it names the plan, else the dated table of the pricing page
-   * (`UPCLOUD_LB_PRICES`). A price list whose currency cannot be read is not
-   * used. UpCloud charges no data transfer for a load balancer.
+   * (`UPCLOUD_LB_PRICES`), else not known. A price list whose currency cannot
+   * be read is not used. Only an unreadable plan list fails the read
+   * (`plan_list_unreadable`). UpCloud charges no data transfer for a load
+   * balancer.
    */
   async plans(cfg) {
     // Every call settles before the read answers: a failed plan list never
     // leaves the price reads running unawaited.
-    const [listed, prices, currency] = await Promise.allSettled([
-      up(cfg, 'plans', 'GET', `/load-balancer/plans`, Plans),
-      up(cfg, 'plans', 'GET', `/price`, PriceList),
+    const [listed, priceList, currency] = await Promise.allSettled([
+      listPlans(cfg, 'plans'),
+      up(cfg, 'plans', 'GET', `/price`, z.unknown()),
       upcloudCurrency(cfg),
     ]);
     if (listed.status === 'rejected') throw listed.reason;
-    const plans = listed.value;
-    const list = prices.status === 'fulfilled' ? prices.value : null;
-    const billed =
-      list?.prices.currency ?? (currency.status === 'fulfilled' ? currency.value : null);
-    const zone = billed ? (list?.prices.zone.find((z) => z.name === cfg.zone) ?? null) : null;
-    return plans.plans.map((p) => upcloudPlanOf(p, zone, billed ?? null));
+    const list =
+      priceList.status === 'fulfilled' ? upcloudZonePricesOf(priceList.value, cfg.zone) : null;
+    const billed = list?.currency ?? (currency.status === 'fulfilled' ? currency.value : null);
+    const prices = billed ? (list?.plans ?? null) : null;
+    const plans = listed.value.map((p) => upcloudPlanOf(p, prices, billed));
+    // UpCloud does not document the key of a load balancer plan in the price
+    // list: say which keys the zone's list holds when a plan is not among
+    // them, so the key can be read from the logs (item names only, never a price).
+    const unnamed = prices ? listed.value.filter((p) => !prices.has(priceKey(p.name))) : [];
+    if (unnamed.length > 0 && list)
+      console.warn(
+        `[upcloud plans] the zone's price list names no price for ${unnamed.map((p) => p.name).join(', ')}; ` +
+          `its other items: ${list.otherKeys.join(', ') || 'none'}`,
+      );
+    return plans;
   },
 
   planDestroy: (_cfg, ledger) => orderByKind(ledger, UPCLOUD_DESTROY_ORDER),
@@ -641,28 +699,66 @@ export const UPCLOUD_LB_PRICES = {
 } as const;
 
 /**
- * The price list's item for a plan. UpCloud documents the list's shape but not
- * the key of a load balancer plan, so the plan's name is matched in the keys a
- * load balancer item can have (case, `-` and `_` aside).
+ * The hours of a month UpCloud bills an hourly price for: at most 672 (28
+ * days), as UpCloud's own CLI prices a month (`upctl server plans --prices`).
+ * A price-list price a month is its hourly price times this.
  */
-function priceItemOf(
-  zone: Record<string, unknown> | null,
-  plan: string,
-): { amount: number; price: number } | null {
-  if (!zone) return null;
-  const norm = (s: string) => s.toLowerCase().replace(/-/g, '_');
-  const name = norm(plan);
-  const wanted = new Set(
-    ['managed_load_balancer', 'managed_loadbalancer', 'load_balancer', 'loadbalancer'].map(
-      (p) => `${p}_${name}`,
-    ),
-  );
-  for (const [key, raw] of Object.entries(zone)) {
-    if (!wanted.has(norm(key))) continue;
+export const UPCLOUD_BILLED_HOURS_PER_MONTH = 672;
+
+/** How plan names and price-list keys are compared: trimmed, lower case, `_` for `-`. */
+function priceKey(s: string): string {
+  return s.trim().toLowerCase().replace(/-/g, '_');
+}
+
+/**
+ * A price-list key that prices a load balancer plan, as `priceKey` spells it:
+ * the plan's name after a load balancer prefix (`managed_load_balancer_`,
+ * `load_balancer_`, `loadbalancer_`, with or without `plan_` after it, the way
+ * a server plan is `server_plan_<name>`). UpCloud documents the list's shape
+ * but not this key, so every spelling of the product is taken.
+ */
+const LB_PRICE_KEY = /^(?:managed_)?load_?balancer_(?:plan_)?(.+)$/;
+
+/** One zone's load balancer prices in the price list (`upcloudZonePricesOf`). */
+export interface UpcloudZonePrices {
+  /** The list's own currency, when it names one (UpCloud's documented example does not). */
+  currency: string | null;
+  /** Plan (`priceKey` of its name) -> price an hour; null when the list has no such zone. */
+  plans: Map<string, number> | null;
+  /** The zone's item keys that price neither a server plan nor a load balancer plan. */
+  otherKeys: string[];
+}
+
+/**
+ * The load balancer plan prices of one zone of a `GET /1.3/price` answer
+ * (exported for tests): each item's `price` is cents an hour for `amount`
+ * units (1 for a plan), so a plan's price an hour is `price / 100 / amount`.
+ * An item of another shape is skipped. Null when the answer is not the
+ * documented shape at all.
+ */
+export function upcloudZonePricesOf(answer: unknown, zone: string): UpcloudZonePrices | null {
+  const list = PriceList.safeParse(answer);
+  if (!list.success) return null;
+  const c = list.data.prices.currency?.trim().toUpperCase();
+  const currency = c && /^[A-Z]{3}$/.test(c) ? c : null;
+  const entry = list.data.prices.zone
+    .map((z) => PriceZone.safeParse(z))
+    .find((z) => z.success && z.data.name === zone)?.data;
+  if (!entry) return { currency, plans: null, otherKeys: [] };
+  const plans = new Map<string, number>();
+  const otherKeys: string[] = [];
+  for (const [key, raw] of Object.entries(entry)) {
+    if (key === 'name' || key.startsWith('server_plan_')) continue;
+    const plan = LB_PRICE_KEY.exec(priceKey(key))?.[1];
+    if (!plan) {
+      otherKeys.push(key);
+      continue;
+    }
     const item = PriceItem.safeParse(raw);
-    if (item.success) return { amount: item.data.amount ?? 1, price: item.data.price };
+    if (item.success && item.data.price >= 0)
+      plans.set(plan, item.data.price / 100 / Math.max(1, item.data.amount ?? 1));
   }
-  return null;
+  return { currency, plans, otherKeys: otherKeys.sort() };
 }
 
 /**
@@ -684,13 +780,14 @@ async function upcloudCurrency(cfg: UpcloudConfig): Promise<string | null> {
 
 /**
  * One plan of `GET /load-balancer/plans` as a plan, priced from the zone's
- * price list (cents an hour, in `currency`, the account's billing one) or the
- * pricing page's table (exported for tests). With no zone list (or no
- * currency for it), the table.
+ * price list (`prices`, an hour in `currency`, the account's billing one; a
+ * month is `UPCLOUD_BILLED_HOURS_PER_MONTH` of them) or the pricing page's
+ * table (exported for tests). With no zone list (or no currency for it), the
+ * table; a plan in neither has no known price.
  */
 export function upcloudPlanOf(
-  p: z.infer<typeof Plans>['plans'][number],
-  zone: Record<string, unknown> | null,
+  p: UpcloudPlanRow,
+  prices: ReadonlyMap<string, number> | null,
   currency: string | null,
 ): ProviderPlan {
   const nodes = typeof p.server_number === 'number' ? p.server_number : null;
@@ -706,12 +803,12 @@ export function upcloudPlanOf(
     bandwidthMbps: null,
     acceptsOutsideNode: null,
   };
-  const item = currency ? priceItemOf(zone, p.name) : null;
-  if (item && currency)
+  const perHour = currency ? (prices?.get(priceKey(p.name)) ?? null) : null;
+  if (perHour !== null && currency)
     return {
       ...base,
-      perHour: item.price / 100 / Math.max(1, item.amount),
-      perMonth: null,
+      perHour,
+      perMonth: Math.round(perHour * UPCLOUD_BILLED_HOURS_PER_MONTH * 100) / 100,
       currency,
       source: 'api',
     };

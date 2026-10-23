@@ -45,6 +45,7 @@
   } from '../../../../lib/edgesApi';
   import PlanDialog from './PlanDialog.svelte';
   import { costWords, sourceWords, trafficWords } from '../lib/planWords';
+  import { codeLabel } from '../../../../lib/edgeCodes';
   import { EDGE_PROVIDER_META } from '../../../../lib/edgeProviderMeta';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import { edgeErrorMessage } from '../lib/edgeErrors';
@@ -258,8 +259,8 @@
               </p>
               {#if pr.plansError}
                 <p class="text-muted-foreground text-xs">
-                  The last price read failed ({pr.plansError}); the prices shown are the ones read
-                  before.
+                  The last price read failed ({codeLabel(pr.plansError)}); the prices shown are the
+                  ones read before.
                 </p>
               {/if}
             {:else if zones && l.pricing}
