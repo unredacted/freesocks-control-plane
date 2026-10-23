@@ -10,6 +10,9 @@
  *   automationOn(config)             the four switches `POST automation` sets, read back as one
  *   automationState(config), automationNote(state)   what those switches mean apart
  *   nodeAutomationWords(config, node)  the node page's automatic-replacement card
+ *   spareInUseWords(config, node, slot?), heldSpareWords(slot)  whether a spare would go in use
+ *   upkeepAddsMissing(config, node)  whether automatic upkeep adds what a node still lacks
+ *   providerPickWords(view, opts)    the node's provider set card in words
  *   planWords(plan)                  the review sentence pieces of a plan
  *   hideButton(n), moreDirectWords(n)  the "hide the unsupported direct addresses" words
  */
@@ -278,11 +281,56 @@ type AutomationConfig = {
   probe: { enabled: boolean };
 };
 
+/** A missing address as the providers view names it (`ProviderSetView['missing']`). */
+type MissingPlace = { locationId: string | null; label: string | null; accountName: string | null };
+
+/**
+ * Where a spare stands against the pool (the providers view, and the dry run
+ * for a new one): whether putting it in use would get it a slot now (null: not
+ * known), and what the held slots wait for.
+ */
+export interface SpareSlot {
+  takesSlot: boolean | null;
+  missing: ReadonlyArray<MissingPlace>;
+  /** Free slots held for `missing` (the view's `pool.held`). */
+  held?: number;
+}
+
+/** "A (Acct)", "A (Acct) or B (Acct)": the distinct named locations of what is missing. */
+function missingPlaces(missing: ReadonlyArray<MissingPlace>): string[] {
+  const out: string[] = [];
+  for (const m of missing) {
+    if (!m.label) continue;
+    const name = m.accountName ? `${m.label} (${m.accountName})` : m.label;
+    if (!out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+const orList = (xs: string[]): string =>
+  xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} or ${xs[xs.length - 1]}`;
+
+/**
+ * Why a tested spare would stay a spare: the free slot is held for what the
+ * node still lacks (reserved allocation), and the two ways on: Replace address
+ * (swap one in use for it), or remove the location that lacks an address.
+ */
+export function heldSpareWords(slot: Pick<SpareSlot, 'missing' | 'held'>): string {
+  const places = missingPlaces(slot.missing);
+  const slots = (slot.held ?? 1) > 1 ? 'free slots are' : 'free slot is';
+  if (places.length === 0)
+    return `It stays a spare: the ${slots} held for an address this node still lacks. To use this one, replace an address in use with it (Replace address).`;
+  return `It stays a spare: the ${slots} held for an address in ${orList(places)}, which this node still lacks. To use this one, replace an address in use with it (Replace address), or remove ${places.length === 1 ? 'that location' : 'those locations'} from the node.`;
+}
+
 /**
  * Whether a spare stays a spare: with automatic publishing on, a node that
  * wants more addresses in use than it has gets a tested spare put in use by
  * the next upkeep pass (every 5 minutes), so "keep" or "add" a spare can mean
  * one more address in use. The sentence says so, or null when it stays a spare.
+ * A spare that would get no slot (`slot.takesSlot` false: the free slots are
+ * held for what the node still lacks) stays a spare whatever the switches, and
+ * the sentence says why (`heldSpareWords`).
  */
 export function spareInUseWords(
   config: { enabled: boolean; autoPublishStandby: boolean },
@@ -292,13 +340,27 @@ export function spareInUseWords(
     desiredPublished: number;
     publishedEdgeIds: ReadonlyArray<string | null>;
   },
+  slot: SpareSlot | null = null,
 ): string | null {
-  if (!config.enabled || !config.autoPublishStandby || !node.enabled || node.setupOwned)
-    return null;
+  if (!node.enabled || node.setupOwned) return null;
   const published = node.publishedEdgeIds.filter(Boolean).length;
   const wanted = node.desiredPublished;
   if (wanted <= published) return null;
+  if (slot?.takesSlot === false) return heldSpareWords(slot);
+  if (!config.enabled || !config.autoPublishStandby) return null;
   return `It may be put in use at once: this node wants ${wanted} ${wanted === 1 ? 'address' : 'addresses'} in use and has ${published}.`;
+}
+
+/**
+ * Whether automatic upkeep provisions what a node still lacks: the master
+ * switch and `edge.autoProvisionToDesired` (convex/edgeReconcile.ts step 5),
+ * on a node that is switched on and that no guided setup owns.
+ */
+export function upkeepAddsMissing(
+  config: { enabled: boolean; autoProvisionToDesired: boolean },
+  node: { enabled: boolean; setupOwned: boolean },
+): boolean {
+  return config.enabled && config.autoProvisionToDesired && node.enabled && !node.setupOwned;
 }
 
 /** The four switches `POST automation {on}` sets, read back as one. */
@@ -536,21 +598,24 @@ export function runPickLines(
  * A node's provider set in words (the node page's card): per location, then the
  * locations that hold one of its addresses outside the set (`outside`: the set
  * changes only when a run goes live, so the spare of a re-protect that failed
- * sits there), then what members miss.
+ * sits there), then what members miss. What is still missing names its
+ * locations, and says who adds it: automatic upkeep only when `upkeepAdds`
+ * (`upkeepAddsMissing`), else nothing on its own, with the two ways on.
  */
 export function providerPickWords(
   view: Pick<
     ProviderSetView,
     'picks' | 'reduced' | 'coolingOnly' | 'uncarried' | 'deficit' | 'hasSet'
   > &
-    Partial<Pick<ProviderSetView, 'outside'>>,
-  nameOf: (listenerKey: string) => string = (k) => k,
-  now: number = Date.now(),
+    Partial<Pick<ProviderSetView, 'outside' | 'missing'>>,
+  opts: { nameOf?: (listenerKey: string) => string; now?: number; upkeepAdds?: boolean } = {},
 ): {
   picks: Array<{ locationId: string; counts: string; cooling: string | null }>;
   outside: Array<{ locationId: string; counts: string; why: string }>;
   notes: string[];
 } {
+  const nameOf = opts.nameOf ?? ((k: string) => k);
+  const now = opts.now ?? Date.now();
   const picks = view.picks.map((p) => {
     const left = p.coolingUntil
       ? Math.max(1, Math.ceil((Date.parse(p.coolingUntil) - now) / 60_000))
@@ -582,9 +647,17 @@ export function providerPickWords(
     notes.push(
       `Members on ${names(view.reduced.map((r) => r.listenerKey))} have no backup at another provider.`,
     );
-  if (view.hasSet && view.deficit > 0)
+  if (view.hasSet && view.deficit > 0) {
+    const places = [...new Set((view.missing ?? []).map((m) => m.label).filter((l) => !!l))];
+    const what = `${plural(view.deficit, 'address is', 'addresses are')} still missing${places.length > 0 ? ` (${places.join(', ')})` : ''}`;
+    const it = view.deficit === 1 ? 'it' : 'them';
     notes.push(
-      `${plural(view.deficit, 'address is', 'addresses are')} still missing; automatic upkeep adds ${view.deficit === 1 ? 'it' : 'them'}.`,
+      opts.upkeepAdds
+        ? `${what}; automatic upkeep adds ${it}.`
+        : places.length > 0
+          ? `${what}. Nothing adds ${it} on its own: add a spare address there, or remove ${places.length === 1 ? 'the location' : 'those locations'}.`
+          : `${what}. Nothing adds ${it} on its own: add a spare address.`,
     );
+  }
   return { picks, outside, notes };
 }

@@ -6,6 +6,7 @@
    *
    * All wording lives in ./lib/words.ts (pure, unit-tested).
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
@@ -254,7 +255,7 @@
 </footer>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-md">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-md`}>
     <Dialog.Header>
       <Dialog.Title>Add a family</Dialog.Title>
       <Dialog.Description>The target site cannot be changed later.</Dialog.Description>
@@ -307,7 +308,7 @@
           Only accept names the target serves over HTTP/2
         </Label>
       </div>
-      <Dialog.Footer>
+      <Dialog.Footer class={STICKY_FOOTER}>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
         <Button type="submit" disabled={!valid || busy}>{busy ? 'Working…' : 'Add'}</Button>
       </Dialog.Footer>

@@ -12,6 +12,7 @@
    *   locationId: string | null
    *   options?: unknown     the provider options the address is built with (only what differs)
    *   each?: boolean        several addresses may be created there ("Each address")
+   *   label?: string        what the line prices ("The new address" where another one is in view)
    */
   import { providersQuery } from '@client/lib/edgesApi';
   import { costWords, sourceWords } from '../lib/planWords';
@@ -21,8 +22,9 @@
     locationId: string | null;
     options?: unknown;
     each?: boolean;
+    label?: string;
   }
-  let { accountId, locationId, options = null, each = false }: Props = $props();
+  let { accountId, locationId, options = null, each = false, label }: Props = $props();
 
   const providers = providersQuery();
   const account = $derived(
@@ -51,7 +53,7 @@
 
 {#if pricing && cost}
   <p class="text-muted-foreground text-xs">
-    {each ? 'Each address' : 'This address'}{plan ? ` (${plan.label})` : ''}: {costWords(
+    {label ?? (each ? 'Each address' : 'This address')}{plan ? ` (${plan.label})` : ''}: {costWords(
       cost,
     )}{plan && cost.basis === 'list' ? ` (${sourceWords(plan).toLowerCase()})` : ''}.
   </p>

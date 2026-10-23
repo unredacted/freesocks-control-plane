@@ -13,6 +13,8 @@
  *   edgeAddress(edge)                the one address an edge is known by
  *   operatorFactsRows(edge)          "what FCP saw" for a needs-operator edge
  *   rotationDurationMs(rotation, now)
+ *   rotationOutcomeWords(rotation)   a run's result in a word or two (a publish held back by the pool says why)
+ *   replaceAutoWords(pick, spare)    what Automatic would use for a replacement, in words
  *   relayProbeTargetKeys(relayId, edges)       the probe targets that belong to this origin
  *   originKindWords / hostModeWords / matchRuleWords / originTransportWords
  */
@@ -183,11 +185,28 @@ export function rotationDurationMs(
 }
 
 export function rotationOutcomeWords(
-  r: Pick<EdgeRotationAdmin, 'terminal' | 'outcome' | 'reason'>,
+  r: Pick<EdgeRotationAdmin, 'terminal' | 'outcome' | 'reason'> &
+    Partial<Pick<EdgeRotationAdmin, 'standbyReason'>>,
 ): string {
   if (!r.terminal) return 'Running';
   const outcome = r.outcome ? humanizeCode(r.outcome) : 'Finished';
-  return r.reason ? `${outcome}: ${codeLabel(r.reason)}` : outcome;
+  const why = r.standbyReason ?? r.reason;
+  return why ? `${outcome}: ${codeLabel(why)}` : outcome;
+}
+
+/**
+ * What Automatic would use for a replacement (the dry run's `wouldSelect`), in
+ * words: the tested spare it switches to, or where it creates a new address.
+ */
+export function replaceAutoWords(
+  w: { standbyEdgeId: string | null; accountName: string | null; locationLabel: string | null },
+  spare: { name: string; place: string | null } | null,
+): string | null {
+  if (w.standbyEdgeId)
+    return `Automatic uses the tested spare ${spare?.name ?? ''}${spare?.place ? ` in ${spare.place}` : ''}.`;
+  if (w.accountName)
+    return `Automatic creates a new address in ${w.locationLabel ? `${w.locationLabel} (${w.accountName})` : w.accountName}.`;
+  return null;
 }
 
 export function relayProbeTargetKeys(

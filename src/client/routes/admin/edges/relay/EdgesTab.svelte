@@ -28,6 +28,7 @@
   import EdgeActionsMenu from './EdgeActionsMenu.svelte';
   import ImportFrontDialog from './ImportFrontDialog.svelte';
   import ProvisionDialog from './ProvisionDialog.svelte';
+  import { showsPublication } from '../lib/pool';
   import { edgeAddress } from './relayLogic';
 
   interface Props {
@@ -193,7 +194,9 @@
                   <StatusBadge kind="status" value={e.status} />
                   <StatusBadge kind="health" value={e.health} />
                   <StatusBadge kind="reach" value={outsideReachOf(e.reachability)} />
-                  <StatusBadge kind="publication" value={e.publication} />
+                  {#if showsPublication(e)}
+                    <StatusBadge kind="publication" value={e.publication} />
+                  {/if}
                   {#if testBlocked.has(e.id)}
                     <Badge
                       variant="warning"

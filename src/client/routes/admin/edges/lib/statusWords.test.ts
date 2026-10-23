@@ -46,6 +46,14 @@ const status = (over: Partial<OriginStatus> = {}): OriginStatus => ({
   ...over,
 });
 
+describe('originSentence: a failed run', () => {
+  test('any run that failed, not only a replacement', () => {
+    expect(originSentence(status({ kind: 'needs-you', code: 'rotation_failed' }))).toBe(
+      'The last run on this node failed. It needs you.',
+    );
+  });
+});
+
 describe('originSentence', () => {
   test('a live run speaks first, in four plain steps', () => {
     expect(

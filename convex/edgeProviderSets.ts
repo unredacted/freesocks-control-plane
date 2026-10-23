@@ -40,7 +40,15 @@ function optionsOfPick(
   const raw = relay.providerSet?.find((x) => x.locationId === locationId)?.options;
   return raw !== undefined ? parseOptionValues(raw) : null;
 }
-import { carries, coolingOf, publishedRefOf, setPicksOf, setStateOf } from './lib/edges/setState';
+import {
+  carries,
+  coolingOf,
+  publishedRefOf,
+  setPicksOf,
+  setStateOf,
+  slotsOf,
+  takesSlot,
+} from './lib/edges/setState';
 import { locationsOfAccount } from './edgeLocations';
 import { regionOffersOf } from './edgeProviderCatalog';
 import type { PublishedRef } from './lib/edges/providerSet';
@@ -51,7 +59,7 @@ import { unpublishFromPool } from './relays';
 import { liveEdgesOfRelay } from './lib/edges/relayGuards';
 import { listenersOf } from './relayListeners';
 import { boundToRelay, startReprotect } from './edgeSetupRuns';
-import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
+import { EDGE_LIVE_STATUSES, publishedCount } from './lib/edges/pool';
 
 const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
 
@@ -66,8 +74,11 @@ const LIVE: ReadonlySet<string> = new Set(EDGE_LIVE_STATUSES);
  * yet (`regions`: picking one creates the location). `outside` names the
  * locations that hold an address of this origin in use or spare but are not
  * in its set: the set changes only when a run goes live, so a re-protect that
- * failed leaves its new spare there, outside the set it never changed. Names
- * are admin-only.
+ * failed leaves its new spare there, outside the set it never changed.
+ * `missing` names what the set still lacks (one entry per missing address,
+ * the deficit's targets), `pool` how many of its free slots that holds, and
+ * `spares` whether each spare (or retiring address) would get a slot if put in
+ * use now (`takesSlot`: false = it would stay a spare). Names are admin-only.
  */
 export const view = internalQuery({
   args: { relayId: v.id('relays') },
@@ -181,6 +192,33 @@ export const view = internalQuery({
         spare,
       });
     }
+    // The pool and what its free slots are held for (reserved allocation,
+    // docs/edges.md § Publication): what the set still lacks, named, and per
+    // spare (or retiring address) whether a publish would get a slot now or
+    // leave it a spare.
+    const keyOf = new Map(state.listeners.map((l) => [l._id as string, l.listenerKey]));
+    const placeOf = (locationId: string | null) => {
+      const p = locationId ? pickRows.find((r) => r.location._id === locationId) : undefined;
+      return { label: p?.location.label ?? null, accountName: p?.account.name ?? null };
+    };
+    const missing = state.targets.map((t) => ({
+      listenerKey: t.listenerKey,
+      locationId: t.locationId,
+      ...placeOf(t.locationId),
+    }));
+    const spares = edges
+      .filter(
+        (e) =>
+          (e.publication === 'unpublished' && e.status === 'active') || e.status === 'draining',
+      )
+      .map((e) => ({
+        edgeId: e._id as string,
+        takesSlot: takesSlot(
+          state,
+          relay,
+          publishedRefOf(e, keyOf.get(e.listenerId as string) ?? ''),
+        ),
+      }));
     return {
       hasSet: !!relay.providerSet,
       websocketNode: state.websocketNode,
@@ -190,6 +228,13 @@ export const view = internalQuery({
       coolingOnly: state.requirement.coolingOnly,
       uncarried: state.requirement.uncarried,
       deficit: state.deficit,
+      missing,
+      pool: {
+        wanted: relay.desiredPublished,
+        inUse: publishedCount(relay.publishedEdgeIds),
+        ...slotsOf(state, relay),
+      },
+      spares,
       available,
       regions,
     };

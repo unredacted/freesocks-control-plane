@@ -69,7 +69,65 @@ export function appendEvent(events: readonly RotationEvent[], ev: RotationEvent)
  * (already redacted and scrubbed of the edge's names by edgeProviderOps).
  */
 export function withProviderAnswer(detail: string, answer: string | undefined): string {
-  return answer ? `${detail}. The provider answered: ${answer}` : detail;
+  return answer ? `${detail}${PROVIDER_ANSWERED}${answer}` : detail;
+}
+
+const PROVIDER_ANSWERED = '. The provider answered: ';
+/** The longest provider answer a failure's words carry (an attention row, an audit row). */
+export const PROVIDER_ANSWER_MAX = 200;
+
+/**
+ * The provider's own (redacted, scrubbed) answer behind a run that failed: the
+ * newest event of THIS run that carried one (`withProviderAnswer`), else the
+ * one kept on the edge this run created (`createdFailure`: pass it only for
+ * that edge, `createdEdgeIdOf`; a standby's kept answer is from an earlier run
+ * and says nothing about this one). Null when the provider said nothing.
+ */
+export function providerAnswerOf(
+  events: readonly { detail?: string | null }[],
+  createdFailure: { detail?: string } | null | undefined,
+): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const d = events[i]!.detail ?? '';
+    const at = d.lastIndexOf(PROVIDER_ANSWERED);
+    if (at >= 0) {
+      const answer = d.slice(at + PROVIDER_ANSWERED.length).trim();
+      if (answer) return answer.slice(0, PROVIDER_ANSWER_MAX);
+    }
+  }
+  const kept = createdFailure?.detail?.trim();
+  return kept ? kept.slice(0, PROVIDER_ANSWER_MAX) : null;
+}
+
+/**
+ * The new edge a rotation created (never a pre-existing standby or a publish
+ * target), from the row (`createdEdgeId` / `viaStandby`); rows from before
+ * those fields fall back to the event log.
+ */
+export function createdEdgeIdOf<T>(r: {
+  kind: string;
+  createdEdgeId?: T;
+  viaStandby?: boolean;
+  toEdgeId?: T;
+  events: readonly { code: string }[];
+}): T | null {
+  if (r.createdEdgeId) return r.createdEdgeId;
+  if (r.viaStandby !== undefined) return r.viaStandby ? null : (r.toEdgeId ?? null);
+  if (!r.toEdgeId) return null;
+  if (r.kind === 'publish') return null;
+  return r.events.some((e) => e.code === 'selected_standby') ? null : r.toEdgeId;
+}
+
+/**
+ * A provision meant to stay a spare: not put in use when done, and no guided
+ * setup run's candidate (the run puts those in use at go-live).
+ */
+export function isSpareProvision(r: {
+  kind: string;
+  publishOnDone?: boolean;
+  setupRun?: unknown;
+}): boolean {
+  return r.kind === 'provision' && r.publishOnDone !== true && !r.setupRun;
 }
 
 /** What an edge records about why it stopped (`edges.failure`). */

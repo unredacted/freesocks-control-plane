@@ -12,6 +12,8 @@
  *   setStateOf(db, relay)           requirement + published + deficit + targets
  *   publishedRefOf(edge, listenerKey)
  *   admissionOf(state, ref)         what one more publication does to the deficit
+ *   takesSlot(state, relay, ref)    whether a publish at `ref` would get a pool slot now
+ *   slotsOf(state, relay)           free pool slots, and how many the deficit holds
  */
 import type { Doc, Id } from '../../_generated/dataModel';
 import type { DatabaseReader } from '../../_generated/server';
@@ -21,6 +23,7 @@ import { accountsForSlot } from './rotation';
 import { frontsAllowed } from './providers/capabilities';
 import { placeProblemOf } from './l7Place';
 import { websocketNodeOf } from './websocketNode';
+import { allocatePoolIndex, freeSlotCount } from './pool';
 import {
   coverTargets,
   coverageDeficit,
@@ -232,4 +235,30 @@ export function admissionOf(
 ): { lowersDeficit: boolean; deficit: number } {
   const after = coverageDeficit(state.requirement, [...state.published, ref]);
   return { lowersDeficit: after < state.deficit, deficit: state.deficit };
+}
+
+/**
+ * Whether a publish of an edge at `ref` would get a pool slot now: the
+ * reserved allocation every publish path applies (`allocatePoolIndex`). False
+ * means it would end as a spare (`pool_full`, or `pool_reserved`: the free
+ * slots are held for what the origin still lacks).
+ */
+export function takesSlot(
+  state: Pick<SetState, 'requirement' | 'published' | 'deficit'>,
+  relay: Pick<Relay, 'publishedEdgeIds' | 'desiredPublished'>,
+  ref: PublishedRef,
+): boolean {
+  return (
+    'index' in
+    allocatePoolIndex(relay.publishedEdgeIds, relay.desiredPublished, admissionOf(state, ref))
+  );
+}
+
+/** Free pool slots, and how many of them are held for the deficit (only an edge that lowers it may take those). */
+export function slotsOf(
+  state: Pick<SetState, 'deficit'>,
+  relay: Pick<Relay, 'publishedEdgeIds' | 'desiredPublished'>,
+): { free: number; held: number } {
+  const free = freeSlotCount(relay.publishedEdgeIds, relay.desiredPublished);
+  return { free, held: Math.min(free, state.deficit) };
 }

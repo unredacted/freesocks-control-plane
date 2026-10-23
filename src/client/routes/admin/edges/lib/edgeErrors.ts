@@ -7,6 +7,7 @@
  *
  * Exports:
  *   EdgeRefusalError                      throw for an `{ ok: false, code }` response
+ *   InputProblemError                     throw for what the form itself found wrong (its message is the words)
  *   assertEdgeOk(res)                     throws EdgeRefusalError unless res.ok; returns res
  *   edgeErrorCode(err)                    the bare code ('cooldown') or null
  *   edgeErrorIssue(err)                   { code, detail } for <CodeNote>, or null
@@ -25,6 +26,14 @@ export class EdgeRefusalError extends Error {
     super(code);
     this.name = 'EdgeRefusalError';
     this.code = code;
+  }
+}
+
+/** What a form found wrong before sending anything: its message is already operator words. */
+export class InputProblemError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InputProblemError';
   }
 }
 
@@ -74,6 +83,7 @@ function refusalWords(code: string, err?: unknown): string | null {
 }
 
 export function edgeErrorMessage(err: unknown): string {
+  if (err instanceof InputProblemError) return err.message;
   // Every throttled edge call reaches a backend or a provider: say so, whatever the code.
   if (err instanceof ApiCallError && err.status === 429) {
     return refusalWords('throttled') ?? apiErrorMessage(err);

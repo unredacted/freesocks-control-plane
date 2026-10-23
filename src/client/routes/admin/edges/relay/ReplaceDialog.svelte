@@ -12,10 +12,15 @@
    * Where the replacement comes from: Automatic (a tested spare, preferring
    * another provider, then another location, else a new address; the dry run
    * says what it would use), or the operator names a tested spare of the same
-   * transport, or a location of the node's set for a new address.
+   * transport, or a location of the node's set for a new address. A new
+   * address's monthly cost is labelled as the new one's (never "This address",
+   * which reads as the one being replaced), and where Automatic would create
+   * it is said even when there is nothing to choose from.
    *
    * Props: kind 'rotate' | 'burn'; origin; edge; edges? (the origin's, for the
-   * spares); plain?; onClose(); onStarted(rotationId)
+   * spares); spareEdgeId? (a tested spare to start on instead of Automatic: the
+   * held spare a node page's "Put it in use" sends here); plain?; onClose();
+   * onStarted(rotationId)
    */
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -36,7 +41,7 @@
   import PreflightPanel from '../components/PreflightPanel.svelte';
   import EdgeCostLine from '../components/EdgeCostLine.svelte';
   import ActionConfirm from './ActionConfirm.svelte';
-  import { edgeAddress } from './relayLogic';
+  import { edgeAddress, replaceAutoWords } from './relayLogic';
   import { frontsNode } from '@client/lib/edgeProviderMeta';
   import { drainLength, replaceDrainMinutes } from '../simple/drainWords';
 
@@ -47,6 +52,8 @@
     edge: EdgeAdmin;
     /** The origin's edges: the tested spares of the same transport are offered by name. */
     edges?: EdgeAdmin[];
+    /** A tested spare of the same transport to start on (else Automatic). */
+    spareEdgeId?: string | null;
     plain?: boolean;
     onClose: () => void;
     onStarted: (rotationId: string) => void;
@@ -57,6 +64,7 @@
     relay,
     edge,
     edges = [],
+    spareEdgeId = null,
     plain = false,
     onClose,
     onStarted,
@@ -64,8 +72,10 @@
 
   const qc = useQueryClient();
   const uid = $props.id();
-  // Where from: 'auto', `spare:<edgeId>` or `loc:<locationId>`.
-  let where = $state('auto');
+  // Where from: 'auto', `spare:<edgeId>` or `loc:<locationId>`. Mounted per
+  // use, so the spare the caller names is the start, read once.
+  const startWhere = () => (spareEdgeId ? `spare:${spareEdgeId}` : 'auto');
+  let where = $state(startWhere());
   const setQ = relayProvidersQuery({
     slug: () => relay.slug,
     id: () => relay.id,
@@ -113,14 +123,11 @@
   const autoWords = $derived.by(() => {
     const w = preflight.data?.wouldSelect;
     if (!w || where !== 'auto') return null;
-    if (w.standbyEdgeId) {
-      const s = edges.find((e) => e.id === w.standbyEdgeId);
-      const place = labelOf(s?.locationId ?? null);
-      return `Automatic uses the tested spare ${s ? edgeAddress(s) || s.name : ''}${place ? ` in ${place}` : ''}.`;
-    }
-    if (w.accountName)
-      return `Automatic creates a new address in ${w.locationLabel ? `${w.locationLabel} (${w.accountName})` : w.accountName}.`;
-    return null;
+    const s = w.standbyEdgeId ? edges.find((e) => e.id === w.standbyEdgeId) : undefined;
+    return replaceAutoWords(
+      w,
+      s ? { name: edgeAddress(s) || s.name, place: labelOf(s.locationId ?? null) } : null,
+    );
   });
 
   /** Limits an admin may override by hand; everything else has to be fixed first. */
@@ -216,16 +223,21 @@
       </Select.Root>
       {#if autoWords}<p class="text-muted-foreground text-xs">{autoWords}</p>{/if}
     </div>
+  {:else if autoWords}
+    <!-- Nothing to choose from: still say where Automatic would create the new address. -->
+    <p class="text-muted-foreground mb-1 text-xs">{autoWords}</p>
   {/if}
   <!-- A new address (not a spare already paid for): what it costs a month, before it exists. -->
   {#if where.startsWith('loc:')}
     <EdgeCostLine
+      label="The new address"
       accountId={picks.find((p) => p.locationId === where.slice(4))?.accountId ?? null}
       locationId={where.slice(4)}
       options={picks.find((p) => p.locationId === where.slice(4))?.options ?? null}
     />
   {:else if where === 'auto' && preflight.data?.wouldSelect && !preflight.data.wouldSelect.standbyEdgeId}
     <EdgeCostLine
+      label="The new address"
       accountId={preflight.data.wouldSelect.accountId}
       locationId={preflight.data.wouldSelect.locationId}
       options={picks.find((p) => p.locationId === preflight.data?.wouldSelect?.locationId)

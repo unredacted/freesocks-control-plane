@@ -3,6 +3,7 @@
    * Custom probe targets: operator-entered host and port pairs (CRUD + probe now).
    * Operator evidence only: the block detector never reads these.
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Badge } from '@client/components/ui/badge';
@@ -194,7 +195,7 @@
 />
 
 <Dialog.Root open={editor !== null} onOpenChange={(v) => !v && (editor = null)}>
-  <Dialog.Content>
+  <Dialog.Content class={DIALOG_FIT}>
     <Dialog.Header>
       <Dialog.Title>{editor?.id ? 'Edit target' : 'New custom target'}</Dialog.Title>
       <Dialog.Description>
@@ -260,7 +261,7 @@
         </label>
       </div>
     {/if}
-    <Dialog.Footer>
+    <Dialog.Footer class={STICKY_FOOTER}>
       <Button variant="outline" onclick={() => (editor = null)}>Cancel</Button>
       <Button disabled={!draftValid || save.isPending} onclick={() => save.mutate()}>
         {save.isPending ? 'Saving' : 'Save target'}

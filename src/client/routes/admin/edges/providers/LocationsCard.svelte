@@ -16,6 +16,7 @@
    *   account: EdgeProviderAccountAdmin
    *   accountNames?: Record<string, string>   account id -> name (a front's DNS account)
    */
+  import { DIALOG_FIT } from '../lib/dialogLayout';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Badge } from '@client/components/ui/badge';
@@ -370,7 +371,7 @@
 </Card>
 
 <Dialog.Root bind:open={adding}>
-  <Dialog.Content class="sm:max-w-2xl">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-2xl`}>
     <Dialog.Header>
       <Dialog.Title>Add a {zones ? 'zone' : 'location'} to {account.name}</Dialog.Title>
       <Dialog.Description>
