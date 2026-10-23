@@ -29,7 +29,11 @@
    * "Put it in use" on a spare: while fewer addresses are in use than the node
    * wants, the server's `pool_below_desired` attention item names the one spare
    * that passes the publish checks; its line offers the same publish as the
-   * Edges home (lib/attentionCalls.ts), which opens the run.
+   * Edges home (lib/attentionCalls.ts), which opens the run. When the free slot
+   * is held for what the node still lacks (reserved allocation: the item's code
+   * `pool_reserved`, or the providers view's `spares`), the confirm says the
+   * address would stay a spare and for which location the slot is held, and
+   * offers Replace address instead of a publish that ends as a spare.
    *
    * A retiring address (drained after a Replace) says when it is deleted; "Delete
    * now" ends its drain early (DELETE the edge: members who have not refreshed
@@ -75,6 +79,7 @@
     relayEdgesQuery,
     relayListenersQuery,
     relayLookupQuery,
+    relayProvidersQuery,
     relayTimelineQuery,
     reprotectRelay,
     requireRelayEdges,
@@ -104,7 +109,13 @@
   import SpareDialog from './SpareDialog.svelte';
   import StatusDot from './StatusDot.svelte';
   import { endNowWords } from './drainWords';
-  import { nodeAutomationWords, spareInUseWords } from './runWords';
+  import {
+    heldSpareWords,
+    nodeAutomationWords,
+    spareInUseWords,
+    upkeepAddsMissing,
+    type SpareSlot,
+  } from './runWords';
 
   interface Props {
     slug: string;
@@ -126,6 +137,8 @@
   };
   const listenersQ = relayListenersQuery(ref);
   const edgesQ = relayEdgesQuery(ref);
+  // The pool against the provider set: what the free slots are held for, per spare.
+  const setQ = relayProvidersQuery(ref);
   const timelineQ = relayTimelineQuery(ref);
   const config = edgeConfigQuery();
   const countriesQ = edgeCountriesQuery({ busy: (d) => anyCountryCheckPending(d) });
@@ -144,9 +157,18 @@
       ? nodeAutomationWords(config.data.config, { ...relay, runLive: !!runId })
       : null,
   );
-  // "Keep as a spare" while the node wants more addresses in use: upkeep puts it in use.
-  const keepNote = $derived(
-    config.data && relay ? spareInUseWords(config.data.config, relay) : null,
+  /** Where one spare (or retiring address) stands against the pool. */
+  const slotOf = (edgeId: string): SpareSlot | null =>
+    setQ.data
+      ? {
+          takesSlot: setQ.data.spares.find((x) => x.edgeId === edgeId)?.takesSlot ?? null,
+          missing: setQ.data.missing,
+          held: setQ.data.pool?.held,
+        }
+      : null;
+  // Whether automatic upkeep adds what the node still lacks (the providers card says).
+  const upkeepAdds = $derived(
+    !!config.data && !!relay && upkeepAddsMissing(config.data.config, relay),
   );
   // The oldest of what the panel shows, and one way to read it all again now.
   const updatedAt = $derived(
@@ -202,10 +224,15 @@
     attention.data?.items.find(
       (i) =>
         i.kind === 'pool_below_desired' &&
-        i.action === 'publish' &&
+        (i.action === 'publish' || i.code === 'pool_reserved') &&
         i.relaySlug === slug &&
         i.edgeId,
     ) ?? null,
+  );
+  // That spare would stay a spare: its free slot is held for what the node lacks.
+  const putInUseHeld = $derived(
+    !!putInUse &&
+      (putInUse.code === 'pool_reserved' || slotOf(putInUse.edgeId!)?.takesSlot === false),
   );
   const PUBLISH = ATTENTION_ACTION_PLAN.publish.confirm;
   const publishDeps = attentionCallDeps(qc, { plain: true });
@@ -448,6 +475,7 @@
       <NodeProvidersCard
         relay={{ id: relay.id, slug: relay.slug }}
         {busy}
+        {upkeepAdds}
         nameOf={(key) => {
           const l = listeners.find((x) => x.listenerKey === key);
           return l ? transportName(l) : key;
@@ -559,6 +587,9 @@
         }}
       />
     {:else}
+      {@const keepNote = config.data
+        ? spareInUseWords(config.data.config, relay, slotOf(e.id))
+        : null}
       <ActionConfirm
         open={true}
         title={`Keep ${addressOf(e)} as a spare?`}
@@ -580,7 +611,18 @@
     {relay}
     listeners={listeners.map((l) => ({ id: l.id, listenerKey: l.listenerKey }))}
   />
-  {#if putInUse}
+  {#if putInUse && putInUseHeld}
+    {@const spare = edges.find((x) => x.id === putInUse.edgeId)}
+    <!-- The free slot is held for what the node lacks: a publish would end as a spare. -->
+    <ActionConfirm
+      bind:open={putInUseOpen}
+      title={`${spare ? addressOf(spare) : 'This address'} stays a spare`}
+      body={heldSpareWords(slotOf(putInUse.edgeId!) ?? { missing: [] })}
+      confirmLabel="Replace address"
+      disabled={busy || published.length === 0}
+      run={async () => replace('rotate')}
+    />
+  {:else if putInUse}
     {@const item = putInUse}
     <ActionConfirm
       bind:open={putInUseOpen}

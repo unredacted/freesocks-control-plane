@@ -19,7 +19,7 @@ import {
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
 import { upsertSettingRow } from './appSettings';
-import { isStaleRotation, MAX_STEP_ERRORS } from './edgeRotations';
+import { isStaleRotation, MAX_STEP_ERRORS, standbyReasonOf } from './edgeRotations';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -37,6 +37,7 @@ const INBOUND = '22222222-2222-4222-8222-222222222222';
 const SS_INBOUND = '44444444-4444-4444-8444-444444444444';
 const SS_HOST_UUID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const SS_OLD_EDGE = '198.51.100.2';
+const THIRD_EDGE = '198.51.100.60';
 
 interface BackendAddress {
   uuid: string;
@@ -61,6 +62,8 @@ function fakeWorld(
     hostLeaks?: boolean;
     /** Extra Hosts the backend starts with (other listeners). */
     extraHosts?: BackendAddress[];
+    /** The addresses the fake provider mints, in order (then NEW_EDGE). */
+    mint?: string[];
   } = {},
 ) {
   const panelHosts: BackendAddress[] = [];
@@ -79,6 +82,7 @@ function fakeWorld(
   let patches = 0;
   let creates = 0;
   let panelCalls = 0;
+  let minted = 0;
   const stub = mockFetch((c) => {
     if (new URL(c.url).hostname === 'panel.example') {
       panelCalls++;
@@ -139,7 +143,9 @@ function fakeWorld(
       return jsonRes(lbs.get(uuid));
     }
     if (c.path === '/1.3/ip_address' && c.method === 'POST')
-      return jsonRes({ ip_address: { address: NEW_EDGE, floating: 'yes' } });
+      return jsonRes({
+        ip_address: { address: opts.mint?.[minted++] ?? NEW_EDGE, floating: 'yes' },
+      });
     const attach = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)\/ip-addresses$/);
     if (attach && c.method === 'POST') return jsonRes({});
     const get = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
@@ -200,6 +206,31 @@ async function seed(opts: { listeners?: ListenerSpecFixture[] } = {}) {
 
 async function listenerRow(t: ReturnType<typeof convexTest>, id: Id<'relayListeners'>) {
   return (await t.run((ctx) => ctx.db.get(id)))!;
+}
+
+/** The listener's Host as FCP records it: present at HOST_UUID with this intent. */
+async function setHostIntent(
+  t: ReturnType<typeof convexTest>,
+  id: Id<'relayListeners'>,
+  tuple: { address: string; sni: string | null; host?: string | null },
+) {
+  await t.run((ctx) =>
+    ctx.db.patch(id, {
+      host: {
+        state: 'present',
+        uuid: HOST_UUID,
+        ownership: 'fcp',
+        intended: {
+          remark: 'node-one-relay-u',
+          address: tuple.address,
+          port: 443,
+          sni: tuple.sni,
+          host: tuple.host ?? null,
+          inboundUuid: INBOUND,
+        },
+      },
+    }),
+  );
 }
 
 /**
@@ -778,6 +809,68 @@ describe('edgeRotations: replace', () => {
     expect(JSON.stringify(audit)).not.toContain(NEW_EDGE);
   });
 
+  test("the listener's Host intent follows every flip, so a name resync never writes an old address back", async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld({ hostPresent: false, mint: [NEW_EDGE, THIRD_EDGE] });
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
+    // First replace: no Host yet, so FCP creates it at the new edge (its intent).
+    await provisionSpare(t, relayId);
+    const first = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await drain(t, first.rotationId);
+    const r1 = (await t.query(internal.edgeRotations.get, { id: first.rotationId }))!;
+    expect([r1.phase, r1.outcome]).toEqual(['done', 'published']);
+    const created = (await listenerRow(t, listenerId)).host!;
+    expect(created).toMatchObject({ state: 'present', ownership: 'fcp' });
+    expect(created.intended).toMatchObject({ address: NEW_EDGE, port: 443, sni: 'a.example' });
+    // Second replace: the Host exists, so the rotation FLIPS it to the third address.
+    await t.run((ctx) => ctx.db.patch(relayId, { cooldownUntil: undefined }));
+    await provisionSpare(t, relayId);
+    const second = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: r1.toEdgeId!,
+    });
+    await drain(t, second.rotationId);
+    const r2 = (await t.query(internal.edgeRotations.get, { id: second.rotationId }))!;
+    expect([r2.phase, r2.outcome]).toEqual(['done', 'published']);
+    expect(r2.events.map((e) => e.code)).toEqual(
+      expect.arrayContaining(['host_forward_written', 'hosts_converged']),
+    );
+    expect(world.panelHosts[0]).toMatchObject({ uuid: created.uuid, address: THIRD_EDGE });
+    // The intent moved with the Host: same Host, same owner, the flipped tuple.
+    const flipped = (await listenerRow(t, listenerId)).host!;
+    expect(flipped).toMatchObject({ state: 'present', uuid: created.uuid, ownership: 'fcp' });
+    expect(flipped.intended).toEqual({
+      ...created.intended,
+      address: THIRD_EDGE,
+      port: 443,
+      sni: 'a.example',
+      host: null,
+    });
+    // Why it matters: retiring the Host's name rewrites the Host from the intent
+    // (address and port kept). It must write the address members are on now.
+    await t.run((ctx) =>
+      ctx.db.patch(listenerId, {
+        tlsNames: [
+          { name: 'a.example', status: 'retired', retiredAt: Date.now() },
+          { name: 'b.example', status: 'active' },
+        ],
+      }),
+    );
+    expect(await t.query(internal.hostOps.resyncSniContext, { listenerId })).toMatchObject({
+      kind: 'write',
+      address: THIRD_EDGE,
+      port: 443,
+      sni: 'b.example',
+    });
+  });
+
   test('a Host create whose outcome is unknown parks the flip; the next pass discovers the Host and finishes', async () => {
     vi.useFakeTimers();
     const world = fakeWorld({ hostPresent: false });
@@ -1227,6 +1320,57 @@ describe('edgeRotations: provision + publish kinds', () => {
     expect(world.patches()).toBe(1);
   });
 
+  test('a publish the pool holds back ends a standby, and says so on the run and in the activity', async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    // `u` is published; `s` has nothing, so the one free slot is held for it.
+    const { t, relayId, listenerIds } = await seed({
+      listeners: [listenerU(), shadowsocksListener()],
+    });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.desiredPublished).toBe(2);
+    const { edgeId: second } = await adoptL4Edge(t, relayId, listenerIds.u, { ipv4: NEW_EDGE });
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'publish',
+      trigger: 'manual',
+      toEdgeId: second,
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect([r.phase, r.outcome]).toEqual(['done', 'standby']);
+    expect(r.events.map((e) => e.code)).toContain('pool_reserved_standby');
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.publishedEdgeIds.filter(Boolean)).toHaveLength(1);
+    expect(origin.standbyEdgeIds).toContain(second);
+    // The run says why it ended a standby; a plain published run says nothing.
+    const admin = (await t.query(internal.edgeRotations.getForAdmin, { id: rotationId }))!;
+    expect(admin.standbyReason).toBe('pool_reserved');
+    expect(admin.audit.map((a) => a.action)).toContain('edge.publish_held');
+    const held = (await t.run((ctx) => ctx.db.query('auditLog').collect())).find(
+      (a) => a.action === 'edge.publish_held',
+    );
+    expect(held?.payload).toEqual({
+      relaySlug: 'node-one',
+      edgeId: second,
+      code: 'pool_reserved',
+      rotationId,
+    });
+    // The node's activity carries it.
+    const timeline = await t.query(internal.edgeOperator.timeline, { relayId });
+    expect(timeline.entries.map((e) => e.action)).toContain('edge.publish_held');
+  });
+
+  test('standbyReasonOf: only a standby outcome, from the last pool refusal event', () => {
+    const ev = (code: string) => ({ at: 0, level: 'warn' as const, code });
+    expect(standbyReasonOf({ outcome: 'standby', events: [ev('pool_full_standby')] })).toBe(
+      'pool_full',
+    );
+    expect(standbyReasonOf({ outcome: 'standby', events: [ev('unverified_standby')] })).toBeNull();
+    expect(
+      standbyReasonOf({ outcome: 'published', events: [ev('pool_reserved_standby')] }),
+    ).toBeNull();
+  });
+
   test('selection fails cleanly when no qualified account exists for the listener', async () => {
     vi.useFakeTimers();
     fakeWorld();
@@ -1364,6 +1508,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     // operator, not FCP, put there.
     world.panelHosts[0].address = NEW_EDGE;
     world.panelHosts[0].sni = 'operator.example';
+    await setHostIntent(t, listenerId, { address: NEW_EDGE, sni: 'operator.example' });
     const { rotationId } = await rollingBackRow(
       t,
       relayId,
@@ -1380,6 +1525,12 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     expect(world.panelHosts[0].address).toBe(OLD_EDGE);
     // The name the plan knows nothing about is untouched.
     expect(world.panelHosts[0].sni).toBe('operator.example');
+    // The intent follows the Host back: the address, with the unknown name kept.
+    expect((await listenerRow(t, listenerId)).host!.intended).toMatchObject({
+      address: OLD_EDGE,
+      port: 443,
+      sni: 'operator.example',
+    });
   });
 
   test('a version-2 plan restores the WHOLE tuple, clears included (an L7 flip rolled back)', async () => {
@@ -1390,6 +1541,12 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     world.panelHosts[0].address = 'front.example.org';
     world.panelHosts[0].sni = 'front.example.org';
     world.panelHosts[0].host = 'front.example.org';
+    // The flip had converged, so the listener's intent followed it to the front.
+    await setHostIntent(t, listenerId, {
+      address: 'front.example.org',
+      sni: 'front.example.org',
+      host: 'front.example.org',
+    });
     const { rotationId } = await rollingBackRow(
       t,
       relayId,
@@ -1420,6 +1577,13 @@ describe('edgeRotations: recovery, guards and bounds', () => {
       port: 443,
       sni: 'a.example',
       host: '',
+    });
+    // The intent is the restored tuple again, the cleared Host header included.
+    expect((await listenerRow(t, listenerId)).host!.intended).toMatchObject({
+      address: OLD_EDGE,
+      port: 443,
+      sni: 'a.example',
+      host: null,
     });
   });
 

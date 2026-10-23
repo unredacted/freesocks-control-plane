@@ -471,6 +471,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.slot.retire': ['relaySlug', 'slotKey'],
   'edge.published': ['relaySlug', 'edgeId', 'poolIndex', 'epoch', 'rotationId'],
   'edge.unpublished': ['relaySlug', 'edgeId', 'poolIndex', 'epoch', 'rotationId'],
+  // A publish the pool refused (reserved allocation or a full pool): the edge stays a standby.
+  'edge.publish_held': ['relaySlug', 'edgeId', 'code', 'rotationId'],
   'edge.destroyed': ['relaySlug', 'provider', 'edgeId'],
   'edge.destroy_failed': ['relaySlug', 'provider', 'edgeId', 'attempts'],
   'edge.delete': ['relaySlug', 'edgeId', 'force', 'drainEndedEarly'],

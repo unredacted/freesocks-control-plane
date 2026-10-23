@@ -10,8 +10,13 @@ import {
 import { filterCountries } from './countries';
 import { auditDetailLine, displayValue, formatBytes, protocolLine } from './format';
 import { parseBounded } from './number';
-import { poolSlots, poolSummary } from './pool';
-import { ROTATION_KIND_LABELS, ROTATION_TRIGGER_LABELS, stepStateTone } from './rotation';
+import { poolSlots, poolSummary, showsPublication } from './pool';
+import {
+  ROTATION_KIND_LABELS,
+  ROTATION_TRIGGER_LABELS,
+  standbyResultWords,
+  stepStateTone,
+} from './rotation';
 import {
   EDGES_ROUTES,
   edgesPaths,
@@ -411,5 +416,22 @@ describe('timeline', () => {
     expect(stepStateTone('done')).toBe('success');
     expect(stepStateTone('FAILED')).toBe('danger');
     expect(stepStateTone('whatever')).toBe('neutral');
+  });
+  it('a publish the pool held back is toasted with why and the ways on', () => {
+    expect(standbyResultWords('pool_reserved')).toMatch(
+      /^The edge stayed a standby: the free pool slot is held .* Replace a published edge with it, or remove that location/,
+    );
+    expect(standbyResultWords('pool_full')).toMatch(/every pool slot is taken/);
+    for (const code of ['pool_reserved', 'pool_full'] as const)
+      expect(standbyResultWords(code)).not.toMatch(/—|_|\/api\//);
+  });
+});
+
+describe('showsPublication', () => {
+  it('hides the publication badge of an edge being destroyed or gone', () => {
+    expect(showsPublication({ status: 'destroying' })).toBe(false);
+    expect(showsPublication({ status: 'destroyed' })).toBe(false);
+    for (const status of ['active', 'draining', 'provisioning', 'failed', 'needs_operator'])
+      expect(showsPublication({ status })).toBe(true);
   });
 });

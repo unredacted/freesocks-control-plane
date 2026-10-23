@@ -1697,7 +1697,7 @@ export function poolRefusal(
     message:
       code === 'pool_full'
         ? 'The published pool is full'
-        : 'The free pool slots are reserved for listeners that have no published edge yet',
+        : 'The free pool slots are held for what this origin still lacks (a listener, or a location of its provider set, with nothing published)',
   });
 }
 

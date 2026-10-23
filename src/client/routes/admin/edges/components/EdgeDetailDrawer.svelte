@@ -57,6 +57,7 @@
   import { anyCountryCheckPending } from '../lib/countryCheckRequests';
   import { edgeHasCountryData } from '../lib/countryChecks';
   import { formatBytes, providerLabel } from '../lib/format';
+  import { showsPublication } from '../lib/pool';
   import { relativeTime, shortId } from '../lib/time';
   import type { KeyValueRow } from '../lib/types';
 
@@ -258,7 +259,9 @@
         <div class="flex flex-wrap items-center gap-1.5 pt-1">
           <LayerBadge layer={edge.layer} />
           <StatusBadge kind="status" value={edge.status} />
-          <StatusBadge kind="publication" value={edge.publication} />
+          {#if showsPublication(edge)}
+            <StatusBadge kind="publication" value={edge.publication} />
+          {/if}
           <StatusBadge kind="health" value={edge.health} />
           <StatusBadge kind="reach" value={outsideReachOf(edge.reachability)} />
         </div>

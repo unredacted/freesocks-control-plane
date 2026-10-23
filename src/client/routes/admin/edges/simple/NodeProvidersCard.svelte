@@ -4,7 +4,9 @@
    * "Provider sets"). One line per location: how many addresses are in use and
    * spare there, whether it cools after a block, whether it is trusted yet.
    * Then what members miss (a transport with no backup at another provider,
-   * one whose locations all cool, one no location carries).
+   * one whose locations all cool, one no location carries), and the addresses
+   * still missing: added by automatic upkeep only when it is on for the node
+   * (`upkeepAdds`), else the card says nothing adds them on their own.
    *
    * A location that holds an address of the node outside its set (the spare
    * of a re-protect that failed: the set changes only when a run goes live)
@@ -28,6 +30,7 @@
    *   busy: boolean            a run or a rotation holds the origin (no edits)
    *   onRunStarted: (runId) => void
    *   nameOf?: (listenerKey) => string    a transport in words
+   *   upkeepAdds?: boolean     automatic upkeep provisions what the node lacks (upkeepAddsMissing)
    */
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -67,8 +70,10 @@
     onRunStarted: (runId: string) => void;
     /** A transport in words, by key. */
     nameOf?: (listenerKey: string) => string;
+    /** Automatic upkeep provisions what the node lacks (`upkeepAddsMissing`). */
+    upkeepAdds?: boolean;
   }
-  let { relay, busy, onRunStarted, nameOf }: Props = $props();
+  let { relay, busy, onRunStarted, nameOf, upkeepAdds = false }: Props = $props();
 
   const uid = $props.id();
   const qc = useQueryClient();
@@ -78,7 +83,7 @@
     rotating: () => busy,
   });
   const view = $derived(setQ.data ?? null);
-  const words = $derived(view ? providerPickWords(view, nameOf) : null);
+  const words = $derived(view ? providerPickWords(view, { nameOf, upkeepAdds }) : null);
 
   let adding = $state(false);
   let chosen = $state<string[]>([]);

@@ -1140,10 +1140,10 @@ const COPY = {
     fix: 'Raise the published edges wanted on the origin, or unpublish an edge first.',
   },
   pool_reserved: {
-    label: 'Slot reserved',
+    label: 'Slot held',
     explain:
-      'The free pool slots are held for listeners that have no published edge yet, so a second edge for an already covered listener cannot take one.',
-    fix: 'Publish an edge for the uncovered listener first, or raise the published edges wanted.',
+      'The free pool slots are held for what this origin still lacks: a listener with no published edge, or a location of its provider set with nothing published. An edge that fills none of them stays a standby.',
+    fix: 'Replace a published edge with it, publish an edge where one is missing, or remove that location from the provider set.',
   },
   pool_raised: {
     label: 'Pool size raised',
@@ -2333,6 +2333,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'relay.qualification_reset': 'Test account reset',
   'edge.published': 'Edge published',
   'edge.unpublished': 'Edge unpublished',
+  'edge.publish_held': 'Edge kept as a standby',
   'edge.rotated': 'Edge replaced',
   'edge.burned': 'Edge burned',
   'edge.rolled_back': 'Rotation rolled back',
@@ -2524,6 +2525,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'relay.host.deleted': 'Old address removed from the backend',
   'edge.published': 'Address in use',
   'edge.unpublished': 'Address taken out of use',
+  'edge.publish_held': 'Address kept as a spare',
   'edge.rotated': 'Address replaced',
   'edge.burned': 'Address replaced (blocked)',
   'edge.rolled_back': 'Replacement rolled back',

@@ -13,6 +13,11 @@
    * still counts against its account until the provider confirms it gone, so
    * an account at its limit gets the new spare later ("Add a spare" again).
    *
+   * Whether it would go in use once tested: the dry run says whether the new
+   * address would get a pool slot (`wouldSelect.takesSlot`); one that would not
+   * (the free slot is held for a location the node still lacks) is said to stay
+   * a spare, naming that location and the two ways on (`spareInUseWords`).
+   *
    * Where: Automatic (the dry run's own choice, said in words), or one location
    * of the node's set for the transport Automatic would pick. A named location
    * offers "Options for this address" (prefilled with the node's options there);
@@ -72,9 +77,7 @@
 
   const qc = useQueryClient();
   const uid = $props.id();
-  // A node that wants more addresses in use takes a tested spare at once.
   const config = edgeConfigQuery();
-  const inUseNote = $derived(config.data ? spareInUseWords(config.data.config, relay) : null);
   /** '' = Automatic; else a location of the node's set. */
   let where = $state('');
   const setQ = relayProvidersQuery({
@@ -144,6 +147,17 @@
   const blockers = $derived(
     renew ? [] : where ? (named.data?.blockers ?? []) : (preflight.data?.blockers ?? []),
   );
+  // A node that wants more addresses in use takes a tested spare at once,
+  // unless its free slot is held for a location the node still lacks.
+  const inUseNote = $derived.by(() => {
+    if (!config.data || renew) return null;
+    const check = where ? named.data : preflight.data;
+    return spareInUseWords(config.data.config, relay, {
+      takesSlot: check?.wouldSelect?.takesSlot ?? null,
+      missing: setQ.data?.missing ?? [],
+      held: setQ.data?.pool?.held,
+    });
+  });
   const autoWords = $derived.by(() => {
     const w = preflight.data?.wouldSelect;
     if (!w?.accountName || where) return null;
@@ -199,7 +213,7 @@
     renew
       ? 'FCP destroys this spare, then creates a new one for the same transport at your provider when nothing blocks it. The new spare is billed and stays unused until you test it.'
       : 'FCP creates one more address for this node at your provider and keeps it as a spare. It is billed, and it is only put in use after you test it.'
-  }${inUseNote ? ` Once tested: ${inUseNote[0]!.toLowerCase()}${inUseNote.slice(1)}` : ''}`}
+  }${inUseNote ? ` Once tested, ${inUseNote[0]!.toLowerCase()}${inUseNote.slice(1)}` : ''}`}
   confirmLabel={renew ? 'Replace the spare' : 'Add a spare'}
   disabled={!renew &&
     (preflight.isPending || (where !== '' && named.isPending) || blockers.length > 0)}

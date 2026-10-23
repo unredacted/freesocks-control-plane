@@ -1,8 +1,10 @@
 /**
  * Rotation display helpers (pure).
  *
- * Exports: ROTATION_KIND_LABELS, ROTATION_TRIGGER_LABELS, stepStateTone(state).
+ * Exports: ROTATION_KIND_LABELS, ROTATION_TRIGGER_LABELS, stepStateTone(state),
+ * standbyResultWords(code).
  */
+import type { EdgeRotationAdmin } from '../../../../../shared/contracts/edges';
 import type { Tone } from '../../../../lib/edgeCodes';
 
 export const ROTATION_KIND_LABELS: Record<'provision' | 'publish' | 'replace', string> = {
@@ -28,4 +30,14 @@ export function stepStateTone(state: string): Tone {
   if (['running', 'claimed', 'in_progress', 'waiting', 'requested'].includes(s)) return 'info';
   if (['skipped', 'pending', 'planned'].includes(s)) return 'muted';
   return 'neutral';
+}
+
+/**
+ * The toast when a run that should have put its edge in use ended with it
+ * still a standby because of the pool (`standbyReason`).
+ */
+export function standbyResultWords(code: NonNullable<EdgeRotationAdmin['standbyReason']>): string {
+  return code === 'pool_full'
+    ? 'The edge stayed a standby: every pool slot is taken. Replace a published edge with it, or raise the published edges wanted.'
+    : 'The edge stayed a standby: the free pool slot is held for an edge this origin still lacks (a listener, or a location of its provider set, with nothing published). Replace a published edge with it, or remove that location from the provider set.';
 }
