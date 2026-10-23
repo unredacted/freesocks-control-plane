@@ -58,7 +58,8 @@ export interface ObservedCall {
 export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
   // --- L4: Gcore Cloud load balancers ------------------------------------------------
   gcore: {
-    source: 'https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16',
+    source:
+      'https://api.gcore.com/docs/cloud (Cloud API v1), 2026-09-16; https://docs.gcore.com/api-reference/cloud/load-balancers/ (list load balancer flavors, preview load balancer price), 2026-10-22',
     calls: [
       {
         method: 'GET',
@@ -105,6 +106,18 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         method: 'GET',
         path: '^/cloud/v1/lbflavors/[^/]+/[^/]+$',
         purpose: 'list load balancer flavors (inventory, the location form)',
+      },
+      {
+        method: 'GET',
+        path: '^/cloud/v1/lbflavors/[^/]+/[^/]+$',
+        purpose: 'the flavors with their list prices, shown or hidden (price read)',
+        query: ['include_prices'],
+      },
+      {
+        method: 'POST',
+        path: '^/cloud/v2/pricing/[^/]+/[^/]+/loadbalancers$',
+        purpose: 'price preview of a flavor the list does not price, a few at most (price read)',
+        body: ['flavor'],
       },
       {
         method: 'GET',
@@ -206,8 +219,15 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
   // --- L4: Scaleway load balancers (official SDK, zoned API) ---------------------------
   scaleway: {
     source:
-      'https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16; https://www.scaleway.com/en/developers/api/iam/ (api-keys), 2026-10-22',
+      'https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/ via @scaleway/sdk-lb v1, 2026-09-16; https://www.scaleway.com/en/developers/api/iam/ (api-keys), 2026-10-22; https://www.scaleway.com/en/developers/api/product-catalog/public-catalog/ and its generated client (scaleway-sdk-js `packages_generated/product_catalog`, v2alpha1), 2026-10-22',
     calls: [
+      {
+        method: 'GET',
+        path: '^/product-catalog/v2alpha1/public-catalog/products$',
+        purpose:
+          "the public product catalog, unauthenticated (an alpha API): the zone's load balancer nodes and IPv4 priced an hour (price read)",
+        query: ['product_types', 'zone', 'page_size'],
+      },
       {
         method: 'GET',
         path: '^/iam/v1alpha1/api-keys/[^/]+$',
@@ -315,19 +335,33 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/lb/v1/zones/[^/]+/lb-types$',
-        purpose: 'list load balancer types (inventory)',
+        purpose:
+          'list load balancer types (inventory; the price read when the catalog does not answer)',
       },
     ],
   },
 
   // --- L4: OVHcloud public cloud load balancers (signed requests) -----------------------
   ovh: {
-    source: 'https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16',
+    source:
+      'https://api.ovh.com/console/ (/cloud/project/{serviceName}), 2026-09-16; https://eu.api.ovh.com/1.0/order.json (/order/catalog/public/cloud) and https://eu.api.ovh.com/1.0/me.json (/me), 2026-10-22',
     calls: [
       {
         method: 'GET',
         path: '^/1\\.0/auth/time$',
         purpose: 'server clock for the request signature (cached, unsigned)',
+      },
+      {
+        method: 'GET',
+        path: '^/1\\.0/me$',
+        purpose: "the account's subsidiary, whose catalog it is priced in (price read)",
+      },
+      {
+        method: 'GET',
+        path: '^/1\\.0/order/catalog/public/cloud$',
+        purpose:
+          'the public cloud catalog, unsigned: balancer and floating IP prices in micro-cents (price read, kept an hour)',
+        query: ['ovhSubsidiary'],
       },
       {
         method: 'GET',
@@ -393,7 +427,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/1\\.0/cloud/project/[^/]+/region/[^/]+/loadbalancing/flavor$',
-        purpose: 'list balancer flavors (inventory, the location form)',
+        purpose: 'list balancer flavors (inventory, the location form, price read)',
       },
       {
         method: 'GET',
