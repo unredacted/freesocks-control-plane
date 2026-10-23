@@ -1252,6 +1252,42 @@ describe('an adopted node is reconciled as it was adopted', () => {
     ]);
   });
 
+  test("a Host the operator adds later under FCP's remark form is not claimed", async () => {
+    const { t, serverId, panel, adoptedId, reality } = await adoptLegacy();
+    panel.hosts.push({
+      uuid: UUID(202),
+      remark: 'legacy-a | decoy-a.example',
+      address: '203.0.113.21',
+      port: 443,
+      sni: 'decoy-a.example',
+      inbound: {
+        configProfileUuid: panel.profiles[0].uuid,
+        configProfileInboundUuid: reality.uuid,
+      },
+      isDisabled: false,
+    });
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    await t.mutation(internal.nodeIntents.reconcileNow, { intentId: adoptedId });
+    const after = await settled(() => t.run((ctx) => ctx.db.get(adoptedId)));
+    expect(after.addressUuids).toEqual([UUID(201)]);
+    // Nor would its retirement delete it.
+    const ctxOf = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('panelRetirements', {
+        backendServerId: serverId,
+        intentId: adoptedId,
+        stage: 'draining',
+        disposition: 'keep-dark',
+        requestedBy: 'admin',
+        events: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return id;
+    });
+    const c = (await t.query(internal.nodeRetirement.context, { retirementId: ctxOf }))!;
+    expect(c.addresses.map((h) => h.hostUuid)).toEqual([UUID(201)]);
+  });
+
   test('the role never enrolls it, and it is not renamed while its Host carries the remark it came with', async () => {
     const { t, serverId, panel, adoptedId } = await adoptLegacy();
     await expect(
@@ -1347,7 +1383,12 @@ describe("a role's retirement request", () => {
       retirement: { stage: 'needs_admin', requestedBy: 'role' },
     });
 
-    // The admin retires it: now the gate closes.
+    // The admin retires it: now the gate closes, and the mirrors are rewritten once.
+    const refreshes = async () =>
+      (await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())).filter(
+        (f) => f.name === 'storage:refreshActiveMirrors',
+      ).length;
+    const before = await refreshes();
     const res = await call('POST', `nodes/intents/${intentId}/retire`, {
       disposition: 'keep-dark',
     });
@@ -1357,6 +1398,7 @@ describe("a role's retirement request", () => {
       delivery: { disposition: 'retiring' },
     });
     expect((await gateOf(t, serverId)).state).toBe('blocked');
+    expect((await refreshes()) - before).toBe(1);
   });
 
   test('rejected, the node serves on and the role may ask again', async () => {

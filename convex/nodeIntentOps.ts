@@ -54,18 +54,20 @@ export const ensureOriginDns = internalAction({
     if (managed && c.intent.settings.publishV6 && c.intent.observed.publicIps.v6)
       desired.push({ type: 'AAAA', name: c.hostname!, content: c.intent.observed.publicIps.v6 });
 
-    // A record FCP owns that is no longer desired (v6 withdrawn, an address
-    // family gone from the observations, the node given a hostname of its
-    // own) is deleted first, so what resolves is exactly what is desired.
+    // A record FCP owns, or may have written, that is no longer desired (v6
+    // withdrawn, an address family gone from the observations, the node given
+    // a hostname of its own) is deleted first, so what resolves is exactly
+    // what is desired.
     const owned = await ctx.runQuery(internal.backendObligations.listForOwner, {
       ownerKind: 'intent',
       ownerId: f.intentId,
     });
     let withdrawn = false;
     for (const o of owned) {
-      if (!ownsRecord(o) || desired.some((d) => `${d.type}:${d.name}` === o.identity)) continue;
-      if ((await withdrawRecord(ctx, o)) === 'unresolved') return { state: 'unresolved' };
-      withdrawn = true;
+      if (desired.some((d) => `${d.type}:${d.name}` === o.identity)) continue;
+      const out = await withdrawHeld(ctx, o);
+      if (out === 'unresolved') return { state: 'unresolved' };
+      if (out === 'removed') withdrawn = true;
     }
     if (!managed) {
       if (withdrawn)
@@ -325,12 +327,22 @@ async function withdrawUnsettled(ctx: ActionCtx, o: Obligation): Promise<'remove
 }
 
 /**
- * Delete the origin records an intent's obligations own (retirement). Ownership
- * re-checked first. A record write still outstanding may land yet: it is
- * waited for while the attempt that opened it can still be running (a lease),
- * then looked for by name and marker and withdrawn if it landed. The node is
- * retiring, so no attempt opens another one.
+ * Withdraw what one obligation of a node may hold in DNS: the record it owns
+ * (ownership re-checked first), or, for a record write never settled, what
+ * landed. Such a write may land yet while the attempt that opened it can still
+ * be running (a lease): it is waited for, then looked for by name and marker.
+ * Null: it holds nothing.
  */
+async function withdrawHeld(
+  ctx: ActionCtx,
+  o: Obligation,
+): Promise<'removed' | 'unresolved' | null> {
+  if (ownsRecord(o)) return withdrawRecord(ctx, o);
+  if (o.kind !== 'dns.record' || !o.dns || !blocksIdentity(o)) return null;
+  return Date.now() - o.updatedAt < CLAIM_LEASE_MS ? 'unresolved' : withdrawUnsettled(ctx, o);
+}
+
+/** Delete the origin records an intent's obligations hold (retirement): `withdrawHeld`, each. */
 export const withdrawOriginDns = internalAction({
   args: { intentId: v.id('panelNodeIntents') },
   handler: async (ctx, { intentId }): Promise<{ removed: number; unresolved: number }> => {
@@ -341,13 +353,7 @@ export const withdrawOriginDns = internalAction({
     let removed = 0;
     let unresolved = 0;
     for (const o of rows) {
-      let out: 'removed' | 'unresolved' | null = null;
-      if (ownsRecord(o)) out = await withdrawRecord(ctx, o);
-      else if (o.kind === 'dns.record' && o.dns && blocksIdentity(o))
-        out =
-          Date.now() - o.updatedAt < CLAIM_LEASE_MS
-            ? 'unresolved'
-            : await withdrawUnsettled(ctx, o);
+      const out = await withdrawHeld(ctx, o);
       if (out === 'removed') removed++;
       else if (out === 'unresolved') unresolved++;
     }

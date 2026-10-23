@@ -131,7 +131,11 @@
   );
   let steps = $derived(
     intent.retirement
-      ? retirementSteps({ adopted: intent.adopted, retirement: intent.retirement })
+      ? retirementSteps({
+          adopted: intent.adopted,
+          retirement: intent.retirement,
+          disposition: intent.disposition,
+        })
       : [],
   );
 </script>

@@ -1430,6 +1430,94 @@ describe("a front node's origin name", () => {
     expect(owned).toEqual([]);
   });
 
+  // A record write whose answer was lost may still have landed: it is not
+  // forgotten because the name it was for is no longer wanted.
+  test('a managed record whose write was never settled is withdrawn too, once its attempt is over', async () => {
+    const { t, serverId, panel } = await frontNode();
+    const intentId = await put(t, serverId);
+    await runIntent(t, intentId);
+    expect(panel.zone).toHaveLength(1);
+    // The create landed, but its answer was lost: the write is still `sent`.
+    const unsettled = (await t.run((ctx) => ctx.db.query('backendObligations').collect())).find(
+      (o) => o.kind === 'dns.record' && o.verb === 'create',
+    )!;
+    await t.run((ctx) => ctx.db.patch(unsettled._id, { state: 'sent' }));
+    await t.mutation(internal.nodeIntents.patchSettings, {
+      intentId,
+      patch: { explicitHostname: 'own.example.net' },
+    });
+    // While the attempt that sent it could still be running, it is waited for.
+    expect(await runIntent(t, intentId)).toMatchObject({
+      state: 'pending',
+      code: 'servers.obligation_unresolved',
+    });
+    expect(panel.zone).toHaveLength(1);
+    // Once it cannot be, it is looked for by name and marker, and withdrawn.
+    await t.run((ctx) => ctx.db.patch(unsettled._id, { updatedAt: Date.now() - 11 * 60_000 }));
+    await t.mutation(internal.nodeIntents.resume, { intentId });
+    await runIntent(t, intentId);
+    expect(panel.zone).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(unsettled._id)))!).toMatchObject({
+      state: 'failed',
+      code: 'withdrawn',
+    });
+  });
+
+  // A write an attempt of the node sent before the retirement may land after
+  // it: the ladder waits for it, then removes what it made.
+  test('a retirement waits for a node write already sent, then removes what it made', async () => {
+    const { t, serverId, panel } = await seed();
+    await runSetup(t, serverId);
+    // The backend takes the node create, but does not show the node yet.
+    const held: any[] = [];
+    const inner = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: string | URL, init: RequestInit = {}) => {
+      const res = await inner(input, init);
+      const url = new URL(typeof input === 'string' ? input : input.toString());
+      if (url.pathname === '/api/nodes' && (init.method ?? 'GET').toUpperCase() === 'POST')
+        held.push(...panel.nodes.splice(0));
+      return res;
+    });
+    const { intentId } = await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-b',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.11', port: 2222 },
+        publicIps: { v4: '203.0.113.11' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    expect(await runIntent(t, intentId)).toMatchObject({
+      state: 'pending',
+      code: 'servers.op_running',
+    });
+    expect(held).toHaveLength(1);
+    await t.mutation(internal.nodeIntents.requestRetirement, { intentId, requestedBy: 'admin' });
+    for (let i = 0; i < 100; i++) await new Promise((r) => setTimeout(r, 5));
+    const retirement = async () =>
+      (await t.run((ctx) => ctx.db.query('panelRetirements').collect()))[0]!;
+    expect(await retirement()).toMatchObject({
+      stage: 'draining',
+      step: 'addresses',
+      code: 'servers.op_running',
+    });
+
+    // The node shows up: the write settles, and the ladder removes the row.
+    panel.nodes.push(...held);
+    const op = (await t.run((ctx) => ctx.db.query('panelOps').collect())).find(
+      (o) => o.kind === 'node' && o.verb === 'create',
+    )!;
+    expect(await t.action(internal.backendWrites.run, { opId: op._id })).toEqual({ open: false });
+    const { retirementId } = { retirementId: (await retirement())._id };
+    await t.action(internal.nodeRetirement.advance, { retirementId });
+    expect(panel.writes.some((w) => w.call === `DELETE /api/nodes/${held[0].uuid}`)).toBe(true);
+    // Its own removal still waits at the backend row, not behind itself.
+    await t.action(internal.nodeRetirement.advance, { retirementId });
+    expect((await retirement()).step).toBe('panel_row');
+  });
+
   test("the role's report fences an attempt that looked at the machine before it", async () => {
     const { t, serverId } = await frontNode();
     __setFrontIngressCheckForTests(async () => ingressOk);

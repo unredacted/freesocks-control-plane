@@ -188,20 +188,23 @@ export interface AddressTransport {
  * node and has not recorded yet, which is how a lost create is found again: on
  * the node's own transport, under the remark FCP gives one of its server names.
  * Anything else whose remark merely starts with the node's name is the
- * operator's. Without the transport (no setup), only the recorded ones.
+ * operator's. Without the transport (no setup), only the recorded ones; and an
+ * adopted node's are only the ones it was adopted with, since FCP never writes
+ * one for it (a Host added later under that form is the operator's).
  */
 export const addressesOf = <
   H extends { hostUuid: string; remark: string; configProfileInboundUuid?: string },
 >(
-  intent: { name: string; addressUuids?: string[] },
+  intent: { name: string; addressUuids?: string[]; adopted?: object },
   hosts: readonly H[],
   transport: AddressTransport | null,
 ): H[] => {
-  const written = new Set(transport?.serverNames.map((n) => addressRemark(intent.name, n)));
+  const own = intent.adopted ? null : transport;
+  const written = new Set(own?.serverNames.map((n) => addressRemark(intent.name, n)));
   return hosts.filter(
     (h) =>
       intent.addressUuids?.includes(h.hostUuid) ||
-      (!!transport && h.configProfileInboundUuid === transport.uuid && written.has(h.remark)),
+      (!!own && h.configProfileInboundUuid === own.uuid && written.has(h.remark)),
   );
 };
 

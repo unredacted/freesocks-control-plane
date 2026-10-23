@@ -504,6 +504,22 @@ describe('retiring a node', () => {
     expect(current(adopted)!.why).toMatch(/The machine is gone/);
   });
 
+  test('a request an earlier release recorded already closed the node: only the decision is left', () => {
+    const legacy = retirementSteps(
+      {
+        adopted: false,
+        disposition: 'retiring',
+        retirement: r({ stage: 'needs_admin', requestedBy: 'role' }),
+      },
+      now,
+    );
+    expect(legacy.map((s) => s.key).slice(0, 2)).toEqual(['closed', 'decision']);
+    expect(legacy[0]!.state).toBe('done');
+    expect(current(legacy)!.key).toBe('decision');
+    expect(current(legacy)!.why).toMatch(/already get the unavailable answer/);
+    expect(current(legacy)!.why).not.toMatch(/reject/);
+  });
+
   test('retired: every step done, nothing waits; an unworded code still reads as an error', () => {
     const done = retirementSteps({ adopted: false, retirement: r({ stage: 'retired' }) }, now);
     expect(done.every((s) => s.state === 'done' && s.why === null)).toBe(true);

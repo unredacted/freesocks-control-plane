@@ -332,7 +332,8 @@ Host whose remark merely starts with `<node> | `, or that sits on another transp
 node's, so a reconcile or a retirement never deletes it (`nodeIntents.ts` `addressesOf`). An
 ADOPTED node's addresses are the ones it was adopted with (§ Adopting a backend): a reconcile
 neither adds one per server name nor removes, re-remarks or re-addresses one, whatever remark
-the operator gave it.
+the operator gave it, and a Host added later under FCP's remark form is the operator's, never
+claimed.
 
 The backend names every entry of a subscription body after its Host's remark, and the remark is
 how FCP reads which node an entry belongs to: node pinning (`lib/nodePinning.ts`
@@ -993,7 +994,8 @@ or, once that account is gone (another account holding the same zone replaced it
 removed), through the account the setup uses for that zone now: the marker, not the account,
 makes a record FCP's, so a retirement never waits forever on an account that no longer exists. A
 node given a hostname of its own (`explicitHostname`) has its managed record withdrawn at its next
-reconcile.
+reconcile, a record whose write was never settled too (looked for by name and marker once the
+attempt that sent it can no longer be running).
 
 `created` and `resolves` are distinct, and the order is fixed: **FCP proves resolution before
 the role applies.** The role waits for the view's `origin.dns` to say `resolves` (or `none`)
@@ -1032,8 +1034,11 @@ ladder keep-dark at once (`nodeRetirement.startIfPlain`), audited with the admin
 ladder starts, the gate closes in the same transaction: members lose the node at once. The node
 is the retirement's alone from then on: its generation moves and its lease goes, so an attempt
 that read it before records nothing (`progress` and `loadForRun` refuse a retiring node), opens no
-obligation, and the sweep resumes nothing for it; a record write still outstanding is waited for
-while its attempt could still run, then found by name and marker and withdrawn. Moving the members to another node is not
+obligation, and the sweep resumes nothing for it. What such an attempt already sent is waited
+for: a backend write for the node still open (a Host, the row itself) holds the ladder at
+`addresses` until it settles, and what it made is removed with the rest (a row whose uuid was
+never recorded is found by the node's name); a record write still outstanding is waited for while
+its attempt could still run, then found by name and marker and withdrawn. Moving the members to another node is not
 offered: a `migrate` disposition is refused with `servers.migration_not_built`. Never
 `restore-direct`. The ladder: `draining` (the origin deleted keep-dark, credentials released,
 the direct Host deleted, DNS withdrawn) → `panel_removed` (the row removed with `removeOnly`, the

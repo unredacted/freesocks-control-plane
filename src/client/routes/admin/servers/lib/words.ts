@@ -621,14 +621,18 @@ export function retireConfirmWords(i: { adopted: boolean }): string {
  * (`code`); a stage after `draining` speaks for itself.
  */
 export function retirementSteps(
-  i: { adopted: boolean; retirement: RetirementLike },
+  i: { adopted: boolean; retirement: RetirementLike; disposition?: string },
   now: number = Date.now(),
 ): RetireStep[] {
   const r = i.retirement;
-  // A role's request is decided first: the node is closed only once it is.
+  // A role's request is decided first: the node is closed only once it is. A
+  // request an earlier release recorded closed it at once (it is `retiring`).
+  const asked = r.decision || r.stage === 'needs_admin';
+  const closedFirst = r.stage === 'needs_admin' && i.disposition === 'retiring';
   const keys = [
-    ...(r.decision || r.stage === 'needs_admin' ? ['decision'] : []),
+    ...(asked && !closedFirst ? ['decision'] : []),
     'closed',
+    ...(closedFirst ? ['decision'] : []),
     'edges',
     'addresses',
     'dns',
@@ -667,7 +671,9 @@ export function retirementSteps(
   const started = r.since ? ` (this step started ${ago(now - Date.parse(r.since))})` : '';
   const why = (): string => {
     if (current === 'decision')
-      return 'The node role asked to retire it, and it serves members meanwhile. Retire it (members on it get the unavailable answer from then on), or reject the request.';
+      return closedFirst
+        ? 'The node role asked to retire it, and members on it already get the unavailable answer. Decide below.'
+        : 'The node role asked to retire it, and it serves members meanwhile. Retire it (members on it get the unavailable answer from then on), or reject the request.';
     if (current === 'wipe')
       return i.adopted
         ? 'FCP never ran this machine. Stop and clean it up yourself, then choose The machine is gone.'

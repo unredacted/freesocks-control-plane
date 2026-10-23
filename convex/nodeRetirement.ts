@@ -32,7 +32,6 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { addressTransportsOf, addressesOf, closeForRetirement } from './nodeIntents';
-import { scheduleMirrorRefresh } from './relays';
 import { runningRenameOf } from './lib/backend/nodeAliases';
 
 const refuse = (code: string, message: string): never => {
@@ -102,11 +101,11 @@ export const decide = internalMutation({
     }
     if (r.stage !== 'requested' && r.stage !== 'needs_admin')
       refuse('servers.retirement_stage', `The retirement is already ${r.stage}`);
-    // A role's request left the node serving until now: members lose it here.
+    // A role's request left the node serving until now: members lose it here
+    // (and its mirrors are rewritten, once). One closed before has had both.
     if (intent.state !== 'retiring' && intent.state !== 'retired')
       await closeForRetirement(ctx, intent, r._id);
     await event(ctx, r, { disposition: a.disposition, stage: 'draining' }, 'decided');
-    await scheduleMirrorRefresh(ctx);
     const server = await ctx.db.get(intent.backendServerId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -195,6 +194,7 @@ export const context = internalQuery({
       .query('panelHosts')
       .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
       .collect();
+    // By name while its uuid was never recorded (a create that landed late).
     const node = intent.nodeUuid
       ? await ctx.db
           .query('panelNodes')
@@ -202,7 +202,30 @@ export const context = internalQuery({
             q.eq('backendServerId', intent.backendServerId).eq('nodeUuid', intent.nodeUuid!),
           )
           .unique()
-      : null;
+      : ((
+          await ctx.db
+            .query('panelNodes')
+            .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+            .collect()
+        ).find((n) => n.name === intent.name) ?? null);
+    // Backend writes for the node still open that this retirement did not
+    // make: an attempt sent them before the retirement, and what they make is
+    // the node's (a Host, the row itself).
+    const openOps = (
+      await ctx.db
+        .query('panelOps')
+        .withIndex('by_open', (q) =>
+          q.eq('open', true).eq('backendServerId', intent.backendServerId),
+        )
+        .collect()
+    ).filter(
+      (o) =>
+        o.actorRun !== `retirement:${r._id}` &&
+        (o.actorRun === `node:${intent._id}` ||
+          (o.kind === 'node' &&
+            (o.identity === intent.name ||
+              (!!intent.nodeUuid && o.objectUuid === intent.nodeUuid)))),
+    ).length;
     return {
       r,
       intent,
@@ -216,6 +239,7 @@ export const context = internalQuery({
         (await addressTransportsOf(ctx, intent.backendServerId))(intent),
       ),
       node,
+      openOps,
     };
   },
 });
@@ -343,8 +367,14 @@ export const advance = internalAction({
         await stop('servers.credentials_pending');
         return null;
       }
-      // 3. The node's own addresses.
+      // 3. The node's own addresses. A write an attempt of the node sent
+      //    before the retirement settles first: what it made is removed here
+      //    and at the backend row.
       step = 'addresses';
+      if (c.openOps > 0) {
+        await stop('servers.op_running');
+        return null;
+      }
       for (const h of c.addresses) {
         const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressDelete, {
           backendServerId: sid,
@@ -375,6 +405,7 @@ export const advance = internalAction({
           backendServerId: sid,
           nodeUuid: fresh.node.nodeUuid,
           removeOnly: true,
+          actorRun: `retirement:${retirementId}`,
         });
         const r = await ctx.runAction(internal.backendWrites.run, { opId });
         if (r.open) {
