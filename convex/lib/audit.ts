@@ -300,6 +300,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.node.maintenance_finished': ['backendSlug', 'name'],
   'servers.node.retire_requested': ['backendSlug', 'name', 'stage'],
   'servers.node.retire_decided': ['backendSlug', 'name', 'disposition'],
+  'servers.node.retire_rejected': ['backendSlug', 'name'],
   'servers.node.retired': ['backendSlug', 'name', 'confirmedBy'],
   // A port change staged until every node's firewall lets the port in
   // (docs/servers.md "Firewall acknowledgement"): the profile name, the port and

@@ -473,7 +473,11 @@ describe('retiring a node', () => {
       now,
     );
     expect(current(asked)!.key).toBe('decision');
-    expect(current(asked)!.why).toMatch(/Decide below/);
+    expect(current(asked)!.why).toMatch(/serves members meanwhile/);
+    expect(current(asked)!.why).toMatch(/reject the request/);
+    // The node is closed only once the request is decided.
+    expect(asked.map((s) => s.key).slice(0, 2)).toEqual(['decision', 'closed']);
+    expect(asked.find((s) => s.key === 'closed')!.state).toBe('todo');
     // Once decided, the decision is a done step.
     const decided = retirementSteps(
       { adopted: false, retirement: r({ requestedBy: 'role', decision: true, step: 'dns' }) },
@@ -498,6 +502,22 @@ describe('retiring a node', () => {
     );
     expect(current(adopted)!.label).toBe('You confirm the machine is gone');
     expect(current(adopted)!.why).toMatch(/The machine is gone/);
+  });
+
+  test('a request an earlier release recorded already closed the node: only the decision is left', () => {
+    const legacy = retirementSteps(
+      {
+        adopted: false,
+        disposition: 'retiring',
+        retirement: r({ stage: 'needs_admin', requestedBy: 'role' }),
+      },
+      now,
+    );
+    expect(legacy.map((s) => s.key).slice(0, 2)).toEqual(['closed', 'decision']);
+    expect(legacy[0]!.state).toBe('done');
+    expect(current(legacy)!.key).toBe('decision');
+    expect(current(legacy)!.why).toMatch(/already get the unavailable answer/);
+    expect(current(legacy)!.why).not.toMatch(/reject/);
   });
 
   test('retired: every step done, nothing waits; an unworded code still reads as an error', () => {
@@ -538,8 +558,22 @@ describe('enrolled nodes', () => {
     expect(stageWords({ ...base, stage: 'live', maintenance: true }).sentence).toMatch(
       /maintenance/,
     );
+    // A role's request leaves the node serving until the admin decides.
     expect(
-      stageWords({ ...base, stage: 'live', retirement: { stage: 'needs_admin' } }).sentence,
+      stageWords({
+        ...base,
+        stage: 'live',
+        disposition: 'live',
+        retirement: { stage: 'needs_admin' },
+      }).sentence,
+    ).toBe('The node role asked to retire it. It serves members until you decide.');
+    expect(
+      stageWords({
+        ...base,
+        stage: 'live',
+        disposition: 'retiring',
+        retirement: { stage: 'needs_admin' },
+      }).sentence,
     ).toMatch(/decision/);
     expect(
       stageWords({

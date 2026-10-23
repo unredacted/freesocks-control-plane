@@ -2,9 +2,10 @@
  * Retiring a node (docs/servers.md "Retirement"). The role's
  * DELETE only records the request; whenever the node was ever live or
  * anything of it is still out there (an origin, Hosts, DNS, credentials, a
- * mirror) an admin decides the disposition: `keep-dark` (its members get the
- * edge-required unavailable behaviour; moving them to another node is not
- * offered). Never `restore-direct`.
+ * mirror) the node keeps serving until an admin decides: the disposition
+ * `keep-dark` (its members get the edge-required unavailable behaviour; moving
+ * them to another node is not offered), or rejecting the request. Never
+ * `restore-direct`.
  *
  * An admin's own request is that decision (its confirm says members lose the
  * node at once): it starts draining keep-dark without a second question.
@@ -30,9 +31,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { addressTransportsOf, addressesOf } from './nodeIntents';
-import { bumpGateVersion } from './backendSetup';
-import { scheduleMirrorRefresh } from './relays';
+import { addressTransportsOf, addressesOf, closeForRetirement } from './nodeIntents';
 import { runningRenameOf } from './lib/backend/nodeAliases';
 
 const refuse = (code: string, message: string): never => {
@@ -98,19 +97,15 @@ export const decide = internalMutation({
         createdAt: now,
         updatedAt: now,
       });
-      await ctx.db.patch(intent._id, {
-        retirementId: id,
-        state: 'retiring',
-        delivery: { ...intent.delivery, disposition: 'retiring', acceptingAssignments: false },
-        updatedAt: now,
-      });
-      await bumpGateVersion(ctx, intent.backendServerId);
       r = (await ctx.db.get(id))!;
     }
     if (r.stage !== 'requested' && r.stage !== 'needs_admin')
       refuse('servers.retirement_stage', `The retirement is already ${r.stage}`);
+    // A role's request left the node serving until now: members lose it here
+    // (and its mirrors are rewritten, once). One closed before has had both.
+    if (intent.state !== 'retiring' && intent.state !== 'retired')
+      await closeForRetirement(ctx, intent, r._id);
     await event(ctx, r, { disposition: a.disposition, stage: 'draining' }, 'decided');
-    await scheduleMirrorRefresh(ctx);
     const server = await ctx.db.get(intent.backendServerId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -122,6 +117,44 @@ export const decide = internalMutation({
     });
     await ctx.scheduler.runAfter(0, internal.nodeRetirement.advance, { retirementId: r._id });
     return { stage: 'draining' as const };
+  },
+});
+
+/**
+ * The admin turns down a retirement the node role asked for. The request
+ * changed nothing (the node kept serving while it waited), so nothing is put
+ * back: the request is closed as `rejected` and the node is free of it; the
+ * role may ask again. A request an earlier release recorded had already closed
+ * the node, and is only decided.
+ */
+export const reject = internalMutation({
+  args: { intentId: v.id('panelNodeIntents'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, a) => {
+    const intent = await ctx.db.get(a.intentId);
+    if (!intent) return refuse('not_found', 'No such node');
+    const r = intent.retirementId ? await ctx.db.get(intent.retirementId) : null;
+    if (
+      !r ||
+      r.stage !== 'needs_admin' ||
+      intent.state === 'retiring' ||
+      intent.state === 'retired'
+    )
+      refuse(
+        'servers.retirement_stage',
+        'Only a retirement the node role asked for, still waiting for your decision, can be rejected',
+      );
+    await event(ctx, r!, { stage: 'rejected' }, 'rejected');
+    await ctx.db.patch(intent._id, { retirementId: undefined, updatedAt: Date.now() });
+    const server = await ctx.db.get(intent.backendServerId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'servers.node.retire_rejected',
+      targetType: 'panel_node_intent',
+      targetId: intent._id,
+      payload: { backendSlug: server?.slug ?? '', name: intent.name },
+    });
+    return { stage: 'rejected' as const };
   },
 });
 
@@ -161,6 +194,7 @@ export const context = internalQuery({
       .query('panelHosts')
       .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
       .collect();
+    // By name while its uuid was never recorded (a create that landed late).
     const node = intent.nodeUuid
       ? await ctx.db
           .query('panelNodes')
@@ -168,7 +202,30 @@ export const context = internalQuery({
             q.eq('backendServerId', intent.backendServerId).eq('nodeUuid', intent.nodeUuid!),
           )
           .unique()
-      : null;
+      : ((
+          await ctx.db
+            .query('panelNodes')
+            .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+            .collect()
+        ).find((n) => n.name === intent.name) ?? null);
+    // Backend writes for the node still open that this retirement did not
+    // make: an attempt sent them before the retirement, and what they make is
+    // the node's (a Host, the row itself).
+    const openOps = (
+      await ctx.db
+        .query('panelOps')
+        .withIndex('by_open', (q) =>
+          q.eq('open', true).eq('backendServerId', intent.backendServerId),
+        )
+        .collect()
+    ).filter(
+      (o) =>
+        o.actorRun !== `retirement:${r._id}` &&
+        (o.actorRun === `node:${intent._id}` ||
+          (o.kind === 'node' &&
+            (o.identity === intent.name ||
+              (!!intent.nodeUuid && o.objectUuid === intent.nodeUuid)))),
+    ).length;
     return {
       r,
       intent,
@@ -182,6 +239,7 @@ export const context = internalQuery({
         (await addressTransportsOf(ctx, intent.backendServerId))(intent),
       ),
       node,
+      openOps,
     };
   },
 });
@@ -309,8 +367,14 @@ export const advance = internalAction({
         await stop('servers.credentials_pending');
         return null;
       }
-      // 3. The node's own addresses.
+      // 3. The node's own addresses. A write an attempt of the node sent
+      //    before the retirement settles first: what it made is removed here
+      //    and at the backend row.
       step = 'addresses';
+      if (c.openOps > 0) {
+        await stop('servers.op_running');
+        return null;
+      }
       for (const h of c.addresses) {
         const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressDelete, {
           backendServerId: sid,
@@ -341,6 +405,7 @@ export const advance = internalAction({
           backendServerId: sid,
           nodeUuid: fresh.node.nodeUuid,
           removeOnly: true,
+          actorRun: `retirement:${retirementId}`,
         });
         const r = await ctx.runAction(internal.backendWrites.run, { opId });
         if (r.open) {

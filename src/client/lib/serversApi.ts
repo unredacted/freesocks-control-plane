@@ -218,6 +218,13 @@ export const approveNode = (slug: string, id: string, reviewHash: string) =>
   );
 export const retireNode = (slug: string, id: string, decision?: { disposition: 'keep-dark' }) =>
   apiClient.post(`${intentPath(slug, id)}/retire`, decision ?? {}, z.object({ stage: z.string() }));
+/** Turn down a retirement the node role asked for: the node keeps serving. */
+export const rejectRetirement = (slug: string, id: string) =>
+  apiClient.post(
+    `${intentPath(slug, id)}/reject-retirement`,
+    {},
+    z.object({ stage: z.literal('rejected') }),
+  );
 /** An adopted node's machine is never run by the role: an admin confirms it is gone. */
 export const confirmWiped = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/wiped`, {}, z.object({ stage: z.string() }));

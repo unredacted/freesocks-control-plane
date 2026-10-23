@@ -10,6 +10,7 @@ import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { blocksIdentity } from './lib/backend/obligations';
+import { fenceHolds } from './lib/backend/fencing';
 
 export const ownerKind = v.union(
   v.literal('setup'),
@@ -91,6 +92,20 @@ export const open = internalMutation({
     ),
   },
   handler: async (ctx, a) => {
+    // A node's attempt writes only while it still holds the node, and never
+    // once the node is being retired: an attempt that read it before the
+    // retirement must not put back what the retirement withdraws.
+    if (a.ownerKind === 'intent') {
+      const id = ctx.db.normalizeId('panelNodeIntents', a.ownerId);
+      const owner = id ? await ctx.db.get(id) : null;
+      if (
+        !owner ||
+        owner.state === 'retiring' ||
+        owner.state === 'retired' ||
+        !fenceHolds(owner, { generation: a.ownerGeneration, attemptId: a.attemptId })
+      )
+        return { ok: false as const, fenced: true };
+    }
     const blocking = await blockingObligationFor(ctx.db, a.backendServerId, a.kind, a.identity);
     if (blocking) return { ok: false as const, blockedBy: blocking._id };
     const now = Date.now();

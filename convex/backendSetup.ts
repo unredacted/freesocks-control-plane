@@ -9,7 +9,8 @@
  *
  * A backend that already has nodes or addresses is ADOPTED: the operator's
  * typed confirmation is the one attestation; nothing is created beside what
- * exists, and nothing a member holds changes.
+ * exists, and no group loses a transport its members are served on (the run
+ * stops at `groups` instead). Its subscription templates become FCP's.
  *
  * Every step is idempotent and re-enterable: the row records the step it is
  * on, the sweep resumes an expired lease, and the one external create (the
@@ -578,13 +579,17 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
   const sid = row.backendServerId;
   const server = await ctx.db.get(sid);
   if (!server) return null;
-  const [profiles, groups] = await Promise.all([
+  const [profiles, groups, hosts] = await Promise.all([
     ctx.db
       .query('panelProfiles')
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
       .collect(),
     ctx.db
       .query('panelSquads')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .collect(),
+    ctx.db
+      .query('panelHosts')
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
       .collect(),
   ]);
@@ -642,7 +647,16 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
         groupUuid: s.squadUuid,
         name: s.name,
         transportUuids: s.inboundUuids,
+        members: s.membersCount,
       })),
+      // The transports an enabled Host serves: what a group's members are given.
+      servedTransports: [
+        ...new Set(
+          hosts.flatMap((h) =>
+            !h.isDisabled && h.configProfileInboundUuid ? [h.configProfileInboundUuid] : [],
+          ),
+        ),
+      ],
       knownModes: modes.map((m) => m.id),
       families,
       boundFamilies,
@@ -990,6 +1004,32 @@ export const run = internalAction({
       //    setup gave it (renamed in place: ids and assignments survive);
       //    created only when nothing exists; carrying the mode's transport.
       await record({ step: 'groups' });
+      // On an adopted backend a group is what its members hold today: a
+      // transport an enabled Host serves is never taken out of a group with
+      // members. Looked at for every mode before any group is written, so the
+      // refusal leaves every group as it was; the operator decides (takes the
+      // transport out, or moves those members) and sets up again.
+      if (c.row.adopted)
+        for (const m of modes) {
+          if (established.has(m.slug)) continue;
+          const g =
+            c.snapshot.groups.find((x) => x.name === m.name) ??
+            (m.groupUuid ? c.snapshot.groups.find((x) => x.groupUuid === m.groupUuid) : null) ??
+            (LEGACY_GROUP_NAMES[m.slug] ?? [])
+              .map((n) => c.snapshot.groups.find((x) => x.name === n))
+              .find((x) => !!x);
+          if (
+            g &&
+            g.members !== 0 &&
+            g.transportUuids.some(
+              (u) => u !== m.transport!.uuid && c.snapshot.servedTransports.includes(u),
+            )
+          ) {
+            await save();
+            await finish('failed', `servers.adopt_group_narrows:${m.slug}`, 'groups');
+            return null;
+          }
+        }
       for (const m of modes) {
         const transportUuid = m.transport!.uuid;
         if (established.has(m.slug)) {

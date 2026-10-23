@@ -3441,7 +3441,15 @@ export default defineSchema({
     // Taken over as it was (already serving members): live at once, with its
     // current addresses committed. `externallyFronted`: a fronted node whose
     // edge FCP does not run yet (an earlier tool made it); Edges takes over later.
-    adopted: v.optional(v.object({ at: v.number(), externallyFronted: v.boolean() })),
+    // `activeInboundUuids`: every transport its row served when adopted, which
+    // a reconcile keeps (members of other groups reach the node on them).
+    adopted: v.optional(
+      v.object({
+        at: v.number(),
+        externallyFronted: v.boolean(),
+        activeInboundUuids: v.optional(v.array(v.string())),
+      }),
+    ),
     retirementId: v.optional(v.id('panelRetirements')),
     tokenId: v.optional(v.id('apiTokens')),
     registeredAt: v.number(),
@@ -3652,6 +3660,8 @@ export default defineSchema({
       v.literal('panel_removed'),
       v.literal('ready_to_wipe'),
       v.literal('retired'),
+      // A role's request an admin turned down: the node was never closed for it.
+      v.literal('rejected'),
     ),
     // Moving members to another node is not offered; a retired node's members
     // get the edge-required unavailable behaviour.
