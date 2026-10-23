@@ -1006,6 +1006,13 @@ const COPY = {
     explain:
       'The address is blocked only where the reports come from, and members there already get another address that works, so it is not replaced for everyone.',
   },
+  // Probe evidence for an address blocked since its first check (sustained unreachability).
+  never_reached: {
+    label: 'Never reached from there',
+    explain:
+      'Checks from that country have never reached this address, from several networks over hours, while the node’s other addresses are reached from there, so it counts as blocked there.',
+    fix: 'Replace it, or mark the country if you know better.',
+  },
   country_wide: {
     label: 'Everything fails there at once',
     explain:

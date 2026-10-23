@@ -1085,6 +1085,78 @@ describe('relayProbes', () => {
     expect(await ir()).toMatchObject({ verdict: 'unreachable', wasReachable: true });
   });
 
+  test('a country that never reached the address keeps its failing streak; a success ends it; IPv6 and runs that could not test never add', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    const MIN = 60_000;
+    const t0 = Date.now();
+    const start = (family: 4 | 6 = 4) =>
+      t.run((ctx) =>
+        ctx.db.insert('probeRuns', {
+          targetKind: 'edge',
+          targetRef: edgeId,
+          source: 'globalping',
+          target: family === 4 ? `${EDGE}:443` : '[2001:db8::9]:443',
+          port: 443,
+          ipVersion: family,
+          status: 'running',
+          trigger: 'cron',
+          requestedAt: Date.now(),
+          results: [],
+        }),
+      );
+    const vantage = (ok: boolean, asn?: string, country = 'IR') => ({
+      country,
+      ...(asn ? { asn, network: `net-${asn}` } : {}),
+      vantageClass: 'eyeball' as const,
+      ok,
+    });
+    const finish = async (results: ReturnType<typeof vantage>[], family: 4 | 6 = 4) =>
+      t.mutation(internal.probes.finishRun, { runId: await start(family), results });
+    const ir = async () =>
+      (await t.query(internal.edges.get, { id: edgeId }))!.reachability!.byCountry.find(
+        (c) => c.country === 'IR',
+      )!;
+    await finish([vantage(false, 'AS1001'), vantage(false, 'AS1002'), vantage(true, 'AS9', 'RU')]);
+    vi.setSystemTime(t0 + 60 * MIN);
+    await finish([vantage(false, 'AS1001'), vantage(false, 'AS1003')]);
+    // A vantage that names no network is a check, never a network.
+    vi.setSystemTime(t0 + 130 * MIN);
+    await finish([vantage(false), vantage(false, 'AS1003')]);
+    expect((await ir()).neverReached).toEqual({
+      checks: 6,
+      networks: 3,
+      since: t0,
+      lastAt: t0 + 130 * MIN,
+    });
+    // RU reached it: no record there.
+    const ru = (await t.query(internal.edges.get, { id: edgeId }))!.reachability!.byCountry.find(
+      (c) => c.country === 'RU',
+    );
+    expect(ru?.neverReached).toBeUndefined();
+    // The IPv6 path failing adds nothing (a vantage without IPv6 can look like a block).
+    await finish([vantage(false, 'AS2001'), vantage(false, 'AS2002')], 6);
+    expect((await ir()).neverReached).toMatchObject({ checks: 6, networks: 3 });
+    // Nor does a run whose vantages could not test (no route): it leaves no result.
+    await t.mutation(internal.probes.failRun, { runId: await start(), error: 'no_route' });
+    expect((await ir()).neverReached).toMatchObject({ checks: 6, networks: 3 });
+    // Once only the IPv6 path is fresh, the summary follows it, and keeps no record.
+    vi.setSystemTime(t0 + 200 * MIN);
+    await finish([vantage(false, 'AS2001'), vantage(false, 'AS2002')], 6);
+    expect(await ir()).toMatchObject({ verdict: 'unreachable' });
+    expect((await ir()).neverReached).toBeUndefined();
+    // One vantage reaching it over IPv4 ends it for good: it has been reached.
+    await finish([vantage(true, 'AS1001'), vantage(false, 'AS1002')]);
+    expect((await ir()).neverReached).toBeUndefined();
+    const rows = await t.run((ctx) => ctx.db.query('probeReachability').collect());
+    expect(rows.find((r) => r.country === 'IR' && r.ipVersion === 4)).toMatchObject({
+      failStreak: 0,
+    });
+    await finish([vantage(false, 'AS1001'), vantage(false, 'AS1002')]);
+    expect(await ir()).toMatchObject({ verdict: 'unreachable', wasReachable: true });
+    expect((await ir()).neverReached).toBeUndefined();
+  });
+
   test('planFor reports the runs per source a round will cost without inserting; requestProbes returns the same number', async () => {
     __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
     const { t, edgeId } = await seed();

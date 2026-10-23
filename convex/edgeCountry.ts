@@ -21,7 +21,14 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { recordHeartbeat } from './cronHeartbeat';
-import { EDGE_PLUMBING, controlCountriesOf, resolveEdgeConfig } from './lib/edgeConfig';
+import {
+  EDGE_PLUMBING,
+  controlCountriesOf,
+  resolveEdgeConfig,
+  type EdgeConfig,
+} from './lib/edgeConfig';
+import { liveEdgesOfRelay } from './lib/edges/relayGuards';
+import { edgeOutage, sustainedCountriesOf } from './lib/edges/probes/sustained';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { resolveSniVantageConfig } from './lib/sniConfig';
 import { addressFamily } from './lib/edges/ip';
@@ -276,13 +283,18 @@ export async function settleRoundIfDone(
   const roundRuns = runs.map(toRoundRun);
   const at = Math.max(...runs.map((r) => r.finishedAt ?? r.requestedAt));
   const windowMs = cfg.country.windowDays * DAY;
+  // Never reached from a country while another address of the node is: a
+  // block there however thin each round alone is (the edge's summary was
+  // refreshed by the run that settled the round).
+  const sustained = await sustainedIn(ctx.db, edge, cfg, now);
   const changed: string[] = [];
   for (const country of cfg.probe.countries) {
     const prev = await evidenceOf(ctx.db, edge._id, country);
     if (prev?.lastRound?.roundId === roundId) continue;
     const verdict = roundVerdict(roundRuns, country, cfg.country, tlsApplies);
+    const isSustained = sustained.includes(country);
     const hold =
-      verdict.result === 'blocked'
+      verdict.result === 'blocked' || isSustained
         ? await countryWideHold(ctx.db, country, edge._id, groupKey, now)
         : false;
     const address = nextAddressTrack(
@@ -294,6 +306,7 @@ export async function settleRoundIfDone(
         repeatMs: EDGE_PLUMBING.countryRepeatMs,
         groupBlocked: await groupBlockedIn(ctx.db, groupKey, country, now),
         countryWideHold: hold,
+        sustained: isSustained,
       },
     );
     const handshake = expireHandshakeTrack(prev?.handshake ?? EMPTY_HANDSHAKE_TRACK, now);
@@ -337,6 +350,34 @@ export async function settleRoundIfDone(
     for (const e of await edgesOfGroup(ctx.db, groupKey))
       await refreshEdgeCountryState(ctx, e._id, now);
   await refreshEdgeCountryState(ctx, edge._id, now);
+}
+
+/**
+ * The checked countries an edge is sustained-unreachable from
+ * (lib/edges/probes/sustained.ts), against the other live addresses of its
+ * node. Nothing during an outage: the node offline, the address's provider
+ * reporting it offline, or FCP's own check of it failing.
+ */
+export async function sustainedIn(
+  db: DatabaseReader,
+  edge: Doc<'edges'>,
+  cfg: EdgeConfig,
+  now: number,
+): Promise<string[]> {
+  if (edgeOutage(edge)) return [];
+  const relay = await db.get(edge.relayId);
+  if (!relay) return [];
+  if (relay.origin.kind === 'panel-node') {
+    const node = relay.origin;
+    const inv = await db
+      .query('backendNodeInventory')
+      .withIndex('by_server_name', (q) =>
+        q.eq('backendServerId', node.backendServerId).eq('name', node.nodeName),
+      )
+      .unique();
+    if (inv?.online === false) return [];
+  }
+  return sustainedCountriesOf(edge, await liveEdgesOfRelay(db, edge.relayId), cfg, now);
 }
 
 /** Edges whose blocked round waits for its repeat (the probe planner takes them first). */

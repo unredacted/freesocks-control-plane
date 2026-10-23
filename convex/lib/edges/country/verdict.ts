@@ -258,6 +258,13 @@ export interface AddressTrackOptions {
   groupBlocked: boolean;
   /** The country-wide guard holds new blocks there. */
   countryWideHold: boolean;
+  /**
+   * The address has never been reached from there and is held unreachable long
+   * enough while another address of its node is reached from there
+   * (lib/edges/probes/verdict.ts `sustainedCountries`): blocked without a
+   * repeat, on any round that is not `proven` or `down`.
+   */
+  sustained?: boolean;
 }
 
 const strip = <T extends object>(o: T, ...keys: Array<keyof T>): T => {
@@ -272,7 +279,10 @@ const strip = <T extends object>(o: T, ...keys: Array<keyof T>): T => {
  * not flap members). proven -> blocked needs `blockedRounds` blocked rounds at
  * least `repeatMs` apart (the repeat is scheduled); blocked -> proven takes one
  * round. A never-decided edge whose group is already blocked there is blocked
- * on its first round.
+ * on its first round. A `sustained` one (never reached from there, for hours,
+ * while the node's other addresses are) is blocked on a blocked or an
+ * undecided round, and stays blocked while it holds; a `down` round (the
+ * controls failed too) never makes it a block.
  */
 export function nextAddressTrack(
   prev: AddressTrack,
@@ -282,7 +292,8 @@ export function nextAddressTrack(
   const { at } = round;
   if (round.result === 'proven')
     return { state: 'proven', decidedAt: at, until: at + o.windowMs, blockedRounds: 0 };
-  if (round.result === 'blocked') {
+  const sustained = o.sustained === true && round.result !== 'down';
+  if (round.result === 'blocked' || sustained) {
     if (o.countryWideHold)
       return { ...strip(prev, 'repeatAt'), reason: 'country_wide' } satisfies AddressTrack;
     if (prev.state === 'blocked')
@@ -291,8 +302,17 @@ export function nextAddressTrack(
         reason: prev.reason ?? 'blocked',
         decidedAt: at,
         until: at + o.windowMs,
-        blockedRounds: prev.blockedRounds + 1,
-        lastBlockedAt: at,
+        ...(round.result === 'blocked'
+          ? { blockedRounds: prev.blockedRounds + 1, lastBlockedAt: at }
+          : {}),
+      };
+    if (round.result !== 'blocked')
+      return {
+        ...strip(prev, 'repeatAt'),
+        state: 'blocked',
+        reason: 'never_reached',
+        decidedAt: at,
+        until: at + o.windowMs,
       };
     const counts =
       prev.blockedRounds === 0 ||
@@ -301,10 +321,15 @@ export function nextAddressTrack(
     const blockedRounds = counts ? prev.blockedRounds + 1 : prev.blockedRounds;
     const lastBlockedAt = counts ? at : prev.lastBlockedAt!;
     const inherited = prev.decidedAt === undefined && o.groupBlocked;
-    if (blockedRounds >= o.blockedRounds || inherited)
+    if (blockedRounds >= o.blockedRounds || inherited || sustained)
       return {
         state: 'blocked',
-        reason: blockedRounds >= o.blockedRounds ? 'blocked' : 'group_blocked',
+        reason:
+          blockedRounds >= o.blockedRounds
+            ? 'blocked'
+            : sustained
+              ? 'never_reached'
+              : 'group_blocked',
         decidedAt: at,
         until: at + o.windowMs,
         blockedRounds,

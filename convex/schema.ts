@@ -397,6 +397,18 @@ const probeReachabilitySummary = v.object({
       // from it before. A port that has never been reached is not evidence,
       // however long another port's reachable history is.
       wasReachable: v.optional(v.boolean()),
+      // The target was NEVER reached from this country over its member-facing
+      // path (IPv4, or the name; never IPv6), any source, any port: the failing
+      // checks on record since the first one (lib/edges/probes/verdict.ts
+      // `sustainedBlock` reads it). Absent once anything reached it.
+      neverReached: v.optional(
+        v.object({
+          checks: v.number(),
+          networks: v.number(),
+          since: v.number(),
+          lastAt: v.number(),
+        }),
+      ),
     }),
   ),
   updatedAt: v.number(),
@@ -1638,6 +1650,10 @@ export default defineSchema({
             edgeId: v.id('edges'),
             source: v.union(v.literal('reports'), v.literal('probes')),
             countries: v.array(v.string()),
+            // Probe evidence: the countries that count by sustained
+            // unreachability (never reached from there) rather than a
+            // reachable-to-unreachable change.
+            neverReached: v.optional(v.array(v.string())),
           }),
         ),
         firstSeenAt: v.union(v.number(), v.null()),
@@ -2503,6 +2519,13 @@ export default defineSchema({
     // Distinct failing networks (ASN / network name) behind the last verdict,
     // bounded (≤16). The cross-source agreement rule counts these for real.
     failNetworks: v.optional(v.array(v.string())),
+    // The failing streak since this row last saw a vantage connect: failing
+    // checks (vantages), when the first of them landed, and the distinct real
+    // networks among them (bounded, ≤16; a vantage without an ASN or network
+    // adds none). A success resets it. Sustained unreachability reads it.
+    failStreak: v.optional(v.number()),
+    failStreakSince: v.optional(v.number()),
+    streakNetworks: v.optional(v.array(v.string())),
     verdict: relayReachVerdict,
     updatedAt: v.number(),
   }).index('by_target_country', ['targetKind', 'targetRef', 'country']),

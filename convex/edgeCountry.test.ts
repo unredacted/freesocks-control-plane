@@ -19,6 +19,8 @@ import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 import { blockedCountries, noteNameBatch, settleRoundIfDone } from './edgeCountry';
 import { internalRunsOf } from './edgeVerification';
 import { liveCountryState } from './lib/edges/country/group';
+import { publishedEdgesOf } from './edgeRender';
+import { assignEndpoints } from './lib/edges/assignment';
 
 const modules = import.meta.glob('./**/*.*s');
 type T = TestConvex<typeof schema>;
@@ -615,6 +617,125 @@ describe('edgeCountry: what the admin reads', () => {
     expect(
       off.items.filter((i) => ['country_wide_failure', 'new_edge_blocked_in'].includes(i.kind)),
     ).toEqual([]);
+  });
+});
+
+describe('edgeCountry: an address never reached from a country (sustained unreachability)', () => {
+  /** Globalping where every address in `failing` fails from IR on every vantage; all else works. */
+  function fakeFailingFromIr(failing: readonly string[]): GlobalpingLike {
+    const requests: Array<{
+      target: string;
+      locations: Array<{ country: string; limit: number }>;
+    }> = [];
+    return {
+      async createMeasurement(req) {
+        requests.push(req as (typeof requests)[number]);
+        return { ok: true, data: { id: `m-${requests.length}` } };
+      },
+      async getMeasurement(id) {
+        const req = requests[Number(id.slice(2)) - 1]!;
+        const fails = (country: string) => country === 'IR' && failing.includes(req.target);
+        const results = req.locations.flatMap((l) =>
+          Array.from({ length: l.limit }, (_, k) => ({
+            probe: {
+              country: l.country,
+              asn: l.country.charCodeAt(0) * 1000 + l.country.charCodeAt(1) * 10 + k,
+              network: `net-${l.country}-${k}`,
+              tags: ['eyeball-network'],
+            },
+            result: fails(l.country)
+              ? { status: 'finished', stats: { loss: 100, avg: null } }
+              : { status: 'finished', stats: { loss: 0, avg: 30 } },
+          })),
+        );
+        return { ok: true, data: { id, status: 'finished', results } };
+      },
+    };
+  }
+
+  /** Three published addresses of one node; each round alone is too thin to decide anything. */
+  async function node() {
+    const s = await seed({
+      extra: {
+        'edge.country.minProbes': '4',
+        'edge.detect.sustainedChecks': '6',
+        'edge.detect.sustainedMinutes': '30',
+      },
+    });
+    await s.t.run((ctx) => ctx.db.patch(s.relayId, { desiredPublished: 3 }));
+    const others: Id<'edges'>[] = [];
+    for (const ipv4 of ['198.51.100.21', '198.51.100.22']) {
+      const { edgeId } = await s.t.mutation(internal.relays.adoptEdge, {
+        relayId: s.relayId,
+        listenerId: s.listenerId,
+        ipv4,
+        publish: true,
+        verified: true,
+      });
+      others.push(edgeId as Id<'edges'>);
+    }
+    const t0 = Date.now();
+    const pass = async (minutes: number) => {
+      vi.setSystemTime(t0 + minutes * MIN);
+      for (const id of [...others, s.edgeId]) await round(s.t, id);
+    };
+    return { ...s, others, pass };
+  }
+
+  test('thin rounds that never decide still block it there once sustained; members there are steered off it', async () => {
+    __setGlobalpingFactory(() => fakeFailingFromIr([EDGE]));
+    const { t, relayId, edgeId, others, pass } = await node();
+    await pass(0);
+    expect((await evidence(t, edgeId, 'IR'))!.address).toMatchObject({
+      state: 'unknown',
+      reason: 'too_few',
+    });
+    // Six failing checks from three networks, but over 20 minutes only: not yet.
+    await pass(20);
+    expect((await evidence(t, edgeId, 'IR'))!.address.state).toBe('unknown');
+    await pass(40);
+    const ir = (await evidence(t, edgeId, 'IR'))!;
+    expect(ir.address).toMatchObject({ state: 'blocked', reason: 'never_reached' });
+    expect(ir.combined).toBe('blocked');
+    expect(
+      liveCountryState((await edgeDoc(t, edgeId)).countryState?.byCountry, Date.now()),
+    ).toEqual([expect.objectContaining({ country: 'IR', state: 'blocked', from: 'edge' })]);
+    // Audited as the address track turning blocked, with its reason.
+    const audits = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(
+      audits.find((a) => a.action === 'edge.country.state' && a.targetId === edgeId)?.payload,
+    ).toMatchObject({ country: 'IR', track: 'address', state: 'blocked', reason: 'never_reached' });
+    // The addresses that work there are not touched.
+    for (const id of others) expect((await edgeDoc(t, id)).countryState).toBeUndefined();
+    // Delivery by country: a member whose stored country is IR gets it neither as
+    // primary nor as backup; without a country the pool is shared as before.
+    const published = await t.run(
+      async (ctx) =>
+        (await publishedEdgesOf(ctx, (await ctx.db.get(relayId))!, { kind: 'member' })).published,
+    );
+    expect(published.find((p) => p.edgeId === edgeId)?.blockedIn).toEqual(['IR']);
+    const unsteered = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      const key = ((i * 0x08888889) >>> 0).toString(16).padStart(8, '0') + 'ab'.repeat(28);
+      const opts = { now: Date.now(), preferDistinctProviders: true, includeBackup: true };
+      const a = assignEndpoints(key, published, { ...opts, edgeCountry: 'IR' });
+      expect(a.primary?.edge.edgeId).not.toBe(edgeId);
+      expect(a.backup?.edge.edgeId).not.toBe(edgeId);
+      unsteered.add(assignEndpoints(key, published, opts).primary!.edge.edgeId);
+    }
+    expect(unsteered).toContain(edgeId);
+  });
+
+  test('every address of the node failing from there (a vantage outage) blocks none of them', async () => {
+    const { t, edgeId, others, pass } = await node();
+    __setGlobalpingFactory(() => fakeFailingFromIr([EDGE, '198.51.100.21', '198.51.100.22']));
+    await pass(0);
+    await pass(20);
+    await pass(40);
+    for (const id of [edgeId, ...others]) {
+      expect((await evidence(t, id, 'IR'))!.address.state).toBe('unknown');
+      expect((await edgeDoc(t, id)).countryState).toBeUndefined();
+    }
   });
 });
 

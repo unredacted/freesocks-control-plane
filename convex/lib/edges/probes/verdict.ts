@@ -92,19 +92,30 @@ export interface CountryVerdict {
   country: string;
   verdict: Verdict;
   /**
-   * The target had a `reachable` verdict from this country earlier. Only a
-   * TRANSITION reachable → unreachable is block evidence: a country that has
-   * never reached the target says nothing about a block (a provider range the
-   * country never carried, a fresh edge nobody has tried yet).
+   * The target had a `reachable` verdict from this country earlier. A
+   * TRANSITION reachable → unreachable is block evidence. A country that has
+   * never reached the target says nothing on its own (a provider range the
+   * country never carried, a fresh edge nobody has tried yet), unless the
+   * failure is `sustained`.
    */
   wasReachable: boolean;
+  /**
+   * Never reached from this country, and held unreachable long enough while
+   * the node's other addresses reach it from there (`sustainedCountries`):
+   * block evidence like a transition.
+   */
+  sustained?: boolean;
 }
+
+/** A country whose verdict is block evidence: a transition, or sustained unreachability. */
+const blockEvidence = (b: CountryVerdict) => b.wasReachable || b.sustained === true;
 
 /**
  * Worst configured country: 1 when any configured country the target was once
- * reachable from is now `unreachable` (an agreed verdict IS the block signal; a
- * share across countries would only dilute a single-country block), 0.5 when
- * the worst is `mixed`, else 0. Countries without a verdict count as nothing.
+ * reachable from (or is sustained-unreachable from) is now `unreachable` (an
+ * agreed verdict IS the block signal; a share across countries would only
+ * dilute a single-country block), 0.5 when the worst is `mixed`, else 0.
+ * Countries without a verdict count as nothing.
  */
 export function probeScore(
   byCountry: ReadonlyArray<CountryVerdict>,
@@ -113,16 +124,106 @@ export function probeScore(
   let worst = 0;
   for (const c of configured) {
     const b = byCountry.find((x) => x.country === c);
-    if (!b || !b.wasReachable) continue;
+    if (!b || !blockEvidence(b)) continue;
     if (b.verdict === 'unreachable') return 1;
     if (b.verdict === 'mixed') worst = Math.max(worst, 0.5);
   }
   return worst;
 }
 
-/** Countries where a once-reachable target is now unreachable (the detector's edge-level evidence). */
+/**
+ * Countries where the target is unreachable as block evidence (the detector's
+ * edge-level evidence): once reachable from there, or sustained-unreachable.
+ */
 export function unreachableCountries(byCountry: ReadonlyArray<CountryVerdict>): string[] {
   return byCountry
-    .filter((b) => b.verdict === 'unreachable' && b.wasReachable)
+    .filter((b) => b.verdict === 'unreachable' && blockEvidence(b))
     .map((b) => b.country);
+}
+
+// --- sustained unreachability ------------------------------------------------------------------
+
+/** What sustained unreachability needs (`edge.detect.sustained*`). */
+export interface SustainedRule {
+  /** Failing checks (vantage answers) on record. */
+  checks: number;
+  /** Distinct networks among them. */
+  networks: number;
+  /** Between the first of them and the newest. */
+  minutes: number;
+}
+
+/** A summary's record of a country that never reached the target (probes.ts `refreshTargetSummary`). */
+export interface NeverReached {
+  checks: number;
+  networks: number;
+  /** The first failing check on record. */
+  since: number;
+  /** The newest. */
+  lastAt: number;
+}
+
+/** One country of a target's summary (`edges.reachability.byCountry`), as the rule reads it. */
+export interface SummaryCountry {
+  country: string;
+  verdict: Verdict;
+  wasReachable?: boolean;
+  neverReached?: NeverReached;
+  /** The country's newest contributing row. */
+  lastAt: number;
+}
+
+/**
+ * The address's own half of sustained unreachability, from one country: its
+ * sources agree it is unreachable now, nothing ever reached it from there over
+ * the member-facing path, and the failing checks on record meet the rule.
+ */
+export function sustainedBlock(
+  c: Pick<SummaryCountry, 'verdict' | 'wasReachable' | 'neverReached'>,
+  rule: SustainedRule,
+): boolean {
+  const n = c.neverReached;
+  if (c.verdict !== 'unreachable' || c.wasReachable || !n) return false;
+  return (
+    n.checks >= rule.checks &&
+    n.networks >= rule.networks &&
+    n.lastAt - n.since >= rule.minutes * 60_000
+  );
+}
+
+/**
+ * Sustained unreachability: the block evidence for an address that has NEVER
+ * been reached from a country, where the transition rule cannot fire (an
+ * address blocked there from the first probe on). A listed country counts when,
+ * all of:
+ *
+ *  - the address's own fresh verdict there is `unreachable`, nothing ever
+ *    reached it from there, and the failing checks meet the rule
+ *    (`sustainedBlock`; never the IPv6 path, never a check that could not test);
+ *  - the address is reached from ELSEWHERE (another country's fresh verdict is
+ *    `reachable`): one nobody reaches is broken, not blocked;
+ *  - ANOTHER address of the same node is reached from THAT country (fresh): the
+ *    vantages there work, and the node's protocol gets through. A vantage
+ *    outage, or a block on the protocol, fails every address alike.
+ *
+ * An outage (the node offline, the address's own internal check failing, its
+ * provider down) is the caller's veto, as for any probe evidence.
+ */
+export function sustainedCountries(
+  own: readonly SummaryCountry[],
+  siblings: ReadonlyArray<readonly SummaryCountry[]>,
+  listed: readonly string[],
+  rule: SustainedRule,
+  isFresh: (c: SummaryCountry) => boolean,
+): string[] {
+  const fresh = (xs: readonly SummaryCountry[]) =>
+    xs.filter((c) => c.country !== 'XX' && isFresh(c));
+  const mine = fresh(own);
+  const others = siblings.map(fresh);
+  return listed.filter((country) => {
+    const c = mine.find((x) => x.country === country);
+    if (!c || !sustainedBlock(c, rule)) return false;
+    if (!mine.some((x) => x.country !== country && x.verdict === 'reachable')) return false;
+    return others.some((s) => s.some((x) => x.country === country && x.verdict === 'reachable'));
+  });
 }

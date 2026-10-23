@@ -84,6 +84,7 @@ import {
   verificationStaleReason,
 } from './lib/edges/verification';
 import { outsideCheckFor } from './lib/edges/verifyRung';
+import { probeStaleAfterMs } from './lib/edges/scoring';
 import { literalFamilies } from './lib/edges/probes/types';
 import {
   edgeLayerOf,
@@ -742,6 +743,7 @@ export const outsideCheck = internalQuery({
     const gone = {
       verdict: 'unreachable' as const,
       notChecked: [] as Array<4 | 6>,
+      blockedIn: [] as string[],
       providerHealthy: false,
     };
     const edge = await ctx.db.get(edgeId);
@@ -772,6 +774,21 @@ export const outsideCheck = internalQuery({
       edge.health,
       cfg.requireProviderHealth,
     );
+    // Every listed country is read on its own: a refusal from listed countries
+    // alone, while the address works from elsewhere, is a block there
+    // (`blocked_in`), unless the node's other addresses fail there too (the
+    // vantages there, or the protocol, are the problem: not this address).
+    const now = Date.now();
+    const staleAfterMs = probeStaleAfterMs(cfg.probe);
+    const siblings = (await liveEdgesOfRelay(ctx.db, edge.relayId)).filter((e) => e._id !== edgeId);
+    const siblingsFailIn = cfg.probe.countries.filter((country) => {
+      const seen = siblings.flatMap((e) =>
+        (e.reachability?.byCountry ?? []).filter(
+          (c) => c.country === country && c.verdict !== 'unknown' && now - c.lastAt <= staleAfterMs,
+        ),
+      );
+      return seen.length > 0 && seen.every((c) => c.verdict === 'unreachable');
+    });
     const check = outsideCheckFor(listener, {
       families: literalFamilies(edge.addresses, cfg.render.ipv6Mode !== 'off'),
       providerHealthy,
@@ -781,8 +798,15 @@ export const outsideCheck = internalQuery({
       ports: edgePortsOf(edge),
       ...(roundSince !== undefined ? { roundSince } : {}),
       final: final === true,
+      listed: cfg.probe.countries,
+      siblingsFailIn,
     });
-    return { verdict: check.verdict, notChecked: check.notChecked, providerHealthy };
+    return {
+      verdict: check.verdict,
+      notChecked: check.notChecked,
+      blockedIn: check.blockedIn,
+      providerHealthy,
+    };
   },
 });
 
@@ -2161,6 +2185,15 @@ async function stageVerify(ctx: ActionCtx, run: Run): Promise<null> {
       l.verify = 'partial';
       l.notChecked = check.notChecked.length > 0 ? check.notChecked : undefined;
       continue;
+    }
+    if (check.verdict === 'blocked_in') {
+      // Born blocked in a listed country while it works from elsewhere: asked
+      // like a country round's block, with no re-apply (saving the same
+      // configuration again never unblocks an address in a country).
+      l.verify = 'unreachable';
+      return needsYou(ctx, run, 'blocked_in', `${l.listenerKey}:${check.blockedIn.join(',')}`, {
+        listeners,
+      });
     }
     if (check.verdict === 'unreachable') {
       // Once per address, before the run asks: its configuration saved again

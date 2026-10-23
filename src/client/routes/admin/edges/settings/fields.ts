@@ -461,6 +461,28 @@ export const DETECTOR_FIELDS: Field[] = [
     unit: 'per day',
     helper: 'A cap across the whole fleet, on top of the cap per node. 0 = none at all.',
   },
+  {
+    kind: 'number',
+    path: 'detect.sustainedChecks',
+    label: 'Failed checks for an address never reached',
+    unit: 'checks',
+    helper:
+      'An address no check from a listed country has ever reached counts as blocked there after this many failed checks, while the node’s other addresses are reached from there.',
+  },
+  {
+    kind: 'number',
+    path: 'detect.sustainedNetworks',
+    label: 'Networks among those checks',
+    unit: 'networks',
+    helper: 'The failed checks must come from at least this many networks.',
+  },
+  {
+    kind: 'number',
+    path: 'detect.sustainedMinutes',
+    label: 'Over at least',
+    unit: 'min',
+    helper: 'Time between the first failed check and the newest.',
+  },
 ];
 
 export const PROBE_SOURCE_FIELDS: Field[] = [

@@ -142,6 +142,16 @@ export interface EdgeConfig {
     fleetBreakerPct: number;
     /** Automatic (detector) rotations across the whole fleet per UTC day; 0 = none. */
     fleetRotationsPerDay: number;
+    /**
+     * Sustained unreachability (lib/edges/probes/verdict.ts `sustainedBlock`):
+     * an address never reached from a listed country counts as blocked there
+     * after this many failing checks, from at least `sustainedNetworks`
+     * networks, spread over at least `sustainedMinutes`, while the node's other
+     * addresses reach that country.
+     */
+    sustainedChecks: number;
+    sustainedNetworks: number;
+    sustainedMinutes: number;
   };
   /** L7 (CDN front) edges. */
   l7: {
@@ -267,6 +277,9 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     allowProbeOnlyAutoRotate: false,
     fleetBreakerPct: 30,
     fleetRotationsPerDay: 12,
+    sustainedChecks: 12,
+    sustainedNetworks: 2,
+    sustainedMinutes: 120,
   },
   l7: {
     autoSelect: false,
@@ -419,6 +432,9 @@ export const EDGE_KEYS = {
   'detect.allowProbeOnlyAutoRotate': 'edge.detect.allowProbeOnlyAutoRotate',
   'detect.fleetBreakerPct': 'edge.detect.fleetBreakerPct',
   'detect.fleetRotationsPerDay': 'edge.detect.fleetRotationsPerDay',
+  'detect.sustainedChecks': 'edge.detect.sustainedChecks',
+  'detect.sustainedNetworks': 'edge.detect.sustainedNetworks',
+  'detect.sustainedMinutes': 'edge.detect.sustainedMinutes',
   'l7.autoSelect': 'edge.l7.autoSelect',
   'l7.maxSameProviderReplacementsPerDay': 'edge.l7.maxSameProviderReplacementsPerDay',
   'render.enabled': 'edge.render.enabled',
@@ -558,6 +574,20 @@ export function sanitizeRelayConfig(
         0,
         500,
         D.detect.fleetRotationsPerDay,
+      ),
+      sustainedChecks: sanitizeInt(raw['detect.sustainedChecks'], 3, 500, D.detect.sustainedChecks),
+      // Floor 2, like `probe.agreementVantages`: one network failing is never a block.
+      sustainedNetworks: sanitizeInt(
+        raw['detect.sustainedNetworks'],
+        2,
+        10,
+        D.detect.sustainedNetworks,
+      ),
+      sustainedMinutes: sanitizeInt(
+        raw['detect.sustainedMinutes'],
+        30,
+        2880,
+        D.detect.sustainedMinutes,
       ),
     },
     l7: {
@@ -1023,6 +1053,9 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'detect.probeWeight': { min: 0, max: 1 },
   'detect.fleetBreakerPct': { min: 1, max: 100 },
   'detect.fleetRotationsPerDay': { min: 0, max: 500 },
+  'detect.sustainedChecks': { min: 3, max: 500 },
+  'detect.sustainedNetworks': { min: 2, max: 10 },
+  'detect.sustainedMinutes': { min: 30, max: 2880 },
   'l7.maxSameProviderReplacementsPerDay': { min: 0, max: 50 },
   'render.namesPerEndpoint': { min: 1, max: 5 },
   'render.backupNames': { min: 1, max: 5 },

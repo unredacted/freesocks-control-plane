@@ -2162,6 +2162,14 @@ can tell the two apart.
   `probe.agreementVantages` distinct failing networks and no success, `lib/edges/probes/verdict.ts`),
   or FCP's shape check over it was refused. Any refused family makes the address `unreachable`
   (`address_unreachable`, after the one re-apply).
+- **blocked**: refused, but only from countries on the censored-country list, while the address
+  is reached over that family from elsewhere (FCP's own shape check, or another country), and
+  the node's other addresses do not fail from those countries too (where every one of them with
+  fresh evidence fails, the vantages or the protocol are the problem, and it stays refused).
+  Every listed country is read on its own, with or without the per-country checks: the address
+  stops at `blocked_in` naming them ("Try another address", "Use it anyway", "Check again"),
+  with no re-apply (saving the same configuration again never unblocks an address in a
+  country). A real refusal of any family still wins.
 - **reached**: a source connected over it and none refused. Once the run's own round has no run
   of that family in flight, a reached family passes.
 - **unknown**: every source settled without being able to test it. Never "unreachable": the
@@ -2184,6 +2192,53 @@ charged for the runs actually made. A target no source in use can check at all (
 address with check-host the only source) is refused `probe.no_source` and never kept due by the
 cron. A RIPE Atlas probe dropped for its own missing route still counts as answered, so the poll
 settles instead of waiting out its deadline.
+
+### Block evidence from probes
+
+The detector reads each published edge's summary per country (`edges.reachability`, rolled up
+across sources and ports by `refreshTargetSummary`). A fresh `unreachable` verdict from a country
+counts as edge-level evidence (`EdgeEvidence` source `probes`, `probeScore` 1) in one of two
+ways:
+
+- **A transition.** The edge was reached from that country before (`wasReachable`, judged per
+  listener port: a port blocked since it appeared is not a transition however long another
+  port's history is).
+- **Sustained unreachability** (`lib/edges/probes/verdict.ts` `sustainedCountries`). An address
+  blocked from its first probe on never makes a transition, so it would stay "Not suspected"
+  forever. It counts in a listed country when all of these hold:
+  - nothing ever reached it from there over its member-facing path (IPv4, or the name of an L7
+    front), by any source on any port: the summary's `neverReached` record. The IPv6 path never
+    counts: a vantage without IPv6 that still answers can look exactly like a block;
+  - at least `detect.sustainedChecks` failing checks (vantage answers) from at least
+    `detect.sustainedNetworks` distinct networks, the first and the newest at least
+    `detect.sustainedMinutes` apart. Each rollup row keeps its failing streak
+    (`probeReachability.failStreak`, `failStreakSince`, `streakNetworks`), reset by any success;
+    a vantage that names no ASN or network adds a check, never a network, and a check that could
+    not test (§ "Probe sources and verdicts") is never stored, so it adds nothing;
+  - the address is reached from ELSEWHERE (another country's fresh verdict is `reachable`): one
+    no country reaches is broken, not blocked, whatever FCP's own host says;
+  - ANOTHER live address of the same node is reached from THAT country (fresh): the vantages
+    there work and the node's protocol gets through. A vantage outage fails every address alike,
+    and so does a block on the protocol.
+
+  The outage vetoes apply as to any probe evidence: the node offline (`node_offline`), FCP's own
+  check of the address failing or its provider reporting it offline (`edge_outage`), every
+  published edge failing alike (`protocol_level_block`), stale or missing sources
+  (`probe_sources_down`), and probe-only rotations need `detect.allowProbeOnlyAutoRotate`. The
+  suspicion's evidence names such countries (`edgeEvidence[].neverReached`; the origin page says
+  "Never reached from there"), and a rotation it starts is a `detector:probes` replacement under
+  the same cooldowns, daily caps and fleet guards as any other.
+
+| Key (`edge.detect.*`) | Default | Bounds   | Meaning                                                  |
+| --------------------- | ------- | -------- | -------------------------------------------------------- |
+| `sustainedChecks`     | 12      | 3..500   | failing checks before a never-reached country counts     |
+| `sustainedNetworks`   | 2       | 2..10    | distinct networks among them                             |
+| `sustainedMinutes`    | 120     | 30..2880 | between the first failing check on record and the newest |
+
+At the default probe settings (every 15 minutes, three vantages per country) an address blocked
+from the start counts after two hours. The same evidence decides the address track of the
+per-country checks (§ "Checks from each country", reason `never_reached`), so it reaches the
+country grades and, with `delivery.country.steer` on, the members of that country.
 
 ### Simulating a block on a test deployment
 
@@ -2262,7 +2317,13 @@ with `delivery.country.steer` on (next section).
   `blockedRounds` (2) blocked rounds at least 30 minutes apart: the first sets `repeatAt` and
   the probe planner takes that edge first once it is due. Blocked to proven takes one round. A
   never-decided edge whose group is already blocked there is blocked on its first blocked
-  round. **Country-wide guard:** a block that would make at least 80 % of the edges checked in
+  round. An address that has never been reached from there and is **sustained-unreachable**
+  (§ "Block evidence from probes": failing checks from enough networks over hours, while
+  another address of its node is reached from there; checked when its round settles) is
+  blocked at once on a blocked or a not-known round, however thin each round alone is
+  (`never_reached`), and every such round re-confirms it while it holds; a `down` round (the
+  controls failed too) never makes it one, nor does an outage of the node or the address.
+  **Country-wide guard:** a block that would make at least 80 % of the edges checked in
   that country within 2 hours blocked, across at least 2 groups and 3 edges, is held as
   `unknown` (`country_wide`): a censor does not block every provider at once, an outage or a
   probe problem does.
@@ -2298,7 +2359,9 @@ with `delivery.country.steer` on (next section).
   evidence on record already makes the rung `partial`, as for a reused spare) and waits for it (at most
   `preUseWaitMinutes`, 15; not known never holds it); one that finds the address blocked in a
   checked country while the controls reach it stops at `blocked_in` ("Try another address" or
-  "Use it anyway"). A rotation that publishes an L4 address (a replacement, a spare's
+  "Use it anyway"). The outside check after it reads every listed country too (§ "Probe sources
+  and verdicts", **blocked**), so an address born blocked there is caught before it is
+  published even when the round alone could not decide. A rotation that publishes an L4 address (a replacement, a spare's
   publication) requests a round once and waits the same bound; a DETECTOR replacement whose
   round finds it blocked in one of the countries that triggered it
   (`edgeRotations.affectedCountries`) fails `replacement_blocked`. Spares are checked every
@@ -2360,7 +2423,9 @@ choice, or the stored guess (lib/memberCountry.ts `steeringCountry`). A transien
 the names and the edges (`locateMember` / `locateAt`).
 
 - **Tiers** (`lib/edges/assignment.ts`): per edge, from `edges.countryState` (entries past their
-  `until` dropped at read): 0 proven there, 1 not known, 2 blocked there. The primary is the
+  `until` dropped at read): 0 proven there, 1 not known, 2 blocked there (by a round, a
+  handshake, a mark, its location, or as never reached from there: § "Block evidence from
+  probes"). The primary is the
   first assignable edge from the member's seeded pool index whose tier is the best any
   assignable edge has: a member moves only when a tier changes, the modulus spread holds inside
   a tier, and a blocked edge is used only when nothing else is assignable. With fewer proven
@@ -2478,7 +2543,8 @@ within 1..8.
 
 The fleet guards: `detect.fleetBreakerPct` (1..100, default 30) and
 `detect.fleetRotationsPerDay` (0..500, default 12); `detect.allowProbeOnlyAutoRotate` defaults
-to false (§ Operations safety). The one-call `POST automation {on}` (§ Operator endpoints)
+to false (§ Operations safety). Sustained unreachability: `detect.sustainedChecks`,
+`detect.sustainedNetworks`, `detect.sustainedMinutes` (§ "Block evidence from probes"). The one-call `POST automation {on}` (§ Operator endpoints)
 flips the four automation switches together and sets `standbyPerListener` to 1 when turning on;
 `render.enabled` and `l7.autoSelect` stay manual.
 
@@ -4167,6 +4233,22 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                 | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Sustained unreachability** adds optional fields only (`probeReachability.failStreak`,
+`failStreakSince`, `streakNetworks`; `neverReached` on each country of a reachability summary;
+`neverReached` on the suspicion's edge evidence) and three settings with defaults
+(`edge.detect.sustainedChecks`, `sustainedNetworks`, `sustainedMinutes`): one deploy, no
+migration, no env change. Streaks start with the first probe run after the deploy, so an address
+blocked from the start counts `sustainedMinutes` (two hours) after it at the earliest. With
+`detect.allowProbeOnlyAutoRotate` on, a detector replacement may follow under the usual gates;
+with the per-country checks on, the address's state there turns blocked (`never_reached`) and,
+with steering on, its members there move off it. A guided run's stage 4 now stops at
+`blocked_in` (not `address_unreachable`, and with no re-apply) for an address refused only from
+listed countries while it works from elsewhere. To roll back, turn probes off
+(`edge.probe.enabled`, so no run or detector pass writes the fields again), then run
+`probes:clearSustainedForRollback` with no arguments before deploying the older build (it walks
+the rollup rows, edges, origins and custom targets, scheduling itself; watch the scheduled runs
+finish first).
 
 **Plans and prices** add one table (`edgePlans`) and optional fields only
 (`edgeProviderAccounts.cost`, `edgeLocations.plansAt` / `plansTriedAt` / `plansError`,

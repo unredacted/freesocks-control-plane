@@ -24,7 +24,8 @@
  *   outsideCheckFor  the guided run's stage 4: once its own round settled, an
  *                    address passes when a family was reached and none refused;
  *                    a family nothing could test is reported (`notChecked`),
- *                    never failed.
+ *                    never failed; one refused only from listed countries
+ *                    while it works from elsewhere is `blocked_in` there.
  *
  * The shape check is `tls-sni` for a REALITY / TLS listener, bare `tcp` for a
  * plaintext one. `partial` is the CEILING here: a forwarder aimed at the
@@ -124,6 +125,12 @@ interface FamilyEvidence {
   reached: boolean;
   /** The `partial` rung's bar: enough distinct outside vantages AND a passing shape check. */
   strong: boolean;
+  /** The countries whose outside sources agreed it is unreachable over this family. */
+  refusedIn: string[];
+  /** FCP's own shape check over this family failed (the address itself, not a country). */
+  shapeFailed: boolean;
+  /** Reached over this family by FCP's shape check or from a country not in `refusedIn`. */
+  reachedElsewhere: boolean;
 }
 
 function evidenceOf(
@@ -141,14 +148,19 @@ function evidenceOf(
   const vantages = new Set(
     outside.filter((r) => r.verdict === 'reachable').map((r) => `${r.country}/${r.source}`),
   );
+  const reachedRow = (r: RungReachabilityRow) =>
+    r.verdict === 'reachable' || r.verdict === 'mixed' || (r.okCount ?? 0) > 0;
+  const refusedIn = [
+    ...new Set(outside.filter((r) => r.verdict === 'unreachable').map((r) => r.country)),
+  ].sort();
   return {
-    refused: shape === 'fail' || outside.some((r) => r.verdict === 'unreachable'),
-    reached:
-      shape === 'ok' ||
-      outside.some(
-        (r) => r.verdict === 'reachable' || r.verdict === 'mixed' || (r.okCount ?? 0) > 0,
-      ),
+    refused: shape === 'fail' || refusedIn.length > 0,
+    reached: shape === 'ok' || outside.some(reachedRow),
     strong: shape === 'ok' && vantages.size >= Math.max(1, agreementVantages),
+    refusedIn,
+    shapeFailed: shape === 'fail',
+    reachedElsewhere:
+      shape === 'ok' || outside.some((r) => !refusedIn.includes(r.country) && reachedRow(r)),
   };
 }
 
@@ -190,13 +202,15 @@ export function partialRungFor(
   return evidence.some((e) => e.strong) ? 'partial' : 'pending';
 }
 
-export type FamilyCheck = 'reached' | 'refused' | 'unknown' | 'pending';
+export type FamilyCheck = 'reached' | 'refused' | 'blocked' | 'unknown' | 'pending';
 
 export interface OutsideCheck {
-  verdict: 'passed' | 'unreachable' | 'pending';
+  verdict: 'passed' | 'unreachable' | 'blocked_in' | 'pending';
   families: Array<{ family: AddressFamily; check: FamilyCheck }>;
   /** Families no source could test: "not checked from outside over IPv6" on the run card. */
   notChecked: AddressFamily[];
+  /** `blocked_in`: the listed countries it is blocked in. */
+  blockedIn: string[];
 }
 
 /**
@@ -207,10 +221,14 @@ export interface OutsideCheck {
  * only that round's evidence counts (an older success must not stand in for a
  * round that could not test): a family waits while a run of the round over it
  * is in flight (until `final`: the stage's wait is over), then reads `reached`
- * or `unknown`. Any refusal answers `unreachable` at once. The address passes when no
- * family is refused or pending, the provider's health allows it, and it does
- * so even with families nobody could test: the operator's own test link
- * (stage 4b) still comes before anything is published.
+ * or `unknown`. Any refusal answers at once: `blocked_in` when every country
+ * that refused it is a listed one (`listed`) where the node's other addresses
+ * do not fail too (`siblingsFailIn`: there the vantages or the protocol are
+ * the problem), and the address is reached over that family from elsewhere
+ * (FCP's own check or another country), else `unreachable`. The address passes
+ * when no family is refused or pending, the provider's health allows it, and
+ * it does so even with families nobody could test: the operator's own test
+ * link (stage 4b) still comes before anything is published.
  */
 export function outsideCheckFor(
   listener: RungListenerLike,
@@ -227,6 +245,10 @@ export function outsideCheckFor(
     /** When the stage asked for its own round. */
     roundSince?: number;
     final?: boolean;
+    /** The censored-country list (the countries edges are checked from). */
+    listed?: ReadonlyArray<string>;
+    /** Listed countries where every other address of the node with fresh evidence fails too. */
+    siblingsFailIn?: ReadonlyArray<string>;
   },
 ): OutsideCheck {
   const since = input.roundSince;
@@ -236,10 +258,21 @@ export function outsideCheckFor(
   const runs = onPorts(input.probeRuns, input.ports).filter(
     (r) => since === undefined || (r.requestedAt ?? 0) >= since,
   );
+  const listed = input.listed ?? [];
+  const siblingsFail = input.siblingsFailIn ?? [];
+  const blockedIn = new Set<string>();
   const families = input.families.map((family) => {
     const ev = evidenceOf(listener, family, rows, runs, input.agreementVantages);
     let check: FamilyCheck;
-    if (ev.refused) check = 'refused';
+    if (
+      ev.refused &&
+      !ev.shapeFailed &&
+      ev.reachedElsewhere &&
+      ev.refusedIn.every((c) => listed.includes(c) && !siblingsFail.includes(c))
+    ) {
+      check = 'blocked';
+      for (const c of ev.refusedIn) blockedIn.add(c);
+    } else if (ev.refused) check = 'refused';
     else if (since === undefined) check = ev.strong ? 'reached' : 'pending';
     else if (
       !input.final &&
@@ -251,12 +284,14 @@ export function outsideCheckFor(
   });
   const notChecked = families.filter((f) => f.check === 'unknown').map((f) => f.family);
   if (families.some((f) => f.check === 'refused'))
-    return { verdict: 'unreachable', families, notChecked };
+    return { verdict: 'unreachable', families, notChecked, blockedIn: [] };
+  if (blockedIn.size > 0)
+    return { verdict: 'blocked_in', families, notChecked, blockedIn: [...blockedIn].sort() };
   if (
     families.length === 0 ||
     families.some((f) => f.check === 'pending') ||
     !input.providerHealthy
   )
-    return { verdict: 'pending', families, notChecked };
-  return { verdict: 'passed', families, notChecked };
+    return { verdict: 'pending', families, notChecked, blockedIn: [] };
+  return { verdict: 'passed', families, notChecked, blockedIn: [] };
 }

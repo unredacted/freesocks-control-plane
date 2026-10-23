@@ -336,6 +336,39 @@ describe('nextAddressTrack', () => {
     ).toMatchObject({ state: 'blocked', reason: 'group_blocked' });
   });
 
+  it('blocks an address never reached from there at once when its unreachability is sustained', () => {
+    const S = { ...OPTS, sustained: true };
+    // A thin round (one vantage) decides nothing alone; sustained evidence does.
+    const thin = nextAddressTrack(EMPTY_ADDRESS_TRACK, round('unknown', T0), S);
+    expect(thin).toMatchObject({
+      state: 'blocked',
+      reason: 'never_reached',
+      decidedAt: T0,
+      until: T0 + 14 * DAY,
+    });
+    // A blocked round needs no repeat either.
+    expect(nextAddressTrack(EMPTY_ADDRESS_TRACK, round('blocked', T0), S)).toMatchObject({
+      state: 'blocked',
+      reason: 'never_reached',
+      blockedRounds: 1,
+    });
+    // While it holds, an undecided round re-confirms the block.
+    const later = nextAddressTrack(thin, round('unknown', T0 + DAY), S);
+    expect(later).toMatchObject({
+      state: 'blocked',
+      reason: 'never_reached',
+      until: T0 + 15 * DAY,
+    });
+    // The controls failing too (down) is broken, not blocked.
+    expect(nextAddressTrack(EMPTY_ADDRESS_TRACK, round('down', T0), S).state).toBe('unknown');
+    // The country-wide guard holds it like any new block.
+    expect(
+      nextAddressTrack(EMPTY_ADDRESS_TRACK, round('unknown', T0), { ...S, countryWideHold: true }),
+    ).toMatchObject({ state: 'unknown', reason: 'country_wide' });
+    // Reached once is proven at once.
+    expect(nextAddressTrack(thin, round('proven', T0 + MIN), S).state).toBe('proven');
+  });
+
   it('holds new blocks while the country-wide guard is on', () => {
     const held = nextAddressTrack(proven, round('blocked', T0 + MIN), {
       ...OPTS,
