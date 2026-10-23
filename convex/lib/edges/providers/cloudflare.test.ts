@@ -1292,7 +1292,7 @@ describe('cloudflare: capability cross-check + error hygiene', () => {
   });
 
   test('no thrown error carries the token, the zone name, the origin address or a body', async () => {
-    mockFetch(() =>
+    const answer = (status: number) => () =>
       jsonRes(
         {
           result: null,
@@ -1304,10 +1304,19 @@ describe('cloudflare: capability cross-check + error hygiene', () => {
             },
           ],
         },
-        400,
-      ),
-    );
+        status,
+      );
     const steps = cloudflareProvider.planProvision(cfg, specFor(), tpl);
+    // Refused for good (400): the run stops on it with Cloudflare's words, the
+    // address and the token never among them (the ops layer scrubs the names).
+    mockFetch(answer(400));
+    const refused = await cloudflareProvider.runStep(cfg, steps[0]!, specFor(), tpl, emptyLedger);
+    expect(refused).toMatchObject({ status: 'partial', code: 'create_refused', refused: true });
+    expect(refused.status === 'partial' && refused.detail).toContain('already exists');
+    for (const secret of ['SECRET_CF', ORIGIN])
+      expect(JSON.stringify(refused)).not.toContain(secret);
+    // Anything else throws, and the error carries the code alone.
+    mockFetch(answer(503));
     const err = await cloudflareProvider
       .runStep(cfg, steps[0]!, specFor(), tpl, emptyLedger)
       .catch((e: unknown) => e);
@@ -1421,6 +1430,7 @@ describe('cloudflare: the member address at a front', () => {
       resources: [],
       code: 'header_rule_forbidden',
       refused: true,
+      httpStatus: 403,
     });
   });
 

@@ -163,6 +163,36 @@ describe('ovh: body + signing', () => {
     expect(errorBlob(err)).not.toContain('SECRET_OVH');
     expect(errorBlob(err)).toContain('Client::Forbidden');
   });
+
+  test('a create OVH refuses for good stops the run with its words; a stale clock or a fault stays unknown', async () => {
+    const [step] = ovhProvider.planProvision(cfg, spec, tpl);
+    const empty = { steps: [], resources: [] };
+    mockFetch(
+      withTime(() =>
+        jsonRes({ class: 'Client::BadRequest', message: 'Invalid flavor for SECRET_OVH_AS' }, 400),
+      ),
+    );
+    const out = await ovhProvider.runStep(cfg, step, spec, tpl, empty);
+    expect(out).toMatchObject({
+      status: 'partial',
+      resources: [],
+      code: 'create_refused',
+      refused: true,
+      detail: expect.stringContaining('Invalid flavor'),
+    });
+    expect(JSON.stringify(out)).not.toContain('SECRET_OVH');
+    // A request signed with a clock OVH no longer accepts is not a refusal of what it asked.
+    mockFetch(
+      withTime(() =>
+        jsonRes({ errorCode: 'QUERY_TIME_OUT', httpCode: '400 Bad Request', message: 'x' }, 400),
+      ),
+    );
+    const stale = await ovhProvider.runStep(cfg, step, spec, tpl, empty).catch((e) => e);
+    expect(stale.meta).toMatchObject({ status: 400, code: 'QUERY_TIME_OUT' });
+    mockFetch(withTime(() => jsonRes({ message: 'down' }, 503)));
+    const down = await ovhProvider.runStep(cfg, step, spec, tpl, empty).catch((e) => e);
+    expect(down.meta.status).toBe(503);
+  });
 });
 
 describe('ovh: polling, discovery, describe, destroy', () => {

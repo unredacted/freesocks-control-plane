@@ -35,8 +35,11 @@ export function isIpv6Literal(s: string): boolean {
       return false;
     }
   }
-  if (parts.length === 1 && groups.length !== 8) return false;
-  if (parts.length === 2 && groups.length > 7) return false;
+  // An embedded IPv4 tail fills two of the eight groups (`v6Groups` reads it so).
+  const last = groups[groups.length - 1];
+  const count = groups.length + (last !== undefined && last.includes('.') ? 1 : 0);
+  if (parts.length === 1 && count !== 8) return false;
+  if (parts.length === 2 && count > 7) return false;
   return true;
 }
 
@@ -74,6 +77,11 @@ export function canonicalIp(s: string): string | null {
   const g = v6Groups(t);
   if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
     return [g[6]! >> 8, g[6]! & 255, g[7]! >> 8, g[7]! & 255].join('.');
+  return v6Text(g);
+}
+
+/** An IPv6 address's groups in the compressed form (RFC 5952). */
+function v6Text(g: readonly number[]): string {
   let best = -1;
   let bestLen = 1;
   for (let i = 0; i < 8; ) {
@@ -88,6 +96,46 @@ export function canonicalIp(s: string): string | null {
   const hex = g.map((x) => x.toString(16));
   if (best < 0) return hex.join(':');
   return `${hex.slice(0, best).join(':')}::${hex.slice(best + bestLen).join(':')}`;
+}
+
+/**
+ * An address range in CIDR notation (`192.0.2.0/24`, `2001:db8::/32`): its
+ * family, its prefix length and the address the range starts at. Null when it
+ * is not one. `start` differs from the written address when bits are set past
+ * the prefix (`192.0.2.10/24` starts at `192.0.2.0`): providers refuse such a
+ * range.
+ */
+export function parseCidr(
+  s: string,
+): { family: AddressFamily; prefix: number; start: string; startsRange: boolean } | null {
+  const m = /^([^/\s]+)\/(\d{1,3})$/.exec(s.trim());
+  if (!m) return null;
+  const [, addr = '', len = ''] = m;
+  const prefix = Number(len);
+  if (String(prefix) !== len) return null;
+  if (isIpv4Literal(addr)) {
+    if (prefix > 32) return null;
+    const n = v4Octets(addr).reduce((acc, o) => acc * 256 + o, 0);
+    const size = 2 ** (32 - prefix);
+    const first = n - (n % size);
+    const start = [24, 16, 8, 0].map((b) => Math.floor(first / 2 ** b) % 256).join('.');
+    return { family: 'v4', prefix, start, startsRange: first === n };
+  }
+  if (isIpv6Literal(addr) && !addr.startsWith('[')) {
+    if (prefix > 128) return null;
+    const g = v6Groups(addr.toLowerCase());
+    const masked = g.map((x, i) => {
+      const bits = Math.min(16, Math.max(0, prefix - 16 * i));
+      return bits === 0 ? 0 : x & ((0xffff << (16 - bits)) & 0xffff);
+    });
+    return {
+      family: 'v6',
+      prefix,
+      start: v6Text(masked),
+      startsRange: masked.every((x, i) => x === g[i]),
+    };
+  }
+  return null;
 }
 
 export type AddressFamily = 'v4' | 'v6';
@@ -127,12 +175,11 @@ export function isPublicIpLiteral(s: string): boolean {
       .trim()
       .replace(/^\[|\]$/g, '')
       .toLowerCase();
-    if (t === '::' || t === '::1') return false;
-    if (t.startsWith('::ffff:')) return false;
-    const first = t.split(':')[0] ?? '';
-    if (first.length === 0) return false; // ::-prefixed compressed leading zeros
-    const firstVal = parseInt(first, 16);
-    if (Number.isNaN(firstVal)) return false;
+    // By value, however it is written: `::`, `::1`, an IPv4-mapped address in
+    // either spelling (`::ffff:192.0.2.1`, `0:0:0:0:0:ffff:192.0.2.1`) and the
+    // rest of 0000::/8 are never public.
+    const firstVal = v6Groups(t)[0] ?? 0;
+    if (firstVal < 0x0100) return false;
     if ((firstVal & 0xfe00) === 0xfc00) return false; // fc00::/7
     if ((firstVal & 0xffc0) === 0xfe80) return false; // fe80::/10
     if ((firstVal & 0xff00) === 0xff00) return false; // multicast

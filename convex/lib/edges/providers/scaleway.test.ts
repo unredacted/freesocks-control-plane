@@ -961,6 +961,7 @@ describe('scaleway: discovery / describe / destroy', () => {
       resources: [],
       code: 'ip_allocation_refused',
       refused: true,
+      httpStatus: 400,
       detail: 'invalid argument(s): project_id is required',
     });
     // A provider fault is not a refusal: it is thrown, and the step is looked for again.
@@ -978,6 +979,52 @@ describe('scaleway: discovery / describe / destroy', () => {
       refused: true,
     });
     expect(api.createIp).not.toHaveBeenCalled();
+  });
+
+  test('the LB, backend and frontend creates stop on a refusal for good; a busy LB (409, 412) stays unknown', async () => {
+    const refusal = (status: number, name: string) =>
+      vi.fn(async () => {
+        throw Object.assign(new Error(`${name}: refused`), { status, name });
+      });
+    const api = fakeApi();
+    const steps = scalewayProvider.planProvision(cfg, spec, tpl);
+    const ledger: Ledger = {
+      steps: [],
+      resources: [
+        res('ip4', 'ip', 'ip4-1'),
+        res('lb', 'lb', 'lb-1'),
+        res('backend', 'backend', 'be-1'),
+      ],
+    };
+    const byKind = (kind: string) => steps.find((s) => s.kind === kind)!;
+    for (const [kind, method] of [
+      ['create_lb', 'createLb'],
+      ['create_backend', 'createBackend'],
+      ['create_frontend', 'createFrontend'],
+    ] as const) {
+      api[method] = refusal(400, 'InvalidArgumentsError');
+      expect(await scalewayProvider.runStep(cfg, byKind(kind), spec, tpl, ledger)).toMatchObject({
+        status: 'partial',
+        resources: [],
+        code: 'create_refused',
+        refused: true,
+        detail: expect.stringContaining('refused'),
+      });
+      api[method] = refusal(403, 'QuotasExceededError');
+      expect(await scalewayProvider.runStep(cfg, byKind(kind), spec, tpl, ledger)).toMatchObject({
+        code: 'create_refused',
+        refused: true,
+      });
+      for (const [status, name] of [
+        [409, 'TransientStateError'],
+        [412, 'PreconditionFailedError'],
+      ] as const) {
+        api[method] = refusal(status, name);
+        await expect(
+          scalewayProvider.runStep(cfg, byKind(kind), spec, tpl, ledger),
+        ).rejects.toMatchObject({ meta: { status } });
+      }
+    }
   });
 
   test('errors carry no secret or host', async () => {

@@ -81,6 +81,7 @@ import {
   noteDiscoverError,
   redactErrorDetail,
   refusalOf,
+  refusedCreate,
   withRefusal,
 } from './http';
 import { acmeChallengeName, normalizeZoneName } from '../hostname';
@@ -217,6 +218,17 @@ function candidateOf(r: ChildResource): ChildResource {
 }
 
 // --- small helpers -----------------------------------------------------------------
+
+/** The steps that create something: one Fastly refuses for good stops the run (`refusedCreate`). */
+const FASTLY_CREATE_STEPS = new Set([
+  'create_service',
+  'create_backend',
+  'create_snippet',
+  'create_domain',
+  'create_tls_subscription',
+  'create_dns_acme',
+  'create_dns_record',
+]);
 
 function refusal(step: string, code: string, why: string): EdgeProviderError {
   return new EdgeProviderError(`fastly ${step}: ${why}`, {
@@ -1682,253 +1694,270 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
   async runStep(cfg, step, spec, tpl, ledger): Promise<StepOutcome> {
     const api = fastlyApiFor(cfg);
     const hostname = requireHostname(spec, step.id);
-    switch (step.kind) {
-      case 'create_service': {
-        const svc = await api.createService({
-          name: spec.name,
-          type: 'vcl',
-          comment: tpl.serviceComment,
-        });
-        const version = highestDraftVersion(svc.versions ?? [])?.number ?? 1;
-        return {
-          status: 'done',
-          resources: [
-            {
-              kind: 'service',
-              resourceId: svc.id,
-              ownership: 'created',
-              meta: { version, name: svc.name ?? spec.name },
-            },
-          ],
-        };
-      }
-      case 'create_backend': {
-        const svc = serviceOf(ledger);
-        const backend = await api.createBackend(svc.id, svc.version, fastlyBackendBody(spec, tpl));
-        return {
-          status: 'done',
-          resources: [{ kind: 'backend', resourceId: backend.name, ownership: 'created' }],
-        };
-      }
-      case 'create_snippet': {
-        const svc = serviceOf(ledger);
-        // In order, the upgrade snippet last. A retry after a partial run finds
-        // the ones it already made (the version is this edge's own draft).
-        let snippet: { name: string; id?: string } = { name: SNIPPET_NAME };
-        for (const body of fastlySnippetBodies(tpl)) {
-          try {
-            snippet = await api.createSnippet(svc.id, svc.version, body);
-          } catch (e) {
-            const made = await api.getSnippet(svc.id, svc.version, body.name).catch(() => null);
-            if (!made) throw e;
-            snippet = made;
-          }
-        }
-        return {
-          status: 'done',
-          resources: [
-            { kind: 'snippet', resourceId: snippet.id ?? snippet.name, ownership: 'created' },
-          ],
-        };
-      }
-      case 'create_domain': {
-        const svc = serviceOf(ledger);
-        if (domainModelOf(cfg) === 'versionless') {
-          // Its own resource, linked to the service: no version holds it, so
-          // it needs no activation and the service's rollback never drops it.
-          const d = await api.createVersionlessDomain({
-            fqdn: hostname,
-            service_id: svc.id,
-            description: spec.name,
+    try {
+      switch (step.kind) {
+        case 'create_service': {
+          const svc = await api.createService({
+            name: spec.name,
+            type: 'vcl',
+            comment: tpl.serviceComment,
           });
-          return { status: 'done', resources: [versionlessResource(d, 'created')] };
-        }
-        const domain = await api.createDomain(svc.id, svc.version, {
-          name: hostname,
-          comment: spec.name,
-        });
-        return {
-          status: 'done',
-          resources: [{ kind: 'domain', resourceId: domain.name, ownership: 'created' }],
-        };
-      }
-      case 'enable_product': {
-        const svc = serviceOf(ledger);
-        try {
-          await api.enableWebsockets(svc.id);
-        } catch (e) {
-          // A 4xx here is an account entitlement problem, not a transient fault.
-          if (e instanceof EdgeProviderError && e.meta.status && e.meta.status < 500)
-            throw withRefusal(
-              refusal(
-                step.id,
-                'websockets_not_entitled',
-                'the account cannot enable the WebSockets product',
-              ),
-              refusalOf(e),
-            );
-          throw e;
-        }
-        return {
-          status: 'done',
-          resources: [{ kind: 'ws_product', resourceId: svc.id, ownership: 'created' }],
-        };
-      }
-      case 'activate_version': {
-        const svc = serviceOf(ledger);
-        const validation = await api.validateServiceVersion(svc.id, svc.version);
-        // The draft does not compile (a protected header, say): validating it
-        // again changes nothing. Fastly's own words come along (redacted here,
-        // the edge's names scrubbed by the ops layer) for the operator to read.
-        if (validation.status !== 'ok') {
-          const said = [validation.msg, ...(validation.errors ?? [])]
-            .map((x) => (typeof x === 'string' ? x : x ? JSON.stringify(x) : ''))
-            .filter(Boolean)
-            .join('; ');
-          const detail = said ? redactErrorDetail(said, [cfg.apiToken]) : undefined;
+          const version = highestDraftVersion(svc.versions ?? [])?.number ?? 1;
           return {
-            status: 'partial',
-            resources: [],
-            code: 'version_invalid',
-            refused: true,
-            ...(detail ? { detail } : {}),
+            status: 'done',
+            resources: [
+              {
+                kind: 'service',
+                resourceId: svc.id,
+                ownership: 'created',
+                meta: { version, name: svc.name ?? spec.name },
+              },
+            ],
           };
         }
-        await api.activateServiceVersion(svc.id, svc.version);
-        return {
-          status: 'done',
-          resources: [
-            {
-              kind: 'active_version',
-              resourceId: String(svc.version),
-              ownership: 'created',
-              meta: { serviceId: svc.id, version: svc.version },
-            },
-          ],
-        };
-      }
-      case 'create_tls_subscription': {
-        if (certificateScopeOf(cfg) === 'wildcard') {
-          // ONE subscription per account and zone: found by its name and
-          // reused, ordered only when none exists (the step holds the
-          // account's certificate lock, so two edges never both order it).
-          const name = wildcardNameFor(hostname);
-          const found = await sharedSubscriptionOf(api, name, cfg);
-          if (found.status === 'found')
-            return {
-              status: 'done',
-              resources: [sharedSubscriptionResource(found.resource.id, name, 'adopted')],
-            };
-          if (found.status === 'ambiguous')
-            throw refusal(
-              step.id,
-              'shared_certificate_ambiguous',
-              'the wildcard is covered by a subscription this account would not order',
-            );
-          const doc = await api.createTlsSubscription(
-            fastlyTlsSubscriptionBody(name, cfg.certificateAuthority, cfg.tlsConfigurationId),
+        case 'create_backend': {
+          const svc = serviceOf(ledger);
+          const backend = await api.createBackend(
+            svc.id,
+            svc.version,
+            fastlyBackendBody(spec, tpl),
           );
           return {
             status: 'done',
-            resources: [sharedSubscriptionResource(doc.data.id, name, 'created')],
+            resources: [{ kind: 'backend', resourceId: backend.name, ownership: 'created' }],
           };
         }
-        const doc = await api.createTlsSubscription(
-          fastlyTlsSubscriptionBody(hostname, cfg.certificateAuthority, cfg.tlsConfigurationId),
-        );
-        return {
-          status: 'done',
-          resources: [
-            {
-              kind: 'tls_subscription',
-              resourceId: doc.data.id,
-              ownership: 'created',
-              meta: { hostname },
-            },
-          ],
-        };
-      }
-      case 'create_dns_acme': {
-        const sub = firstResource(ledger, 'tls_subscription');
-        if (!sub) throw ledgerIncomplete(step.id);
-        let shared: Awaited<ReturnType<typeof sharedAcmeRecord>> | null = null;
-        if (certificateScopeOf(cfg) === 'wildcard') {
-          shared = await sharedAcmeRecord(cfg, api, ledger, hostname);
-          if (shared.status === 'found') return { status: 'done', resources: [shared.resource] };
-          if (shared.status === 'ambiguous')
-            throw refusal(
-              step.id,
-              'acme_name_in_use',
-              'the challenge name already holds a record FCP did not write',
-            );
+        case 'create_snippet': {
+          const svc = serviceOf(ledger);
+          // In order, the upgrade snippet last. A retry after a partial run finds
+          // the ones it already made (the version is this edge's own draft).
+          let snippet: { name: string; id?: string } = { name: SNIPPET_NAME };
+          for (const body of fastlySnippetBodies(tpl)) {
+            try {
+              snippet = await api.createSnippet(svc.id, svc.version, body);
+            } catch (e) {
+              const made = await api.getSnippet(svc.id, svc.version, body.name).catch(() => null);
+              if (!made) throw e;
+              snippet = made;
+            }
+          }
+          return {
+            status: 'done',
+            resources: [
+              { kind: 'snippet', resourceId: snippet.id ?? snippet.name, ownership: 'created' },
+            ],
+          };
         }
-        const doc = await api.getTlsSubscription(sub.resourceId, 'tls_authorizations');
-        const challenge = managedDnsChallenge(doc);
-        if (!challenge) {
-          // An issued wildcard that offers no challenge (validated some other
-          // way) has nothing for this edge to write.
-          const state = subscriptionState(doc);
-          if (shared && (state === 'issued' || state === 'renewing'))
-            return { status: 'done', resources: [] };
-          // The authorization appears within seconds of the subscription; a
-          // retryable refusal lets the orchestrator come back rather than
-          // recording a half-done step.
-          throw new EdgeProviderError('fastly acme: no managed-dns challenge yet', {
-            provider: 'fastly',
-            step: step.id,
-            code: 'acme_challenge_pending',
-            retryable: true,
-            timedOut: false,
+        case 'create_domain': {
+          const svc = serviceOf(ledger);
+          if (domainModelOf(cfg) === 'versionless') {
+            // Its own resource, linked to the service: no version holds it, so
+            // it needs no activation and the service's rollback never drops it.
+            const d = await api.createVersionlessDomain({
+              fqdn: hostname,
+              service_id: svc.id,
+              description: spec.name,
+            });
+            return { status: 'done', resources: [versionlessResource(d, 'created')] };
+          }
+          const domain = await api.createDomain(svc.id, svc.version, {
+            name: hostname,
+            comment: spec.name,
           });
+          return {
+            status: 'done',
+            resources: [{ kind: 'domain', resourceId: domain.name, ownership: 'created' }],
+          };
         }
-        const dns = await dnsClientFor(cfg);
-        // Our own record for a wildcard subscription that is gone (it failed
-        // and was deleted at the provider): the name takes one CNAME, so it is
-        // replaced. Only a record carrying OUR customer's marker is ever
-        // removed here (`sharedAcmeRecord`).
-        if (shared?.status === 'absent')
-          for (const old of shared.stale) await dns.deleteRecord(old.id);
-        const record = await dns.createRecord({
-          type: 'CNAME',
-          name:
-            challenge.record_name ??
-            acmeChallengeName(wildcardBase(certificateNameOf(cfg, hostname))),
-          content: challenge.values[0],
-          proxied: false,
-          comment: shared?.status === 'absent' ? shared.marker : spec.name,
-          ...dnsRecordOptions(tpl, false),
-        });
-        return { status: 'done', resources: [dnsResource('acme', record, dns, !!shared)] };
+        case 'enable_product': {
+          const svc = serviceOf(ledger);
+          try {
+            await api.enableWebsockets(svc.id);
+          } catch (e) {
+            // A 4xx here is an account entitlement problem, not a transient fault.
+            const refused = refusedCreate(e, 'websockets_not_entitled');
+            if (refused) return refused;
+            if (e instanceof EdgeProviderError && e.meta.status && e.meta.status < 500)
+              throw withRefusal(
+                refusal(
+                  step.id,
+                  'websockets_not_entitled',
+                  'the account cannot enable the WebSockets product',
+                ),
+                refusalOf(e),
+              );
+            throw e;
+          }
+          return {
+            status: 'done',
+            resources: [{ kind: 'ws_product', resourceId: svc.id, ownership: 'created' }],
+          };
+        }
+        case 'activate_version': {
+          const svc = serviceOf(ledger);
+          const validation = await api.validateServiceVersion(svc.id, svc.version);
+          // The draft does not compile (a protected header, say): validating it
+          // again changes nothing. Fastly's own words come along (redacted here,
+          // the edge's names scrubbed by the ops layer) for the operator to read.
+          if (validation.status !== 'ok') {
+            const said = [validation.msg, ...(validation.errors ?? [])]
+              .map((x) => (typeof x === 'string' ? x : x ? JSON.stringify(x) : ''))
+              .filter(Boolean)
+              .join('; ');
+            const detail = said ? redactErrorDetail(said, [cfg.apiToken]) : undefined;
+            return {
+              status: 'partial',
+              resources: [],
+              code: 'version_invalid',
+              refused: true,
+              ...(detail ? { detail } : {}),
+            };
+          }
+          await api.activateServiceVersion(svc.id, svc.version);
+          return {
+            status: 'done',
+            resources: [
+              {
+                kind: 'active_version',
+                resourceId: String(svc.version),
+                ownership: 'created',
+                meta: { serviceId: svc.id, version: svc.version },
+              },
+            ],
+          };
+        }
+        case 'create_tls_subscription': {
+          if (certificateScopeOf(cfg) === 'wildcard') {
+            // ONE subscription per account and zone: found by its name and
+            // reused, ordered only when none exists (the step holds the
+            // account's certificate lock, so two edges never both order it).
+            const name = wildcardNameFor(hostname);
+            const found = await sharedSubscriptionOf(api, name, cfg);
+            if (found.status === 'found')
+              return {
+                status: 'done',
+                resources: [sharedSubscriptionResource(found.resource.id, name, 'adopted')],
+              };
+            if (found.status === 'ambiguous')
+              throw refusal(
+                step.id,
+                'shared_certificate_ambiguous',
+                'the wildcard is covered by a subscription this account would not order',
+              );
+            const doc = await api.createTlsSubscription(
+              fastlyTlsSubscriptionBody(name, cfg.certificateAuthority, cfg.tlsConfigurationId),
+            );
+            return {
+              status: 'done',
+              resources: [sharedSubscriptionResource(doc.data.id, name, 'created')],
+            };
+          }
+          const doc = await api.createTlsSubscription(
+            fastlyTlsSubscriptionBody(hostname, cfg.certificateAuthority, cfg.tlsConfigurationId),
+          );
+          return {
+            status: 'done',
+            resources: [
+              {
+                kind: 'tls_subscription',
+                resourceId: doc.data.id,
+                ownership: 'created',
+                meta: { hostname },
+              },
+            ],
+          };
+        }
+        case 'create_dns_acme': {
+          const sub = firstResource(ledger, 'tls_subscription');
+          if (!sub) throw ledgerIncomplete(step.id);
+          let shared: Awaited<ReturnType<typeof sharedAcmeRecord>> | null = null;
+          if (certificateScopeOf(cfg) === 'wildcard') {
+            shared = await sharedAcmeRecord(cfg, api, ledger, hostname);
+            if (shared.status === 'found') return { status: 'done', resources: [shared.resource] };
+            if (shared.status === 'ambiguous')
+              throw refusal(
+                step.id,
+                'acme_name_in_use',
+                'the challenge name already holds a record FCP did not write',
+              );
+          }
+          const doc = await api.getTlsSubscription(sub.resourceId, 'tls_authorizations');
+          const challenge = managedDnsChallenge(doc);
+          if (!challenge) {
+            // An issued wildcard that offers no challenge (validated some other
+            // way) has nothing for this edge to write.
+            const state = subscriptionState(doc);
+            if (shared && (state === 'issued' || state === 'renewing'))
+              return { status: 'done', resources: [] };
+            // The authorization appears within seconds of the subscription; a
+            // retryable refusal lets the orchestrator come back rather than
+            // recording a half-done step.
+            throw new EdgeProviderError('fastly acme: no managed-dns challenge yet', {
+              provider: 'fastly',
+              step: step.id,
+              code: 'acme_challenge_pending',
+              retryable: true,
+              timedOut: false,
+            });
+          }
+          const dns = await dnsClientFor(cfg);
+          // Our own record for a wildcard subscription that is gone (it failed
+          // and was deleted at the provider): the name takes one CNAME, so it is
+          // replaced. Only a record carrying OUR customer's marker is ever
+          // removed here (`sharedAcmeRecord`).
+          if (shared?.status === 'absent')
+            for (const old of shared.stale) await dns.deleteRecord(old.id);
+          const record = await dns.createRecord({
+            type: 'CNAME',
+            name:
+              challenge.record_name ??
+              acmeChallengeName(wildcardBase(certificateNameOf(cfg, hostname))),
+            content: challenge.values[0],
+            proxied: false,
+            comment: shared?.status === 'absent' ? shared.marker : spec.name,
+            ...dnsRecordOptions(tpl, false),
+          });
+          return { status: 'done', resources: [dnsResource('acme', record, dns, !!shared)] };
+        }
+        case 'await_tls': {
+          const sub = firstResource(ledger, 'tls_subscription');
+          if (!sub) throw ledgerIncomplete(step.id);
+          // One look before waiting: an already issued certificate (the account's
+          // shared wildcard, typically) finishes the step without a poll.
+          return awaitOutcome(cfg, step, sub.resourceId, ledger);
+        }
+        case 'create_dns_record': {
+          const doc = await api.listTlsConfigurations('dns_records');
+          const target = parseTrafficCname(doc, cfg.tlsConfigurationId);
+          if (!target)
+            throw refusal(step.id, 'tls_configuration_missing', 'no CNAME target could be read');
+          const dns = await dnsClientFor(cfg);
+          const record = await dns.createRecord({
+            type: 'CNAME',
+            name: hostname,
+            content: target,
+            proxied: false,
+            comment: spec.name,
+            ...dnsRecordOptions(tpl, true),
+          });
+          return {
+            status: 'done',
+            resources: [dnsResource('traffic', record, dns)],
+            addresses: { hostname },
+          };
+        }
+        default:
+          throw refusal(step.id, 'unknown_step', `unknown step kind ${step.kind}`);
       }
-      case 'await_tls': {
-        const sub = firstResource(ledger, 'tls_subscription');
-        if (!sub) throw ledgerIncomplete(step.id);
-        // One look before waiting: an already issued certificate (the account's
-        // shared wildcard, typically) finishes the step without a poll.
-        return awaitOutcome(cfg, step, sub.resourceId, ledger);
-      }
-      case 'create_dns_record': {
-        const doc = await api.listTlsConfigurations('dns_records');
-        const target = parseTrafficCname(doc, cfg.tlsConfigurationId);
-        if (!target)
-          throw refusal(step.id, 'tls_configuration_missing', 'no CNAME target could be read');
-        const dns = await dnsClientFor(cfg);
-        const record = await dns.createRecord({
-          type: 'CNAME',
-          name: hostname,
-          content: target,
-          proxied: false,
-          comment: spec.name,
-          ...dnsRecordOptions(tpl, true),
-        });
-        return {
-          status: 'done',
-          resources: [dnsResource('traffic', record, dns)],
-          addresses: { hostname },
-        };
-      }
-      default:
-        throw refusal(step.id, 'unknown_step', `unknown step kind ${step.kind}`);
+    } catch (e) {
+      // A create Fastly (or the DNS zone) refuses for good made nothing that
+      // outlives the edge (a snippet lives in this edge's own draft): the run
+      // stops at once with the provider's words instead of sending it again.
+      const refused = FASTLY_CREATE_STEPS.has(step.kind)
+        ? refusedCreate(e, 'create_refused')
+        : null;
+      if (refused) return refused;
+      throw e;
     }
   },
 

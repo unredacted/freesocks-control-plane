@@ -21,6 +21,7 @@ import {
 import { detectBodyFormat } from './clientFamilies';
 import { formatSupported } from './protocols';
 import {
+  edgeAddressesOf,
   formatHasAutoGroup,
   matchListeners,
   renderEdgeEndpoints,
@@ -137,7 +138,8 @@ export function applyEdgeRender(
     ...(opts.avoidBlockedIn ? { avoidBlockedIn: opts.avoidBlockedIn } : {}),
     minProvenForExclusive: rctx.minProvenForExclusive,
   });
-  // (5): render + the edge-required verdict.
+  // (5): render + the edge-required verdict. A retained entry on a covered
+  // transport that is no edge of the origin is left out (`withheld`).
   const out = renderEdgeEndpoints({
     body,
     matchers: rctx.matchers,
@@ -145,6 +147,7 @@ export function applyEdgeRender(
     rule: rctx.rule,
     originAddress: rctx.originAddress,
     nodeAddresses: rctx.nodeAddresses,
+    edgeAddresses: edgeAddressesOf(rctx.published),
     deliveryStyle: rctx.deliveryStyle,
   });
   // (6): the eligibility snapshot the DB half persists on the subscription.

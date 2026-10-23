@@ -259,6 +259,8 @@ export type StepOutcome =
       code?: string;
       refused?: true;
       detail?: string;
+      /** The provider's HTTP status on a refused call (`refusedCreate`): 401 / 403 count against the account. */
+      httpStatus?: number;
     }
   /**
    * Async provider: an operation/task to poll; children known so far listed.

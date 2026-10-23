@@ -888,7 +888,7 @@ const COPY = {
   direct_host_reappeared: {
     label: 'Direct address back in the backend',
     explain:
-      'A backend Host that hands out the node address itself was re-enabled or added on a protected node, so members on it are refused a body until it is hidden again.',
+      'A backend Host on a protected node hands out the node address itself, or an address FCP cannot tell apart from it, and was re-enabled or added. Until it is hidden, members on the node are refused a body, or get one without that entry.',
     fix: 'Hide it in the backend, or add it to the protected node so FCP hides it for you.',
   },
   restore_in_progress: {
@@ -1046,6 +1046,13 @@ const COPY = {
     label: 'Saved the address again',
     explain:
       'The new address could not be reached from outside, so its configuration was saved again at the provider, unchanged, and it is being checked afresh.',
+  },
+  // A provider refused a create for good (a 4xx such as a validation error): retrying cannot help.
+  create_refused: {
+    label: 'Create refused',
+    explain:
+      'The provider refused to create this with the settings FCP sent, so trying again would be refused the same way. Its own reason is shown with the failure.',
+    fix: "Read the provider's reason, change the location or template setting it names, then delete this address and try again.",
   },
   // A provider refused the arguments of an address allocation (a 400): retrying cannot help.
   ip_allocation_refused: {
@@ -2599,6 +2606,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.block_simulation.ended': 'Test block ended',
   'edge.host.hidden': 'Direct address hidden in the backend',
   'edge.host.restored': 'Direct address restored in the backend',
+  'edge.render.withheld': 'Unplaced entry left out for members',
   'edge.relay.restore_started': 'Removing protection',
   'edge.setup_run.started': 'Protection started',
   'edge.setup_run.needs_operator': 'Protection needs you',

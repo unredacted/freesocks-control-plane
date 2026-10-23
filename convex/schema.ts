@@ -1629,6 +1629,18 @@ export default defineSchema({
         ),
       }),
     ),
+    // Entries a member render left out on this origin: on a covered transport, at
+    // an address FCP cannot place (neither an edge nor the node by an address it
+    // knows; edgeHostHides.noteWithheld). Keeps `direct_host_reappeared` raised
+    // while renders keep noting it; `since` is when the current stretch began.
+    withheldEntries: v.optional(
+      v.object({
+        at: v.number(),
+        since: v.number(),
+        count: v.number(),
+        remarks: v.array(v.string()),
+      }),
+    ),
     // Block-detector state (convex/edgeDetector.ts).
     suspicion: v.optional(
       v.object({

@@ -29,6 +29,7 @@ import type { Id } from '../_generated/dataModel';
 import type { CountryContext } from './edges/assignment';
 import { classifyClient } from './edges/clientFamilies';
 import { applyEdgeRender } from './edges/renderPipeline';
+import { withheldNoteDue } from './edges/withheld';
 import type { ResolvedWhere } from './edges/sni/country';
 import { resolveClientIp, resolveCountry } from './http';
 import { memberWhere, nextGuess, steeringCountry, type CountryFields } from './memberCountry';
@@ -205,6 +206,35 @@ export type DeliveryOutcome =
     }
   | { kind: 'refuse'; reason: string };
 
+/** One served render's entries left out, and the origin to note them on. */
+export interface WithheldNote {
+  rctx: { relayId: Id<'relays'>; withheldNotedAt: number | null };
+  names: Array<string | null>;
+}
+
+/**
+ * Tell the operator a render left entries out (`PipelineResult.withheld`):
+ * scheduled, never awaited, at most once a minute per origin (the decision
+ * carries when it was last noted), and best effort like the refusal counter.
+ */
+export async function noteWithheldEntries(
+  ctx: Pick<ActionCtx, 'scheduler'>,
+  rctx: { relayId: Id<'relays'>; withheldNotedAt: number | null },
+  withheld: ReadonlyArray<string | null> | undefined,
+  now: number,
+): Promise<void> {
+  if (!withheld || withheld.length === 0 || !withheldNoteDue(rctx.withheldNotedAt, now)) return;
+  try {
+    await ctx.scheduler.runAfter(0, internal.edgeHostHides.noteWithheld, {
+      relayId: rctx.relayId,
+      count: withheld.length,
+      remarks: withheld.filter((r): r is string => r !== null),
+    });
+  } catch {
+    /* the note is best effort */
+  }
+}
+
 /**
  * Decide, render and relabel one fetched body. A place an origin covers gets a
  * rendered body that passed every check, or a refusal (a `DELIVERY_UNAVAILABLE_CODES`
@@ -271,6 +301,8 @@ export async function deliverBody(
   let renderedEpoch: number | null = null;
   let validUntil: number | null = null;
   let render: RenderSnapshot | null = null;
+  // What the served pass left out, noted only once that pass is the one served.
+  let withheld: WithheldNote | null = null;
   if (sub.backendServerId) {
     const family = classifyClient(input.ua).family;
     let renderedUnder: string | null = null;
@@ -289,6 +321,7 @@ export async function deliverBody(
       let epoch: number | null = null;
       let passValidUntil: number | null = null;
       let snapshot: RenderSnapshot | null = null;
+      let passWithheld: WithheldNote | null = null;
       if (decision.kind === 'render') {
         const rctx = decision.context;
         const renderKey =
@@ -303,6 +336,7 @@ export async function deliverBody(
           edgeCountry: location.edgeCountry,
         });
         if (out.delivery.kind !== 'serve') return refuse(out.delivery.reason);
+        if (out.withheld?.length) passWithheld = { rctx, names: out.withheld };
         body = out.body;
         epoch = rctx.epoch;
         passValidUntil = out.validUntil;
@@ -337,6 +371,7 @@ export async function deliverBody(
       renderedEpoch = epoch;
       validUntil = passValidUntil;
       render = snapshot;
+      withheld = passWithheld;
       renderedUnder = after;
       break;
     }
@@ -360,6 +395,7 @@ export async function deliverBody(
   // Judged once more before the body is kept or stamped: a proof that lapsed
   // after the render answers like a policy that moved.
   if (!withinValidity(validUntil, subscriptionNow())) return refuse('policy_moved');
+  if (withheld) await noteWithheldEntries(ctx, withheld.rctx, withheld.names, now);
   return {
     kind: 'serve',
     content,

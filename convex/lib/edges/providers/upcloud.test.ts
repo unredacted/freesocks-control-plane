@@ -151,6 +151,48 @@ describe('upcloud: steps', () => {
       body: { address: '203.0.113.20', network_name: 'public' },
     });
   });
+
+  test('every create UpCloud refuses for good stops the run with its words; a conflict or a fault stays unknown', async () => {
+    const ledger: Ledger = {
+      steps: [],
+      resources: [
+        {
+          stepId: 'lb',
+          kind: 'lb',
+          resourceId: 'lb-uuid',
+          ownership: 'created',
+          deleteState: 'present',
+        },
+        {
+          stepId: 'ip',
+          kind: 'floating_ip',
+          resourceId: '203.0.113.20',
+          ownership: 'created',
+          deleteState: 'present',
+        },
+      ],
+    };
+    for (const step of steps) {
+      mockFetch(() =>
+        jsonRes(
+          { error: { error_code: 'INVALID_FIELD', error_message: 'The field is not valid.' } },
+          400,
+        ),
+      );
+      expect(await upcloudProvider.runStep(cfg, step, spec, tpl, ledger)).toMatchObject({
+        status: 'partial',
+        resources: [],
+        code: 'create_refused',
+        refused: true,
+        detail: expect.stringContaining('The field is not valid.'),
+      });
+      for (const status of [409, 500]) {
+        mockFetch(() => jsonRes({ error: { error_code: 'BUSY' } }, status));
+        const err = await upcloudProvider.runStep(cfg, step, spec, tpl, ledger).catch((e) => e);
+        expect(err.meta.status).toBe(status);
+      }
+    }
+  });
 });
 
 describe('upcloud: discovery', () => {

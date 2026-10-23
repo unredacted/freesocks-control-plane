@@ -28,6 +28,7 @@ import type { MirrorContext } from './subscriptions';
 import type { ActiveMirrorPage } from './subscriptions';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import { relabelMemberEntries } from './lib/memberEntryNames';
+import { noteWithheldEntries, type WithheldNote } from './lib/subscriptionDelivery';
 import type { Id } from './_generated/dataModel';
 
 /** The body a mirror holds when its place is edge-required and nothing can render. */
@@ -82,7 +83,7 @@ async function renderMirrorBody(
   sub: { id: Id<'subscriptions'>; backendServerId: Id<'backendServers'> | null | undefined },
   node: string | undefined,
   content: string,
-): Promise<{ content: string; renderedEpoch: number | null; validated: MirrorValidation | null }> {
+): Promise<MirrorRender> {
   const out = await renderMirrorEndpoints(ctx, sub, node, content);
   if (out.validated?.stub) return out;
   // The same member-facing names as the fronted route (docs/privacy.md), after
@@ -93,13 +94,32 @@ async function renderMirrorBody(
   return { ...out, content: relabelMemberEntries(out.content, naming).content };
 }
 
+/** A mirror body as rendered, and what it left out (noted once an upload of it is accepted). */
+interface MirrorRender {
+  content: string;
+  renderedEpoch: number | null;
+  validated: MirrorValidation | null;
+  withheld?: WithheldNote;
+}
+
+/**
+ * The render left entries out and its body now serves from the mirror (an
+ * upload accepted under the mirror barrier, or the identical body already
+ * there): tell the operator, as the fronted route does. Never for a body that
+ * was not uploaded or that a moved policy overtook.
+ */
+async function noteMirrorWithheld(ctx: ActionCtx, rendered: MirrorRender): Promise<void> {
+  if (!rendered.withheld) return;
+  await noteWithheldEntries(ctx, rendered.withheld.rctx, rendered.withheld.names, Date.now());
+}
+
 /** The edge-render half of `renderMirrorBody`. */
 async function renderMirrorEndpoints(
   ctx: ActionCtx,
   sub: { id: Id<'subscriptions'>; backendServerId: Id<'backendServers'> | null | undefined },
   node: string | undefined,
   content: string,
-): Promise<{ content: string; renderedEpoch: number | null; validated: MirrorValidation | null }> {
+): Promise<MirrorRender> {
   if (!sub.backendServerId) return { content, renderedEpoch: null, validated: null };
   const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
     subscriptionId: sub.id,
@@ -111,9 +131,7 @@ async function renderMirrorEndpoints(
     backendServerId: sub.backendServerId,
     nodeName: node,
   });
-  const stub = (
-    epoch: number,
-  ): { content: string; renderedEpoch: number | null; validated: MirrorValidation } => ({
+  const stub = (epoch: number): MirrorRender => ({
     content: MIRROR_UNAVAILABLE_STUB,
     renderedEpoch: null,
     validated: {
@@ -144,6 +162,8 @@ async function renderMirrorEndpoints(
   return {
     content: out.body,
     renderedEpoch: rctx.epoch,
+    // Noted only once an upload of this body is accepted (`noteMirrorWithheld`).
+    ...(out.withheld?.length ? { withheld: { rctx, names: out.withheld } } : {}),
     validated: {
       policyVersion: policy.bindingVersion ?? 0,
       epoch: rctx.epoch,
@@ -429,8 +449,10 @@ export const provisionMirror = internalAction({
     });
     // Settled only if nothing moved while the object was written; otherwise
     // the repair pass re-renders it under the policy that holds now.
-    if ((await tokenOf()) === tokenBefore)
+    if ((await tokenOf()) === tokenBefore) {
       await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
+      await noteMirrorWithheld(ctx, rendered);
+    }
     return {
       status: 'ok',
       publicUrl: entry.publicUrl,
@@ -623,6 +645,7 @@ async function refreshOneSubMirrors(
       // and the mirror is already correct, so record it.
       await recordPin();
       await stampContent();
+      await noteMirrorWithheld(ctx, rendered);
       return false;
     }
     // The mirror barrier: the obligation is open before the object is
@@ -686,6 +709,7 @@ async function refreshOneSubMirrors(
       ...(allSucceeded && !moved ? { rawContentHash: hash } : {}),
     });
     if (moved) return true;
+    await noteMirrorWithheld(ctx, rendered);
     if (allSucceeded)
       // Nothing moved and every copy was rewritten: the obligation is met (and
       // every earlier one of these copies with it).

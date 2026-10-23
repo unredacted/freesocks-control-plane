@@ -58,7 +58,8 @@ import type {
   StepOutcome,
 } from './types';
 import { firstResource, metaOf, orderByKind } from './types';
-import { EdgeProviderError, credentialTestFailure, noteDiscoverError } from './http';
+import { EdgeProviderError, credentialTestFailure, noteDiscoverError, refusedCreate } from './http';
+import type { DnsRecord } from './dns/types';
 import { addressFamily } from '../ip';
 import { isFirstLevelUnder } from '../hostname';
 import { checkCaa, type CaaLookup, type CaaRecord, type CaaVerdictKind } from '../caa';
@@ -915,13 +916,22 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
     switch (step.kind) {
       case 'create_dns_record': {
         const body = cloudflareRecordBody(cfg, spec, tpl, step.id);
-        const record = await dnsFor(cfg).createRecord({
-          type: body.type,
-          name: body.name,
-          content: body.content,
-          proxied: body.proxied,
-          comment: body.comment,
-        });
+        let record: DnsRecord;
+        try {
+          record = await dnsFor(cfg).createRecord({
+            type: body.type,
+            name: body.name,
+            content: body.content,
+            proxied: body.proxied,
+            comment: body.comment,
+          });
+        } catch (e) {
+          // Refused for good (a record of another kind at the name, a value the
+          // zone does not take): nothing was written, and would not be.
+          const refused = refusedCreate(e, 'create_refused');
+          if (refused) return refused;
+          throw e;
+        }
         const addresses: Addresses = { hostname: record.name };
         return {
           status: 'done',
@@ -938,12 +948,19 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
       }
       case 'create_origin_rule': {
         const originPort = originPortOf(spec, step.id);
-        const ruleset = await addZoneRule(
-          cfg,
-          ORIGIN_PHASE,
-          cloudflareOriginRule(spec, originPort),
-          step.id,
-        );
+        let ruleset: RawRuleset;
+        try {
+          ruleset = await addZoneRule(
+            cfg,
+            ORIGIN_PHASE,
+            cloudflareOriginRule(spec, originPort),
+            step.id,
+          );
+        } catch (e) {
+          const refused = refusedCreate(e, 'create_refused');
+          if (refused) return refused;
+          throw e;
+        }
         // The whole ruleset comes back: ours is the one with our ref.
         const mine = findRuleByRef(ruleset, spec.name);
         if (!mine?.id) return { status: 'partial', resources: [], code: 'rule_not_returned' };
@@ -973,7 +990,10 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
               resources: [],
               code: 'header_rule_forbidden',
               refused: true,
+              httpStatus: 403,
             };
+          const refused = refusedCreate(e, 'create_refused');
+          if (refused) return refused;
           throw e;
         }
         const mine = findRuleByRef(ruleset, spec.name);

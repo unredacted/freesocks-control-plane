@@ -1052,7 +1052,7 @@ describe('edgeReconcile: backend Host operations run every tick', () => {
     inbound: { configProfileUuid: FIXTURE_CONFIG_PROFILE, configProfileInboundUuid: INBOUND_U },
   });
 
-  test('nothing pending: the pass neither calls the backend nor errors', async () => {
+  test('nothing pending: the pass writes nothing to the backend and does not error', async () => {
     const world = fakeUpcloud([], { panelHosts: [panelHost()] });
     const s = await seed();
     await s.t.run((ctx) =>
@@ -1060,7 +1060,8 @@ describe('edgeReconcile: backend Host operations run every tick', () => {
     );
     const r = await run(s.t);
     expect(r.errors).toBe(0);
-    expect(world.panelCalls).toEqual([]);
+    // Only the bound origin's direct-Host look, one listing every pass.
+    expect(world.panelCalls).toEqual(['GET /api/hosts']);
     expect(world.panelHosts).toHaveLength(1);
   });
 
@@ -1079,7 +1080,12 @@ describe('edgeReconcile: backend Host operations run every tick', () => {
     );
     const r = await run(s.t);
     expect(r.errors).toBe(0);
-    expect(world.panelCalls).toEqual([`DELETE /api/hosts/${HOST_UUID}`, 'GET /api/hosts']);
+    // The read-back, then the bound origin's direct-Host look.
+    expect(world.panelCalls).toEqual([
+      `DELETE /api/hosts/${HOST_UUID}`,
+      'GET /api/hosts',
+      'GET /api/hosts',
+    ]);
     expect(world.panelHosts).toEqual([]);
     expect((await s.t.run((ctx) => ctx.db.get(s.listenerId)))!.host).toEqual({ state: 'absent' });
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
@@ -1141,20 +1147,22 @@ describe('edgeReconcile: backend Host operations run every tick', () => {
       listenerId: s.listenerId,
       opId: claim.opId,
     });
-    // Still inside the op's TTL: no look.
+    // Every pass also takes the bound origin's direct-Host look (one listing).
+    const directLook = 'GET /api/hosts';
+    // Still inside the op's TTL: no discovery look.
     await run(s.t);
-    expect(world.panelCalls).toEqual([]);
+    expect(world.panelCalls).toEqual([directLook]);
     // Expired: a look; the backend holds the Host after all → present, owned by FCP.
     vi.setSystemTime(1_800_000_000_000 + 61_000);
     world.panelHosts.push(panelHost());
     await run(s.t);
-    expect(world.panelCalls).toEqual(['GET /api/hosts']);
+    expect(world.panelCalls).toEqual([directLook, 'GET /api/hosts', directLook]);
     const l = (await s.t.run((ctx) => ctx.db.get(s.listenerId)))!;
     expect(l.host).toMatchObject({ state: 'present', uuid: HOST_UUID, ownership: 'fcp' });
     expect(l.host!.op).toBeUndefined();
-    // Settled: nothing more to look at.
+    // Settled: nothing more to look at but the direct Hosts.
     await run(s.t);
-    expect(world.panelCalls).toEqual(['GET /api/hosts']);
+    expect(world.panelCalls).toEqual([directLook, 'GET /api/hosts', directLook, directLook]);
   });
 });
 

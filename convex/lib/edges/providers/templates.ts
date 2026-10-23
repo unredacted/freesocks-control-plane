@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import type { EdgeProviderId } from '../../edgeProviderIds';
 import type { TemplateFieldDescriptor } from './types';
+import { parseCidr } from '../ip';
 import {
   deepMerge,
   describeFields,
@@ -1740,7 +1741,19 @@ export function validateTemplateParams(
   };
 }
 
-const IPV4_CIDR = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}\/(3[0-2]|[12]?\d)$/;
+/**
+ * What is wrong with one allowed client range, in plain words, or null. A
+ * range written from an address inside it (`192.0.2.10/24`) is refused: the
+ * providers refuse it with a bare validation error, so it is caught here with
+ * the range to write instead.
+ */
+function rangeProblem(c: string, families: 'v4' | 'any'): string | null {
+  const r = parseCidr(c);
+  if (!r || (families === 'v4' && r.family !== 'v4'))
+    return `"${c}" is not ${families === 'v4' ? 'an IPv4' : 'an address'} range, like 192.0.2.0/24`;
+  if (!r.startsRange) return `"${c}" starts inside its range: write it as ${r.start}/${r.prefix}`;
+  return null;
+}
 
 /**
  * Rules a provider enforces across fields (a check timeout under its interval)
@@ -1779,8 +1792,10 @@ const WRITE_CHECKS: Partial<
     if (hm.timeout >= hm.delay)
       out.push(`${label('healthMonitor.timeout')}: must be below the check interval`);
     // The v1 API takes IPv4 ranges only.
-    for (const c of (p.allowedCidrs as string[] | undefined) ?? [])
-      if (!IPV4_CIDR.test(c)) out.push(`${label('allowedCidrs')}: "${c}" is not an IPv4 range`);
+    for (const c of (p.allowedCidrs as string[] | undefined) ?? []) {
+      const problem = rangeProblem(c, 'v4');
+      if (problem) out.push(`${label('allowedCidrs')}: ${problem}`);
+    }
     return out;
   },
   gcore: (p, label) => {
@@ -1794,11 +1809,15 @@ const WRITE_CHECKS: Partial<
       if (v.length === 0 || /[\t\r\n]/.test(v))
         out.push(`${label('tags')}: the value of "${k}" must be one non-empty line`);
     }
-    // An IPv4-only edge takes IPv4 ranges only.
-    if (p.ipFamily === 'ipv4')
-      for (const c of (p.allowedCidrs as string[] | undefined) ?? [])
-        if (c.includes(':'))
-          out.push(`${label('allowedCidrs')}: "${c}" is IPv6 on an IPv4-only edge`);
+    // Ranges as Gcore takes them; an IPv4-only edge takes IPv4 ranges only.
+    for (const c of (p.allowedCidrs as string[] | undefined) ?? []) {
+      if (p.ipFamily === 'ipv4' && c.includes(':')) {
+        out.push(`${label('allowedCidrs')}: "${c}" is IPv6 on an IPv4-only edge`);
+        continue;
+      }
+      const problem = rangeProblem(c, 'any');
+      if (problem) out.push(`${label('allowedCidrs')}: ${problem}`);
+    }
     return out;
   },
   fastly: (p, label) => {

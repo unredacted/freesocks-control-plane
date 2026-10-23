@@ -428,6 +428,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.host.hidden': ['relaySlug', 'count', 'remarks', 'runId', 'rehidden'],
   'edge.host.restored': ['relaySlug', 'count', 'remarks'],
   'edge.host.reappeared': ['relaySlug', 'count', 'remarks'],
+  // A member render left out entries it could not place (edgeHostHides.noteWithheld).
+  'edge.render.withheld': ['relaySlug', 'count', 'remarks'],
   'edge.relay.restore_started': ['relaySlug', 'purpose'],
   'edge.relay.restore_finished': ['relaySlug', 'purpose', 'hidesRestored'],
   'relay.upsert': ['slug', 'created', 'changed'],

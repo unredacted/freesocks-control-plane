@@ -98,6 +98,7 @@ import { freedomAttention } from './freedomDelivery';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { publishedRefOf, setStateOf, slotsOf, takesSlot } from './lib/edges/setState';
+import { withheldFresh } from './lib/edges/withheld';
 import { websocketNodeOf } from './lib/edges/websocketNode';
 import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
@@ -1014,6 +1015,28 @@ async function statusFactsOf(
 }
 
 /**
+ * What the direct-Host attention says of an origin: the Hosts the reconcile
+ * pass saw and could not hide, plus the entries member renders left out
+ * recently (one Host can be both: counted once by its name). Null: neither.
+ */
+export function directHostFacts(
+  relay: Pick<Doc<'relays'>, 'directHostAlert' | 'withheldEntries'>,
+  now: number,
+): { count: number; remarks: string[]; since: number } | null {
+  const hosts = relay.directHostAlert?.hosts ?? [];
+  const withheld = withheldFresh(relay.withheldEntries, now) ? relay.withheldEntries : null;
+  if (hosts.length === 0 && !withheld) return null;
+  const remarks = [...new Set([...hosts.map((h) => h.remark), ...(withheld?.remarks ?? [])])];
+  // A withheld entry without a name is one more the remarks cannot show.
+  const unnamed = withheld ? Math.max(0, withheld.count - withheld.remarks.length) : 0;
+  const since = Math.min(
+    ...(hosts.length > 0 && relay.directHostAlert ? [relay.directHostAlert.at] : []),
+    ...(withheld ? [withheld.since] : []),
+  );
+  return { count: Math.max(hosts.length, remarks.length + unnamed), remarks, since };
+}
+
+/**
  * Server-ranked list of what needs the operator, one action per item, plus the
  * one status of every origin (`origins`, deleting ones included, slug order)
  * and the fleet headline (`fleet`), judged in lib/edges/originStatus.ts.
@@ -1174,21 +1197,20 @@ export const attention = internalQuery({
           action: 'open_run',
           since: null,
         });
-      // A direct Host reappeared on a bound guided node and could not be
-      // re-hidden: delivery is fail-closed (`leak_detected`) until it is hidden.
-      if (relay.directHostAlert && relay.directHostAlert.hosts.length > 0) {
+      // A direct Host reappeared on a bound node and could not be re-hidden:
+      // delivery is fail-closed (`leak_detected`) until it is hidden. Or member
+      // renders left out an entry FCP could not place (lib/edges/withheld.ts).
+      const direct = directHostFacts(relay, now);
+      if (direct) {
         items.push({
           ...base(relay),
           id: `direct_host_reappeared:${relay._id}`,
           kind: 'direct_host_reappeared',
           severity: 'critical',
           code: null,
-          facts: {
-            count: relay.directHostAlert.hosts.length,
-            remarks: relay.directHostAlert.hosts.map((h) => h.remark),
-          },
+          facts: { count: direct.count, remarks: direct.remarks },
           action: 'open_relay',
-          since: iso(relay.directHostAlert.at),
+          since: iso(direct.since),
         });
       }
       // The restore workflow: informational, one phase per reconcile tick.

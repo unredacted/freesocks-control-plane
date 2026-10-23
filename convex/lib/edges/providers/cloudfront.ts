@@ -85,7 +85,12 @@ import type {
   StepOutcome,
 } from './types';
 import { firstResource, metaOf, resourcesOfKind } from './types';
-import { EdgeProviderError, credentialTestFailure, refusalOf } from './http';
+import {
+  EdgeProviderError,
+  credentialTestFailure,
+  refusalOf,
+  refusedCreate as sharedRefusedCreate,
+} from './http';
 import { normalizeZoneName } from '../hostname';
 import { addressFamily } from '../ip';
 import { certCovers } from '../layers';
@@ -935,6 +940,14 @@ async function findDistribution(
   };
 }
 
+/**
+ * A record the DNS zone refuses for good (another record at the name, a value
+ * it does not take): the shared rule (http.ts), since the zone is not AWS.
+ */
+function refusedDnsCreate(e: unknown): StepOutcome | null {
+  return sharedRefusedCreate(e, 'create_refused');
+}
+
 /** What a client fault on create means: a refusal that would be repeated as it is. */
 function refusedCreate(e: unknown, resources: ChildResource[]): StepOutcome | null {
   if (!(e instanceof EdgeProviderError)) return null;
@@ -1181,14 +1194,21 @@ export const cloudFrontProvider: EdgeProvider<CloudFrontConfig, CloudFrontTempla
         // Our own account's record with another value (edited by hand): the
         // name takes one CNAME, so it is replaced.
         for (const old of shared.stale) await shared.dns.deleteRecord(old.id);
-        const record = await shared.dns.createRecord({
-          type: 'CNAME',
-          name: normalizeZoneName(want.name),
-          content: normalizeZoneName(want.value),
-          proxied: false,
-          comment: cloudFrontAcmMarker(certificate.arn),
-          ...cloudFrontRecordOptions(tpl, false),
-        });
+        let record: DnsRecord;
+        try {
+          record = await shared.dns.createRecord({
+            type: 'CNAME',
+            name: normalizeZoneName(want.name),
+            content: normalizeZoneName(want.value),
+            proxied: false,
+            comment: cloudFrontAcmMarker(certificate.arn),
+            ...cloudFrontRecordOptions(tpl, false),
+          });
+        } catch (e) {
+          const refused = refusedDnsCreate(e);
+          if (refused) return refused;
+          throw e;
+        }
         return { status: 'done', resources: [dnsResource('acme', record, shared.dns, true)] };
       }
       case 'await_tls': {
@@ -1246,14 +1266,21 @@ export const cloudFrontProvider: EdgeProvider<CloudFrontConfig, CloudFrontTempla
         if (!target)
           throw refusal(step.id, 'distribution_name_missing', 'no CNAME target to point at');
         const dns = await dnsClientFor(cfg);
-        const record = await dns.createRecord({
-          type: 'CNAME',
-          name: hostname,
-          content: target,
-          proxied: false,
-          comment: spec.name,
-          ...cloudFrontRecordOptions(tpl, true),
-        });
+        let record: DnsRecord;
+        try {
+          record = await dns.createRecord({
+            type: 'CNAME',
+            name: hostname,
+            content: target,
+            proxied: false,
+            comment: spec.name,
+            ...cloudFrontRecordOptions(tpl, true),
+          });
+        } catch (e) {
+          const refused = refusedDnsCreate(e);
+          if (refused) return refused;
+          throw e;
+        }
         return {
           status: 'done',
           resources: [dnsResource('traffic', record, dns)],

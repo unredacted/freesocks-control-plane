@@ -62,6 +62,14 @@ export interface RenderInput {
   matchers: RenderMatcher[];
   endpoints: RenderEndpoint[];
   rule: RenderRuleInput;
+  /**
+   * Edge-required delivery: whether a RETAINED entry's address is one FCP
+   * cannot vouch for (not an edge of the origin; the node by an address FCP
+   * knows is the leak check's to refuse). Such an entry on a covered transport
+   * (it speaks what one of the listeners speaks) is left out of the body and
+   * reported in `withheld`. Absent: every other entry passes, as before.
+   */
+  withholds?: (address: string) => boolean;
 }
 
 /** Why a listener's template entry could not be used. */
@@ -81,6 +89,8 @@ export interface RenderOutput {
   emitted: number;
   /** Per listener, whether its template entry resolved in this body. */
   listeners?: ListenerMatch[];
+  /** The entries left out (`RenderInput.withholds`): their names, never their addresses. */
+  withheld?: Array<string | null>;
 }
 
 export const AUTO_GROUP_TEST_URL = 'https://www.gstatic.com/generate_204';
@@ -175,6 +185,27 @@ export function resolveMatchers<T>(
     matches.push({ listenerKey: m.listenerKey, matched: true });
   }
   return { templates, matches };
+}
+
+/**
+ * The retained entries edge-required delivery leaves out (`RenderInput.withholds`):
+ * not a template, on a transport one of the listeners speaks, at an address the
+ * caller cannot vouch for. Entries on a transport no listener covers pass.
+ */
+export function withheldEntries<T>(
+  entries: readonly MatchableEntry<T>[],
+  matchers: readonly RenderMatcher[],
+  isTemplate: (entry: T) => boolean,
+  withholds: RenderInput['withholds'],
+): MatchableEntry<T>[] {
+  if (!withholds) return [];
+  return entries.filter(
+    (e) =>
+      e.address !== null &&
+      !isTemplate(e.entry) &&
+      matchers.some((m) => e.supported(m.proto) && e.agrees(m.proto)) &&
+      withholds(e.address),
+  );
 }
 
 /** Every identity the matched templates carry (what the codecs drop / swap in groups). */

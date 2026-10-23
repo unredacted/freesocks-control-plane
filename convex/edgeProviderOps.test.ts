@@ -1819,31 +1819,70 @@ describe('a refused create step carries the provider reason, never a secret, add
       message: `listener for ${NAME} on MEMBER-FRONT.example.org: member 198.51.100.7 (2001:db8::7) is not allowed with key SECRET_GCORE_KEY`,
     };
     mockFetch(() => jsonRes(body, 400));
-    let err: unknown;
-    try {
-      await t.action(internal.edgeProviderOps.runStep, {
-        accountId,
-        spec: hostSpec,
-        templateParams: {},
-        step,
-        ledger: { steps: [], resources: [] },
-      });
-    } catch (e) {
-      err = e;
-    }
-    const data = dataOf(err);
-    expect(data).toMatchObject({ code: 'bad_request', status: 400, provider: 'gcore' });
-    expect(data.detail).toContain('is not allowed with key [redacted]');
-    expect(data.detail).toContain('member [address] ([address])');
-    expect(data.detail).toContain('listener for [name] on [name]');
-    expectScrubbed(`${JSON.stringify(data)} ${(err as Error).message}`, 'SECRET_GCORE_KEY');
+    // Refused for good: a known outcome that stops the run at once.
+    const out = await t.action(internal.edgeProviderOps.runStep, {
+      accountId,
+      spec: hostSpec,
+      templateParams: {},
+      step,
+      ledger: { steps: [], resources: [] },
+    });
+    expect(out).toMatchObject({
+      status: 'partial',
+      resources: [],
+      code: 'create_refused',
+      refused: true,
+    });
+    const detail = (out as { detail?: string }).detail!;
+    expect(detail).toContain('is not allowed with key [redacted]');
+    expect(detail).toContain('member [address] ([address])');
+    expect(detail).toContain('listener for [name] on [name]');
+    expectScrubbed(JSON.stringify(out), 'SECRET_GCORE_KEY');
     // A call that is not a create forwards nothing, whatever the provider said.
+    let err: unknown;
     try {
       await t.action(internal.edgeProviderOps.describe, { accountId, ledger: lbLedger });
     } catch (e) {
       err = e;
     }
     expect(dataOf(err).detail).toBeUndefined();
+  });
+
+  test("a create refused with 401 or 403 still counts against the account's API health", async () => {
+    const t = newT();
+    const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'acct-g',
+      settings: { projectId: 11, regionId: 22 },
+      credentials: { apiKey: 'SECRET_GCORE_KEY' },
+    });
+    const [step] = await t.action(internal.edgeProviderOps.planProvision, {
+      accountId,
+      spec,
+      templateParams: {},
+    });
+    const account = async () => (await t.run((ctx) => ctx.db.get(accountId)))!;
+    const create = () =>
+      t.action(internal.edgeProviderOps.runStep, {
+        accountId,
+        spec,
+        templateParams: {},
+        step,
+        ledger: { steps: [], resources: [] },
+      });
+    // A validation refusal is the request's fault, not the account's.
+    mockFetch(() => jsonRes({ message: '1 input is not valid' }, 400));
+    expect(await create()).toMatchObject({ code: 'create_refused', httpStatus: 400 });
+    expect((await account()).apiFailures ?? 0).toBe(0);
+    // A revoked or narrowed key: the run stops, and the account's run of failures grows.
+    for (const [status, n] of [
+      [401, 1],
+      [403, 2],
+    ] as const) {
+      mockFetch(() => jsonRes({ message: 'Invalid API key' }, status));
+      expect(await create()).toMatchObject({ code: 'create_refused', refused: true });
+      expect(await account()).toMatchObject({ apiFailures: n, lastApiError: String(status) });
+    }
   });
 
   test('the Scaleway SDK: a backend refusal (generic ScalewayError) and a refused address', async () => {
@@ -1857,43 +1896,39 @@ describe('a refused create step carries the provider reason, never a secret, add
         ? jsonRes({ id: 'lb-1', name: NAME, status: 'ready', ip: [] })
         : jsonRes({ message: said, type: 'not_a_known_type', help: `ask about ${HOST}` }, 400),
     );
-    let err: unknown;
-    try {
-      await t.action(internal.edgeProviderOps.runStep, {
-        accountId,
-        edgeId,
-        spec: hostSpec,
-        templateParams: {},
-        step: {
-          id: 'backend',
-          kind: 'create_backend',
-          resourceName: `${NAME}-backend`,
-          discoverability: 'by_name',
-        },
-        ledger: {
-          steps: [],
-          resources: [
-            {
-              stepId: 'lb',
-              kind: 'lb',
-              resourceId: 'lb-1',
-              ownership: 'created',
-              deleteState: 'present',
-            },
-          ],
-        },
-      });
-    } catch (e) {
-      err = e;
-    }
+    const refused = await t.action(internal.edgeProviderOps.runStep, {
+      accountId,
+      edgeId,
+      spec: hostSpec,
+      templateParams: {},
+      step: {
+        id: 'backend',
+        kind: 'create_backend',
+        resourceName: `${NAME}-backend`,
+        discoverability: 'by_name',
+      },
+      ledger: {
+        steps: [],
+        resources: [
+          {
+            stepId: 'lb',
+            kind: 'lb',
+            resourceId: 'lb-1',
+            ownership: 'created',
+            deleteState: 'present',
+          },
+        ],
+      },
+    });
     // It really went through the SDK to the wire.
     expect(stub.calls.some((c) => c.path === '/lb/v1/zones/fr-par-1/lbs/lb-1/backends')).toBe(true);
-    const data = dataOf(err);
-    expect(data).toMatchObject({ code: 'ScalewayError', status: 400, provider: 'scaleway' });
-    expect(data.detail).toContain('http error 400');
-    expect(data.detail).toContain('server [name] for [name] cannot reach [address] / [address]');
-    expect(data.detail).toContain('not_a_known_type');
-    expectScrubbed(`${JSON.stringify(data)} ${(err as Error).message}`, SECRET);
+    // Refused for good: the run stops on it with the provider's words, scrubbed.
+    expect(refused).toMatchObject({ status: 'partial', code: 'create_refused', refused: true });
+    const said400 = (refused as { detail?: string }).detail!;
+    expect(said400).toContain('http error 400');
+    expect(said400).toContain('server [name] for [name] cannot reach [address] / [address]');
+    expect(said400).toContain('not_a_known_type');
+    expectScrubbed(JSON.stringify(refused), SECRET);
 
     // The refused address allocation stops the run with the same words, scrubbed.
     mockFetch(() => jsonRes({ message: said, type: 'invalid_request_error' }, 400));

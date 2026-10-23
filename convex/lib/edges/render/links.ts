@@ -5,7 +5,8 @@
  * verified against what the listener speaks (render/uri.ts); each assigned
  * endpoint becomes a copy of that line with the edge address/port, the
  * selected SNI and a friendly label. Everything else in the list (other
- * transports, comments) passes through untouched.
+ * transports, comments) passes through untouched, except an entry the caller
+ * withholds (`RenderInput.withholds`), which is left out.
  */
 import { sameAddress } from '../hosts';
 import { decodeBase64Loose, encodeBase64 } from './base64';
@@ -13,6 +14,7 @@ import {
   orderEndpoints,
   resolveMatchers,
   templateIdentities,
+  withheldEntries,
   type MatchableEntry,
   type RenderInput,
   type RenderMatcher,
@@ -102,18 +104,25 @@ export function renderLinks(input: RenderInput): RenderOutput {
   }
   const templateLines = new Set([...templates.values()].map((t) => t.line));
   const templateIds = templateIdentities(entries, templates);
+  const isTemplateLine = (line: string): boolean =>
+    templateLines.has(line) ||
+    (PROXY_LINE_RE.test(line) &&
+      (() => {
+        const r = remarkOf(line);
+        return r !== null && templateIds.has(r);
+      })());
+  const withheld = withheldEntries(
+    entries,
+    input.matchers,
+    (e) => isTemplateLine(e.line),
+    input.withholds,
+  );
+  const withheldLines = new Set(withheld.map((w) => w.entry.line));
   const out: string[] = [];
   let replacedAny = false;
   for (const line of decoded.lines) {
-    if (!line) continue;
-    const isTemplate =
-      templateLines.has(line) ||
-      (PROXY_LINE_RE.test(line) &&
-        (() => {
-          const r = remarkOf(line);
-          return r !== null && templateIds.has(r);
-        })());
-    if (isTemplate) {
+    if (!line || withheldLines.has(line)) continue;
+    if (isTemplateLine(line)) {
       if (!replacedAny) {
         replacedAny = true;
         out.push('__RELAY_ENDPOINTS__');
@@ -155,6 +164,7 @@ export function renderLinks(input: RenderInput): RenderOutput {
     ...(emitted.length === 0 ? { reason: 'templates_dropped' } : {}),
     emitted: emitted.length,
     listeners: matches,
+    ...(withheld.length > 0 ? { withheld: withheld.map((w) => w.identity) } : {}),
   };
 }
 
