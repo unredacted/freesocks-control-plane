@@ -9,7 +9,9 @@
 # Reads the stack env file (ENV_FILE, default .env.beta — prod: ENV_FILE=.env.prod)
 # for POSTGRES_PASSWORD/POSTGRES_DB. If dumps are age-encrypted, point
 # AGE_KEY_FILE at a file holding the age PRIVATE key (kept off the host;
-# needed only for the drill). Idempotent: the scratch DB is dropped either way.
+# needed only for the drill). The decrypt runs in the backup image, whose age
+# wrote the dump, so the host needs no age of its own. Idempotent: the scratch
+# DB is dropped either way.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -32,20 +34,25 @@ echo "[restore-verify] latest dump: $latest"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"; $COMPOSE exec -T postgres psql -U convex -d postgres -c "DROP DATABASE IF EXISTS $SCRATCH" >/dev/null 2>&1 || true' EXIT
 
-$COMPOSE cp "backup:$latest" "$tmp/dump"
-dump="$tmp/dump"
-
 if [ "${latest##*.}" = "age" ]; then
   : "${AGE_KEY_FILE:?set AGE_KEY_FILE to the age private-key file for encrypted dumps}"
-  age -d -i "$AGE_KEY_FILE" -o "$tmp/dump.sql.gz" "$dump"
+  # A one-off backup container reads the dump straight from its volume and the
+  # key from stdin (`-i -`): no age on the host, and the key never lands in a
+  # container filesystem or volume.
+  $COMPOSE run --rm --no-deps -T --entrypoint age backup -d -i - "$latest" <"$AGE_KEY_FILE" >"$tmp/dump.sql.gz"
   dump="$tmp/dump.sql.gz"
+else
+  $COMPOSE cp "backup:$latest" "$tmp/dump"
+  dump="$tmp/dump"
 fi
 
 echo "[restore-verify] creating scratch DB $SCRATCH"
 $COMPOSE exec -T postgres psql -U convex -d postgres -qAc "CREATE DATABASE $SCRATCH"
 
 echo "[restore-verify] restoring…"
-gunzip -c "$dump" | $COMPOSE exec -T postgres psql -U convex -d "$SCRATCH" -q
+# ON_ERROR_STOP: a dump that fails part-way must fail the drill, not leave a
+# half-restored scratch DB whose documents table still passes the count below.
+gunzip -c "$dump" | $COMPOSE exec -T postgres psql -U convex -d "$SCRATCH" -q -v ON_ERROR_STOP=1
 
 # Convex keeps every logical table inside internal tables (documents/indexes/…)
 # in a schema named after the instance — schemas travel with pg_dump, so locate
