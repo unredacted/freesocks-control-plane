@@ -2078,7 +2078,8 @@ export const AttentionItem = z.object({
    * `pool_below_desired` published, desired, standbys (code `pool_reserved`: the spare it
    * names would stay a spare, its free slots are held for what the node still lacks) ·
    * `members_dark` published ·
-   * `host_unresolved` op (create|delete|null), attempts · `rotation_failed` kind, phase ·
+   * `host_unresolved` op (create|delete|null), attempts · `rotation_failed` kind, phase, spare (a provision not meant
+   * for use), answer (the provider's redacted words) ·
    * `block_suspected` score, hintLevel, countries[] · `edge_unreachable` countries[] ·
    * `needs_operator` provider, layer · `account_untested` / `account_unqualified` name, provider.
    */

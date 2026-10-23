@@ -69,7 +69,33 @@ export function appendEvent(events: readonly RotationEvent[], ev: RotationEvent)
  * (already redacted and scrubbed of the edge's names by edgeProviderOps).
  */
 export function withProviderAnswer(detail: string, answer: string | undefined): string {
-  return answer ? `${detail}. The provider answered: ${answer}` : detail;
+  return answer ? `${detail}${PROVIDER_ANSWERED}${answer}` : detail;
+}
+
+const PROVIDER_ANSWERED = '. The provider answered: ';
+/** The longest provider answer a failure's words carry (an attention row, an audit row). */
+export const PROVIDER_ANSWER_MAX = 200;
+
+/**
+ * The provider's own (redacted, scrubbed) answer behind a run that failed: the
+ * one its edge kept (`failure.detail`), else the newest event that carried one
+ * (`withProviderAnswer`). Null when the provider said nothing.
+ */
+export function providerAnswerOf(
+  events: readonly { detail?: string | null }[],
+  edgeFailure: { detail?: string } | null | undefined,
+): string | null {
+  const kept = edgeFailure?.detail?.trim();
+  if (kept) return kept.slice(0, PROVIDER_ANSWER_MAX);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const d = events[i]!.detail ?? '';
+    const at = d.lastIndexOf(PROVIDER_ANSWERED);
+    if (at >= 0) {
+      const answer = d.slice(at + PROVIDER_ANSWERED.length).trim();
+      if (answer) return answer.slice(0, PROVIDER_ANSWER_MAX);
+    }
+  }
+  return null;
 }
 
 /** What an edge records about why it stopped (`edges.failure`). */

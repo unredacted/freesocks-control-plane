@@ -1544,7 +1544,12 @@ any point, and never writes twice what it cannot prove:
   the step runs again, at most 3 attempts, then the run fails `step_retries_exhausted`; that
   step stays `pending` (nothing of it exists), so the failed edge is destroyed by the reconcile
   with everything the earlier steps built and billed, and the failure shows as
-  `rotation_failed`. A step left `ambiguous` or `needs_operator` raises the edge to
+  `rotation_failed`. That item and its audit row (`edge.rotation_failed`) carry what the run
+  was (`kind`, and `spare` for a provision that would not have been put in use) and the
+  provider's redacted answer when it sent one (`answer`, `providerAnswerOf`: the one the edge
+  kept, else the newest event that carried one), so the admin names it by what it was
+  ("Adding a spare failed", "Putting an address in use failed"; only a replace is a
+  replacement), quotes the provider, and opens the run. A step left `ambiguous` or `needs_operator` raises the edge to
   `needs_operator`. `ambiguous`: the edge needs an operator, the run fails
   `ambiguous_resource`. `unresolved`: keep looking for 30 minutes after the step started, then
   `discovery_timeout`. A provision has its own 20-minute cap (`provision_timeout`). Shared

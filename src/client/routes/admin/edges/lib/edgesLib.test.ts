@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { ATTENTION_ACTIONS } from '../../../../../shared/contracts/edgeCodes';
 import {
   ATTENTION_ACTION_PLAN,
+  attentionActionLabel,
   attentionFactsLine,
+  attentionHeading,
   attentionSubject,
   attentionTarget,
   type AttentionItem,
@@ -281,6 +283,8 @@ describe('attention', () => {
       'Account acct-a, Region B',
     );
     expect(attentionFactsLine(item({ facts: { name: 'acct-a' } }))).toBe('Account acct-a');
+    // A failed run's kind is its title, never a "Provision run" fact.
+    expect(attentionFactsLine(item({ facts: { kind: 'provision', phase: 'failed' } }))).toBe('');
     expect(attentionSubject(item({ listenerKey: 'main' }))).toBe('Origin relay-a, listener main');
     expect(attentionSubject(item({ relaySlug: null }))).toBe('');
   });
@@ -327,6 +331,10 @@ describe('format', () => {
   it('reads only known audit payload keys', () => {
     expect(auditDetailLine({ code: 'edge.cooldown', token: 'nope' })).toBe('In cooldown');
     expect(auditDetailLine({ changedKeys: ['a', 'b'] })).toBe('changed a, b');
+    // A failed run: its reason, then the provider's own words.
+    expect(
+      auditDetailLine({ code: 'step_retries_exhausted', answer: '1 input is not valid' }),
+    ).toBe('Step retries exhausted · The provider answered: 1 input is not valid.');
     // Advanced keeps the key; the simple face names the listener in words.
     expect(auditDetailLine({ listenerKey: 'freedomrea55ng1t' })).toBe('listener freedomrea55ng1t');
     expect(auditDetailLine({ listenerKey: 'freedomrea55ng1t' }, () => 'VLESS + REALITY')).toBe(
@@ -433,5 +441,39 @@ describe('showsPublication', () => {
     expect(showsPublication({ status: 'destroyed' })).toBe(false);
     for (const status of ['active', 'draining', 'provisioning', 'failed', 'needs_operator'])
       expect(showsPublication({ status })).toBe(true);
+  });
+});
+
+describe('a failed run in the attention list', () => {
+  const failed = (facts: Record<string, unknown>) =>
+    ({
+      id: 'rotation_failed:r1',
+      kind: 'rotation_failed',
+      severity: 'warning',
+      relaySlug: 'node-one',
+      relayId: 'o1',
+      edgeId: null,
+      listenerKey: null,
+      accountId: null,
+      rotationId: 'r1',
+      code: 'step_retries_exhausted',
+      facts,
+      action: 'open_relay',
+      since: null,
+    }) as AttentionItem;
+  it('is named by what it was, and its button opens the run', () => {
+    expect(attentionHeading(failed({ kind: 'provision', spare: true }), true)).toEqual({
+      label: 'Adding a spare failed',
+      explain: 'A new spare address for this protected node could not be created.',
+      final: true,
+    });
+    // A replacement keeps the kind's own copy (worded by the screen).
+    expect(attentionHeading(failed({ kind: 'replace' }), true)).toMatchObject({
+      label: 'Rotation failed',
+      final: false,
+    });
+    expect(attentionActionLabel(failed({ kind: 'provision' }), true)).toBe('Open the run');
+    expect(attentionActionLabel(failed({ kind: 'provision' }), false)).toBe('Open run');
+    expect(attentionTarget(failed({ kind: 'provision' }))).toContain('rotation=r1');
   });
 });

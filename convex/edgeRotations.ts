@@ -96,6 +96,7 @@ import {
   ROTATION_PHASES,
   TERMINAL_PHASES,
   nextFailure,
+  providerAnswerOf,
   withProviderAnswer,
   type AccountCandidate,
   type RotationEvent,
@@ -1386,6 +1387,9 @@ async function auditFailure(
   code: string,
 ) {
   const origin = await ctx.db.get(r.relayId);
+  const edge = r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null;
+  // What the run was (a spare is not a replacement) and what the provider said.
+  const answer = providerAnswerOf((await ctx.db.get(r._id))?.events ?? r.events, edge?.failure);
   await auditRotation(ctx, r._id, {
     actorType: 'system',
     action: 'edge.rotation_failed',
@@ -1394,10 +1398,14 @@ async function auditFailure(
     payload: {
       relaySlug: origin?.slug ?? '',
       trigger: r.trigger,
+      kind: r.kind,
+      spare: r.kind === 'provision' && r.publishOnDone !== true,
       phase,
       outcome,
       step: phase,
       code,
+      ...(answer ? { answer } : {}),
+      rotationId: r._id,
     },
   });
 }

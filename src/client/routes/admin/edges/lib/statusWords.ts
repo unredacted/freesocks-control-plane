@@ -72,6 +72,8 @@ export function originSentence(s: OriginStatus): string {
     case 'needs-you':
       if (s.code === 'offline')
         return `${plural(s.offline, 'address is', 'addresses are')} offline.`;
+      // Any run (a spare, a new address, a replacement), not only a replacement.
+      if (s.code === 'rotation_failed') return 'The last run on this node failed. It needs you.';
       return `${codeLabel(s.code ?? 'needs_operator')}. It needs you.`;
     case 'off':
       return 'Protection is switched off (Advanced).';

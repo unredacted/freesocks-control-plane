@@ -16,6 +16,7 @@
  *   EDGE_HEALTH_LABELS, healthTone  the PROVIDER's own check of the node behind an edge
  *   outsideReachOf, OUTSIDE_REACH_LABELS, outsideReachTone   reachability from outside (probes)
  *   PUBLICATION_LABELS, publicationTone
+ *   failedRunLabel(facts, plain), providerAnswerWords(facts)   a failed run by its kind, the provider's words
  *   HOST_STATE_LABELS, SETUP_STEP_TITLES, SETUP_STATUS_LABELS
  *   ATTENTION_ACTION_LABELS, severityTone
  *   auditActionLabel(action)        audit `action` -> short sentence (small map + fallback)
@@ -2396,7 +2397,65 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'probe.target.delete': 'Probe target deleted',
 };
 
-export function auditActionLabel(action: string): string {
+/**
+ * A failed run named by what it was: adding a spare or a new address is no
+ * replacement, and putting a spare in use is neither (`kind` / `spare` of the
+ * `edge.rotation_failed` payload or the `rotation_failed` attention facts).
+ * Null for a replace, or when the kind is not known: the plain label stands.
+ */
+export function failedRunLabel(
+  facts: unknown,
+  plain: boolean,
+): { label: string; explain: string } | null {
+  if (!facts || typeof facts !== 'object') return null;
+  const f = facts as Record<string, unknown>;
+  if (f['kind'] === 'provision')
+    return f['spare'] === false
+      ? plain
+        ? {
+            label: 'Adding an address failed',
+            explain: 'A new address for this protected node could not be created.',
+          }
+        : {
+            label: 'Provision failed',
+            explain: 'A new edge for this origin could not be created.',
+          }
+      : plain
+        ? {
+            label: 'Adding a spare failed',
+            explain: 'A new spare address for this protected node could not be created.',
+          }
+        : {
+            label: 'Standby provision failed',
+            explain: 'A new standby edge for this origin could not be created.',
+          };
+  if (f['kind'] === 'publish')
+    return plain
+      ? {
+          label: 'Putting an address in use failed',
+          explain: 'A spare address of this protected node could not be put in use.',
+        }
+      : {
+          label: 'Publish failed',
+          explain: 'A standby edge of this origin could not be published.',
+        };
+  return null;
+}
+
+/** The provider's own words behind a failure (redacted by the server), as a sentence; null when it said none. */
+export function providerAnswerWords(facts: unknown): string | null {
+  if (!facts || typeof facts !== 'object') return null;
+  const a = (facts as Record<string, unknown>)['answer'];
+  if (typeof a !== 'string' || a.trim() === '') return null;
+  const t = a.trim();
+  return `The provider answered: ${t}${/[.!?]$/.test(t) ? '' : '.'}`;
+}
+
+export function auditActionLabel(action: string, payload?: unknown): string {
+  if (action === 'edge.rotation_failed') {
+    const run = failedRunLabel(payload, false);
+    if (run) return run.label;
+  }
   const known = AUDIT_ACTION_LABELS[action];
   if (known) return known;
   // 'edge.foo_bar' -> 'Edge foo bar'; 'admin.edge.x' -> 'Edge x'.
@@ -2555,7 +2614,11 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.country.mark': 'Marked for a country',
   'edge.country.check': 'Checked from every country',
 };
-export function plainAuditActionLabel(action: string): string {
+export function plainAuditActionLabel(action: string, payload?: unknown): string {
+  if (action === 'edge.rotation_failed') {
+    const run = failedRunLabel(payload, true);
+    if (run) return run.label;
+  }
   return PLAIN_AUDIT_LABELS[action] ?? plainWords(auditActionLabel(action));
 }
 

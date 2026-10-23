@@ -11,8 +11,8 @@
  * needs; one that does not navigates instead (no confirm promising a call).
  *
  * Exports: attentionTarget(item), ATTENTION_ACTION_PLAN, attentionCallable(item),
- *          attentionSubject(item), attentionFactsLine(item), AttentionPlan,
- *          AttentionConfirmCopy.
+ *          attentionSubject(item), attentionFactsLine(item), attentionHeading(item, plain),
+ *          attentionActionLabel(item, plain), AttentionPlan, AttentionConfirmCopy.
  */
 import type { z } from 'zod';
 import type { AttentionItem as AttentionItemSchema } from '../../../../../shared/contracts/edges';
@@ -20,7 +20,13 @@ import type { AttentionAction } from '../../../../../shared/contracts/edgeCodes'
 import { edgesPaths } from './routes';
 import { serversPaths } from '../../servers/lib/routes';
 import { durationLabel } from './time';
-import { codeLabel } from '../../../../lib/edgeCodes';
+import {
+  ATTENTION_ACTION_LABELS,
+  PLAIN_ATTENTION_ACTION_LABELS,
+  codeExplain,
+  codeLabel,
+  failedRunLabel,
+} from '../../../../lib/edgeCodes';
 
 export type AttentionItem = z.infer<typeof AttentionItemSchema>;
 
@@ -233,8 +239,6 @@ export function attentionFactsLine(item: AttentionItem): string {
   const name = str('name');
   const location = str('location');
   if (name !== null) out.push(location ? `Account ${name}, ${location}` : `Account ${name}`);
-  const kind = str('kind');
-  if (kind !== null) out.push(`${kind.charAt(0).toUpperCase()}${kind.slice(1)} run`);
   const op = str('op');
   if (op !== null) out.push(op === 'create' ? 'Creating the Host' : 'Deleting the Host');
   const published = num('published');
@@ -287,4 +291,29 @@ export function attentionFactsLine(item: AttentionItem): string {
     if (codes.length > 0) out.push(`in ${codes.join(', ')}`);
   }
   return out.join(' · ');
+}
+
+/**
+ * A row's title and explanation: its kind's copy, except a failed run, which
+ * is named by what it was (a spare that could not be built is no replacement,
+ * `failedRunLabel`). `plain` words are final; the others go through the
+ * screen's own wording.
+ */
+export function attentionHeading(
+  item: Pick<AttentionItem, 'kind' | 'facts'>,
+  plain: boolean,
+): { label: string; explain: string; final: boolean } {
+  const run = item.kind === 'rotation_failed' ? failedRunLabel(item.facts, plain) : null;
+  if (run) return { ...run, final: true };
+  return { label: codeLabel(item.kind), explain: codeExplain(item.kind), final: false };
+}
+
+/** The row's button: a failed run opens that run (its drawer), whatever its action says. */
+export function attentionActionLabel(
+  item: Pick<AttentionItem, 'kind' | 'action' | 'rotationId'>,
+  plain: boolean,
+): string {
+  if (item.kind === 'rotation_failed' && item.rotationId && item.action === 'open_relay')
+    return plain ? PLAIN_ATTENTION_ACTION_LABELS.open_run : ATTENTION_ACTION_LABELS.open_run;
+  return plain ? PLAIN_ATTENTION_ACTION_LABELS[item.action] : ATTENTION_ACTION_LABELS[item.action];
 }

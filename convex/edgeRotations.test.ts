@@ -20,6 +20,7 @@ import {
 } from './lib/edges/testing/fixtures';
 import { upsertSettingRow } from './appSettings';
 import { isStaleRotation, MAX_STEP_ERRORS, standbyReasonOf } from './edgeRotations';
+import { providerAnswerOf } from './lib/edges/rotation';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -2317,6 +2318,90 @@ describe('edgeRotations: a provision step that keeps failing', () => {
     }
     expect(w.deletes).toEqual(['lb-1']);
     expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!.status).toBe('destroyed');
+  });
+
+  test("a spare that could not be built is named as one, with the provider's words, in attention and activity", async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    const { t, relayId, listenerId } = await seed();
+    // A spare's provision whose create step the provider refused in words (kept,
+    // redacted, on its edge), about to run out of retries.
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, { ipv4: NEW_EDGE });
+    const now = Date.now();
+    const rotationId = await t.run(async (ctx) => {
+      await ctx.db.patch(edgeId as Id<'edges'>, {
+        status: 'provisioning',
+        failure: { step: 'ip', code: 'INVALID_INPUT', status: 400, detail: '1 input is not valid' },
+      });
+      const id = await ctx.db.insert('edgeRotations', {
+        relayId,
+        kind: 'provision',
+        trigger: 'manual',
+        burn: false,
+        force: false,
+        toEdgeId: edgeId,
+        createdEdgeId: edgeId,
+        viaStandby: false,
+        listenerId,
+        publishOnDone: false,
+        phase: 'provisioning',
+        stepVersion: 3,
+        cancelRequested: false,
+        hostPlan: [],
+        hostPlanCaptured: false,
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: now,
+        updatedAt: now,
+      } as never);
+      await ctx.db.patch(relayId, { activeRotationId: id });
+      return id;
+    });
+    await t.mutation(internal.edgeRotations.advance, {
+      rotationId,
+      stepVersion: 3,
+      event: { type: 'fail', code: 'step_retries_exhausted', detail: 'ip', rollback: false },
+    });
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe('failed');
+    // Attention: what the run was and what the provider said; it opens the run.
+    const { items } = await t.query(internal.edgeOperator.attention, {});
+    expect(items.find((i) => i.kind === 'rotation_failed')).toMatchObject({
+      rotationId,
+      code: 'step_retries_exhausted',
+      action: 'open_relay',
+      facts: { kind: 'provision', spare: true, answer: '1 input is not valid' },
+    });
+    // Activity: the same, on the audit row the node page words.
+    const audit = (await t.run((ctx) => ctx.db.query('auditLog').collect())).find(
+      (a) => a.action === 'edge.rotation_failed',
+    );
+    expect(audit?.payload).toMatchObject({
+      relaySlug: 'node-one',
+      kind: 'provision',
+      spare: true,
+      code: 'step_retries_exhausted',
+      answer: '1 input is not valid',
+      rotationId,
+    });
+    expect(JSON.stringify(audit?.payload)).not.toContain(NEW_EDGE);
+  });
+
+  test("providerAnswerOf: the edge's kept answer, else the newest event that carried one", () => {
+    expect(providerAnswerOf([], { detail: ' 1 input is not valid ' })).toBe('1 input is not valid');
+    expect(
+      providerAnswerOf(
+        [
+          { detail: 'step lb threw: 400. The provider answered: old words' },
+          { detail: 'step ip threw: 400 x. The provider answered: newer words' },
+          { detail: 'step ip still unresolved' },
+        ],
+        { detail: '' },
+      ),
+    ).toBe('newer words');
+    expect(providerAnswerOf([{ detail: 'step ip threw: 500' }, {}], null)).toBeNull();
+    expect(providerAnswerOf([], { detail: 'x'.repeat(500) })!.length).toBe(200);
   });
 
   test('automatic upkeep does not provision again right after its provision failed', async () => {

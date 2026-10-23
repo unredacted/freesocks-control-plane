@@ -35,6 +35,9 @@
    * address would stay a spare and for which location the slot is held, and
    * offers Replace address instead of a publish that ends as a spare.
    *
+   * Recent activity names a failed run by what it was (adding a spare is no
+   * replacement) with the provider's words, and links it to the run.
+   *
    * A retiring address (drained after a Replace) says when it is deleted; "Delete
    * now" ends its drain early (DELETE the edge: members who have not refreshed
    * lose it), "Keep as a spare" puts it back among the spares (the operator
@@ -102,6 +105,7 @@
   import { transportName } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
   import { originSentence, statusOf } from '../lib/statusWords';
+  import { timelineLinkParams } from '../relay/relayLogic';
   import EndpointTestCard from './EndpointTestCard.svelte';
   import ListenerAddresses from './ListenerAddresses.svelte';
   import NodeProvidersCard from './NodeProvidersCard.svelte';
@@ -280,6 +284,19 @@
     const listenerKey = listeners.find((l) => l.id === edge.listenerId)?.listenerKey;
     if (listenerKey) renewing = { edgeId, listenerId: edge.listenerId, listenerKey };
   }
+
+  // A run that failed or kept its address a spare links to the run itself.
+  const runHref = (entry: {
+    action: string;
+    targetType: string | null;
+    targetId: string | null;
+    payload: unknown;
+  }) => {
+    if (entry.action !== 'edge.rotation_failed' && entry.action !== 'edge.publish_held')
+      return null;
+    const rotation = timelineLinkParams(entry)?.rotation;
+    return rotation ? edgesPaths.relay(slug, { tab: 'rotations', rotation }) : null;
+  };
 
   let autoBusy = $state(false);
   async function setAuto(next: boolean) {
@@ -513,6 +530,7 @@
           entries={timelineQ.data?.entries ?? []}
           max={8}
           labelFor={plainAuditActionLabel}
+          hrefFor={runHref}
           listenerName={(key) => {
             const l = listeners.find((x) => x.listenerKey === key);
             return l ? transportName(l) : 'a transport';

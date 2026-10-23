@@ -43,12 +43,14 @@ import {
   codeFix,
   codeLabel,
   edgeStatusLabel,
+  failedRunLabel,
   humanizeCode,
   phaseLabel,
   PLAIN_ATTENTION_ACTION_LABELS,
   PLAIN_WORDS,
   plainAuditActionLabel,
   plainWords,
+  providerAnswerWords,
   RESTORE_PHASE_WORDS,
   restorePhaseWords,
 } from './edgeCodes';
@@ -394,6 +396,44 @@ describe('phase, status and step maps', () => {
     expect(auditActionLabel('edge.published')).toBe('Edge published');
     expect(auditActionLabel('admin.edge.something_odd')).toBe('Edge something odd');
     expect(auditActionLabel('probe.new_thing')).toBe('Probe new thing');
+  });
+
+  test('a failed run is named by what it was: a spare is no replacement', () => {
+    const spare = { kind: 'provision', spare: true };
+    expect(plainAuditActionLabel('edge.rotation_failed', spare)).toBe('Adding a spare failed');
+    expect(plainAuditActionLabel('edge.rotation_failed', { kind: 'provision', spare: false })).toBe(
+      'Adding an address failed',
+    );
+    expect(plainAuditActionLabel('edge.rotation_failed', { kind: 'publish' })).toBe(
+      'Putting an address in use failed',
+    );
+    // A replacement, or a row from before the kind was recorded, stays a replacement.
+    expect(plainAuditActionLabel('edge.rotation_failed', { kind: 'replace' })).toBe(
+      'Replacement failed',
+    );
+    expect(plainAuditActionLabel('edge.rotation_failed')).toBe('Replacement failed');
+    expect(auditActionLabel('edge.rotation_failed', spare)).toBe('Standby provision failed');
+    expect(auditActionLabel('edge.rotation_failed', { kind: 'replace' })).toBe('Rotation failed');
+    expect(failedRunLabel(spare, true)?.explain).toBe(
+      'A new spare address for this protected node could not be created.',
+    );
+    for (const plain of [true, false])
+      for (const f of [spare, { kind: 'provision', spare: false }, { kind: 'publish' }]) {
+        const w = failedRunLabel(f, plain)!;
+        expect(`${w.label} ${w.explain}`).not.toMatch(/—|_|replace/i);
+      }
+  });
+
+  test("the provider's answer as a sentence, or nothing", () => {
+    expect(providerAnswerWords({ answer: '1 input is not valid' })).toBe(
+      'The provider answered: 1 input is not valid.',
+    );
+    expect(providerAnswerWords({ answer: 'Quota exceeded.' })).toBe(
+      'The provider answered: Quota exceeded.',
+    );
+    expect(providerAnswerWords({ answer: ' ' })).toBeNull();
+    expect(providerAnswerWords({})).toBeNull();
+    expect(providerAnswerWords(null)).toBeNull();
   });
 });
 
