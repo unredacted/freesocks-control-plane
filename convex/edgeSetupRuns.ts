@@ -3660,11 +3660,15 @@ export const resume = internalMutation({
  * (`kind: 'reprotect'`) drops only its own candidates instead, in one
  * mutation (`cancelReprotect`): the live node keeps what members have.
  *
- * What happens is decided, and the run marked cancelled, in ONE mutation
- * (`decideCancel`) before anything acts on it: a go-live that committed first
- * refuses the cancel, and one still due is fenced out by the run's new step
- * version. An origin that is live (no setup owns it, or a binding names it)
- * is never deleted or restored: the cancel then only ends the run.
+ * What happens is decided in ONE mutation that re-reads the run and fences
+ * its scheduled step (`decideCancel`): a go-live that committed first refuses
+ * the cancel, and one still due finds its step version moved. The delete or
+ * the restore then takes the origin (either refuses a go-live from then on),
+ * and only after it does is the run marked cancelled: a cleanup refused
+ * meanwhile leaves the run open, so the cancel can be pressed again (and its
+ * step is re-kicked if it is not). An origin that is live (no setup owns it,
+ * or a binding names it) is never deleted or restored: the cancel then only
+ * ends the run.
  */
 export const cancel = internalAction({
   args: { runId: v.id('edgeSetupRuns'), actorAdminId: v.optional(v.id('adminUsers')) },
@@ -3676,7 +3680,7 @@ export const cancel = internalAction({
     if (!r) throw new ConvexError({ code: 'not_found', message: 'Run not found' });
     if (r.kind === 'reprotect')
       return ctx.runMutation(internal.edgeSetupRuns.cancelReprotect, { runId, actorAdminId });
-    const d = await ctx.runMutation(internal.edgeSetupRuns.decideCancel, { runId, actorAdminId });
+    const d = await ctx.runMutation(internal.edgeSetupRuns.decideCancel, { runId });
     if (d.relayId && d.disposition === 'deleted') {
       await ctx.runMutation(internal.relays.requestDelete, {
         id: d.relayId,
@@ -3695,6 +3699,11 @@ export const cancel = internalAction({
     // at its 24 h TTL (the sweep removes it; an origin delete releases too).
     if (d.relayId)
       await ctx.runMutation(internal.edgeTestCredentials.releaseForRelay, { relayId: d.relayId });
+    await ctx.runMutation(internal.edgeSetupRuns.markCancelled, {
+      runId,
+      disposition: d.disposition,
+      actorAdminId,
+    });
     return { ok: true as const, disposition: d.disposition };
   },
 });
@@ -3702,15 +3711,15 @@ export const cancel = internalAction({
 export type CancelDisposition = 'deleted' | 'restore' | 'candidates' | 'none';
 
 /**
- * The deciding half of a cancel, with the run's terminal write: re-read, still
- * cancellable, and what happens to its origin judged from the rows as they are
- * now. Marked cancelled here, so the go-live can no longer land in between.
+ * The deciding half of a cancel: re-read, still cancellable, and what happens
+ * to its origin judged from the rows as they are now. The run's step version
+ * moves, so a go-live already scheduled can no longer land before the cleanup.
  */
 export const decideCancel = internalMutation({
-  args: { runId: v.id('edgeSetupRuns'), actorAdminId: v.optional(v.id('adminUsers')) },
+  args: { runId: v.id('edgeSetupRuns') },
   handler: async (
     ctx,
-    { runId, actorAdminId },
+    { runId },
   ): Promise<{
     disposition: 'deleted' | 'restore' | 'none';
     relayId: Id<'relays'> | null;
@@ -3732,7 +3741,7 @@ export const decideCancel = internalMutation({
       else if (cancelRestores(r.stage) || parkedAtGoLive)
         disposition = (await originEverServed(ctx.db, relay)) ? 'restore' : 'deleted';
     }
-    await markRunCancelled(ctx, r, disposition, actorAdminId);
+    await ctx.db.patch(runId, { stepVersion: r.stepVersion + 1, updatedAt: Date.now() });
     return {
       disposition,
       relayId: relay?._id ?? null,
@@ -3779,6 +3788,21 @@ function assertCancellable(r: Run): void {
       message: 'The run is past the point of cancellation',
     });
 }
+
+/** The end of a cancel, once its origin was taken care of (`cancel`). */
+export const markCancelled = internalMutation({
+  args: {
+    runId: v.id('edgeSetupRuns'),
+    disposition: v.union(v.literal('deleted'), v.literal('restore'), v.literal('none')),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { runId, disposition, actorAdminId }) => {
+    const r = await ctx.db.get(runId);
+    if (!r || isTerminalRunState(r.state)) return null;
+    await markRunCancelled(ctx, r, disposition, actorAdminId);
+    return null;
+  },
+});
 
 /** The end of every cancel: the end hook (THIS attempt), the terminal write, the audit. */
 async function markRunCancelled(

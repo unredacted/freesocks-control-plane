@@ -1137,10 +1137,12 @@ standbys for the reconcile destroy and removes the credential); at stages 5-7 th
 stay and `edgeRestore.start` runs with purpose `cancel_setup`, unless the origin never reached
 members (no edge ever published, no hide row, no binding naming it), which is deleted like an
 earlier cancel so the node is free to protect again; after go-live there is no cancel. The
-cancel decides in ONE mutation that re-reads the run and marks it cancelled
+cancel decides in ONE mutation that re-reads the run and moves its step version
 (`edgeSetupRuns.decideCancel`) before it deletes or restores anything: a go-live that committed
-first refuses the cancel (`edge.setup_run_finished`), and a go-live still due is fenced out by
-the run's new step version. An origin no setup owns any more (a newer run went live on it) or
+first refuses the cancel (`edge.setup_run_finished`), and a go-live still due is fenced out.
+The run is marked cancelled only once the delete or the restore took the origin: a cleanup
+refused meanwhile (a server change, a restore already running) leaves the run open, so the
+cancel can be pressed again (a run left `running` is re-kicked by the reconcile). An origin no setup owns any more (a newer run went live on it) or
 that a binding names is never deleted or restored by a cancel: the run only ends (disposition
 `none`). Go-live itself waits while a restore workflow runs on the origin (the run asks,
 `provider_failed` / `restore_in_progress`), and `edgeRestore.start` refuses `cancel_setup` on an
@@ -1391,9 +1393,11 @@ for an enrolled node every other address it has, whatever form the origin takes 
 IPv4 and IPv6, its name, its management address); and the names among the node's Hosts that
 resolve to the node (`relays.nodeAddresses`). IP literals compare as the address they are
 (`canonicalIp`: `2001:db8:0:0::10` is `2001:db8::10`, `::ffff:192.0.2.10` is `192.0.2.10`).
-The plan, the hide and the re-observation resolve (A and AAAA, `nodeIntentOps.resolveNames`, at
-most 20 names a look) each name a Host on the node's transports dials that would make it a direct
-Host if it were the node; a name answering with one of the node's addresses is the node, and so
+The plan, the hide, the rehearsal's Host observations and the re-observation resolve (A and
+AAAA, `nodeIntentOps.resolveNames`) EVERY name a Host on the node's transports dials that would
+make it a direct Host if it were the node: past 200 names one look refuses
+(`edge.too_many_host_names`: the plan and the hide stop, the re-observation raises those Hosts as
+`direct_host_reappeared`) rather than leave one unchecked; a name answering with one of the node's addresses is the node, and so
 is everything it answers (its other family). Such names are kept on the origin once found (the
 cache token moves, so no body rendered before is served again), so the render, which cannot
 resolve, refuses an entry at them too. A name the node is known by only to the operator, and an

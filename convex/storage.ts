@@ -814,9 +814,16 @@ export const drainMirrors = internalAction({
   ): Promise<{ refreshed: number; scanned: number; done: boolean }> => {
     const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
     if (providers.length === 0) {
-      // No mirror to keep: a running pass ends here, a new one never starts.
-      if (pass === 'continue')
-        await ctx.runMutation(internal.mirrorProviders.noteMirrorPass, { done: true });
+      // No mirror to keep: a running pass ends here (a request it absorbed
+      // goes round once more and ends the same way), a new one never starts.
+      if (
+        pass === 'continue' &&
+        (await ctx.runMutation(internal.mirrorProviders.noteMirrorPass, { done: true }))
+      )
+        await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, {
+          cursor: null,
+          pass: 'continue',
+        });
       return { refreshed: 0, scanned: 0, done: true };
     }
     if (pass === 'start' && !(await ctx.runMutation(internal.mirrorProviders.claimMirrorPass, {})))

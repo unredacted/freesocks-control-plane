@@ -1969,16 +1969,44 @@ describe('edgeSetupRuns: a cancel racing the go-live', () => {
     return { ...seeded, runId, race };
   }
 
+  /** Run whatever is scheduled, a few rounds (a step and what it schedules at once). */
+  async function runScheduled(t: T) {
+    for (let i = 0; i < 5; i++) {
+      await vi.runAllTimersAsync();
+      await t.finishInProgressScheduledFunctions();
+    }
+  }
+
   test('a go-live due while the cancel decides never lands: the run ends cancelled and nothing binds', async () => {
     const { t, serverId, calls, runId, race } = await dueToGoLive();
     // Whatever the run has scheduled runs between the cancel's decision and its restore.
-    race.go = () => pump(t, runId, settled).then(() => undefined);
+    race.go = () => runScheduled(t);
     const c = await t.action(internal.edgeSetupRuns.cancel, { runId });
     expect(c.disposition).toBe('restore');
     expect(calls.restore).toEqual(['cancel_setup']);
     expect((await run(t, runId)).state).toBe('cancelled');
     expect(await bindingFor(t, serverId)).toBeNull();
     expect((await relayOf(t, runId)).setupOwned).toBe(true);
+  });
+
+  test('a cancel whose restore cannot start yet can be pressed again: the run is not ended before its cleanup', async () => {
+    const { t, calls, runId, race } = await dueToGoLive();
+    let refuse = true;
+    race.go = async () => {
+      if (!refuse) return;
+      refuse = false;
+      throw new ConvexError({ code: 'edge.panel_op_running', message: 'busy' });
+    };
+    await expect(t.action(internal.edgeSetupRuns.cancel, { runId })).rejects.toThrow(
+      /panel_op_running/,
+    );
+    expect((await run(t, runId)).state).not.toBe('cancelled');
+    expect(calls.restore).toEqual([]);
+    // The second press goes through and ends the run.
+    const c = await t.action(internal.edgeSetupRuns.cancel, { runId });
+    expect(c.disposition).toBe('restore');
+    expect(calls.restore).toEqual(['cancel_setup']);
+    expect((await run(t, runId)).state).toBe('cancelled');
   });
 
   test('go-live waits while a restore runs on the origin, and a cancelled setup restores only an origin it owns', async () => {

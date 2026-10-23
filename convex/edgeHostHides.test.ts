@@ -14,7 +14,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
-import { classifyDirectHosts, listingHash } from './lib/edges/directHosts';
+import { MAX_NODE_NAME_LOOKUPS, classifyDirectHosts, listingHash } from './lib/edges/directHosts';
 import { cohortPage, type Cohort, type CohortCursor, type CohortPage } from './lib/edges/cohorts';
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
 import { HOST_OP_TTL_MS, HOST_SETTLE_MS } from './hostOps';
@@ -699,6 +699,72 @@ describe('the node by any of its addresses', () => {
       expect(leak.reason).toBe('leak_detected');
       panel.find(id).isDisabled = true;
     }
+  });
+});
+
+describe('names among the Hosts, every time the Hosts are looked at', () => {
+  afterEach(() => __setNameResolutionForTests(null));
+  const direct = (uuid: string, address: string): AddressRow => ({
+    uuid,
+    remark: `${FIXTURE_NODE}-reality`,
+    address,
+    port: 443,
+    sni: 'target.example',
+    isDisabled: false,
+    inbound: inbound(FIXTURE_INBOUND),
+  });
+  /** `node-<n>.example.net` names; only `node-one.example.net` is the node. */
+  const resolveOnly = () =>
+    __setNameResolutionForTests(async (name) =>
+      name === 'node-one.example.net'
+        ? { v4: [FIXTURE_ORIGIN], v6: [] }
+        : { v4: ['198.51.100.200'], v6: [] },
+    );
+
+  test("a Host added after the hide that dials the node by a new name is seen by the rehearsal's observation", async () => {
+    resolveOnly();
+    const { t, panel, relayId, relay, download } = await world();
+    await t.action(internal.edgeHostHides.hide, { relayId, approvedUuids: [] });
+    panel.hosts.push(direct('late', 'node-one.example.net'));
+    const obs = await t.action(internal.edgeHostHides.observe, { relayId });
+    expect(obs.direct.covered.map((h) => h.uuid)).toContain('late');
+    expect((await relay()).nodeAddresses).toEqual(['node-one.example.net']);
+    // The render knows it too: the entry is never served.
+    const leak = await download();
+    expect(leak.status).toBe(503);
+    expect(leak.reason).toBe('leak_detected');
+  });
+
+  test('every name is looked up however many there are, and too many to check stop the hide', async () => {
+    resolveOnly();
+    const others = Array.from({ length: 24 }, (_, i) =>
+      direct(`other-${i}`, `cdn-${i}.example.org`),
+    );
+    const { t, panel, relayId } = await world({
+      hosts: [...panelHosts(), ...others, direct('last', 'node-one.example.net')],
+    });
+    const hid = await t.action(internal.edgeHostHides.hide, { relayId, approvedUuids: [] });
+    expect(hid).toMatchObject({ hidden: 2 });
+    expect(panel.find('last').isDisabled).toBe(true);
+    // Past what one look may ask, nothing is guessed: the hide refuses.
+    for (let i = 0; i < MAX_NODE_NAME_LOOKUPS; i++)
+      panel.hosts.push(direct(`more-${i}`, `more-${i}.example.org`));
+    await expect(
+      t.action(internal.edgeHostHides.hide, { relayId, approvedUuids: [] }),
+    ).rejects.toThrow(/edge\.too_many_host_names/);
+  });
+
+  test('a node already known by as many addresses as are kept moves no cache token for another', async () => {
+    const { t, relayId, relay } = await world();
+    const full = Array.from({ length: 50 }, (_, i) => `n${i}.example.net`);
+    await t.run((ctx) => ctx.db.patch(relayId, { nodeAddresses: full }));
+    const epoch = (await relay()).publicationEpoch;
+    await t.mutation(internal.edgeHostHides.recordNodeAddresses, {
+      relayId,
+      addresses: ['one-more.example.net'],
+    });
+    expect((await relay()).publicationEpoch).toBe(epoch);
+    expect((await relay()).nodeAddresses).toEqual(full);
   });
 });
 

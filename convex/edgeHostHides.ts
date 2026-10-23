@@ -33,10 +33,12 @@ import { writeAuditLog } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import type { BackendHost } from './lib/backends/types';
 import {
+  MAX_NODE_NAME_LOOKUPS,
   classifyDirectHosts,
   isDirectHost,
   listingHash,
   nodeNameCandidates,
+  nodeNameHosts,
   nodeNamesOf,
   observedTuple,
   sameTuple,
@@ -593,7 +595,8 @@ function nodeInbounds(
 /**
  * The names among a node's Hosts that turn out to be the node (they resolve to
  * one of its addresses), with what they resolve to: a direct Host may dial the
- * node by a name. Resolved only when such a name is there (`nodeNameCandidates`).
+ * node by a name. Resolved only when such a name is there (`nodeNameCandidates`),
+ * every one of them: more than one look may ask is refused, never cut short.
  */
 export async function resolveNodeNames(
   ctx: ActionCtx,
@@ -602,6 +605,11 @@ export async function resolveNodeNames(
 ): Promise<string[]> {
   const names = nodeNameCandidates(hosts, dctx);
   if (names.length === 0) return [];
+  if (names.length > MAX_NODE_NAME_LOOKUPS)
+    throw new ConvexError({
+      code: TOO_MANY_HOST_NAMES,
+      message: `The node's Hosts dial ${names.length} names, more than the ${MAX_NODE_NAME_LOOKUPS} FCP checks at once; remove the ones not in use`,
+    });
   const answers = await ctx.runAction(internal.nodeIntentOps.resolveNames, { names });
   return nodeNamesOf(dctx, answers);
 }
@@ -630,6 +638,8 @@ async function withNodeNames(
   return { ...c, alsoAddresses: [...c.alsoAddresses, ...found] };
 }
 
+const TOO_MANY_HOST_NAMES = 'edge.too_many_host_names';
+
 /** Bound on the names kept per origin (a node's own names are few). */
 const MAX_NODE_ADDRESSES = 50;
 
@@ -638,10 +648,13 @@ export const recordNodeAddresses = internalMutation({
   handler: async (ctx, { relayId, addresses }) => {
     const relay = await ctx.db.get(relayId);
     if (!relay) return null;
-    const next = [...(relay.nodeAddresses ?? [])];
+    const kept = relay.nodeAddresses ?? [];
+    const next = [...kept];
     for (const a of addresses) if (!next.some((x) => sameAddress(x, a))) next.push(a);
-    if (next.length === (relay.nodeAddresses ?? []).length) return null;
-    await ctx.db.patch(relayId, { nodeAddresses: next.slice(0, MAX_NODE_ADDRESSES) });
+    // The kept set only grows, so the same length after the cap is the same set.
+    const capped = next.slice(0, MAX_NODE_ADDRESSES);
+    if (capped.length === kept.length) return null;
+    await ctx.db.patch(relayId, { nodeAddresses: capped });
     // What a member may be served changed: no body rendered before is reused.
     await bumpEpochAndRefresh(ctx, relay);
     return null;
@@ -878,17 +891,19 @@ export interface HostObservation {
 export const observe = internalAction({
   args: { relayId: v.id('relays'), nodeInboundUuids: v.optional(v.array(v.string())) },
   handler: async (ctx, a): Promise<HostObservation> => {
-    const c = await ctx.runQuery(internal.edgeHostHides.context, { relayId: a.relayId });
-    if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    const c0 = await ctx.runQuery(internal.edgeHostHides.context, { relayId: a.relayId });
+    if (!c0) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     // A backend without client-facing Hosts (Outline, a manual origin) has
     // nothing to observe: a constant listing, never a `hosts_unsupported` throw.
-    if (c.relay.hostMode === 'none')
+    if (c0.relay.hostMode === 'none')
       return {
         listingHash: 'none',
         observedAt: Date.now(),
         direct: { covered: [], uncovered: [] },
       };
-    const hosts = await listPanelHosts(ctx, c.backendServerId);
+    const hosts = await listPanelHosts(ctx, c0.backendServerId);
+    // A Host added since the hide may dial the node by a name nothing knew yet.
+    const c = await withNodeNames(ctx, c0, hosts, nodeInbounds(c0, hosts, a.nodeInboundUuids));
     const inbounds = nodeInbounds(c, hosts, a.nodeInboundUuids);
     const dctx = directContextOf(c, inbounds, conventionRemarks(hosts, c.nodeName));
     return {
@@ -921,7 +936,28 @@ export const reobserveDirect = internalAction({
         continue;
       }
       report.relays++;
-      const c = await withNodeNames(ctx, c0, hosts, nodeInbounds(c0, hosts, undefined));
+      let c: HideContext;
+      try {
+        c = await withNodeNames(ctx, c0, hosts, nodeInbounds(c0, hosts, undefined));
+      } catch (err) {
+        if ((err as ConvexError<{ code?: string }>).data?.code !== TOO_MANY_HOST_NAMES) throw err;
+        // Too many names to check: every Host that could be the node is raised
+        // for the operator rather than assumed not to be.
+        const unchecked = nodeNameHosts(
+          hosts,
+          directContextOf(c0, nodeInbounds(c0, hosts, undefined)),
+        ).filter((h) => !h.isDisabled);
+        await ctx.runMutation(internal.edgeHostHides.setDirectHostAlert, {
+          relayId,
+          hosts: unchecked.map((h) => ({
+            uuid: h.uuid,
+            remark: h.remark,
+            inboundUuid: h.inbound?.configProfileInboundUuid ?? null,
+          })),
+        });
+        report.alerted++;
+        continue;
+      }
       const st = await ctx.runQuery(internal.edgeHostHides.status, { relayId });
       const approved = new Set(
         st.rows.filter((r) => r.intent === 'disable').map((r) => r.hostUuid),

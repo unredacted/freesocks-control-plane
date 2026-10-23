@@ -77,31 +77,45 @@ export function isDirectHost(h: BackendHost, ctx: DirectHostContext): boolean {
   return true;
 }
 
-/** Names asked per look: each is one DNS query, and a node's Hosts are few. */
-export const MAX_NODE_NAME_LOOKUPS = 20;
+/**
+ * Names one look may ask about. Every name is asked (one dropped could be the
+ * node, never hidden and never refused by the leak check); past this many the
+ * look refuses instead (`edge.too_many_host_names`). A node's Hosts are few.
+ */
+export const MAX_NODE_NAME_LOOKUPS = 200;
 
 /**
- * The names worth resolving to tell whether they are the node: a Host that
+ * The Hosts worth a lookup to tell whether they dial the node: a Host that
  * would be a direct Host but for its address, which is a name the node is not
- * known by yet (plus the origin itself when it is a name: its answers are the
- * node's addresses). Bounded by MAX_NODE_NAME_LOOKUPS.
+ * known by yet.
+ */
+export function nodeNameHosts(
+  hosts: readonly BackendHost[],
+  ctx: DirectHostContext,
+): BackendHost[] {
+  const known = [ctx.originAddress, ...(ctx.alsoAddresses ?? [])];
+  const inbounds = lower(ctx.nodeInboundUuids);
+  return hosts.filter((h) => {
+    const inbound = h.inbound?.configProfileInboundUuid?.toLowerCase();
+    if (!inbound || !inbounds.has(inbound)) return false;
+    if (canonicalIp(h.address) !== null || known.some((a) => sameAddress(h.address, a)))
+      return false;
+    return !ctx.fcpRemarks.includes(h.remark) && !ctx.legacyHostUuids.includes(h.uuid);
+  });
+}
+
+/**
+ * The names to resolve: every one `nodeNameHosts` dial, plus the origin itself
+ * when it is a name (its answers are the node's addresses).
  */
 export function nodeNameCandidates(
   hosts: readonly BackendHost[],
   ctx: DirectHostContext,
 ): string[] {
-  const known = [ctx.originAddress, ...(ctx.alsoAddresses ?? [])];
-  const inbounds = lower(ctx.nodeInboundUuids);
   const names = new Set<string>();
   if (canonicalIp(ctx.originAddress) === null) names.add(normalizeAddress(ctx.originAddress));
-  for (const h of hosts) {
-    const inbound = h.inbound?.configProfileInboundUuid?.toLowerCase();
-    if (!inbound || !inbounds.has(inbound)) continue;
-    if (canonicalIp(h.address) !== null || known.some((a) => sameAddress(h.address, a))) continue;
-    if (ctx.fcpRemarks.includes(h.remark) || ctx.legacyHostUuids.includes(h.uuid)) continue;
-    names.add(normalizeAddress(h.address));
-  }
-  return [...names].slice(0, MAX_NODE_NAME_LOOKUPS);
+  for (const h of nodeNameHosts(hosts, ctx)) names.add(normalizeAddress(h.address));
+  return [...names];
 }
 
 /**

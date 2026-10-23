@@ -345,10 +345,14 @@ export const resolveNames = internalAction({
   args: { names: v.array(v.string()) },
   handler: async (_ctx, { names }): Promise<Record<string, string[]>> => {
     const out: Record<string, string[]> = {};
-    for (const name of names) {
-      const r = await (nameResolver ?? resolveBoth)(name).catch(() => ({ v4: [], v6: [] }));
-      out[name] = [...r.v4, ...r.v6];
-    }
+    // A few at a time: a node's Hosts may dial many names, each one query.
+    for (let i = 0; i < names.length; i += 20)
+      await Promise.all(
+        names.slice(i, i + 20).map(async (name) => {
+          const r = await (nameResolver ?? resolveBoth)(name).catch(() => ({ v4: [], v6: [] }));
+          out[name] = [...r.v4, ...r.v6];
+        }),
+      );
     return out;
   },
 });

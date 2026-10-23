@@ -505,6 +505,20 @@ describe('a change members must see reaches every mirror in one pass', () => {
     expect((await t.run((ctx) => ctx.db.get(subId)))!.lastDeliveredContentAt).toBeDefined();
   }, 60_000);
 
+  test('a pass that ends because no mirror provider is left frees the pass for the next request', async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const claim = () => t.mutation(internal.mirrorProviders.claimMirrorPass, {});
+    expect(await claim()).toBe(true);
+    // A request while it runs: it is to go round once more.
+    expect(await claim()).toBe(false);
+    // The last provider is gone when the pass continues.
+    await t.action(internal.storage.drainMirrors, { cursor: null, pass: 'continue' });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    // Nothing runs any more: the next request starts a pass of its own.
+    expect(await claim()).toBe(true);
+  });
+
   test('requests while a pass runs make it go round once more, not once each', async () => {
     const t = convexTest(schema, modules);
     const claim = () => t.mutation(internal.mirrorProviders.claimMirrorPass, {});
