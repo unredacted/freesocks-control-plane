@@ -48,7 +48,7 @@ type T = TestConvex<typeof schema>;
 const mirrorRefreshes = (t: T) =>
   t.run(async (ctx) => {
     const rows = await ctx.db.system.query('_scheduled_functions').collect();
-    return rows.filter((r) => r.name === 'storage:refreshActiveMirrors').length;
+    return rows.filter((r) => r.name === 'storage:drainMirrors').length;
   });
 
 const epochOf = async (t: T, relayId: Id<'relays'>) =>

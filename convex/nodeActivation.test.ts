@@ -358,7 +358,7 @@ describe('the activation routes over HTTP', () => {
     expect(intent.delivery.disposition).toBe('retiring');
     // The node was live: mirrored bodies are refreshed at once, not by the cron.
     const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
-    expect(scheduled.map((f) => f.name)).toContain('storage:refreshActiveMirrors');
+    expect(scheduled.map((f) => f.name)).toContain('storage:drainMirrors');
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     const row = audit.find((a) => a.action === 'servers.node.retire_requested')!;
     expect(row.actorType).toBe('admin');
@@ -1383,10 +1383,11 @@ describe("a role's retirement request", () => {
       retirement: { stage: 'needs_admin', requestedBy: 'role' },
     });
 
-    // The admin retires it: now the gate closes, and the mirrors are rewritten once.
+    // The admin retires it: now the gate closes, and the mirrors are rewritten once
+    // (one full pass over every mirrored key).
     const refreshes = async () =>
       (await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())).filter(
-        (f) => f.name === 'storage:refreshActiveMirrors',
+        (f) => f.name === 'storage:drainMirrors',
       ).length;
     const before = await refreshes();
     const res = await call('POST', `nodes/intents/${intentId}/retire`, {

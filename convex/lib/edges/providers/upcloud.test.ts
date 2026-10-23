@@ -157,7 +157,22 @@ describe('upcloud: discovery', () => {
   const steps = upcloudProvider.planProvision(cfg, spec, tpl);
   const empty: Ledger = { steps: [], resources: [] };
 
-  test('service list is authoritative: found by exact name, else confirmed absent', async () => {
+  /** The step as a lost create left it: requested `agoMs` ago, outcome unknown. */
+  const lost = (stepId: string, kind: string, agoMs: number): Ledger => ({
+    steps: [
+      {
+        stepId,
+        kind,
+        resourceName: spec.name,
+        state: 'unresolved',
+        attempt: 0,
+        startedAt: Date.now() - agoMs,
+      },
+    ],
+    resources: [],
+  });
+
+  test('service list is authoritative: found by exact name, else confirmed absent once settled', async () => {
     mockFetch(() =>
       jsonRes([
         { uuid: 'u1', name: spec.name },
@@ -169,9 +184,54 @@ describe('upcloud: discovery', () => {
       resources: [{ kind: 'lb', resourceId: 'u1', ownership: 'adopted' }],
     });
     mockFetch(() => jsonRes([{ uuid: 'u2', name: 'other' }]));
-    expect(await upcloudProvider.discover(cfg, steps[0], spec, empty, 1)).toEqual({
+    expect(
+      await upcloudProvider.discover(cfg, steps[0], spec, lost('lb', 'create_lb', 5 * 60_000), 2),
+    ).toEqual({ status: 'confirmed_absent' });
+  });
+
+  test('one quiet look, or a look too soon after the create, is not proof that it never happened', async () => {
+    mockFetch((c) =>
+      c.path === '/1.3/ip_address' ? jsonRes({ ip_addresses: { ip_address: [] } }) : jsonRes([]),
+    );
+    // A create that outlived its timeout may land a little later: look again.
+    const old = lost('lb', 'create_lb', 5 * 60_000);
+    expect(await upcloudProvider.discover(cfg, steps[0], spec, old, 1)).toEqual({
+      status: 'unresolved',
+    });
+    expect(
+      await upcloudProvider.discover(cfg, steps[0], spec, lost('lb', 'create_lb', 10_000), 2),
+    ).toEqual({ status: 'unresolved' });
+    expect(await upcloudProvider.discover(cfg, steps[0], spec, old, 2)).toEqual({
       status: 'confirmed_absent',
     });
+    // The same for a floating IP that might still appear.
+    expect(
+      await upcloudProvider.discover(cfg, steps[1], spec, lost('ip', 'allocate_ip', 5 * 60_000), 1),
+    ).toEqual({ status: 'unresolved' });
+  });
+
+  test('the service list is read page by page: a service past the first page is found', async () => {
+    // UpCloud answers 10 services by default, at most 100 a page.
+    const services = Array.from({ length: 205 }, (_, i) => ({
+      uuid: `u${i}`,
+      name: i === 204 ? spec.name : `other-${i}`,
+    }));
+    const stub = mockFetch((c) => {
+      const q = new URLSearchParams(c.query);
+      const limit = Math.min(Number(q.get('limit') ?? 10), 100);
+      const offset = Number(q.get('offset') ?? 0);
+      return jsonRes(services.slice(offset, offset + limit));
+    });
+    expect(
+      await upcloudProvider.discover(cfg, steps[0], spec, lost('lb', 'create_lb', 5 * 60_000), 2),
+    ).toEqual({
+      status: 'found',
+      resources: [{ kind: 'lb', resourceId: 'u204', ownership: 'adopted' }],
+    });
+    expect(stub.calls).toHaveLength(3);
+    stub.calls.length = 0;
+    const inv = await upcloudProvider.inventory!(cfg);
+    expect(inv.loadBalancers).toHaveLength(205);
   });
 
   test('floating ips carry no identity: unattached candidates are ambiguous, none is confirmed absent', async () => {
@@ -207,9 +267,9 @@ describe('upcloud: discovery', () => {
         },
       }),
     );
-    expect(await upcloudProvider.discover(cfg, steps[1], spec, empty, 1)).toEqual({
-      status: 'confirmed_absent',
-    });
+    expect(
+      await upcloudProvider.discover(cfg, steps[1], spec, lost('ip', 'allocate_ip', 5 * 60_000), 2),
+    ).toEqual({ status: 'confirmed_absent' });
   });
 });
 

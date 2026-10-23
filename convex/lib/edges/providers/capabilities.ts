@@ -124,7 +124,9 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     idleTimeoutConfigurable: true,
     memberHealth: false,
     typicalProvisionMs: 5 * MIN,
-    discoverySettleMs: 0,
+    // The create is one synchronous call that can outlive the HTTP timeout and
+    // still complete: its service may only be listed a little later.
+    discoverySettleMs: MIN,
   },
   // Every change answers at once and is applied afterwards: the LB, backend
   // and frontend steps are polled until the LB is `ready` again (scaleway.ts).

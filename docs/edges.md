@@ -761,8 +761,9 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    backup when the first stops working (`hero.relayBackupHint`).
    An L7 edge renders as ONE entry (its hostname). A backend that hands out a single access
    key (Outline) renders in **single-key** style: one entry, no backup, no auto group;
-5. checks every outgoing entry, emitted AND retained, against the origin address
-   (`leak_detected`), and persists an **eligibility snapshot** (`subscriptions.lastRender`:
+5. checks every outgoing entry, emitted AND retained, against the node by any of its
+   addresses (the origin and the node's address set below, IPs compared as the address they
+   are, however written: `leak_detected`), and persists an **eligibility snapshot** (`subscriptions.lastRender`:
    epoch, family, resolved listeners, primary/backup edge) that the member's connection labels
    and report attribution read: they never reconstruct an assignment without the body.
    Attribution names an edge ONLY from that snapshot (current epoch) and covers unpinned
@@ -998,7 +999,15 @@ helper.
 Mirrors follow the same policy: each mirror row records what its object holds (`validated`:
 policy version, epoch, edges); creating an origin revalidates the origin's mirrors, replacing
 a raw object with a fresh render or, when nothing can render, with an **unavailable stub**
-(the URL is already distributed, so the object itself must stop serving the origin). The
+(the URL is already distributed, so the object itself must stop serving the origin). Every
+change members must see (a binding claimed or released, an edge leaving the pool, a rotation's
+flip, a node closed or retired) renders the mirrors again in ONE full pass from the first key to
+the last (`scheduleMirrorRefresh` -> `storage.drainMirrors`, continued run after run), minutes
+on any fleet, not the six-hourly sweep's window of a few thousand keys. One pass runs at a time
+(`mirrorProviders.claimMirrorPass` / `noteMirrorPass`, appState `mirror:pass`): a request while
+one runs makes it go round once more at its end, so every key is rendered after the latest
+change and a burst of changes costs one more pass, not one each; a pass not heard from for 30
+minutes died, and the next request starts anew. The
 account view and the issuance responses hand out ONLY the fronted token URL for a covered key
 (`edgeRequired`), with the raw URL and its short id blank. A key counts as covered when a binding
 covers its pinned node or its whole backend, and, while it is not pinned yet (a new key may land
@@ -1047,7 +1056,7 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `POST automation {on}`                                              | The one automation switch (settings scope): in ONE mutation sets `edge.enabled`, `edge.autoRotate`, `edge.probe.enabled` and `edge.autoProvisionToDesired` to `on`, and `edge.standbyPerListener = 1` when turning on (left as-is when off). Never `render.enabled` or `l7.autoSelect`; touches no origin row (an origin's own `autoRotate` keeps its meaning under the global gate: `cfg.enabled && cfg.autoRotate && relay.autoRotate`). Audited `edge.automation.set` (the boolean only).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `POST setup-runs/plan {backendServerId, nodeUuid}`                  | The guided setup's read-only plan for one backend node (`listenerKeys?` as on create; throttled: it lists the node's transports and Hosts): frontable transports, direct Hosts tagged covered / uncovered, compatible accounts with reasons, the fleet-wide rendering consequence, disabled client families, and the `planHash` a run creation must echo. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `POST setup-runs`, `GET setup-runs[/{id}]`                          | Create a run (`{backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`: `listenerKeys` is the operator's choice of 1 to 8 frontable transports when the node has more, covered by the plan hash; `edge.plan_stale`, `edge.account_incompatible`, `edge.too_many_inbounds`, `edge.setup_run_active`), list runs, poll one (stage, state, the interruption, per-listener verdicts, the `try_it` test links).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `POST setup-runs/{id}/{cancel\|retry\|continue}`                    | The three operator verbs on a run: cancel (before publish deletes the origin `restore-direct`; between publish and go-live, a run parked at `go_live` included, starts the restore workflow with purpose `cancel_setup`; a re-protect run instead drops only its own candidates, disposition `candidates`; after go-live refused), retry (re-enters the current stage under a new generation; `{tryAnotherAddress, edgeId?}` at `try_it` replaces only that line, refused as `edge.replacement_cannot_start` with nothing cancelled when no replacement could start, `{checkAgain}` checks the same unreachable address afresh, `{acceptPartial}`, `{accountId}` answer the card's secondary buttons), continue (`{confirmations[]}` forwards each `try_it` tick to `POST edges/{id}/verify`; `{approvedHideUuids[]}` replaces the consent after `review_changed`; `{keepDirect}` finishes unbound).                                                                                                                                                                                                                                                                                                                                  |
+| `POST setup-runs/{id}/{cancel\|retry\|continue}`                    | The three operator verbs on a run: cancel (before publish deletes the origin `restore-direct`; between publish and go-live, a run parked at `go_live` included, starts the restore workflow with purpose `cancel_setup`; a re-protect run instead drops only its own candidates, disposition `candidates`; after go-live refused), retry (re-enters the current stage under a new generation; a failed run only while it is still the node's run, else `edge.setup_run_superseded`; `{tryAnotherAddress, edgeId?}` at `try_it` replaces only that line, refused as `edge.replacement_cannot_start` with nothing cancelled when no replacement could start, `{checkAgain}` checks the same unreachable address afresh, `{acceptPartial}`, `{accountId}` answer the card's secondary buttons), continue (`{confirmations[]}` forwards each `try_it` tick to `POST edges/{id}/verify`; `{approvedHideUuids[]}` replaces the consent after `review_changed`; `{keepDirect}` finishes unbound).                                                                                                                                                                                                                                            |
 | `POST relays/{id}/require-edges`                                    | Starts a guided run for a deferred origin (it never binds by itself): the SAME activation policy. Every published L4 edge without a current confirmation comes back as `pending[]` (the node page renders the `try_it` card) instead of a binding; with nothing pending the run starts at the rehearsal and goes live through stage 8. Refuses `edge.not_deferred`, `edge.coverage_incomplete`, `edge.setup_run_active`, `edge.busy`, `edge.quarantined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `POST relays/{id}/serve-direct`                                     | "Serve this node directly again": the restore workflow with purpose `release_requirement` (binding released before any direct Host is re-enabled; edges and listeners kept). Refuses `edge.quarantined`, `edge.setup_owned`, `edge.restore_in_progress` and `edge.not_edge_required`. See § "Operations safety".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `POST relays/{id}/reprotect`                                        | "Protect again" for a live, bound, enrolled node: a re-protect run (`kind: 'reprotect'`, `mode` `replace_all` or `add`) that keeps the committed delivery until go-live and drops only its candidates on cancel. Refuses `edge.reprotect_not_bound`, `edge.reprotect_not_enrolled`, `edge.reprotect_no_room` and the usual run refusals. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -1126,9 +1135,21 @@ failed, cancelled or unbound run leaves the origin owned. Cancel before stage 5 
 `restore-direct` (nothing was published; the delete cancels the live rotation, drains the
 standbys for the reconcile destroy and removes the credential); at stages 5-7 the published edges
 stay and `edgeRestore.start` runs with purpose `cancel_setup`, unless the origin never reached
-members (`edgeSetupRuns.originEverServed`: no edge ever published, no hide row, no binding
-naming it), which is deleted like an earlier cancel so the node is free to protect again;
-after go-live there is no cancel. An origin a failed or cancelled run left owned (no run live
+members (no edge ever published, no hide row, no binding naming it), which is deleted like an
+earlier cancel so the node is free to protect again; after go-live there is no cancel. The
+cancel decides in ONE mutation that re-reads the run and moves its step version
+(`edgeSetupRuns.decideCancel`) before it deletes or restores anything: a go-live that committed
+first refuses the cancel (`edge.setup_run_finished`), and a go-live still due is fenced out.
+The run is marked cancelled only once the delete or the restore took the origin: a cleanup
+refused meanwhile (a server change, a restore already running) leaves the run open, so the
+cancel can be pressed again (a run left `running` is re-kicked by the reconcile). An origin no setup owns any more (a newer run went live on it) or
+that a binding names is never deleted or restored by a cancel: the run only ends (disposition
+`none`). Go-live itself waits while a restore workflow runs on the origin (the run asks,
+`provider_failed` / `restore_in_progress`), and `edgeRestore.start` refuses `cancel_setup` on an
+origin no setup owns (`edge.origin_live`). Try again on a FAILED run is accepted only while it
+is still the node's run: no newer run of the node, none open, and its origin still owned by a
+setup and serving no member; otherwise `edge.setup_run_superseded` (open the newer run, or start
+a new one). An origin a failed or cancelled run left owned (no run live
 on it) is a **leftover**: the protect sheet offers its node again (`nodeCandidates.leftover`,
 "Half set up") and the new run resumes it (`plan.existingRelay`) at its recorded stage, at
 publish at the latest: the new run's listeners hold no edge until publish (through provision)
@@ -1359,11 +1380,29 @@ Host the ledger already disabled is refused: `edge.consent_withdrawn_hidden`, Re
 protection is the path that re-enables it).
 
 A node that serves members today has backend Hosts pointing at its own address (**direct
-Hosts**: enabled, on one of the node's transports, dialling `originAddress`, not an FCP origin
+Hosts**: enabled, on one of the node's transports, dialling the node, not an FCP origin
 remark, not an adopted legacy Host; `convex/lib/edges/directHosts.ts`). A guided setup hides
 them once its edges serve, so that from then on members depend on the edge; a Host is
 `covered` when a frontable listener serves its transport and `uncovered` otherwise (the operator
 approves hiding an uncovered one by uuid, or its members stay on the direct address).
+
+**The node by any of its addresses.** "Dialling the node" is judged against ONE set, shared by
+the setup plan, the hide, the reconcile's re-observation, the member render's leak check, the
+rehearsal and the restore's raw-body checks (`nodeIntents.nodeAddressesOf`): `originAddress`;
+for an enrolled node every other address it has, whatever form the origin takes (its public
+IPv4 and IPv6, its name, its management address); and the names among the node's Hosts that
+resolve to the node (`relays.nodeAddresses`). IP literals compare as the address they are
+(`canonicalIp`: `2001:db8:0:0::10` is `2001:db8::10`, `::ffff:192.0.2.10` is `192.0.2.10`).
+The plan, the hide, the rehearsal's Host observations and the re-observation resolve (A and
+AAAA, `nodeIntentOps.resolveNames`) EVERY name a Host on the node's transports dials that would
+make it a direct Host if it were the node: past 200 names one look refuses
+(`edge.too_many_host_names`: the plan and the hide stop, the re-observation raises those Hosts as
+`direct_host_reappeared`) rather than leave one unchecked; a name answering with one of the node's addresses is the node, and so
+is everything it answers (its other family). Such names are kept on the origin once found (the
+cache token moves, so no body rendered before is served again), so the render, which cannot
+resolve, refuses an entry at them too. A name the node is known by only to the operator, and an
+unenrolled node's other family no Host name reveals, stay unknown: before protecting such a node,
+check that its Hosts dial it by an address FCP knows.
 
 **The hide ledger** (`edgeHostHides`, `convex/edgeHostHides.ts`) records every write BEFORE it
 is made: `intended` (the observed tuple, an `opId`, a 60 s lease) → `setHostDisabled(uuid,
@@ -1452,13 +1491,22 @@ any point, and never writes twice what it cannot prove:
   wall clock. An unexpected throw is counted and retried after a poll interval (20 s).
 - **Cancel.** In `select`, `provisioning` or `verifying` a run is cancelled; in `publishing` or
   `host_flipping` it rolls back; from `confirming` on it is `edge.too_late`; a request during
-  `rolling_back` is recorded and never aborts the rollback.
+  `rolling_back` is recorded and never aborts the rollback. A provider call still out when the
+  run ends (a create the cancel overtook) records what it built when it answers, but never
+  moves a `failed` or `cancelled` edge back to an in-progress status: the edge stays where the
+  reconcile destroys it, and the reconcile waits for that answer before it does.
 - **Provider steps.** Each create or delete holds an operation claim (60 s lease). A live claim
   answers `edge.op_busy`; an expired claim on a provision or destroy step is never re-run: the
   step goes `unresolved` and to **discovery**, which answers one of four outcomes. `found`: the
-  step is done. `confirmed_absent` (two or more quiet looks plus the adapter's settle time):
-  the step runs again, at most 3 attempts, then the edge needs an operator and the run fails
-  `step_retries_exhausted`. `ambiguous`: the edge needs an operator, the run fails
+  step is done. `confirmed_absent` (two or more quiet looks plus the adapter's settle time,
+  `discoverySettleMs`; one quiet look is never proof, since a create that outlived its timeout
+  can still be listed later; UpCloud waits a minute, as its create is one synchronous call, and
+  reads its service list page by page, the API answering 10 services unless asked for more):
+  the step runs again, at most 3 attempts, then the run fails `step_retries_exhausted`; that
+  step stays `pending` (nothing of it exists), so the failed edge is destroyed by the reconcile
+  with everything the earlier steps built and billed, and the failure shows as
+  `rotation_failed`. A step left `ambiguous` or `needs_operator` raises the edge to
+  `needs_operator`. `ambiguous`: the edge needs an operator, the run fails
   `ambiguous_resource`. `unresolved`: keep looking for 30 minutes after the step started, then
   `discovery_timeout`. A provision has its own 20-minute cap (`provision_timeout`). Shared
   external locks use the same lease and are held on a thrown or partial write until discovery
@@ -1475,8 +1523,9 @@ any point, and never writes twice what it cannot prove:
   (`panel_unreachable`); a planned Host that vanished or was rebound is `hosts_changed` and
   rolls back; an unconverged confirm writes again.
 - **Rollback.** The DB half (`applyRollbackBinding`) is idempotent: the new edge back to an
-  unpublished standby, the previous edge republished at its pool index, the epoch bumped,
-  template edges and mirrors refreshed. The Host half writes back the previous tuple, judged by
+  unpublished standby, the previous edge republished at its pool index (only while it still
+  serves, `draining` or `active`: one being destroyed, failed or parked for an operator is never
+  handed out again), the epoch bumped, template edges and mirrors refreshed. The Host half writes back the previous tuple, judged by
   the same diff. With no forward write ever claimed the run is `rolled_back` at once. Six
   failed rollback writes, a vanished or rebound Host, or a backend unreachable past the cap
   **quarantine** the origin.
@@ -1489,7 +1538,9 @@ any point, and never writes twice what it cannot prove:
   cleared) and calls the setup run's terminal hook with the generation it stored. A failed run
   marks its new edge `failed`; outside a running rotation the reconcile settles unresolved steps
   by discovery and turns failed or cancelled edges into destroy runs (at most 48 attempts, then
-  `needs_operator`). Attention `rotation_stuck` (critical) fires after an hour, before the wall
+  `needs_operator`). A drained edge is destroyed only while no rotation runs on its origin: the
+  edge a replace swapped out is what its rollback puts back, so a drain that ends during a
+  stuck flip waits for the run to end. Attention `rotation_stuck` (critical) fires after an hour, before the wall
   clock ends the run. A maintenance freeze blocks starts only; steps, re-kicks, rollbacks and
   cancels keep running.
 
@@ -1518,7 +1569,11 @@ or a provision FOR THAT LISTENER (`listenerId` in the start), then the origin-wi
 `standbyPerRelay` reserve plus `standbyPerListener` verified standbys per coverage listener
 (each the origin's own value, else the fleet's: § Configuration; the automation switch sets
 `edge.standbyPerListener` to 1). Finishes origin deletes. At most one automatic start per pass
-(`EDGE_PLUMBING.maxReconcileStartsPerTick`; `edge.enabled` is the switch).
+(`EDGE_PLUMBING.maxReconcileStartsPerTick`; `edge.enabled` is the switch). After an automatic
+provision on an origin failed, upkeep provisions there again only an hour later
+(`EDGE_PLUMBING.autoProvisionBackoffMs`): each attempt pays for what it builds before the
+failing step, so a cause that persists (a quota, a provider fault) is not paid for on every
+tick. A manual start is never held.
 
 **Retention** (separate daily crons, `convex/retention.ts`): `retention-edges` prunes
 `destroyed` edges after 30 days, `retention-edge-rotations` terminal rotations after 90, and the
@@ -2795,7 +2850,9 @@ account has others.
 may leave its Project id empty: every create then names the API key's default project. The
 credential test reads it from IAM (`GET /iam/v1alpha1/api-keys/{access_key}`,
 `default_project_id`) and the account keeps it as the observed `defaultProjectId` (not a
-secret); `loadAdapter` gives it to a call whose location names none. A key that may not read it
+secret); `loadAdapter` gives it to a call whose location names none. A new edge freezes the
+project it is planned in on its own placement (`insertPlannedEdge`): a later key whose default
+project differs never sends that edge's discovery, describe or destroy to another project. A key that may not read it
 still passes its test, but a location with neither reads `project_unresolved` (`placeProblemOf`:
 the plan, selection and the set judge it so) and is not offered until it names a Project id, so
 nothing fails at provisioning; the adapter refuses a create with no project rather than send
@@ -3987,7 +4044,7 @@ lifecycle runs in that test and its rows appear here.
 | upcloud    | GET    | `^/1\.3/account$`                                                                  | credential test                                                                                                                                                             | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                                                                                                                                                                                                                         |
 | upcloud    | GET    | `^/1\.3/zone$`                                                                     | location form: the zones                                                                                                                                                    | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                                                                                                                                                                                                                         |
 | upcloud    | POST   | `^/1\.3/load-balancer$`                                                            | create the service with its TCP frontend and backend inline                                                                                                                 | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                                                                                                                                                                                                                         |
-| upcloud    | GET    | `^/1\.3/load-balancer$`                                                            | list services: discovery by name and inventory                                                                                                                              | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                                                                                                                                                                                                                         |
+| upcloud    | GET    | `^/1\.3/load-balancer$ ?limit&offset`                                              | list services, page by page: discovery by name and inventory                                                                                                                | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                                                                                                                                                                                                                         |
 | upcloud    | GET    | `^/1\.3/load-balancer/plans$`                                                      | list the service plans (inventory)                                                                                                                                          | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                                                                                                                                                                                                                         |
 | upcloud    | GET    | `^/1\.3/load-balancer/(?!plans$)[^/]+$`                                            | read one service: describe, inspect, attachment check                                                                                                                       | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                                                                                                                                                                                                                         |
 | upcloud    | DELETE | `^/1\.3/load-balancer/(?!plans$)[^/]+$`                                            | delete the service (idempotent; re-issued until it answers 404)                                                                                                             | https://developers.upcloud.com/1.3/ (Managed Load Balancer), 2026-09-16                                                                                                                                                                                                                                                                                                                                                                                         |

@@ -11,7 +11,8 @@
  */
 import type { BackendHost } from '../backends/types';
 import { sha256Hex } from '../crypto';
-import { sameAddress } from './hosts';
+import { normalizeAddress, sameAddress } from './hosts';
+import { canonicalIp } from './ip';
 
 export interface DirectHost {
   uuid: string;
@@ -74,6 +75,74 @@ export function isDirectHost(h: BackendHost, ctx: DirectHostContext): boolean {
   if (ctx.fcpRemarks.includes(h.remark)) return false;
   if (ctx.legacyHostUuids.includes(h.uuid)) return false;
   return true;
+}
+
+/**
+ * Names one look may ask about. Every name is asked (one dropped could be the
+ * node, never hidden and never refused by the leak check); past this many the
+ * look refuses instead (`edge.too_many_host_names`). A node's Hosts are few.
+ */
+export const MAX_NODE_NAME_LOOKUPS = 200;
+
+/**
+ * The Hosts worth a lookup to tell whether they dial the node: a Host that
+ * would be a direct Host but for its address, which is a name the node is not
+ * known by yet.
+ */
+export function nodeNameHosts(
+  hosts: readonly BackendHost[],
+  ctx: DirectHostContext,
+): BackendHost[] {
+  const known = [ctx.originAddress, ...(ctx.alsoAddresses ?? [])];
+  const inbounds = lower(ctx.nodeInboundUuids);
+  return hosts.filter((h) => {
+    const inbound = h.inbound?.configProfileInboundUuid?.toLowerCase();
+    if (!inbound || !inbounds.has(inbound)) return false;
+    if (canonicalIp(h.address) !== null || known.some((a) => sameAddress(h.address, a)))
+      return false;
+    return !ctx.fcpRemarks.includes(h.remark) && !ctx.legacyHostUuids.includes(h.uuid);
+  });
+}
+
+/**
+ * The names to resolve: every one `nodeNameHosts` dial, plus the origin itself
+ * when it is a name (its answers are the node's addresses).
+ */
+export function nodeNameCandidates(
+  hosts: readonly BackendHost[],
+  ctx: DirectHostContext,
+): string[] {
+  const names = new Set<string>();
+  if (canonicalIp(ctx.originAddress) === null) names.add(normalizeAddress(ctx.originAddress));
+  for (const h of nodeNameHosts(hosts, ctx)) names.add(normalizeAddress(h.address));
+  return [...names];
+}
+
+/**
+ * What the answers say the node is, besides what it is known by: an origin
+ * that is a name answers with the node's addresses; and a candidate name that
+ * answers with an address the node is known by (an IP among the origin, its
+ * `alsoAddresses` and the origin's answers) is the node, with everything it
+ * answers (the node's other family). Empty when nothing new is the node.
+ */
+export function nodeNamesOf(
+  ctx: Pick<DirectHostContext, 'originAddress' | 'alsoAddresses'>,
+  answers: Readonly<Record<string, readonly string[]>>,
+): string[] {
+  const origin = normalizeAddress(ctx.originAddress);
+  const known = [ctx.originAddress, ...(ctx.alsoAddresses ?? [])];
+  const ips = [...known, ...(answers[origin] ?? [])].filter((a) => canonicalIp(a) !== null);
+  const out: string[] = [];
+  const add = (a: string) => {
+    if (![...known, ...out].some((x) => sameAddress(x, a))) out.push(a);
+  };
+  for (const a of answers[origin] ?? []) add(a);
+  for (const [name, ans] of Object.entries(answers)) {
+    if (name === origin || !ans.some((a) => ips.some((ip) => sameAddress(ip, a)))) continue;
+    add(name);
+    for (const a of ans) add(a);
+  }
+  return out;
 }
 
 /** The node's ENABLED direct Hosts, split by whether a frontable listener covers their transport. */

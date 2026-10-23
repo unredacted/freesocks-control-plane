@@ -391,6 +391,7 @@ describe('edgeReconcile', () => {
   });
 
   test('failed edge with an unresolved step is DISCOVERED (never re-run): absent → settled → destroyed', async () => {
+    vi.useFakeTimers();
     const world = fakeUpcloud([]);
     const s = await seed();
     const { id: edgeId } = await insertPlanned(s.t, {
@@ -413,13 +414,20 @@ describe('edgeReconcile', () => {
       status: 'failed',
       stepStates: [{ stepId: 'lb', state: 'unresolved' }],
     });
+    // One quiet look proves nothing yet (a lost create may be listed later)...
+    expect((await run(s.t)).settled).toBe(1);
+    let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
+    expect(edge.steps[0].state).toBe('unresolved');
+    // ...a second one past the settle floor does.
+    vi.setSystemTime(Date.now() + 2 * 60_000);
     const r1 = await run(s.t);
     expect(r1.settled).toBe(1);
-    let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
+    edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.steps[0].state).toBe('done');
     expect(edge.status).toBe('failed');
     // Only the LIST (discovery) was called; never a POST.
     expect(edgeCalls(world.stub.calls, '/1.3/').map((c) => `${c.method} ${c.path}`)).toEqual([
+      'GET /1.3/load-balancer',
       'GET /1.3/load-balancer',
     ]);
     // Nothing to delete: destroying and destroyed in the same pass.

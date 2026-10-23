@@ -796,19 +796,39 @@ export const repairMirrorUploads = internalAction({
 /**
  * One full pass over every mirrored key, started NOW and continued until it
  * reached the last one: for a change that must not wait for the six-hourly
- * sweep's window (freedom modes only through edges: a held key's mirror is
- * replaced by the unavailable stub, a released one gets its body back). The
- * same per-key refresh as the sweep, `REFRESH_MAX_PAGES` pages per run, then
- * it schedules itself with its own cursor; the sweep's cursor is untouched.
+ * sweep's window (an edge left the pool, a node closed, a freedom key held or
+ * released). The same per-key refresh as the sweep, `REFRESH_MAX_PAGES` pages
+ * per run, then it schedules itself with its own cursor; the sweep's cursor is
+ * untouched. `pass: 'start'` (`scheduleMirrorRefresh`) first claims THE pass:
+ * while one runs, the request only makes it go round once more at its end
+ * (`mirrorProviders.claimMirrorPass` / `noteMirrorPass`).
  */
 export const drainMirrors = internalAction({
-  args: { cursor: v.union(v.string(), v.null()) },
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    pass: v.optional(v.union(v.literal('start'), v.literal('continue'))),
+  },
   handler: async (
     ctx,
-    { cursor: start },
+    { cursor: start, pass },
   ): Promise<{ refreshed: number; scanned: number; done: boolean }> => {
     const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
-    if (providers.length === 0) return { refreshed: 0, scanned: 0, done: true };
+    if (providers.length === 0) {
+      // No mirror to keep: a running pass ends here (a request it absorbed
+      // goes round once more and ends the same way), a new one never starts.
+      if (
+        pass === 'continue' &&
+        (await ctx.runMutation(internal.mirrorProviders.noteMirrorPass, { done: true }))
+      )
+        await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, {
+          cursor: null,
+          pass: 'continue',
+        });
+      return { refreshed: 0, scanned: 0, done: true };
+    }
+    if (pass === 'start' && !(await ctx.runMutation(internal.mirrorProviders.claimMirrorPass, {})))
+      return { refreshed: 0, scanned: 0, done: true };
+    const next = pass ? ('continue' as const) : undefined;
     const byName = new Map(providers.map((p) => [p.name, p]));
     let cursor = start;
     let refreshed = 0;
@@ -823,10 +843,25 @@ export const drainMirrors = internalAction({
         scanned++;
         if (await refreshOneSubMirrors(ctx, byName, sub)) refreshed++;
       }
-      if (res.isDone) return { refreshed, scanned, done: true };
+      if (res.isDone) {
+        // A request that came in meanwhile: once more from the first key.
+        if (
+          pass &&
+          (await ctx.runMutation(internal.mirrorProviders.noteMirrorPass, { done: true }))
+        )
+          await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, {
+            cursor: null,
+            pass: next,
+          });
+        return { refreshed, scanned, done: true };
+      }
       cursor = res.continueCursor;
     }
-    await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, { cursor });
+    if (pass) await ctx.runMutation(internal.mirrorProviders.noteMirrorPass, { done: false });
+    await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, {
+      cursor,
+      ...(next ? { pass: next } : {}),
+    });
     return { refreshed, scanned, done: false };
   },
 });

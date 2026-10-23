@@ -129,9 +129,15 @@ export async function assertNoRotationOrQuarantine(db: DatabaseReader, origin: D
   }
 }
 
-/** Members must stop receiving an edge that left the pool: refresh the S3 mirrors once. */
+/**
+ * Members must stop receiving what changed (an edge left the pool, a node was
+ * closed, a binding claimed or released): every mirrored key is rendered again
+ * in ONE full pass from the first key to the last (`storage.drainMirrors`),
+ * not the six-hourly sweep's window of a few thousand keys. Requests while a
+ * pass runs coalesce into one more round of it.
+ */
 export async function scheduleMirrorRefresh(ctx: MutationCtx) {
-  await ctx.scheduler.runAfter(0, internal.storage.refreshActiveMirrors, {});
+  await ctx.scheduler.runAfter(0, internal.storage.drainMirrors, { cursor: null, pass: 'start' });
 }
 
 /**

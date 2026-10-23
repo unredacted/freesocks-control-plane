@@ -183,6 +183,15 @@ describe('diffHosts', () => {
     expect(sameAddress('edge.example.', 'edge.example')).toBe(true);
     expect(sameAddress('192.0.2.1', '192.0.2.2')).toBe(false);
   });
+
+  test('an IP is compared as the address it is, however it is written', () => {
+    expect(sameAddress('2001:db8:0:0::10', '2001:db8::10')).toBe(true);
+    expect(sameAddress('2001:0db8:0000:0000:0000:0000:0000:0010', '[2001:DB8::10]')).toBe(true);
+    expect(sameAddress('::ffff:192.0.2.10', '192.0.2.10')).toBe(true);
+    expect(sameAddress('::ffff:c000:20a', '192.0.2.10')).toBe(true);
+    expect(sameAddress('2001:db8::10', '2001:db8::1:0')).toBe(false);
+    expect(sameAddress('::ffff:192.0.2.11', '192.0.2.10')).toBe(false);
+  });
 });
 
 describe('diffHosts: the full tuple', () => {

@@ -260,3 +260,38 @@ describe('applyEdgeRender: listener-aware assignment', () => {
     expect(out.body).not.toContain('203.0.113.20');
   });
 });
+
+describe('applyEdgeRender: the node by any of its addresses', () => {
+  const direct = (address: string, remark: string) =>
+    `vless://${UUID}@${address}:443?encryption=none&security=reality&sni=target.example&type=tcp#${encodeURIComponent(remark)}`;
+
+  test('a retained entry at another address of the node, or another spelling of it, refuses the body', () => {
+    for (const address of ['[2001:db8::10]', 'node-a.example.net', '[::ffff:192.0.2.10]']) {
+      const body = [realityLink, direct(address, `${NODE}-reality`)].join('\n');
+      const out = applyEdgeRender(
+        rctx([edgeA], { nodeAddresses: ['2001:db8:0:0::10', 'node-a.example.net'] }),
+        body,
+        key(1),
+        { now: NOW },
+      );
+      expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'leak_detected' });
+    }
+    // An entry elsewhere still passes through.
+    const other = [realityLink, direct('198.51.100.99', 'other')].join('\n');
+    expect(
+      applyEdgeRender(rctx([edgeA], { nodeAddresses: ['2001:db8::10'] }), other, key(1), {
+        now: NOW,
+      }).delivery,
+    ).toEqual({ kind: 'serve' });
+  });
+
+  test("an edge at one of the node's addresses is never handed out", () => {
+    const out = applyEdgeRender(
+      rctx([edgeA], { nodeAddresses: ['::ffff:203.0.113.10'] }),
+      realityLink,
+      key(1),
+      { now: NOW },
+    );
+    expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'leak_detected' });
+  });
+});

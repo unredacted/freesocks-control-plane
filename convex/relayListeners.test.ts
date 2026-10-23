@@ -39,7 +39,7 @@ const mirrorRefreshes = (t: T) =>
   t.run(
     async (ctx) =>
       (await ctx.db.system.query('_scheduled_functions').collect()).filter(
-        (r) => r.name === 'storage:refreshActiveMirrors',
+        (r) => r.name === 'storage:drainMirrors',
       ).length,
   );
 const audits = (t: T, action: string) =>

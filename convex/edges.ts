@@ -21,10 +21,10 @@ import type { Doc, Id } from './_generated/dataModel';
 import { randomHex } from './lib/crypto';
 import { reserveAllocation } from './edgeProviderAccounts';
 import { defaultLocationOf, liveCountForLocation } from './edgeLocations';
-import { edgeResourceName } from './lib/edges/accountSettings';
+import { EDGE_OBSERVED_PLACEMENT, edgeResourceName } from './lib/edges/accountSettings';
 import { dropEdgeFromPool, liveEdgesOfAccount } from './relays';
 import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
-import { parseIntent, type ProvisionIntent } from './lib/edges/intent';
+import { parseIntent, parseObservedSettings, type ProvisionIntent } from './lib/edges/intent';
 import {
   holdLearnedAddresses,
   needsEndpointVerification,
@@ -71,6 +71,9 @@ type Resource = Edge['resources'][number];
 
 /** Re-exported for the callers that iterate statuses (the single list lives in lib/edges/pool.ts). */
 export const LIVE_STATUSES = EDGE_LIVE_STATUSES;
+
+/** The statuses of an edge a run is still building. */
+const IN_PROGRESS: ReadonlySet<string> = new Set(['planning', 'provisioning', 'verifying']);
 
 const childResource = v.object({
   kind: v.string(),
@@ -402,13 +405,21 @@ export async function insertPlannedEdge(
   }
   const now = Date.now();
   const name = edgeResourceName(origin.slug, a.nameNonce ?? randomHex(4));
+  // A value the location leaves to the provider's default (Scaleway: the API
+  // key's default project) is frozen as it is NOW: a later key whose default
+  // differs must not send this edge's discovery or destroy somewhere else.
+  const placement: Record<string, unknown> = { ...(location.placement as object) };
+  const observed = parseObservedSettings(account.observedSettings);
+  for (const [key, { fact }] of Object.entries(EDGE_OBSERVED_PLACEMENT[account.provider]))
+    if ((placement[key] === undefined || placement[key] === '') && observed[fact])
+      placement[key] = observed[fact];
   const id = await ctx.db.insert('edges', {
     relayId: a.relayId,
     listenerId: a.listenerId,
     accountId: a.accountId,
     locationId: location._id,
     placeKey: location.placeKey,
-    placement: location.placement,
+    placement: placement as typeof location.placement,
     templateId: a.templateId ?? undefined,
     templateHash: a.templateHash,
     ...(a.choices !== undefined
@@ -602,7 +613,11 @@ export const settleOp = internalMutation({
         v6: a.addresses.v6 ?? edge.addresses.v6,
         hostname: a.addresses.hostname ?? edge.addresses.hostname,
       };
-    if (a.status && a.status !== edge.status) {
+    // A run that ENDED (failed, cancelled) while this call was out is not
+    // brought back to life by its settle: what the call built is recorded
+    // above, and the edge stays where the reconcile destroys it.
+    const ended = edge.status === 'failed' || edge.status === 'cancelled';
+    if (a.status && a.status !== edge.status && !(ended && IN_PROGRESS.has(a.status))) {
       patch.status = a.status as Edge['status'];
       patch.statusChangedAt = now;
       if (a.status === 'destroyed') Object.assign(patch, destroyedPatch(now));

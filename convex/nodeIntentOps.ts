@@ -402,6 +402,34 @@ export const checkOriginResolves = internalAction({
   },
 });
 
+type NameResolver = (name: string) => Promise<{ v4: string[]; v6: string[] }>;
+let nameResolver: NameResolver | null = null;
+/** Test seam: answer `resolveNames` without DNS (null = the real lookup). */
+export function __setNameResolutionForTests(f: NameResolver | null): void {
+  nameResolver = f;
+}
+
+/**
+ * What public resolvers answer for a few names (A and AAAA): whether a Host
+ * dialling a node by a name dials the node (edgeHostHides `nodeNamesAmong`).
+ * DNS only; a failed lookup is no answer.
+ */
+export const resolveNames = internalAction({
+  args: { names: v.array(v.string()) },
+  handler: async (_ctx, { names }): Promise<Record<string, string[]>> => {
+    const out: Record<string, string[]> = {};
+    // A few at a time: a node's Hosts may dial many names, each one query.
+    for (let i = 0; i < names.length; i += 20)
+      await Promise.all(
+        names.slice(i, i + 20).map(async (name) => {
+          const r = await (nameResolver ?? resolveBoth)(name).catch(() => ({ v4: [], v6: [] }));
+          out[name] = [...r.v4, ...r.v6];
+        }),
+      );
+    return out;
+  },
+});
+
 function tlsCheck(
   host: string,
   port: number,

@@ -801,11 +801,21 @@ describe('scaleway: discovery / describe / destroy', () => {
       resources: [{ kind: 'ip', resourceId: 'ip4-9', ownership: 'adopted' }],
     });
     expect(
-      await scalewayProvider.discover(cfg, steps[1], spec, { steps: [], resources: [] }, 1),
+      await scalewayProvider.discover(cfg, steps[1], spec, { steps: [], resources: [] }, 2),
     ).toEqual({ status: 'confirmed_absent' });
     expect(
-      await scalewayProvider.discover(cfg, steps[2], spec, { steps: [], resources: [] }, 1),
+      await scalewayProvider.discover(cfg, steps[2], spec, { steps: [], resources: [] }, 2),
     ).toEqual({ status: 'confirmed_absent' });
+  });
+
+  test('one quiet look is not proof that a create never happened', async () => {
+    const list = (items: unknown[]) =>
+      Object.assign(Promise.resolve({}), { all: async () => items });
+    fakeApi({ listIPs: vi.fn(() => list([])), listLbs: vi.fn(() => list([])) });
+    for (const step of [steps[0], steps[2]])
+      expect(
+        await scalewayProvider.discover(cfg, step, spec, { steps: [], resources: [] }, 1),
+      ).toEqual({ status: 'unresolved' });
   });
 
   test('describe maps ready→active with both families and health from stats; 404 → gone', async () => {

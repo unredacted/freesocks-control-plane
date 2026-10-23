@@ -13,6 +13,7 @@
  * Not a test file itself. Every value is RFC 5737 / `*.example`.
  */
 import { jsonRes, mockFetch, type FetchStub } from './mockFetch';
+import { hostPort } from '../ip';
 
 export interface AddressRow {
   uuid: string;
@@ -59,7 +60,8 @@ export function fakeHostPanel(initial: AddressRow[], mode: PatchMode = 'apply'):
   const body = () =>
     hosts
       .filter((h) => !h.isDisabled)
-      .map((h) => `vless://${FAKE_USER_UUID}@${h.address}:${h.port}?${qs(h)}#${h.remark}`)
+      // A panel brackets an IPv6 address in a share link, as a URI must.
+      .map((h) => `vless://${FAKE_USER_UUID}@${hostPort(h.address, h.port)}?${qs(h)}#${h.remark}`)
       .join('\n');
   const stub = mockFetch(async (c) => {
     if (new URL(c.url).hostname !== 'panel.example') throw new Error(`unexpected ${c.url}`);

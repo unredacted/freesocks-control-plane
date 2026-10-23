@@ -144,7 +144,8 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
       {
         method: 'GET',
         path: '^/1\\.3/load-balancer$',
-        purpose: 'list services: discovery by name and inventory',
+        purpose: 'list services, page by page: discovery by name and inventory',
+        query: ['limit', 'offset'],
       },
       {
         method: 'GET',

@@ -17,6 +17,7 @@
  * plan and surfaced as drift.
  */
 import type { BackendHost } from '../backends/types';
+import { canonicalIp } from './ip';
 
 const SLOT_KEY_RE = /^[a-z0-9]{1,16}$/;
 
@@ -211,15 +212,20 @@ export function rollbackTargetFor(entry: HostPlanEntry): HostTarget {
   };
 }
 
-/** Case-insensitive, bracket-tolerant address equality (IPv6 literals). */
+/**
+ * Address equality: names case-insensitively (a trailing dot ignored), IP
+ * literals as the address they are, however written (brackets, zero groups,
+ * an IPv4-mapped IPv6: `canonicalIp`).
+ */
 export function sameAddress(a: string, b: string): boolean {
   return normalizeAddress(a) === normalizeAddress(b);
 }
 
 export function normalizeAddress(a: string): string {
-  return a
+  const t = a
     .trim()
     .toLowerCase()
     .replace(/^\[|\]$/g, '')
     .replace(/\.$/, '');
+  return canonicalIp(t) ?? t;
 }

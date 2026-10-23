@@ -30,7 +30,8 @@ import { locationKeyOf } from './lib/edges/locations';
 import { mapTransportsToListeners } from './lib/edges/inboundMapping';
 import { applyOriginProbes, originProbeTargets } from './edgeOriginProbe';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
-import { classifyDirectHosts } from './lib/edges/directHosts';
+import { classifyDirectHosts, type DirectHostContext } from './lib/edges/directHosts';
+import { resolveNodeNames } from './edgeHostHides';
 import { templateHostRemark } from './lib/edges/hosts';
 import { accountsForSlot } from './lib/edges/rotation';
 import {
@@ -54,7 +55,7 @@ import { atCap } from './lib/edges/pricing';
 import { accountTested, certificateRefusalOf } from './edgeProviderAccounts';
 import { checkPickOptions } from './edgeTemplates';
 import { listenersOf } from './relayListeners';
-import { enrolledOriginOf, withVerifiedIngress } from './nodeIntents';
+import { enrolledOriginOf, nodeAddressesOf, withVerifiedIngress } from './nodeIntents';
 import {
   L4_NOT_FOR_WEBSOCKET,
   l4BarredFor,
@@ -290,6 +291,7 @@ async function planContextOf(
             setupStage: relay.setupStage ?? null,
             deleting: relay.deleting === true,
             originAddress: relay.originAddress,
+            nodeAddresses: await nodeAddressesOf(ctx, relay),
             listenerKeys: relayListeners.map((l) => l.listenerKey),
             legacyHostUuids: relayListeners.flatMap((l) =>
               (l.legacyHosts ?? []).map((h) => h.uuid),
@@ -914,9 +916,9 @@ export async function buildPlan(
   const hosts = await planStage('reading the Hosts from the backend', () =>
     planOps.listHosts(ctx, { backendServerId: a.backendServerId }),
   );
-  const classified = classifyDirectHosts(hosts, {
+  const dctx: DirectHostContext = {
     originAddress,
-    alsoAddresses: c.enrolled?.directAddresses ?? [],
+    alsoAddresses: c.relay?.nodeAddresses ?? c.enrolled?.directAddresses ?? [],
     nodeInboundUuids,
     fcpRemarks: [
       ...(c.relay?.fcpRemarks ?? []),
@@ -924,6 +926,14 @@ export async function buildPlan(
     ],
     legacyHostUuids: c.relay?.legacyHostUuids ?? [],
     coveredInboundUuids,
+  };
+  // A Host may dial the node by a name: one that resolves to the node is the node.
+  const names = await planStage('resolving the names the Hosts dial', () =>
+    resolveNodeNames(ctx, hosts, dctx),
+  );
+  const classified = classifyDirectHosts(hosts, {
+    ...dctx,
+    alsoAddresses: [...(dctx.alsoAddresses ?? []), ...names],
   });
   const directHosts = [
     ...classified.covered.map((h) => ({

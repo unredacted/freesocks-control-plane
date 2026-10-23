@@ -37,6 +37,7 @@ import { type ModeShape } from './lib/backend/profileTemplate';
 import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
+import { sameAddress } from './lib/edges/hosts';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 import { confirmFromRole, firewallPortsFor } from './lib/backend/portRequirements';
 import { currentNodeName, formerNamesByName, runningRenameOf } from './lib/backend/nodeAliases';
@@ -247,10 +248,11 @@ export function ingressOf(intent: Intent, hostname: string | undefined): Ingress
 /**
  * What an enrolled node's edges dial and how its loopback transports are
  * reached (docs/servers.md "Node lifecycle"): the origin address FCP gives
- * the role (never the management address), the declared ingress, and, when
- * that origin is a hostname, the public addresses a direct Host could still
- * dial the node at. The setup plan and transport discovery read the node from
- * here, not from the backend's node row. Null for a node FCP does not manage.
+ * the role (never the management address), the declared ingress, and every
+ * OTHER address a direct Host could still dial the node at, whatever form the
+ * origin takes: its public IPv4 and IPv6, its name, its management address.
+ * The setup plan and transport discovery read the node from here, not from
+ * the backend's node row. Null for a node FCP does not manage.
  */
 export async function enrolledOriginOf(
   ctx: { db: QueryCtx['db'] },
@@ -279,19 +281,46 @@ export async function enrolledOriginOf(
     .unique();
   const hostname = originHostnameOf(intent, setup);
   const originAddress = originAddressOf(intent, hostname);
-  const ips = [intent.observed.publicIps.v4, intent.observed.publicIps.v6].filter(
-    (x): x is string => !!x && x !== originAddress,
-  );
+  const others: string[] = [];
+  for (const a of [
+    hostname,
+    intent.observed.publicIps.v4,
+    intent.observed.publicIps.v6,
+    intent.observed.management.address,
+  ])
+    if (a && ![originAddress, ...others].some((x) => sameAddress(x, a))) others.push(a);
   const ingressVerified = intent.activation.evidence.some(
     (e) => e.kind === 'ingress_verified' && e.machineRevision === intent.machineRevision,
   );
   return {
     originAddress,
     ingress: ingressOf(intent, hostname),
-    directAddresses: IPV4.test(originAddress) || originAddress.includes(':') ? [] : ips,
+    directAddresses: others,
     acceptsAnyHost: ingressVerified && intent.settings.ingress?.hostHeader === 'any',
     mode: modeSlug(intent),
   };
+}
+
+/**
+ * Every address besides its origin that IS the node behind an origin: an
+ * enrolled node's other addresses (`enrolledOriginOf`), and the names among
+ * its Hosts FCP found to resolve to it, with their answers
+ * (`relays.nodeAddresses`). The direct-Host hide, its re-observation and
+ * every leak check (member renders, the rehearsal, the restore's raw-body
+ * checks) judge "this is the node" by the origin plus this one set.
+ */
+export async function nodeAddressesOf(
+  ctx: { db: QueryCtx['db'] },
+  relay: Doc<'relays'>,
+): Promise<string[]> {
+  const enrolled =
+    relay.origin.kind === 'panel-node' && relay.backendServerId
+      ? await enrolledOriginOf(ctx, relay.backendServerId, relay.origin.nodeName)
+      : null;
+  const out: string[] = [];
+  for (const a of [...(enrolled?.directAddresses ?? []), ...(relay.nodeAddresses ?? [])])
+    if (![relay.originAddress, ...out].some((x) => sameAddress(x, a))) out.push(a);
+  return out;
 }
 
 /** The probe outcomes with what an enrolled node's verified ingress already proved. */
