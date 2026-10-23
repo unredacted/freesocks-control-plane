@@ -600,7 +600,9 @@ gunzip -c "$HOME/fcp-snapshots/freesocks-freesocks_beta-<ts>.sql.gz" \
 Run a **restore drill** before launch and periodically after:
 `sh docker/restore-verify.sh` restores the latest dump into a scratch DB,
 asserts core-table row counts, and drops it (set `AGE_KEY_FILE` for encrypted
-dumps). A backup that has never been restored is not a backup.
+dumps; it decrypts with the backup image's `age`, so the host needs none, and
+any SQL error fails the drill). A backup that has never been restored is not a
+backup.
 
 ### Exports stay outside the checkout
 
