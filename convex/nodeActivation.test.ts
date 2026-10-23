@@ -1383,10 +1383,11 @@ describe("a role's retirement request", () => {
       retirement: { stage: 'needs_admin', requestedBy: 'role' },
     });
 
-    // The admin retires it: now the gate closes, and the mirrors are rewritten once.
+    // The admin retires it: now the gate closes, and the mirrors are rewritten once
+    // (one full pass over every mirrored key).
     const refreshes = async () =>
       (await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())).filter(
-        (f) => f.name === 'storage:refreshActiveMirrors',
+        (f) => f.name === 'storage:drainMirrors',
       ).length;
     const before = await refreshes();
     const res = await call('POST', `nodes/intents/${intentId}/retire`, {
