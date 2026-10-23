@@ -2079,7 +2079,7 @@ export const AttentionItem = z.object({
    * names would stay a spare, its free slots are held for what the node still lacks) ·
    * `members_dark` published ·
    * `host_unresolved` op (create|delete|null), attempts · `rotation_failed` kind, phase, spare (a provision not meant
-   * for use), answer (the provider's redacted words) ·
+   * for use, no setup run's), answer (the provider's redacted words during that run) ·
    * `block_suspected` score, hintLevel, countries[] · `edge_unreachable` countries[] ·
    * `needs_operator` provider, layer · `account_untested` / `account_unqualified` name, provider.
    */

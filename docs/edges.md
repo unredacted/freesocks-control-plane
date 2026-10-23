@@ -1545,9 +1545,10 @@ any point, and never writes twice what it cannot prove:
   step stays `pending` (nothing of it exists), so the failed edge is destroyed by the reconcile
   with everything the earlier steps built and billed, and the failure shows as
   `rotation_failed`. That item and its audit row (`edge.rotation_failed`) carry what the run
-  was (`kind`, and `spare` for a provision that would not have been put in use) and the
-  provider's redacted answer when it sent one (`answer`, `providerAnswerOf`: the one the edge
-  kept, else the newest event that carried one), so the admin names it by what it was
+  was (`kind`, and `spare` for a provision that would not have been put in use and is no
+  guided setup's candidate, `isSpareProvision`) and the provider's redacted answer when it sent
+  one during that run (`answer`, `providerAnswerOf`: the newest event of the run that carried
+  one, else the one kept on the edge the run created; a standby's older answer never counts), so the admin names it by what it was
   ("Adding a spare failed", "Putting an address in use failed"; only a replace is a
   replacement), quotes the provider, and opens the run. A step left `ambiguous` or `needs_operator` raises the edge to
   `needs_operator`. `ambiguous`: the edge needs an operator, the run fails
@@ -3904,7 +3905,7 @@ words keeps its message. The forms check the bounds the schema states (`describe
 of them says so under its field (`fieldProblem`), and submitting focuses the first such field
 and names it in the dialog's error instead of sending. An edges dialog never grows past the
 window (`lib/dialogLayout.ts`, pinned by a test): the confirm dialog keeps its title and buttons
-put and scrolls its body; any other dialog scrolls inside the window with its footer stuck to
+put and scrolls everything between them, its explanation included; any other dialog scrolls inside the window with its footer stuck to
 its bottom edge. `edge.provider_account.options_changed` records which keys
 changed, with values for choices, numbers and switches only;
 `edge.provider_account.options_migrated` the deploy move; rotation starts carry `optionKeys`.

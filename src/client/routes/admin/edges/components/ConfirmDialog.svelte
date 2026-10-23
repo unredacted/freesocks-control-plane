@@ -20,7 +20,7 @@
    *   children?: Snippet
    *
    * It never grows past the window: the title and the buttons stay put and
-   * what is between them scrolls (lib/dialogLayout.ts). A failed confirm brings
+   * what is between them, the explanation included, scrolls (lib/dialogLayout.ts). A failed confirm brings
    * the first field marked invalid into view, else its error.
    */
   import { tick, type Snippet } from 'svelte';
@@ -112,15 +112,17 @@
   }}
 >
   <AlertDialog.Content class={CONFIRM_FIT}>
-    <AlertDialog.Header class="shrink-0">
+    <!-- With an explanation under it, the title keeps its old, closer spacing. -->
+    <AlertDialog.Header class={body ? 'shrink-0 -mb-2.5' : 'shrink-0'}>
       <AlertDialog.Title>{title}</AlertDialog.Title>
-      {#if body}
-        <AlertDialog.Description>{body}</AlertDialog.Description>
-      {/if}
     </AlertDialog.Header>
-    {#if children || typed || (shownError !== null && shownError !== undefined)}
-      <!-- Between the title and the buttons: scrolls when it outgrows the window. -->
+    {#if body || children || typed || (shownError !== null && shownError !== undefined)}
+      <!-- Between the title and the buttons, the explanation included: scrolls when it outgrows the window. -->
       <div bind:this={bodyEl} data-slot="confirm-body" class={CONFIRM_BODY}>
+        {#if body}
+          <AlertDialog.Description class="text-center sm:text-start">{body}</AlertDialog.Description
+          >
+        {/if}
         {#if children}
           <div class="text-sm">{@render children()}</div>
         {/if}

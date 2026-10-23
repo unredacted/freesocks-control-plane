@@ -18,7 +18,9 @@
    * it is said even when there is nothing to choose from.
    *
    * Props: kind 'rotate' | 'burn'; origin; edge; edges? (the origin's, for the
-   * spares); plain?; onClose(); onStarted(rotationId)
+   * spares); spareEdgeId? (a tested spare to start on instead of Automatic: the
+   * held spare a node page's "Put it in use" sends here); plain?; onClose();
+   * onStarted(rotationId)
    */
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -50,6 +52,8 @@
     edge: EdgeAdmin;
     /** The origin's edges: the tested spares of the same transport are offered by name. */
     edges?: EdgeAdmin[];
+    /** A tested spare of the same transport to start on (else Automatic). */
+    spareEdgeId?: string | null;
     plain?: boolean;
     onClose: () => void;
     onStarted: (rotationId: string) => void;
@@ -60,6 +64,7 @@
     relay,
     edge,
     edges = [],
+    spareEdgeId = null,
     plain = false,
     onClose,
     onStarted,
@@ -67,8 +72,10 @@
 
   const qc = useQueryClient();
   const uid = $props.id();
-  // Where from: 'auto', `spare:<edgeId>` or `loc:<locationId>`.
-  let where = $state('auto');
+  // Where from: 'auto', `spare:<edgeId>` or `loc:<locationId>`. Mounted per
+  // use, so the spare the caller names is the start, read once.
+  const startWhere = () => (spareEdgeId ? `spare:${spareEdgeId}` : 'auto');
+  let where = $state(startWhere());
   const setQ = relayProvidersQuery({
     slug: () => relay.slug,
     id: () => relay.id,

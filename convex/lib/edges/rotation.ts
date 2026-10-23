@@ -78,15 +78,15 @@ export const PROVIDER_ANSWER_MAX = 200;
 
 /**
  * The provider's own (redacted, scrubbed) answer behind a run that failed: the
- * one its edge kept (`failure.detail`), else the newest event that carried one
- * (`withProviderAnswer`). Null when the provider said nothing.
+ * newest event of THIS run that carried one (`withProviderAnswer`), else the
+ * one kept on the edge this run created (`createdFailure`: pass it only for
+ * that edge, `createdEdgeIdOf`; a standby's kept answer is from an earlier run
+ * and says nothing about this one). Null when the provider said nothing.
  */
 export function providerAnswerOf(
   events: readonly { detail?: string | null }[],
-  edgeFailure: { detail?: string } | null | undefined,
+  createdFailure: { detail?: string } | null | undefined,
 ): string | null {
-  const kept = edgeFailure?.detail?.trim();
-  if (kept) return kept.slice(0, PROVIDER_ANSWER_MAX);
   for (let i = events.length - 1; i >= 0; i--) {
     const d = events[i]!.detail ?? '';
     const at = d.lastIndexOf(PROVIDER_ANSWERED);
@@ -95,7 +95,39 @@ export function providerAnswerOf(
       if (answer) return answer.slice(0, PROVIDER_ANSWER_MAX);
     }
   }
-  return null;
+  const kept = createdFailure?.detail?.trim();
+  return kept ? kept.slice(0, PROVIDER_ANSWER_MAX) : null;
+}
+
+/**
+ * The new edge a rotation created (never a pre-existing standby or a publish
+ * target), from the row (`createdEdgeId` / `viaStandby`); rows from before
+ * those fields fall back to the event log.
+ */
+export function createdEdgeIdOf<T>(r: {
+  kind: string;
+  createdEdgeId?: T;
+  viaStandby?: boolean;
+  toEdgeId?: T;
+  events: readonly { code: string }[];
+}): T | null {
+  if (r.createdEdgeId) return r.createdEdgeId;
+  if (r.viaStandby !== undefined) return r.viaStandby ? null : (r.toEdgeId ?? null);
+  if (!r.toEdgeId) return null;
+  if (r.kind === 'publish') return null;
+  return r.events.some((e) => e.code === 'selected_standby') ? null : r.toEdgeId;
+}
+
+/**
+ * A provision meant to stay a spare: not put in use when done, and no guided
+ * setup run's candidate (the run puts those in use at go-live).
+ */
+export function isSpareProvision(r: {
+  kind: string;
+  publishOnDone?: boolean;
+  setupRun?: unknown;
+}): boolean {
+  return r.kind === 'provision' && r.publishOnDone !== true && !r.setupRun;
 }
 
 /** What an edge records about why it stopped (`edges.failure`). */

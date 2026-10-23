@@ -20,7 +20,7 @@ import {
 } from './lib/edges/testing/fixtures';
 import { upsertSettingRow } from './appSettings';
 import { isStaleRotation, MAX_STEP_ERRORS, standbyReasonOf } from './edgeRotations';
-import { providerAnswerOf } from './lib/edges/rotation';
+import { isSpareProvision, providerAnswerOf } from './lib/edges/rotation';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -2402,6 +2402,75 @@ describe('edgeRotations: a provision step that keeps failing', () => {
     ).toBe('newer words');
     expect(providerAnswerOf([{ detail: 'step ip threw: 500' }, {}], null)).toBeNull();
     expect(providerAnswerOf([], { detail: 'x'.repeat(500) })!.length).toBe(200);
+    // This run's own words win over what an edge kept.
+    expect(
+      providerAnswerOf([{ detail: 'step ip threw: 400. The provider answered: this run' }], {
+        detail: 'kept',
+      }),
+    ).toBe('this run');
+  });
+
+  test('isSpareProvision: a provision kept unused, never a setup run candidate or a fill', () => {
+    expect(isSpareProvision({ kind: 'provision', publishOnDone: false })).toBe(true);
+    expect(isSpareProvision({ kind: 'provision' })).toBe(true);
+    expect(isSpareProvision({ kind: 'provision', publishOnDone: true })).toBe(false);
+    // A guided setup's candidate is put in use at go-live: not a spare.
+    expect(
+      isSpareProvision({ kind: 'provision', publishOnDone: false, setupRun: { runId: 'r' } }),
+    ).toBe(false);
+    expect(isSpareProvision({ kind: 'publish' })).toBe(false);
+    expect(isSpareProvision({ kind: 'replace' })).toBe(false);
+  });
+
+  test("a failed publish never quotes the standby's older provider answer", async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    const { t, relayId, listenerId } = await seed();
+    // A standby that once had a provider refusal, then recovered.
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, { ipv4: NEW_EDGE });
+    const now = Date.now();
+    const rotationId = await t.run(async (ctx) => {
+      await ctx.db.patch(edgeId as Id<'edges'>, {
+        failure: { step: 'ip', code: 'INVALID_INPUT', detail: 'an old answer' },
+      });
+      const id = await ctx.db.insert('edgeRotations', {
+        relayId,
+        kind: 'publish',
+        trigger: 'manual',
+        burn: false,
+        force: false,
+        toEdgeId: edgeId,
+        viaStandby: true,
+        listenerId,
+        phase: 'publishing',
+        stepVersion: 2,
+        cancelRequested: false,
+        hostPlan: [],
+        hostPlanCaptured: false,
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: now,
+        updatedAt: now,
+      } as never);
+      await ctx.db.patch(relayId, { activeRotationId: id });
+      return id;
+    });
+    await t.mutation(internal.edgeRotations.advance, {
+      rotationId,
+      stepVersion: 2,
+      event: { type: 'fail', code: 'not_publishable', rollback: false },
+    });
+    const { items } = await t.query(internal.edgeOperator.attention, {});
+    const item = items.find((i) => i.kind === 'rotation_failed')!;
+    expect(item.facts).toMatchObject({ kind: 'publish', spare: false });
+    expect(item.facts).not.toHaveProperty('answer');
+    const audit = (await t.run((ctx) => ctx.db.query('auditLog').collect())).find(
+      (a) => a.action === 'edge.rotation_failed',
+    );
+    expect(audit?.payload).toMatchObject({ kind: 'publish', spare: false });
+    expect(audit?.payload).not.toHaveProperty('answer');
   });
 
   test('automatic upkeep does not provision again right after its provision failed', async () => {

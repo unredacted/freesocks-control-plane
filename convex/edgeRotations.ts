@@ -95,6 +95,8 @@ import {
   ROLLBACK_ON_CANCEL_PHASES,
   ROTATION_PHASES,
   TERMINAL_PHASES,
+  createdEdgeIdOf,
+  isSpareProvision,
   nextFailure,
   providerAnswerOf,
   withProviderAnswer,
@@ -1387,9 +1389,14 @@ async function auditFailure(
   code: string,
 ) {
   const origin = await ctx.db.get(r.relayId);
-  const edge = r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null;
-  // What the run was (a spare is not a replacement) and what the provider said.
-  const answer = providerAnswerOf((await ctx.db.get(r._id))?.events ?? r.events, edge?.failure);
+  // What the run was (a spare is not a replacement) and what the provider said
+  // during THIS run (a standby's older answer is not this failure's).
+  const current = (await ctx.db.get(r._id)) ?? r;
+  const created = createdEdgeId(current);
+  const answer = providerAnswerOf(
+    current.events,
+    created ? (await ctx.db.get(created))?.failure : null,
+  );
   await auditRotation(ctx, r._id, {
     actorType: 'system',
     action: 'edge.rotation_failed',
@@ -1399,7 +1406,7 @@ async function auditFailure(
       relaySlug: origin?.slug ?? '',
       trigger: r.trigger,
       kind: r.kind,
-      spare: r.kind === 'provision' && r.publishOnDone !== true,
+      spare: isSpareProvision(r),
       phase,
       outcome,
       step: phase,
@@ -1416,11 +1423,7 @@ async function auditFailure(
  * before those fields existed fall back to the event log.
  */
 function createdEdgeId(r: Rotation): Id<'edges'> | null {
-  if (r.createdEdgeId) return r.createdEdgeId;
-  if (r.viaStandby !== undefined) return r.viaStandby ? null : (r.toEdgeId ?? null);
-  if (!r.toEdgeId) return null;
-  if (r.kind === 'publish') return null;
-  return r.events.some((e) => e.code === 'selected_standby') ? null : r.toEdgeId;
+  return createdEdgeIdOf(r);
 }
 
 /**

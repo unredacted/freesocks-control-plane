@@ -243,11 +243,22 @@
   let putInUseOpen = $state(false);
 
   // Replace: one published address, or a choice when several are in use.
-  let replacing = $state<{ kind: 'rotate' | 'burn'; edge: EdgeAdmin } | null>(null);
-  let choosing = $state<'rotate' | 'burn' | null>(null);
-  function replace(kind: 'rotate' | 'burn') {
-    if (published.length === 1) replacing = { kind, edge: published[0]! };
-    else choosing = kind;
+  // `spare`: a held spare to replace with (its transport's addresses only, and
+  // the Replace dialog starts on that spare instead of Automatic).
+  type Replacing = { kind: 'rotate' | 'burn'; edge: EdgeAdmin; spareEdgeId?: string };
+  let replacing = $state<Replacing | null>(null);
+  let choosing = $state<{
+    kind: 'rotate' | 'burn';
+    candidates: EdgeAdmin[];
+    spareEdgeId?: string;
+  } | null>(null);
+  function replace(kind: 'rotate' | 'burn', spare?: EdgeAdmin) {
+    const candidates = spare
+      ? published.filter((e) => e.listenerId === spare.listenerId)
+      : published;
+    const spareEdgeId = spare?.id;
+    if (candidates.length === 1) replacing = { kind, edge: candidates[0]!, spareEdgeId };
+    else if (candidates.length > 1) choosing = { kind, candidates, spareEdgeId };
   }
   // A retiring address: end its drain now, or keep it as a spare.
   let ending = $state<{ edge: EdgeAdmin; action: 'delete' | 'keep' } | null>(null);
@@ -550,6 +561,7 @@
       open={true}
       plain
       kind={replacing.kind}
+      spareEdgeId={replacing.spareEdgeId ?? null}
       {relay}
       {edges}
       edge={replacing.edge}
@@ -561,7 +573,7 @@
     />
   {/if}
   {#if choosing}
-    {@const kind = choosing}
+    {@const { kind, candidates, spareEdgeId } = choosing}
     <ActionConfirm
       open={true}
       title="Which address?"
@@ -572,13 +584,13 @@
       onClose={() => (choosing = null)}
     >
       <div class="flex flex-col gap-2">
-        {#each published as e (e.id)}
+        {#each candidates as e (e.id)}
           <Button
             variant="outline"
             size="sm"
             onclick={() => {
               choosing = null;
-              replacing = { kind, edge: e };
+              replacing = { kind, edge: e, spareEdgeId };
             }}
           >
             {e.addresses.hostname ?? e.addresses.v4 ?? e.addresses.v6 ?? e.name}
@@ -637,8 +649,8 @@
       title={`${spare ? addressOf(spare) : 'This address'} stays a spare`}
       body={heldSpareWords(slotOf(putInUse.edgeId!) ?? { missing: [] })}
       confirmLabel="Replace address"
-      disabled={busy || published.length === 0}
-      run={async () => replace('rotate')}
+      disabled={busy || !spare || !published.some((e) => e.listenerId === spare.listenerId)}
+      run={async () => replace('rotate', spare)}
     />
   {:else if putInUse}
     {@const item = putInUse}

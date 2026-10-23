@@ -46,9 +46,19 @@ describe('edges dialogs never grow past the window', () => {
 
   test('the confirm dialog keeps its title and buttons put and scrolls its body', () => {
     const confirm = files.find((f) => f.path === 'components/ConfirmDialog.svelte')!.source;
-    expect(confirm).toMatch(/<AlertDialog\.Header class="shrink-0">/);
+    expect(confirm).toMatch(
+      /<AlertDialog\.Header class=\{body \? 'shrink-0 -mb-2\.5' : 'shrink-0'\}>/,
+    );
     expect(confirm).toMatch(/<AlertDialog\.Footer class="shrink-0">/);
     expect(confirm).toMatch(/data-slot="confirm-body" class=\{CONFIRM_BODY\}/);
+    // Only the title is fixed: a long explanation scrolls with the rest.
+    const header = confirm.slice(
+      confirm.indexOf('<AlertDialog.Header'),
+      confirm.indexOf('</AlertDialog.Header>'),
+    );
+    expect(header).not.toContain('Description');
+    const body = confirm.slice(confirm.indexOf('data-slot="confirm-body"'));
+    expect(body.indexOf('<AlertDialog.Description')).toBeGreaterThan(0);
   });
 
   test('the classes bound the height by the window and scroll', () => {

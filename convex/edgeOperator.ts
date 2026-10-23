@@ -26,7 +26,12 @@ import { probeSourceHealth } from './probes';
 import { countryWideHolds, newEdgeBlockedIn } from './edgeCountry';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { readMaintenance } from './lib/edges/maintenance';
-import { isTerminalPhase, providerAnswerOf } from './lib/edges/rotation';
+import {
+  createdEdgeIdOf,
+  isSpareProvision,
+  isTerminalPhase,
+  providerAnswerOf,
+} from './lib/edges/rotation';
 import { accountsForSlot } from './lib/edges/rotation';
 import {
   edgeLayerOf,
@@ -1275,8 +1280,11 @@ export const attention = internalQuery({
       ) {
         // What the run was (a spare that failed to build is no replacement) and
         // the provider's own words on it; the action opens the run itself.
-        const failedEdge = last.toEdgeId ? await ctx.db.get(last.toEdgeId) : null;
-        const answer = providerAnswerOf(last.events, failedEdge?.failure);
+        const created = createdEdgeIdOf(last);
+        const answer = providerAnswerOf(
+          last.events,
+          created ? (await ctx.db.get(created))?.failure : null,
+        );
         items.push({
           ...base(relay),
           id: `rotation_failed:${last._id}`,
@@ -1287,7 +1295,7 @@ export const attention = internalQuery({
           facts: {
             kind: last.kind,
             phase: last.phase,
-            spare: last.kind === 'provision' && last.publishOnDone !== true,
+            spare: isSpareProvision(last),
             ...(answer ? { answer } : {}),
           },
           action: 'open_relay',
