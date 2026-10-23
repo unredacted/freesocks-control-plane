@@ -40,19 +40,20 @@
   import { cn } from '@client/lib/utils';
   import { router } from '@client/stores/router.svelte';
   import {
-    ATTENTION_ACTION_LABELS,
     PLAIN_ATTENTION_ACTION_LABELS,
-    codeExplain,
     codeFix,
     codeLabel,
     plainWords,
+    providerAnswerWords,
   } from '@client/lib/edgeCodes';
   import StatusBadge from './StatusBadge.svelte';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import {
     ATTENTION_ACTION_PLAN,
+    attentionActionLabel,
     attentionCallable,
     attentionFactsLine,
+    attentionHeading,
     attentionSubject,
     attentionTarget,
     type AttentionItem,
@@ -142,9 +143,9 @@
     {#each shown as item (item.id)}
       {@const facts = w(attentionFactsLine(item))}
       {@const subject = w(attentionSubject(item))}
-      {@const actionLabel = plain
-        ? PLAIN_ATTENTION_ACTION_LABELS[item.action]
-        : ATTENTION_ACTION_LABELS[item.action]}
+      {@const actionLabel = attentionActionLabel(item, plain)}
+      {@const heading = attentionHeading(item, plain)}
+      {@const answer = providerAnswerWords(item.facts)}
       <li
         class={cn(
           'bg-card flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border border-s-4 px-3 py-2.5',
@@ -154,14 +155,18 @@
         <div class="min-w-0 flex-1 basis-64">
           <div class="flex flex-wrap items-center gap-2">
             <StatusBadge kind="severity" value={item.severity} />
-            <span class="text-sm font-medium">{w(codeLabel(item.kind))}</span>
+            <span class="text-sm font-medium"
+              >{heading.final ? heading.label : w(heading.label)}</span
+            >
             {#if subject}<span class="text-muted-foreground text-sm">{subject}</span>{/if}
           </div>
           <p class="text-muted-foreground mt-1 text-sm">
-            {w(codeExplain(item.kind))}
+            {heading.final ? heading.explain : w(heading.explain)}
             {#if item.code}
               <span class="text-foreground">Reason: {w(codeLabel(item.code))}.</span>
             {/if}
+            <!-- The provider's own words, as it sent them (never rewritten). -->
+            {#if answer}<span class="text-foreground">{answer}</span>{/if}
           </p>
           {#if item.code && codeFix(item.code)}
             <p class="mt-0.5 text-sm">{w(codeFix(item.code))}</p>

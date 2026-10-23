@@ -95,7 +95,10 @@ import {
   ROLLBACK_ON_CANCEL_PHASES,
   ROTATION_PHASES,
   TERMINAL_PHASES,
+  createdEdgeIdOf,
+  isSpareProvision,
   nextFailure,
+  providerAnswerOf,
   withProviderAnswer,
   type AccountCandidate,
   type RotationEvent,
@@ -223,6 +226,27 @@ export async function rotationListenerKey(
   return (await db.get(r.listenerId))?.listenerKey ?? null;
 }
 
+/** The pool refusals that end a publish with its edge still a standby, by event code. */
+const STANDBY_REASONS = {
+  pool_reserved_standby: 'pool_reserved',
+  pool_full_standby: 'pool_full',
+} as const;
+
+/**
+ * Why a run that should have put its edge in use ended with it still a
+ * standby because of the pool (reserved allocation, or a full pool), or null.
+ */
+export function standbyReasonOf(
+  r: Pick<Rotation, 'outcome' | 'events'>,
+): (typeof STANDBY_REASONS)[keyof typeof STANDBY_REASONS] | null {
+  if (r.outcome !== 'standby') return null;
+  for (let i = r.events.length - 1; i >= 0; i--) {
+    const code = r.events[i]!.code;
+    if (code in STANDBY_REASONS) return STANDBY_REASONS[code as keyof typeof STANDBY_REASONS];
+  }
+  return null;
+}
+
 export function mapRotationAdmin(
   r: Rotation,
   edge: Edge | null,
@@ -247,6 +271,7 @@ export function mapRotationAdmin(
     listenerKey,
     outcome: r.outcome ?? null,
     reason: r.reason ?? null,
+    standbyReason: standbyReasonOf(r),
     steps: (edge?.steps ?? []).map((s) => ({
       stepId: s.stepId,
       kind: s.kind,
@@ -1238,6 +1263,45 @@ export const requestCancel = internalMutation({
 
 // --- transitions ---------------------------------------------------------------------------
 
+/**
+ * The listener's persisted Host intent (`relayListeners.host.intended`, owned
+ * by convex/hostOps.ts) follows what this rotation wrote on the listener's
+ * Host: the flip's target once it converged, the plan's old tuple once a
+ * rollback restored it. The intent is read after the rotation: the server-name
+ * resync writes its address and port back onto the Host (`hostOps.resyncSni`),
+ * so an intent left at the address the Host was CREATED at would point the
+ * Host at an edge that is long gone. Only the Host the plan captured, and only
+ * an intent that exists (a Host the plan found that FCP never created carries
+ * none); an SNI or Host header the target leaves `undefined` keeps its value.
+ */
+async function followHostIntent(
+  ctx: MutationCtx,
+  r: Rotation,
+  targetFor: (entry: Rotation['hostPlan'][number]) => HostTarget | null,
+  now: number,
+): Promise<void> {
+  if (!r.listenerId) return;
+  const l = await ctx.db.get(r.listenerId);
+  const st = l?.host;
+  if (!l || !st?.intended || !st.uuid) return;
+  const entry = r.hostPlan.find((p) => p.uuid === st.uuid);
+  const t = entry ? targetFor(entry) : null;
+  if (!t) return;
+  await ctx.db.patch(l._id, {
+    host: {
+      ...st,
+      intended: {
+        ...st.intended,
+        address: t.address,
+        port: t.port,
+        sni: t.sni === undefined ? st.intended.sni : t.sni,
+        host: t.host === undefined ? st.intended.host : t.host,
+      },
+    },
+    updatedAt: now,
+  });
+}
+
 const advanceEvent = v.union(
   v.object({ type: v.literal('selected'), toEdgeId: v.id('edges'), viaStandby: v.boolean() }),
   v.object({
@@ -1255,7 +1319,19 @@ const advanceEvent = v.union(
   }),
   v.object({ type: v.literal('provisioned') }),
   v.object({ type: v.literal('verified') }),
-  v.object({ type: v.literal('host_converged'), flipped: v.number() }),
+  v.object({
+    type: v.literal('host_converged'),
+    flipped: v.number(),
+    /** The tuple the planned Host now carries (the flip's target): the listener's intent follows it. */
+    target: v.optional(
+      v.object({
+        address: v.string(),
+        port: v.number(),
+        sni: v.optional(v.union(v.string(), v.null())),
+        host: v.optional(v.union(v.string(), v.null())),
+      }),
+    ),
+  }),
   v.object({ type: v.literal('reflip') }),
   v.object({ type: v.literal('confirmed') }),
   v.object({
@@ -1313,6 +1389,14 @@ async function auditFailure(
   code: string,
 ) {
   const origin = await ctx.db.get(r.relayId);
+  // What the run was (a spare is not a replacement) and what the provider said
+  // during THIS run (a standby's older answer is not this failure's).
+  const current = (await ctx.db.get(r._id)) ?? r;
+  const created = createdEdgeId(current);
+  const answer = providerAnswerOf(
+    current.events,
+    created ? (await ctx.db.get(created))?.failure : null,
+  );
   await auditRotation(ctx, r._id, {
     actorType: 'system',
     action: 'edge.rotation_failed',
@@ -1321,10 +1405,14 @@ async function auditFailure(
     payload: {
       relaySlug: origin?.slug ?? '',
       trigger: r.trigger,
+      kind: r.kind,
+      spare: isSpareProvision(r),
       phase,
       outcome,
       step: phase,
       code,
+      ...(answer ? { answer } : {}),
+      rotationId: r._id,
     },
   });
 }
@@ -1335,11 +1423,7 @@ async function auditFailure(
  * before those fields existed fall back to the event log.
  */
 function createdEdgeId(r: Rotation): Id<'edges'> | null {
-  if (r.createdEdgeId) return r.createdEdgeId;
-  if (r.viaStandby !== undefined) return r.viaStandby ? null : (r.toEdgeId ?? null);
-  if (!r.toEdgeId) return null;
-  if (r.kind === 'publish') return null;
-  return r.events.some((e) => e.code === 'selected_standby') ? null : r.toEdgeId;
+  return createdEdgeIdOf(r);
 }
 
 /**
@@ -1515,6 +1599,8 @@ export const advance = internalMutation({
           events: ev('info', 'hosts_converged', `${event.flipped} host(s)`),
           updatedAt: now,
         });
+        const target = event.target;
+        if (target) await followHostIntent(ctx, r, () => target, now);
         await scheduleStep(ctx, rotationId, poll);
         return { ok: true as const };
       }
@@ -1595,6 +1681,8 @@ export const advance = internalMutation({
           events: ev('warn', 'rolled_back'),
           updatedAt: now,
         });
+        // The rollback wrote the plan's old tuple back (or nothing was written).
+        if (forwardWriteAttempted(r)) await followHostIntent(ctx, r, rollbackTargetFor, now);
         await releaseOrigin(ctx, r);
         const origin = await ctx.db.get(r.relayId);
         await auditRotation(ctx, r._id, {
@@ -1920,7 +2008,8 @@ export const applyPublish = internalMutation({
         await poolAdmitOf(ctx.db, origin, to),
       );
       if ('refused' in alloc) {
-        // Pool full (or its free slots reserved): keep the edge as a standby and finish.
+        // Pool full (or its free slots reserved): keep the edge as a standby and
+        // finish, said on the run (`standbyReason`) and in the activity.
         await ctx.db.patch(rotationId, {
           phase: 'finalizing',
           stepVersion: next,
@@ -1934,6 +2023,13 @@ export const applyPublish = internalMutation({
         await ctx.db.patch(r.relayId, {
           standbyEdgeIds: [...origin.standbyEdgeIds.filter((e) => e !== to._id), to._id],
           updatedAt: now,
+        });
+        await auditRotation(ctx, rotationId, {
+          actorType: 'system',
+          action: 'edge.publish_held',
+          targetType: 'edge',
+          targetId: to._id,
+          payload: { relaySlug: origin.slug, edgeId: to._id, code: alloc.refused, rotationId },
         });
         await scheduleStep(ctx, rotationId, 0);
         return { ok: true as const, poolIndex: null, needsHostFlip: false };
@@ -3563,7 +3659,7 @@ async function advanceCall(
       }
     | { type: 'provisioned' }
     | { type: 'verified' }
-    | { type: 'host_converged'; flipped: number }
+    | { type: 'host_converged'; flipped: number; target?: HostTarget }
     | { type: 'reflip' }
     | { type: 'confirmed' }
     | { type: 'fail'; code: string; detail?: string; rollback: boolean }
@@ -4736,7 +4832,11 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     return;
   }
   if (diff.converged) {
-    await advanceCall(ctx, r._id, sv, { type: 'host_converged', flipped: r.hostPlan.length });
+    await advanceCall(ctx, r._id, sv, {
+      type: 'host_converged',
+      flipped: r.hostPlan.length,
+      target,
+    });
     return;
   }
   const entry = diff.needsWrite[0];

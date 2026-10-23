@@ -26,7 +26,12 @@ import { probeSourceHealth } from './probes';
 import { countryWideHolds, newEdgeBlockedIn } from './edgeCountry';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { readMaintenance } from './lib/edges/maintenance';
-import { isTerminalPhase } from './lib/edges/rotation';
+import {
+  createdEdgeIdOf,
+  isSpareProvision,
+  isTerminalPhase,
+  providerAnswerOf,
+} from './lib/edges/rotation';
 import { accountsForSlot } from './lib/edges/rotation';
 import {
   edgeLayerOf,
@@ -92,7 +97,7 @@ import { modeRefOf } from './nodeIntents';
 import { freedomAttention } from './freedomDelivery';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
-import { setStateOf } from './lib/edges/setState';
+import { publishedRefOf, setStateOf, slotsOf, takesSlot } from './lib/edges/setState';
 import { websocketNodeOf } from './lib/edges/websocketNode';
 import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
@@ -1273,6 +1278,13 @@ export const attention = internalQuery({
         (last.phase === 'failed' || last.phase === 'rolled_back') &&
         (last.finishedAt ?? last.updatedAt) > now - RECENT_FAILURE_MS
       ) {
+        // What the run was (a spare that failed to build is no replacement) and
+        // the provider's own words on it; the action opens the run itself.
+        const created = createdEdgeIdOf(last);
+        const answer = providerAnswerOf(
+          last.events,
+          created ? (await ctx.db.get(created))?.failure : null,
+        );
         items.push({
           ...base(relay),
           id: `rotation_failed:${last._id}`,
@@ -1280,7 +1292,12 @@ export const attention = internalQuery({
           severity: 'warning',
           rotationId: last._id as string,
           code: last.outcome ?? last.phase,
-          facts: { kind: last.kind, phase: last.phase },
+          facts: {
+            kind: last.kind,
+            phase: last.phase,
+            spare: isSpareProvision(last),
+            ...(answer ? { answer } : {}),
+          },
           action: 'open_relay',
           since: isoN(last.finishedAt ?? last.updatedAt),
         });
@@ -1537,22 +1554,29 @@ export const attention = internalQuery({
         const idle = edges.filter((e) => e.status === 'active' && e.publication === 'unpublished');
         const standbys = idle.length;
         // The publish action names the first standby that would actually pass
-        // the publish checks; with none publishable the operator is sent to the
-        // origin page instead of a call that cannot run.
+        // the publish checks AND get a pool slot; with none publishable the
+        // operator is sent to the origin page instead of a call that cannot
+        // run. A standby that passes the checks but whose publish would leave it
+        // a spare (the free slots are held for what the node still lacks,
+        // reserved allocation) is named with code `pool_reserved` instead: the
+        // node page says why rather than offering a publish that ends standby.
         let publishable: string | null = null;
+        let held: string | null = null;
         for (const e of idle) {
-          if ((await checkPublishable(ctx, e, cfg.requireProviderHealth)).ok) {
+          if (!(await checkPublishable(ctx, e, cfg.requireProviderHealth)).ok) continue;
+          if (takesSlot(setState, relay, publishedRefOf(e, listenerOf(e)?.listenerKey ?? ''))) {
             publishable = e._id as string;
             break;
           }
+          held ??= e._id as string;
         }
         items.push({
           ...base(relay),
-          edgeId: publishable,
+          edgeId: publishable ?? held,
           id: `pool_below_desired:${relay._id}`,
           kind: 'pool_below_desired',
           severity: published === 0 ? 'warning' : 'info',
-          code: null,
+          code: !publishable && held ? 'pool_reserved' : null,
           facts: { published, desired: relay.desiredPublished, standbys },
           action: publishable ? 'publish' : standbys > 0 ? 'open_relay' : 'provision',
           since: null,
@@ -2027,6 +2051,7 @@ export const preflight = internalQuery({
       provider: string | null;
       layer: 'l4' | 'l7' | null;
       templateId: string | null;
+      takesSlot?: boolean | null;
     } | null = null;
     if (a.kind !== 'publish' && !g.blockers.some((b) => b.code === 'not_found')) {
       const sel = await selectionContext(ctx, startArgs, relay, g.targetEdge, cfg);
@@ -2060,6 +2085,19 @@ export const preflight = internalQuery({
           provider: sel.account.provider,
           layer: edgeLayerOf(sel.account.provider),
           templateId: (sel.template.id as string | null) ?? null,
+          // A new address: whether a publish, once it is tested, would get a
+          // pool slot as the pool stands now (reserved allocation).
+          takesSlot:
+            a.kind === 'provision' && loc
+              ? takesSlot(
+                  await setStateOf(ctx.db, relay),
+                  relay,
+                  publishedRefOf(
+                    { locationId: loc._id, provider: acct?.provider, placeKey: loc.placeKey },
+                    sel.listener.listenerKey,
+                  ),
+                )
+              : null,
         };
         if (loc && !loc.qualified)
           warnings.push({ code: 'account_unqualified', detail: acct?.name ?? null });
@@ -2074,6 +2112,20 @@ export const preflight = internalQuery({
           if (a.trigger && a.trigger !== 'manual' && !cfg.l7.autoSelect)
             warnings.push({ code: 'l7_manual_only', detail: null });
         }
+      }
+    }
+    // A publish the pool would refuse ends with the edge still a standby (the
+    // run says so when it ends): said before it starts, too.
+    if (a.kind === 'publish' && a.edgeId) {
+      const edge = await ctx.db.get(a.edgeId);
+      if (edge && edge.relayId === relay._id && edge.publication === 'unpublished') {
+        const key = listeners.find((l) => l._id === edge.listenerId)?.listenerKey ?? '';
+        const state = await setStateOf(ctx.db, relay);
+        if (!takesSlot(state, relay, publishedRefOf(edge, key)))
+          warnings.push({
+            code: slotsOf(state, relay).free === 0 ? 'pool_full' : 'pool_reserved',
+            detail: null,
+          });
       }
     }
     if (isTest) warnings.push({ code: 'unpublished_result', detail: null });

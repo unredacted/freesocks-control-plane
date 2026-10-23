@@ -12,6 +12,7 @@
    *   location: EdgeLocationAdmin | null
    *   sizeKey: string | null          the template key of the provider's size
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
@@ -62,7 +63,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="sm:max-w-xl">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-xl`}>
     <Dialog.Header>
       <Dialog.Title>Plan for {location?.label ?? 'this location'}</Dialog.Title>
       <Dialog.Description>
@@ -101,7 +102,7 @@
       </p>
     {/if}
     {#if save.error}<InlineError message={edgeErrorMessage(save.error)} />{/if}
-    <Dialog.Footer>
+    <Dialog.Footer class={STICKY_FOOTER}>
       <Button variant="outline" onclick={() => (open = false)}>Cancel</Button>
       <Button
         disabled={!chosen || chosen === current || !sizeKey || !location || save.isPending}

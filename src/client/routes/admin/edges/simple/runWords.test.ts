@@ -8,7 +8,9 @@ import {
   moreDirectWords,
   needButtons,
   nodeAutomationWords,
+  heldSpareWords,
   spareInUseWords,
+  upkeepAddsMissing,
   planWords,
   replaceWords,
   setWords,
@@ -447,8 +449,7 @@ describe('providerPickWords', () => {
         uncarried: [],
         deficit: 1,
       },
-      (k) => (k === 'main' ? 'REALITY' : k),
-      now,
+      { nameOf: (k) => (k === 'main' ? 'REALITY' : k), now, upkeepAdds: true },
     );
     expect(w.picks[0]).toEqual({
       locationId: 'x',
@@ -493,6 +494,68 @@ describe('providerPickWords', () => {
   });
 });
 
+describe('providerPickWords: who adds a missing address', () => {
+  const view = {
+    hasSet: true,
+    picks: [],
+    reduced: [],
+    coolingOnly: [],
+    uncarried: [],
+    deficit: 1,
+    missing: [{ listenerKey: 'main', locationId: 'x', label: 'Region A', accountName: 'Acct A' }],
+  };
+  it('names the location and says automatic upkeep adds it only when upkeep provisions', () => {
+    expect(providerPickWords(view, { upkeepAdds: true }).notes).toEqual([
+      '1 address is still missing (Region A); automatic upkeep adds it.',
+    ]);
+  });
+  it('with upkeep off it says nothing adds it on its own, and points to a spare or removing the location', () => {
+    expect(providerPickWords(view, { upkeepAdds: false }).notes).toEqual([
+      '1 address is still missing (Region A). Nothing adds it on its own: add a spare address there, or remove the location.',
+    ]);
+    // The default is the safe one: never promise upkeep that does not run.
+    expect(providerPickWords(view).notes[0]).toMatch(/Nothing adds it on its own/);
+  });
+  it('several missing, and a missing address with no location to name', () => {
+    expect(
+      providerPickWords(
+        {
+          ...view,
+          deficit: 2,
+          missing: [
+            ...view.missing,
+            { listenerKey: 'ws', locationId: 'y', label: 'Region B', accountName: 'Acct B' },
+          ],
+        },
+        { upkeepAdds: false },
+      ).notes,
+    ).toEqual([
+      '2 addresses are still missing (Region A, Region B). Nothing adds them on its own: add a spare address there, or remove those locations.',
+    ]);
+    expect(
+      providerPickWords(
+        {
+          ...view,
+          missing: [{ listenerKey: 'main', locationId: null, label: null, accountName: null }],
+        },
+        { upkeepAdds: false },
+      ).notes,
+    ).toEqual(['1 address is still missing. Nothing adds it on its own: add a spare address.']);
+  });
+});
+
+describe('upkeepAddsMissing', () => {
+  const on = { enabled: true, autoProvisionToDesired: true };
+  const node = { enabled: true, setupOwned: false };
+  it('only the master switch with automatic provisioning, on a node that is on and not setup-owned', () => {
+    expect(upkeepAddsMissing(on, node)).toBe(true);
+    expect(upkeepAddsMissing({ ...on, autoProvisionToDesired: false }, node)).toBe(false);
+    expect(upkeepAddsMissing({ ...on, enabled: false }, node)).toBe(false);
+    expect(upkeepAddsMissing(on, { ...node, enabled: false })).toBe(false);
+    expect(upkeepAddsMissing(on, { ...node, setupOwned: true })).toBe(false);
+  });
+});
+
 describe('spareInUseWords', () => {
   const on = { enabled: true, autoPublishStandby: true };
   const node = {
@@ -515,5 +578,47 @@ describe('spareInUseWords', () => {
     expect(spareInUseWords({ ...on, enabled: false }, node)).toBeNull();
     expect(spareInUseWords(on, { ...node, setupOwned: true })).toBeNull();
     expect(spareInUseWords(on, { ...node, enabled: false })).toBeNull();
+  });
+  const held = {
+    takesSlot: false,
+    missing: [{ locationId: 'x', label: 'Region A', accountName: 'Acct A' }],
+    held: 1,
+  };
+  it('a spare whose free slot is held for a missing location stays a spare, and says where and the two ways on', () => {
+    // The beta case: 4 wanted, 3 in use, the free slot held for a location with nothing in use.
+    const four = { ...node, desiredPublished: 4, publishedEdgeIds: ['e1', 'e2', 'e3'] };
+    const words =
+      'It stays a spare: the free slot is held for an address in Region A (Acct A), which this node still lacks. To use this one, replace an address in use with it (Replace address), or remove that location from the node.';
+    expect(spareInUseWords(on, four, held)).toBe(words);
+    // Never "may be put in use at once" for it, whatever the switches.
+    expect(spareInUseWords({ ...on, autoPublishStandby: false }, four, held)).toBe(words);
+    // A spare that does take the slot keeps the old sentence; unknown is not "held".
+    expect(spareInUseWords(on, four, { ...held, takesSlot: true })).toBe(
+      'It may be put in use at once: this node wants 4 addresses in use and has 3.',
+    );
+    expect(spareInUseWords(on, four, { ...held, takesSlot: null })).toMatch(/^It may be put/);
+    // A full pool says nothing, held or not.
+    expect(
+      spareInUseWords(on, { ...four, publishedEdgeIds: ['a', 'b', 'c', 'd'] }, held),
+    ).toBeNull();
+  });
+  it('heldSpareWords: several locations, several slots, and none to name', () => {
+    expect(
+      heldSpareWords({
+        missing: [
+          { locationId: 'x', label: 'Region A', accountName: 'Acct A' },
+          { locationId: 'x', label: 'Region A', accountName: 'Acct A' },
+          { locationId: 'y', label: 'Region B', accountName: null },
+        ],
+        held: 2,
+      }),
+    ).toBe(
+      'It stays a spare: the free slots are held for an address in Region A (Acct A) or Region B, which this node still lacks. To use this one, replace an address in use with it (Replace address), or remove those locations from the node.',
+    );
+    expect(
+      heldSpareWords({ missing: [{ locationId: null, label: null, accountName: null }] }),
+    ).toBe(
+      'It stays a spare: the free slot is held for an address this node still lacks. To use this one, replace an address in use with it (Replace address).',
+    );
   });
 });

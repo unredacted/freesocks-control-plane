@@ -1,10 +1,19 @@
+<script lang="ts" module>
+  /** Runs whose held-back result was already toasted (once per page load). */
+  const toasted = new Set<string>();
+  const STANDBY_TOAST_WITHIN_MS = 2 * 60_000;
+</script>
+
 <script lang="ts">
   /**
    * One rotation (provision / publish / replace) in a side sheet: phase in words,
    * progress, steps, the event log, the audit trail, and Cancel while the run can
    * still be cancelled. Polls every 2 s until the rotation is terminal
    * (`rotationQuery`), then invalidates the origin once so the page behind it
-   * catches up.
+   * catches up. A run that should have put its edge in use but ended with it
+   * still a standby because of the pool (`standbyReason`: its free slot is
+   * held for what the origin lacks, or the pool is full) says so in a note, and
+   * in a toast (once) when this drawer watched it finish or it just finished.
    *
    * Open by setting `rotationId` (pages keep it in `?rotation=`); `onClose` must clear it.
    *
@@ -37,7 +46,12 @@
   import ConfirmDialog from './ConfirmDialog.svelte';
   import Timeline from './Timeline.svelte';
   import { providerLabel } from '../lib/format';
-  import { ROTATION_KIND_LABELS, ROTATION_TRIGGER_LABELS, stepStateTone } from '../lib/rotation';
+  import {
+    ROTATION_KIND_LABELS,
+    ROTATION_TRIGGER_LABELS,
+    standbyResultWords,
+    stepStateTone,
+  } from '../lib/rotation';
   import { durationLabel, relativeTime, shortId } from '../lib/time';
   import type { KeyValueRow } from '../lib/types';
 
@@ -55,11 +69,22 @@
   const r = $derived(rotation.data ?? null);
 
   // Invalidate the origin ONCE per rotation, when it is first seen terminal.
+  // A run held back by the pool says so in a toast, once, when this drawer
+  // watched it finish or it finished just now (a publish can end before the
+  // drawer's first read).
   let settledFor: string | null = null;
+  let runningSeen: string | null = null;
   $effect(() => {
+    if (r && !r.terminal) runningSeen = r.id;
     if (r && r.terminal && settledFor !== r.id) {
       settledFor = r.id;
       invalidateRelay(qc, relaySlug);
+      const justNow =
+        !!r.finishedAt && Date.now() - Date.parse(r.finishedAt) < STANDBY_TOAST_WITHIN_MS;
+      if (r.standbyReason && (runningSeen === r.id || justNow) && !toasted.has(r.id)) {
+        toasted.add(r.id);
+        toast.warning(standbyResultWords(r.standbyReason));
+      }
     }
   });
 
@@ -181,6 +206,9 @@
             issue={{ code: r.reason ?? r.outcome ?? r.phase }}
             tone={r.phase === 'failed' || r.phase === 'quarantined' ? 'blocker' : 'warning'}
           />
+        {:else if r.terminal && r.standbyReason}
+          <!-- Done, but the edge is still a standby: the pool kept it out. -->
+          <CodeNote issue={{ code: r.standbyReason }} tone="warning" />
         {/if}
 
         <KeyValue title="Run" rows={summaryRows} hideEmpty />

@@ -6,7 +6,8 @@
  * size (`desiredPublished`). The strip shows, in order: every pool index up to
  * the larger of the two, then the standbys, then the draining edges.
  *
- * Exports: poolSlots(input) -> PoolSlot[], poolSummary(input) -> string, PoolSlot, PoolInput.
+ * Exports: poolSlots(input) -> PoolSlot[], poolSummary(input) -> string, PoolSlot, PoolInput,
+ * showsPublication(edge) (whether an edge's publication badge means anything).
  */
 export type PoolSlotKind = 'published' | 'missing' | 'vacant' | 'standby' | 'draining';
 
@@ -78,4 +79,13 @@ export function poolSummary(input: PoolInput): string {
   if (standbys > 0) parts.push(plural(standbys, 'standby', 'standbys'));
   if (draining > 0) parts.push(`${draining} draining`);
   return parts.join(', ');
+}
+
+/**
+ * Whether an edge's publication badge means anything: one being destroyed (or
+ * gone) is neither in use nor a spare, so a "Standby" beside "Destroying" only
+ * misleads.
+ */
+export function showsPublication(edge: { status: string }): boolean {
+  return edge.status !== 'destroying' && edge.status !== 'destroyed';
 }

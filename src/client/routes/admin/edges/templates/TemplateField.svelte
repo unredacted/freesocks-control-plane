@@ -16,6 +16,10 @@
    *   disabled?: boolean
    *   onchange(value: unknown)            undefined clears the key
    *   onreset()
+   *
+   * A value chosen here that breaks the field's bounds says so under the field
+   * in plain words ("At most 10."), marked `aria-invalid` so a form can focus
+   * the first one on submit (lib/focusInvalid.ts).
    */
   import { untrack } from 'svelte';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
@@ -28,7 +32,7 @@
   import type { EdgeTemplateField } from '../../../../../shared/contracts/edges';
   import { displayValue } from '../lib/format';
   import { listToText, numberFromInput, textToList } from './params';
-  import { kvToText, textToKv } from '../lib/options';
+  import { fieldProblem, kvToText, textToKv } from '../lib/options';
   import { planOptionLabel, planRefused, type PlanLike } from '../lib/planWords';
   import PlanFacts from '../components/PlanFacts.svelte';
 
@@ -81,6 +85,10 @@
   const missing = $derived(
     field.required === true && (shown === undefined || shown === null || shown === ''),
   );
+  // What is wrong with the value chosen here, beside the field in plain words.
+  const problem = $derived(numberInvalid ? 'a number' : fieldProblem(field, value));
+  const invalid = $derived(!!problem || missing);
+  const problemId = `${uid}-problem`;
   const defaultWords = $derived.by(() => {
     if (defaultValue === undefined || defaultValue === null) return 'none';
     if (field.type === 'select') {
@@ -176,7 +184,8 @@
       min={field.min}
       max={field.max}
       {disabled}
-      aria-invalid={numberInvalid || missing}
+      aria-invalid={invalid}
+      aria-describedby={problem ? problemId : undefined}
       value={text}
       oninput={(e) => {
         text = e.currentTarget.value;
@@ -189,6 +198,8 @@
       id={`${uid}-f`}
       rows="3"
       {disabled}
+      aria-invalid={invalid}
+      aria-describedby={problem ? problemId : undefined}
       class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
       value={listToText(shown)}
       onchange={(e) => onchange(textToList(e.currentTarget.value))}
@@ -208,12 +219,18 @@
     <Input
       id={`${uid}-f`}
       {disabled}
-      aria-invalid={missing}
+      aria-invalid={invalid}
+      aria-describedby={problem ? problemId : undefined}
       value={typeof shown === 'string' ? shown : shown === undefined ? '' : displayValue(shown)}
       oninput={(e) => onchange(e.currentTarget.value)}
     />
   {/if}
 
+  {#if problem}
+    <p id={problemId} class="text-xs text-destructive">
+      {problem[0]!.toUpperCase()}{problem.slice(1)}.
+    </p>
+  {/if}
   {#if field.help}<p class="text-xs text-muted-foreground">{field.help}</p>{/if}
   {#if missing}<p class="text-xs text-destructive">This field is required.</p>{/if}
 </div>

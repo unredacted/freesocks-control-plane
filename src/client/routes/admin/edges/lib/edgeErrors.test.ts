@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../../lib/errors', () => ({ apiErrorMessage: () => 'shared copy' }));
 
 import { ApiCallError } from '../../../../lib/api';
-import { EdgeRefusalError, edgeErrorMessage, liveRefreshFailure } from './edgeErrors';
+import {
+  EdgeRefusalError,
+  InputProblemError,
+  edgeErrorMessage,
+  liveRefreshFailure,
+} from './edgeErrors';
 
 describe('edgeErrorMessage', () => {
   const refused = (code: string, status = 409) =>
@@ -49,6 +54,14 @@ describe('edgeErrorMessage', () => {
 
   it('keeps label plus fix for the status codes', () => {
     expect(edgeErrorMessage(refused('edge.pool_empty'))).toBe('Pool empty. Publish an edge.');
+  });
+});
+
+describe('InputProblemError', () => {
+  it('what the form found wrong reads as its own words', () => {
+    expect(edgeErrorMessage(new InputProblemError('Healthy after: at most 10.'))).toBe(
+      'Healthy after: at most 10.',
+    );
   });
 });
 

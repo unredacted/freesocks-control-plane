@@ -6,6 +6,7 @@ import {
   justificationText,
   recommendKeep,
   relayProbeTargetKeys,
+  replaceAutoWords,
   rotationDurationMs,
   rotationOutcomeWords,
   suspicionChip,
@@ -118,6 +119,45 @@ describe('misc', () => {
       reason: 'cooldown',
     });
     expect(failed).not.toContain('_');
+  });
+  it('a publish the pool held back says why instead of a silent "Standby"', () => {
+    expect(
+      rotationOutcomeWords({
+        terminal: true,
+        outcome: 'standby',
+        reason: null,
+        standbyReason: 'pool_reserved',
+      }),
+    ).toBe('Standby: Slot held');
+    expect(
+      rotationOutcomeWords({
+        terminal: true,
+        outcome: 'standby',
+        reason: 'by hand',
+        standbyReason: 'pool_full',
+      }),
+    ).toBe('Standby: Pool full');
+  });
+  it('replaceAutoWords: the tested spare Automatic uses, or the location of the new address', () => {
+    expect(
+      replaceAutoWords(
+        { standbyEdgeId: 's1', accountName: null, locationLabel: null },
+        { name: '192.0.2.7', place: 'Region A' },
+      ),
+    ).toBe('Automatic uses the tested spare 192.0.2.7 in Region A.');
+    // No tested spare: the new address is named by where it is created (it can be dearer).
+    expect(
+      replaceAutoWords(
+        { standbyEdgeId: null, accountName: 'Acct B', locationLabel: 'Region B' },
+        null,
+      ),
+    ).toBe('Automatic creates a new address in Region B (Acct B).');
+    expect(
+      replaceAutoWords({ standbyEdgeId: null, accountName: 'Acct B', locationLabel: null }, null),
+    ).toBe('Automatic creates a new address in Acct B.');
+    expect(
+      replaceAutoWords({ standbyEdgeId: null, accountName: null, locationLabel: null }, null),
+    ).toBeNull();
   });
   it('links timeline entries to the right drawer', () => {
     expect(timelineLinkParams({ targetType: 'edge_rotation', targetId: 'rot1' })).toEqual({

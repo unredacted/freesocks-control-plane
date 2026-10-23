@@ -4,7 +4,9 @@
    * "Provider sets"). One line per location: how many addresses are in use and
    * spare there, whether it cools after a block, whether it is trusted yet.
    * Then what members miss (a transport with no backup at another provider,
-   * one whose locations all cool, one no location carries).
+   * one whose locations all cool, one no location carries), and the addresses
+   * still missing: added by automatic upkeep only when it is on for the node
+   * (`upkeepAdds`), else the card says nothing adds them on their own.
    *
    * A location that holds an address of the node outside its set (the spare
    * of a re-protect that failed: the set changes only when a run goes live)
@@ -28,7 +30,10 @@
    *   busy: boolean            a run or a rotation holds the origin (no edits)
    *   onRunStarted: (runId) => void
    *   nameOf?: (listenerKey) => string    a transport in words
+   *   upkeepAdds?: boolean     automatic upkeep provisions what the node lacks (upkeepAddsMissing)
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
+  import { tick } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { Badge } from '@client/components/ui/badge';
@@ -47,7 +52,9 @@
   } from '@client/lib/edgesApi';
   import OptionFields from '../templates/OptionFields.svelte';
   import { asParams, type Params } from '../templates/params';
-  import { optionSummary, overrides, pickBase } from '../lib/options';
+  import { optionProblems, optionSummary, overrides, pickBase, problemLine } from '../lib/options';
+  import { focusFirstInvalid } from '../lib/focusInvalid';
+  import InlineError from '@client/components/InlineError.svelte';
   import { EDGE_PROVIDER_META, accountFronts, frontsNode } from '@client/lib/edgeProviderMeta';
   import { codeExplain } from '@client/lib/edgeCodes';
   import LocationPicker from '../forms/LocationPicker.svelte';
@@ -67,8 +74,10 @@
     onRunStarted: (runId: string) => void;
     /** A transport in words, by key. */
     nameOf?: (listenerKey: string) => string;
+    /** Automatic upkeep provisions what the node lacks (`upkeepAddsMissing`). */
+    upkeepAdds?: boolean;
   }
-  let { relay, busy, onRunStarted, nameOf }: Props = $props();
+  let { relay, busy, onRunStarted, nameOf, upkeepAdds = false }: Props = $props();
 
   const uid = $props.id();
   const qc = useQueryClient();
@@ -78,7 +87,7 @@
     rotating: () => busy,
   });
   const view = $derived(setQ.data ?? null);
-  const words = $derived(view ? providerPickWords(view, nameOf) : null);
+  const words = $derived(view ? providerPickWords(view, { nameOf, upkeepAdds }) : null);
 
   let adding = $state(false);
   let chosen = $state<string[]>([]);
@@ -161,6 +170,23 @@
   let optionsFor = $state<ProviderSetView['picks'][number] | null>(null);
   let draft = $state<Params>({});
   let confirmOptions = $state(false);
+  // An option out of its bounds: said beside the field, and here on "Protect again".
+  let optionsProblem = $state<string | null>(null);
+  let optionsEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    void draft;
+    optionsProblem = null;
+  });
+  async function askProtectAgain() {
+    const problems = editing ? optionProblems(editing.fields, draft, editing.base) : [];
+    if (problems.length > 0) {
+      optionsProblem = problems.map(problemLine).join(' ');
+      await tick();
+      focusFirstInvalid(optionsEl);
+      return;
+    }
+    confirmOptions = true;
+  }
   const editing = $derived(optionsFor ? optionsOf(optionsFor) : null);
   function openOptions(p: ProviderSetView['picks'][number]) {
     optionsFor = p;
@@ -284,7 +310,7 @@
 </section>
 
 <Dialog.Root bind:open={adding}>
-  <Dialog.Content class={newIn ? 'sm:max-w-2xl' : 'sm:max-w-lg'}>
+  <Dialog.Content class={`${DIALOG_FIT} ${newIn ? 'sm:max-w-2xl' : 'sm:max-w-lg'}`}>
     <Dialog.Header>
       <Dialog.Title>Add a location</Dialog.Title>
       <Dialog.Description>
@@ -380,7 +406,7 @@
         {/key}
       {/if}
     </div>
-    <Dialog.Footer>
+    <Dialog.Footer class={STICKY_FOOTER}>
       <Button
         class="h-11 sm:h-8"
         disabled={chosen.length === 0 || change.isPending}
@@ -399,7 +425,7 @@
     if (!v) optionsFor = null;
   }}
 >
-  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-2xl`}>
     <Dialog.Header>
       <Dialog.Title>Options at {optionsFor?.label ?? 'this location'}</Dialog.Title>
       <Dialog.Description>
@@ -409,20 +435,23 @@
       </Dialog.Description>
     </Dialog.Header>
     {#if editing}
-      <OptionFields
-        fields={editing.fields}
-        values={draft}
-        base={editing.base}
-        baseWord="the location's defaults"
-        prominentFirst
-        onchange={(next) => (draft = overrides(next, editing.base, editing.fields))}
-      />
+      <div bind:this={optionsEl}>
+        <OptionFields
+          fields={editing.fields}
+          values={draft}
+          base={editing.base}
+          baseWord="the location's defaults"
+          prominentFirst
+          onchange={(next) => (draft = overrides(next, editing.base, editing.fields))}
+        />
+      </div>
     {/if}
-    <Dialog.Footer>
+    {#if optionsProblem}<InlineError message={optionsProblem} />{/if}
+    <Dialog.Footer class={STICKY_FOOTER}>
       <Button
         class="h-11 sm:h-8"
         disabled={reprotect.isPending}
-        onclick={() => (confirmOptions = true)}>Protect again with these</Button
+        onclick={() => void askProtectAgain()}>Protect again with these</Button
       >
       <Button variant="outline" class="h-11 sm:h-8" onclick={() => (optionsFor = null)}
         >Cancel</Button

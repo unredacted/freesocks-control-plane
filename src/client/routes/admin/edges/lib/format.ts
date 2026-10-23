@@ -13,7 +13,7 @@ import type {
   ListenerSecurity,
   ListenerStreamTransport,
 } from '../../../../../shared/contracts/edgeProtocolIds';
-import { codeLabel } from '../../../../lib/edgeCodes';
+import { codeLabel, providerAnswerWords } from '../../../../lib/edgeCodes';
 
 export const PROTOCOL_LABELS: Record<ListenerProtocolId, string> = {
   vless: 'VLESS',
@@ -132,6 +132,9 @@ export function auditDetailLine(
   const listener = p['listenerKey'];
   if (typeof listener === 'string' && listener)
     out.push(listenerName ? listenerName(listener) : `listener ${listener}`);
+  // A failure's provider answer (redacted by the server), in its own words.
+  const answer = providerAnswerWords(p);
+  if (answer) out.push(answer);
   const keys = p['changedKeys'];
   if (Array.isArray(keys) && keys.length > 0) {
     const names = keys.filter((x): x is string => typeof x === 'string').slice(0, 4);

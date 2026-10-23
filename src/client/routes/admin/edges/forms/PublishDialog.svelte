@@ -10,6 +10,7 @@
    *   edgeId: string
    *   onStarted: (rotationId: string) => void     open the rotation drawer with it
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { untrack } from 'svelte';
   import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -62,7 +63,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-xl`}>
     <Dialog.Header>
       <Dialog.Title>Publish edge {shortId(edgeId)}</Dialog.Title>
       <Dialog.Description>
@@ -82,7 +83,7 @@
     {:else if publish.error}
       <InlineError message={edgeErrorMessage(publish.error)} />
     {/if}
-    <Dialog.Footer>
+    <Dialog.Footer class={STICKY_FOOTER}>
       <Button variant="outline" onclick={() => (open = false)}>Cancel</Button>
       <Button
         variant="outline"

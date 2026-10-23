@@ -18,6 +18,7 @@
    * Props: open (bindable); relay; listeners; listenerKey? / accountId? (preselect);
    *        onStarted(rotationId)
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { untrack } from 'svelte';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -190,7 +191,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-xl`}>
     <Dialog.Header>
       <Dialog.Title>Provision an edge for {relay.slug}</Dialog.Title>
       <Dialog.Description>
@@ -344,7 +345,7 @@
       {/if}
     </div>
 
-    <Dialog.Footer>
+    <Dialog.Footer class={STICKY_FOOTER}>
       <Button variant="outline" onclick={() => (open = false)}>Cancel</Button>
       <Button disabled={!ready || blocked || preflight.isFetching || busy} onclick={start}>
         {busy ? 'Starting' : 'Provision'}

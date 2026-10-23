@@ -14,6 +14,9 @@
  *   overrides(values, base, fields)        only what differs from the base
  *   optionSummary(fields, values)          "Label value" phrases for a chip line
  *   valueWords(field, value)               one value in words
+ *   fieldProblem(field, value)             what is wrong with one chosen value ("at most 10"), or null
+ *   optionProblems(fields, values, base)   every chosen value with a problem, in form order
+ *   problemLine(problem)                   "Healthy after: at most 10."
  */
 import type { EdgeTemplateField } from '../../../../../shared/contracts/edges';
 import { deepEqual, getPath, setPath, type Params } from '../templates/params';
@@ -183,3 +186,56 @@ export function pickBase(
   for (const [k, v] of Object.entries(location?.regionalParams ?? {})) out = setPath(out, k, v);
   return deepMerge(out, (account.optionDefaults ?? {}) as Params);
 }
+
+/**
+ * What is wrong with one value chosen for a field, in plain words without the
+ * field ("at most 10", "a number"), checked against the bounds the server's
+ * schema states (`min`, `max`, `pattern`, `maxItems`); null when nothing is.
+ * An inherited value (`undefined`) is never this level's problem.
+ */
+export function fieldProblem(
+  field: Pick<EdgeTemplateField, 'type' | 'min' | 'max' | 'pattern' | 'maxItems'>,
+  value: unknown,
+): string | null {
+  if (value === undefined || value === null) return null;
+  if (field.type === 'number') {
+    if (typeof value !== 'number' || Number.isNaN(value)) return 'a number';
+    if (field.min !== undefined && value < field.min) return `at least ${field.min}`;
+    if (field.max !== undefined && value > field.max) return `at most ${field.max}`;
+    return null;
+  }
+  if (field.type === 'string' && typeof value === 'string' && value !== '' && field.pattern) {
+    try {
+      if (!new RegExp(field.pattern).test(value)) return 'not in the expected form';
+    } catch {
+      return null;
+    }
+  }
+  if (field.type === 'string-list' && Array.isArray(value) && field.maxItems !== undefined)
+    if (value.length > field.maxItems)
+      return `at most ${field.maxItems} ${field.maxItems === 1 ? 'entry' : 'entries'}`;
+  return null;
+}
+
+export interface OptionProblem {
+  key: string;
+  label: string;
+  words: string;
+}
+
+/** Every value this level chose for a shown field that has a problem, in form order. */
+export function optionProblems(
+  fields: readonly EdgeTemplateField[],
+  values: Params,
+  base: Params = {},
+): OptionProblem[] {
+  const out: OptionProblem[] = [];
+  for (const f of visibleFields(fields, values, base)) {
+    const words = fieldProblem(f, getPath(values, f.key));
+    if (words) out.push({ key: f.key, label: f.label, words });
+  }
+  return out;
+}
+
+/** One problem as the dialog's error line: "Healthy after: at most 10." */
+export const problemLine = (p: OptionProblem): string => `${p.label}: ${p.words}.`;

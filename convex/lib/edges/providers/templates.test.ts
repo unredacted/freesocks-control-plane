@@ -9,6 +9,7 @@ import {
   checkBuiltParams,
   contextProblems,
   durationMs,
+  issueWords,
   optionFieldsOf,
   validateAccountOptionDefaults,
   validatePickOptions,
@@ -268,5 +269,47 @@ describe('a pick is checked against the template it builds with', () => {
     expect(validatePickOptions('fastly', { tcpKeepaliveTime: 60 }).ok).toBe(true);
     expect(checkBuiltParams('fastly', { tcpKeepalive: true, tcpKeepaliveTime: 60 }).ok).toBe(true);
     expect(checkBuiltParams('fastly', { tcpKeepaliveTime: 60 }).ok).toBe(false);
+  });
+});
+
+describe('option problems in plain words', () => {
+  it('an out-of-range option names its field and the bound, never the schema text', () => {
+    const r = validatePickOptions('gcore', { healthMonitor: { maxRetries: 11 } });
+    expect(r).toEqual({
+      ok: false,
+      code: 'edge.option_invalid',
+      issues: ['Healthy after: at most 10'],
+    });
+    // The template editor keeps the path (it labels it), with the same words.
+    const t = validateTemplateWrite('gcore', { healthMonitor: { maxRetries: 0 } });
+    expect(t).toEqual({ ok: false, issues: ['healthMonitor.maxRetries: at least 1'] });
+  });
+
+  it('issueWords: each schema issue kind in words, a written rule kept as written', () => {
+    const words = (schema: z.ZodType, value: unknown) => {
+      const r = schema.safeParse(value);
+      return r.success ? [] : r.error.issues.map((i) => issueWords(i));
+    };
+    expect(words(z.number().max(10), 11)).toEqual(['at most 10']);
+    expect(words(z.number().lt(10), 10)).toEqual(['less than 10']);
+    expect(words(z.number().min(1), 0)).toEqual(['at least 1']);
+    expect(words(z.number().gt(0), 0)).toEqual(['more than 0']);
+    expect(words(z.number().int(), 1.5)).toEqual(['a whole number']);
+    expect(words(z.number(), 'x')).toEqual(['a number']);
+    expect(words(z.object({ a: z.number() }), {})).toEqual(['required']);
+    expect(words(z.string().min(1), '')).toEqual(['required']);
+    expect(words(z.string().max(3), 'abcd')).toEqual(['at most 3 characters']);
+    expect(words(z.array(z.string()).max(1), ['a', 'b'])).toEqual(['at most 1 entry']);
+    expect(words(z.enum(['tcp', 'http']), 'udp')).toEqual(['one of tcp, http']);
+    expect(words(z.string().regex(/^a/), 'b')).toEqual(['not in the expected form']);
+    expect(words(z.number().multipleOf(5), 7)).toEqual(['a multiple of 5']);
+    expect(
+      words(
+        z.number().refine((v) => v !== 3, 'must not be 3'),
+        3,
+      ),
+    ).toEqual(['must not be 3']);
+    // No bare comparison, no em-dash, in any of them.
+    for (const w of words(z.number().max(10), 11)) expect(w).not.toMatch(/[<>=]|—/);
   });
 });

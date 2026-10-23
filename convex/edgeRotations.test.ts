@@ -19,7 +19,8 @@ import {
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
 import { upsertSettingRow } from './appSettings';
-import { isStaleRotation, MAX_STEP_ERRORS } from './edgeRotations';
+import { isStaleRotation, MAX_STEP_ERRORS, standbyReasonOf } from './edgeRotations';
+import { isSpareProvision, providerAnswerOf } from './lib/edges/rotation';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -37,6 +38,7 @@ const INBOUND = '22222222-2222-4222-8222-222222222222';
 const SS_INBOUND = '44444444-4444-4444-8444-444444444444';
 const SS_HOST_UUID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const SS_OLD_EDGE = '198.51.100.2';
+const THIRD_EDGE = '198.51.100.60';
 
 interface BackendAddress {
   uuid: string;
@@ -61,6 +63,8 @@ function fakeWorld(
     hostLeaks?: boolean;
     /** Extra Hosts the backend starts with (other listeners). */
     extraHosts?: BackendAddress[];
+    /** The addresses the fake provider mints, in order (then NEW_EDGE). */
+    mint?: string[];
   } = {},
 ) {
   const panelHosts: BackendAddress[] = [];
@@ -79,6 +83,7 @@ function fakeWorld(
   let patches = 0;
   let creates = 0;
   let panelCalls = 0;
+  let minted = 0;
   const stub = mockFetch((c) => {
     if (new URL(c.url).hostname === 'panel.example') {
       panelCalls++;
@@ -139,7 +144,9 @@ function fakeWorld(
       return jsonRes(lbs.get(uuid));
     }
     if (c.path === '/1.3/ip_address' && c.method === 'POST')
-      return jsonRes({ ip_address: { address: NEW_EDGE, floating: 'yes' } });
+      return jsonRes({
+        ip_address: { address: opts.mint?.[minted++] ?? NEW_EDGE, floating: 'yes' },
+      });
     const attach = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)\/ip-addresses$/);
     if (attach && c.method === 'POST') return jsonRes({});
     const get = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
@@ -200,6 +207,31 @@ async function seed(opts: { listeners?: ListenerSpecFixture[] } = {}) {
 
 async function listenerRow(t: ReturnType<typeof convexTest>, id: Id<'relayListeners'>) {
   return (await t.run((ctx) => ctx.db.get(id)))!;
+}
+
+/** The listener's Host as FCP records it: present at HOST_UUID with this intent. */
+async function setHostIntent(
+  t: ReturnType<typeof convexTest>,
+  id: Id<'relayListeners'>,
+  tuple: { address: string; sni: string | null; host?: string | null },
+) {
+  await t.run((ctx) =>
+    ctx.db.patch(id, {
+      host: {
+        state: 'present',
+        uuid: HOST_UUID,
+        ownership: 'fcp',
+        intended: {
+          remark: 'node-one-relay-u',
+          address: tuple.address,
+          port: 443,
+          sni: tuple.sni,
+          host: tuple.host ?? null,
+          inboundUuid: INBOUND,
+        },
+      },
+    }),
+  );
 }
 
 /**
@@ -778,6 +810,68 @@ describe('edgeRotations: replace', () => {
     expect(JSON.stringify(audit)).not.toContain(NEW_EDGE);
   });
 
+  test("the listener's Host intent follows every flip, so a name resync never writes an old address back", async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld({ hostPresent: false, mint: [NEW_EDGE, THIRD_EDGE] });
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
+    // First replace: no Host yet, so FCP creates it at the new edge (its intent).
+    await provisionSpare(t, relayId);
+    const first = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await drain(t, first.rotationId);
+    const r1 = (await t.query(internal.edgeRotations.get, { id: first.rotationId }))!;
+    expect([r1.phase, r1.outcome]).toEqual(['done', 'published']);
+    const created = (await listenerRow(t, listenerId)).host!;
+    expect(created).toMatchObject({ state: 'present', ownership: 'fcp' });
+    expect(created.intended).toMatchObject({ address: NEW_EDGE, port: 443, sni: 'a.example' });
+    // Second replace: the Host exists, so the rotation FLIPS it to the third address.
+    await t.run((ctx) => ctx.db.patch(relayId, { cooldownUntil: undefined }));
+    await provisionSpare(t, relayId);
+    const second = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: r1.toEdgeId!,
+    });
+    await drain(t, second.rotationId);
+    const r2 = (await t.query(internal.edgeRotations.get, { id: second.rotationId }))!;
+    expect([r2.phase, r2.outcome]).toEqual(['done', 'published']);
+    expect(r2.events.map((e) => e.code)).toEqual(
+      expect.arrayContaining(['host_forward_written', 'hosts_converged']),
+    );
+    expect(world.panelHosts[0]).toMatchObject({ uuid: created.uuid, address: THIRD_EDGE });
+    // The intent moved with the Host: same Host, same owner, the flipped tuple.
+    const flipped = (await listenerRow(t, listenerId)).host!;
+    expect(flipped).toMatchObject({ state: 'present', uuid: created.uuid, ownership: 'fcp' });
+    expect(flipped.intended).toEqual({
+      ...created.intended,
+      address: THIRD_EDGE,
+      port: 443,
+      sni: 'a.example',
+      host: null,
+    });
+    // Why it matters: retiring the Host's name rewrites the Host from the intent
+    // (address and port kept). It must write the address members are on now.
+    await t.run((ctx) =>
+      ctx.db.patch(listenerId, {
+        tlsNames: [
+          { name: 'a.example', status: 'retired', retiredAt: Date.now() },
+          { name: 'b.example', status: 'active' },
+        ],
+      }),
+    );
+    expect(await t.query(internal.hostOps.resyncSniContext, { listenerId })).toMatchObject({
+      kind: 'write',
+      address: THIRD_EDGE,
+      port: 443,
+      sni: 'b.example',
+    });
+  });
+
   test('a Host create whose outcome is unknown parks the flip; the next pass discovers the Host and finishes', async () => {
     vi.useFakeTimers();
     const world = fakeWorld({ hostPresent: false });
@@ -1227,6 +1321,57 @@ describe('edgeRotations: provision + publish kinds', () => {
     expect(world.patches()).toBe(1);
   });
 
+  test('a publish the pool holds back ends a standby, and says so on the run and in the activity', async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    // `u` is published; `s` has nothing, so the one free slot is held for it.
+    const { t, relayId, listenerIds } = await seed({
+      listeners: [listenerU(), shadowsocksListener()],
+    });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.desiredPublished).toBe(2);
+    const { edgeId: second } = await adoptL4Edge(t, relayId, listenerIds.u, { ipv4: NEW_EDGE });
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'publish',
+      trigger: 'manual',
+      toEdgeId: second,
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect([r.phase, r.outcome]).toEqual(['done', 'standby']);
+    expect(r.events.map((e) => e.code)).toContain('pool_reserved_standby');
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.publishedEdgeIds.filter(Boolean)).toHaveLength(1);
+    expect(origin.standbyEdgeIds).toContain(second);
+    // The run says why it ended a standby; a plain published run says nothing.
+    const admin = (await t.query(internal.edgeRotations.getForAdmin, { id: rotationId }))!;
+    expect(admin.standbyReason).toBe('pool_reserved');
+    expect(admin.audit.map((a) => a.action)).toContain('edge.publish_held');
+    const held = (await t.run((ctx) => ctx.db.query('auditLog').collect())).find(
+      (a) => a.action === 'edge.publish_held',
+    );
+    expect(held?.payload).toEqual({
+      relaySlug: 'node-one',
+      edgeId: second,
+      code: 'pool_reserved',
+      rotationId,
+    });
+    // The node's activity carries it.
+    const timeline = await t.query(internal.edgeOperator.timeline, { relayId });
+    expect(timeline.entries.map((e) => e.action)).toContain('edge.publish_held');
+  });
+
+  test('standbyReasonOf: only a standby outcome, from the last pool refusal event', () => {
+    const ev = (code: string) => ({ at: 0, level: 'warn' as const, code });
+    expect(standbyReasonOf({ outcome: 'standby', events: [ev('pool_full_standby')] })).toBe(
+      'pool_full',
+    );
+    expect(standbyReasonOf({ outcome: 'standby', events: [ev('unverified_standby')] })).toBeNull();
+    expect(
+      standbyReasonOf({ outcome: 'published', events: [ev('pool_reserved_standby')] }),
+    ).toBeNull();
+  });
+
   test('selection fails cleanly when no qualified account exists for the listener', async () => {
     vi.useFakeTimers();
     fakeWorld();
@@ -1364,6 +1509,7 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     // operator, not FCP, put there.
     world.panelHosts[0].address = NEW_EDGE;
     world.panelHosts[0].sni = 'operator.example';
+    await setHostIntent(t, listenerId, { address: NEW_EDGE, sni: 'operator.example' });
     const { rotationId } = await rollingBackRow(
       t,
       relayId,
@@ -1380,6 +1526,12 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     expect(world.panelHosts[0].address).toBe(OLD_EDGE);
     // The name the plan knows nothing about is untouched.
     expect(world.panelHosts[0].sni).toBe('operator.example');
+    // The intent follows the Host back: the address, with the unknown name kept.
+    expect((await listenerRow(t, listenerId)).host!.intended).toMatchObject({
+      address: OLD_EDGE,
+      port: 443,
+      sni: 'operator.example',
+    });
   });
 
   test('a version-2 plan restores the WHOLE tuple, clears included (an L7 flip rolled back)', async () => {
@@ -1390,6 +1542,12 @@ describe('edgeRotations: recovery, guards and bounds', () => {
     world.panelHosts[0].address = 'front.example.org';
     world.panelHosts[0].sni = 'front.example.org';
     world.panelHosts[0].host = 'front.example.org';
+    // The flip had converged, so the listener's intent followed it to the front.
+    await setHostIntent(t, listenerId, {
+      address: 'front.example.org',
+      sni: 'front.example.org',
+      host: 'front.example.org',
+    });
     const { rotationId } = await rollingBackRow(
       t,
       relayId,
@@ -1420,6 +1578,13 @@ describe('edgeRotations: recovery, guards and bounds', () => {
       port: 443,
       sni: 'a.example',
       host: '',
+    });
+    // The intent is the restored tuple again, the cleared Host header included.
+    expect((await listenerRow(t, listenerId)).host!.intended).toMatchObject({
+      address: OLD_EDGE,
+      port: 443,
+      sni: 'a.example',
+      host: null,
     });
   });
 
@@ -2153,6 +2318,159 @@ describe('edgeRotations: a provision step that keeps failing', () => {
     }
     expect(w.deletes).toEqual(['lb-1']);
     expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!.status).toBe('destroyed');
+  });
+
+  test("a spare that could not be built is named as one, with the provider's words, in attention and activity", async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    const { t, relayId, listenerId } = await seed();
+    // A spare's provision whose create step the provider refused in words (kept,
+    // redacted, on its edge), about to run out of retries.
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, { ipv4: NEW_EDGE });
+    const now = Date.now();
+    const rotationId = await t.run(async (ctx) => {
+      await ctx.db.patch(edgeId as Id<'edges'>, {
+        status: 'provisioning',
+        failure: { step: 'ip', code: 'INVALID_INPUT', status: 400, detail: '1 input is not valid' },
+      });
+      const id = await ctx.db.insert('edgeRotations', {
+        relayId,
+        kind: 'provision',
+        trigger: 'manual',
+        burn: false,
+        force: false,
+        toEdgeId: edgeId,
+        createdEdgeId: edgeId,
+        viaStandby: false,
+        listenerId,
+        publishOnDone: false,
+        phase: 'provisioning',
+        stepVersion: 3,
+        cancelRequested: false,
+        hostPlan: [],
+        hostPlanCaptured: false,
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: now,
+        updatedAt: now,
+      } as never);
+      await ctx.db.patch(relayId, { activeRotationId: id });
+      return id;
+    });
+    await t.mutation(internal.edgeRotations.advance, {
+      rotationId,
+      stepVersion: 3,
+      event: { type: 'fail', code: 'step_retries_exhausted', detail: 'ip', rollback: false },
+    });
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe('failed');
+    // Attention: what the run was and what the provider said; it opens the run.
+    const { items } = await t.query(internal.edgeOperator.attention, {});
+    expect(items.find((i) => i.kind === 'rotation_failed')).toMatchObject({
+      rotationId,
+      code: 'step_retries_exhausted',
+      action: 'open_relay',
+      facts: { kind: 'provision', spare: true, answer: '1 input is not valid' },
+    });
+    // Activity: the same, on the audit row the node page words.
+    const audit = (await t.run((ctx) => ctx.db.query('auditLog').collect())).find(
+      (a) => a.action === 'edge.rotation_failed',
+    );
+    expect(audit?.payload).toMatchObject({
+      relaySlug: 'node-one',
+      kind: 'provision',
+      spare: true,
+      code: 'step_retries_exhausted',
+      answer: '1 input is not valid',
+      rotationId,
+    });
+    expect(JSON.stringify(audit?.payload)).not.toContain(NEW_EDGE);
+  });
+
+  test("providerAnswerOf: the edge's kept answer, else the newest event that carried one", () => {
+    expect(providerAnswerOf([], { detail: ' 1 input is not valid ' })).toBe('1 input is not valid');
+    expect(
+      providerAnswerOf(
+        [
+          { detail: 'step lb threw: 400. The provider answered: old words' },
+          { detail: 'step ip threw: 400 x. The provider answered: newer words' },
+          { detail: 'step ip still unresolved' },
+        ],
+        { detail: '' },
+      ),
+    ).toBe('newer words');
+    expect(providerAnswerOf([{ detail: 'step ip threw: 500' }, {}], null)).toBeNull();
+    expect(providerAnswerOf([], { detail: 'x'.repeat(500) })!.length).toBe(200);
+    // This run's own words win over what an edge kept.
+    expect(
+      providerAnswerOf([{ detail: 'step ip threw: 400. The provider answered: this run' }], {
+        detail: 'kept',
+      }),
+    ).toBe('this run');
+  });
+
+  test('isSpareProvision: a provision kept unused, never a setup run candidate or a fill', () => {
+    expect(isSpareProvision({ kind: 'provision', publishOnDone: false })).toBe(true);
+    expect(isSpareProvision({ kind: 'provision' })).toBe(true);
+    expect(isSpareProvision({ kind: 'provision', publishOnDone: true })).toBe(false);
+    // A guided setup's candidate is put in use at go-live: not a spare.
+    expect(
+      isSpareProvision({ kind: 'provision', publishOnDone: false, setupRun: { runId: 'r' } }),
+    ).toBe(false);
+    expect(isSpareProvision({ kind: 'publish' })).toBe(false);
+    expect(isSpareProvision({ kind: 'replace' })).toBe(false);
+  });
+
+  test("a failed publish never quotes the standby's older provider answer", async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    const { t, relayId, listenerId } = await seed();
+    // A standby that once had a provider refusal, then recovered.
+    const { edgeId } = await adoptL4Edge(t, relayId, listenerId, { ipv4: NEW_EDGE });
+    const now = Date.now();
+    const rotationId = await t.run(async (ctx) => {
+      await ctx.db.patch(edgeId as Id<'edges'>, {
+        failure: { step: 'ip', code: 'INVALID_INPUT', detail: 'an old answer' },
+      });
+      const id = await ctx.db.insert('edgeRotations', {
+        relayId,
+        kind: 'publish',
+        trigger: 'manual',
+        burn: false,
+        force: false,
+        toEdgeId: edgeId,
+        viaStandby: true,
+        listenerId,
+        phase: 'publishing',
+        stepVersion: 2,
+        cancelRequested: false,
+        hostPlan: [],
+        hostPlanCaptured: false,
+        flipAttempts: 0,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: now,
+        updatedAt: now,
+      } as never);
+      await ctx.db.patch(relayId, { activeRotationId: id });
+      return id;
+    });
+    await t.mutation(internal.edgeRotations.advance, {
+      rotationId,
+      stepVersion: 2,
+      event: { type: 'fail', code: 'not_publishable', rollback: false },
+    });
+    const { items } = await t.query(internal.edgeOperator.attention, {});
+    const item = items.find((i) => i.kind === 'rotation_failed')!;
+    expect(item.facts).toMatchObject({ kind: 'publish', spare: false });
+    expect(item.facts).not.toHaveProperty('answer');
+    const audit = (await t.run((ctx) => ctx.db.query('auditLog').collect())).find(
+      (a) => a.action === 'edge.rotation_failed',
+    );
+    expect(audit?.payload).toMatchObject({ kind: 'publish', spare: false });
+    expect(audit?.payload).not.toHaveProperty('answer');
   });
 
   test('automatic upkeep does not provision again right after its provision failed', async () => {

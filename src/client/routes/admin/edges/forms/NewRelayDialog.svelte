@@ -12,6 +12,7 @@
    *   kinds?: OriginKind[]             the origin kinds offered (the first is preselected)
    *   onCreated: (slug: string) => void
    */
+  import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { untrack } from 'svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -154,7 +155,7 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+  <Dialog.Content class={`${DIALOG_FIT} sm:max-w-3xl`}>
     <Dialog.Header>
       <Dialog.Title>New origin</Dialog.Title>
       <Dialog.Description>
@@ -272,7 +273,7 @@
         <InlineError message={edgeErrorMessage(create.error)} />
       {/if}
 
-      <Dialog.Footer>
+      <Dialog.Footer class={STICKY_FOOTER}>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
         <Button type="submit" disabled={create.isPending}>
           {create.isPending ? 'Creating' : 'Create relay'}

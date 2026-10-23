@@ -1150,6 +1150,11 @@ export const EdgeRotationAdmin = z.object({
   listenerKey: z.string().nullable().default(null),
   outcome: z.string().nullable(),
   reason: z.string().nullable(),
+  /**
+   * A run that ended with its edge still a standby because of the pool: `pool_reserved` (the
+   * free slots are held for what the node still lacks) or `pool_full`. Null otherwise.
+   */
+  standbyReason: z.enum(['pool_reserved', 'pool_full']).nullable().default(null),
   steps: z.array(EdgeStep),
   progress: z.object({ done: z.number(), total: z.number(), percent: z.number() }),
   events: z.array(
@@ -2015,6 +2020,12 @@ export const PreflightResponse = z.object({
       provider: EdgeProviderId.nullable(),
       layer: EdgeLayer.nullable(),
       templateId: z.string().nullable(),
+      /**
+       * `provision` of a new address: whether putting it in use once it is tested would get it
+       * a pool slot as the pool stands now (false: it would stay a spare, the free slots are
+       * held for what the node still lacks). Null when not asked.
+       */
+      takesSlot: z.boolean().nullable().default(null),
     })
     .nullable(),
 });
@@ -2064,8 +2075,11 @@ export const AttentionItem = z.object({
   code: z.string().nullable().default(null),
   /**
    * Small facts for the row. Keys per kind (all optional; the CMS renders only these):
-   * `pool_below_desired` published, desired, standbys · `members_dark` published ·
-   * `host_unresolved` op (create|delete|null), attempts · `rotation_failed` kind, phase ·
+   * `pool_below_desired` published, desired, standbys (code `pool_reserved`: the spare it
+   * names would stay a spare, its free slots are held for what the node still lacks) ·
+   * `members_dark` published ·
+   * `host_unresolved` op (create|delete|null), attempts · `rotation_failed` kind, phase, spare (a provision not meant
+   * for use, no setup run's), answer (the provider's redacted words during that run) ·
    * `block_suspected` score, hintLevel, countries[] · `edge_unreachable` countries[] ·
    * `needs_operator` provider, layer · `account_untested` / `account_unqualified` name, provider.
    */
@@ -2420,6 +2434,31 @@ export const ProviderSetView = z.object({
   uncarried: z.array(z.string()),
   /** Addresses the set still needs (0 = complete). */
   deficit: z.number(),
+  /**
+   * What the set still lacks, one entry per missing address (`deficit` entries):
+   * a transport, and the location of the set it is wanted in (null: any location).
+   */
+  missing: z
+    .array(
+      z.object({
+        listenerKey: z.string(),
+        locationId: z.string().nullable(),
+        label: z.string().nullable(),
+        accountName: z.string().nullable(),
+      }),
+    )
+    .default([]),
+  /**
+   * The pool: addresses wanted in use, in use, free slots, and how many of the
+   * free slots are held for `missing` (reserved allocation: only an address that
+   * fills one may take a held slot).
+   */
+  pool: z
+    .object({ wanted: z.number(), inUse: z.number(), free: z.number(), held: z.number() })
+    .nullable()
+    .default(null),
+  /** Each spare (and retiring address): whether putting it in use now would get it a slot. */
+  spares: z.array(z.object({ edgeId: z.string(), takesSlot: z.boolean() })).default([]),
   /** Locations that could be added (they carry at least one transport of the node). */
   available: z.array(
     z.object({
