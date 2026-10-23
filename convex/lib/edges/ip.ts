@@ -35,8 +35,11 @@ export function isIpv6Literal(s: string): boolean {
       return false;
     }
   }
-  if (parts.length === 1 && groups.length !== 8) return false;
-  if (parts.length === 2 && groups.length > 7) return false;
+  // An embedded IPv4 tail fills two of the eight groups (`v6Groups` reads it so).
+  const last = groups[groups.length - 1];
+  const count = groups.length + (last !== undefined && last.includes('.') ? 1 : 0);
+  if (parts.length === 1 && count !== 8) return false;
+  if (parts.length === 2 && count > 7) return false;
   return true;
 }
 
@@ -172,12 +175,11 @@ export function isPublicIpLiteral(s: string): boolean {
       .trim()
       .replace(/^\[|\]$/g, '')
       .toLowerCase();
-    if (t === '::' || t === '::1') return false;
-    if (t.startsWith('::ffff:')) return false;
-    const first = t.split(':')[0] ?? '';
-    if (first.length === 0) return false; // ::-prefixed compressed leading zeros
-    const firstVal = parseInt(first, 16);
-    if (Number.isNaN(firstVal)) return false;
+    // By value, however it is written: `::`, `::1`, an IPv4-mapped address in
+    // either spelling (`::ffff:192.0.2.1`, `0:0:0:0:0:ffff:192.0.2.1`) and the
+    // rest of 0000::/8 are never public.
+    const firstVal = v6Groups(t)[0] ?? 0;
+    if (firstVal < 0x0100) return false;
     if ((firstVal & 0xfe00) === 0xfc00) return false; // fc00::/7
     if ((firstVal & 0xffc0) === 0xfe80) return false; // fe80::/10
     if ((firstVal & 0xff00) === 0xff00) return false; // multicast

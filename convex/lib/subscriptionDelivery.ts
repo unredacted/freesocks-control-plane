@@ -206,8 +206,8 @@ export type DeliveryOutcome =
     }
   | { kind: 'refuse'; reason: string };
 
-/** One served pass's entries left out, and the origin to note them on. */
-interface WithheldNote {
+/** One served render's entries left out, and the origin to note them on. */
+export interface WithheldNote {
   rctx: { relayId: Id<'relays'>; withheldNotedAt: number | null };
   names: Array<string | null>;
 }

@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 import {
   addressFamily,
   bracketIfV6,
+  canonicalIp,
+  parseCidr,
   hostPort,
   isIpv4Literal,
   isIpv6Literal,
@@ -19,6 +21,13 @@ describe('ip helpers', () => {
     expect(isIpv6Literal('[2001:db8::5]')).toBe(true);
     expect(isIpv6Literal('2001:db8:::5')).toBe(false);
     expect(isIpv6Literal('example.com')).toBe(false);
+    // An embedded IPv4 tail fills two groups, compressed or written out.
+    expect(isIpv6Literal('::ffff:192.0.2.0')).toBe(true);
+    expect(isIpv6Literal('0:0:0:0:0:ffff:192.0.2.0')).toBe(true);
+    expect(isIpv6Literal('0:0:0:0:0:0:ffff:192.0.2.0')).toBe(false);
+    expect(isIpv6Literal('0:0:0:0:ffff:192.0.2.0')).toBe(false);
+    expect(isIpv6Literal('1:2:3:4:5:6::192.0.2.0')).toBe(false);
+    expect(canonicalIp('0:0:0:0:0:ffff:192.0.2.1')).toBe('192.0.2.1');
     expect(addressFamily('203.0.113.5')).toBe('v4');
     expect(addressFamily('2001:db8::5')).toBe('v6');
     expect(addressFamily('edge.example')).toBeNull();
@@ -41,6 +50,8 @@ describe('ip helpers', () => {
       'fd00::1',
       'ff02::1',
       '::ffff:203.0.113.5',
+      '0:0:0:0:0:ffff:203.0.113.5',
+      '0:0:0:0:0:ffff:cb00:7105',
       'not-an-ip',
     ]) {
       expect(isPublicIpLiteral(bad), bad).toBe(false);
@@ -48,6 +59,28 @@ describe('ip helpers', () => {
     for (const ok of ['203.0.113.5', '198.51.100.9', '2001:db8::5', '2001:db8:4::1']) {
       expect(isPublicIpLiteral(ok), ok).toBe(true);
     }
+  });
+
+  test('ranges: an IPv4-embedded IPv6 range, compressed or written out', () => {
+    for (const range of ['::ffff:192.0.2.0/120', '0:0:0:0:0:ffff:192.0.2.0/120'])
+      expect(parseCidr(range), range).toEqual({
+        family: 'v6',
+        prefix: 120,
+        start: '::ffff:c000:200',
+        startsRange: true,
+      });
+    expect(parseCidr('0:0:0:0:0:ffff:192.0.2.9/120')).toMatchObject({
+      startsRange: false,
+      start: '::ffff:c000:200',
+    });
+    expect(parseCidr('192.0.2.10/24')).toEqual({
+      family: 'v4',
+      prefix: 24,
+      start: '192.0.2.0',
+      startsRange: false,
+    });
+    expect(parseCidr('192.0.2.0/33')).toBeNull();
+    expect(parseCidr('2001:db8::/129')).toBeNull();
   });
 
   test('bracketing', () => {

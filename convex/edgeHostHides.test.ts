@@ -19,6 +19,7 @@ import { cohortPage, type Cohort, type CohortCursor, type CohortPage } from './l
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
 import { HOST_OP_TTL_MS, HOST_SETTLE_MS } from './hostOps';
 import { __setNameResolutionForTests } from './nodeIntentOps';
+import { __setS3SendForTests } from './storage';
 import { fakeHostPanel, type AddressRow } from './lib/edges/testing/fakeHostPanel';
 import {
   FIXTURE_CONFIG_PROFILE,
@@ -946,6 +947,95 @@ describe('a protected node whose Hosts FCP built itself (no hide rows) is looked
     expect(panel.find(LATE).isDisabled).toBe(false);
     await t.run((ctx) => ctx.db.patch(relayId, { hostMode: 'none' }));
     expect(await t.query(internal.edgeHostHides.boundRelays, {})).toEqual([]);
+  });
+});
+
+describe('a mirror notes what its render left out only once the upload is accepted', () => {
+  afterEach(() => __setS3SendForTests(null));
+  const BY_NAME = 'node-one.wildcard.example.net';
+  /** A bound node with one mirrored key, and a Host by a name no look has resolved. */
+  async function mirrored() {
+    const hosts = [
+      ...panelHosts().filter((h) => h.uuid === FCP_UUID),
+      {
+        uuid: 'e2e2e2e2-e2e2-4e2e-8e2e-e2e2e2e2e2e2',
+        remark: `${FIXTURE_NODE}-added`,
+        address: BY_NAME,
+        port: 443,
+        sni: 'target.example',
+        isDisabled: false,
+        inbound: inbound(FIXTURE_INBOUND),
+      },
+    ];
+    const w = await world({ hosts });
+    await w.t.run(async (ctx) => {
+      await ctx.db.insert('mirrorProviders', {
+        name: 'p1',
+        endpoint: 'https://s3.invalid',
+        bucket: 'b',
+        publicUrl: 'https://mirror.example',
+        region: 'auto',
+        accessKeyId: 'ak',
+        secretAccessKey: 'sk',
+        isActive: true,
+        priority: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(w.subId, {
+        subscriptionMirrors: [
+          {
+            provider: 'p1',
+            publicUrl: 'https://mirror.example/mirrors/m1',
+            objectPath: 'mirrors/m1',
+            status: 'ok',
+          },
+        ],
+        rawContentHash: 'hash-of-the-old-body',
+      });
+    });
+    const noted = async () => ({
+      note: (await w.relay()).withheldEntries,
+      audits: (await w.t.run((ctx) => ctx.db.query('auditLog').collect())).filter(
+        (a) => a.action === 'edge.render.withheld',
+      ).length,
+    });
+    const refresh = async () => {
+      await w.t.action(internal.storage.refreshMirrorsForSubscription, {
+        subscriptionId: w.subId,
+      });
+      await w.t.finishAllScheduledFunctions(vi.runAllTimers);
+    };
+    return { ...w, noted, refresh };
+  }
+
+  test('a failed upload, or one a policy move overtook, notes nothing; an accepted one does', async () => {
+    vi.useFakeTimers();
+    const w = await mirrored();
+    // Every upload fails: the body never serves.
+    __setS3SendForTests(async () => {
+      throw new Error('s3 down');
+    });
+    await w.refresh();
+    expect(await w.noted()).toEqual({ note: undefined, audits: 0 });
+    // The key moved in place while the object was written: the body is stale.
+    const puts: string[] = [];
+    __setS3SendForTests(async (_p, op) => {
+      if (op.kind !== 'put') return;
+      puts.push(op.body);
+      await w.t.run(async (ctx) => {
+        const sub = (await ctx.db.get(w.subId))!;
+        await ctx.db.patch(w.subId, { deliveryRev: (sub.deliveryRev ?? 0) + 1 });
+      });
+    });
+    await w.refresh();
+    expect(puts).toHaveLength(1);
+    expect(puts[0]).not.toContain(BY_NAME);
+    expect(await w.noted()).toEqual({ note: undefined, audits: 0 });
+    // Accepted under the barrier: now the operator is told, once.
+    __setS3SendForTests(async () => {});
+    await w.refresh();
+    expect((await w.noted()).note).toMatchObject({ count: 1, remarks: [`${FIXTURE_NODE}-added`] });
+    expect((await w.noted()).audits).toBe(1);
   });
 });
 
