@@ -7,14 +7,18 @@
  * that moves a path, or a new call slipped into an adapter are all invisible in
  * review; here they are one diff. `wireContract.test.ts` drives each adapter's
  * FULL lifecycle against a recording HTTP transport and asserts both directions:
- * every recorded request matches an entry below, and every entry below is
- * exercised by the lifecycle (so the table cannot list endpoints nothing calls).
+ * every recorded request matches exactly one entry below, and every entry below
+ * is exercised by the lifecycle (so the table cannot list endpoints nothing
+ * calls). "Exactly one" is what keeps an entry honest: a request that also
+ * satisfied a sibling entry would count that sibling as exercised after its own
+ * use was gone.
  * `docs/edges.md` carries the rendered table, pinned by the same test.
  *
  * Paths are RegExp SOURCES matched against the request path (no host, no query),
  * with `[^/]+` where an id, a name or a version number goes. Query and body keys
  * are the ones that must be PRESENT (extra keys are fine): they pin filters,
- * pagination and the fields an allocating call cannot lose.
+ * pagination and the fields an allocating call cannot lose. `withoutQuery`
+ * names keys that must be ABSENT, to tell two uses of one path apart.
  *
  * Each entry's `source` is the vendor documentation the calls were read from,
  * with the date, so a reviewer can check a shape against the vendor rather than
@@ -30,6 +34,8 @@ export interface WireCall {
   purpose: string;
   /** Query keys that must be present on every such call. */
   query?: string[];
+  /** Query keys that must be absent: what sets this entry apart from one on the same path that requires them. */
+  withoutQuery?: string[];
   /** Top-level body keys that must be present when the call sends a body. */
   body?: string[];
   /**
@@ -106,6 +112,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         method: 'GET',
         path: '^/cloud/v1/lbflavors/[^/]+/[^/]+$',
         purpose: 'list load balancer flavors (inventory, the location form)',
+        withoutQuery: ['include_prices'],
       },
       {
         method: 'GET',
@@ -899,6 +906,7 @@ function matches(entry: WireCall, call: ObservedCall): boolean {
   if ((entry.target ?? undefined) !== (call.target ?? undefined)) return false;
   const queryKeys = new Set(call.queryKeys ?? []);
   for (const k of entry.query ?? []) if (!queryKeys.has(k)) return false;
+  for (const k of entry.withoutQuery ?? []) if (queryKeys.has(k)) return false;
   const bodyKeys = call.bodyKeys;
   // Body keys are only required when the call actually sent a body: a `GET` and
   // a body-less `DELETE` of the same path are covered by the same entry.
@@ -919,6 +927,15 @@ export function unmatchedCalls(id: EdgeProviderId, calls: readonly ObservedCall[
   return calls.filter((c) => !matchWireCall(id, c));
 }
 
+/**
+ * Recorded calls that more than one contract entry covers. Such a call would
+ * count every entry it matches as exercised, so the entries must be told apart
+ * (`query`, `withoutQuery`, a narrower path) until each call matches exactly one.
+ */
+export function ambiguousCalls(id: EdgeProviderId, calls: readonly ObservedCall[]): ObservedCall[] {
+  return calls.filter((c) => WIRE_CONTRACTS[id].calls.filter((e) => matches(e, c)).length > 1);
+}
+
 /** Contract entries the observed lifecycle never exercised (a dead entry). */
 export function uncoveredEntries(id: EdgeProviderId, calls: readonly ObservedCall[]): WireCall[] {
   return WIRE_CONTRACTS[id].calls.filter((entry) => !calls.some((c) => matches(entry, c)));
@@ -927,8 +944,9 @@ export function uncoveredEntries(id: EdgeProviderId, calls: readonly ObservedCal
 /** `GET /foo/[^/]+$` as one readable line (the doc table cell). */
 export function wireCallLabel(entry: WireCall): string {
   const q = entry.query?.length ? ` ?${entry.query.join('&')}` : '';
+  const nq = entry.withoutQuery?.length ? ` without ?${entry.withoutQuery.join('&')}` : '';
   const t = entry.target ? ` X-Amz-Target: ${entry.target}` : '';
-  return `${entry.path}${q}${t}`;
+  return `${entry.path}${q}${nq}${t}`;
 }
 
 // --- documentation ------------------------------------------------------------------------

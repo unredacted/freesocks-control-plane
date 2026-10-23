@@ -32,10 +32,12 @@ import {
 import { acmeChallengeName } from '../hostname';
 import {
   WIRE_CONTRACTS,
+  ambiguousCalls,
   matchWireCall,
   tableRowCells,
   uncoveredEntries,
   unmatchedCalls,
+  wireCallLabel,
   wireContractCells,
   WIRE_CONTRACT_HEADING,
   type ObservedCall,
@@ -118,10 +120,14 @@ function fromRecorded(calls: readonly RecordedCall[]): ObservedCall[] {
 const show = (c: ObservedCall) =>
   `${c.method} ${c.path}${c.queryKeys?.length ? `?${c.queryKeys.join('&')}` : ''}`;
 
-/** Every recorded call is declared (an undeclared endpoint fails here). */
+/**
+ * Every recorded call is declared by exactly one entry (an undeclared endpoint,
+ * or a call two entries both claim, fails here).
+ */
 function expectDeclared(id: EdgeProviderId, calls: readonly ObservedCall[]): void {
   expect(calls.length).toBeGreaterThan(0);
   expect(unmatchedCalls(id, calls).map(show)).toEqual([]);
+  expect(ambiguousCalls(id, calls).map(show)).toEqual([]);
 }
 
 /** ...and every declared call was exercised (a dead contract entry fails here). */
@@ -423,6 +429,23 @@ describe('wire contract: gcore', () => {
     expect(found.status).toBe('found');
     expect(recovery.calls.filter((c) => c.method === 'POST')).toHaveLength(0);
     expectDeclared('gcore', fromCaptured(recovery.calls));
+  });
+
+  test('the priced flavor read never stands in for the plain one, nor the other way round', async () => {
+    const stub = mockFetch(route());
+    const unexercisedFlavorReads = () =>
+      uncoveredEntries('gcore', fromCaptured(stub.calls))
+        .filter((e) => e.path.includes('/lbflavors/'))
+        .map(wireCallLabel);
+    // The price read alone: the inventory and location-form entry is still unexercised.
+    await gcoreProvider.plans!(cfg);
+    expect(unexercisedFlavorReads()).toEqual([
+      '^/cloud/v1/lbflavors/[^/]+/[^/]+$ without ?include_prices',
+    ]);
+    // The inventory alone: the price read's entry is.
+    stub.calls.length = 0;
+    await gcoreProvider.inventory(cfg);
+    expect(unexercisedFlavorReads()).toEqual(['^/cloud/v1/lbflavors/[^/]+/[^/]+$ ?include_prices']);
   });
 
   test('errors carry no key, no origin address and no response body', async () => {
@@ -2232,6 +2255,21 @@ describe('wire contract docs', () => {
     // Confidentiality rule for this subsystem: never name a provider as the one
     // in use. The table is a capability list, not a deployment description.
     expect(section().toLowerCase()).not.toMatch(/\bproduction\b|\bin use\b|\bwe use\b/);
+  });
+
+  test('a call two entries both claim is reported, since it would count both as exercised', () => {
+    const dnsRecords = { method: 'GET', path: '/client/v4/zones/z/dns_records' };
+    expect(
+      ambiguousCalls('cloudflare', [
+        { ...dnsRecords, queryKeys: ['name.exact', 'per_page'] },
+        { ...dnsRecords, queryKeys: ['page', 'per_page', 'proxied'] },
+      ]),
+    ).toEqual([]);
+    expect(
+      ambiguousCalls('cloudflare', [
+        { ...dnsRecords, queryKeys: ['name.exact', 'page', 'per_page', 'proxied'] },
+      ]),
+    ).toHaveLength(1);
   });
 
   test('a call the contract does not declare is reported rather than silently accepted', () => {
