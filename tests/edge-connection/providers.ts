@@ -131,8 +131,8 @@ export function installProviderFakes(opts: {
     calls.upcloud.push({ method, path, body });
     const p = path.replace(/^\/1\.3/, '');
     if (p === '/account' && method === 'GET') return json({ account: { username: 'ec-test' } });
-    if (p === '/load-balancer/plans' && method === 'GET')
-      return json({ plans: [{ name: 'development' }] });
+    // UpCloud answers the plan list as a bare array.
+    if (p === '/load-balancer/plans' && method === 'GET') return json([{ name: 'development' }]);
     if (p === '/load-balancer' && method === 'GET') return json([...lbs.values()]);
     if (p === '/load-balancer' && method === 'POST') {
       const uuid = `0a000000-0000-4000-8000-${String(++seq).padStart(12, '0')}`;

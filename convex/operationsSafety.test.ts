@@ -197,6 +197,8 @@ describe('provider failures are visible', () => {
     expect(apiFailureCode(err({ status: 401 }))).toBe('401');
     expect(apiFailureCode(err({ status: 429 }))).toBe('429');
     expect(apiFailureCode(err({ status: 200, code: 'schema_mismatch' }))).toBe('schema_mismatch');
+    // An adapter's own word for an answer it could not read counts the same way.
+    expect(apiFailureCode(err({ code: 'plan_list_unreadable' }))).toBe('plan_list_unreadable');
     // A refusal the caller handles is not the API failing.
     expect(apiFailureCode(err({ status: 404 }))).toBeNull();
     expect(apiFailureCode(err({ status: 409, code: 'conflict' }))).toBeNull();

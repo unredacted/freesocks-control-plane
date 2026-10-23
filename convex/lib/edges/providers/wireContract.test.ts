@@ -418,9 +418,20 @@ describe('wire contract: upcloud', () => {
   const route = (c: Captured): Response => {
     const p = c.path;
     if (p === '/1.3/account') return jsonRes({ account: { username: 'automation' } });
+    if (p === '/1.3/account/details/automation')
+      return jsonRes({ account: { username: 'automation', currency: 'EUR' } });
+    if (p === '/1.3/price')
+      return jsonRes({
+        prices: {
+          zone: [
+            { name: 'fi-hel1', managed_load_balancer_development: { amount: 1, price: 1.4881 } },
+          ],
+        },
+      });
     if (p === '/1.3/zone')
       return jsonRes({ zones: { zone: [{ id: 'fi-hel1', description: 'Helsinki' }] } });
-    if (p === '/1.3/load-balancer/plans') return jsonRes({ plans: [{ name: 'development' }] });
+    if (p === '/1.3/load-balancer/plans')
+      return jsonRes([{ name: 'development', per_server_max_sessions: 1000, server_number: 1 }]);
     if (p === '/1.3/load-balancer') return c.method === 'POST' ? jsonRes(LB) : jsonRes([LB]);
     if (p === `/1.3/load-balancer/${LB.uuid}/ip-addresses`) return jsonRes({});
     if (p === `/1.3/load-balancer/${LB.uuid}`) return jsonRes(c.method === 'DELETE' ? {} : LB);
@@ -454,6 +465,9 @@ describe('wire contract: upcloud', () => {
     await upcloudProvider.describe(cfg, ledger);
     await upcloudProvider.inspect(cfg, ledger);
     await upcloudProvider.inventory(cfg);
+    expect(await upcloudProvider.plans!(cfg)).toMatchObject([
+      { size: 'development', perMonth: 10, currency: 'EUR', source: 'api' },
+    ]);
     // No confirmDestroyed: the idempotent DELETE is re-issued instead.
     expect(await destroyAll(upcloudProvider as never, cfg as never, ledger)).toEqual([
       'lb',

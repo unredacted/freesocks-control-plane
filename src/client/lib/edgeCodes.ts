@@ -1309,6 +1309,17 @@ const COPY = {
     explain: 'A new edge here would take the account past the monthly spend cap set on it.',
     fix: 'Raise the cap on the account, pick another account, or remove an edge.',
   },
+  // a price read (`plansError` on a location)
+  plan_list_unreadable: {
+    label: 'Plan list unreadable',
+    explain:
+      "The provider's list of load balancer plans was not a list of named plans, so no size or price could be read.",
+    fix: 'Refresh prices again later; until then the location keeps the plans and prices it read before.',
+  },
+  schema_mismatch: {
+    label: 'Answer not understood',
+    explain: "The provider's answer was not in the shape FCP reads, so nothing was taken from it.",
+  },
   account_budget_unlimited: {
     label: 'No daily spending limit',
     explain:

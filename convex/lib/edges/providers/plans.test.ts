@@ -6,7 +6,14 @@
  *  - Gcore: the flavor list with `include_prices=true`; the v2 price preview
  *    for a flavor the list does not price;
  *  - UpCloud: the account's price list for the zone, else the pricing page's
- *    dated table;
+ *    dated table. Its fixtures follow UpCloud's recorded answers: the plan
+ *    list is a bare array (the `development` and `production-small` rows as
+ *    upcloud-go-api records them in `getloadbalancerplans.yaml`), the price
+ *    list is `prices.zone[]` with `{ amount, price }` items in cents an hour
+ *    (trimmed from its `getpricezones.yaml`, zone names replaced). UpCloud
+ *    does not document a load balancer plan's price key:
+ *    `managed_load_balancer_<plan>` is FCP's assumption, and the reader takes
+ *    every spelling of it;
  *  - OVHcloud: the flavor list joined by name to the public cloud catalog
  *    (micro-cents);
  *  - Scaleway: the public product catalog, else the zone's size list priced
@@ -16,7 +23,14 @@
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { gcoreProvider } from './gcore';
-import { UPCLOUD_LB_PRICES, upcloudProvider } from './upcloud';
+import {
+  UPCLOUD_BILLED_HOURS_PER_MONTH,
+  UPCLOUD_LB_PRICES,
+  upcloudPlanListOf,
+  upcloudProvider,
+  upcloudZonePricesOf,
+} from './upcloud';
+import { EdgeProviderError } from './http';
 import {
   __resetOvhCatalogCache,
   __resetOvhSkewCache,
@@ -41,6 +55,8 @@ import { edgeLayerOf } from './capabilities';
 import { EDGE_PROVIDER_IDS } from '../../edgeProviderIds';
 import ovhCatalog from './fixtures/pricing/ovh_public_cloud_catalog_lb.json';
 import scalewayCatalog from './fixtures/pricing/scaleway_catalog_lb_zone.json';
+import upcloudPlansFixture from './fixtures/pricing/upcloud_load_balancer_plans.json';
+import upcloudPriceFixture from './fixtures/pricing/upcloud_price.json';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -146,26 +162,10 @@ describe('gcore: the priced flavor list, the price preview for what it hides', (
 
 describe('upcloud: the price list for the zone, else the pricing page', () => {
   const cfg: UpcloudConfig = { type: 'upcloud', token: 'SECRET_UC_TOKEN', zone: 'zz-zone1' };
-  const plansAnswer = {
-    plans: [
-      { name: 'development', per_server_max_sessions: 1000, server_number: 1 },
-      { name: 'production-small', per_server_max_sessions: 50000, server_number: 2 },
-      { name: 'something-new', per_server_max_sessions: 1000, server_number: 1 },
-    ],
-  };
+  /** A plan's monthly price: UpCloud bills an hourly price for at most 672 hours a month. */
+  const monthly = (centsAnHour: number) =>
+    Math.round((centsAnHour / 100) * UPCLOUD_BILLED_HOURS_PER_MONTH * 100) / 100;
 
-  const priceList = {
-    prices: {
-      zone: [
-        { name: 'zz-other', managed_load_balancer_development: { amount: 1, price: 9 } },
-        {
-          name: 'zz-zone1',
-          ipv4_address: { amount: 1, price: 0.3 },
-          'managed_load_balancer_production-small': { amount: 1, price: 4.2 },
-        },
-      ],
-    },
-  };
   /** The account's own answers: its username, then its details (the billing currency). */
   const account = (currency: string | null) => (c: { path: string }) =>
     c.path === '/1.3/account'
@@ -176,63 +176,227 @@ describe('upcloud: the price list for the zone, else the pricing page', () => {
           : jsonRes({ account: { username: 'uc-user', country: 'ZZZ', currency } })
         : null;
 
-  test('a plan the price list names is priced from it, in the account’s billing currency', async () => {
-    const stub = mockFetch((c) => {
-      if (c.path === '/1.3/load-balancer/plans') return jsonRes(plansAnswer);
-      if (c.path === '/1.3/price') return jsonRes(priceList);
-      return account('USD')(c) ?? notFound();
-    });
+  /** UpCloud as the recorded fixtures answer it, with any route overridden. */
+  const upcloud =
+    (over: { plans?: unknown; price?: unknown; currency?: string | null } = {}) =>
+    (c: { path: string }) => {
+      if (c.path === '/1.3/load-balancer/plans') return jsonRes(over.plans ?? upcloudPlansFixture);
+      if (c.path === '/1.3/price') return jsonRes(over.price ?? upcloudPriceFixture);
+      return account(over.currency === undefined ? 'EUR' : over.currency)(c) ?? notFound();
+    };
+
+  test('every plan of the recorded answers is priced from its zone, a month being 672 hours', async () => {
+    const stub = mockFetch(upcloud());
     const plans = await upcloudProvider.plans!(cfg);
-    expect(plans.find((p) => p.size === 'production-small')).toEqual({
-      size: 'production-small',
-      label: 'production-small (2 nodes, 50,000 sessions each)',
-      perHour: 0.042,
-      perMonth: null,
-      currency: 'USD',
+    expect(plans.map((p) => p.size)).toEqual([
+      'development',
+      'production-small',
+      'production-medium',
+      'essentials',
+    ]);
+    expect(plans[0]).toEqual({
+      size: 'development',
+      label: 'development (1 node, 1,000 sessions each)',
+      perHour: 0.014881,
+      perMonth: 10,
+      currency: 'EUR',
       traffic: { kind: 'unlimited' },
       bandwidthMbps: null,
       acceptsOutsideNode: null,
       source: 'api',
     });
-    // Not named in this zone's list: the dated table of the pricing page.
-    expect(plans.find((p) => p.size === 'development')).toMatchObject({
-      perMonth: UPCLOUD_LB_PRICES.monthly.development,
-      perHour: null,
-      source: 'catalog',
-      catalogAsOf: UPCLOUD_LB_PRICES.asOf,
-    });
-    // In neither: no price.
-    expect(plans.find((p) => p.size === 'something-new')).toMatchObject({
-      currency: null,
-      perMonth: null,
-    });
+    // The pricing page's monthly figures, read back from cents an hour.
+    expect(plans.map((p) => [p.size, p.perMonth, p.source])).toEqual([
+      ['development', 10, 'api'],
+      ['production-small', 30, 'api'],
+      ['production-medium', 75, 'api'],
+      ['essentials', 0, 'api'],
+    ]);
+    expect(plans[1]!.label).toBe('production-small (2 nodes, 50,000 sessions each)');
+    // The plan list is read page by page, and nothing is written.
+    const listed = stub.calls.filter((c) => c.path === '/1.3/load-balancer/plans');
+    expect(listed.map((c) => c.query)).toEqual(['?limit=100&offset=0']);
     expect(stub.calls.every((c) => c.method === 'GET')).toBe(true);
+    expect(JSON.stringify(plans)).not.toContain('SECRET_UC_TOKEN');
+  });
+
+  test("only the location's zone prices it: another zone's list never does", async () => {
+    mockFetch(upcloud());
+    const plans = await upcloudProvider.plans!({ ...cfg, zone: 'zz-zone2' });
+    expect(plans.map((p) => [p.size, p.perMonth, p.currency, p.source])).toEqual([
+      ['development', monthly(1.6369), 'EUR', 'api'],
+      ['production-small', monthly(4.9107), 'EUR', 'api'],
+      // Not named in this zone's list: the pricing page's dated table.
+      [
+        'production-medium',
+        UPCLOUD_LB_PRICES.monthly['production-medium'],
+        UPCLOUD_LB_PRICES.currency,
+        'catalog',
+      ],
+      ['essentials', UPCLOUD_LB_PRICES.monthly.essentials, UPCLOUD_LB_PRICES.currency, 'catalog'],
+    ]);
+    expect(plans[0]!.perMonth).toBe(11);
+    // A zone the list does not hold at all: the table for every plan.
+    mockFetch(upcloud());
+    const elsewhere = await upcloudProvider.plans!({ ...cfg, zone: 'zz-zone9' });
+    expect(elsewhere.every((p) => p.source === 'catalog')).toBe(true);
+    expect(elsewhere.find((p) => p.size === 'production-small')?.perMonth).toBe(30);
+  });
+
+  test('a plan in neither the list nor the table has no known price, and the read still answers', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockFetch(
+      upcloud({
+        plans: [
+          ...upcloudPlansFixture,
+          { name: 'something-new', per_server_max_sessions: 1000, server_number: 1 },
+        ],
+      }),
+    );
+    const plans = await upcloudProvider.plans!(cfg);
+    expect(plans.find((p) => p.size === 'something-new')).toEqual({
+      size: 'something-new',
+      label: 'something-new (1 node, 1,000 sessions each)',
+      perHour: null,
+      perMonth: null,
+      currency: null,
+      traffic: { kind: 'unlimited' },
+      bandwidthMbps: null,
+      acceptsOutsideNode: null,
+      source: 'api',
+    });
+    expect(plans.filter((p) => p.perMonth !== null)).toHaveLength(4);
+    // The log names the plan and the zone's other item keys, never a price or the key.
+    expect(warn).toHaveBeenCalledTimes(1);
+    const said = String(warn.mock.calls[0]![0]);
+    expect(said).toContain('something-new');
+    expect(said).toContain('ipv4_address');
+    expect(said).not.toContain('server_plan_');
+    expect(said).not.toContain('SECRET_UC_TOKEN');
+    expect(said).not.toMatch(/\d\.\d/);
+    warn.mockRestore();
   });
 
   test('a price list whose currency cannot be read is not used: the table answers', async () => {
-    mockFetch((c) => {
-      if (c.path === '/1.3/load-balancer/plans') return jsonRes(plansAnswer);
-      if (c.path === '/1.3/price') return jsonRes(priceList);
-      return account(null)(c) ?? notFound();
-    });
+    mockFetch(upcloud({ currency: null }));
     const plans = await upcloudProvider.plans!(cfg);
     expect(plans.find((p) => p.size === 'production-small')).toMatchObject({
       perMonth: 30,
       currency: 'EUR',
       source: 'catalog',
+      catalogAsOf: UPCLOUD_LB_PRICES.asOf,
     });
   });
 
-  test('a price list that cannot be read falls back to the table for every plan', async () => {
+  test('a price list that cannot be read, or is not the documented shape, falls back to the table', async () => {
     mockFetch((c) =>
-      c.path === '/1.3/load-balancer/plans' ? jsonRes(plansAnswer) : jsonRes({}, 401),
+      c.path === '/1.3/load-balancer/plans' ? jsonRes(upcloudPlansFixture) : jsonRes({}, 401),
     );
     const plans = await upcloudProvider.plans!(cfg);
-    expect(plans.find((p) => p.size === 'production-small')).toMatchObject({
-      perMonth: 30,
-      currency: 'EUR',
-      source: 'catalog',
+    expect(plans.every((p) => p.source === 'catalog')).toBe(true);
+    for (const price of [{}, { prices: { zone: 'not a list' } }, []]) {
+      mockFetch(upcloud({ price }));
+      const read = await upcloudProvider.plans!(cfg);
+      expect(read.find((p) => p.size === 'development')).toMatchObject({
+        perMonth: 10,
+        source: 'catalog',
+      });
+    }
+  });
+
+  test('a plan list that is not a list of named plans fails the read with plan_list_unreadable', async () => {
+    // The shape this adapter once expected: UpCloud answers a bare array.
+    for (const plans of [{ plans: upcloudPlansFixture }, [{ per_server_max_sessions: 1 }]]) {
+      mockFetch(upcloud({ plans }));
+      const err = await upcloudProvider.plans!(cfg).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(EdgeProviderError);
+      expect((err as EdgeProviderError).meta).toMatchObject({
+        provider: 'upcloud',
+        step: 'plans',
+        code: 'plan_list_unreadable',
+        retryable: false,
+      });
+    }
+    expect(() => upcloudPlanListOf({ plans: [] })).toThrow(/not a list/);
+    expect(() => upcloudPlanListOf([{ name: 'development' }, { name: '' }])).toThrow(
+      /plan 2 has no name/,
+    );
+  });
+
+  test('the plan list keeps fields UpCloud adds and reads past its first page', async () => {
+    expect(
+      upcloudPlanListOf([
+        { name: 'development', server_number: '1', per_server_max_sessions: null, zones: [] },
+      ]),
+    ).toEqual([
+      { name: 'development', server_number: null, per_server_max_sessions: null, zones: [] },
+    ]);
+    const many = Array.from({ length: 130 }, (_, i) => ({ name: `plan-${i}` }));
+    const stub = mockFetch((c) => {
+      if (c.path !== '/1.3/load-balancer/plans') return upcloud()(c);
+      const q = new URLSearchParams(c.query);
+      const offset = Number(q.get('offset') ?? 0);
+      return jsonRes(many.slice(offset, offset + Math.min(Number(q.get('limit') ?? 10), 100)));
     });
+    expect(await upcloudProvider.plans!(cfg)).toHaveLength(130);
+    expect(
+      stub.calls.filter((c) => c.path === '/1.3/load-balancer/plans').map((c) => c.query),
+    ).toEqual(['?limit=100&offset=0', '?limit=100&offset=100']);
+  });
+
+  test('the inventory lists the plans as sizes, and an unreadable list leaves none', async () => {
+    mockFetch((c) => (c.path === '/1.3/load-balancer' ? jsonRes([]) : upcloud()(c)));
+    expect((await upcloudProvider.inventory(cfg)).flavors).toEqual(
+      upcloudPlansFixture.map((p) => ({ id: p.name, label: p.name })),
+    );
+    mockFetch((c) =>
+      c.path === '/1.3/load-balancer' ? jsonRes([]) : upcloud({ plans: { plans: [] } })(c),
+    );
+    expect((await upcloudProvider.inventory(cfg)).flavors).toEqual([]);
+  });
+
+  test('the zone price reader: every spelling of the product key, units, and items skipped', () => {
+    const read = upcloudZonePricesOf(
+      {
+        prices: {
+          currency: 'usd',
+          zone: [
+            'not a zone',
+            { description: 'no name' },
+            {
+              name: 'zz-zone1',
+              load_balancer_development: { amount: 1, price: 1.5 },
+              'LoadBalancer_Production-Small': { amount: 2, price: 9 },
+              'managed_load_balancer_plan_production-medium': { amount: 1, price: 11 },
+              managed_load_balancer_essentials: { price: 'free' },
+              'server_plan_1xCPU-1GB': { amount: 1, price: 1.0416 },
+              managed_kubernetes_control_plane: { amount: 1, price: 4 },
+              ipv4_address: { amount: 1, price: 0.336 },
+            },
+          ],
+        },
+      },
+      'zz-zone1',
+    );
+    expect(read).toEqual({
+      currency: 'USD',
+      plans: new Map([
+        ['development', 0.015],
+        ['production_small', 0.045],
+        ['production_medium', 0.11],
+      ]),
+      otherKeys: ['ipv4_address', 'managed_kubernetes_control_plane'],
+    });
+    expect(upcloudZonePricesOf(upcloudPriceFixture, 'zz-zone9')).toEqual({
+      currency: null,
+      plans: null,
+      otherKeys: [],
+    });
+    expect(upcloudZonePricesOf({ prices: [] }, 'zz-zone1')).toBeNull();
+    expect(upcloudZonePricesOf('<html>', 'zz-zone1')).toBeNull();
   });
 });
 
