@@ -32,10 +32,12 @@ import {
 import { acmeChallengeName } from '../hostname';
 import {
   WIRE_CONTRACTS,
+  ambiguousCalls,
   matchWireCall,
   tableRowCells,
   uncoveredEntries,
   unmatchedCalls,
+  wireCallLabel,
   wireContractCells,
   WIRE_CONTRACT_HEADING,
   type ObservedCall,
@@ -68,7 +70,7 @@ import {
   __setScalewayApiFactory,
   __setScalewayKeysFactory,
 } from './scaleway';
-import { ovhProvider, __resetOvhSkewCache } from './ovh';
+import { ovhProvider, __resetOvhCatalogCache, __resetOvhSkewCache } from './ovh';
 import {
   cloudflareProvider,
   __setCloudflareApiFactory,
@@ -85,6 +87,8 @@ import {
 import { __setCloudFrontEndpoint } from './cloudfront/sdk';
 import { fakeDnsZone } from '../testing/fakeCloudFront';
 import { readFileSync } from 'node:fs';
+import ovhCatalog from './fixtures/pricing/ovh_public_cloud_catalog_lb.json';
+import scalewayCatalog from './fixtures/pricing/scaleway_catalog_lb_zone.json';
 
 // --- shared plumbing -------------------------------------------------------------------
 
@@ -116,10 +120,14 @@ function fromRecorded(calls: readonly RecordedCall[]): ObservedCall[] {
 const show = (c: ObservedCall) =>
   `${c.method} ${c.path}${c.queryKeys?.length ? `?${c.queryKeys.join('&')}` : ''}`;
 
-/** Every recorded call is declared (an undeclared endpoint fails here). */
+/**
+ * Every recorded call is declared by exactly one entry (an undeclared endpoint,
+ * or a call two entries both claim, fails here).
+ */
 function expectDeclared(id: EdgeProviderId, calls: readonly ObservedCall[]): void {
   expect(calls.length).toBeGreaterThan(0);
   expect(unmatchedCalls(id, calls).map(show)).toEqual([]);
+  expect(ambiguousCalls(id, calls).map(show)).toEqual([]);
 }
 
 /** ...and every declared call was exercised (a dead contract entry fails here). */
@@ -257,6 +265,44 @@ describe('wire contract: gcore', () => {
     state: 'FINISHED',
     created_resources: { loadbalancers: ['lb-1'], floatingips: ['fip-1'] },
   };
+  // Price shapes from https://docs.gcore.com/api-reference/cloud/load-balancers/
+  // (LbFlavorPricingSerializer, LoadBalancerPricingPreviewResponseSerializer), read 2026-10-22.
+  const PRICED_FLAVORS = {
+    count: 2,
+    results: [
+      {
+        flavor_id: 'lb1-1-2',
+        flavor_name: 'lb1-1-2',
+        ram: 2048,
+        vcpus: 1,
+        currency_code: 'EUR',
+        price_per_hour: 0.0208,
+        price_per_month: 15,
+        price_status: 'show',
+      },
+      {
+        flavor_id: 'lb1-2-4',
+        flavor_name: 'lb1-2-4',
+        ram: 4096,
+        vcpus: 2,
+        currency_code: null,
+        price_per_hour: null,
+        price_per_month: null,
+        price_status: 'hide',
+      },
+    ],
+  };
+  const PRICE_PREVIEW = {
+    currency_code: 'EUR',
+    discount_percent: 0,
+    per_hour: { external_ip: 0, flavor: 0.0416, floating_ip: 0.004 },
+    per_month: { external_ip: 0, flavor: 30, floating_ip: 2.88 },
+    price_status: 'show',
+    price_without_discount_per_month: 32.88,
+    tax_percent: 0,
+    total_price_per_hour: 0.0456,
+    total_price_per_month: 32.88,
+  };
 
   function route(over: { lbs?: unknown[] } = {}) {
     return (c: Captured): Response => {
@@ -272,7 +318,11 @@ describe('wire contract: gcore', () => {
         });
       if (p.startsWith('/cloud/v1/tasks/')) return jsonRes(TASK);
       if (p === `/cloud/v1/lbflavors/11/22`)
-        return jsonRes({ results: [{ flavor_name: 'lb1-1-2' }] });
+        return new URLSearchParams(c.query).get('include_prices') === 'true'
+          ? jsonRes(PRICED_FLAVORS)
+          : jsonRes({ results: [{ flavor_name: 'lb1-1-2' }] });
+      if (p === '/cloud/v2/pricing/11/22/loadbalancers' && c.method === 'POST')
+        return jsonRes(PRICE_PREVIEW);
       if (p === SCOPE)
         return c.method === 'POST'
           ? jsonRes({ tasks: ['task-1'] })
@@ -313,6 +363,14 @@ describe('wire contract: gcore', () => {
     await gcoreProvider.describe(cfg, ledger);
     await gcoreProvider.inspect(cfg, ledger);
     await gcoreProvider.inventory(cfg);
+    // The hidden flavor's price comes from the preview, which names it alone.
+    expect(await gcoreProvider.plans!(cfg)).toMatchObject([
+      { size: 'lb1-1-2', perMonth: 15, currency: 'EUR', source: 'api' },
+      { size: 'lb1-2-4', perMonth: 30, currency: 'EUR', source: 'api' },
+    ]);
+    expect(
+      stub.calls.filter((c) => c.path.startsWith('/cloud/v2/pricing/')).map((c) => c.body),
+    ).toEqual([{ flavor: 'lb1-2-4' }]);
     expect(await destroyAll(gcoreProvider as never, cfg as never, ledger)).toEqual([
       'lb',
       'floating_ip',
@@ -371,6 +429,23 @@ describe('wire contract: gcore', () => {
     expect(found.status).toBe('found');
     expect(recovery.calls.filter((c) => c.method === 'POST')).toHaveLength(0);
     expectDeclared('gcore', fromCaptured(recovery.calls));
+  });
+
+  test('the priced flavor read never stands in for the plain one, nor the other way round', async () => {
+    const stub = mockFetch(route());
+    const unexercisedFlavorReads = () =>
+      uncoveredEntries('gcore', fromCaptured(stub.calls))
+        .filter((e) => e.path.includes('/lbflavors/'))
+        .map(wireCallLabel);
+    // The price read alone: the inventory and location-form entry is still unexercised.
+    await gcoreProvider.plans!(cfg);
+    expect(unexercisedFlavorReads()).toEqual([
+      '^/cloud/v1/lbflavors/[^/]+/[^/]+$ without ?include_prices',
+    ]);
+    // The inventory alone: the price read's entry is.
+    stub.calls.length = 0;
+    await gcoreProvider.inventory(cfg);
+    expect(unexercisedFlavorReads()).toEqual(['^/cloud/v1/lbflavors/[^/]+/[^/]+$ ?include_prices']);
   });
 
   test('errors carry no key, no origin address and no response body', async () => {
@@ -544,6 +619,7 @@ describe('wire contract: scaleway', () => {
   };
   const tpl = scalewayProvider.templateSchema.parse({}) as never;
   const ZONE = '/lb/v1/zones/fr-par-1';
+  const CATALOG = '/product-catalog/v2alpha1/public-catalog/products';
 
   // Shapes from https://www.scaleway.com/en/developers/api/load-balancer/zoned-api/, read 2026-09-16.
   const IP4 = { id: 'ip4-1', ip_address: '203.0.113.80', tags: [spec.name], lb_id: 'lb-1' };
@@ -629,6 +705,8 @@ describe('wire contract: scaleway', () => {
       return jsonRes({ lb_types: [{ name: 'LB-S', stock_status: 'available' }], total_count: 1 });
     if (p === `/iam/v1alpha1/api-keys/${cfg.accessKey}`)
       return jsonRes({ access_key: cfg.accessKey, default_project_id: DEFAULT_PROJECT });
+    // The public product catalog, recorded 2026-10-22 (trimmed to one zone's load balancer products).
+    if (p === CATALOG) return jsonRes(scalewayCatalog);
     return jsonRes({ message: 'not found', type: 'not_found' }, 404);
   };
 
@@ -662,6 +740,13 @@ describe('wire contract: scaleway', () => {
     await scalewayProvider.describe(cfg, ledger);
     await scalewayProvider.inspect(cfg, ledger);
     await scalewayProvider.inventory(cfg);
+    // Each node priced an hour with the IPv4 its edge allocates added.
+    expect((await scalewayProvider.plans!(cfg)).find((p) => p.size === 'LB-S')).toMatchObject({
+      perHour: 0.028,
+      currency: 'EUR',
+      acceptsOutsideNode: false,
+      source: 'api',
+    });
     expect(await destroyAll(scalewayProvider as never, cfg as never, ledger)).toEqual([
       'frontend',
       'backend',
@@ -671,7 +756,13 @@ describe('wire contract: scaleway', () => {
     ]);
 
     expectContractCovered('scaleway', fromCaptured(stub.calls));
-    expect(stub.calls.every((c) => c.headers['x-auth-token'] === cfg.secretKey)).toBe(true);
+    // The public catalog is asked without the key; every other call carries it.
+    const [open, keyed] = [
+      stub.calls.filter((c) => c.path === CATALOG),
+      stub.calls.filter((c) => c.path !== CATALOG),
+    ];
+    expect(open.map((c) => c.headers['x-auth-token'])).toEqual([undefined]);
+    expect(keyed.every((c) => c.headers['x-auth-token'] === cfg.secretKey)).toBe(true);
   });
 
   test('an allocating call is never retried and never replayed after a lost response', async () => {
@@ -769,6 +860,7 @@ describe('wire contract: scaleway', () => {
 describe('wire contract: ovh', () => {
   afterEach(() => {
     __resetOvhSkewCache();
+    __resetOvhCatalogCache();
     vi.unstubAllGlobals();
   });
 
@@ -791,6 +883,7 @@ describe('wire contract: ovh', () => {
   const PROJECT = '/1.0/cloud/project/svc-1';
   const REGION = `${PROJECT}/region/GRA9`;
   const LBS = `${REGION}/loadbalancing/loadbalancer`;
+  const CATALOG = '/1.0/order/catalog/public/cloud';
 
   // Shapes from https://api.ovh.com/console/ (/cloud/project), read 2026-09-16.
   const LB = {
@@ -809,6 +902,10 @@ describe('wire contract: ovh', () => {
     return (c: Captured): Response => {
       const p = c.path;
       if (p === '/1.0/auth/time') return jsonRes(1_700_000_000);
+      // `/me` (nichandle.Nichandle, trimmed) and the public cloud catalog (recorded
+      // 2026-10-22, trimmed to its balancer and floating IP addons).
+      if (p === '/1.0/me') return jsonRes({ nichandle: 'zz0000-ovh', ovhSubsidiary: 'FR' });
+      if (p === CATALOG) return jsonRes(ovhCatalog);
       if (p === '/1.0/cloud/project') return jsonRes(['svc-1']);
       if (p === PROJECT) return jsonRes({ description: 'freesocks' });
       if (p === `${PROJECT}/region`) return jsonRes(['GRA9']);
@@ -877,6 +974,10 @@ describe('wire contract: ovh', () => {
     await ovhProvider.describe(cfg, ledger);
     await ovhProvider.inspect(cfg, ledger);
     await ovhProvider.inventory(cfg);
+    // `small` at the catalog's price with the floating IP every balancer gets added.
+    expect(await ovhProvider.plans!(cfg)).toMatchObject([
+      { size: 'small', perHour: 0.011, perMonth: 7.8, currency: 'EUR', source: 'api' },
+    ]);
     expect(await destroyAll(ovhProvider as never, cfg as never, ledger)).toEqual([
       'lb',
       'floating_ip',
@@ -906,6 +1007,11 @@ describe('wire contract: ovh', () => {
     expect(stub.calls.every((c) => c.redirect === 'manual')).toBe(true);
     for (const call of stub.calls) {
       if (call.path === '/1.0/auth/time') continue;
+      if (call.path === CATALOG) {
+        // The public catalog is read unsigned: no account header reaches it.
+        expect(Object.keys(call.headers).filter((h) => h.startsWith('x-ovh'))).toEqual([]);
+        continue;
+      }
       expect(call.headers['x-ovh-application']).toBe(cfg.applicationKey);
       expect(call.headers['x-ovh-signature']).toMatch(/^\$1\$[0-9a-f]{40}$/);
     }
@@ -2149,6 +2255,21 @@ describe('wire contract docs', () => {
     // Confidentiality rule for this subsystem: never name a provider as the one
     // in use. The table is a capability list, not a deployment description.
     expect(section().toLowerCase()).not.toMatch(/\bproduction\b|\bin use\b|\bwe use\b/);
+  });
+
+  test('a call two entries both claim is reported, since it would count both as exercised', () => {
+    const dnsRecords = { method: 'GET', path: '/client/v4/zones/z/dns_records' };
+    expect(
+      ambiguousCalls('cloudflare', [
+        { ...dnsRecords, queryKeys: ['name.exact', 'per_page'] },
+        { ...dnsRecords, queryKeys: ['page', 'per_page', 'proxied'] },
+      ]),
+    ).toEqual([]);
+    expect(
+      ambiguousCalls('cloudflare', [
+        { ...dnsRecords, queryKeys: ['name.exact', 'page', 'per_page', 'proxied'] },
+      ]),
+    ).toHaveLength(1);
   });
 
   test('a call the contract does not declare is reported rather than silently accepted', () => {
