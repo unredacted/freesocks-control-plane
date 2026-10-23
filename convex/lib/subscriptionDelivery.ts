@@ -206,6 +206,12 @@ export type DeliveryOutcome =
     }
   | { kind: 'refuse'; reason: string };
 
+/** One served pass's entries left out, and the origin to note them on. */
+interface WithheldNote {
+  rctx: { relayId: Id<'relays'>; withheldNotedAt: number | null };
+  names: Array<string | null>;
+}
+
 /**
  * Tell the operator a render left entries out (`PipelineResult.withheld`):
  * scheduled, never awaited, at most once a minute per origin (the decision
@@ -295,6 +301,8 @@ export async function deliverBody(
   let renderedEpoch: number | null = null;
   let validUntil: number | null = null;
   let render: RenderSnapshot | null = null;
+  // What the served pass left out, noted only once that pass is the one served.
+  let withheld: WithheldNote | null = null;
   if (sub.backendServerId) {
     const family = classifyClient(input.ua).family;
     let renderedUnder: string | null = null;
@@ -313,6 +321,7 @@ export async function deliverBody(
       let epoch: number | null = null;
       let passValidUntil: number | null = null;
       let snapshot: RenderSnapshot | null = null;
+      let passWithheld: WithheldNote | null = null;
       if (decision.kind === 'render') {
         const rctx = decision.context;
         const renderKey =
@@ -327,7 +336,7 @@ export async function deliverBody(
           edgeCountry: location.edgeCountry,
         });
         if (out.delivery.kind !== 'serve') return refuse(out.delivery.reason);
-        await noteWithheldEntries(ctx, rctx, out.withheld, now);
+        if (out.withheld?.length) passWithheld = { rctx, names: out.withheld };
         body = out.body;
         epoch = rctx.epoch;
         passValidUntil = out.validUntil;
@@ -362,6 +371,7 @@ export async function deliverBody(
       renderedEpoch = epoch;
       validUntil = passValidUntil;
       render = snapshot;
+      withheld = passWithheld;
       renderedUnder = after;
       break;
     }
@@ -385,6 +395,7 @@ export async function deliverBody(
   // Judged once more before the body is kept or stamped: a proof that lapsed
   // after the render answers like a policy that moved.
   if (!withinValidity(validUntil, subscriptionNow())) return refuse('policy_moved');
+  if (withheld) await noteWithheldEntries(ctx, withheld.rctx, withheld.names, now);
   return {
     kind: 'serve',
     content,

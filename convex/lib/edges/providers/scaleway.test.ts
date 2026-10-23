@@ -961,6 +961,7 @@ describe('scaleway: discovery / describe / destroy', () => {
       resources: [],
       code: 'ip_allocation_refused',
       refused: true,
+      httpStatus: 400,
       detail: 'invalid argument(s): project_id is required',
     });
     // A provider fault is not a refusal: it is thrown, and the step is looked for again.

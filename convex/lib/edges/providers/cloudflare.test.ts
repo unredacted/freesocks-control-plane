@@ -1430,6 +1430,7 @@ describe('cloudflare: the member address at a front', () => {
       resources: [],
       code: 'header_rule_forbidden',
       refused: true,
+      httpStatus: 403,
     });
   });
 

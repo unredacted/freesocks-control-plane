@@ -100,7 +100,14 @@ export function refusedCreate(
 ): StepOutcome | null {
   if (!isDefiniteRefusal(err)) return null;
   const detail = refusalOf(err);
-  return { status: 'partial', resources, code, refused: true, ...(detail ? { detail } : {}) };
+  return {
+    status: 'partial',
+    resources,
+    code,
+    refused: true,
+    httpStatus: err.meta.status,
+    ...(detail ? { detail } : {}),
+  };
 }
 
 /**

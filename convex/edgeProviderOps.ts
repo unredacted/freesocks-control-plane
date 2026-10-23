@@ -284,6 +284,25 @@ async function noteTestFailure(
 }
 
 /**
+ * A create refused with 401 or 403 (`refusedCreate`) resolves as a known
+ * outcome, but the refusal may be the account's credential (revoked, or
+ * without the permission): counted against the account as a thrown 401 / 403
+ * would be (`apiFailureCode`), so the API-health alert still fires and the
+ * resolved call does not reset the run.
+ */
+async function noteRefusedCredential(
+  ctx: ActionCtx,
+  accountId: Id<'edgeProviderAccounts'>,
+  seen: ApiSeen,
+  out: StepOutcome,
+): Promise<void> {
+  if (out.status !== 'partial' || !out.refused) return;
+  if (out.httpStatus !== 401 && out.httpStatus !== 403) return;
+  seen.failed = true;
+  await noteApiOutcome(ctx, accountId, String(out.httpStatus));
+}
+
+/**
  * `run` for an account-scoped provider call that counts toward the account's
  * API health (`edgeProviderAccounts.recordApiOutcome`): a provider-side failure
  * adds one, the first success after failures resets the run. Recording never
@@ -1876,10 +1895,15 @@ export const runStep = internalAction({
         refusalNames(names, { intent, cfg });
         const tpl = renderedTemplate(provider, a.templateParams, a.spec, intent?.zoneSslMode);
         checkSpec(providerId, a.spec, a.proto, tpl, intent?.zoneSslMode);
-        return scrubbedOutcome(
-          await provider.runStep(cfg, a.step as ResourceStep, a.spec, tpl, a.ledger as Ledger),
-          names,
+        const out = await provider.runStep(
+          cfg,
+          a.step as ResourceStep,
+          a.spec,
+          tpl,
+          a.ledger as Ledger,
         );
+        await noteRefusedCredential(ctx, a.accountId, seen, out);
+        return scrubbedOutcome(out, names);
       },
       names,
     );

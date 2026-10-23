@@ -916,6 +916,25 @@ describe('a protected node whose Hosts FCP built itself (no hide rows) is looked
     }
   });
 
+  test('on an origin whose Hosts the operator writes, FCP disables only what a guided setup hid with consent', async () => {
+    // Never hid a Host: a covered direct Host is raised, never written to.
+    const a = await world({ hosts: fcpOnly() });
+    await a.t.run((ctx) => ctx.db.patch(a.relayId, { hostMode: 'operator' }));
+    a.panel.hosts.push(added(FIXTURE_ORIGIN));
+    await a.t.action(internal.hostOps.reconcileHosts, {});
+    expect(a.panel.patches).toEqual([]);
+    expect(a.panel.find(LATE).isDisabled).toBe(false);
+    expect((await a.relay()).directHostAlert?.hosts.map((h) => h.uuid)).toEqual([LATE]);
+    // A guided setup hid one with the operator's consent: that one is hidden again.
+    const b = await world();
+    await b.t.action(internal.edgeHostHides.hide, { relayId: b.relayId, approvedUuids: [] });
+    await b.t.run((ctx) => ctx.db.patch(b.relayId, { hostMode: 'operator' }));
+    b.panel.find(D1).isDisabled = false;
+    await b.t.action(internal.edgeHostHides.reobserveDirect, {});
+    expect(b.panel.find(D1).isDisabled).toBe(true);
+    expect((await b.relay()).directHostAlert).toBeUndefined();
+  });
+
   test('an origin that is not bound, or has no Hosts to read, is not looked at', async () => {
     const { t, panel, relayId } = await world({ hosts: fcpOnly(), deferred: true });
     panel.hosts.push(added(FIXTURE_ORIGIN));

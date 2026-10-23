@@ -1442,8 +1442,10 @@ is left out (§ "Rendering"). The pass re-observes the direct Hosts of EVERY bou
 than `none`, an active delivery binding for its slug), whether or not it ever hid a Host: a node
 whose Hosts FCP built itself has no hide row, and a direct Host added to it after go-live, by
 address or by a name that resolves to it, is caught all the same. A covered or previously
-approved one is **hidden** (audited `edge.host.hidden` with `rehidden`); any other raises
-attention `direct_host_reappeared` (critical, `relays.directHostAlert`, cleared when the next
+approved one is **hidden** (audited `edge.host.hidden` with `rehidden`) where FCP may write the
+node's Hosts: `hostMode: fcp`, or an origin whose guided setup hid Hosts with the operator's
+consent (it has hide rows). On an origin whose Hosts the operator writes and that never hid
+one, it is raised instead, never disabled. Any other raises attention `direct_host_reappeared` (critical, `relays.directHostAlert`, cleared when the next
 pass sees none). Both are suppressed while a restore workflow runs. An origin whose Hosts cannot
 be read is skipped for that pass (unknown is not an observation), and one that fails does not
 stop the others.
@@ -1543,7 +1545,10 @@ any point, and never writes twice what it cannot prove:
   (Scaleway's address allocation on `ip_allocation_refused`, Cloudflare's header rule on
   `header_rule_forbidden`, Fastly's WebSockets product on `websockets_not_entitled`, CloudFront's
   distribution on its own codes) with the provider's words, scrubbed (§ "The provider's
-  answer"), instead of sending the same request until `step_retries_exhausted`. Each adapter
+  answer"), instead of sending the same request until `step_retries_exhausted`; the outcome
+  carries the status (`httpStatus`, kept as the edge's `failure.status`), and a 401 or 403 also
+  counts against the account's API health (`noteRefusedCredential`), as a thrown one would, so a
+  revoked or narrowed key still raises `account_api_failing`. Each adapter
   applies it only where the refused call is the step's one create, so nothing built by the
   step is left off the ledger: Gcore's and OVH's compound create, each UpCloud and Scaleway
   step, Cloudflare's record and rules, Fastly's service, backend, snippets, domain, certificate

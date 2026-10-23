@@ -1042,6 +1042,11 @@ async function reobserveOne(
   }
   const st = await ctx.runQuery(internal.edgeHostHides.status, { relayId });
   const approved = new Set(st.rows.filter((r) => r.intent === 'disable').map((r) => r.hostUuid));
+  // FCP writes Hosts only where it may: an origin whose Hosts it owns, or one
+  // whose guided setup hid Hosts with the operator's consent (it has hide
+  // rows). On an origin whose Hosts the operator writes and that never hid
+  // one, a direct Host is raised for the operator, never disabled.
+  const mayWrite = c.relay.hostMode === 'fcp' || st.rows.length > 0;
   const known = nodeInbounds(c, hosts, undefined);
   const dctx = directContextOf(c, known, conventionRemarks(hosts, c.nodeName));
   const enabledDirect = hosts.filter((h) => !h.isDisabled && isDirectHost(h, dctx));
@@ -1050,7 +1055,7 @@ async function reobserveOne(
   const remarks: string[] = [];
   for (const h of enabledDirect) {
     const d = toDirectHost(h);
-    if (covered.has(d.inboundUuid.toLowerCase()) || approved.has(h.uuid)) {
+    if (mayWrite && (covered.has(d.inboundUuid.toLowerCase()) || approved.has(h.uuid))) {
       const out = await writeHostBit(ctx, {
         relayId,
         backendServerId: c.backendServerId,

@@ -990,6 +990,7 @@ export const cloudflareProvider: EdgeProvider<CloudflareConfig, CloudflareTempla
               resources: [],
               code: 'header_rule_forbidden',
               refused: true,
+              httpStatus: 403,
             };
           const refused = refusedCreate(e, 'create_refused');
           if (refused) return refused;

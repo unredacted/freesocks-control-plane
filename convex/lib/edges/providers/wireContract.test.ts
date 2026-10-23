@@ -849,6 +849,7 @@ describe('wire contract: scaleway', () => {
       resources: [],
       code: 'ip_allocation_refused',
       refused: true,
+      httpStatus: 400,
       detail: 'invalid argument(s): project_id is required, required',
     });
     expect(stub.calls).toHaveLength(1);

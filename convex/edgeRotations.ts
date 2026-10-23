@@ -3899,6 +3899,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         failure: {
           step: pending.stepId,
           code: out.code,
+          ...(out.httpStatus !== undefined ? { status: out.httpStatus } : {}),
           ...(out.detail ? { detail: out.detail } : {}),
         },
         waiting: null,

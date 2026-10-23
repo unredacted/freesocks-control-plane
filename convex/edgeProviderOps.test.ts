@@ -1848,6 +1848,43 @@ describe('a refused create step carries the provider reason, never a secret, add
     expect(dataOf(err).detail).toBeUndefined();
   });
 
+  test("a create refused with 401 or 403 still counts against the account's API health", async () => {
+    const t = newT();
+    const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'acct-g',
+      settings: { projectId: 11, regionId: 22 },
+      credentials: { apiKey: 'SECRET_GCORE_KEY' },
+    });
+    const [step] = await t.action(internal.edgeProviderOps.planProvision, {
+      accountId,
+      spec,
+      templateParams: {},
+    });
+    const account = async () => (await t.run((ctx) => ctx.db.get(accountId)))!;
+    const create = () =>
+      t.action(internal.edgeProviderOps.runStep, {
+        accountId,
+        spec,
+        templateParams: {},
+        step,
+        ledger: { steps: [], resources: [] },
+      });
+    // A validation refusal is the request's fault, not the account's.
+    mockFetch(() => jsonRes({ message: '1 input is not valid' }, 400));
+    expect(await create()).toMatchObject({ code: 'create_refused', httpStatus: 400 });
+    expect((await account()).apiFailures ?? 0).toBe(0);
+    // A revoked or narrowed key: the run stops, and the account's run of failures grows.
+    for (const [status, n] of [
+      [401, 1],
+      [403, 2],
+    ] as const) {
+      mockFetch(() => jsonRes({ message: 'Invalid API key' }, status));
+      expect(await create()).toMatchObject({ code: 'create_refused', refused: true });
+      expect(await account()).toMatchObject({ apiFailures: n, lastApiError: String(status) });
+    }
+  });
+
   test('the Scaleway SDK: a backend refusal (generic ScalewayError) and a refused address', async () => {
     const t = newT();
     const SECRET = '11111111-2222-4333-8444-555555555555';

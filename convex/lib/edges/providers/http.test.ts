@@ -180,6 +180,7 @@ describe('refusedCreate: a create the provider refused for good', () => {
       resources: [],
       code: 'create_refused',
       refused: true,
+      httpStatus: 400,
       detail: expect.stringContaining('1 input is not valid'),
     });
     mockFetch(() => jsonRes({ message: 'busy' }, 409));
