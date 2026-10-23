@@ -30,6 +30,8 @@ import { resolveModeCatalog } from './lib/connectionModes';
 import { resolveMemberCountryConfig } from './memberCountry';
 import { todayKey } from './relays';
 import { isTerminalRunState } from './lib/edges/setupRuns';
+import { liveEdgesOfRelay } from './lib/edges/relayGuards';
+import { sustainedCountriesOf } from './lib/edges/probes/sustained';
 import { familyKeyOf } from './probes';
 import {
   fleetBrakeEngages,
@@ -209,6 +211,10 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
   const nodeOnline = inv ? inv.online : null;
   const edges: EdgeProbeState[] = [];
   const published: Array<{ edgeId: string; poolIndex: number }> = [];
+  // Every live address of the node, published or not: sustained
+  // unreachability needs another one of the same listener reached from the
+  // same country.
+  const live = await liveEdgesOfRelay(ctx.db, relayId);
   for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
     const id = origin.publishedEdgeIds[i];
     if (!id) continue;
@@ -234,6 +240,10 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
       );
     const entries = e.reachability?.byCountry ?? [];
     const external = entries.filter((c) => c.country !== 'XX');
+    // Never reached from a listed country while another address of the node
+    // is (lib/edges/probes/verdict.ts `sustainedCountries`): evidence like a
+    // transition. An outage is vetoed by `evaluate`, as for any probe verdict.
+    const sustained = sustainedCountriesOf(e, live, cfg, now);
     edges.push({
       edgeId: e._id,
       byCountry: external.map((c) => ({
@@ -244,6 +254,7 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
         // country-wide history is only the fallback for summaries written
         // before the marker existed.
         wasReachable: c.wasReachable ?? wasReachable(c.country),
+        sustained: sustained.includes(c.country),
         // Each country's own freshness: a summary refreshed by one source
         // must not make another country's old verdict look current.
         ageMs: now - c.lastAt,
@@ -419,6 +430,7 @@ export const recordEvaluation = internalMutation({
           edgeId: e.edgeId as Id<'edges'>,
           source: e.source,
           countries: e.countries.slice(0, 10),
+          ...(e.neverReached ? { neverReached: e.neverReached.slice(0, 10) } : {}),
         })),
         firstSeenAt: ev.firstSeenAt,
         lastEvalAt: a.now,

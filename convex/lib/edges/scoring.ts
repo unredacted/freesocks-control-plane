@@ -86,6 +86,11 @@ export interface EdgeEvidence {
   edgeId: string;
   source: 'reports' | 'probes';
   countries: string[];
+  /**
+   * Probe evidence: the countries among `countries` that count by sustained
+   * unreachability (never reached from there) rather than a transition.
+   */
+  neverReached?: string[];
 }
 
 export interface Evaluation {
@@ -218,8 +223,18 @@ export function evaluate(input: EvaluationInput): Evaluation {
   // --- evidence ----------------------------------------------------------------------------
   const edgeEvidence: EdgeEvidence[] = [];
   for (const e of probeEdges) {
-    const countries = unreachableCountries(freshCountries(e));
-    if (countries.length > 0) edgeEvidence.push({ edgeId: e.edgeId, source: 'probes', countries });
+    const fresh = freshCountries(e);
+    const countries = unreachableCountries(fresh);
+    if (countries.length === 0) continue;
+    const neverReached = fresh
+      .filter((c) => c.verdict === 'unreachable' && !c.wasReachable && c.sustained)
+      .map((c) => c.country);
+    edgeEvidence.push({
+      edgeId: e.edgeId,
+      source: 'probes',
+      countries,
+      ...(neverReached.length > 0 ? { neverReached } : {}),
+    });
   }
   const attributed = Object.values(w.byEdge).reduce((a, b) => a + b.count, 0);
   for (const [edgeId, v] of Object.entries(w.byEdge)) {
@@ -241,9 +256,10 @@ export function evaluate(input: EvaluationInput): Evaluation {
   let score = clamp01(
     Math.max(originBase, detect.probeWeight * probeScore + (1 - detect.probeWeight) * originBase),
   );
-  // A fresh, agreed probe verdict on a once-reachable edge is edge-level
-  // evidence on its own: when the operator allows probe-only rotations it may
-  // reach suspicion without members or load saying anything.
+  // A fresh, agreed probe verdict on a once-reachable (or sustained-
+  // unreachable) edge is edge-level evidence on its own: when the operator
+  // allows probe-only rotations it may reach suspicion without members or load
+  // saying anything.
   if (detect.allowProbeOnlyAutoRotate && edgeEvidence.some((e) => e.source === 'probes')) {
     score = clamp01(Math.max(score, probeScore));
   }

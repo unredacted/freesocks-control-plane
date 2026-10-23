@@ -611,6 +611,8 @@ export const RelaySuspicion = z.object({
       edgeId: z.string(),
       source: z.enum(['reports', 'probes']),
       countries: z.array(z.string()),
+      /** Probe evidence that counts by sustained unreachability (never reached from there). */
+      neverReached: z.array(z.string()).optional(),
     }),
   ),
   firstSeenAt: isoN,

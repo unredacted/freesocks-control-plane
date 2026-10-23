@@ -173,6 +173,7 @@ async function seed(
       const evidence = opts.evidence?.(calls.probes.length) ?? 'partial';
       if (evidence === 'partial') await landPartialEvidence(t, edgeId);
       else if (evidence === 'unreachable') await landUnreachableEvidence(t, edgeId);
+      else if (evidence === 'blocked_cn') await landBlockedInEvidence(t, edgeId);
       else await landUntestedEvidence(t, edgeId, evidence);
       if (opts.countryRound) await opts.countryRound(t, edgeId, calls.probes.length);
     },
@@ -266,7 +267,7 @@ async function seed(
   };
 }
 
-type Evidence = 'partial' | 'unreachable' | 'beta_mix' | 'nothing_tested';
+type Evidence = 'partial' | 'unreachable' | 'blocked_cn' | 'beta_mix' | 'nothing_tested';
 
 /**
  * A round whose sources mostly could not test (what beta saw on a working
@@ -278,7 +279,7 @@ type Evidence = 'partial' | 'unreachable' | 'beta_mix' | 'nothing_tested';
 async function landUntestedEvidence(
   t: T,
   edgeId: Id<'edges'>,
-  mix: Exclude<Evidence, 'partial' | 'unreachable'>,
+  mix: Exclude<Evidence, 'partial' | 'unreachable' | 'blocked_cn'>,
 ) {
   await t.run(async (ctx) => {
     const edge = (await ctx.db.get(edgeId))!;
@@ -369,6 +370,54 @@ async function landPartialEvidence(t: T, edgeId: Id<'edges'>) {
  * The probe round "lands" on a dead address (a load balancer resetting every
  * connection): both outside vantages unreachable, the internal shape run fails.
  */
+/**
+ * Born blocked in CN: every vantage there fails (sources agree), RU reaches
+ * it, and FCP's own shape check passes.
+ */
+async function landBlockedInEvidence(t: T, edgeId: Id<'edges'>) {
+  await t.run(async (ctx) => {
+    const edge = (await ctx.db.get(edgeId))!;
+    const listener = (await ctx.db.get(edge.listenerId))!;
+    const now = Date.now();
+    for (const [country, ok] of [
+      ['CN', false],
+      ['RU', true],
+    ] as const)
+      await ctx.db.insert('probeReachability', {
+        targetKind: 'edge',
+        targetRef: edgeId as string,
+        country,
+        source: 'globalping',
+        ipVersion: 4,
+        addressKind: 'ip',
+        probeProtocol: 'tcp',
+        port: listener.originPort,
+        okCount: ok ? 3 : 0,
+        failCount: ok ? 0 : 3,
+        ...(ok ? { lastOkAt: now, lastReachableAt: now } : { lastFailAt: now }),
+        failNetworks: ok ? [] : ['AS64501', 'AS64502', 'AS64503'],
+        verdict: ok ? 'reachable' : 'unreachable',
+        updatedAt: now,
+      });
+    await ctx.db.insert('probeRuns', {
+      targetKind: 'edge',
+      targetRef: edgeId as string,
+      source: 'internal',
+      target: `${edge.addresses.v4}:${listener.originPort}`,
+      port: listener.originPort,
+      ipVersion: 4,
+      addressKind: 'ip',
+      probeProtocol: listener.security === 'none' ? 'tcp' : 'tls-sni',
+      requestedFamily: 4,
+      status: 'finished',
+      trigger: 'qualification',
+      requestedAt: now,
+      finishedAt: now,
+      results: [{ country: 'XX', vantageClass: 'datacenter', ok: true }],
+    });
+  });
+}
+
 async function landUnreachableEvidence(t: T, edgeId: Id<'edges'>) {
   await t.run(async (ctx) => {
     const edge = (await ctx.db.get(edgeId))!;
@@ -950,6 +999,57 @@ describe('edgeSetupRuns: an address the outside check finds unreachable', () => 
     await expect(
       t.mutation(internal.edgeSetupRuns.retry, { runId, checkAgain: true }),
     ).rejects.toThrow(/Check again/);
+  });
+});
+
+describe('edgeSetupRuns: an address born blocked in a listed country', () => {
+  test('the outside check reads every listed country: blocked_in, with no re-apply; another address goes on', async () => {
+    const { t, world, serverId, accountId, calls } = await seed({
+      evidence: (nth) => (nth === 1 ? 'blocked_cn' : 'partial'),
+      reapply: async () => ({ status: 'sent', settled: true }),
+    });
+    // The per-country checks are off: the outside check alone must catch it.
+    await t.run((ctx) =>
+      upsertSettingRow(
+        ctx,
+        CENSORED_COUNTRIES_KEY,
+        JSON.stringify(
+          ['CN', 'RU'].map((code) => ({ code, checkEdges: true, checkNamesInside: false })),
+        ),
+      ),
+    );
+    const { runId } = await startRun(t, serverId, accountId);
+    let r = await pump(t, runId, settled);
+    expect(r.state).toBe('needs_you');
+    expect(r.need).toMatchObject({
+      code: 'blocked_in',
+      detail: `${r.listeners[0]!.listenerKey}:CN`,
+    });
+    expect(r.listeners[0]!.verify).toBe('unreachable');
+    // Saving the same configuration again never unblocks an address in a country.
+    expect(calls.reapplied).toEqual([]);
+    const first = r.listeners[0]!.edgeId;
+    expect((await t.run((ctx) => ctx.db.get(first!)))!.publication).not.toBe('published');
+    await t.mutation(internal.edgeSetupRuns.retry, { runId, tryAnotherAddress: true });
+    r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.listeners[0]!.edgeId).not.toBe(first);
+    expect(world.lbCreates()).toBe(2);
+  });
+
+  test('refused from a country off the list stays unreachable (the re-apply comes first)', async () => {
+    const { t, serverId, accountId, calls } = await seed({ evidence: () => 'blocked_cn' });
+    await t.run((ctx) =>
+      upsertSettingRow(
+        ctx,
+        CENSORED_COUNTRIES_KEY,
+        JSON.stringify([{ code: 'RU', checkEdges: true, checkNamesInside: false }]),
+      ),
+    );
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect(r.need?.code).toBe('address_unreachable');
+    expect(calls.reapplied).toHaveLength(1);
   });
 });
 

@@ -689,6 +689,7 @@ export const COUNTRY_REASONS = [
   'no_tcp_pairing',
   'recovered',
   'blocked',
+  'never_reached',
 ] as const;
 export type CountryReason = (typeof COUNTRY_REASONS)[number];
 

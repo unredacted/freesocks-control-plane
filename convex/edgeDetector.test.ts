@@ -917,6 +917,152 @@ describe('origin block detector', () => {
     expect(o.suspicion!.veto).toBe('no_edge_evidence');
   });
 
+  /** A fresh summary as the probes write it (lib/edges/probes/verdict.ts). */
+  type Row = {
+    country: string;
+    verdict: 'reachable' | 'unreachable' | 'unknown';
+    neverReached?: { checks: number; networks: number; since: number; lastAt: number };
+    v6Verdict?: 'reachable' | 'unreachable' | 'unknown';
+  };
+  const summaryOf = (rows: Row[]) => ({
+    reachability: {
+      byCountry: rows.map((c) => ({
+        okVantages: c.verdict === 'reachable' ? 3 : 0,
+        failVantages: c.verdict === 'unreachable' ? 3 : 0,
+        lastAt: NOW - 60_000,
+        wasReachable: c.verdict === 'reachable',
+        ...c,
+      })),
+      updatedAt: NOW - 60_000,
+    },
+    health: 'online' as const,
+  });
+  /** The beta case: four hours, three networks, 42 failing checks, nothing ever reached it. */
+  const neverReached = {
+    checks: 42,
+    networks: 3,
+    since: NOW - 4 * 60 * 60_000,
+    lastAt: NOW - 60_000,
+  };
+  const reachesAll: Row[] = [
+    { country: 'IR', verdict: 'reachable' },
+    { country: 'RU', verdict: 'reachable' },
+    { country: 'XX', verdict: 'reachable' },
+  ];
+
+  async function probeOnlySeed() {
+    const s = await seed();
+    await warmBaseline(s.t, s.relayId, 100);
+    await nodeLoad(s.t, s.serverId, 100);
+    await s.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.detect.allowProbeOnlyAutoRotate', 'true');
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      await ctx.db.patch(s.relayId, { autoRotate: true });
+    });
+    return s;
+  }
+
+  test('an address never reached from a country while the node’s other address is: evidence like a transition, rotated under the same gates', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await probeOnlySeed();
+    await s.t.run(async (ctx) => {
+      await ctx.db.patch(s.edgeA, summaryOf(reachesAll));
+      await ctx.db.patch(
+        s.edgeB,
+        summaryOf([
+          { country: 'IR', verdict: 'unreachable', neverReached },
+          { country: 'RU', verdict: 'reachable' },
+          { country: 'XX', verdict: 'reachable' },
+        ]),
+      );
+    });
+    const r = await s.t.action(internal.edgeDetector.run, {});
+    expect(r).toMatchObject({ suspected: 1, rotated: 1 });
+    const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
+    expect(o.suspicion).toMatchObject({ state: 'suspected', hintLevel: 'probes', probeScore: 1 });
+    expect(o.suspicion!.edgeEvidence).toEqual([
+      { edgeId: s.edgeB, source: 'probes', countries: ['IR'], neverReached: ['IR'] },
+    ]);
+    const rot = (await s.t.query(internal.edgeRotations.get, { id: o.activeRotationId! }))!;
+    expect(rot).toMatchObject({
+      kind: 'replace',
+      trigger: 'detector',
+      burn: true,
+      targetEdgeId: s.edgeB,
+      reason: 'detector:probes',
+    });
+    // The same cooldown and caps hold the next pass.
+    await s.t.action(internal.edgeDetector.run, {});
+    expect((await s.t.query(internal.relays.get, { id: s.relayId }))!.suspicion!.veto).toBe(
+      'rotation_active',
+    );
+  });
+
+  test('never reached is no block when nothing else reaches it, when every address fails there, over IPv6 alone, or in an outage', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await probeOnlySeed();
+    const evaluate = async (a: Row[], b: Row[]) => {
+      await s.t.run(async (ctx) => {
+        await ctx.db.patch(s.edgeA, summaryOf(a));
+        await ctx.db.patch(s.edgeB, summaryOf(b));
+      });
+      await s.t.action(internal.edgeDetector.run, {});
+      return (await s.t.query(internal.relays.get, { id: s.relayId }))!.suspicion!;
+    };
+    // Never reached from ANY country: broken, not blocked (FCP's own host is no country).
+    expect(
+      await evaluate(reachesAll, [
+        { country: 'IR', verdict: 'unreachable', neverReached },
+        { country: 'RU', verdict: 'unreachable', neverReached },
+        { country: 'XX', verdict: 'reachable' },
+      ]),
+    ).toMatchObject({ state: 'clear', edgeEvidence: [] });
+    // The vantages there reach no address of the node: a vantage outage.
+    expect(
+      await evaluate(
+        [
+          { country: 'IR', verdict: 'unreachable' },
+          { country: 'RU', verdict: 'reachable' },
+        ],
+        [
+          { country: 'IR', verdict: 'unreachable', neverReached },
+          { country: 'RU', verdict: 'reachable' },
+        ],
+      ),
+    ).toMatchObject({ state: 'clear', edgeEvidence: [] });
+    // Only the IPv6 path fails there: the probes write no never-reached record for it.
+    expect(
+      await evaluate(reachesAll, [
+        { country: 'IR', verdict: 'unknown', v6Verdict: 'unreachable' },
+        { country: 'RU', verdict: 'reachable' },
+      ]),
+    ).toMatchObject({ state: 'clear', edgeEvidence: [] });
+    // FCP's own check of the address fails: an outage, never a block.
+    expect(
+      await evaluate(reachesAll, [
+        { country: 'IR', verdict: 'unreachable', neverReached },
+        { country: 'RU', verdict: 'reachable' },
+        { country: 'XX', verdict: 'unreachable' },
+      ]),
+    ).toMatchObject({ state: 'clear', edgeEvidence: [] });
+    // Too short a streak is not sustained yet.
+    expect(
+      await evaluate(reachesAll, [
+        {
+          country: 'IR',
+          verdict: 'unreachable',
+          neverReached: { ...neverReached, since: NOW - 30 * 60_000 },
+        },
+        { country: 'RU', verdict: 'reachable' },
+      ]),
+    ).toMatchObject({ state: 'clear', edgeEvidence: [] });
+    expect(
+      (await s.t.query(internal.relays.get, { id: s.relayId }))!.activeRotationId,
+    ).toBeUndefined();
+  });
+
   test('member "which connection" evidence alone can rotate; the marks sweep drops expired rows', async () => {
     vi.useFakeTimers({ now: NOW });
     const s = await seed();

@@ -39,6 +39,7 @@ import {
 } from './lib/edgeConfig';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { failureCode, sourceHealth, type SourceHealth } from './lib/edges/country/sourceHealth';
+import { networkIdOf } from './lib/edges/country/verdict';
 import { settleRoundIfDone, dueRepeatEdges } from './edgeCountry';
 import { addressFamily, bracketIfV6 } from './lib/edges/ip';
 import { isValidHostname } from './lib/edges/hostname';
@@ -933,6 +934,7 @@ export const finishRun = internalMutation({
       );
       const row =
         samePath.find((x) => x.port === port) ?? samePath.find((x) => x.port === undefined);
+      const streak = failStreakAfter(row, rs, now);
       const patch = {
         port,
         addressKind: run.addressKind ?? 'ip',
@@ -948,6 +950,7 @@ export const finishRun = internalMutation({
         lastReachableAt: summary.verdict === 'reachable' ? now : row?.lastReachableAt,
         // The real distinct failing networks (bounded) behind this verdict.
         failNetworks: summary.failNetworks.slice(0, MAX_FAIL_NETWORKS),
+        ...streak,
         verdict: summary.verdict,
         updatedAt: now,
       };
@@ -984,6 +987,41 @@ export const finishRun = internalMutation({
     return null;
   },
 });
+
+/**
+ * A rollup row's failing streak after one run's results from its country: any
+ * vantage that connected resets it; otherwise the failing vantages add to it,
+ * with the real networks among them (`networkIdOf`: a vantage that names no
+ * ASN or network adds none, so missing metadata never makes a spread). A run
+ * whose vantages could not test leaves no result and never gets here.
+ */
+function failStreakAfter(
+  row:
+    | Pick<Doc<'probeReachability'>, 'failStreak' | 'failStreakSince' | 'streakNetworks'>
+    | undefined,
+  rs: readonly ProbeResult[],
+  now: number,
+): Pick<Doc<'probeReachability'>, 'failStreak' | 'failStreakSince' | 'streakNetworks'> {
+  if (rs.some((r) => r.ok))
+    return { failStreak: 0, failStreakSince: undefined, streakNetworks: undefined };
+  const failing = rs.filter((r) => !r.ok);
+  if (failing.length === 0)
+    return {
+      failStreak: row?.failStreak,
+      failStreakSince: row?.failStreakSince,
+      streakNetworks: row?.streakNetworks,
+    };
+  const networks = new Set(row?.streakNetworks ?? []);
+  for (const r of failing) {
+    const id = networkIdOf(r);
+    if (id && networks.size < MAX_FAIL_NETWORKS) networks.add(id);
+  }
+  return {
+    failStreak: (row?.failStreak ?? 0) + failing.length,
+    failStreakSince: row?.failStreakSince ?? now,
+    streakNetworks: [...networks],
+  };
+}
 
 /** Cross-source summary per country onto the target's own row (what the detector + admin read). */
 async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, now: number) {
@@ -1075,10 +1113,29 @@ async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, no
           reachedBefore(history.filter((r) => portKey(r) === p)),
       );
     })();
+    // Sustained unreachability's own half (lib/edges/probes/verdict.ts
+    // `sustainedBlock`): never reached from here over the member-facing path,
+    // by any source on any port, and the failing checks on record since the
+    // first. Never the IPv6 path: a vantage without IPv6 that still answers
+    // can look exactly like a block.
+    const neverReached = (() => {
+      if (primaryFamily === 6 || reachedBefore(history)) return undefined;
+      const streaks = history.filter(
+        (r) => (r.failStreak ?? 0) > 0 && r.failStreakSince !== undefined,
+      );
+      if (streaks.length === 0) return undefined;
+      return {
+        checks: streaks.reduce((a, r) => a + (r.failStreak ?? 0), 0),
+        networks: new Set(streaks.flatMap((r) => r.streakNetworks ?? [])).size,
+        since: Math.min(...streaks.map((r) => r.failStreakSince!)),
+        lastAt: Math.max(...streaks.map((r) => r.lastFailAt ?? r.updatedAt)),
+      };
+    })();
     return {
       country,
       verdict,
       wasReachable,
+      ...(neverReached ? { neverReached } : {}),
       ...(v6 ? { v6Verdict: v6 } : {}),
       ...(name ? { nameVerdict: name } : {}),
       okVantages: perSource.reduce((a, s) => a + s.okVantages, 0),
@@ -1108,6 +1165,102 @@ function internalVerdict(perSource: SourceSummary[]): Verdict {
   if (s.failVantages > 0) return 'unreachable';
   return 'unknown';
 }
+
+// --- rollback ----------------------------------------------------------------------------------
+
+type ReachabilitySummary = NonNullable<Doc<'edges'>['reachability']>;
+
+/** A summary without its never-reached records (null when it carries none). */
+function withoutNeverReached(r: ReachabilitySummary | undefined): ReachabilitySummary | null {
+  if (!r || !r.byCountry.some((c) => c.neverReached !== undefined)) return null;
+  return {
+    ...r,
+    byCountry: r.byCountry.map((c) => {
+      const { neverReached, ...rest } = c;
+      void neverReached;
+      return rest;
+    }),
+  };
+}
+
+/**
+ * Before deploying a build older than sustained unreachability (docs/edges.md
+ * "Deploy notes"): clears the fields it added, page by page, scheduling itself
+ * through the rollup rows, the edges, the origins (their summaries and the
+ * suspicion's evidence) and the custom targets. An older schema refuses them.
+ */
+export const clearSustainedForRollback = internalMutation({
+  args: {
+    step: v.optional(
+      v.union(v.literal('rollups'), v.literal('edges'), v.literal('relays'), v.literal('targets')),
+    ),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, a) => {
+    const step = a.step ?? 'rollups';
+    const next = { rollups: 'edges', edges: 'relays', relays: 'targets', targets: null } as const;
+    const PAGE = 200;
+    const cursor = a.cursor ?? null;
+    let page: { isDone: boolean; continueCursor: string };
+    if (step === 'rollups') {
+      const p = await ctx.db.query('probeReachability').paginate({ cursor, numItems: PAGE });
+      for (const r of p.page)
+        if (
+          r.failStreak !== undefined ||
+          r.failStreakSince !== undefined ||
+          r.streakNetworks !== undefined
+        )
+          await ctx.db.patch(r._id, {
+            failStreak: undefined,
+            failStreakSince: undefined,
+            streakNetworks: undefined,
+          });
+      page = p;
+    } else if (step === 'edges') {
+      const p = await ctx.db.query('edges').paginate({ cursor, numItems: PAGE });
+      for (const e of p.page) {
+        const reachability = withoutNeverReached(e.reachability);
+        if (reachability) await ctx.db.patch(e._id, { reachability });
+      }
+      page = p;
+    } else if (step === 'relays') {
+      const p = await ctx.db.query('relays').paginate({ cursor, numItems: PAGE });
+      for (const r of p.page) {
+        const reachability = withoutNeverReached(r.reachability);
+        const suspicion = r.suspicion?.edgeEvidence.some((e) => e.neverReached !== undefined)
+          ? {
+              ...r.suspicion,
+              edgeEvidence: r.suspicion.edgeEvidence.map((e) => {
+                const { neverReached, ...rest } = e;
+                void neverReached;
+                return rest;
+              }),
+            }
+          : null;
+        if (reachability || suspicion)
+          await ctx.db.patch(r._id, {
+            ...(reachability ? { reachability } : {}),
+            ...(suspicion ? { suspicion } : {}),
+          });
+      }
+      page = p;
+    } else {
+      const p = await ctx.db.query('probeTargets').paginate({ cursor, numItems: PAGE });
+      for (const t of p.page) {
+        const reachability = withoutNeverReached(t.reachability);
+        if (reachability) await ctx.db.patch(t._id, { reachability });
+      }
+      page = p;
+    }
+    const following = page.isDone ? next[step] : step;
+    if (following)
+      await ctx.scheduler.runAfter(0, internal.probes.clearSustainedForRollback, {
+        step: following,
+        cursor: page.isDone ? null : page.continueCursor,
+      });
+    return { step, done: following === null };
+  },
+});
 
 // --- reads -------------------------------------------------------------------------------------
 

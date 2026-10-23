@@ -239,6 +239,8 @@ export const COUNTRY_REASON_WORDS: Record<CountryReason, string> = {
   recovered: 'Names get through from there again.',
   blocked:
     'Every vantage there failed in checks at least 30 minutes apart while the control countries reached it.',
+  never_reached:
+    'No check from there has ever reached it, from several networks over hours, while the node’s other addresses are reached from there.',
 };
 
 /** An edge with nothing decided of its own, in a location blocked there. */

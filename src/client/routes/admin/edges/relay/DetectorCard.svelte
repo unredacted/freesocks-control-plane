@@ -139,6 +139,11 @@
                     ? ` in ${ev.countries.join(', ')}`
                     : ''}
                 </span>
+                {#if ev.neverReached && ev.neverReached.length > 0}
+                  <p class="text-xs text-muted-foreground" title={codeExplain('never_reached')}>
+                    {codeLabel('never_reached')}: {ev.neverReached.join(', ')}
+                  </p>
+                {/if}
               </li>
             {/each}
           </ul>

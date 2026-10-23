@@ -246,6 +246,7 @@ describe('outsideCheckFor (a guided run, stage 4)', () => {
         { family: 6, check: 'unknown' },
       ],
       notChecked: [6],
+      blockedIn: [],
     });
   });
 
@@ -295,6 +296,79 @@ describe('outsideCheckFor (a guided run, stage 4)', () => {
         { family: 6, check: 'refused' },
       ],
     });
+  });
+
+  test('refused only from listed countries while it works from elsewhere: blocked there, not unreachable', () => {
+    const listed = ['CN', 'IR', 'RU'];
+    const fcpReached = runOf('internal', 4, 'finished', [{ ok: true }], 10);
+    // Born blocked in CN: every vantage there fails, FCP itself and RU reach it.
+    expect(
+      check([fcpReached], {
+        families: [4],
+        listed,
+        reachability: [
+          row('CN', 'globalping', 4, 'unreachable'),
+          row('RU', 'globalping', 4, 'reachable'),
+        ],
+      }),
+    ).toMatchObject({ verdict: 'blocked_in', blockedIn: ['CN'], families: [{ check: 'blocked' }] });
+    // Every listed country refuses it, but FCP's own check reaches it: blocked in each.
+    expect(
+      check([fcpReached], {
+        families: [4],
+        listed,
+        reachability: [
+          row('CN', 'globalping', 4, 'unreachable'),
+          row('IR', 'checkhost', 4, 'unreachable'),
+        ],
+      }),
+    ).toMatchObject({ verdict: 'blocked_in', blockedIn: ['CN', 'IR'] });
+  });
+
+  test('a listed-country refusal stays unreachable where it says nothing about this address', () => {
+    const listed = ['CN', 'IR'];
+    const fcpReached = runOf('internal', 4, 'finished', [{ ok: true }], 10);
+    const cnRefused = row('CN', 'globalping', 4, 'unreachable');
+    // The node's other addresses fail from CN too: the vantages or the protocol.
+    expect(
+      check([fcpReached], {
+        families: [4],
+        listed,
+        siblingsFailIn: ['CN'],
+        reachability: [cnRefused],
+      }).verdict,
+    ).toBe('unreachable');
+    // A country off the list refused it as well.
+    expect(
+      check([fcpReached], {
+        families: [4],
+        listed,
+        reachability: [cnRefused, row('DE', 'globalping', 4, 'unreachable')],
+      }).verdict,
+    ).toBe('unreachable');
+    // Nothing reached it anywhere (FCP's own check could not test).
+    expect(
+      check([runOf('internal', 4, 'failed', [], 10)], {
+        families: [4],
+        listed,
+        reachability: [cnRefused, row('IR', 'globalping', 4, 'unreachable')],
+      }).verdict,
+    ).toBe('unreachable');
+    // FCP's own shape check failed: the address itself is out.
+    expect(
+      check([runOf('internal', 4, 'finished', [{ ok: false }], 10)], {
+        families: [4],
+        listed,
+        reachability: [cnRefused, row('IR', 'globalping', 4, 'reachable')],
+      }).verdict,
+    ).toBe('unreachable');
+    // A real refusal of another family wins over a block in a country.
+    expect(
+      check([fcpReached, runOf('internal', 6, 'finished', [{ ok: false }], 10)], {
+        listed,
+        reachability: [cnRefused],
+      }),
+    ).toMatchObject({ verdict: 'unreachable', blockedIn: [] });
   });
 
   test('a family waits for its own round in flight, until the wait is over', () => {
