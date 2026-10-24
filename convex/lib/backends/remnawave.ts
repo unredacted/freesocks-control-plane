@@ -1682,6 +1682,17 @@ function mapObservedHosts(rows: z.infer<typeof ObservedHostsResponse>): Observed
   }));
 }
 
+/** The backend's mode groups (internal squads) with the transports each holds. Read-only. */
+export async function remnawaveListModeGroups(cfg: RemnawaveConfig): Promise<ObservedModeGroup[]> {
+  return mapObservedSquads(
+    await call(cfg, {
+      method: 'GET',
+      path: '/api/internal-squads',
+      schema: ObservedSquadsResponse,
+    }),
+  );
+}
+
 function mapObservedSquads(rows: z.infer<typeof ObservedSquadsResponse>): ObservedModeGroup[] {
   return rows.internalSquads.map((sq) => ({
     squadUuid: sq.uuid,

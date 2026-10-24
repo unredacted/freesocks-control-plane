@@ -31,12 +31,17 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { QueryCtx } from './_generated/server';
+import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import { farFutureExpiryIso, type IssuedUser, type UserState } from './lib/backends/types';
+import {
+  farFutureExpiryIso,
+  type IssuedUser,
+  type ObservedModeGroup,
+  type UserState,
+} from './lib/backends/types';
 import { boundedUsername } from './lib/backends/username';
 import { writeAuditLog } from './lib/audit';
 import { randomHex } from './lib/crypto';
@@ -158,6 +163,14 @@ export const ensureContext = internalQuery({
       backendServerId: server._id,
       placement: resolved,
       modeSlug: slug,
+      // A placement or mode someone chose (the request, the operator's
+      // qualification mode): it stands as it is.
+      chosen: placement !== undefined || !!modeSlug || !!relay.qualificationModeSlug,
+      // The transports the origin protects (its live listeners'): the account
+      // must sit in a mode group holding them all, or the node refuses it there.
+      protectedInbounds: listeners
+        .filter((l) => !l.retired && l.deployed && l.enabled && l.panelBinding)
+        .map((l) => l.panelBinding!.configProfileInboundUuid.toLowerCase()),
       placementRequired: caps.placement,
       lookupSupported: caps.userLookupByUsername,
       op: relay.qualificationMint ?? null,
@@ -448,6 +461,28 @@ function definitiveCreateFailure(err: unknown): boolean {
   return typeof status === 'number' && status < 500;
 }
 
+/**
+ * The mode groups of the backend that hold every one of `inbounds`, by uuid
+ * (sorted, so the same panel gives the same answer); empty when none does or
+ * the panel cannot be read.
+ */
+async function groupsHolding(
+  ctx: { runAction: ActionCtx['runAction'] },
+  backendServerId: Id<'backendServers'>,
+  inbounds: readonly string[],
+): Promise<string[]> {
+  const groups: ObservedModeGroup[] = await ctx
+    .runAction(internal.backends.listModeGroups, { backendServerId })
+    .catch(() => []);
+  return groups
+    .filter((g) => {
+      const held = new Set(g.inboundUuids.map((u) => u.toLowerCase()));
+      return inbounds.every((u) => held.has(u));
+    })
+    .map((g) => g.squadUuid)
+    .sort();
+}
+
 export interface EnsureResult {
   ok: boolean;
   code?: string;
@@ -496,6 +531,24 @@ export const ensure = internalAction({
       });
     let c = await read();
     if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    // A test entry built from a transport carries this account, and the node
+    // accepts it there only from a mode group holding that transport. Unless a
+    // placement or mode was chosen, a group the panel says holds every
+    // transport the origin protects wins over the default (or the enrolled
+    // mode's group, when it lacks one). A panel that cannot be read changes
+    // nothing.
+    if (!c.chosen && c.placementRequired && c.protectedInbounds.length > 0) {
+      const holding = await groupsHolding(ctx, c.backendServerId, c.protectedInbounds);
+      if (holding.length > 0 && !holding.includes(c.placement ?? '')) {
+        const placement = holding[0]!;
+        c = await ctx.runQuery(internal.relayQualification.ensureContext, {
+          relayId: a.relayId,
+          placement,
+          ...(c.modeSlug ? { modeSlug: c.modeSlug } : {}),
+        });
+        if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+      }
+    }
     // The empty-node rehearsal body must come from a REAL placement (the node's
     // mode group), or it proves nothing about the node; the operator's explicit
     // qualification mint keeps minting on the backend default as before.

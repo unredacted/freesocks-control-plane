@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import {
+  FIXTURE_INBOUND,
   insertPanelServer,
   realityListener,
   registerRelay,
@@ -491,6 +492,44 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
     expect((await t.query(internal.relayQualification.mintContext, { relayId }))?.placement).toBe(
       'sq-node-one',
     );
+  });
+
+  test("the account goes in a mode group holding every transport the origin protects (a built test entry carries it there); an operator's chosen mode stands", async () => {
+    const panel = fakePanel({
+      squads: [
+        { uuid: 'sq-node-one', inboundUuids: ['99999999-9999-4999-8999-999999999999'] },
+        { uuid: 'sq-relay', inboundUuids: [FIXTURE_INBOUND.toUpperCase()] },
+      ],
+    });
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    const { relayId } = await registerRelay(t);
+    // The default pool is a group that does not hold the origin's transport.
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-node-one'] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect(
+      await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true, reused: false });
+    expect([...panel.users.values()].map((u) => u.squads)).toEqual([['sq-relay']]);
+    const row = (await t.run((ctx) => ctx.db.get(relayId)))!;
+    expect(row.qualificationMint).toMatchObject({ state: 'stored', placement: 'sq-relay' });
+    // The same answer next time: the account is reused, not minted again.
+    expect(
+      await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true, reused: true });
+    expect(panel.created).toHaveLength(1);
+    // An operator's chosen mode stands, whatever the groups hold.
+    await t.run((ctx) => ctx.db.patch(relayId, { qualificationModeSlug: 'freedom-ws' }));
+    await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' });
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.qualificationMint).toMatchObject({
+      placement: 'sq-node-one',
+    });
   });
 
   test('deleting an origin with an unsettled operation schedules the by-username removal', async () => {

@@ -1290,6 +1290,15 @@ reach it through a load balancer the operator built by hand, by an operator Host
   the plan; a load balancer pick that would carry it is a set problem
   (`test_link_unavailable`) and the create is refused with `edge.test_link_unavailable`, before
   any address is bought. Add a Host at the node's own address for it, or pick a CDN location.
+- **Its check account's group.** A test entry built from a transport carries the check account,
+  and the node accepts it there only from a mode group (internal squad) holding that transport.
+  So unless a placement or the origin's qualification mode was chosen, `relayQualification.ensure`
+  reads the panel's groups live (`backends.listModeGroups`) and puts the account in one that holds
+  every transport the origin protects, ahead of the default pool or an enrolled node's own group
+  when that lacks one (the first by uuid when several do; nothing changes when none does or the
+  panel cannot be read). This matters on a node with transports of different groups, such as an
+  enrolled node with a second, hand-built transport: every protected transport must sit in one
+  group together, or the test link of the others is refused by the node.
 - **An inactive backend.** A backend out of the issuance pool (`isActive: false`; its members
   are still served) still gets FCP's own check credential: `relayQualification` resolves its
   placement on that instance (`resolvePlacementTarget({includeInactive})`) and `issueUser`

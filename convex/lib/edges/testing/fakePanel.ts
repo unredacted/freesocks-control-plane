@@ -20,6 +20,8 @@ export interface FakePanelUser {
   status: 'ACTIVE' | 'DISABLED' | 'LIMITED' | 'EXPIRED';
   usedTrafficBytes: number;
   trafficLimitBytes: number;
+  /** The mode groups (internal squads) it was created in. */
+  squads?: string[];
 }
 
 export interface FakePanelHost {
@@ -45,6 +47,8 @@ export interface FakePanelOptions {
   /** `GET /api/nodes` + `GET /api/config-profiles/{uuid}` payloads for transport discovery. */
   nodes?: unknown[];
   profiles?: Record<string, unknown>;
+  /** `GET /api/internal-squads`: the mode groups and the inbounds each holds (absent = 404). */
+  squads?: Array<{ uuid: string; name?: string; inboundUuids: string[] }>;
 }
 
 export interface FakePanel {
@@ -109,7 +113,11 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
         panel.failCreateWith = null;
         return jsonRes({ message: 'create failed' }, status);
       }
-      const body = call.body as { username: string; trafficLimitBytes?: number };
+      const body = call.body as {
+        username: string;
+        trafficLimitBytes?: number;
+        activeInternalSquads?: string[];
+      };
       // The real create-user contract (3-36 of [A-Za-z0-9_-]), so a name FCP
       // builds too long fails here as it does on a real backend.
       if (!BACKEND_USERNAME_RE.test(body.username))
@@ -125,6 +133,7 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
         status: 'ACTIVE',
         usedTrafficBytes: 0,
         trafficLimitBytes: body.trafficLimitBytes ?? 0,
+        ...(body.activeInternalSquads ? { squads: body.activeInternalSquads } : {}),
       };
       users.set(u.username, u);
       panel.created.push(u.username);
@@ -189,6 +198,17 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
       return new Response(body, { status: 200, headers: { 'content-type': 'text/plain' } });
     }
     if (method === 'GET' && path === '/api/nodes') return jsonRes({ response: opts.nodes ?? [] });
+    if (method === 'GET' && path === '/api/internal-squads' && opts.squads)
+      return jsonRes({
+        response: {
+          total: opts.squads.length,
+          internalSquads: opts.squads.map((q) => ({
+            uuid: q.uuid,
+            name: q.name ?? q.uuid,
+            inbounds: q.inboundUuids.map((uuid) => ({ uuid, tag: uuid })),
+          })),
+        },
+      });
     if (method === 'GET' && (m = /^\/api\/config-profiles\/([^/]+)$/.exec(path))) {
       const p = opts.profiles?.[m[1]];
       return p ? jsonRes({ response: p }) : jsonRes({ message: 'not found' }, 404);
