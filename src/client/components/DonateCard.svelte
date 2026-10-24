@@ -130,6 +130,9 @@
         </button>
       {/each}
     </div>
+    {#if selectedProcessor === 'nowpayments' || selectedProcessor === 'btcpay'}
+      <p class="mt-2 text-xs text-muted-foreground">{t('upgrade.exchangeFeeNote')}</p>
+    {/if}
   </fieldset>
 
   <fieldset>

@@ -252,6 +252,9 @@
     {#if selectedProcessor === 'nowpayments'}
       <p class="mt-2 text-xs text-primary/90">{t('upgrade.cryptoPrivacyNote')}</p>
     {/if}
+    {#if selectedProcessor === 'nowpayments' || selectedProcessor === 'btcpay'}
+      <p class="mt-2 text-xs text-muted-foreground">{t('upgrade.exchangeFeeNote')}</p>
+    {/if}
   </fieldset>
 
   <fieldset>

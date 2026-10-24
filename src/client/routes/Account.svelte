@@ -222,8 +222,15 @@
   // refresh entitlement (account + me) and clear the param. The only polling
   // query in the SPA - crypto 'confirming' can take minutes (refetchInterval).
   let orderRef = $derived(router.searchParams.get('order'));
-  const order = billingOrderQuery(() => orderRef);
-  let orderPaidHandled = false;
+  // Gift codes minted after the buyer left the return page (a slow crypto
+  // confirmation, a top-up, an operator's grant) arrive via the account view
+  // instead: poll that order the same way so the one-time reveal opens on this
+  // visit. The URL's ?order= wins when present.
+  let pendingGiftRef = $derived(account.data?.pendingGiftOrderRef ?? null);
+  let pollRef = $derived(orderRef ?? pendingGiftRef);
+  const order = billingOrderQuery(() => pollRef);
+  // The order last handled, so a refetch never re-fires the same reveal/toast.
+  let handledRef = '';
 
   // --- Tabbed sections (in-page strip, ?tab= synced) ----------------------
   // The page groups into 4 tabs; the active one is reflected into the URL
@@ -269,10 +276,10 @@
   let giftRevealOpen = $state(false);
   let giftAckRef = '';
   $effect(() => {
-    if (orderRef && order.data?.status === 'paid' && !orderPaidHandled) {
-      orderPaidHandled = true;
+    if (pollRef && order.data?.status === 'paid' && handledRef !== pollRef) {
+      handledRef = pollRef;
       if (order.data.kind === 'gift') {
-        giftAckRef = orderRef;
+        giftAckRef = pollRef;
         giftRevealCodes = order.data.giftCodes ?? [];
         giftRevealOpen = giftRevealCodes.length > 0;
         void qc.invalidateQueries({ queryKey: queryKeys.accountCodes });
@@ -282,7 +289,9 @@
         liveMessage = t('upgrade.paidTitle');
         toast.success(t('upgrade.paidTitle'), { description: t('upgrade.paidBody') });
       }
-      router.navigate('/account', { replace: true });
+      // Only a checkout return carries ?order= to clear; a pending gift surfaced
+      // by the account view leaves the URL (and its ?tab=) alone.
+      if (orderRef) router.navigate('/account', { replace: true });
     }
   });
   async function ackGiftReveal() {
@@ -304,6 +313,8 @@
       }
     }
     void qc.invalidateQueries({ queryKey: queryKeys.accountCodes });
+    // Refresh pendingGiftOrderRef so a second unseen gift (if any) surfaces next.
+    void qc.invalidateQueries({ queryKey: queryKeys.account });
   }
 
   // First-key create from the no-subscription empty state: persist the picked
@@ -812,7 +823,25 @@
         <!-- Post-payment confirmation (return from the processor's hosted page).
              The webhook - not this redirect - is the source of truth; we just poll. -->
         {#if showOrderCallout}
-          {#if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
+          {#if order.data?.status === 'underpaid'}
+            <!-- The money arrived but short beyond the tolerance: held for the
+                 operator, so point the member at support rather than "failed". -->
+            <MembershipCallout
+              tone="warn"
+              title={t('upgrade.underpaidTitle')}
+              body={t('upgrade.underpaidBody')}
+            >
+              {#snippet secondaryAction()}
+                <button
+                  type="button"
+                  class="rounded-sm text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onclick={() => router.navigate('/account', { replace: true })}
+                >
+                  {t('common.close')}
+                </button>
+              {/snippet}
+            </MembershipCallout>
+          {:else if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
             <MembershipCallout
               tone="error"
               title={t('upgrade.failedTitle')}

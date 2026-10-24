@@ -168,10 +168,12 @@ store. The whole point is that a leak of one does not become a leak of the other
 
 **Why the control-plane key needs `canviewinvoices`.** A BTCPay `InvoiceSettled` webhook
 carries neither the amount nor the settle state, so the adapter re-reads the invoice
-(`invoiceDetail` in `convex/lib/processors/btcpay.ts`) to run two guards: the amount
-cross-check, and the `PaidPartial` check that refuses to grant on a part-paid invoice
-settled under a store tolerance. Without the permission, that read 403s and returns
-`null` — **and the settle still grants**, with both guards silently disabled.
+and its payment methods (`invoiceDetail` / `invoicePaidRatio` in
+`convex/lib/processors/btcpay.ts`) to run two guards: the amount cross-check, and the
+underpayment check that measures what was actually paid and holds an invoice settled
+further short than the billing underpayment tolerance (see `docs/billing.md`,
+"Underpayments"). Without the permission, those reads 403 and return `null` — **and the
+settle still grants**, with both guards silently disabled.
 
 That failure is now audited as `billing.settle_detail_unavailable`, and the Admin →
 Billing **Test connection** probe fails on an under-scoped key. If you see either, this

@@ -80,6 +80,16 @@
           {t('common.close')}
         </Button>
       </section>
+    {:else if order.data?.status === 'underpaid'}
+      <section
+        class="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-6 text-center md:p-8"
+      >
+        <h2 class="font-display text-xl font-semibold">{t('upgrade.underpaidTitle')}</h2>
+        <p class="text-sm text-muted-foreground">{t('donate.orderUnderpaidBody')}</p>
+        <Button variant="outline" class="min-h-11" onclick={clearOrder}>
+          {t('common.close')}
+        </Button>
+      </section>
     {:else if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
       <section
         class="space-y-3 rounded-xl border border-destructive/40 bg-destructive/10 p-6 text-center md:p-8"

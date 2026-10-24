@@ -64,7 +64,7 @@ ids), enforced by an allowlist, and is covered by a test that asserts a
 
 ## Order lifecycle
 
-`pending` → (`confirming`) → `paid` | `failed` | `expired`
+`pending` → (`confirming`) → `paid` | `failed` | `expired` | `underpaid`
 
 - `pending`: checkout created, no terminal webhook yet.
 - `confirming`: crypto mempool/confirmation wait (can be minutes) — the SPA keeps
@@ -78,6 +78,59 @@ ids), enforced by an allowlist, and is covered by a test that asserts a
   are swept to `expired` after `BILLING_PENDING_TTL_HOURS` (default 48). A LATE
   paid webhook (a slow crypto confirmation landing after the sweep) still grants —
   `expired → paid` is deliberately allowed so money is never silently lost (tested).
+- `underpaid`: the money arrived but short of the price by more than the
+  underpayment tolerance (see below). Nothing is granted, and the sweep never
+  expires it: it waits on Admin → Billing for the operator to grant or dismiss.
+  It outranks `expired`, so a short payment landing on an already-swept order
+  is still held. A refund/reversal (`failed`) closes it, and a late
+  out-of-order partial event can't reopen a `failed` order. A top-up payment (a
+  later full `paid` event on the same invoice) grants it.
+
+### Underpayments (exchange withdrawal fees)
+
+The common short payment is not price movement: the payer sends from an
+exchange that takes its flat withdrawal fee **out of** the amount it sends (the
+two reports that prompted this were short by exactly 2 TRX and exactly 0.2 XTZ).
+Price movement can't cause it, because the processors judge the coins received
+against the coins quoted. So:
+
+- **Tolerance.** `underpaymentTolerancePct` (Admin → Billing, 0 to 10, default
+  **5**) is how far short a crypto payment may arrive and still grant. It is
+  measured in the **paid coin** (`actually_paid / pay_amount` on NOWPayments,
+  `totalPaid / amount` from the invoice's payment methods on BTCPay), so rate
+  drift doesn't count against the payer. 5% covers a flat fee on the cheapest
+  crypto term ($14, 3 months); the worst a deliberate underpayer gains is 5%.
+- **Within the tolerance** the order grants as usual and is audited
+  `billing.underpayment_accepted` (with `paidPermille` and `tolerancePct`); the
+  order records `paidRatio`. The membership or gift is delivered in full, but a
+  donation (standalone or riding along) is credited only for the share that
+  arrived (`floor(donationCents x paidRatio)`), written back as the order's
+  `donationCents` so a later refund unwinds exactly that.
+- **Beyond it**, or when the shortfall can't be measured (amounts missing), the
+  order is held as `underpaid` and audited `billing.underpayment_seen`. The
+  member's return page tells them the payment arrived short and to contact
+  support with their Support ID (the donate page says it will be reviewed).
+- **Resolving by hand.** Admin → Billing shows a banner and an `underpaid`
+  filter. Each held order offers **Grant** (deliver what it bought, exactly the
+  grant a full payment gets) and **Dismiss** (close it as `failed` once you have
+  refunded or settled it another way). Dismissal is terminal: it stamps
+  `dismissedAt`, and any later payment event for that order is refused and
+  audited `billing.grant_refused` (`reason: dismissed`). **Grant** is also offered on a
+  `pending` / `confirming` / `expired` order, for a payment the processor shows
+  but FCP never saw settle (a webhook that never arrived, or a short payment
+  from before the tolerance existed); never on `paid` or `failed`. A gift
+  order's codes go to the **buyer's own account**, exactly as for a normal
+  purchase: the grant stores them in the order's one-time reveal, and the
+  buyer's `/account` opens it on their next visit (see "Gift purchases"). The
+  operator never sees them, so the grant response carries order facts only.
+  Route: `POST /api/v1/admin/billing/orders/{id}/grant|dismiss`
+  (`admin:users:write`, and a passkey admin session only, like code minting: a
+  gift grant mints transferable codes, so an `fsv1_` token gets 403); audited
+  `admin.billing.order_granted` / `admin.billing.underpaid_dismissed`. A held
+  order keeps the best `paidRatio` measured so far (a further short payment
+  raises it).
+- **Prevention.** Checkout shows a note on the crypto rails: an exchange may take
+  its withdrawal fee out of the amount it sends, so add the fee.
 
 ### Grant cross-checks (defense-in-depth, 2026-07-16)
 
@@ -130,9 +183,15 @@ Flow (gift):
    same table admin-minted membership codes use — and stashes the **plaintexts**
    in a **transient `giftReveal` buffer** on the order row.
 3. The buyer polls the order, sees each plaintext code **once** (the
-   `GiftRevealModal`), and acknowledges saving them, which clears the buffer. The
+   `GiftRevealModal`), and acknowledges saving them, which clears the buffer. If
+   the codes were minted after the buyer left the return page (a slow crypto
+   confirmation, a top-up, an operator's grant), the account view carries the
+   order as `pendingGiftOrderRef` (`billing.pendingGiftReveal`) and `/account`
+   opens the same reveal on their next visit. The
    **`billing-gift-reveal-sweep`** cron (hourly) clears any un-acknowledged buffer
-   after its window, so plaintext gift codes never linger at rest.
+   `BILLING_GIFT_REVEAL_TTL_HOURS` (default 24) after **payment** (`paidAt`, not
+   order creation), so plaintext gift codes never linger at rest and a late
+   payment still gets its full window.
 4. Recipients redeem a code exactly like an admin-minted membership code (Account
    → redeem), extending their own membership by the purchased duration.
 
@@ -233,8 +292,14 @@ section, both gated on donations being enabled and non-empty history.
 4. **IPN auth:** the callback signature is `HMAC-SHA512` of the **key-sorted**
    JSON body, compared against the `x-nowpayments-sig` header
    (`convex/lib/processors/nowpayments.ts:verifyAndParse`). Status mapping:
-   `finished`→paid, `confirming`/`confirmed`/`sending`/`partially_paid`→confirming,
-   `waiting`→pending, `failed`/`refunded`→failed, `expired`→expired.
+   `finished`/`partially_paid`→paid, `confirming`/`confirmed`/`sending`→confirming,
+   `waiting`→pending, `failed`/`refunded`→failed, `expired`→expired. A paid
+   event whose `actually_paid` is below `pay_amount` (or lacks either) is
+   flagged as an underpayment and decided against the tolerance (see
+   "Underpayments" above). Set NOWPayments' own **Payment covering** (dashboard,
+   0 to 10%) to the same value as `underpaymentTolerancePct` so its dashboard
+   agrees with FCP; FCP decides from the amounts either way, so marking a short
+   payment `finished` in their dashboard does not by itself grant it.
    **HMAC-mismatch postback fallback:** the verifier's canonicalization is a
    reconstruction of NOWPayments' serializer (PHP escaping, `N.0` float combos)
    and cannot cover every number rendering, so a mismatched IPN that carries a
@@ -296,11 +361,12 @@ address + Lightning invoice side by side).
    - `btcpay.store.cancreateinvoice` — creating the invoice.
    - `btcpay.store.canviewinvoices` — reading it back. **Not optional.** On every
      `InvoiceSettled` the adapter re-reads the invoice to recover the amount and
-     the settle state, because the webhook carries neither
-     (`convex/lib/processors/btcpay.ts:invoiceDetail`). Without this permission
-     that read 403s, the read returns null, and **the settle grants with the
-     amount + partial-payment guards disabled** — a store settle-tolerance could
-     then hand out a membership for a part-paid invoice. The same permission
+     the settle state, and its payment methods to measure what was actually
+     paid, because the webhook carries neither
+     (`convex/lib/processors/btcpay.ts:invoiceDetail` / `invoicePaidRatio`).
+     Without this permission those reads 403 and **the settle grants with the
+     amount + underpayment checks disabled**: an invoice settled short (by a
+     looser store default, or marked settled by hand) could then grant. The same permission
      backs the Admin → Billing credential probe. When the read fails, the grant
      is audited as `billing.settle_detail_unavailable`; if you see that action,
      this is why.
@@ -330,11 +396,14 @@ address + Lightning invoice side by side).
    `InvoiceProcessing`/`InvoiceReceivedPayment`/`InvoicePaymentSettled`→confirming;
    `InvoiceCreated`→pending; `InvoiceExpired`→expired; `InvoiceInvalid`→failed.
 
-   One exception to `InvoiceSettled`→paid: an invoice whose `additionalStatus`
-   is `PaidPartial` (the store settled it under a configured tolerance) is
-   downgraded to **confirming**, never grants, and is audited as
-   `billing.underpayment_seen` so you can refund or ask for a top-up. This is
-   the guard that step 2's `canviewinvoices` permission makes possible.
+   Underpayments: on `InvoiceSettled` the adapter measures the paid fraction from
+   the invoice's payment methods (`totalPaid / amount`); a short settle is
+   decided against the tolerance like NOWPayments (see "Underpayments" above).
+   When the payment methods can't be read, `additionalStatus: PaidPartial` is
+   the fallback signal and holds the order (no ratio, never grants). An
+   `InvoiceExpired` with `partiallyPaid: true` (money arrived, BTCPay never
+   accepted it, possibly unconfirmed) is always held as `underpaid`, never
+   granted. This is what step 2's `canviewinvoices` permission makes possible.
 
 7. **Minimum term:** `btcpayMinMonths` (Admin → Billing) defaults to **1** —
    Lightning has no meaningful floor. If you run on-chain-only, consider raising
@@ -352,17 +421,12 @@ address + Lightning invoice side by side).
      but any non-Bitcoin chain reintroduces a payer-facing coin selector, and
      this decides where it lands (e.g. `BTC-LN`).
 
-   **Not exposed: `paymentTolerance`.** Setting it above 0 makes BTCPay settle a
-   short payment as `Settled` + `PaidPartial` — which the guard in step 6
-   downgrades to `confirming` and never grants. A tolerance would therefore be
-   inert _and_ misleading: the payer's money arrives, the order stays
-   non-terminal, and the operator believes they configured otherwise. Supporting
-   it means comparing the ACTUAL shortfall against the tolerance before
-   downgrading, which needs the paid amount (a second read of
-   `/invoices/{id}/payment-methods`, summed across methods via each one's rate)
-   plus currency and rounding care. That loosens a grant guard, so it is its own
-   change rather than a config default. If exchange-fee shortfalls become a real
-   problem, that is the work to do — not flipping a percentage.
+   - **Payment tolerance** — not a separate BTCPay knob: every invoice is created
+     with `checkout.paymentTolerance` = the billing `underpaymentTolerancePct`,
+     so BTCPay settles (after its confirmations) exactly the payments FCP would
+     grant. FCP still re-measures the shortfall on settle and checks it against
+     the CURRENT tolerance, so a looser store default or a since-lowered
+     setting can't grant more than FCP allows.
 
 9. **Verify before going live:** Admin → Billing → **Test connection** on the
    BTCPay rail (`POST /api/v1/admin/billing/test-connection`) checks **both**

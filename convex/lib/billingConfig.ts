@@ -75,6 +75,17 @@ export interface BillingConfig {
   btcpayMinMonths: number;
   /** Per-invoice BTCPay checkout overrides (see BtcpayCheckoutConfig). */
   btcpayCheckout: BtcpayCheckoutConfig;
+  /**
+   * How short a crypto payment may arrive and still grant, as a percent of the
+   * invoice (0 = exact only). Exchanges commonly take a flat withdrawal fee out
+   * of the amount the payer sends (observed: exactly 2 TRX on a $14 invoice,
+   * 4.7%), so an exact-match rule strands real payers. Measured in the PAID
+   * coin, so exchange-rate drift doesn't count against the payer. Applies to
+   * NOWPayments (`finished`/`partially_paid`) and BTCPay (also passed as the
+   * invoice's `paymentTolerance`). Anything shorter is held as `underpaid` for
+   * the operator, never expired. Operational, so NOT in publicConfig.
+   */
+  underpaymentTolerancePct: number;
   /** Optional-donation config (add-on + standalone → free-user bandwidth pool). */
   donation: DonationConfig;
 }
@@ -119,6 +130,7 @@ export const BILLING_DEFAULTS: BillingConfig = {
     // unified BIP21 QR for on-chain + Lightning, so there's nothing to preselect).
     defaultPaymentMethod: '',
   },
+  underpaymentTolerancePct: 5,
   donation: {
     enabled: true,
     suggestedAmountsCents: [300, 500, 1000, 2500],
@@ -144,6 +156,7 @@ export const BILLING_KEYS = {
   btcpay_expirationMinutes: 'billing.btcpay.expirationMinutes',
   btcpay_monitoringMinutes: 'billing.btcpay.monitoringMinutes',
   btcpay_defaultPaymentMethod: 'billing.btcpay.defaultPaymentMethod',
+  underpaymentTolerancePct: 'billing.underpaymentTolerancePct',
   donation_enabled: 'billing.donation.enabled',
   donation_suggestedAmounts: 'billing.donation.suggestedAmounts',
   donation_minAmountCents: 'billing.donation.minAmountCents',
@@ -159,6 +172,8 @@ const MAX_BONUS_GB_PER_USD = 1000; // sanity ceiling on the donation→bandwidth
 const MAX_MONTHLY_CAP_GB = 100_000; // sanity ceiling on the shared monthly bonus.
 const MAX_BONUS_WINDOW_DAYS = 365; // a donation can fund the pool for at most a year.
 const MAX_CHECKOUT_MINUTES = 60 * 24 * 30; // 30 days — an upper bound on invoice expiry/monitoring.
+// NOWPayments' own "Payment covering" tops out at 10%; past that it's a discount.
+export const MAX_UNDERPAYMENT_TOLERANCE_PCT = 10;
 
 /** Coerce a single duration entry; returns null if unusable (dropped by the caller). */
 function sanitizeDuration(raw: unknown): BillingDuration | null {
@@ -296,6 +311,7 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     bpExpiry,
     bpMonitor,
     bpDefaultMethod,
+    underpayTol,
     dEnabled,
     dAmounts,
     dMin,
@@ -316,6 +332,7 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     readSetting(db, BILLING_KEYS.btcpay_expirationMinutes),
     readSetting(db, BILLING_KEYS.btcpay_monitoringMinutes),
     readSetting(db, BILLING_KEYS.btcpay_defaultPaymentMethod),
+    readSetting(db, BILLING_KEYS.underpaymentTolerancePct),
     readSetting(db, BILLING_KEYS.donation_enabled),
     readSetting(db, BILLING_KEYS.donation_suggestedAmounts),
     readSetting(db, BILLING_KEYS.donation_minAmountCents),
@@ -343,6 +360,11 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
       monitoringMinutes: asMinutes(bpMonitor, bpc.monitoringMinutes),
       defaultPaymentMethod: asPaymentMethodId(bpDefaultMethod, bpc.defaultPaymentMethod),
     },
+    underpaymentTolerancePct: asNonNegNumber(
+      underpayTol,
+      BILLING_DEFAULTS.underpaymentTolerancePct,
+      MAX_UNDERPAYMENT_TOLERANCE_PCT,
+    ),
     donation: {
       enabled: asBool(dEnabled, d.enabled),
       suggestedAmountsCents: sanitizeAmountsList(dAmounts),
@@ -352,6 +374,20 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
       bonusWindowDays: asWindowDays(dWindow, d.bonusWindowDays),
     },
   };
+}
+
+/**
+ * Whether a short payment still grants: the fraction delivered (in the paid
+ * asset) is at least `1 - tolerancePct/100`. An unmeasured shortfall (null)
+ * never grants. The epsilon keeps a ratio that lands exactly on the boundary
+ * (5% short at a 5% tolerance) from failing on float rounding.
+ */
+export function withinUnderpaymentTolerance(
+  paidRatio: number | null,
+  tolerancePct: number,
+): boolean {
+  if (paidRatio == null || !Number.isFinite(paidRatio)) return false;
+  return paidRatio >= 1 - tolerancePct / 100 - 1e-9;
 }
 
 /** Look up a duration by months in a resolved config. */
@@ -436,6 +472,16 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
         asPaymentMethodId(bc.defaultPaymentMethod, def.defaultPaymentMethod),
       );
     }
+  }
+  if ('underpaymentTolerancePct' in p) {
+    put(
+      BILLING_KEYS.underpaymentTolerancePct,
+      asNonNegNumber(
+        p.underpaymentTolerancePct,
+        BILLING_DEFAULTS.underpaymentTolerancePct,
+        MAX_UNDERPAYMENT_TOLERANCE_PCT,
+      ),
+    );
   }
   if (p.donation && typeof p.donation === 'object') {
     const dd = p.donation as Record<string, unknown>;
