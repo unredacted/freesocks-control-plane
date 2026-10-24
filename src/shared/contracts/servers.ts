@@ -830,5 +830,15 @@ export const ProfilePatchPreview = z.object({
   otherAddresses: z
     .array(z.object({ remark: z.string(), address: z.string(), port: z.number() }))
     .default([]),
+  /**
+   * Addresses on a moved transport that move to the new port with their node:
+   * an enrolled node's own, and an adopted node's recorded ones that name the
+   * old port (one naming another port is a forwarder's mapping and keeps it).
+   */
+  movedAddresses: z
+    .array(
+      z.object({ node: z.string(), remark: z.string(), address: z.string(), port: z.number() }),
+    )
+    .default([]),
 });
 export type ProfilePatchPreview = z.infer<typeof ProfilePatchPreview>;

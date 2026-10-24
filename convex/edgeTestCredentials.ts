@@ -352,6 +352,7 @@ export const ensure = internalAction({
       issued = await ctx.runAction(internal.backends.issueUser, {
         backend: c.backend,
         pinServerId: c.backendServerId,
+        ownCheck: true,
         spec: {
           username,
           trafficLimitBytes: QUALIFICATION_TRAFFIC_LIMIT_BYTES,

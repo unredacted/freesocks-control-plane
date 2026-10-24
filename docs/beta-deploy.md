@@ -322,6 +322,11 @@ Swap the final command for whatever you need — the common ones:
   admin-added clients).
 - `bunx convex run lifecycle:purgeInactiveFree '{}'` — the only path that actually
   removes idle free accounts the `deactivate-idle-free` cron deactivated-and-retained.
+- `bunx convex run serverAdmin:removedBackends '{}'`, then
+  `bunx convex run serverAdmin:purgeRemovedBackend '{"backendServerId":"<id>"}'` (a dry run: it
+  reports the rows per table) and the same with `"dryRun":false` — clears the server-management
+  rows a backend server removed before they were cleaned up left behind (`docs/servers.md` §
+  "Removing a backend server").
 - `bunx convex env get ADMIN_BOOTSTRAP_SECRET` / `bunx convex env list` — read
   deployment env (the deployer log also prints the bootstrap secret every deploy).
 - `bunx convex run edgeMaintenance:freeze '{}'` / `seedEdgesReset:status '{}'` /

@@ -36,7 +36,7 @@ import { writeAuditLog } from './lib/audit';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { CLAIM_LEASE_MS } from './lib/backend/fencing';
 import { claimKey } from './lib/backend/ops';
-import { HOST_REMARK_MAX } from './lib/backend/hostRemark';
+import { HOST_REMARK_MAX, roleWroteAddress } from './lib/backend/hostRemark';
 import {
   bridgeNodeRename,
   longestListenerRemark,
@@ -170,7 +170,10 @@ export const request = internalMutation({
     if (intent?.claim && intent.claim.expiresAt > now)
       refuse('servers.op_running', 'The node is still being brought in line. Try again shortly');
     // An adopted node's Hosts keep the remarks they came with, and the rename
-    // moves only FCP's forms: one it would leave behind keeps naming the old name.
+    // moves only FCP's forms: one it would leave behind keeps naming the old
+    // name. That is every address it was adopted with, and every Host the
+    // node role's contract v1 remarked for it (a front node's records none),
+    // which node pinning reads as the node's.
     if (intent?.adopted) {
       const hosts = await ctx.db
         .query('panelHosts')
@@ -179,7 +182,7 @@ export const request = internalMutation({
       if (
         hosts.some(
           (h) =>
-            intent.addressUuids?.includes(h.hostUuid) &&
+            (intent.addressUuids?.includes(h.hostUuid) || roleWroteAddress(from, h.remark)) &&
             renamedRemark(h.remark, h.sni, from, to) === null,
         )
       )

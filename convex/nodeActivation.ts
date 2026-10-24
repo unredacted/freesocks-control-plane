@@ -135,9 +135,44 @@ async function reviewShapeOf(
     authRevision: intent.authRevision ?? null,
     listeners,
     subscriptionTemplates: Object.fromEntries(setup.templates.map((t) => [t.family, t.hash])),
-    addressTuples: names.map((sni) => ({ address: originAddress, port: transport.port, sni })),
+    addressTuples: direct
+      ? ((await adoptedTargetsOf(ctx, intent, names)) ??
+        names.map((sni) => ({ address: originAddress, port: transport.port, sni })))
+      : [],
   };
 }
+
+/**
+ * What members of an ADOPTED direct node dial: its recorded addresses, each at
+ * its own address, port and server name (the transport's first name when the
+ * Host names none), in the order they were recorded. Its row may hold only a
+ * private management address, so neither the test link nor the review is
+ * built from it. Null for a node FCP set up, whose addresses are its origin
+ * address, one per name.
+ */
+async function adoptedTargetsOf(
+  ctx: { db: QueryCtx['db'] },
+  intent: Intent,
+  names: readonly string[],
+): Promise<{ address: string; port: number; sni: string }[] | null> {
+  if (!intent.adopted) return null;
+  const hosts = await ctx.db
+    .query('panelHosts')
+    .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+    .collect();
+  return (intent.addressUuids ?? []).flatMap((u) => {
+    const h = hosts.find((x) => x.hostUuid === u);
+    return h ? [{ address: h.address, port: h.port, sni: h.sni || names[0] || '' }] : [];
+  });
+}
+
+/** `address:port` as a URI authority: an IPv6 literal is bracketed. */
+const hostPort = (address: string, port: number): string =>
+  address.includes(':') && !address.startsWith('[') ? `[${address}]:${port}` : `${address}:${port}`;
+
+/** The endpoint a direct test binds to: every distinct `address:port` the links dial. */
+const endpointOf = (targets: readonly { address: string; port: number }[]): string =>
+  [...new Set(targets.map((x) => hostPort(x.address, x.port)))].join(',');
 
 /**
  * Every (transport, location) a fronted node is served from or about to be:
@@ -401,7 +436,9 @@ async function standbysOf(ctx: { db: QueryCtx['db'] }, intent: Intent): Promise<
 function approvalStageOf(intent: Intent, direct: boolean, standbys: Standbys | null): Stage | null {
   const stage = intent.activation.stage;
   if (stage === 'candidates_verified' || stage === 'awaiting_approval') return stage;
-  if (!direct && standbys && !standbys.code && (stage === 'machine_ready' || stage === 'live'))
+  // An adopted node whose edge FCP does not run has no standbys to wait for.
+  const ready = !!intent.adopted?.externallyFronted || (!!standbys && !standbys.code);
+  if (!direct && ready && (stage === 'machine_ready' || stage === 'live'))
     return 'candidates_verified';
   return null;
 }
@@ -500,14 +537,19 @@ async function credentialContextOf(ctx: QueryCtx, intentId: Id<'panelNodeIntents
   // An issuance whose answer was lost: the row holds no backend identity.
   const unresolved = rows.find((r) => r.removal === 'pending' && !r.backendUserId) ?? null;
   const hostname = originHostnameOf(intent, setup);
+  const transport = transportFor(setup, modeSlug(intent));
   return {
     intent,
     server: { _id: server._id, backend: server.backend, config: server.config, slug: server.slug },
     setup,
     mode: modeEntry(setup, modeSlug(intent)),
-    transport: transportFor(setup, modeSlug(intent)),
+    transport,
     groupUuid: modeEntry(setup, modeSlug(intent)).groupUuid ?? null,
     originAddress: originAddressOf(intent, hostname),
+    // An adopted node is tested where its members dial it.
+    adoptedTargets: intent.adopted
+      ? await adoptedTargetsOf(ctx, intent, await liveNamesOf(ctx, intent, transport.uuid))
+      : null,
     reusable: reusable
       ? {
           id: reusable._id,
@@ -592,6 +634,7 @@ async function ensureIntentCredential(
     issued = await ctx.runAction(internal.backends.issueUser, {
       backend: c.server.backend,
       pinServerId: c.server._id,
+      ownCheck: true,
       spec: {
         username,
         trafficLimitBytes: QUALIFICATION_TRAFFIC_LIMIT_BYTES,
@@ -691,9 +734,24 @@ export const buildDirectTestLink = internalAction({
         code: 'servers.credential_unavailable',
         message: 'No protocol credential',
       });
-    const names = [...params.serverNames];
-    const endpoint = `${c.originAddress}:${params.port ?? reality.port}`;
-    const links = (names.length > 0 ? names : ['']).map((sni) => {
+    // One link per address members dial: an adopted node's recorded Hosts,
+    // else the origin address once per name the transport serves.
+    const port = params.port ?? reality.port;
+    const targets =
+      c.adoptedTargets ??
+      (params.serverNames.length > 0 ? params.serverNames : ['']).map((sni) => ({
+        address: c.originAddress,
+        port,
+        sni,
+      }));
+    if (targets.length === 0)
+      throw new ConvexError({
+        code: 'servers.host_missing',
+        message: 'None of the addresses this node was adopted with is on the backend',
+      });
+    const names = c.adoptedTargets ? targets.map((x) => x.sni) : [...params.serverNames];
+    const endpoint = endpointOf(targets);
+    const links = targets.map(({ address, port, sni }) => {
       const q = new URLSearchParams({
         encryption: 'none',
         flow: REALITY_RAW_FLOW,
@@ -706,7 +764,7 @@ export const buildDirectTestLink = internalAction({
       });
       return {
         sni,
-        link: `vless://${protocolUuid}@${endpoint}?${q.toString()}#${encodeURIComponent(`FCP test ${c.intent.name}`)}`,
+        link: `vless://${protocolUuid}@${hostPort(address, port)}?${q.toString()}#${encodeURIComponent(`FCP test ${c.intent.name}`)}`,
       };
     });
     const binding: DirectTestBinding = {
@@ -760,10 +818,17 @@ export const confirmDirect = internalMutation({
     const reality = transportFor(setup, modeSlug(intent));
     const hostname = originHostnameOf(intent, setup);
     const observed = await liveNamesOf(ctx, intent, reality.uuid);
-    const names = observed.length > 0 ? observed : (reality.serverNames ?? []);
+    const adopted = await adoptedTargetsOf(ctx, intent, observed);
+    const names = adopted
+      ? adopted.map((x) => x.sni)
+      : observed.length > 0
+        ? observed
+        : (reality.serverNames ?? []);
     const live = {
       inboundUuid: reality.uuid,
-      endpoint: `${originAddressOf(intent, hostname)}:${reality.port}`,
+      endpoint: adopted
+        ? endpointOf(adopted)
+        : `${originAddressOf(intent, hostname)}:${reality.port}`,
       machineRevision: intent.machineRevision,
       configRevision: intent.configRevision ?? '',
       authRevision: intent.authRevision ?? null,
@@ -865,12 +930,39 @@ export const approve = internalMutation({
     // Any older run of this node is superseded: it never commits. Its
     // candidates stay isolated from members (the gate counts every
     // uncommitted run's resources) until this run commits or they are released.
+    // What an older run turned on, never committed and never turned off again
+    // (a run's ownership is cleared once its rollback sent the disables) is
+    // this run's to turn off if it fails, while it is still on: the older one
+    // gives it up here, so nothing is owned twice or after an operator took
+    // it back.
+    const committedHosts = new Set(intent.approved?.committed.hostUuids ?? []);
+    const stillOn = new Set(
+      (
+        await ctx.db
+          .query('panelHosts')
+          .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+          .collect()
+      )
+        .filter((h) => !h.isDisabled)
+        .map((h) => h.hostUuid),
+    );
+    const inherited = new Set<string>();
     for (const r of await ctx.db
       .query('panelActivationRuns')
       .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
-      .collect())
-      if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
-        await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+      .collect()) {
+      const open = r.state === 'running' || r.state === 'blocked' || r.state === 'review';
+      const owned = r.state !== 'committed' ? (r.enabledHostUuids ?? []) : [];
+      for (const u of owned)
+        if (!committedHosts.has(u) && stillOn.has(u) && (intent.addressUuids ?? []).includes(u))
+          inherited.add(u);
+      if (open || owned.length > 0)
+        await ctx.db.patch(r._id, {
+          ...(open ? { state: 'superseded' as const } : {}),
+          ...(owned.length > 0 ? { enabledHostUuids: undefined } : {}),
+          updatedAt: now,
+        });
+    }
     // A fronted approval names the standbys of the open setup run: they are
     // this run's candidates from now on (members never see one before the
     // commit), except an edge members already hold under the committed approval.
@@ -899,6 +991,7 @@ export const approve = internalMutation({
           ? []
           : (standbys?.edgeIds ?? []).filter((e) => !committedEdges.has(e as string)),
       },
+      ...(inherited.size > 0 ? { enabledHostUuids: [...inherited] } : {}),
       events: [{ at: now, code: 'approved' }],
       createdAt: now,
       updatedAt: now,
@@ -943,6 +1036,14 @@ export const approve = internalMutation({
         activationRunId: runId,
         generation: setupRun.generation,
       });
+    } else if (intent.adopted?.externallyFronted) {
+      // An adopted node whose edge FCP does not run: nothing of FCP's
+      // publishes for it, so nothing would ever wake a run waiting at publish.
+      // Members reach it through that edge as before; the approval commits
+      // here, through the same promotion every go-live uses, or is refused
+      // with nothing changed.
+      const r = await promoteCandidate(ctx, (await ctx.db.get(runId))!);
+      if (!r.ok) refuse(r.code, 'The node could not go live');
     }
     return { runId };
   },
@@ -1037,6 +1138,60 @@ export const step = internalMutation({
   },
 });
 
+/** Record an address the run is about to turn on (`enabledHostUuids`); refused once it is not running. */
+export const noteEnabled = internalMutation({
+  args: { runId: v.id('panelActivationRuns'), stepVersion: v.number(), hostUuid: v.string() },
+  handler: async (ctx, a) => {
+    const run = await ctx.db.get(a.runId);
+    if (!run || run.stepVersion !== a.stepVersion || run.state !== 'running')
+      return { ok: false as const };
+    const intent = await ctx.db.get(run.intentId);
+    if (!intent || intent.activation.currentRunId !== run._id) return { ok: false as const };
+    const enabled = run.enabledHostUuids ?? [];
+    if (!enabled.includes(a.hostUuid))
+      await ctx.db.patch(run._id, {
+        enabledHostUuids: [...enabled, a.hostUuid],
+        updatedAt: Date.now(),
+      });
+    return { ok: true as const };
+  },
+});
+
+/** The rollback of a failed or superseded run sent its disables: it owns none of them any more. */
+export const releaseEnabled = internalMutation({
+  args: { runId: v.id('panelActivationRuns'), hostUuids: v.array(v.string()) },
+  handler: async (ctx, { runId, hostUuids }) => {
+    const run = await ctx.db.get(runId);
+    if (!run?.enabledHostUuids) return null;
+    const left = run.enabledHostUuids.filter((u) => !hostUuids.includes(u));
+    await ctx.db.patch(runId, {
+      enabledHostUuids: left.length > 0 ? left : undefined,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
+ * What a run that failed or was superseded turns off again: the addresses it
+ * turned on (or took over from a run it superseded), minus what is committed
+ * now. Nothing while a newer run of the node is current: that run took them
+ * over at its approval and decides.
+ */
+export const enabledToRelease = internalQuery({
+  args: { runId: v.id('panelActivationRuns') },
+  handler: async (ctx, { runId }): Promise<string[]> => {
+    const run = await ctx.db.get(runId);
+    if (!run) return [];
+    const intent = await ctx.db.get(run.intentId);
+    if (!intent) return [];
+    const current = intent.activation.currentRunId;
+    if (current && current !== run._id) return [];
+    const committed = new Set(intent.approved?.committed.hostUuids ?? []);
+    return (run.enabledHostUuids ?? []).filter((u) => !committed.has(u));
+  },
+});
+
 /**
  * A run that blocked or failed parks the node where it can be approved
  * again: the run keeps its record, the intent drops it as current, and a
@@ -1094,6 +1249,15 @@ export const runDirect = internalAction({
           return block('servers.maintenance_required').then(() => null);
         for (const h of c.addresses) {
           if (!h.isDisabled) continue;
+          // Recorded before the write: an address this run may have turned on
+          // is one it turns off again if it fails. A run superseded meanwhile
+          // records nothing and sends nothing.
+          const noted = await ctx.runMutation(internal.nodeActivation.noteEnabled, {
+            runId,
+            stepVersion,
+            hostUuid: h.hostUuid,
+          });
+          if (!noted.ok) return null;
           const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
             backendServerId: c.server._id,
             hostUuid: h.hostUuid,
@@ -1158,16 +1322,28 @@ export const runDirect = internalAction({
             : { state: 'blocked' as const, code: 'servers.rehearsal_failed' }),
         });
         if (!ok || !s.ok) {
-          // A failed rehearsal closes what it opened: every address goes back to disabled.
-          for (const h of c.addresses) {
+          // A failed (or superseded) run closes what it opened, and only that:
+          // an address that was on before it ran (an adopted node's, a live
+          // node's committed one) stays on.
+          const off: string[] = await ctx.runQuery(internal.nodeActivation.enabledToRelease, {
+            runId,
+          });
+          for (const hostUuid of off) {
             const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
               backendServerId: c.server._id,
-              hostUuid: h.hostUuid,
+              hostUuid,
               isDisabled: true,
               ...activationActor(c.run),
             });
             await ctx.runAction(internal.backendWrites.run, { opId });
           }
+          // Turned off: the run owns none of them any more, so a later
+          // approval never takes over one an operator turns on again.
+          if (off.length > 0)
+            await ctx.runMutation(internal.nodeActivation.releaseEnabled, {
+              runId,
+              hostUuids: off,
+            });
           return null;
         }
         await ctx.runMutation(internal.nodeActivation.commit, {
