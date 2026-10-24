@@ -17,6 +17,8 @@
 # Env (set in .env.beta):
 #   POSTGRES_HOST (default postgres), POSTGRES_USER (convex), POSTGRES_DB,
 #   POSTGRES_PASSWORD, BACKUP_INTERVAL_SECONDS (default 86400),
+#   BACKUP_RETRY_SECONDS (first retry after a failed cycle, default 300;
+#     doubles on each further failure, never longer than the interval),
 #   BACKUP_RETENTION (local copies to keep, default 7),
 #   BACKUP_AGE_PUBLIC_KEY (age recipient; encrypts dumps before upload),
 #   BACKUP_ALLOW_UNENCRYPTED=true (silence the no-encryption warning),
@@ -50,9 +52,18 @@ PGUSER="${POSTGRES_USER:-convex}"
 PGDB="${POSTGRES_DB:-freesocks_beta}"
 export PGPASSWORD="${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}"
 INTERVAL="${BACKUP_INTERVAL_SECONDS:-86400}"
+RETRY="${BACKUP_RETRY_SECONDS:-300}"
 RETENTION="${BACKUP_RETENTION:-7}"
 OUT_DIR="${BACKUP_DIR:-/backups}"
 mkdir -p "$OUT_DIR"
+
+# Prune old local dumps beyond the retention count (both plaintext + .age).
+prune_local() {
+  ls -1t "$OUT_DIR"/freesocks-*.sql.gz* 2>/dev/null | tail -n +"$((RETENTION + 1))" | while read -r old; do
+    echo "[backup] pruning ${old}"
+    rm -f "$old"
+  done
+}
 
 backup_once() {
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -100,19 +111,18 @@ backup_once() {
     echo "[backup] uploading -> s3://${S3_BUCKET}/${key}"
     if ! aws --endpoint-url "$S3_ENDPOINT" s3 cp "$file" "s3://${S3_BUCKET}/${key}"; then
       # A failed OFFSITE copy is a failed backup (the local copy is kept): return
-      # non-zero so the heartbeat stops and the container reads unhealthy.
+      # non-zero so the heartbeat stops and the container reads unhealthy. Still
+      # prune: every retry of a failing upload writes a full dump, and without
+      # this they pile up until the disk is full.
       echo "[backup] ERROR: offsite upload failed (local copy kept)" >&2
+      prune_local
       return 1
     fi
   else
     echo "[backup] WARNING: S3_* not set; backup is LOCAL ONLY (no offsite copy)" >&2
   fi
 
-  # Prune old local dumps beyond the retention count (both plaintext + .age).
-  ls -1t "$OUT_DIR"/freesocks-*.sql.gz* 2>/dev/null | tail -n +"$((RETENTION + 1))" | while read -r old; do
-    echo "[backup] pruning ${old}"
-    rm -f "$old"
-  done
+  prune_local
 }
 
 # Liveness heartbeat: touched only on a SUCCESSFUL cycle (dump + offsite upload
@@ -121,12 +131,24 @@ backup_once() {
 # caught by the fail-fast gate + restart policy.)
 HEARTBEAT="${OUT_DIR}/.heartbeat"
 
-echo "[backup] sidecar up; interval=${INTERVAL}s retention=${RETENTION}"
+# A failed cycle is retried after RETRY seconds, doubling on each further
+# failure up to the interval, instead of waiting a whole interval: a cycle that
+# raced a Postgres restart (the sidecar's first cycle runs at start) used to
+# leave the stack without a backup for a day. The backoff keeps a persistent
+# failure (a dead S3 destination) from re-dumping a large database every few
+# minutes.
+echo "[backup] sidecar up; interval=${INTERVAL}s retry=${RETRY}s retention=${RETENTION}"
+delay="$RETRY"
 while true; do
   if backup_once; then
     touch "$HEARTBEAT"
+    delay="$RETRY"
+    wait_s="$INTERVAL"
   else
-    echo "[backup] cycle failed; heartbeat NOT touched (healthcheck will trip)" >&2
+    [ "$delay" -gt "$INTERVAL" ] && delay="$INTERVAL"
+    echo "[backup] cycle failed; heartbeat NOT touched (healthcheck will trip); retrying in ${delay}s" >&2
+    wait_s="$delay"
+    delay=$((delay * 2))
   fi
-  sleep "$INTERVAL"
+  sleep "$wait_s"
 done
