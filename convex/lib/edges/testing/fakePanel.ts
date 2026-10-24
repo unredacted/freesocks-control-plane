@@ -64,6 +64,8 @@ export interface FakePanel {
   failDeleteWith: number | null;
   /** Every traffic reset answers this status while set. */
   failResetWith: number | null;
+  /** The mode group listing answers this status while set. */
+  failSquadsWith: number | null;
   /** Requests the backend saw, by method + path. */
   calls: Captured[];
 }
@@ -86,6 +88,7 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
     failCreateWith: null,
     failDeleteWith: null,
     failResetWith: null,
+    failSquadsWith: null,
     calls: [],
   };
   const userJson = (u: FakePanelUser) => ({
@@ -198,6 +201,8 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
       return new Response(body, { status: 200, headers: { 'content-type': 'text/plain' } });
     }
     if (method === 'GET' && path === '/api/nodes') return jsonRes({ response: opts.nodes ?? [] });
+    if (method === 'GET' && path === '/api/internal-squads' && panel.failSquadsWith !== null)
+      return jsonRes({ message: 'listing failed' }, panel.failSquadsWith);
     if (method === 'GET' && path === '/api/internal-squads' && opts.squads)
       return jsonRes({
         response: {

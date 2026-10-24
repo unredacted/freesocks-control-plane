@@ -1295,8 +1295,9 @@ reach it through a load balancer the operator built by hand, by an operator Host
   So unless a placement or the origin's qualification mode was chosen, `relayQualification.ensure`
   reads the panel's groups live (`backends.listModeGroups`) and puts the account in one that holds
   every transport the origin protects, ahead of the default pool or an enrolled node's own group
-  when that lacks one (the first by uuid when several do; nothing changes when none does or the
-  panel cannot be read). This matters on a node with transports of different groups, such as an
+  when that lacks one (the group a stored account sits in while it still holds them, else the
+  first by uuid; nothing changes when none does). A listing that fails is unknown, never "none":
+  the stored account keeps its group, so a panel outage never re-mints it. This matters on a node with transports of different groups, such as an
   enrolled node with a second, hand-built transport: every protected transport must sit in one
   group together, or the test link of the others is refused by the node.
 - **An inactive backend.** A backend out of the issuance pool (`isActive: false`; its members

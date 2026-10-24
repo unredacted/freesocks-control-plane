@@ -524,6 +524,14 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
       await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
     ).toMatchObject({ ok: true, reused: true });
     expect(panel.created).toHaveLength(1);
+    // A listing that fails is unknown, not "no group": the account stays where it works.
+    panel.failSquadsWith = 503;
+    expect(
+      await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true, reused: true });
+    expect(panel.created).toHaveLength(1);
+    expect(panel.deleted).toEqual([]);
+    panel.failSquadsWith = null;
     // An operator's chosen mode stands, whatever the groups hold.
     await t.run((ctx) => ctx.db.patch(relayId, { qualificationModeSlug: 'freedom-ws' }));
     await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' });

@@ -463,17 +463,18 @@ function definitiveCreateFailure(err: unknown): boolean {
 
 /**
  * The mode groups of the backend that hold every one of `inbounds`, by uuid
- * (sorted, so the same panel gives the same answer); empty when none does or
- * the panel cannot be read.
+ * (sorted, so the same panel gives the same answer); empty when none does,
+ * null when the panel could not be read (unknown, never "none").
  */
 async function groupsHolding(
   ctx: { runAction: ActionCtx['runAction'] },
   backendServerId: Id<'backendServers'>,
   inbounds: readonly string[],
-): Promise<string[]> {
-  const groups: ObservedModeGroup[] = await ctx
+): Promise<string[] | null> {
+  const groups: ObservedModeGroup[] | null = await ctx
     .runAction(internal.backends.listModeGroups, { backendServerId })
-    .catch(() => []);
+    .catch(() => null);
+  if (!groups) return null;
   return groups
     .filter((g) => {
       const held = new Set(g.inboundUuids.map((u) => u.toLowerCase()));
@@ -535,12 +536,22 @@ export const ensure = internalAction({
     // accepts it there only from a mode group holding that transport. Unless a
     // placement or mode was chosen, a group the panel says holds every
     // transport the origin protects wins over the default (or the enrolled
-    // mode's group, when it lacks one). A panel that cannot be read changes
-    // nothing.
+    // mode's group, when it lacks one); the group a stored account already sits
+    // in is kept while it still holds them. A panel that cannot be read keeps
+    // the stored account's group (unknown is not "none": no re-mint over an
+    // outage), and changes nothing when there is none.
     if (!c.chosen && c.placementRequired && c.protectedInbounds.length > 0) {
       const holding = await groupsHolding(ctx, c.backendServerId, c.protectedInbounds);
-      if (holding.length > 0 && !holding.includes(c.placement ?? '')) {
-        const placement = holding[0]!;
+      const stored = c.op?.state === 'stored' && c.stored ? c.op.placement : null;
+      const placement =
+        holding === null
+          ? stored
+          : holding.includes(c.placement ?? '')
+            ? null
+            : stored && holding.includes(stored)
+              ? stored
+              : (holding[0] ?? null);
+      if (placement && placement !== c.placement) {
         c = await ctx.runQuery(internal.relayQualification.ensureContext, {
           relayId: a.relayId,
           placement,
