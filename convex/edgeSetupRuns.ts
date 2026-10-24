@@ -1945,15 +1945,17 @@ async function stagePrepare(ctx: ActionCtx, run: Run): Promise<null> {
         });
       relayId = created.id;
       relaySlug = slug;
-      // The node is known by the address the panel lists too, when the
-      // operator gave another: a Host dialling it is the node's own.
-      if (plan.managementAddress)
-        await ctx.runMutation(internal.edgeHostHides.recordNodeAddresses, {
-          relayId,
-          addresses: [plan.managementAddress],
-        });
     }
   }
+  // The node is known by the address the panel lists too, when the operator
+  // gave another: a Host dialling it is the node's own. Recorded whether the
+  // origin was made now or reused (a step cut short after the create finds it
+  // again); a second record changes nothing.
+  if (plan.managementAddress)
+    await ctx.runMutation(internal.edgeHostHides.recordNodeAddresses, {
+      relayId,
+      addresses: [plan.managementAddress],
+    });
   // Each target's layer is its pick's provider's.
   const layerOf = (locationId: Id<'edgeLocations'> | undefined) => {
     const p = ctxRow.picks.find((x) => x.locationId === (locationId ?? null)) ?? ctxRow.picks[0]!;

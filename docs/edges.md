@@ -1258,28 +1258,36 @@ reach it through a load balancer the operator built by hand, by an operator Host
 `<node>-relay` at the load balancer's public address. No Host dials the node itself.
 
 - **Where new addresses forward to.** The plan's origin is the address the panel lists
-  (`originSource: panel`) unless the operator gives the node's public address
+  (`originSource: panel`) unless the operator gives the node's public IP address
   (`POST setup-runs/plan` and `POST setup-runs` take `originAddress`; the Protect sheet asks for
-  it on its first step, "Public address of the node", whenever FCP does not manage the node).
-  It is checked: an IP or a host name (`validation`), public (`edge.origin_not_public` for a
-  private, loopback or reserved address, or a name leading to one; a name with no address is
-  `edge.origin_unresolved`), and refused for an enrolled node (its origin is its enrollment's)
-  and for a node whose earlier origin forwards elsewhere (`edge.origin_address_locked`: remove
-  that protection first). The plan shows it (`originSource: given`) and its hash covers it, so a
+  it on its first step, "Public IP address of the node", whenever FCP does not manage the node).
+  It is checked: an IP, never a name (`edge.origin_not_ip`: a load balancer's backend is an IP
+  literal at every provider), public (`edge.origin_not_public` for a private, loopback or reserved
+  address), and stored the one way an IP is written (`canonicalIp`: no brackets, IPv6
+  compressed). It is refused for an enrolled node (its origin is its enrollment's) and for a
+  node whose earlier origin forwards elsewhere (`edge.origin_address_locked`: remove that
+  protection first). The plan shows it (`originSource: given`) and its hash covers it, so a
   create naming another address is `edge.plan_stale`. Only the address is taken: each transport
   must answer there on the port the panel lists (a port that differed would break the resume
-  check and the port-change tracking). An origin at a private IP (`originPrivate`) gets no load
-  balancer: every load balancer account reads `origin_private` in the plan, the create is
-  refused with `edge.origin_not_public`, and the rotation machine never offers, names or buys a
-  load balancer for such an origin, whoever asks (`originNotPublic`, lib/edges/ip.ts).
+  check and the port-change tracking). The address the panel lists stays the node's
+  (`managementAddress`, recorded on the origin at prepare whether the origin was made then or
+  found again), so a Host dialling it is a direct Host. A load balancer cannot forward to an
+  origin at a private IP (`originPrivate`) or to a name (`originName`, the panel listing the
+  node by one): every load balancer account reads `origin_private` / `origin_name` in the plan,
+  the create is refused with `edge.origin_not_public` / `edge.origin_not_ip`, and the rotation
+  machine never creates, names, reuses or publishes a load balancer for such an origin, whoever
+  asks (`l4OriginProblem`, lib/edges/ip.ts: no load balancer account is a candidate, a load
+  balancer spare it already has is never picked, and naming one or publishing one is refused).
 - **Its members are found.** The `<node>-relay` remark pins with its node
   (`convex/lib/nodePinning.ts`), so the members on the node are pinned to it, the plan does not
   read the node as empty, the rehearsal and the restore checks see the real members, and members
   see the neutral entry name.
 - **Its test link.** With no Host at the node, a load balancer address is tested through the
-  entry built from the transport's live REALITY parameters (§ "Publication", the test link). A
-  transport with neither (not REALITY, no Host at `originAddress:originPort`) is marked
-  `noTestLink` in the plan; a load balancer pick that would carry it is a set problem
+  entry built from the transport's live REALITY parameters (§ "Publication", the test link). The
+  plan reads those parameters from the panel as the test link will (`edgeTestLinks.synthesisReady`:
+  the transport still there, with a public key and a server name). A transport with neither (no
+  Host at `originAddress:originPort`, and not REALITY or not readable) is marked `noTestLink` in
+  the plan; a load balancer pick that would carry it is a set problem
   (`test_link_unavailable`) and the create is refused with `edge.test_link_unavailable`, before
   any address is bought. Add a Host at the node's own address for it, or pick a CDN location.
 - **An inactive backend.** A backend out of the issuance pool (`isActive: false`; its members
@@ -4433,8 +4441,9 @@ one attention kind (`front_host_unused`) and plan fields (`originSource`, `origi
 `originDeleting`, `frontHosts`, `inbounds[].noTestLink`): one deploy, no migration, no env
 change. From the first reconcile pass after it, a bound node's operator fronts are recorded, and
 an entry they name that renders leave out stops raising `direct_host_reappeared` (it is
-`front_host_unused`, info). A protect plan now refuses a load balancer for a private origin and
-for a transport no test link can be made for, before anything is bought. To roll back, run
+`front_host_unused`, info). A protect plan now refuses a load balancer for an origin at a private IP or a
+name, and for a transport no test link can be made for, before anything is bought; the rotation
+machine likewise never creates, reuses or publishes a load balancer for such an origin. To roll back, run
 `edgeHostHides:clearFrontsForRollback` with no arguments right before deploying the older
 build: its schema has no such field (a pass may record one again in between; run it again if
 the push is refused).

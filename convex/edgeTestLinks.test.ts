@@ -302,6 +302,29 @@ describe('the isolated test link', () => {
     expect(r.link).not.toContain(ORIGIN);
   });
 
+  test('the plan asks the panel first: a transport it describes with a key can be built, one it no longer holds cannot', async () => {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    const ready = await seed({ profiles: realityProfile() });
+    const ask = (t: typeof ready.t, tag: string) =>
+      t.action(internal.edgeTestLinks.synthesisReady, {
+        backendServerId: ready.fx.serverId,
+        profileUuid: FIXTURE_CONFIG_PROFILE,
+        tag,
+      });
+    expect(await ask(ready.t, 'VLESS_RELAY_A')).toBe(true);
+    expect(await ask(ready.t, 'VLESS_GONE')).toBe(false);
+    // A profile whose REALITY key is missing gives no entry either.
+    const profile = realityProfile();
+    const inbound = (
+      profile[FIXTURE_CONFIG_PROFILE].config.inbounds[0] as {
+        streamSettings: { realitySettings: Record<string, unknown> };
+      }
+    ).streamSettings.realitySettings;
+    delete inbound.privateKey;
+    const keyless = await seed({ profiles: profile });
+    expect(await ask(keyless.t, 'VLESS_RELAY_A')).toBe(false);
+  });
+
   test('no entry for the transport: the Host is on ANOTHER transport, or the body has none at the origin', async () => {
     // Nor can the panel describe the transport (its profile holds another one),
     // so no entry can be built from it either.

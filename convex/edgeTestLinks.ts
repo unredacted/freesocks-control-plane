@@ -33,7 +33,7 @@ import type { Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { panelDigestKey } from './lib/backend/key';
-import type { BackendHost } from './lib/backends/types';
+import type { BackendHost, PanelInboundTestParams } from './lib/backends/types';
 import type { BackendId } from './lib/backendIds';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import { sameAddress } from './lib/edges/hosts';
@@ -310,9 +310,38 @@ async function synthesizedEntry(
     synth.tag,
     (await panelDigestKey()).key,
   );
-  if (!params) return null;
+  if (!usableTestParams(params)) return null;
   return realityEntryLine(uuid, c.originAddress, c.originPort, params, synth.remark, synth.stream);
 }
+
+/** Live REALITY parameters a test entry can be built from: a public key and a server name. */
+export function usableTestParams(
+  params: PanelInboundTestParams | null,
+): params is PanelInboundTestParams {
+  return !!params && !!params.publicKey && params.serverNames.length > 0;
+}
+
+/**
+ * Whether the test link could build this transport's entry from the panel now
+ * (`synthesizedEntry`): the protect plan asks before a load balancer for it is
+ * bought, so a transport the panel no longer describes, or describes with no
+ * key, is refused there rather than at the test card.
+ */
+export const synthesisReady = internalAction({
+  args: { backendServerId: v.id('backendServers'), profileUuid: v.string(), tag: v.string() },
+  handler: async (ctx, a): Promise<boolean> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: a.backendServerId });
+    const writes = server ? PROVIDERS[server.backend].backendWrites : undefined;
+    if (!server || !writes) return false;
+    const params = await writes.readInboundForTest(
+      server.config as BackendConfig,
+      a.profileUuid,
+      a.tag,
+      (await panelDigestKey()).key,
+    );
+    return usableTestParams(params);
+  },
+});
 
 /** The stream of a REALITY transport: raw TCP, or XHTTP with its path and mode. */
 export type RealityStream = { kind: 'raw' } | { kind: 'xhttp'; path: string; mode: string };

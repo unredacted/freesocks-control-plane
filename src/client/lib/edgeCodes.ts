@@ -958,7 +958,12 @@ const COPY = {
     label: 'Address is not public',
     explain:
       "The node's address is private, loopback or reserved, so a provider's load balancer cannot reach it.",
-    fix: "Give the node's public address.",
+    fix: "Give the node's public IP address.",
+  },
+  origin_not_ip: {
+    label: 'Address is a name',
+    explain: 'A load balancer forwards to an IP address, never to a name.',
+    fix: "Give the node's public IP address.",
   },
   l4_not_for_websocket: {
     label: 'No load balancer for WebSocket',
@@ -1484,11 +1489,6 @@ const REFUSAL_COPY = {
     label: 'Old protection still going',
     explain: "The node's earlier protection is still being removed.",
     fix: 'Wait until it is gone (the Edges page shows it), then protect the node again.',
-  },
-  origin_unresolved: {
-    label: 'Name has no address',
-    explain: 'The name given for the node answers with no address.',
-    fix: "Give the node's public address, or a name that has one.",
   },
   test_link_unavailable: {
     label: 'New address could not be tested',
@@ -2240,7 +2240,13 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Node address is private',
     explain:
       'The panel lists a private address for this node, so a load balancer at a provider cannot reach it.',
-    fix: "Give the node's public address on the first step.",
+    fix: "Give the node's public IP address on the first step.",
+  },
+  origin_name: {
+    label: 'Node address is a name',
+    explain:
+      'The panel lists a name for this node, and a load balancer forwards to an IP address, never to a name.',
+    fix: "Give the node's public IP address on the first step.",
   },
   test_link_unavailable: {
     label: 'New address could not be tested',

@@ -2560,6 +2560,8 @@ export const SetupPlanResponse = z.object({
   originSource: z.enum(['relay', 'enrolled', 'given', 'panel']).default('panel'),
   /** The origin is a private, loopback or reserved IP: no load balancer is offered. */
   originPrivate: z.boolean().default(false),
+  /** The origin is a name: a load balancer forwards to an IP, so none is offered. */
+  originName: z.boolean().default(false),
   /** The address the panel lists for the node when the operator gave another (the node's too). */
   managementAddress: z.string().optional(),
   /** The node's earlier protection is still being removed (a run is refused until it is gone). */

@@ -301,6 +301,11 @@ export interface SetupPlanSnapshot {
    */
   originPrivate?: boolean;
   /**
+   * The origin is a name: a load balancer forwards to an IP, so none is
+   * offered (`origin_name`). Absent on runs from before.
+   */
+  originName?: boolean;
+  /**
    * The address the panel lists for the node when the operator gave another
    * origin: the node is known by it too (the run records it on the origin).
    */

@@ -36,8 +36,8 @@ import {
   type DirectHostContext,
 } from './lib/edges/directHosts';
 import { resolveNodeNames } from './edgeHostHides';
-import { normalizeAddress, sameAddress, templateHostRemark } from './lib/edges/hosts';
-import { addressFamily, isPublicIpLiteral, originNotPublic } from './lib/edges/ip';
+import { sameAddress, templateHostRemark } from './lib/edges/hosts';
+import { canonicalIp, isPublicIpLiteral, l4OriginProblem } from './lib/edges/ip';
 import { testLinkSourceOf } from './edgeTestLinks';
 import { accountsForSlot } from './lib/edges/rotation';
 import {
@@ -101,8 +101,11 @@ export interface PlanOps {
   ): Promise<OriginProbeOutcome[]>;
   /** The wait before an origin that did not answer is probed again. */
   pause(ms: number): Promise<void>;
-  /** A and AAAA of each name (the origin an operator gives by name). */
-  resolveNames(ctx: ActionCtx, names: string[]): Promise<Record<string, string[]>>;
+  /** Whether the panel describes a REALITY transport well enough to build its test entry. */
+  synthesisReady(
+    ctx: ActionCtx,
+    a: { backendServerId: Id<'backendServers'>; profileUuid: string; tag: string },
+  ): Promise<boolean>;
 }
 
 const defaultPlanOps: PlanOps = {
@@ -110,7 +113,7 @@ const defaultPlanOps: PlanOps = {
   listHosts: (ctx, a) => ctx.runAction(internal.backends.listHosts, a),
   probeOrigins: (ctx, a) => ctx.runAction(internal.edgeOriginProbeOps.probe, a),
   pause: (ms) => new Promise((r) => setTimeout(r, ms)),
-  resolveNames: (ctx, names) => ctx.runAction(internal.nodeIntentOps.resolveNames, { names }),
+  synthesisReady: (ctx, a) => ctx.runAction(internal.edgeTestLinks.synthesisReady, a),
 };
 
 let planOps: PlanOps = defaultPlanOps;
@@ -378,12 +381,14 @@ function accountCompatibility(
   required: SetupPlanInbound[],
   relay: PlanContext['relay'],
   websocketNode: boolean,
-  originPrivate = false,
+  l4Problem: ReturnType<typeof l4OriginProblem> = null,
 ): SetupPlanAccount {
   const reasons: string[] = [];
   const layer = edgeLayerOf(a.provider);
-  // A load balancer forwards to the origin address: a private one is out of reach.
-  if (layer === 'l4' && originPrivate) reasons.push('origin_private');
+  // A load balancer forwards to the origin address, an IP: a private one is
+  // out of its reach, and a name is none.
+  if (layer === 'l4' && l4Problem)
+    reasons.push(l4Problem === 'origin_not_ip' ? 'origin_name' : 'origin_private');
   // A front of this account could get no certificate: named first, since a
   // test alone does not fix it.
   if (a.certificateRefusal) reasons.push(a.certificateRefusal);
@@ -512,12 +517,18 @@ function accountCompatibility(
  */
 /** What a run cannot be created with: a transport no pick carries, a set too large, a pick that cannot be used. */
 export function refuseSet(set: SetupPlanSet): void {
-  // A load balancer for a node whose address is private: it could reach nothing.
+  // A load balancer for a node whose address is private, or a name: it could reach nothing.
   if (set.problems.some((p) => p.reason === 'origin_private'))
     throw new ConvexError({
       code: 'edge.origin_not_public',
       message:
-        "The node's address is private, so a load balancer cannot reach it. Give its public address",
+        "The node's address is private, so a load balancer cannot reach it. Give its public IP address",
+    });
+  if (set.problems.some((p) => p.reason === 'origin_name'))
+    throw new ConvexError({
+      code: 'edge.origin_not_ip',
+      message:
+        "The node's address is a name, and a load balancer forwards to an IP address. Give its public IP address",
     });
   // A load balancer address no test link could be made for: refused before it is bought.
   if (set.problems.some((p) => p.reason === TEST_LINK_UNAVAILABLE))
@@ -859,7 +870,7 @@ export async function buildPlan(
     nodeName: c.node.name,
     cursor: null,
   });
-  const given = await givenOriginOf(ctx, c, args.originAddress);
+  const given = givenOriginOf(c, args.originAddress);
   const originSource = c.relay
     ? ('relay' as const)
     : c.enrolled
@@ -874,10 +885,11 @@ export async function buildPlan(
       code: 'edge.node_address_missing',
       message: 'The backend reports no address for this node',
     });
-  // A load balancer forwards to the origin: one the panel lists as a private
-  // address (a node FCP does not manage is listed by its management address)
-  // is out of its reach, so no load balancer is offered for it.
-  const originPrivate = originNotPublic(originAddress);
+  // A load balancer forwards to the origin, an IP: one the panel lists as a
+  // private address (a node FCP does not manage is listed by its management
+  // address) is out of its reach, and a name is none, so no load balancer is
+  // offered for it.
+  const l4Problem = l4OriginProblem(originAddress);
   const origin = {
     kind: 'panel-node' as const,
     backendServerId: a.backendServerId,
@@ -1031,10 +1043,22 @@ export async function buildPlan(
         ],
       },
     );
-    if (!source) i.noTestLink = true;
+    // An entry to build is read from the panel now, as the test link will:
+    // a transport it no longer describes, or describes with no key, has none.
+    const ready =
+      source === 'synthesized' && spec.panelBinding
+        ? await planStage("reading the transport's REALITY settings from the backend", () =>
+            planOps.synthesisReady(ctx, {
+              backendServerId: a.backendServerId,
+              profileUuid: spec.panelBinding!.configProfileUuid,
+              tag: spec.panelBinding!.inboundTag,
+            }),
+          )
+        : source !== null;
+    if (!ready) i.noTestLink = true;
   }
   const accounts = c.accounts.map((acct) =>
-    accountCompatibility(acct, required, c.relay, c.websocketNode, originPrivate),
+    accountCompatibility(acct, required, c.relay, c.websocketNode, l4Problem),
   );
   const set =
     args.picks && args.picks.length > 0
@@ -1054,7 +1078,8 @@ export async function buildPlan(
     nodeName: c.node.name,
     originAddress,
     originSource,
-    originPrivate,
+    originPrivate: l4Problem === 'origin_not_public',
+    originName: l4Problem === 'origin_not_ip',
     ...(managementAddress ? { managementAddress } : {}),
     originDeleting: c.relay?.deleting === true,
     relaySlug: c.relay?.slug ?? slugForNode(c.node.name),
@@ -1096,21 +1121,16 @@ export async function buildPlan(
   return { plan, planHash };
 }
 
-/** Host names an operator may give as an origin (the shape `relays` accepts). */
-const ORIGIN_NAME_RE = /^[a-z0-9.-]{1,253}$/i;
-
 /**
- * The public address the operator gave for a node FCP does not manage, checked:
- * an IP or a host name; public (a name must answer, with public addresses
- * only); refused for an enrolled node (its origin is its enrollment's) and for
- * one whose earlier origin forwards elsewhere (`edge.origin_address_locked`).
- * Null when none was given.
+ * The public address the operator gave for a node FCP does not manage, checked
+ * and written the one way an IP is (`canonicalIp`: no brackets, IPv6
+ * compressed): an IP, never a name (a load balancer forwards to an IP,
+ * `edge.origin_not_ip`), and public (`edge.origin_not_public`); refused for an
+ * enrolled node (its origin is its enrollment's) and for one whose earlier
+ * origin forwards elsewhere (`edge.origin_address_locked`). Null when none was
+ * given.
  */
-async function givenOriginOf(
-  ctx: ActionCtx,
-  c: PlanContext,
-  raw: string | undefined,
-): Promise<string | null> {
+function givenOriginOf(c: PlanContext, raw: string | undefined): string | null {
   const address = raw?.trim() ?? '';
   if (!address) return null;
   if (c.enrolled)
@@ -1126,29 +1146,18 @@ async function givenOriginOf(
         'An earlier setup of this node forwards to another address. Remove its protection first to use a new one',
     });
   }
-  if (!addressFamily(address) && !ORIGIN_NAME_RE.test(address))
-    throw new ConvexError({ code: 'validation', message: 'Give an IP address or a host name' });
-  if (addressFamily(address)) {
-    if (!isPublicIpLiteral(address))
-      throw new ConvexError({
-        code: 'edge.origin_not_public',
-        message: 'That address is private, so a provider cannot reach it. Give its public address',
-      });
-    return address;
-  }
-  const name = normalizeAddress(address);
-  const answers = (await planOps.resolveNames(ctx, [name]))[name] ?? [];
-  if (answers.length === 0)
+  const ip = canonicalIp(address);
+  if (!ip)
     throw new ConvexError({
-      code: 'edge.origin_unresolved',
-      message: 'That name has no address. Give the public address, or a name that has one',
+      code: 'edge.origin_not_ip',
+      message: 'Give the IP address: a load balancer forwards to an IP address, never to a name',
     });
-  if (!answers.every((x) => isPublicIpLiteral(x)))
+  if (!isPublicIpLiteral(ip))
     throw new ConvexError({
       code: 'edge.origin_not_public',
-      message: 'That name leads to a private address, so a provider cannot reach it',
+      message: 'That address is private, so a provider cannot reach it. Give its public address',
     });
-  return name;
+  return ip;
 }
 
 /**

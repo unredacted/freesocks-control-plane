@@ -189,13 +189,15 @@ export function isPublicIpLiteral(s: string): boolean {
 }
 
 /**
- * An origin no provider can reach: an IP literal that is not public (a private,
- * loopback or reserved address, such as the management address a panel lists
- * for a node FCP does not manage). A name is not judged here: it is resolved
- * where that matters.
+ * Why a load balancer could not forward to this origin, or null when it can:
+ * `origin_not_public` for an IP that is not public (a private, loopback or
+ * reserved address, such as the management address a panel lists for a node
+ * FCP does not manage); `origin_not_ip` for a name, since a load balancer's
+ * backend is an IP literal at every provider (a member's `ip`, `serverIp`).
  */
-export function originNotPublic(address: string): boolean {
-  return addressFamily(address) !== null && !isPublicIpLiteral(address);
+export function l4OriginProblem(address: string): 'origin_not_public' | 'origin_not_ip' | null {
+  if (addressFamily(address) === null) return 'origin_not_ip';
+  return isPublicIpLiteral(address) ? null : 'origin_not_public';
 }
 
 // --- the address an edge PUBLISHES -------------------------------------------------------

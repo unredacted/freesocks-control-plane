@@ -6,9 +6,10 @@
    *                      shows the transports in words. A node with more transports
    *                      than one run protects asks which ones (up to
    *                      SETUP_RUN_MAX_LISTENERS) and plans those. A node FCP does
-   *                      not manage asks for its public address (the panel may list
-   *                      a private one, which no provider reaches); the plan checks
-   *                      it and the run forwards there.
+   *                      not manage asks for its public IP address (the panel may
+   *                      list a private one, which no provider reaches, or a name,
+   *                      which no load balancer takes); the plan checks it and the
+   *                      run forwards there.
    *   2. Where from?     the node's provider set: each account's locations as
    *                      checkboxes (an account that carries only some transports
    *                      says which; one that cannot carry the node says why, with
@@ -812,14 +813,16 @@
           {/if}
           {#if asksOrigin && !planM.isPending && !choosingTransports}
             <div class="space-y-2 rounded-md border p-3 text-sm">
-              <Label for="protect-origin">Public address of the node</Label>
+              <Label for="protect-origin">Public IP address of the node</Label>
               <p class="text-muted-foreground text-xs">
                 FCP does not manage this node. Its new addresses send members on to this address, so
-                give the one the node answers on from the internet.
+                give the IP address the node answers on from the internet.
                 {#if plan?.originSource === 'panel'}
                   The panel lists {plan.originAddress}{plan.originPrivate
                     ? ', a private address no provider can reach.'
-                    : '. Leave this empty to use it.'}
+                    : plan.originName
+                      ? ', a name: a load balancer forwards to an IP address only.'
+                      : '. Leave this empty to use it.'}
                 {/if}
               </p>
               <div class="flex flex-wrap items-center gap-2">

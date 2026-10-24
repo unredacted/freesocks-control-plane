@@ -177,8 +177,10 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'outside_approved_shape',
   // a load balancer for a WebSocket node's transport (lib/edges/websocketNode.ts)
   'l4_not_for_websocket',
-  // a load balancer for an origin at a private address (lib/edges/ip.ts originNotPublic)
+  // a load balancer for an origin it cannot forward to: a private address, or a name
+  // (lib/edges/ip.ts l4OriginProblem)
   'origin_not_public',
+  'origin_not_ip',
   // a Scaleway location with no Project id whose API key's default project is unknown
   'project_unresolved',
   // a load balancer size that takes only the provider's own servers (lib/edges/sizeCheck.ts)
@@ -569,8 +571,10 @@ export const SETUP_ACCOUNT_REASONS = [
   'origin_unreachable',
   'origin_not_public',
   // A load balancer for a node whose origin is a private address (the
-  // management address a panel lists for a node FCP does not manage).
+  // management address a panel lists for a node FCP does not manage), or a
+  // name (a load balancer forwards to an IP address).
   'origin_private',
+  'origin_name',
   'origin_port_not_carried',
   'account_capacity_reached',
   'account_budget_exhausted',
