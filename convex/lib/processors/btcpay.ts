@@ -29,17 +29,15 @@ export interface BtcpayConfig {
   // than on `CheckoutParams` because that struct is shared by all four rails and
   // none of these translate to the hosted ones. Each is omitted from the request
   // when unset, so BTCPay's own default applies.
-  //
-  // DELIBERATELY ABSENT: `checkout.paymentTolerance`. Setting it above 0 makes
-  // BTCPay settle a short payment as Settled + additionalStatus PaidPartial —
-  // which `verifyAndParse` below downgrades to `confirming` and never grants. So
-  // a tolerance would be inert: the payer's money arrives, the order stays
-  // non-terminal, and the operator believes they configured otherwise. Supporting
-  // it means comparing the ACTUAL shortfall against the tolerance before
-  // downgrading, which needs the paid amount (a second read of
-  // `/invoices/{id}/payment-methods`, summed across methods via each one's rate)
-  // plus currency + rounding care. That loosens a grant guard, so it belongs in
-  // its own change — not smuggled in as a config default.
+  /**
+   * `checkout.paymentTolerance`: the percent short BTCPay still settles. Set to
+   * the billing `underpaymentTolerancePct`, so BTCPay settles exactly the
+   * payments FCP would grant (and does the confirmation waiting). The settle
+   * path still measures the real shortfall from the invoice's payment methods
+   * and applyEvent re-checks it against the CURRENT tolerance, so a store-level
+   * default or a since-lowered setting can't grant more than FCP allows.
+   */
+  paymentTolerancePct?: number;
   /**
    * How long the payer has to pay. BTCPay's default is 15 minutes — far too
    * short for someone who has to go acquire crypto first, which is the common
@@ -132,6 +130,9 @@ export async function createCheckout(
             ? { monitoringMinutes: cfg.monitoringMinutes }
             : {}),
           ...(cfg.defaultPaymentMethod ? { defaultPaymentMethod: cfg.defaultPaymentMethod } : {}),
+          ...(cfg.paymentTolerancePct !== undefined
+            ? { paymentTolerance: cfg.paymentTolerancePct }
+            : {}),
         },
       }),
       signal: controller.signal,
@@ -162,11 +163,11 @@ export async function createCheckout(
 /**
  * Fetch the invoice's billed amount AND settle state for the grant cross-check
  * (BTCPay's settle event carries neither). `additionalStatus === 'PaidPartial'`
- * is the settle-tolerance case: a store configured to settle at e.g. 90% paid
- * fires `InvoiceSettled` on a PARTIAL payment — the billed `amount` alone
- * can't see this (it equals the order's cents by construction), so the settle
- * state must. Best-effort: any failure leaves the detail null (the invoice-id
- * binding remains the guard).
+ * marks an invoice that holds payments but is still short; it is the fallback
+ * underpayment signal when the paid amount itself can't be read (a payment
+ * settled within `paymentTolerance` comes through as plain Settled, so only
+ * invoicePaidRatio sees that one). Best-effort: any failure leaves the detail
+ * null (the invoice-id binding remains the guard).
  */
 const InvoiceDetail = z
   .object({
@@ -205,6 +206,62 @@ async function invoiceDetail(
     clearTimeout(timer);
   }
 }
+
+const InvoicePaymentMethods = z.array(
+  z
+    .object({
+      // "The invoice amount, converted to this payment method's currency."
+      amount: z.string(),
+      // "The total amount paid by all payment methods to the invoice,
+      // converted to this payment method's currency."
+      totalPaid: z.string(),
+      paymentMethodPaid: z.string().optional(),
+    })
+    .passthrough(),
+);
+
+/**
+ * The fraction of the invoice the payer actually delivered (1 = exact, above 1
+ * = overpaid), read from `GET …/invoices/{id}/payment-methods` (same
+ * `canviewinvoices` permission as invoiceDetail). Every entry's `totalPaid`
+ * already sums ALL methods in that entry's currency, so one entry answers it;
+ * the one the payer used (largest `paymentMethodPaid`) avoids conversion
+ * rounding. Measured in the paid asset, so rate drift since the invoice was
+ * created doesn't count. Best-effort: null on any failure.
+ */
+async function invoicePaidRatio(cfg: BtcpayConfig, invoiceId: string): Promise<number | null> {
+  const base = cfg.apiUrl.replace(/\/$/, '');
+  const path = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}/invoices/${encodeURIComponent(invoiceId)}/payment-methods`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
+  try {
+    const res = await fetch(`${base}${path}`, {
+      headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const parsed = InvoicePaymentMethods.safeParse(await res.json().catch(() => null));
+    if (!parsed.success) return null;
+    let best: { paid: number; ratio: number } | null = null;
+    for (const m of parsed.data) {
+      const amount = Number.parseFloat(m.amount);
+      const totalPaid = Number.parseFloat(m.totalPaid);
+      if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(totalPaid)) continue;
+      const paid = Number.parseFloat(m.paymentMethodPaid ?? '0');
+      const used = Number.isFinite(paid) ? paid : 0;
+      if (!best || used > best.paid) best = { paid: used, ratio: totalPaid / amount };
+    }
+    return best ? best.ratio : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// A float-safe "short of the invoice": decimal-string division can land a hair
+// under 1 on an exact payment.
+const SHORT_EPSILON = 1e-9;
 
 /**
  * Verify a store webhook's authenticity and parse it. The `BTCPay-Sig` header is
@@ -247,27 +304,39 @@ export async function verifyAndParse(args: {
   const orderRef =
     typeof metadata.orderId === 'string' && metadata.orderId ? metadata.orderId : null;
   // The settle event carries no amount/settle state — fetch them for the grant
-  // cross-check (one API read, only on the granting transition, only when
-  // configured). A Settled-at-partial invoice (store settle-tolerance) is NOT a
-  // grant: downgrade to confirming + flag the underpayment for audit.
+  // cross-check (API reads only on the granting transition, only when
+  // configured). A settle that is short of the invoice (within the invoice's
+  // paymentTolerance, a store default, or marked settled by hand) is flagged
+  // `underpaid` with the fraction delivered; applyEvent grants it only within
+  // the underpayment tolerance.
   // Hoisted so TS narrows `cfg` for the call below AND so `detailUnavailable`
   // keys off the same value rather than re-deriving the condition (a cast here
   // would start lying the moment either half changed).
   const settleCfg = type === 'InvoiceSettled' && invoiceId ? args.cfg : undefined;
   const detail = settleCfg ? await invoiceDetail(settleCfg, invoiceId) : null;
-  const underpaid = detail?.paidPartial === true;
+  // An invoice that expired holding a partial payment: the money arrived but
+  // BTCPay never accepted it (and it may be unconfirmed), so it is always held
+  // for the operator as `underpaid`, never granted, and never just `expired`.
+  const expiredPartial = type === 'InvoiceExpired' && p.partiallyPaid === true;
+  const ratioCfg = (settleCfg || expiredPartial) && invoiceId ? args.cfg : undefined;
+  const measured = ratioCfg ? await invoicePaidRatio(ratioCfg, invoiceId) : null;
+  // Short by the measured amount when it could be read; otherwise BTCPay's own
+  // PaidPartial flag (ratio unknown, so it never grants).
+  const short = measured != null ? measured < 1 - SHORT_EPSILON : detail?.paidPartial === true;
+  const underpaid = expiredPartial || (type === 'InvoiceSettled' && short);
+  const paidRatio = measured != null && measured < 1 - SHORT_EPSILON ? measured : null;
   // We asked for the settle detail and didn't get it, so this grant proceeds
   // with the amount + PaidPartial cross-checks disabled. Almost always an
   // API key missing `btcpay.store.canviewinvoices`. Surfaced so it can be
   // fixed rather than quietly under-collecting.
   const detailUnavailable = !!settleCfg && detail === null;
-  const status = underpaid ? 'confirming' : mapEventType(type);
+  const status = expiredPartial ? 'underpaid' : mapEventType(type);
   return {
     ok: true,
     orderRef,
     processorRef: invoiceId,
     status,
-    ...(underpaid ? { underpaid: true } : {}),
+    ...(underpaid ? { underpaid: true, paidRatio } : {}),
     ...(detailUnavailable ? { detailUnavailable: true } : {}),
     // The settle event carries no amount, so the invoice-id binding IS the
     // grant guard: applyEvent refuses when it differs from the invoice id FCP

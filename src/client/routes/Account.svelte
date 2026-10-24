@@ -812,7 +812,25 @@
         <!-- Post-payment confirmation (return from the processor's hosted page).
              The webhook - not this redirect - is the source of truth; we just poll. -->
         {#if showOrderCallout}
-          {#if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
+          {#if order.data?.status === 'underpaid'}
+            <!-- The money arrived but short beyond the tolerance: held for the
+                 operator, so point the member at support rather than "failed". -->
+            <MembershipCallout
+              tone="warn"
+              title={t('upgrade.underpaidTitle')}
+              body={t('upgrade.underpaidBody')}
+            >
+              {#snippet secondaryAction()}
+                <button
+                  type="button"
+                  class="rounded-sm text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onclick={() => router.navigate('/account', { replace: true })}
+                >
+                  {t('common.close')}
+                </button>
+              {/snippet}
+            </MembershipCallout>
+          {:else if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
             <MembershipCallout
               tone="error"
               title={t('upgrade.failedTitle')}

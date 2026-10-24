@@ -109,6 +109,10 @@ const billingOrderStatus = v.union(
   v.literal('paid'),
   v.literal('failed'),
   v.literal('expired'),
+  // Money arrived short by more than the underpayment tolerance (or by an
+  // unmeasurable amount). Never swept to expired; the operator grants or
+  // dismisses it from Admin → Billing.
+  v.literal('underpaid'),
 );
 
 // Edges (provider-managed L4 load balancers in front of origin nodes):
@@ -1105,6 +1109,11 @@ export default defineSchema({
     currency: v.string(),
     status: billingOrderStatus,
     paidAt: v.optional(v.number()),
+    // The fraction of the invoice actually delivered, in the paid asset (e.g.
+    // 0.953), when the payment arrived short: set on an `underpaid` hold and on
+    // a short payment granted within the tolerance. Absent = paid in full (or
+    // not yet paid).
+    paidRatio: v.optional(v.number()),
     // Gift purchases: a 'gift' order mints `quantity` shareable codes (bound to
     // the buyer via redemptionCodes.purchasedByOrderId) instead of extending the
     // buyer's own membership. Absent ⇒ legacy self-upgrade. A 'donation' order

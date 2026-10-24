@@ -10,7 +10,12 @@
  * actually reaches.
  */
 import { describe, expect, test } from 'vitest';
-import { BILLING_DEFAULTS, BILLING_KEYS, billingConfigWrites } from './lib/billingConfig';
+import {
+  BILLING_DEFAULTS,
+  BILLING_KEYS,
+  billingConfigWrites,
+  withinUnderpaymentTolerance,
+} from './lib/billingConfig';
 
 /** The JSON-decoded value written for `key`, or undefined if not written. */
 function written(patch: unknown, key: string): unknown {
@@ -80,5 +85,50 @@ describe('billingConfigWrites shape', () => {
 
   test('an empty btcpayCheckout object writes nothing', () => {
     expect(billingConfigWrites({ btcpayCheckout: {} })).toEqual([]);
+  });
+});
+
+describe('underpaymentTolerancePct', () => {
+  const tol = (v: unknown) =>
+    written({ underpaymentTolerancePct: v }, BILLING_KEYS.underpaymentTolerancePct);
+
+  test('defaults to 5%: covers a flat exchange withdrawal fee on the cheapest crypto term', () => {
+    expect(BILLING_DEFAULTS.underpaymentTolerancePct).toBe(5);
+  });
+
+  test('accepts 0..10 (0 = exact payments only), fractional allowed', () => {
+    expect(tol(0)).toBe(0);
+    expect(tol(2.5)).toBe(2.5);
+    expect(tol(10)).toBe(10);
+  });
+
+  test('out-of-range or non-numeric falls back to the default', () => {
+    const def = BILLING_DEFAULTS.underpaymentTolerancePct;
+    for (const bad of [-1, 10.5, 50, Number.NaN, '5', null]) expect(tol(bad)).toBe(def);
+  });
+
+  test('absent from the patch writes nothing', () => {
+    expect(billingConfigWrites({ enabled: true }).map((w) => w.key)).not.toContain(
+      BILLING_KEYS.underpaymentTolerancePct,
+    );
+  });
+});
+
+describe('withinUnderpaymentTolerance', () => {
+  test('the two reported exchange-fee payments pass at 5%', () => {
+    expect(withinUnderpaymentTolerance(40.404061 / 42.404061, 5)).toBe(true); // TRX, 4.7% short
+    expect(withinUnderpaymentTolerance(46.538109 / 46.73810961, 5)).toBe(true); // XTZ, 0.4% short
+  });
+
+  test('exactly on the boundary passes; past it fails', () => {
+    expect(withinUnderpaymentTolerance(0.95, 5)).toBe(true);
+    expect(withinUnderpaymentTolerance(0.9499, 5)).toBe(false);
+  });
+
+  test('0% means exact; an unmeasured shortfall never passes', () => {
+    expect(withinUnderpaymentTolerance(0.999, 0)).toBe(false);
+    expect(withinUnderpaymentTolerance(1, 0)).toBe(true);
+    expect(withinUnderpaymentTolerance(null, 10)).toBe(false);
+    expect(withinUnderpaymentTolerance(Number.NaN, 10)).toBe(false);
   });
 });

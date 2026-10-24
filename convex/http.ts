@@ -3893,6 +3893,45 @@ http.route({
   }),
 });
 
+// POST /api/v1/admin/billing/orders/{id}/{op}, op ∈ grant | dismiss (no body).
+// grant: deliver what the order bought (the same grant as a full payment) for
+// a held `underpaid` order or one stuck pending/confirming/expired; a gift's
+// codes come back once in the response. dismiss: close a held `underpaid`
+// order as failed. Same scope as granting a membership from the user's page.
+http.route({
+  pathPrefix: '/api/v1/admin/billing/orders/',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:users:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const parts = new URL(req.url).pathname
+      .slice('/api/v1/admin/billing/orders/'.length)
+      .split('/');
+    const [orderId, op] = parts;
+    if (parts.length !== 2 || !orderId || (op !== 'grant' && op !== 'dismiss')) {
+      return errorJson('not_found', 'Unknown billing order operation', 404);
+    }
+    try {
+      if (op === 'grant') {
+        return json(
+          await ctx.runAction(internal.billing.adminGrantOrder, {
+            orderId,
+            actorAdminId: admin.adminUserId,
+          }),
+        );
+      }
+      return json(
+        await ctx.runMutation(internal.billing.dismissUnderpaidOrder, {
+          orderId,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // The connection-mode catalog admin surface (DB-driven; full CRUD lands with
 // the per-entity routes in phase 3 — this GET is the editor's read).
 // GET: families + leaf modes with full CMS fields and per-backend placement

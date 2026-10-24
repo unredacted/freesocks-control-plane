@@ -2100,3 +2100,59 @@ describe('analytics origin (POST /api/v1/telemetry + admin config)', () => {
     expect(patch.status).toBe(400);
   });
 });
+
+describe('admin billing order resolve route', () => {
+  async function seedUnderpaidOrder(t: ReturnType<typeof convexTest>): Promise<string> {
+    return t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'member',
+        name: 'Member',
+        backend: 'remnawave',
+        monthlyTrafficGb: 0,
+        deviceLimit: 0,
+        hwidLimit: 0,
+        hwidEnabled: false,
+        trafficStrategy: 'NO_RESET',
+        isDefaultFree: false,
+        isActive: true,
+        priority: 10,
+        expirationDaysAfterMembershipLapse: 7,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      return ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef: 'ref-route',
+        userId,
+        tierId,
+        durationDays: 91,
+        amountCents: 1400,
+        currency: 'USD',
+        status: 'underpaid',
+        paidRatio: 0.9,
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  test('grant needs admin:users:write; a resolved order then refuses (409)', async () => {
+    const t = convexTest(schema, modules);
+    const orderId = await seedUnderpaidOrder(t);
+    const reader = await insertToken(t, { scopes: ['admin:users:read'], subjectType: 'service' });
+    const writer = await insertToken(t, { scopes: ['admin:users:write'], subjectType: 'service' });
+    const post = (path: string, token: string) =>
+      t.fetch(path, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+
+    expect((await post(`/api/v1/admin/billing/orders/${orderId}/grant`, reader)).status).toBe(401);
+    const ok = await post(`/api/v1/admin/billing/orders/${orderId}/grant`, writer);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ granted: true, kind: 'self', giftCodes: [] });
+    const again = await post(`/api/v1/admin/billing/orders/${orderId}/dismiss`, writer);
+    expect(again.status).toBe(409);
+    expect((await post(`/api/v1/admin/billing/orders/${orderId}/refund`, writer)).status).toBe(404);
+  });
+});
