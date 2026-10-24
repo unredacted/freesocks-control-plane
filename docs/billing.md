@@ -122,7 +122,8 @@ against the coins quoted. So:
   order's codes come back once in the grant response so you can pass them to
   the buyer through support. Route: `POST /api/v1/admin/billing/orders/{id}/grant|dismiss`
   (`admin:users:write`, the same scope as granting a membership from the user's
-  page); audited `admin.billing.order_granted` / `admin.billing.underpaid_dismissed`.
+  page; the response is HPKE-sealed like `POST /admin/membership-codes`, since a
+  gift grant carries bearer codes); audited `admin.billing.order_granted` / `admin.billing.underpaid_dismissed`.
 - **Prevention.** Checkout shows a note on the crypto rails: an exchange may take
   its withdrawal fee out of the amount it sends, so add the fee.
 

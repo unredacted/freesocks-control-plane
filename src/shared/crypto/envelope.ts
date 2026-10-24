@@ -330,6 +330,9 @@ export const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePol
   { method: 'PATCH', prefix: '/api/v1/admin/mirror-providers/', policy: SEAL_REQ },
   // Member gift-code reveal (same secret class; the buyer polls this GET).
   { method: 'GET', prefix: '/api/v1/billing/order/', policy: REVEAL },
+  // Admin -> Billing order grant/dismiss: a gift grant returns the minted codes
+  // once (the same secret class as POST /admin/membership-codes).
+  { method: 'POST', prefix: '/api/v1/admin/billing/orders/', policy: REVEAL },
   // Admin -> Users: where a member connects from (cookie sessions only: required).
   { method: 'GET', prefix: '/api/v1/admin/member-country/', policy: REVEAL_REQUIRED },
   // Relay edges (docs/edges.md): every admin route under this prefix carries
