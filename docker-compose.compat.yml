@@ -29,7 +29,7 @@ services:
   # against a fake that returns what the checker expects. Pinned by digest.
   compat-frontcheck-xray:
     platform: linux/amd64
-    image: ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7
+    image: ghcr.io/xtls/xray-core:26.10.21@sha256:d5c3729dfeed7c412af17a63b941c48c76ba68afee5b6184fe4078f8fa8bedcc
     volumes:
       - ./docker/compat/frontcheck-xray.json:/etc/xray/config.json:ro
       - ./.cache/compat/frontcheck:/etc/xray/tls:ro

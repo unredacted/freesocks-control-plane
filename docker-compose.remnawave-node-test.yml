@@ -16,7 +16,7 @@ services:
     networks: [default, rw-node-control]
 
   rw-test-node:
-    image: remnawave/node:3.4.2
+    image: remnawave/node:3.4.3
     container_name: rw-test-node
     hostname: rw-test-node
     restart: 'no'
@@ -47,7 +47,7 @@ services:
   # REALITY outbound, so a plain HTTP fetch of a loopback port IS an
   # authenticated session with that name.
   rw-test-client:
-    image: remnawave/node:3.4.2
+    image: remnawave/node:3.4.3
     container_name: rw-test-client
     restart: 'no'
     profiles: [client]
