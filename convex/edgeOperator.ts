@@ -1020,20 +1020,46 @@ async function statusFactsOf(
  * recently (one Host can be both: counted once by its name). Null: neither.
  */
 export function directHostFacts(
-  relay: Pick<Doc<'relays'>, 'directHostAlert' | 'withheldEntries'>,
+  relay: Pick<Doc<'relays'>, 'directHostAlert' | 'withheldEntries' | 'operatorFronts'>,
   now: number,
 ): { count: number; remarks: string[]; since: number } | null {
   const hosts = relay.directHostAlert?.hosts ?? [];
-  const withheld = withheldFresh(relay.withheldEntries, now) ? relay.withheldEntries : null;
+  const fresh = withheldFresh(relay.withheldEntries, now) ? relay.withheldEntries : null;
+  // An entry left out that a known operator front names is not the node
+  // (`frontHostFacts`); a withheld entry without a name is one more the remarks
+  // cannot show.
+  const fronts = new Set(relay.operatorFronts?.remarks ?? []);
+  const named = (fresh?.remarks ?? []).filter((r) => !fronts.has(r));
+  const unnamed = fresh ? Math.max(0, fresh.count - fresh.remarks.length) : 0;
+  const withheld = fresh && (named.length > 0 || unnamed > 0) ? fresh : null;
   if (hosts.length === 0 && !withheld) return null;
-  const remarks = [...new Set([...hosts.map((h) => h.remark), ...(withheld?.remarks ?? [])])];
-  // A withheld entry without a name is one more the remarks cannot show.
-  const unnamed = withheld ? Math.max(0, withheld.count - withheld.remarks.length) : 0;
+  const remarks = [...new Set([...hosts.map((h) => h.remark), ...(withheld ? named : [])])];
   const since = Math.min(
     ...(hosts.length > 0 && relay.directHostAlert ? [relay.directHostAlert.at] : []),
     ...(withheld ? [withheld.since] : []),
   );
-  return { count: Math.max(hosts.length, remarks.length + unnamed), remarks, since };
+  return {
+    count: Math.max(hosts.length, remarks.length + (withheld ? unnamed : 0)),
+    remarks,
+    since,
+  };
+}
+
+/**
+ * The entries member renders left out recently that a known operator front
+ * names (`relays.operatorFronts`): a load balancer the operator built by hand,
+ * which members no longer get and which can be deleted at its provider. Null:
+ * none.
+ */
+export function frontHostFacts(
+  relay: Pick<Doc<'relays'>, 'withheldEntries' | 'operatorFronts'>,
+  now: number,
+): { count: number; remarks: string[]; since: number } | null {
+  const withheld = withheldFresh(relay.withheldEntries, now) ? relay.withheldEntries : null;
+  const fronts = new Set(relay.operatorFronts?.remarks ?? []);
+  const remarks = [...new Set((withheld?.remarks ?? []).filter((r) => fronts.has(r)))];
+  if (!withheld || remarks.length === 0) return null;
+  return { count: remarks.length, remarks, since: withheld.since };
 }
 
 /**
@@ -1211,6 +1237,21 @@ export const attention = internalQuery({
           facts: { count: direct.count, remarks: direct.remarks },
           action: 'open_relay',
           since: iso(direct.since),
+        });
+      }
+      // A front the operator built by hand: members no longer get it (render
+      // leaves it out), and it is known not to be the node. Advice, not an alarm.
+      const front = frontHostFacts(relay, now);
+      if (front) {
+        items.push({
+          ...base(relay),
+          id: `front_host_unused:${relay._id}`,
+          kind: 'front_host_unused',
+          severity: 'info',
+          code: null,
+          facts: { count: front.count, remarks: front.remarks },
+          action: 'open_relay',
+          since: iso(front.since),
         });
       }
       // The restore workflow: informational, one phase per reconcile tick.

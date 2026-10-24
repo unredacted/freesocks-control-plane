@@ -481,6 +481,8 @@ describe('the protect plan offers the regions an account reaches', () => {
     __setPlanOpsForTests({
       listNodeInbounds: async () => [inboundA],
       listHosts: async () => [],
+      // No Host at the node: its REALITY test entry is built (the panel describes it).
+      synthesisReady: async () => true,
     });
     const id = await createAccount(t, {
       provider: 'upcloud',

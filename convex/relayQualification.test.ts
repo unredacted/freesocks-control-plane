@@ -466,6 +466,33 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
     expect((await t.run((ctx) => ctx.db.get(outlineRelay)))?.qualificationMint).toBeUndefined();
   });
 
+  test("a backend out of the issuance pool (inactive) still gets FCP's own check credential on its node's placement; choosing a mode is never asked for", async () => {
+    const { t, relayId, panel, relay } = await seedWithPanel();
+    // The node's members are served from a mode group on this backend.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-node-one'] }),
+        updatedAt: Date.now(),
+      });
+      for (const s of await ctx.db.query('backendServers').collect())
+        await ctx.db.patch(s._id, { isActive: false });
+    });
+    expect(
+      await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true, reused: false });
+    expect(panel.created).toHaveLength(1);
+    expect((await relay()).qualificationMint).toMatchObject({
+      state: 'stored',
+      placement: 'sq-node-one',
+    });
+    // The legacy read agrees.
+    expect((await t.query(internal.relayQualification.mintContext, { relayId }))?.placement).toBe(
+      'sq-node-one',
+    );
+  });
+
   test('deleting an origin with an unsettled operation schedules the by-username removal', async () => {
     const { t, relayId, panel } = await seedWithPanel();
     __setEnsureFailpointForTests((point) => {

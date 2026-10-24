@@ -19,6 +19,8 @@
  *   <hostname>-<transport>-<hash6>    (multi-edge: xray2-…-ws-6a536a)
  *   <hostname>-reality                (v1 direct nodes)
  *   <node>-relay-<slot>               an origin's template Host
+ *   <node>-relay                      an operator's own Host for a node it fronts
+ *                                     by hand (a load balancer it built)
  * so the node name is the part before the separator, or the remark with the
  * transport suffix stripped. All of a node's entries (one per server name, or
  * multi-domain fronting) stay together — pinning is per NODE, not per endpoint.
@@ -50,9 +52,10 @@ import { parseProxyUri } from './edges/render/uri';
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
 // Known transport suffixes the role appends to Host remarks (xhttp removed
 // 2026-07-04 but kept here so legacy remarks still parse), plus the origin-edge
-// template Host remark `<node>-origin-<slotKey>` (convex/lib/edges/hosts.ts):
+// template Host remark `<node>-relay-<slotKey>` (convex/lib/edges/hosts.ts) and
+// the bare `<node>-relay` an operator gives the Host of a front it built by hand:
 // a node's origin templates must pin WITH the node, never pass through to all.
-const TRANSPORT_SUFFIX_RE = /-(ws|reality|xhttp)(-[0-9a-f]{6})?$|-relay-[a-z0-9]{1,16}$/i;
+const TRANSPORT_SUFFIX_RE = /-(ws|reality|xhttp)(-[0-9a-f]{6})?$|-relay(-[a-z0-9]{1,16})?$/i;
 
 // An FCP address remark (`addressRemark`): a node name (nodeIntents'
 // NODE_NAME charset), the ` | ` separator (ADDRESS_SEP), and the server name

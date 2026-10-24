@@ -204,6 +204,15 @@ describe('relabelMemberEntries: every format', () => {
     expect(out.renamed).toBe(3);
     expectNeutral(out.content, labelsBySni(out.content).values());
   });
+
+  test("an operator's hand-built front (<node>-relay) is relabelled, never shown as the remark", () => {
+    const out = relabelMemberEntries(
+      `vless://u@${ADDR_A}:443?security=reality&sni=${NAMES[0]}#${NODE_A}-relay`,
+      NAMING,
+    );
+    expect(out.renamed).toBe(1);
+    expectNeutral(out.content, labelsBySni(out.content).values());
+  });
 });
 
 describe('relabelMemberEntries: labels', () => {

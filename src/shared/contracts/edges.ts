@@ -2337,6 +2337,8 @@ export const SetupPlanInbound = z.object({
   detail: z.string().optional(),
   /** The origin probe got no answer for this HTTP transport (a short reason): L4-only until asked again. */
   probeFailed: z.string().optional(),
+  /** No test link could be made for a load balancer address of it (`test_link_unavailable`). */
+  noTestLink: z.boolean().optional(),
 });
 export const SetupPlanDirectHost = z.object({
   uuid: z.string(),
@@ -2550,11 +2552,27 @@ export const SetupPlanResponse = z.object({
   nodeUuid: z.string(),
   nodeName: z.string(),
   originAddress: z.string(),
+  /**
+   * Where `originAddress` comes from: an earlier run's origin, an enrolled node's
+   * intent, the public address the operator gave (`originAddress` on the request)
+   * for a node FCP does not manage, or the address the panel lists for the node.
+   */
+  originSource: z.enum(['relay', 'enrolled', 'given', 'panel']).default('panel'),
+  /** The origin is a private, loopback or reserved IP: no load balancer is offered. */
+  originPrivate: z.boolean().default(false),
+  /** The origin is a name: a load balancer forwards to an IP, so none is offered. */
+  originName: z.boolean().default(false),
+  /** The address the panel lists for the node when the operator gave another (the node's too). */
+  managementAddress: z.string().optional(),
+  /** The node's earlier protection is still being removed (a run is refused until it is gone). */
+  originDeleting: z.boolean().default(false),
   relaySlug: z.string(),
   inbounds: z.array(SetupPlanInbound),
   requiredListeners: z.array(z.string()),
   tooManyInbounds: z.boolean(),
   directHosts: z.array(SetupPlanDirectHost),
+  /** Hosts on a protected transport that dial neither the node nor FCP: a front the operator built. */
+  frontHosts: z.array(z.object({ uuid: z.string(), remark: z.string() })).default([]),
   accounts: z.array(SetupPlanAccount),
   renderGlobal: z.object({ willEnable: z.boolean(), affectedRelays: z.array(z.string()) }),
   familiesDisabled: z.array(z.string()),
@@ -2590,6 +2608,8 @@ export const SetupRunCreateRequest = z.object({
   listenerKeys: z.array(z.string()).optional(),
   /** Provider options per pick (location id -> the values chosen; the plan was shown with the same). */
   pickOptions: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+  /** The public address of a node FCP does not manage (the plan was shown with the same). */
+  originAddress: z.string().optional(),
 });
 export type SetupRunCreateRequest = z.infer<typeof SetupRunCreateRequest>;
 export const SetupRunCreatedResponse = z.object({ runId: z.string(), stage: SetupRunStage });

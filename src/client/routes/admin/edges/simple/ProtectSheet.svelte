@@ -5,7 +5,11 @@
    *                      protected ones greyed); picking one fetches the plan and
    *                      shows the transports in words. A node with more transports
    *                      than one run protects asks which ones (up to
-   *                      SETUP_RUN_MAX_LISTENERS) and plans those.
+   *                      SETUP_RUN_MAX_LISTENERS) and plans those. A node FCP does
+   *                      not manage asks for its public IP address (the panel may
+   *                      list a private one, which no provider reaches, or a name,
+   *                      which no load balancer takes); the plan checks it and the
+   *                      run forwards there.
    *   2. Where from?     the node's provider set: each account's locations as
    *                      checkboxes (an account that carries only some transports
    *                      says which; one that cannot carry the node says why, with
@@ -55,6 +59,8 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import { Skeleton } from '@client/components/ui/skeleton';
+  import { Input } from '@client/components/ui/input';
+  import { Label } from '@client/components/ui/label';
   import { Badge } from '@client/components/ui/badge';
   import Link from '@client/components/Link.svelte';
   import { countryName } from '@client/lib/countries';
@@ -186,13 +192,18 @@
   // The transports the operator chose on a node with more than one run takes
   // (null: the plan's own set). The create sends the same choice.
   let chosenKeys = $state<string[] | null>(null);
+  // The public address given for a node FCP does not manage (null: none given),
+  // and what the field holds before it is used.
+  let originGiven = $state<string | null>(null);
+  let originDraft = $state('');
   const planM = createMutation(() => ({
     mutationFn: (v: {
       uuid: string;
       keys: string[] | null;
       picks: string[];
       options: Record<string, Params>;
-    }) => planSetupRun(serverId, v.uuid, v.keys ?? undefined, v.picks, v.options),
+      origin: string | null;
+    }) => planSetupRun(serverId, v.uuid, v.keys ?? undefined, v.picks, v.options, v.origin),
     onSuccess: (p, v) => {
       // A slower answer for a node, a choice or a set the operator has since
       // moved away from is dropped: the review and the run must never use
@@ -201,6 +212,7 @@
         p.nodeUuid !== nodeUuid ||
         p.backendServerId !== serverId ||
         v.keys !== chosenKeys ||
+        v.origin !== originGiven ||
         // By value: `picks` reads back as Svelte's proxy of the array sent.
         v.picks.join(',') !== picks.join(',') ||
         // What would be sent now (an emptied pick or one no longer chosen drops out).
@@ -212,7 +224,13 @@
     },
   }));
   const replan = () =>
-    planM.mutate({ uuid: nodeUuid, keys: chosenKeys, picks, options: optionsSent() });
+    planM.mutate({
+      uuid: nodeUuid,
+      keys: chosenKeys,
+      picks,
+      options: optionsSent(),
+      origin: originGiven,
+    });
   function pickNode(uuid: string) {
     nodeUuid = uuid;
     plan = null;
@@ -221,7 +239,24 @@
     picks = [];
     pickOptions = {};
     autoPicked = false;
-    planM.mutate({ uuid, keys: null, picks: [], options: {} });
+    originGiven = null;
+    originDraft = '';
+    planM.mutate({ uuid, keys: null, picks: [], options: {}, origin: null });
+  }
+  // A node FCP does not manage: where its new addresses forward to is asked
+  // (the panel lists its management address, often a private one).
+  const asksOrigin = $derived(
+    originGiven !== null ||
+      (plan !== null && (plan.originSource === 'panel' || plan.originSource === 'given')),
+  );
+  function useOrigin() {
+    const next = originDraft.trim() || null;
+    if (next === originGiven && plan) return;
+    originGiven = next;
+    plan = null;
+    picks = [];
+    autoPicked = false;
+    replan();
   }
   const planIssue = $derived(planM.error ? edgeErrorIssue(planM.error) : null);
   // A transport in words: never its internal key.
@@ -335,7 +370,13 @@
   );
   function setPicks(next: string[]) {
     picks = next;
-    planM.mutate({ uuid: nodeUuid, keys: chosenKeys, picks: next, options: optionsSent() });
+    planM.mutate({
+      uuid: nodeUuid,
+      keys: chosenKeys,
+      picks: next,
+      options: optionsSent(),
+      origin: originGiven,
+    });
   }
   function toggleLocation(id: string, on: boolean) {
     setPicks(on ? [...picks.filter((x) => x !== id), id] : picks.filter((x) => x !== id));
@@ -451,6 +492,7 @@
         approvedHideUuids: keepDirect ? [] : (words?.uncovered?.uuids ?? []),
         ...(keepDirect ? { keepDirect: true } : {}),
         ...(chosenKeys ? { listenerKeys: chosenKeys } : {}),
+        ...(originGiven ? { originAddress: originGiven } : {}),
       }),
     onSuccess: (r) => {
       toast.success('Protecting the node.');
@@ -464,7 +506,9 @@
       ? plan !== null &&
           !plan.tooManyInbounds &&
           !choosingTransports &&
-          plan.requiredListeners.length > 0
+          plan.requiredListeners.length > 0 &&
+          !plan.originDeleting &&
+          !plan.originPrivate
       : step === 'account'
         ? setReady && !planM.isPending
         : false,
@@ -758,6 +802,51 @@
               {/if}
             </div>
           {/if}
+          {#if plan?.originDeleting}
+            <p
+              class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+              role="status"
+            >
+              This node's earlier protection is still being removed. Protect it again once it is
+              gone.
+            </p>
+          {/if}
+          {#if asksOrigin && !planM.isPending && !choosingTransports}
+            <div class="space-y-2 rounded-md border p-3 text-sm">
+              <Label for="protect-origin">Public IP address of the node</Label>
+              <p class="text-muted-foreground text-xs">
+                FCP does not manage this node. Its new addresses send members on to this address, so
+                give the IP address the node answers on from the internet.
+                {#if plan?.originSource === 'panel'}
+                  The panel lists {plan.originAddress}{plan.originPrivate
+                    ? ', a private address no provider can reach.'
+                    : plan.originName
+                      ? ', a name: a load balancer forwards to an IP address only.'
+                      : '. Leave this empty to use it.'}
+                {/if}
+              </p>
+              <div class="flex flex-wrap items-center gap-2">
+                <Input
+                  id="protect-origin"
+                  class="h-11 max-w-xs sm:h-8"
+                  bind:value={originDraft}
+                  autocomplete="off"
+                  spellcheck={false}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') useOrigin();
+                  }}
+                />
+                <Button variant="outline" class="h-11 sm:h-8" onclick={useOrigin}>
+                  Use this address
+                </Button>
+              </div>
+              {#if plan?.originSource === 'given'}
+                <p class="text-muted-foreground text-xs">
+                  New addresses forward to {plan.originAddress}.
+                </p>
+              {/if}
+            </div>
+          {/if}
         {/if}
       {:else if step === 'account'}
         {#if addingAccount}
@@ -1040,6 +1129,21 @@
             <Link href="/admin/connection-modes" class={`${LINK} mt-1 inline-block`}
               >Open Connection modes</Link
             >
+          </div>
+        {/if}
+        {#if plan.frontHosts.length > 0}
+          <!-- A front the operator built by hand (its own load balancer): members stop getting it. -->
+          <div class="rounded-md border p-3 text-sm">
+            <p>
+              Members reach this node today through {plan.frontHosts.length === 1
+                ? 'a front'
+                : 'fronts'} FCP did not build. Once the node is live they get the new addresses instead
+              and no longer get {plan.frontHosts.length === 1 ? 'it' : 'them'}, so you can then
+              delete {plan.frontHosts.length === 1 ? 'it' : 'them'} at the provider.
+            </p>
+            <p class="text-muted-foreground mt-1 text-xs">
+              {plan.frontHosts.map((h) => h.remark).join(', ')}
+            </p>
           </div>
         {/if}
         {#if words.uncovered}

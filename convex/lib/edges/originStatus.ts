@@ -79,6 +79,7 @@ export const ATTENTION_RANK = [
   'account_untested',
   'test_key_cleanup',
   'restore_in_progress',
+  'front_host_unused',
   'maintenance_frozen',
 ] as const satisfies readonly AttentionKind[];
 
