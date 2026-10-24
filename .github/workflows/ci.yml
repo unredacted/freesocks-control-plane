@@ -10,6 +10,10 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
+# Read-only token: no job here writes to the repo, issues or PRs.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
