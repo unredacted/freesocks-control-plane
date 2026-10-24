@@ -1175,9 +1175,6 @@ describe('activating a direct node', () => {
     expect(run.rehearsal?.detail).toContain('www.decoy-a.example');
     // What the run turned on is off again; the address that was on before it
     // ran stays as it was. Nobody was served meanwhile: the gate is closed.
-    expect(run.enabledHostUuids).toEqual([
-      panel.hosts.find((h) => h.sni === 'www.decoy-a.example').uuid,
-    ]);
     expect(panel.hosts.find((h) => h.sni === 'www.decoy-a.example').isDisabled).toBe(true);
     expect(panel.hosts.find((h) => h.sni === 'decoy-a.example').isDisabled).toBe(false);
     expect((await gateOf(t, serverId)).state).toBe('blocked');

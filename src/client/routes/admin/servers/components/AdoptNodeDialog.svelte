@@ -36,6 +36,17 @@
   let busy = $state(false);
   // Ticked addresses (none: FCP finds them by the node's name or address).
   let hostUuids = $state<string[]>([]);
+  // Every opening starts blank: a tick left from another node would adopt
+  // that node's address for this one.
+  let openedFor: string | null = null;
+  $effect(() => {
+    const target = open ? (node?.nodeUuid ?? '') : null;
+    if (target === openedFor) return;
+    openedFor = target;
+    mode = '';
+    externallyFronted = false;
+    hostUuids = [];
+  });
   let picked = $derived(modes.find((m) => m.slug === mode) ?? null);
   let fronted = $derived(!!picked && picked.shape.fronting !== 'direct');
   // The addresses on the picked direct mode's transport, from the last look.

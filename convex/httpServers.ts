@@ -546,7 +546,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         externallyFronted: body.externallyFronted === true,
         // The addresses the admin named (else FCP finds them by name or address).
         ...(Array.isArray(body.hostUuids)
-          ? { hostUuids: body.hostUuids.slice(0, 64).map((u) => String(u)) }
+          ? { hostUuids: body.hostUuids.map((u) => String(u)) }
           : {}),
         ...actorOf(admin),
       }),

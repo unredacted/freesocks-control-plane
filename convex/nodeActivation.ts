@@ -166,9 +166,13 @@ async function adoptedTargetsOf(
   });
 }
 
+/** `address:port` as a URI authority: an IPv6 literal is bracketed. */
+const hostPort = (address: string, port: number): string =>
+  address.includes(':') && !address.startsWith('[') ? `[${address}]:${port}` : `${address}:${port}`;
+
 /** The endpoint a direct test binds to: every distinct `address:port` the links dial. */
 const endpointOf = (targets: readonly { address: string; port: number }[]): string =>
-  [...new Set(targets.map((x) => `${x.address}:${x.port}`))].join(',');
+  [...new Set(targets.map((x) => hostPort(x.address, x.port)))].join(',');
 
 /**
  * Every (transport, location) a fronted node is served from or about to be:
@@ -760,7 +764,7 @@ export const buildDirectTestLink = internalAction({
       });
       return {
         sni,
-        link: `vless://${protocolUuid}@${address}:${port}?${q.toString()}#${encodeURIComponent(`FCP test ${c.intent.name}`)}`,
+        link: `vless://${protocolUuid}@${hostPort(address, port)}?${q.toString()}#${encodeURIComponent(`FCP test ${c.intent.name}`)}`,
       };
     });
     const binding: DirectTestBinding = {
@@ -926,19 +930,38 @@ export const approve = internalMutation({
     // Any older run of this node is superseded: it never commits. Its
     // candidates stay isolated from members (the gate counts every
     // uncommitted run's resources) until this run commits or they are released.
-    // What an older run turned on and never committed is this run's to turn
-    // off again if it fails: the older one leaves it alone from now on.
+    // What an older run turned on, never committed and never turned off again
+    // (a run's ownership is cleared once its rollback sent the disables) is
+    // this run's to turn off if it fails, while it is still on: the older one
+    // gives it up here, so nothing is owned twice or after an operator took
+    // it back.
     const committedHosts = new Set(intent.approved?.committed.hostUuids ?? []);
+    const stillOn = new Set(
+      (
+        await ctx.db
+          .query('panelHosts')
+          .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+          .collect()
+      )
+        .filter((h) => !h.isDisabled)
+        .map((h) => h.hostUuid),
+    );
     const inherited = new Set<string>();
     for (const r of await ctx.db
       .query('panelActivationRuns')
       .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
       .collect()) {
-      if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
-        await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
-      if (r.state !== 'committed')
-        for (const u of r.enabledHostUuids ?? [])
-          if (!committedHosts.has(u) && (intent.addressUuids ?? []).includes(u)) inherited.add(u);
+      const open = r.state === 'running' || r.state === 'blocked' || r.state === 'review';
+      const owned = r.state !== 'committed' ? (r.enabledHostUuids ?? []) : [];
+      for (const u of owned)
+        if (!committedHosts.has(u) && stillOn.has(u) && (intent.addressUuids ?? []).includes(u))
+          inherited.add(u);
+      if (open || owned.length > 0)
+        await ctx.db.patch(r._id, {
+          ...(open ? { state: 'superseded' as const } : {}),
+          ...(owned.length > 0 ? { enabledHostUuids: undefined } : {}),
+          updatedAt: now,
+        });
     }
     // A fronted approval names the standbys of the open setup run: they are
     // this run's candidates from now on (members never see one before the
@@ -1134,6 +1157,21 @@ export const noteEnabled = internalMutation({
   },
 });
 
+/** The rollback of a failed or superseded run sent its disables: it owns none of them any more. */
+export const releaseEnabled = internalMutation({
+  args: { runId: v.id('panelActivationRuns'), hostUuids: v.array(v.string()) },
+  handler: async (ctx, { runId, hostUuids }) => {
+    const run = await ctx.db.get(runId);
+    if (!run?.enabledHostUuids) return null;
+    const left = run.enabledHostUuids.filter((u) => !hostUuids.includes(u));
+    await ctx.db.patch(runId, {
+      enabledHostUuids: left.length > 0 ? left : undefined,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
 /**
  * What a run that failed or was superseded turns off again: the addresses it
  * turned on (or took over from a run it superseded), minus what is committed
@@ -1299,6 +1337,13 @@ export const runDirect = internalAction({
             });
             await ctx.runAction(internal.backendWrites.run, { opId });
           }
+          // Turned off: the run owns none of them any more, so a later
+          // approval never takes over one an operator turns on again.
+          if (off.length > 0)
+            await ctx.runMutation(internal.nodeActivation.releaseEnabled, {
+              runId,
+              hostUuids: off,
+            });
           return null;
         }
         await ctx.runMutation(internal.nodeActivation.commit, {

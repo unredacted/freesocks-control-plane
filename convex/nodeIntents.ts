@@ -507,6 +507,9 @@ export const enroll = internalMutation({
   },
 });
 
+/** The most addresses an admin may name for one adopted node. */
+const MAX_ADOPT_ADDRESSES = 64;
+
 /**
  * Adopt an existing backend node as a LIVE enrolled node (docs/servers.md
  * "Adopting a backend"): it already serves members, so nothing changes for
@@ -573,6 +576,9 @@ export const adoptNode = internalMutation({
     );
     if (a.hostUuids && !direct)
       refuse('validation', 'A node members reach through an edge is adopted without addresses');
+    // Never a partial set: an address left out would serve members unmanaged.
+    if (a.hostUuids && a.hostUuids.length > MAX_ADOPT_ADDRESSES)
+      refuse('validation', `Name at most ${MAX_ADOPT_ADDRESSES} addresses`);
     const named = a.hostUuids ? [...new Set(a.hostUuids)] : null;
     if (named?.some((u) => !usable.some((h) => h.hostUuid === u)))
       refuse(

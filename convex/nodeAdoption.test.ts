@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { insertPanelServer } from './lib/edges/testing/fixtures';
+import { insertPanelServer, registerRelay } from './lib/edges/testing/fixtures';
 import { installFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBackend';
 import { gateOfNode } from './lib/edges/testing/reads';
 
@@ -224,6 +224,36 @@ describe('adopting a direct node the node role set up', () => {
     expect((await intentOf(s.t, r.intentId))!.addressUuids).toEqual([hostUuid]);
   });
 
+  test('an IPv6 Host is dialed in brackets by the test link and its binding', async () => {
+    const s = await seed();
+    const { nodeUuid, hostUuid } = await legacyDirect(s);
+    s.panel.hosts.find((h) => h.uuid === hostUuid)!.address = '2001:db8::50';
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const { intentId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    const built = await s.t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    expect(built.link).toContain('@[2001:db8::50]:443?');
+    expect(built.binding.endpoint).toBe('[2001:db8::50]:443');
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await s.t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+  });
+
+  test('a list of named addresses too long is refused whole, never cut short', async () => {
+    const s = await seed();
+    const { nodeUuid, hostUuid } = await legacyDirect(s);
+    await expect(
+      s.t.mutation(internal.nodeIntents.adoptNode, {
+        backendServerId: s.serverId,
+        nodeUuid,
+        mode: 'privacy-reality',
+        hostUuids: [hostUuid, ...Array.from({ length: 64 }, (_, i) => UUID(500 + i))],
+      }),
+    ).rejects.toThrow(/at most 64/);
+  });
+
   test("another node's recorded address cannot be named", async () => {
     const s = await seed();
     const a = await legacyDirect(s);
@@ -419,8 +449,30 @@ describe('re-approving an adopted direct node', () => {
       (r) => !!r && r.state !== 'running',
     );
     expect(run!.state).toBe('blocked');
-    expect(run!.enabledHostUuids).toEqual([hostUuid]);
     expect(s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled).toBe(true);
+    // Turned off again, so the run owns it no more.
+    const settled = await until(
+      () => s.t.run((ctx) => ctx.db.get(runId)),
+      (r) => !r?.enabledHostUuids,
+    );
+    expect(settled!.enabledHostUuids).toBeUndefined();
+
+    // The operator turns it on again: a later failed approval never takes
+    // over the earlier run's ownership, so it stays on.
+    s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled = false;
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const again = await s.t.query(internal.nodeActivation.review, { intentId });
+    const { runId: runId2 } = await s.t.mutation(internal.nodeActivation.approve, {
+      intentId,
+      reviewHash: again.reviewHash,
+    });
+    const run2 = await until(
+      () => s.t.run((ctx) => ctx.db.get(runId2)),
+      (r) => !!r && r.state !== 'running',
+    );
+    expect(run2!).toMatchObject({ state: 'blocked', code: 'servers.rehearsal_failed' });
+    expect(run2!.enabledHostUuids).toBeUndefined();
+    expect(s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled).toBe(false);
   });
 });
 
@@ -594,6 +646,7 @@ describe('removing a backend server', () => {
     'panelOps',
     'sniInboundBindings',
     'sniInboundNameHistory',
+    'edgeDeliveryBindings',
   ] as const;
   const counts = (t: T) =>
     t.run(async (ctx) => {
@@ -646,6 +699,16 @@ describe('removing a backend server', () => {
         renameId,
         at: Date.now(),
       });
+      // What a removed origin's keep-dark left of its delivery.
+      await ctx.db.insert('edgeDeliveryBindings', {
+        backendServerId: s.serverId,
+        nodeName: 'legacy-a',
+        policy: 'edge-required',
+        policyVersion: 1,
+        relaySlug: 'legacy-a',
+        state: 'released',
+        updatedAt: Date.now(),
+      });
     });
 
   test('refused while a node FCP manages on it is not retired', async () => {
@@ -657,6 +720,15 @@ describe('removing a backend server', () => {
     await expect(
       s.t.mutation(internal.adminApi.deleteBackendServerBySlug, { slug: 'panel-a' }),
     ).rejects.toThrow(/server\.has_nodes/);
+    expect(await s.t.run((ctx) => ctx.db.get(s.serverId))).not.toBeNull();
+  });
+
+  test('refused while Edges still protect an origin on it', async () => {
+    const s = await seed();
+    await registerRelay(s.t, { kind: 'backend-server', slug: 'whole-a' });
+    await expect(
+      s.t.mutation(internal.adminApi.deleteBackendServer, { id: s.serverId }),
+    ).rejects.toThrow(/server\.has_origins/);
     expect(await s.t.run((ctx) => ctx.db.get(s.serverId))).not.toBeNull();
   });
 

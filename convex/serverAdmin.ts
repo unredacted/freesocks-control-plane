@@ -493,9 +493,11 @@ export const validatePlacements = internalQuery({
  * What keeps a backend server from being removed (docs/servers.md "Removing a
  * backend server"): a node FCP manages on it that is not retired (retire it
  * from its page first: its addresses, origin and members' delivery are the
- * retirement's to undo), a setup run or a rename running now, or a backend
- * write still open. Null when nothing does: what is left is FCP's record of
- * the backend, removed with it (`purgeRemovedBackend`).
+ * retirement's to undo), an origin Edges still protects on it (a whole-server
+ * one has no node: its edges are provider resources only its removal tears
+ * down), a setup run or a rename running now, or a backend write still open.
+ * Null when nothing does: what is left is FCP's record of the backend,
+ * removed with it (`purgeRemovedBackend`).
  */
 export async function removalBlocker(
   db: DatabaseReader,
@@ -513,6 +515,18 @@ export async function removalBlocker(
         .slice(0, 3)
         .map((i) => i.name)
         .join(', ')}). Retire ${managed.length === 1 ? 'it' : 'them'} from Servers first`,
+    };
+  const origins = await db
+    .query('relays')
+    .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
+    .take(4);
+  if (origins.length > 0)
+    return {
+      code: 'server.has_origins',
+      message: `Edges still protect ${origins.length === 1 ? 'an origin' : 'origins'} on this backend (${origins
+        .slice(0, 3)
+        .map((r) => r.slug)
+        .join(', ')}). Remove ${origins.length === 1 ? 'its' : 'their'} protection in Edges first`,
     };
   const setup = await db
     .query('panelSetups')
@@ -597,6 +611,25 @@ async function rowsOfBackend(
         ),
       );
   return [
+    // A guided setup run's history names an activation run: it goes first.
+    [
+      'edgeSetupRuns',
+      ids(
+        await db
+          .query('edgeSetupRuns')
+          .withIndex('by_origin', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'edgeDeliveryBindings',
+      ids(
+        await db
+          .query('edgeDeliveryBindings')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
     ['panelActivationRuns', runs],
     ['panelRetirements', retirements],
     ['sniRollouts', rollouts],
@@ -770,7 +803,8 @@ async function rowsOfBackend(
 /**
  * Remove what FCP kept about a backend server that is gone: its setup, nodes,
  * renames and aliases, port changes, activation runs, retirements, holds,
- * ownership, ledger, caches, and the server-name binding and history its
+ * ownership, ledger, caches, the guided setup runs and delivery bindings its
+ * removed origins left, and the server-name binding and history its
  * transports had (a family rollout reads a binding). A dry run unless
  * `dryRun: false`: it counts and changes nothing. A real run deletes a batch
  * and comes back for the next until nothing is left. Refused while the
@@ -838,6 +872,8 @@ export const removedBackends = internalQuery({
     for (const r of await ctx.db.query('panelObserveState').collect()) sids.add(r.backendServerId);
     for (const r of await ctx.db.query('panelNodeIntents').collect()) sids.add(r.backendServerId);
     for (const r of await ctx.db.query('sniInboundBindings').collect()) sids.add(r.backendServerId);
+    for (const r of await ctx.db.query('edgeDeliveryBindings').collect())
+      sids.add(r.backendServerId);
     for (const r of await ctx.db.query('panelOwnership').take(PURGE_READ_CAP))
       sids.add(r.backendServerId);
     const gone: Id<'backendServers'>[] = [];
