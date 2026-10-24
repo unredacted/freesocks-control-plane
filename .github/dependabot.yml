@@ -28,11 +28,18 @@
 # a head in Oct 2026: the Bun and Cap releases fixing three high Bun advisories
 # shipped on a Thursday and would have waited for the next Monday. `cron`, not
 # `interval: daily`, because daily skips weekends (same as the convex-node entry
-# below). GitHub's default 3-day cooldown still applies to every version update
-# here (no `cooldown` key = 3 days, since Jul 2026), so a new image is proposed
-# three to four days after it is published; bump by hand when a security fix
-# can't wait that long. The compose entry covers the test compose files too
-# (one grouped PR either way); the test-only Dockerfiles stay weekly.
+# below). The compose entry covers the test compose files too (one grouped PR
+# either way); the test-only Dockerfiles stay weekly.
+#
+# COOLDOWN: GitHub holds every version update back 3 days by default (since Jul
+# 2026, with no `cooldown` key at all), so a malicious release has time to be
+# caught before it reaches a PR. For images that same wait delays every security
+# fix, since a version update is their only route in, so the four image entries
+# set 1 day: a new image is proposed one to two days after it is published.
+# github-actions and bun keep the default on purpose: their security updates
+# skip the cooldown, so a shorter one would speed up no fix and only drop the
+# guard against the attack those ecosystems actually see (hijacked release
+# tags and npm accounts). Bump by hand when an image fix can't wait a day.
 
 version: 2
 updates:
@@ -74,6 +81,8 @@ updates:
       interval: cron
       cronjob: '0 9 * * *'
       timezone: Etc/UTC
+    cooldown:
+      default-days: 1
     open-pull-requests-limit: 10
     labels: [dependencies, docker]
     commit-message:
@@ -110,6 +119,8 @@ updates:
       interval: cron
       cronjob: '0 9 * * *'
       timezone: Etc/UTC
+    cooldown:
+      default-days: 1
     open-pull-requests-limit: 10
     labels: [dependencies, docker]
     commit-message:
@@ -131,6 +142,8 @@ updates:
       day: monday
       time: '09:00'
       timezone: Etc/UTC
+    cooldown:
+      default-days: 1
     open-pull-requests-limit: 10
     labels: [dependencies, docker]
     commit-message:
@@ -163,6 +176,8 @@ updates:
       interval: cron
       cronjob: '0 21 * * *'
       timezone: Etc/UTC
+    cooldown:
+      default-days: 1
     open-pull-requests-limit: 2
     labels: [dependencies, docker]
     commit-message:
