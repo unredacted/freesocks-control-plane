@@ -37,7 +37,7 @@ services:
   backend:
     # Convex ships one image per commit, and EVERY image tag is a GitHub release
     # (`precompiled-<date>-<sha7>` in convex/convex-backend). So the tag here
-    # is the git sha of a release: 6422278 = precompiled-2026-09-17-6422278 (the npm 1.46.0 anchor).
+    # is the git sha of a release: 1447815 = precompiled-2026-10-22-1447815 (the npm 1.48.0 anchor).
     #
     # The tag is what makes an upgrade auditable. Convex stopped maintaining
     # self-hosted/CHANGELOG.md in 2025-09 ("check `git log` for a detailed
@@ -70,7 +70,7 @@ services:
     build:
       context: docker/convex-node
       args:
-        CONVEX_IMAGE: ghcr.io/convex/convex-backend:6422278e11c9ea384f54a455c248010559bd6807@sha256:bcbe82c68a06ae2b8445cce837123198329deb89249a9a5199bc73b8261e107b
+        CONVEX_IMAGE: ghcr.io/convex/convex-backend:1447815c8c697c55a35ab0fff64aa7580ca01cc8@sha256:d52c213b4c24b49f5b60bd2ca4eec66f164e137e37c5237e924da2489ce357a1
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -213,7 +213,7 @@ services:
     build:
       context: docker/convex-node
       args:
-        CONVEX_IMAGE: ghcr.io/convex/convex-dashboard:6422278e11c9ea384f54a455c248010559bd6807@sha256:8d5167990b1d7f69cf362ba028a5055a99aee2b5396cab26247febdcf4caa485
+        CONVEX_IMAGE: ghcr.io/convex/convex-dashboard:1447815c8c697c55a35ab0fff64aa7580ca01cc8@sha256:20a5e507c559af44877d85787c13d15405374b19b198e95aac91da202fc23dae
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -362,7 +362,7 @@ services:
   # deployer. The key is accepted by the backend because it shares INSTANCE_SECRET.
   # The plain upstream image: generate_key runs no Node, so it needs no overlay.
   keygen:
-    image: ghcr.io/convex/convex-backend:6422278e11c9ea384f54a455c248010559bd6807@sha256:bcbe82c68a06ae2b8445cce837123198329deb89249a9a5199bc73b8261e107b
+    image: ghcr.io/convex/convex-backend:1447815c8c697c55a35ab0fff64aa7580ca01cc8@sha256:d52c213b4c24b49f5b60bd2ca4eec66f164e137e37c5237e924da2489ce357a1
     pids_limit: 128
     restart: 'no'
     logging: *log
