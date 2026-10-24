@@ -34,12 +34,9 @@
 # COOLDOWN: GitHub holds every version update back 3 days by default (since Jul
 # 2026, with no `cooldown` key at all), so a malicious release has time to be
 # caught before it reaches a PR. For images that same wait delays every security
-# fix, since a version update is their only route in, so the four image entries
-# set 1 day: a new image is proposed one to two days after it is published.
-# github-actions and bun keep the default on purpose: their security updates
-# skip the cooldown, so a shorter one would speed up no fix and only drop the
-# guard against the attack those ecosystems actually see (hijacked release
-# tags and npm accounts). Bump by hand when an image fix can't wait a day.
+# fix, since a version update is their only route in. Every entry sets 1 day: a
+# new version is proposed one to two days after it is published. Bump by hand
+# when an image fix can't wait a day.
 
 version: 2
 updates:
@@ -196,6 +193,8 @@ updates:
       day: monday
       time: '09:00'
       timezone: Etc/UTC
+    cooldown:
+      default-days: 1
     open-pull-requests-limit: 3
     labels: [dependencies, ci]
     commit-message:
@@ -226,6 +225,8 @@ updates:
       day: monday
       time: '09:00'
       timezone: Etc/UTC
+    cooldown:
+      default-days: 1
     open-pull-requests-limit: 3
     labels: [dependencies]
     commit-message:
