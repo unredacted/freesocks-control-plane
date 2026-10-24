@@ -164,26 +164,6 @@ updates:
       - dependency-name: node
         update-types: ['version-update:semver-major']
 
-  # --- age, built from source by docker/backup.Dockerfile -------------------
-  # docker/age/go.mod pins the age release (and its Go dependencies). The Go
-  # toolchain it is compiled with is the `golang` base image in the /docker
-  # entry above, so a Go security release reaches the backup image through that.
-  - package-ecosystem: gomod
-    directory: /docker/age
-    schedule:
-      interval: cron
-      cronjob: '0 9 * * *'
-      timezone: Etc/UTC
-    cooldown:
-      default-days: 1
-    open-pull-requests-limit: 2
-    labels: [dependencies, docker]
-    commit-message:
-      prefix: chore(docker)
-    groups:
-      age:
-        patterns: ['*']
-
   # --- the Node inside the Convex images -------------------------------------
   # docker/convex-node/Dockerfile copies a pinned official Node over the one in
   # the Convex backend and dashboard images, whose upstream .nvmrc does not
