@@ -546,7 +546,11 @@ are anonymous, so a lost datastore is unrecoverable. This is intentional; if a
 first deploy shows the backup container restarting, that's why. The sidecar
 has a **success healthcheck** (`/backups/.heartbeat` is touched only when the
 dump AND the offsite upload succeeded), so a wedged loop — or a silently
-failing S3 destination — shows `unhealthy`. Set `BACKUP_AGE_PUBLIC_KEY` (an age
+failing S3 destination — shows `unhealthy`. A failed cycle is retried after
+`BACKUP_RETRY_SECONDS` (default 300), doubling on each further failure up to the
+interval, so a first cycle that raced a Postgres restart is retried within
+minutes instead of a day later; a failed upload still prunes local copies to
+`BACKUP_RETENTION`, so retries never fill the disk. Set `BACKUP_AGE_PUBLIC_KEY` (an age
 X25519 recipient; keep the private half offline) so dumps are encrypted
 client-side before upload: a dump carries `accountIdHash` + live subscription
 tokens, so an unencrypted bucket compromise yields the readable datastore.
