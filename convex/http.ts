@@ -3898,13 +3898,19 @@ http.route({
 // a held `underpaid` order or one stuck pending/confirming/expired; a gift's
 // codes go to the buyer's own account reveal, never into this response.
 // dismiss: close a held `underpaid` order as failed. Same scope as granting a
-// membership from the user's page. Unsealed: the response is order facts only.
+// membership from the user's page, but a passkey ADMIN SESSION only (like code
+// minting): a gift grant mints transferable codes, so an `fsv1_` token must
+// not be able to turn an unpaid gift checkout into codes. Unsealed: the
+// response is order facts only.
 http.route({
   pathPrefix: '/api/v1/admin/billing/orders/',
   method: 'POST',
   handler: guard(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:users:write');
     if (!admin) return ADMIN_UNAUTH();
+    if (!admin.adminUserId) {
+      return errorJson('auth.forbidden', 'Resolving an order requires an admin session', 403);
+    }
     const parts = new URL(req.url).pathname
       .slice('/api/v1/admin/billing/orders/'.length)
       .split('/');

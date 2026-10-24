@@ -1160,7 +1160,10 @@ export default defineSchema({
     // Pending gift reveals ordered by when the codes were minted (paidAt), so the
     // reveal sweep's 24 h runs from payment, not checkout: a gift paid or granted
     // days after checkout keeps its full window.
-    .index('by_gift_reveal_pending_paid', ['giftRevealPending', 'paidAt']),
+    .index('by_gift_reveal_pending_paid', ['giftRevealPending', 'paidAt'])
+    // A member's own pending gift reveals (the /account reveal lookup), so it
+    // never has to scan their order history.
+    .index('by_user_gift_reveal_pending', ['userId', 'giftRevealPending']),
 
   apiTokens: defineTable({
     name: v.string(),

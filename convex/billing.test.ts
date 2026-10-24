@@ -2719,3 +2719,29 @@ describe('underpayment review fixes', () => {
     expect(code).toBe('conflict');
   });
 });
+
+describe('held underpaid order keeps the best measured ratio', () => {
+  test('a further short payment raises paidRatio; a lower reading never lowers it', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-ratio');
+    const short = (ratio: number, ref: string) =>
+      t.mutation(internal.billing.applyEvent, {
+        processor: 'nowpayments',
+        orderRef: 'ref-ratio',
+        status: 'paid',
+        processorRef: ref,
+        underpaid: true,
+        paidRatio: ratio,
+      });
+    await short(0.5, 'p1');
+    expect((await t.run((ctx) => ctx.db.get(orderId)))?.paidRatio).toBe(0.5);
+    await short(0.8, 'p2'); // topped up, still beyond the 5% tolerance
+    let order = await t.run((ctx) => ctx.db.get(orderId));
+    expect(order?.status).toBe('underpaid');
+    expect(order?.paidRatio).toBe(0.8);
+    await short(0.6, 'p3'); // an out-of-order / partial reading
+    order = await t.run((ctx) => ctx.db.get(orderId));
+    expect(order?.paidRatio).toBe(0.8);
+  });
+});

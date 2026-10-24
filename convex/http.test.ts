@@ -2139,20 +2139,28 @@ describe('admin billing order resolve route', () => {
     });
   }
 
-  test('grant needs admin:users:write; a resolved order then refuses (409)', async () => {
+  test('grant needs an admin SESSION (tokens refused); a resolved order then refuses (409)', async () => {
     const t = convexTest(schema, modules);
     const orderId = await seedUnderpaidOrder(t);
     const reader = await insertToken(t, { scopes: ['admin:users:read'], subjectType: 'service' });
     const writer = await insertToken(t, { scopes: ['admin:users:write'], subjectType: 'service' });
-    const post = (path: string, token: string) =>
+    const cookie = await adminCookie(t);
+    const viaToken = (path: string, token: string) =>
       t.fetch(path, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    const post = (path: string) => t.fetch(path, { method: 'POST', headers: { cookie } });
+    const grantPath = `/api/v1/admin/billing/orders/${orderId}/grant`;
 
-    expect((await post(`/api/v1/admin/billing/orders/${orderId}/grant`, reader)).status).toBe(401);
-    const ok = await post(`/api/v1/admin/billing/orders/${orderId}/grant`, writer);
+    expect((await viaToken(grantPath, reader)).status).toBe(401);
+    // A write-scoped automation token still can't grant (a gift grant mints codes).
+    const tokenGrant = await viaToken(grantPath, writer);
+    expect(tokenGrant.status).toBe(403);
+    expect(((await tokenGrant.json()) as { error: { code: string } }).error.code).toBe(
+      'auth.forbidden',
+    );
+    const ok = await post(grantPath);
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ granted: true, kind: 'self' });
-    const again = await post(`/api/v1/admin/billing/orders/${orderId}/dismiss`, writer);
-    expect(again.status).toBe(409);
-    expect((await post(`/api/v1/admin/billing/orders/${orderId}/refund`, writer)).status).toBe(404);
+    expect((await post(`/api/v1/admin/billing/orders/${orderId}/dismiss`)).status).toBe(409);
+    expect((await post(`/api/v1/admin/billing/orders/${orderId}/refund`)).status).toBe(404);
   });
 });

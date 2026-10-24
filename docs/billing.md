@@ -124,8 +124,11 @@ against the coins quoted. So:
   buyer's `/account` opens it on their next visit (see "Gift purchases"). The
   operator never sees them, so the grant response carries order facts only.
   Route: `POST /api/v1/admin/billing/orders/{id}/grant|dismiss`
-  (`admin:users:write`, the same scope as granting a membership from the user's
-  page); audited `admin.billing.order_granted` / `admin.billing.underpaid_dismissed`.
+  (`admin:users:write`, and a passkey admin session only, like code minting: a
+  gift grant mints transferable codes, so an `fsv1_` token gets 403); audited
+  `admin.billing.order_granted` / `admin.billing.underpaid_dismissed`. A held
+  order keeps the best `paidRatio` measured so far (a further short payment
+  raises it).
 - **Prevention.** Checkout shows a note on the crypto rails: an exchange may take
   its withdrawal fee out of the amount it sends, so add the fee.
 

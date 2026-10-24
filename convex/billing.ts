@@ -949,10 +949,16 @@ export const applyEvent = internalMutation({
         // processorRef deliberately untouched: it stays the id FCP minted at
         // checkout, so a top-up payment on the same invoice still passes the
         // ref cross-check and grants.
-        if (STATUS_RANK.underpaid > STATUS_RANK[order.status]) {
+        // On an order already held, keep the BEST measured ratio: a further
+        // short payment (or a later read of BTCPay's cumulative total) only
+        // adds to what arrived, and the admin view + a later grant's donation
+        // credit read it. Money leaving goes through `failed`, never here.
+        const holds = STATUS_RANK.underpaid > STATUS_RANK[order.status];
+        const bestRatio = paidRatio != null ? Math.max(paidRatio, order.paidRatio ?? 0) : null;
+        if (holds || order.status === 'underpaid') {
           await ctx.db.patch(order._id, {
-            status: 'underpaid',
-            ...(paidRatio != null ? { paidRatio } : {}),
+            ...(holds ? { status: 'underpaid' as const } : {}),
+            ...(bestRatio != null ? { paidRatio: bestRatio } : {}),
             updatedAt: now,
           });
         }
@@ -1369,19 +1375,19 @@ export const getAnonOrderStatus = internalQuery({
 export const pendingGiftReveal = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, { userId }): Promise<string | null> => {
-    const recent = await ctx.db
+    // Straight to this member's pending reveals (oldest first), however many
+    // other orders they have: a late-paid gift can be older than any number of
+    // later checkouts. Only paid gift orders ever carry the flag.
+    const pending = await ctx.db
       .query('billingOrders')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .order('desc')
-      .take(50);
-    const pending = recent.filter(
-      (o) =>
-        o.kind === 'gift' &&
-        o.status === 'paid' &&
-        o.giftRevealPending === true &&
-        (o.giftReveal?.length ?? 0) > 0,
+      .withIndex('by_user_gift_reveal_pending', (q) =>
+        q.eq('userId', userId).eq('giftRevealPending', true),
+      )
+      .take(10);
+    const next = pending.find(
+      (o) => o.kind === 'gift' && o.status === 'paid' && (o.giftReveal?.length ?? 0) > 0,
     );
-    return pending.length > 0 ? pending[pending.length - 1]!.opaqueRef : null;
+    return next?.opaqueRef ?? null;
   },
 });
 
