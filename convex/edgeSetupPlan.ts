@@ -14,7 +14,8 @@
  *   - whether the first go-live would turn on rendering fleet-wide, and which
  *     client families' render rules are off.
  * `planHash` covers the required listener specs + the direct-Host identities +
- * the offered account ids; a run creation must echo it (`edge.plan_stale`).
+ * the offered account ids (+ the operator fronts and a given origin); a run
+ * creation must echo it (`edge.plan_stale`).
  *
  * The backend calls are reached through `planOps`, a seam the tests replace.
  */
@@ -1117,6 +1118,7 @@ export async function buildPlan(
       ? { pickOptions: Object.fromEntries(set.picks.map((p) => [p.locationId, p.options ?? {}])) }
       : {}),
     ...(given ? { givenOrigin: originAddress } : {}),
+    frontHosts: fronts,
   });
   return { plan, planHash };
 }

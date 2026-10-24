@@ -409,7 +409,9 @@ export const build = internalAction({
             ? 'The test account is used up and could not be reset'
             : cred.code === 'mode_groups_unknown'
               ? "The panel's mode groups could not be read yet, so no test account was made"
-              : 'No test credential is available for this origin',
+              : cred.code === 'no_group_holds_transports'
+                ? 'No mode group on the panel holds every transport this protection covers'
+                : 'No test credential is available for this origin',
       });
     const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
       backend: cred.fetchRef.backend,

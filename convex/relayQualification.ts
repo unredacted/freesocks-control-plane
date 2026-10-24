@@ -462,26 +462,30 @@ function definitiveCreateFailure(err: unknown): boolean {
 }
 
 /**
- * The mode groups of the backend that hold every one of `inbounds`, by uuid
- * (sorted, so the same panel gives the same answer); empty when none does,
- * null when the panel could not be read (unknown, never "none").
+ * Which mode groups of the backend hold every one of `inbounds`, by uuid
+ * (sorted, so the same panel gives the same answer): `unknown` when the panel
+ * could not be read (never "none"), `unlisted` when it lists no group at all
+ * (mock mode, a backend without the listing): there is nothing to choose from.
  */
 async function groupsHolding(
   ctx: { runAction: ActionCtx['runAction'] },
   backendServerId: Id<'backendServers'>,
   inbounds: readonly string[],
-): Promise<string[] | null> {
+): Promise<{ holding: string[] } | 'unknown' | 'unlisted'> {
   const groups: ObservedModeGroup[] | null = await ctx
     .runAction(internal.backends.listModeGroups, { backendServerId })
     .catch(() => null);
-  if (!groups) return null;
-  return groups
-    .filter((g) => {
-      const held = new Set(g.inboundUuids.map((u) => u.toLowerCase()));
-      return inbounds.every((u) => held.has(u));
-    })
-    .map((g) => g.squadUuid)
-    .sort();
+  if (!groups) return 'unknown';
+  if (groups.length === 0) return 'unlisted';
+  return {
+    holding: groups
+      .filter((g) => {
+        const held = new Set(g.inboundUuids.map((u) => u.toLowerCase()));
+        return inbounds.every((u) => held.has(u));
+      })
+      .map((g) => g.squadUuid)
+      .sort(),
+  };
 }
 
 export interface EnsureResult {
@@ -514,7 +518,8 @@ export interface EnsureResult {
  * `qualification_credential_unsupported` (the backend mints no protocol
  * credential), `credential_unresolved` (the settle rule is still running),
  * `mode_groups_unknown` (the panel's groups could not be read for a first
- * mint: retried).
+ * mint: retried), `no_group_holds_transports` (the panel lists its groups and
+ * none holds every transport the origin protects).
  */
 export const ensure = internalAction({
   args: {
@@ -545,18 +550,23 @@ export const ensure = internalAction({
     // groups can be read (`mode_groups_unknown`, retried): an account in a group
     // without the transport would make every test link fail at the node.
     if (!c.chosen && c.placementRequired && c.protectedInbounds.length > 0) {
-      const holding = await groupsHolding(ctx, c.backendServerId, c.protectedInbounds);
+      const groups = await groupsHolding(ctx, c.backendServerId, c.protectedInbounds);
       const stored = c.op?.state === 'stored' && c.stored ? c.op.placement : null;
-      if (holding === null && !stored)
+      if (groups === 'unknown' && !stored)
         return { ok: false, code: 'mode_groups_unknown', reused: false };
+      // The panel lists its groups and none holds them all: some transport
+      // could never be tested with this account, wherever it is made.
+      if (groups !== 'unknown' && groups !== 'unlisted' && groups.holding.length === 0)
+        return { ok: false, code: 'no_group_holds_transports', reused: false };
+      const holding = groups === 'unknown' || groups === 'unlisted' ? null : groups.holding;
       const placement =
-        holding === null
+        groups === 'unknown'
           ? stored
-          : holding.includes(c.placement ?? '')
+          : !holding || holding.includes(c.placement ?? '')
             ? null
             : stored && holding.includes(stored)
               ? stored
-              : (holding[0] ?? null);
+              : holding[0]!;
       if (placement && placement !== c.placement) {
         c = await ctx.runQuery(internal.relayQualification.ensureContext, {
           relayId: a.relayId,

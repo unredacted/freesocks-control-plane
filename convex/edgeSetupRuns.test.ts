@@ -1549,6 +1549,22 @@ describe("edgeSetupRuns: the panel's mode groups not read yet", () => {
   });
 });
 
+describe('edgeSetupRuns: no mode group holds every protected transport', () => {
+  test('the test card asks for a connection mode instead of failing the run', async () => {
+    const { t, serverId, accountId } = await seed({
+      testLinkError: () =>
+        new ConvexError({ code: 'edge.no_group_holds_transports', message: 'split' }),
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    expect([r.stage, r.state]).toEqual(['try_it', 'needs_you']);
+    expect(r.need).toMatchObject({ code: 'choose_mode', detail: 'no_group_holds_transports' });
+    // The address is kept: nothing was wrong with it.
+    const edgeId = r.listeners[0]!.edgeId!;
+    expect((await t.run((ctx) => ctx.db.get(edgeId)))!.status).not.toBe('cancelled');
+  });
+});
+
 describe("edgeSetupRuns: Doesn't work when no new address can be made", () => {
   /** The run at its test card, with the one address it built. */
   async function atTheCard(opts: Parameters<typeof seed>[0] = {}) {
@@ -2549,7 +2565,7 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
     );
 
   test('the panel address is private: no load balancer is offered and the run is refused; the public address the operator gives is checked, shown and used', async () => {
-    const { t, serverId, accountId } = await seedFronted();
+    const { t, serverId, accountId, world } = await seedFronted();
     const plan = await planWith(t, serverId);
     expect(plan).toMatchObject({
       originAddress: MANAGEMENT,
@@ -2601,6 +2617,22 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
     });
     expect(given.accounts.find((a) => a.id === (accountId as string))!.compatible).toBe(true);
     expect(given.planHash).not.toBe(plan.planHash);
+    // The fronts the review names are part of what was shown: one renamed
+    // since is a stale plan.
+    world.panelHosts[0]!.remark = 'node-one-relay-old';
+    expect(
+      await codeOf(
+        t.action(internal.edgeSetupPlan.create, {
+          backendServerId: serverId,
+          nodeUuid: NODE_UUID,
+          accountId,
+          planHash: given.planHash,
+          approvedHideUuids: [],
+          originAddress: ORIGIN,
+        }),
+      ),
+    ).toBe('edge.plan_stale');
+    world.panelHosts[0]!.remark = 'node-one-relay';
     // A create naming another address than the plan showed is stale.
     expect(
       await codeOf(

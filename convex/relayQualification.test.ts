@@ -555,6 +555,31 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
       }),
     ).toMatchObject({ ok: true });
     expect([...fresh.users.values()].map((u) => u.squads)).toEqual([['sq-relay']]);
+    // The panel lists its groups and none holds the transport: no account
+    // anywhere could be tested on it, so none is made; a chosen mode stands.
+    const split = fakePanel({
+      squads: [{ uuid: 'sq-other', inboundUuids: ['99999999-9999-4999-8999-999999999999'] }],
+    });
+    const t3 = convexTest(schema, modules);
+    await insertPanelServer(t3);
+    const { relayId: third } = await registerRelay(t3);
+    await t3.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-other'] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect(
+      await t3.action(internal.relayQualification.ensure, { relayId: third, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: false, code: 'no_group_holds_transports' });
+    expect(split.created).toEqual([]);
+    await t3.run((ctx) => ctx.db.patch(third, { qualificationModeSlug: 'freedom-ws' }));
+    expect(
+      await t3.action(internal.relayQualification.ensure, { relayId: third, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true });
+    expect([...split.users.values()].map((u) => u.squads)).toEqual([['sq-other']]);
     // An operator's chosen mode stands, whatever the groups hold.
     await t.run((ctx) => ctx.db.patch(relayId, { qualificationModeSlug: 'freedom-ws' }));
     await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' });

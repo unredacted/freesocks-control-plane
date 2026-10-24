@@ -1491,6 +1491,12 @@ const REFUSAL_COPY = {
       "FCP could not read the panel's mode groups, so it does not yet know which one holds this node's transports, and makes no test account until it does.",
     fix: 'It asks again by itself. If it keeps waiting, check that the panel answers.',
   },
+  no_group_holds_transports: {
+    label: 'Transports in different groups',
+    explain:
+      "No mode group on the panel holds every transport this node's protection covers, so FCP's test account cannot reach them all and some could never be tested.",
+    fix: 'Put the transports in one mode group on the panel, or choose the mode whose group the test account should use.',
+  },
   origin_deleting: {
     label: 'Old protection still going',
     explain: "The node's earlier protection is still being removed.",

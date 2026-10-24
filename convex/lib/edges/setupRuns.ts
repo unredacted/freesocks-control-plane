@@ -132,6 +132,8 @@ export async function planHashOf(input: {
   pickOptions?: Readonly<Record<string, unknown>>;
   /** The public address the operator gave for a node FCP does not manage. */
   givenOrigin?: string;
+  /** The operator fronts members stop getting at go-live (the review names them). */
+  frontHosts?: ReadonlyArray<{ uuid: string; remark: string }>;
 }): Promise<string> {
   return sha256Hex(
     canonicalJson({
@@ -146,6 +148,13 @@ export async function planHashOf(input: {
         ? { pickOptions: input.pickOptions }
         : {}),
       ...(input.givenOrigin ? { givenOrigin: input.givenOrigin } : {}),
+      ...(input.frontHosts && input.frontHosts.length > 0
+        ? {
+            frontHosts: [...input.frontHosts]
+              .map((h) => ({ uuid: h.uuid, remark: h.remark }))
+              .sort((a, b) => a.uuid.localeCompare(b.uuid)),
+          }
+        : {}),
     }),
   );
 }

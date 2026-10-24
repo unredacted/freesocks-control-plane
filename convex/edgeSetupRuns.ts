@@ -2051,6 +2051,11 @@ function modeGroupsUnknown(err: unknown): boolean {
   return errCode(err).code === 'edge.mode_groups_unknown';
 }
 
+/** No mode group holds every protected transport: the operator chooses the mode (or regroups). */
+function noGroupHoldsTransports(err: unknown): boolean {
+  return errCode(err).code === 'edge.no_group_holds_transports';
+}
+
 // --- stage 3: provision ---------------------------------------------------------------------------------
 
 async function stageProvision(ctx: ActionCtx, run: Run): Promise<null> {
@@ -2385,6 +2390,8 @@ async function stageTryIt(ctx: ActionCtx, run: Run): Promise<null> {
   } catch (err) {
     if (testAccountUsedUp(err)) return needsYou(ctx, run, 'test_account_used_up');
     if (modeGroupsUnknown(err)) return waitModeGroups(ctx, run);
+    if (noGroupHoldsTransports(err))
+      return needsYou(ctx, run, 'choose_mode', 'no_group_holds_transports');
     throw err;
   }
   if (links.length === 0) {
@@ -2492,6 +2499,8 @@ async function stageHide(ctx: ActionCtx, run: Run): Promise<null> {
     } catch (err) {
       if (testAccountUsedUp(err)) return needsYou(ctx, run, 'test_account_used_up');
       if (modeGroupsUnknown(err)) return waitModeGroups(ctx, run);
+      if (noGroupHoldsTransports(err))
+        return needsYou(ctx, run, 'choose_mode', 'no_group_holds_transports');
       throw err;
     }
     const detail = stale.every((l) => vOf(c, l)?.keyChanged)

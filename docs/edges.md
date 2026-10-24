@@ -1299,7 +1299,10 @@ reach it through a load balancer the operator built by hand, by an operator Host
   first by uuid; nothing changes when none does). A listing that fails is unknown, never "none":
   the stored account keeps its group, so a panel outage never re-mints it; with no stored
   account yet, nothing is minted until the groups can be read (`mode_groups_unknown`: a run's
-  credential, test card or hide step waits and asks again, event `mode_groups_unknown`). This matters on a node with transports of different groups, such as an
+  credential, test card or hide step waits and asks again, event `mode_groups_unknown`). A
+  panel that lists its groups with none holding them all is refused outright
+  (`no_group_holds_transports`, the run's `choose_mode` card): some transport could never be
+  tested, so put them in one group or choose the mode the account should use. This matters on a node with transports of different groups, such as an
   enrolled node with a second, hand-built transport: every protected transport must sit in one
   group together, or the test link of the others is refused by the node.
 - **An inactive backend.** A backend out of the issuance pool (`isActive: false`; its members
@@ -1311,7 +1314,8 @@ reach it through a load balancer the operator built by hand, by an operator Host
   `edge.origin_deleting`; a run that meets the delete at prepare waits for it (event
   `origin_deleting`) and then creates its own origin, instead of failing as taken.
 - **The operator's own front after go-live.** Its Host is an operator front
-  (§ "Direct-Host hides and the restore workflow"): the plan lists it (`frontHosts`; the review
+  (§ "Direct-Host hides and the restore workflow"): the plan lists it (`frontHosts`, which the
+  plan hash covers, so a front added, removed or renamed since is `edge.plan_stale`; the review
   says members reach the node through a front FCP did not build and stop getting it once the
   node is live), the render leaves it out once the node is bound, and attention
   `front_host_unused` (info) says it can be deleted at its provider, never
