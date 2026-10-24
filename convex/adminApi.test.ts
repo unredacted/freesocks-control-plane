@@ -1555,3 +1555,26 @@ describe('characterization: backendServersList masks every secret', () => {
     expect(serialized).not.toContain(REMNAWAVE_SECRET_TOKEN);
   });
 });
+
+describe('adminApi mintAutomationToken scopes', () => {
+  test('every admin scope a token can hold is mintable, server management included', async () => {
+    const { SCOPE_GROUPS } = await import('../src/shared/contracts/scopes');
+    const t = convexTest(schema, modules);
+    const res = await t.action(internal.adminApi.mintAutomationToken, {
+      scopes: ['admin:servers:manage'],
+    });
+    expect(res.scopes).toEqual(['admin:servers:manage']);
+    // The node role's scope carries the backends it may act for.
+    await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'panel-a',
+      backend: 'remnawave',
+      baseUrl: 'https://panel.example',
+      apiToken: 'tok',
+    });
+    const all = await t.action(internal.adminApi.mintAutomationToken, {
+      scopes: [...SCOPE_GROUPS.admin],
+      registerBackendSlugs: ['panel-a'],
+    });
+    expect([...all.scopes].sort()).toEqual([...SCOPE_GROUPS.admin].sort());
+  });
+});

@@ -49,6 +49,7 @@ import { normalizeSupportId } from './lib/supportId';
 import { checkInfraUrl } from './lib/urlSafety';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
+import { removalBlocker } from './serverAdmin';
 import {
   billingConfigWrites,
   billingSecretWrites,
@@ -1005,6 +1006,8 @@ const AUTOMATION_ALLOWED_SCOPES = [
   'admin:settings:write',
   'admin:servers:read',
   'admin:servers:write',
+  // Server management and Edges writes (backend-write automation).
+  'admin:servers:manage',
   'admin:status:read',
   // The node role's bounded token (Servers by-name routes); needs `registerBackendSlugs`.
   'admin:edges:register',
@@ -1493,22 +1496,39 @@ async function assertBackendServerUnused(
   }
 }
 
+/**
+ * Remove a backend server row and, after it, everything FCP kept about it.
+ * Refused while live keys point at the instance (they'd be unresolvable
+ * orphans for reads/updates/teardowns; Convex has no FK enforcement;
+ * tombstoned/deleted rows don't count, the retention sweep reclaims them), and
+ * while server management still has work on it (`removalBlocker`: a node not
+ * retired, a setup or rename running, an open backend write). What is left of
+ * server management (its setup, retired nodes and their history, the caches,
+ * the server-name binding a family rollout would read) goes in the batches of
+ * `serverAdmin.purgeRemovedBackend`, and the node-stats cache at once (the
+ * picker would keep attributing mode groups to a gone backend).
+ */
+async function removeBackendServer(ctx: MutationCtx, id: Id<'backendServers'>): Promise<void> {
+  await assertBackendServerUnused(ctx.db, id);
+  const blocker = await removalBlocker(ctx.db, id);
+  if (blocker) throw new ConvexError(blocker);
+  await ctx.db.delete(id);
+  const stats = await ctx.db
+    .query('remnawaveNodeStats')
+    .withIndex('by_server', (q) => q.eq('backendServerId', id))
+    .collect();
+  for (const s of stats) await ctx.db.delete(s._id);
+  await ctx.scheduler.runAfter(0, internal.serverAdmin.purgeRemovedBackend, {
+    backendServerId: id,
+    dryRun: false,
+  });
+}
+
 export const deleteBackendServer = internalMutation({
   args: { id: v.id('backendServers'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
     const row = await ctx.db.get(id);
-    // Refuse while live keys point at the instance (they'd be unresolvable
-    // orphans for reads/updates/teardowns). Convex has no FK enforcement.
-    // Tombstoned/deleted rows don't count (the retention sweep reclaims them).
-    await assertBackendServerUnused(ctx.db, id);
-    await ctx.db.delete(id);
-    // Its node-stats cache rows dangle otherwise (the picker would keep
-    // attributing mode groups to a gone backend).
-    const stats = await ctx.db
-      .query('remnawaveNodeStats')
-      .withIndex('by_server', (q) => q.eq('backendServerId', id))
-      .collect();
-    for (const s of stats) await ctx.db.delete(s._id);
+    await removeBackendServer(ctx, id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -1636,10 +1656,9 @@ export const deleteBackendServerBySlug = internalMutation({
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
     if (!row) return { ok: true as const, deleted: false };
-    // Same in-use guard as the by-id path (this is the Ansible route; it used
-    // to delete unconditionally and orphan every key on the backend).
-    await assertBackendServerUnused(ctx.db, row._id);
-    await ctx.db.delete(row._id);
+    // The same guards and cleanup as the by-id path (this is the Ansible
+    // route; it used to delete unconditionally and orphan every key on the backend).
+    await removeBackendServer(ctx, row._id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,

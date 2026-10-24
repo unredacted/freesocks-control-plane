@@ -123,16 +123,24 @@ export const issueUser = internalAction({
     // (gone/inactive/wrong type) → backend.unavailable, never a silent re-pick
     // that would break the (placement, backend) pairing.
     pinServerId: v.optional(v.id('backendServers')),
+    // A temporary, capped credential FCP mints for its own checks (a test
+    // link, a qualification, a rehearsal): pinned, it may land on a backend
+    // that is out of the issuance pool, which only member keys must skip.
+    // A node being taken live again there is still tested.
+    ownCheck: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
-    { backend, spec, pinServerId },
+    { backend, spec, pinServerId, ownCheck },
   ): Promise<IssuedUser & { backendServerId?: Id<'backendServers'> }> => {
     if (mockBackendEnabled()) return mockIssueUser(spec as IssueUserSpec);
     let server: Doc<'backendServers'> | null;
     if (pinServerId) {
       const pinned = await ctx.runQuery(internal.backendServers.getById, { id: pinServerId });
-      server = pinned && pinned.isActive && pinned.backend === backend ? pinned : null;
+      server =
+        pinned && (pinned.isActive || ownCheck === true) && pinned.backend === backend
+          ? pinned
+          : null;
       if (!server) throw new ConvexError({ code: 'backend.unavailable', backend });
     } else {
       const candidates = await ctx.runQuery(internal.backendServers.pickCandidatesForIssue, {

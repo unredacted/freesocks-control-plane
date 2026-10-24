@@ -846,6 +846,19 @@ describe('activating a direct node', () => {
         activeInbounds: [{ uuid: transportUuid, tag: TAG }],
       },
     });
+    // The Host its members dial (a direct node is adopted with its addresses).
+    panel.hosts.push({
+      uuid: UUID(301),
+      remark: 'legacy-b-reality',
+      address: '203.0.113.30',
+      port: 443,
+      sni: 'decoy-a.example',
+      inbound: {
+        configProfileUuid: panel.profiles[0].uuid,
+        configProfileInboundUuid: transportUuid,
+      },
+      isDisabled: false,
+    });
     await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
     const { intentId } = await t.mutation(internal.nodeIntents.adoptNode, {
       backendServerId: serverId,
@@ -1160,8 +1173,13 @@ describe('activating a direct node', () => {
     expect(run.state).toBe('blocked');
     expect(run.code).toBe('servers.rehearsal_failed');
     expect(run.rehearsal?.detail).toContain('www.decoy-a.example');
-    // Nothing of the candidate set stays enabled, and nobody was served meanwhile.
-    expect(panel.hosts.every((h) => h.isDisabled)).toBe(true);
+    // What the run turned on is off again; the address that was on before it
+    // ran stays as it was. Nobody was served meanwhile: the gate is closed.
+    expect(run.enabledHostUuids).toEqual([
+      panel.hosts.find((h) => h.sni === 'www.decoy-a.example').uuid,
+    ]);
+    expect(panel.hosts.find((h) => h.sni === 'www.decoy-a.example').isDisabled).toBe(true);
+    expect(panel.hosts.find((h) => h.sni === 'decoy-a.example').isDisabled).toBe(false);
     expect((await gateOf(t, serverId)).state).toBe('blocked');
   });
 });

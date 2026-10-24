@@ -579,7 +579,7 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
   const sid = row.backendServerId;
   const server = await ctx.db.get(sid);
   if (!server) return null;
-  const [profiles, groups, hosts] = await Promise.all([
+  const [profiles, groups, hosts, aNode] = await Promise.all([
     ctx.db
       .query('panelProfiles')
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
@@ -592,6 +592,10 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
       .query('panelHosts')
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
       .collect(),
+    ctx.db
+      .query('panelNodes')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .first(),
   ]);
   const { modes } = await resolveModeCatalog(ctx.db);
   // Every family a REALITY mode names: its target and the names usable today.
@@ -660,6 +664,8 @@ async function loadSetupContext(ctx: QueryCtx, f: Fence) {
       knownModes: modes.map((m) => m.id),
       families,
       boundFamilies,
+      // The backend already has nodes or addresses (what adoption is about).
+      existing: !!aNode || hosts.length > 0,
     },
   };
 }
@@ -676,6 +682,7 @@ const stepPatch = v.object({
   templates: v.optional(v.any()),
   templatesCheckedAt: v.optional(v.number()),
   privacy: v.optional(v.union(v.literal('ok'), v.literal('drifted'))),
+  adopted: v.optional(v.boolean()),
 });
 
 export const recordStep = internalMutation({
@@ -841,6 +848,18 @@ export const run = internalAction({
         return null;
       }
       c = await reload();
+      // `start` judged adoption from what FCP had read so far, which for a
+      // backend it never read is nothing. This look is the backend itself: one
+      // with nodes or addresses is adopted on the typed say-so only, and once
+      // adopted, every guard for members' groups applies.
+      if (!fcpWrites(c.row) && c.snapshot.existing) {
+        if (!input.adopt) {
+          await finish('failed', 'servers.adopt_required', 'observe');
+          return null;
+        }
+        await record({ adopted: true });
+        c = await reload();
+      }
 
       // 2. Every REALITY mode's family must have a usable name today; a
       //    created transport is born with exactly those names.
@@ -964,6 +983,34 @@ export const run = internalAction({
       });
       await record({ profileUuid: profile.profileUuid, privacy, modes });
 
+      // On an adopted backend a group is what its members hold today: a
+      // transport an enabled Host serves is never taken out of a group with
+      // members. Looked at for every mode before anything else is written (no
+      // family bound, no group touched), so the refusal leaves the backend as
+      // it was; the operator decides (takes the transport out, or moves those
+      // members) and sets up again.
+      if (c.row.adopted)
+        for (const m of modes) {
+          if (established.has(m.slug)) continue;
+          const g =
+            c.snapshot.groups.find((x) => x.name === m.name) ??
+            (m.groupUuid ? c.snapshot.groups.find((x) => x.groupUuid === m.groupUuid) : null) ??
+            (LEGACY_GROUP_NAMES[m.slug] ?? [])
+              .map((n) => c.snapshot.groups.find((x) => x.name === n))
+              .find((x) => !!x);
+          if (
+            g &&
+            g.members !== 0 &&
+            g.transportUuids.some(
+              (u) => u !== m.transport!.uuid && c.snapshot.servedTransports.includes(u),
+            )
+          ) {
+            await save();
+            await finish('failed', `servers.adopt_group_narrows:${m.slug}`, 'groups');
+            return null;
+          }
+        }
+
       // 4. Families bound to their transports: the one authoritative allowlist
       //    of each REALITY transport (rollouts carry later changes).
       await record({ step: 'bind' });
@@ -1004,32 +1051,6 @@ export const run = internalAction({
       //    setup gave it (renamed in place: ids and assignments survive);
       //    created only when nothing exists; carrying the mode's transport.
       await record({ step: 'groups' });
-      // On an adopted backend a group is what its members hold today: a
-      // transport an enabled Host serves is never taken out of a group with
-      // members. Looked at for every mode before any group is written, so the
-      // refusal leaves every group as it was; the operator decides (takes the
-      // transport out, or moves those members) and sets up again.
-      if (c.row.adopted)
-        for (const m of modes) {
-          if (established.has(m.slug)) continue;
-          const g =
-            c.snapshot.groups.find((x) => x.name === m.name) ??
-            (m.groupUuid ? c.snapshot.groups.find((x) => x.groupUuid === m.groupUuid) : null) ??
-            (LEGACY_GROUP_NAMES[m.slug] ?? [])
-              .map((n) => c.snapshot.groups.find((x) => x.name === n))
-              .find((x) => !!x);
-          if (
-            g &&
-            g.members !== 0 &&
-            g.transportUuids.some(
-              (u) => u !== m.transport!.uuid && c.snapshot.servedTransports.includes(u),
-            )
-          ) {
-            await save();
-            await finish('failed', `servers.adopt_group_narrows:${m.slug}`, 'groups');
-            return null;
-          }
-        }
       for (const m of modes) {
         const transportUuid = m.transport!.uuid;
         if (established.has(m.slug)) {

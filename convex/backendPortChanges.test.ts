@@ -938,3 +938,91 @@ describe('review follow-ups', () => {
     });
   });
 });
+
+/**
+ * An adopted node's recorded addresses are its own: those on the transport's
+ * old port move with it (members of an adopted node would otherwise be left
+ * dialing a port nothing listens on), and one naming another port is a
+ * forwarder's mapping and keeps it. The preview says which move.
+ */
+describe('a port change reaches an adopted node', () => {
+  test("its addresses on the old port move, a forwarder's mapping stays, and the preview lists them", async () => {
+    const s = await seed();
+    s.panel.nodes.push({
+      uuid: UUID(700),
+      name: 'legacy-a',
+      address: '192.0.2.50',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: s.profileUuid,
+        activeInbounds: [{ uuid: s.transportUuid, tag: TAG }],
+      },
+    });
+    const host = (uuid: string, remark: string, address: string, port: number) => ({
+      uuid,
+      remark,
+      address,
+      port,
+      sni: 'decoy-a.example',
+      inbound: { configProfileUuid: s.profileUuid, configProfileInboundUuid: s.transportUuid },
+      isDisabled: false,
+    });
+    s.panel.hosts.push(
+      host(UUID(701), 'legacy-a-reality', 'legacy-a.example.net', 443),
+      host(UUID(702), 'legacy-a-reality-0a0b0c', 'fwd-a.example.net', 8000),
+    );
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const { intentId: adoptedId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid: UUID(700),
+      mode: 'privacy-reality',
+    });
+    expect((await s.t.run((ctx) => ctx.db.get(adoptedId)))!.addressUuids).toEqual([
+      UUID(701),
+      UUID(702),
+    ]);
+
+    const preview = await previewPort(s, 8443);
+    expect(preview.firewall!.nodes).toEqual([
+      { name: 'node-a', confirmedBy: 'role', enrolled: true },
+      { name: 'legacy-a', confirmedBy: 'operator', enrolled: true },
+    ]);
+    expect(preview.movedAddresses.map((a) => [a.node, a.remark, a.port])).toEqual(
+      expect.arrayContaining([['legacy-a', 'legacy-a-reality', 443]]),
+    );
+    expect(preview.movedAddresses.map((a) => a.remark)).not.toContain('legacy-a-reality-0a0b0c');
+    expect(preview.otherAddresses).toEqual([]);
+
+    const change = PortChangeView.parse(await (await stagePort(s, 8443)).json());
+    expect(
+      (await s.call('POST', `port-changes/${change.id}/acknowledge`, { nodeNames: ['legacy-a'] }))
+        .status,
+    ).toBe(200);
+    await s.t.mutation(internal.nodeIntents.applied, {
+      intentId: s.intentId,
+      appliedRevision: 1,
+      nodeStarted: true,
+      firewallPorts: [443, 8443],
+    });
+    const done = await until(
+      () => changeOf(s, change.id),
+      (c) => c.state === 'applied' || c.state === 'refused',
+    );
+    expect(done.state).toBe('applied');
+    await until(
+      async () => s.panel.hosts.find((h) => h.uuid === UUID(701))!.port,
+      (p) => p === 8443,
+    );
+    const adopted = await until(
+      () => s.t.run((ctx) => ctx.db.get(adoptedId)),
+      (r) => !!r && !r.claim && !r.adopted?.portMoves?.length,
+    );
+    expect(s.panel.hosts.find((h) => h.uuid === UUID(702))!.port).toBe(8000);
+    // Closed by the change, as every node on the transport; it comes back through its approval.
+    expect(adopted!.maintenance?.reason).toBe('profile');
+    expect(adopted!.addressUuids).toEqual([UUID(701), UUID(702)]);
+  });
+});

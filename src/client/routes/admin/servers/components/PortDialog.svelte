@@ -157,6 +157,21 @@
               {/each}
             </ul>
           {/if}
+          {#if fw && preview.movedAddresses.length > 0}
+            <div class="space-y-1">
+              <p>
+                {preview.movedAddresses.length === 1
+                  ? `This address moves to port ${fw.port} with its node`
+                  : `These addresses move to port ${fw.port} with their nodes`}, while the nodes are
+                closed:
+              </p>
+              <ul class="text-muted-foreground">
+                {#each preview.movedAddresses as h (h.node + h.remark + h.address)}
+                  <li class="break-all">{h.node}: {h.remark}, {h.address}:{h.port}</li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
           {#if preview.otherAddresses.length > 0}
             <div class="space-y-1">
               <p>

@@ -974,6 +974,9 @@ export async function claimProfilePatch(
 
   const touched = new Map<string, string>();
   const ports: Record<string, number> = {};
+  // The port each moved transport listened on before (as last read): an
+  // adopted node's addresses that named it move with it (bridgePortChange).
+  const fromPorts: Record<string, number> = {};
   for (const op of ops) {
     if (op.op === 'addInboundFromTemplate') {
       // Tags are unique across the whole backend, not per profile (409, measured).
@@ -1002,6 +1005,8 @@ export async function claimProfilePatch(
       // Re-checked at the claim: a node may have moved onto the transport since.
       await portChangeImpact(ctx, sid, a.profileUuid, uuid, op.port);
       ports[op.inboundTag] = op.port;
+      const was = cached.inbounds.find((i) => i.inboundUuid === uuid)?.port;
+      if (typeof was === 'number') fromPorts[op.inboundTag] = was;
     }
   }
   const touchedUuids = new Set(touched.values());
@@ -1118,6 +1123,7 @@ export async function claimProfilePatch(
       inboundUuids: a.inboundUuids,
       targets,
       ports,
+      fromPorts,
       relayIds: affected,
     },
     asyncNodeUuids: nodes.map((n) => n.nodeUuid),
@@ -1425,14 +1431,18 @@ export type ProfilePatchPreviewView = ProfilePatchPreview & {
     nodes: { name: string; confirmedBy: 'role' | 'operator'; enrolled: boolean }[];
   } | null;
   otherAddresses: { remark: string; address: string; port: number }[];
+  movedAddresses: { node: string; remark: string; address: string; port: number }[];
 };
 
 /**
  * Who a port change reaches, for the preview: the nodes that must let the new
- * port in (and who confirms each), and the addresses on the transport FCP does
- * not own. Those keep the port they name: a forwarder in front of a node may
- * map it, so FCP lists them and never moves them. An enrolled node's own
- * addresses follow the port in its reconcile.
+ * port in (and who confirms each), the addresses that move with their node,
+ * and the addresses on the transport FCP does not own. An enrolled node's own
+ * addresses follow the port in its reconcile, and so do an adopted node's
+ * recorded ones that name the old port (`movedAddresses`; one naming another
+ * port is a forwarder's mapping and keeps it). The ones FCP does not own keep
+ * the port they name: a forwarder in front of a node may map it, so FCP lists
+ * them and never moves them.
  */
 export const portPreview = internalQuery({
   args: {
@@ -1464,6 +1474,15 @@ export const portPreview = internalQuery({
     const owned = new Set(
       intents.flatMap((i) => addressesOf(i, hosts, transportOf(i)).map((h) => h.hostUuid)),
     );
+    // A retiring node's addresses are on their way out: nothing moves them.
+    const movesWith = new Map(
+      intents
+        .filter((i) => i.state !== 'retiring' && i.state !== 'retired')
+        .flatMap((i) => addressesOf(i, hosts, transportOf(i)).map((h) => [h.hostUuid, i.name])),
+    );
+    const onOldPort = hosts.filter(
+      (h) => h.configProfileInboundUuid === a.inboundUuid && h.port === impact.fromPort,
+    );
     return {
       firewall: {
         port: a.port,
@@ -1473,14 +1492,13 @@ export const portPreview = internalQuery({
           enrolled: !!n.intentId,
         })),
       },
-      otherAddresses: hosts
-        .filter(
-          (h) =>
-            h.configProfileInboundUuid === a.inboundUuid &&
-            !owned.has(h.hostUuid) &&
-            h.port === impact.fromPort,
-        )
+      otherAddresses: onOldPort
+        .filter((h) => !owned.has(h.hostUuid))
         .map((h) => ({ remark: h.remark, address: h.address, port: h.port })),
+      movedAddresses: onOldPort.flatMap((h) => {
+        const node = movesWith.get(h.hostUuid);
+        return node ? [{ node, remark: h.remark, address: h.address, port: h.port }] : [];
+      }),
     };
   },
 });
@@ -1511,7 +1529,7 @@ export const previewProfilePatch = internalAction({
               inboundUuid: preview.inboundUuids[portOp.inboundTag] ?? '',
               port: portOp.port,
             })
-          : { firewall: null, otherAddresses: [] };
+          : { firewall: null, otherAddresses: [], movedAddresses: [] };
       return { ...preview, ops: checked, ...blast, ...ports };
     } catch (e) {
       if (e instanceof PatchRefused) throw new ConvexError({ code: e.code, message: e.message });

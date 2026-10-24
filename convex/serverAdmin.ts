@@ -10,7 +10,9 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
-import type { Doc } from './_generated/dataModel';
+import type { DatabaseReader } from './_generated/server';
+import { internal } from './_generated/api';
+import type { Doc, Id, TableNames } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -482,5 +484,364 @@ export const validatePlacements = internalQuery({
         })
         .sort((a, b) => a.modeSlug.localeCompare(b.modeSlug)),
     };
+  },
+});
+
+// --- removing a backend server: its server-management rows go with it ---------------------------
+
+/**
+ * What keeps a backend server from being removed (docs/servers.md "Removing a
+ * backend server"): a node FCP manages on it that is not retired (retire it
+ * from its page first: its addresses, origin and members' delivery are the
+ * retirement's to undo), a setup run or a rename running now, or a backend
+ * write still open. Null when nothing does: what is left is FCP's record of
+ * the backend, removed with it (`purgeRemovedBackend`).
+ */
+export async function removalBlocker(
+  db: DatabaseReader,
+  sid: Id<'backendServers'>,
+): Promise<{ code: string; message: string } | null> {
+  const intents = await db
+    .query('panelNodeIntents')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .collect();
+  const managed = intents.filter((i) => i.state !== 'retired');
+  if (managed.length > 0)
+    return {
+      code: 'server.has_nodes',
+      message: `FCP manages ${managed.length === 1 ? 'a node' : `${managed.length} nodes`} on this backend (${managed
+        .slice(0, 3)
+        .map((i) => i.name)
+        .join(', ')}). Retire ${managed.length === 1 ? 'it' : 'them'} from Servers first`,
+    };
+  const setup = await db
+    .query('panelSetups')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .unique();
+  if (setup?.claim && setup.claim.expiresAt > Date.now())
+    return { code: 'server.setup_running', message: 'This backend is being set up right now' };
+  const renaming = await db
+    .query('panelNodeRenames')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .filter((q) => q.eq(q.field('state'), 'running'))
+    .first();
+  if (renaming)
+    return { code: 'server.rename_running', message: 'A node of this backend is being renamed' };
+  const open = await db
+    .query('panelOps')
+    .withIndex('by_open', (q) => q.eq('open', true).eq('backendServerId', sid))
+    .first();
+  if (open)
+    return {
+      code: 'server.op_running',
+      message: 'A change to this backend is still being made. Try again once it is done',
+    };
+  return null;
+}
+
+/** A dry run reads at most this many rows of each table; a purge deletes at most this many per call. */
+const PURGE_READ_CAP = 1000;
+const PURGE_BATCH = 400;
+
+/**
+ * Every server-management row of a backend, per table, rows that point at
+ * another one first (activation runs and retirements before their node,
+ * rollouts before their binding, requirements before their port change).
+ * At most `cap` per table.
+ */
+async function rowsOfBackend(
+  db: DatabaseReader,
+  sid: Id<'backendServers'>,
+  cap: number,
+): Promise<Array<[TableNames, Id<TableNames>[]]>> {
+  const ids = (rows: { _id: Id<TableNames> }[]) => rows.map((r) => r._id);
+  const intents = await db
+    .query('panelNodeIntents')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .take(cap);
+  const bindings = await db
+    .query('sniInboundBindings')
+    .withIndex('by_server_inbound', (q) => q.eq('backendServerId', sid))
+    .take(cap);
+  const runs: Id<TableNames>[] = [];
+  const retirements: Id<TableNames>[] = [];
+  for (const i of intents) {
+    if (runs.length < cap)
+      runs.push(
+        ...ids(
+          await db
+            .query('panelActivationRuns')
+            .withIndex('by_intent', (q) => q.eq('intentId', i._id))
+            .take(cap - runs.length),
+        ),
+      );
+    if (retirements.length < cap)
+      retirements.push(
+        ...ids(
+          await db
+            .query('panelRetirements')
+            .withIndex('by_intent', (q) => q.eq('intentId', i._id))
+            .take(cap - retirements.length),
+        ),
+      );
+  }
+  const rollouts: Id<TableNames>[] = [];
+  for (const b of bindings)
+    if (rollouts.length < cap)
+      rollouts.push(
+        ...ids(
+          await db
+            .query('sniRollouts')
+            .withIndex('by_binding', (q) => q.eq('bindingId', b._id))
+            .take(cap - rollouts.length),
+        ),
+      );
+  return [
+    ['panelActivationRuns', runs],
+    ['panelRetirements', retirements],
+    ['sniRollouts', rollouts],
+    [
+      'panelPortRequirements',
+      ids(
+        await db
+          .query('panelPortRequirements')
+          .withIndex('by_server_node', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelNodeAliases',
+      ids(
+        await db
+          .query('panelNodeAliases')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelNodeRenames',
+      ids(
+        await db
+          .query('panelNodeRenames')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelMaintenanceHolds',
+      ids(
+        await db
+          .query('panelMaintenanceHolds')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelPortChanges',
+      ids(
+        await db
+          .query('panelPortChanges')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelOwnership',
+      ids(
+        await db
+          .query('panelOwnership')
+          .withIndex('by_server_kind_identity', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'backendObligations',
+      ids(
+        await db
+          .query('backendObligations')
+          .withIndex('by_server_kind_identity', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelClaims',
+      ids(
+        await db
+          .query('panelClaims')
+          .withIndex('by_server_key', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelOps',
+      ids(
+        await db
+          .query('panelOps')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'sniInboundNameHistory',
+      ids(
+        await db
+          .query('sniInboundNameHistory')
+          .withIndex('by_inbound_name', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelNodes',
+      ids(
+        await db
+          .query('panelNodes')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelHosts',
+      ids(
+        await db
+          .query('panelHosts')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelProfiles',
+      ids(
+        await db
+          .query('panelProfiles')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelSquads',
+      ids(
+        await db
+          .query('panelSquads')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'backendNodeInventory',
+      ids(
+        await db
+          .query('backendNodeInventory')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'remnawaveNodeStats',
+      ids(
+        await db
+          .query('remnawaveNodeStats')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    [
+      'panelObserveState',
+      ids(
+        await db
+          .query('panelObserveState')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    ['panelNodeIntents', ids(intents)],
+    ['sniInboundBindings', ids(bindings)],
+    [
+      'panelSetups',
+      ids(
+        await db
+          .query('panelSetups')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+  ];
+}
+
+/**
+ * Remove what FCP kept about a backend server that is gone: its setup, nodes,
+ * renames and aliases, port changes, activation runs, retirements, holds,
+ * ownership, ledger, caches, and the server-name binding and history its
+ * transports had (a family rollout reads a binding). A dry run unless
+ * `dryRun: false`: it counts and changes nothing. A real run deletes a batch
+ * and comes back for the next until nothing is left. Refused while the
+ * backend server is still there. Removing a backend server runs it; a backend
+ * an earlier release removed is cleared by hand, through the deployer
+ * (docs/beta-deploy.md "One-off functions"), after `removedBackends` named it.
+ */
+export const purgeRemovedBackend = internalMutation({
+  args: { backendServerId: v.id('backendServers'), dryRun: v.optional(v.boolean()) },
+  handler: async (ctx, { backendServerId: sid, dryRun }) => {
+    if (await ctx.db.get(sid))
+      throw new ConvexError({
+        code: 'server.still_there',
+        message: 'That backend server is still there. Remove it first',
+      });
+    const dry = dryRun !== false;
+    const rows = await rowsOfBackend(ctx.db, sid, dry ? PURGE_READ_CAP : PURGE_BATCH);
+    const found = Object.fromEntries(
+      rows.filter(([, ids]) => ids.length > 0).map(([table, ids]) => [table, ids.length]),
+    );
+    if (dry)
+      return {
+        dryRun: true as const,
+        rows: found,
+        capped: rows.some(([, ids]) => ids.length >= PURGE_READ_CAP),
+      };
+    let budget = PURGE_BATCH;
+    let deleted = 0;
+    for (const [, ids] of rows)
+      for (const id of ids) {
+        if (budget <= 0) break;
+        await ctx.db.delete(id);
+        budget--;
+        deleted++;
+      }
+    const total = rows.reduce((n, [, ids]) => n + ids.length, 0);
+    const more = total > deleted || rows.some(([, ids]) => ids.length >= PURGE_BATCH);
+    if (more)
+      await ctx.scheduler.runAfter(0, internal.serverAdmin.purgeRemovedBackend, {
+        backendServerId: sid,
+        dryRun: false,
+      });
+    if (deleted > 0)
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'admin.backend_server.purge',
+        targetType: 'backend_server',
+        targetId: sid,
+        payload: { rows: deleted, more },
+      });
+    return { dryRun: false as const, rows: found, deleted, more };
+  },
+});
+
+/**
+ * Backend servers that are gone while FCP still keeps server-management rows
+ * for them (an earlier release removed the backend row alone). Each is one
+ * `purgeRemovedBackend` away from clean.
+ */
+export const removedBackends = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const sids = new Set<Id<'backendServers'>>();
+    for (const r of await ctx.db.query('panelSetups').collect()) sids.add(r.backendServerId);
+    for (const r of await ctx.db.query('panelObserveState').collect()) sids.add(r.backendServerId);
+    for (const r of await ctx.db.query('panelNodeIntents').collect()) sids.add(r.backendServerId);
+    for (const r of await ctx.db.query('sniInboundBindings').collect()) sids.add(r.backendServerId);
+    for (const r of await ctx.db.query('panelOwnership').take(PURGE_READ_CAP))
+      sids.add(r.backendServerId);
+    const gone: Id<'backendServers'>[] = [];
+    for (const sid of sids) if (!(await ctx.db.get(sid))) gone.push(sid);
+    return gone;
   },
 });
