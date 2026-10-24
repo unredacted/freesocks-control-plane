@@ -1745,6 +1745,11 @@ function mapBillingOrder(o: Doc<'billingOrders'>) {
     userId: (o.userId as string | undefined) ?? null,
     status: o.status,
     amountCents: o.amountCents,
+    // Fraction of the invoice delivered when the payment arrived short.
+    paidRatio: o.paidRatio ?? null,
+    // What the order buys: own membership, gift codes, or a donation.
+    kind: o.kind ?? 'self',
+    quantity: o.quantity ?? 1,
     donationCents: o.donationCents ?? 0,
     currency: o.currency,
     durationDays: o.durationDays,
@@ -1754,7 +1759,17 @@ function mapBillingOrder(o: Doc<'billingOrders'>) {
   };
 }
 
-const BILLING_ORDER_STATUSES = new Set(['pending', 'confirming', 'paid', 'failed', 'expired']);
+type BillingOrderStatus = Doc<'billingOrders'>['status'];
+const BILLING_ORDER_STATUSES = new Set<string>([
+  'pending',
+  'confirming',
+  'paid',
+  'failed',
+  'expired',
+  'underpaid',
+] satisfies BillingOrderStatus[]);
+// Held underpaid orders counted for the Admin → Billing banner (read "50+").
+const UNDERPAID_COUNT_CAP = 51;
 
 // The most paid orders one revenue computation reads (current + previous range
 // combined); the response flags `truncated` past it instead of under-counting.
@@ -1861,9 +1876,7 @@ export const billingOverview = internalQuery({
     const qry = useStatus
       ? ctx.db
           .query('billingOrders')
-          .withIndex('by_status', (q) =>
-            q.eq('status', status as 'pending' | 'confirming' | 'paid' | 'failed' | 'expired'),
-          )
+          .withIndex('by_status', (q) => q.eq('status', status as BillingOrderStatus))
           .order('desc')
       : ctx.db.query('billingOrders').order('desc');
     // paginate()'s compound (_creationTime,_id) cursor avoids the ms-collision skip
@@ -1894,11 +1907,18 @@ export const billingOverview = internalQuery({
         at: iso(w._creationTime),
       })),
     };
+    // Payments that arrived short beyond the tolerance: money in, nothing
+    // granted until the operator resolves them. Never swept, so count them.
+    const underpaidRows = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_status', (q) => q.eq('status', 'underpaid'))
+      .take(UNDERPAID_COUNT_CAP);
     return {
       config,
       secretStatus,
       orders,
       failedWebhooks,
+      underpaidOrders: { count: underpaidRows.length },
       nextCursor: res.isDone ? null : res.continueCursor,
     };
   },

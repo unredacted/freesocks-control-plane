@@ -170,10 +170,30 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // A second paid event with a different payment id for an already-paid order:
   // the buyer paid twice on one invoice. The operator's refund-review queue.
   'billing.overpayment_seen': ['processor', 'amountCents', 'reportedMinor'],
-  // A paid-class webhook for an INCOMPLETELY-paid invoice (merchant settle-
-  // tolerance): the grant was refused by downgrade, so this is the operator's
-  // follow-up queue (refund or request a top-up).
-  'billing.underpayment_seen': ['processor', 'expectedMinor', 'reportedMinor'],
+  // A payment that arrived SHORT of the invoice (e.g. an exchange took its
+  // withdrawal fee out of the amount sent). `_accepted` = within the
+  // underpayment tolerance, granted; `_seen` = beyond it (or unmeasurable), the
+  // order is held as `underpaid` for the operator. paidPermille = the fraction
+  // delivered x1000 in the paid asset (null when unmeasurable).
+  'billing.underpayment_seen': [
+    'processor',
+    'expectedMinor',
+    'reportedMinor',
+    'paidPermille',
+    'tolerancePct',
+  ],
+  'billing.underpayment_accepted': [
+    'processor',
+    'expectedMinor',
+    'reportedMinor',
+    'paidPermille',
+    'tolerancePct',
+  ],
+  // The operator resolved an order from Admin → Billing: granted a held
+  // underpaid (or stuck pending/confirming/expired) order, or dismissed an
+  // underpaid one. Order facts only, never the gift codes.
+  'admin.billing.order_granted': ['processor', 'fromStatus', 'kind', 'amountCents', 'paidPermille'],
+  'admin.billing.underpaid_dismissed': ['processor', 'amountCents', 'paidPermille'],
   'billing.settle_detail_unavailable': ['processor'],
   // A referral's pending/converted reward was voided (refund, referee lapse,
   // program disabled, cap, referrer gone).

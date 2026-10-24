@@ -109,6 +109,10 @@ const billingOrderStatus = v.union(
   v.literal('paid'),
   v.literal('failed'),
   v.literal('expired'),
+  // Money arrived short by more than the underpayment tolerance (or by an
+  // unmeasurable amount). Never swept to expired; the operator grants or
+  // dismisses it from Admin → Billing.
+  v.literal('underpaid'),
 );
 
 // Edges (provider-managed L4 load balancers in front of origin nodes):
@@ -1105,6 +1109,14 @@ export default defineSchema({
     currency: v.string(),
     status: billingOrderStatus,
     paidAt: v.optional(v.number()),
+    // The fraction of the invoice actually delivered, in the paid asset (e.g.
+    // 0.953), when the payment arrived short: set on an `underpaid` hold and on
+    // a short payment granted within the tolerance. Absent = paid in full (or
+    // not yet paid).
+    paidRatio: v.optional(v.number()),
+    // Set when an operator dismissed this order from Admin → Billing (refunded
+    // or settled off-platform). Terminal: no later webhook may grant it.
+    dismissedAt: v.optional(v.number()),
     // Gift purchases: a 'gift' order mints `quantity` shareable codes (bound to
     // the buyer via redemptionCodes.purchasedByOrderId) instead of extending the
     // buyer's own membership. Absent ⇒ legacy self-upgrade. A 'donation' order
@@ -1145,7 +1157,13 @@ export default defineSchema({
     // cap bounds the SELECTED range instead of silently dropping old ranges
     // once the newest N paid orders no longer reach back that far.
     .index('by_status_paidAt', ['status', 'paidAt'])
-    .index('by_gift_reveal_pending', ['giftRevealPending']),
+    // Pending gift reveals ordered by when the codes were minted (paidAt), so the
+    // reveal sweep's 24 h runs from payment, not checkout: a gift paid or granted
+    // days after checkout keeps its full window.
+    .index('by_gift_reveal_pending_paid', ['giftRevealPending', 'paidAt'])
+    // A member's own pending gift reveals (the /account reveal lookup), so it
+    // never has to scan their order history.
+    .index('by_user_gift_reveal_pending', ['userId', 'giftRevealPending']),
 
   apiTokens: defineTable({
     name: v.string(),

@@ -368,7 +368,9 @@ export const billingOrderQuery = (refGetter: () => string | null) =>
         // polls the sealed member endpoint every 4s forever.
         if (query.state.status === 'error') return false;
         const s = query.state.data?.status;
-        return s === 'paid' || s === 'failed' || s === 'expired' ? false : 4000;
+        return s === 'paid' || s === 'failed' || s === 'expired' || s === 'underpaid'
+          ? false
+          : 4000;
       },
       staleTime: 0,
       retry: false,

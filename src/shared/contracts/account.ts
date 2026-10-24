@@ -138,6 +138,9 @@ export const AccountResponse = z.object({
   /** The member's stored node-location preference (a PublicConfig.locations
    *  code; null = automatic). Optional for rolling-deploy compat. */
   preferredLocation: z.string().nullable().optional().default(null),
+  /** A paid gift order whose codes the member hasn't seen yet (its order ref):
+   *  the SPA opens the one-time reveal for it. Optional for rolling-deploy compat. */
+  pendingGiftOrderRef: z.string().nullable().optional().default(null),
 });
 export type AccountResponse = z.infer<typeof AccountResponse>;
 

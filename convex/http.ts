@@ -3893,6 +3893,52 @@ http.route({
   }),
 });
 
+// POST /api/v1/admin/billing/orders/{id}/{op}, op ∈ grant | dismiss (no body).
+// grant: deliver what the order bought (the same grant as a full payment) for
+// a held `underpaid` order or one stuck pending/confirming/expired; a gift's
+// codes go to the buyer's own account reveal, never into this response.
+// dismiss: close a held `underpaid` order as failed. Same scope as granting a
+// membership from the user's page, but a passkey ADMIN SESSION only (like code
+// minting): a gift grant mints transferable codes, so an `fsv1_` token must
+// not be able to turn an unpaid gift checkout into codes. Unsealed: the
+// response is order facts only.
+http.route({
+  pathPrefix: '/api/v1/admin/billing/orders/',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:users:write');
+    if (!admin) return ADMIN_UNAUTH();
+    if (!admin.adminUserId) {
+      return errorJson('auth.forbidden', 'Resolving an order requires an admin session', 403);
+    }
+    const parts = new URL(req.url).pathname
+      .slice('/api/v1/admin/billing/orders/'.length)
+      .split('/');
+    const [orderId, op] = parts;
+    if (parts.length !== 2 || !orderId || (op !== 'grant' && op !== 'dismiss')) {
+      return errorJson('not_found', 'Unknown billing order operation', 404);
+    }
+    try {
+      if (op === 'grant') {
+        return json(
+          await ctx.runAction(internal.billing.adminGrantOrder, {
+            orderId,
+            actorAdminId: admin.adminUserId,
+          }),
+        );
+      }
+      return json(
+        await ctx.runMutation(internal.billing.dismissUnderpaidOrder, {
+          orderId,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // The connection-mode catalog admin surface (DB-driven; full CRUD lands with
 // the per-entity routes in phase 3 — this GET is the editor's read).
 // GET: families + leaf modes with full CMS fields and per-backend placement

@@ -42,7 +42,16 @@ export const CheckoutResponse = z.object({
 });
 export type CheckoutResponse = z.infer<typeof CheckoutResponse>;
 
-export const BillingOrderStatus = z.enum(['pending', 'confirming', 'paid', 'failed', 'expired']);
+/** `underpaid`: the payment arrived short beyond the tolerance and is held for
+ *  the operator (never expired); the member is told to contact support. */
+export const BillingOrderStatus = z.enum([
+  'pending',
+  'confirming',
+  'paid',
+  'failed',
+  'expired',
+  'underpaid',
+]);
 export type BillingOrderStatus = z.infer<typeof BillingOrderStatus>;
 
 export const OrderStatusResponse = z.object({
@@ -125,6 +134,9 @@ export const BillingConfigView = z.object({
   btcpayMinMonths: z.number().int().default(1),
   /** Defaulted so a transient SPA-newer-than-backend deploy skew still parses. */
   btcpayCheckout: BtcpayCheckoutView.default(BTCPAY_CHECKOUT_VIEW_DEFAULT),
+  /** Percent short a crypto payment may arrive and still grant (0-10).
+   *  Defaulted so a transient SPA-newer-than-backend deploy skew still parses. */
+  underpaymentTolerancePct: z.number().default(5),
   /** Defaulted so a transient SPA-newer-than-backend deploy skew still parses. */
   donation: DonationConfigView.default(DONATION_VIEW_DEFAULT),
 });
@@ -181,6 +193,12 @@ export const AdminBillingOrder = z.object({
   userHandle: z.string().nullable().default(null),
   status: BillingOrderStatus,
   amountCents: z.number().int(),
+  /** Fraction of the invoice delivered (in the paid asset) when the payment
+   *  arrived short, e.g. 0.953; null when paid in full or not paid. */
+  paidRatio: z.number().nullable().default(null),
+  /** What the order buys: 'self' membership, 'gift' codes (quantity), or 'donation'. */
+  kind: z.enum(['self', 'gift', 'donation']).default('self'),
+  quantity: z.number().int().default(1),
   /** The donation portion of amountCents (0 for a pure membership order). */
   donationCents: z.number().int().nonnegative().default(0),
   currency: z.string(),
@@ -236,9 +254,21 @@ export const AdminBillingOverview = z.object({
     })
     .optional()
     .default({ count: 0, recent: [] }),
+  /** Orders held `underpaid` (money arrived short, nothing granted yet); capped
+   *  at 51 = "50+". Optional/defaulted for rolling-deploy compat. */
+  underpaidOrders: z.object({ count: z.number().int() }).optional().default({ count: 0 }),
   nextCursor: z.string().nullable(),
 });
 export type AdminBillingOverview = z.infer<typeof AdminBillingOverview>;
+
+/** `POST /api/v1/admin/billing/orders/{id}/grant`: a held underpaid order granted anyway. */
+/** A gift order's codes go to the buyer's own account reveal, never to the operator. */
+export const AdminBillingOrderGrantResponse = z.object({
+  granted: z.boolean(),
+  kind: z.enum(['self', 'gift', 'donation']),
+});
+/** `POST /api/v1/admin/billing/orders/{id}/dismiss`: a held underpaid order closed as failed. */
+export const AdminBillingOrderDismissResponse = z.object({ ok: z.literal(true) });
 
 export const AdminBillingConfigResponse = z.object({
   config: BillingConfigView,

@@ -10,8 +10,13 @@
 
 export type ProcessorId = 'nowpayments' | 'btcpay' | 'stripe' | 'paypal';
 
-/** Order lifecycle — kept in sync with the billingOrderStatus union in schema.ts. */
-export type OrderStatus = 'pending' | 'confirming' | 'paid' | 'failed' | 'expired';
+/**
+ * Order lifecycle — kept in sync with the billingOrderStatus union in schema.ts.
+ * `underpaid`: money arrived but short of the invoice by more than the
+ * underpayment tolerance (or by an amount we can't measure). Never expired by
+ * the stale-order sweep; held for the operator to grant or dismiss.
+ */
+export type OrderStatus = 'pending' | 'confirming' | 'paid' | 'failed' | 'expired' | 'underpaid';
 
 /** Inputs to create a hosted checkout. Amount is in minor units (cents). */
 export interface CheckoutParams {
@@ -44,7 +49,12 @@ export interface ParsedEvent {
   orderRef: string | null;
   /** The processor's payment/session id (for reconciliation + dedupe). */
   processorRef: string;
-  /** Normalized lifecycle status. Only `paid` grants membership. */
+  /**
+   * Normalized lifecycle status. Only `paid` can grant membership, and a
+   * `paid` that is `underpaid` grants only within the configured tolerance.
+   * `underpaid` here means money arrived short and the rail did NOT treat it
+   * as final (BTCPay expired with a partial payment): always held, never granted.
+   */
   status: OrderStatus;
   /** Stable id for webhookEvents dedupe — distinct per (payment, status) transition. */
   dedupeId: string;
@@ -68,14 +78,21 @@ export interface ParsedEvent {
   amountMinor?: number | null;
   amountCurrency?: string | null;
   /**
-   * Settle-tolerance signal: the rail reports a paid-class transition for an
-   * invoice that was NOT fully paid (e.g. NOWPayments `finished` within a
-   * merchant tolerance, BTCPay Settled/PaidPartial). The adapter ALSO
-   * downgrades `status` to `confirming` (never a grant); this flag lets
-   * applyEvent write `billing.underpayment_seen` so the underpayment is a
-   * visible operator signal instead of a silently-stalled order.
+   * The payer delivered LESS than the invoice (e.g. an exchange took its
+   * withdrawal fee out of the amount sent): NOWPayments `partially_paid` or a
+   * short `finished`, BTCPay settled within its tolerance or expired with a
+   * partial payment. The adapter only reports it; applyEvent decides, against
+   * the admin-editable `underpaymentTolerancePct`, whether a `paid` status
+   * still grants (audited `billing.underpayment_accepted`) or the order is held
+   * as `underpaid` (audited `billing.underpayment_seen`).
    */
   underpaid?: boolean;
+  /**
+   * With `underpaid`: the fraction of the invoice actually delivered, measured
+   * in the PAID asset (so exchange-rate drift doesn't count), e.g. 0.953. Null
+   * when the shortfall can't be measured, which never grants.
+   */
+  paidRatio?: number | null;
   /**
    * The rail could NOT read back the settle detail that powers the amount +
    * settle-tolerance cross-checks, on the one transition that grants. Today

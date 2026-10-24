@@ -33,15 +33,21 @@ class NowPaymentsApiError extends Error {
   }
 }
 
-/** Map a NOWPayments payment_status to our normalized order status. */
+/**
+ * Map a NOWPayments payment_status to our normalized order status.
+ * `partially_paid` is paid-class: NOWPayments sends it once the (short) funds
+ * have arrived, so it is as final as `finished`. verifyAndParse flags every
+ * paid-class event whose received amount is short as `underpaid`, and
+ * applyEvent grants it only within the underpayment tolerance.
+ */
 export function mapStatus(s: string): OrderStatus {
   switch (s) {
     case 'finished':
+    case 'partially_paid':
       return 'paid';
     case 'confirming':
     case 'confirmed':
     case 'sending':
-    case 'partially_paid':
       return 'confirming';
     case 'waiting':
       return 'pending';
@@ -286,14 +292,14 @@ export async function verifyAndParse(args: {
   const orderRef = typeof p.order_id === 'string' && p.order_id ? p.order_id : null;
   const processorRef =
     p.payment_id != null ? String(p.payment_id) : p.invoice_id != null ? String(p.invoice_id) : '';
-  let status = mapStatus(rawStatus);
-  // Settle-tolerance guard: with partial-payment acceptance enabled on the
-  // merchant account, NOWPayments can report `finished` for an invoice paid
-  // only within a custom tolerance. Downgrade to `confirming` (never a grant)
-  // and flag the underpayment for audit when the received amount is short —
-  // OR when the amounts are absent/unparseable entirely (a `finished` we can't
-  // verify fails safe, not open). Amounts may arrive as JSON strings on some
-  // account configs, so coerce.
+  const status = mapStatus(rawStatus);
+  // Underpayment check: a paid-class event (`partially_paid`, or `finished`
+  // under the merchant's "Payment covering" setting) whose received amount is
+  // short is flagged with the fraction delivered, in the PAID coin
+  // (actually_paid / pay_amount), so rate drift doesn't count against the
+  // payer. applyEvent compares it to the tolerance. Absent/unparseable amounts
+  // flag it with a null ratio, which never grants (fails safe, not open).
+  // Amounts may arrive as JSON strings on some account configs, so coerce.
   const toAmount = (x: unknown): number | null => {
     const n = typeof x === 'number' ? x : typeof x === 'string' ? Number(x) : NaN;
     return Number.isFinite(n) ? n : null;
@@ -302,13 +308,16 @@ export async function verifyAndParse(args: {
   const payAmount = toAmount(p.pay_amount);
   const underpaid =
     status === 'paid' && (actuallyPaid == null || payAmount == null || actuallyPaid < payAmount);
-  if (underpaid) status = 'confirming';
+  const paidRatio =
+    underpaid && actuallyPaid != null && payAmount != null && payAmount > 0
+      ? actuallyPaid / payAmount
+      : null;
   return {
     ok: true,
     orderRef,
     processorRef,
     status,
-    ...(underpaid ? { underpaid: true } : {}),
+    ...(underpaid ? { underpaid: true, paidRatio } : {}),
     // The invoice id minted at checkout (stored as the order's processorRef);
     // the grant path cross-checks it. Distinct from payment_id above.
     checkoutRef: p.invoice_id != null ? String(p.invoice_id) : null,
@@ -331,6 +340,10 @@ export async function verifyAndParse(args: {
       price_amount: typeof p.price_amount === 'number' ? p.price_amount : null,
       price_currency: typeof p.price_currency === 'string' ? p.price_currency : null,
       pay_currency: typeof p.pay_currency === 'string' ? p.pay_currency : null,
+      // Crypto amounts (no payer PII): what the invoice asked vs what arrived,
+      // so an underpayment can be read back from the webhook log.
+      pay_amount: payAmount,
+      actually_paid: actuallyPaid,
     },
   };
 }
