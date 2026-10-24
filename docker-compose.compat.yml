@@ -26,10 +26,14 @@ services:
 
   # Front qualification (docker/compat/frontcheck-up.sh): the REAL software the
   # relay nodes run, so the check is proved against Xray-core rather than
-  # against a fake that returns what the checker expects. Pinned by digest.
+  # against a fake that returns what the checker expects. Pinned by digest to
+  # the Xray inside the remnawave/node image the nodes run, read with
+  # `docker run --rm --entrypoint xray remnawave/node:<version> version`.
+  # Dependabot ignores this pin (it would move it past what the nodes run):
+  # re-pin it by hand when the node image's Xray moves.
   compat-frontcheck-xray:
     platform: linux/amd64
-    image: ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7
+    image: ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558
     volumes:
       - ./docker/compat/frontcheck-xray.json:/etc/xray/config.json:ro
       - ./.cache/compat/frontcheck:/etc/xray/tls:ro

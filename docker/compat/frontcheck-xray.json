@@ -126,6 +126,13 @@
     }
   ],
   "outbounds": [
-    { "tag": "to-origin", "protocol": "freedom", "settings": { "redirect": "10.89.71.10:8080" } }
+    {
+      "tag": "to-origin",
+      "protocol": "freedom",
+      "settings": {
+        "redirect": "10.89.71.10:8080",
+        "finalRules": [{ "action": "allow", "ip": ["10.89.71.10/32"] }]
+      }
+    }
   ]
 }

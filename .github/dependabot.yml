@@ -72,6 +72,14 @@ updates:
   #    in CI): run it before merging. Lesson: the 2.8.0->3.3.2 bump of
   #    2026-08-25 broke the harness silently (APP_SECRET) and nobody noticed
   #    for a week.
+  #
+  # Ignored: `xtls/xray-core` in docker-compose.compat.yml. The front check is
+  # proved against the Xray inside the remnawave/node image the nodes run, so
+  # that pin follows the node image by hand (see the comment on the service);
+  # Dependabot would move it to whatever Xray released last. Its first update
+  # after the pin was stuck did exactly that, and the front check broke: newer
+  # Xray blocks private targets in `freedom` unless a `finalRules` entry
+  # allows them (docker/compat/frontcheck-xray.json).
   - package-ecosystem: docker-compose
     directory: /
     schedule:
@@ -84,6 +92,8 @@ updates:
     labels: [dependencies, docker]
     commit-message:
       prefix: chore(docker)
+    ignore:
+      - dependency-name: xtls/xray-core
     groups:
       compose-images:
         # NO `update-types` filter, deliberately. It looks like a way to keep
