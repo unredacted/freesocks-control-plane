@@ -4,6 +4,7 @@
   import { Button } from '@client/components/ui/button';
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Input } from '@client/components/ui/input';
+  import * as AlertDialog from '@client/components/ui/alert-dialog';
   import AdminLayout from './AdminLayout.svelte';
   import BillingRevenueChart from './BillingRevenueChart.svelte';
   import AdminListState from './AdminListState.svelte';
@@ -12,7 +13,10 @@
   import { adminBillingQuery, adminReferralConfigQuery, queryKeys } from '../../lib/queries';
   import {
     AdminBillingConfigResponse,
+    AdminBillingOrderDismissResponse,
+    AdminBillingOrderGrantResponse,
     BillingTestConnectionResponse,
+    type AdminBillingOrder,
     type BillingConfigPatch,
     type BillingConfigView,
     type BillingProcessor,
@@ -84,7 +88,44 @@
       probe[key] = { ok: false, error: apiErrorMessage(err) };
     }
   }
-  const STATUS_FILTERS = ['', 'pending', 'confirming', 'paid', 'failed', 'expired'];
+  const STATUS_FILTERS = ['', 'underpaid', 'pending', 'confirming', 'paid', 'failed', 'expired'];
+
+  // --- Resolving an order by hand --------------------------------------------
+  // Grant: deliver what the order bought, for a payment that arrived short
+  // (underpaid) or one the processor shows but FCP never saw settle. Dismiss:
+  // close an underpaid order once it's refunded or settled another way. The
+  // server re-checks the status, so this set only decides which rows offer it.
+  const GRANTABLE = new Set(['underpaid', 'confirming', 'pending', 'expired']);
+  let pendingAction = $state<{ order: AdminBillingOrder; op: 'grant' | 'dismiss' } | null>(null);
+
+  const resolveOrder = createMutation(() => ({
+    mutationFn: async ({ id, op }: { id: string; op: 'grant' | 'dismiss' }) => {
+      const path = `/api/v1/admin/billing/orders/${encodeURIComponent(id)}/${op}`;
+      return op === 'grant'
+        ? apiClient.post(path, {}, AdminBillingOrderGrantResponse)
+        : apiClient.post(path, {}, AdminBillingOrderDismissResponse);
+    },
+    onSuccess: (_res, vars) => {
+      pendingAction = null;
+      void qc.invalidateQueries({ queryKey: ['admin', 'billing'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'billing-revenue'] });
+      toast.success(vars.op === 'grant' ? 'Order granted' : 'Order dismissed');
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  }));
+
+  function pct(ratio: number): string {
+    return `${(ratio * 100).toFixed(1)}%`;
+  }
+
+  // What a grant delivers, in the confirm dialog's words.
+  function grantDelivers(o: AdminBillingOrder): string {
+    if (o.kind === 'gift') {
+      return `${o.quantity} gift code${o.quantity === 1 ? '' : 's'} of ${o.durationDays} days each`;
+    }
+    if (o.kind === 'donation') return 'the donation to the shared free-user bandwidth pool';
+    return `${o.durationDays} days of membership for ${o.userHandle ?? 'the buyer'}`;
+  }
 
   function addDuration() {
     if (!draft) return;
@@ -195,6 +236,7 @@
     confirming: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
     failed: 'bg-destructive/15 text-destructive',
     expired: 'bg-muted text-muted-foreground',
+    underpaid: 'bg-orange-500/15 text-orange-700 dark:text-orange-300',
   };
 
   // --- W3-8b: per-rail readiness ---------------------------------------------
@@ -450,6 +492,33 @@
         <span class="mt-1 block text-xs text-muted-foreground">
           Shortest term the BTCPay rail offers. Lightning has no floor (keep 1); raise it if you run
           on-chain-only and small payments would be dwarfed by network fees.
+        </span>
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-xs font-medium text-muted-foreground"
+          >Underpayment tolerance (%)</span
+        >
+        <Input
+          type="number"
+          min={0}
+          max={10}
+          step="0.5"
+          class="min-h-9 w-24"
+          value={draft.underpaymentTolerancePct}
+          oninput={(e) =>
+            draft &&
+            (draft.underpaymentTolerancePct = Math.min(
+              10,
+              Math.max(0, Number((e.currentTarget as HTMLInputElement).value) || 0),
+            ))}
+        />
+        <span class="mt-1 block text-xs text-muted-foreground">
+          How far short a crypto payment can arrive and still activate (0 to 10). Exchanges often
+          take their withdrawal fee out of the amount the payer sends, so an exact-match rule turns
+          away real payments. Measured in the coin paid, so price swings don't count. Applies to
+          NOWPayments and BTCPay. Payments further short wait under "underpaid" below. Set
+          NOWPayments' Payment covering to the same value so its dashboard agrees.
         </span>
       </label>
 
@@ -943,6 +1012,27 @@
       </div>
     {/if}
 
+    <!-- Underpaid orders: money arrived short beyond the tolerance, nothing
+         granted yet. Never expire, so they wait here for a decision. -->
+    {#if (billing.data?.underpaidOrders?.count ?? 0) > 0}
+      {@const n = billing.data!.underpaidOrders.count}
+      <div
+        class="mb-6 space-y-2 rounded-lg border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-sm"
+      >
+        <p class="font-medium text-orange-700 dark:text-orange-300">
+          {n > 50 ? '50+' : n} payment{n === 1 ? '' : 's'} arrived short
+        </p>
+        <p class="text-xs text-muted-foreground">
+          The payer sent less than the price by more than the underpayment tolerance, so nothing was
+          granted. The money did arrive. Grant the order if the shortfall is acceptable, or dismiss
+          it once you have refunded the payer or settled it another way.
+        </p>
+        <Button variant="outline" size="sm" onclick={() => (statusFilter = 'underpaid')}>
+          Show underpaid orders
+        </Button>
+      </div>
+    {/if}
+
     <!-- Orders -->
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <h2 class="text-lg font-semibold">Orders</h2>
@@ -990,6 +1080,19 @@
             {/if}
             <span class="capitalize">{o.processor}</span>
             <span class="tabular-nums">{formatMoney(o.amountCents, o.currency)}</span>
+            {#if o.kind === 'gift'}
+              <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                >gift x{o.quantity}</span
+              >
+            {/if}
+            {#if o.paidRatio != null}
+              <span
+                class="rounded bg-orange-500/10 px-1.5 py-0.5 text-[11px] text-orange-700 tabular-nums dark:text-orange-300"
+                title="Share of the price that arrived, measured in the coin paid"
+              >
+                received {pct(o.paidRatio)}
+              </span>
+            {/if}
             {#if o.donationCents > 0}
               <span
                 class="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary tabular-nums"
@@ -1001,9 +1104,83 @@
             <span class="ms-auto text-xs text-muted-foreground tabular-nums">
               {o.paidAt ? `paid ${formatDate(o.paidAt)}` : formatDate(o.createdAt)}
             </span>
+            {#if GRANTABLE.has(o.status)}
+              <span class="flex gap-1">
+                <Button
+                  size="sm"
+                  variant={o.status === 'underpaid' ? 'default' : 'ghost'}
+                  class="h-7 px-2 text-xs"
+                  onclick={() => (pendingAction = { order: o, op: 'grant' })}
+                >
+                  Grant
+                </Button>
+                {#if o.status === 'underpaid'}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    class="h-7 px-2 text-xs"
+                    onclick={() => (pendingAction = { order: o, op: 'dismiss' })}
+                  >
+                    Dismiss
+                  </Button>
+                {/if}
+              </span>
+            {/if}
           </li>
         {/each}
       </ul>
     {/if}
   {/if}
+
+  <!-- Confirm a hand resolution (grant is irreversible from here). -->
+  <AlertDialog.Root
+    open={!!pendingAction}
+    onOpenChange={(o) => (o ? null : (pendingAction = null))}
+  >
+    <AlertDialog.Content>
+      {#if pendingAction}
+        {@const o = pendingAction.order}
+        <AlertDialog.Header>
+          <AlertDialog.Title>
+            {pendingAction.op === 'grant' ? 'Grant' : 'Dismiss'} order {o.refPrefix}…?
+          </AlertDialog.Title>
+          <AlertDialog.Description>
+            {#if pendingAction.op === 'dismiss'}
+              The order closes as failed and nothing is granted. Do this once you have refunded the
+              payer or settled it another way.
+            {:else}
+              {#if o.status === 'underpaid'}
+                This payment arrived short{o.paidRatio != null
+                  ? ` (${pct(o.paidRatio)} of the price)`
+                  : ''}.
+              {:else}
+                FCP never saw this order paid. Only grant it if the {o.processor} dashboard shows the
+                payment arrived.
+              {/if}
+              Granting delivers {grantDelivers(o)} and marks the order paid.
+              {#if o.kind === 'gift'}
+                The codes go to the buyer's account, shown the next time they open it (within 24
+                hours, or they are cleared).
+              {/if}
+            {/if}
+          </AlertDialog.Description>
+        </AlertDialog.Header>
+        <AlertDialog.Footer>
+          <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+          <AlertDialog.Action
+            onclick={() =>
+              pendingAction &&
+              resolveOrder.mutate({ id: pendingAction.order.id, op: pendingAction.op })}
+            disabled={resolveOrder.isPending}
+          >
+            {resolveOrder.isPending
+              ? 'Working…'
+              : pendingAction.op === 'grant'
+                ? 'Grant'
+                : 'Dismiss'}
+          </AlertDialog.Action>
+        </AlertDialog.Footer>
+      {/if}
+    </AlertDialog.Content>
+  </AlertDialog.Root>
 </AdminLayout>

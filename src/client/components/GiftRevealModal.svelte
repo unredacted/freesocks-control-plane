@@ -47,10 +47,16 @@
       return;
     }
     open = next;
-    if (!next) onAck();
+    if (!next) {
+      // Reset for the next reveal: a second unseen gift can open this same
+      // mounted modal, and it must start unconfirmed.
+      acknowledged = false;
+      onAck();
+    }
   }
   function done() {
     open = false;
+    acknowledged = false;
     onAck();
   }
 </script>

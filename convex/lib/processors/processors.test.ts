@@ -594,6 +594,9 @@ describe('btcpay.verifyAndParse', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string | URL) => {
+        if (String(url).endsWith('/payment-methods')) {
+          return res([{ amount: '0.00025', totalPaid: '0.00025', paymentMethodPaid: '0.00025' }]);
+        }
         expect(String(url)).toMatch(/\/api\/v1\/stores\/store_1\/invoices\/inv_amt$/);
         return res({ id: 'inv_amt', amount: '15.00', currency: 'usd' });
       }),
@@ -617,22 +620,26 @@ describe('btcpay.verifyAndParse', () => {
     }
   });
 
-  test('a Settled-at-partial invoice downgrades to confirming + underpaid (settle tolerance)', async () => {
-    // A store configured to settle at e.g. 90% paid fires InvoiceSettled on a
-    // PARTIAL payment; the billed amount equals the order's cents by
-    // construction, so only additionalStatus sees it.
+  // Settle-path stub: the invoice detail and its payment methods.
+  const stubInvoice = (detail: unknown, methods: unknown, methodsOk = true) =>
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        res({
-          id: 'inv_pp',
-          amount: '15.00',
-          currency: 'USD',
-          status: 'Settled',
-          additionalStatus: 'PaidPartial',
-        }),
+      vi.fn(async (url: string | URL) =>
+        String(url).endsWith('/payment-methods')
+          ? res(methods, methodsOk ? {} : { ok: false, status: 500 })
+          : res(detail),
       ),
     );
+  const settleCfg = { apiUrl: 'https://btcpay.test', storeId: 'store_1', apiKey: 'k' };
+  const DETAIL = { id: 'inv_pp', amount: '15.00', currency: 'USD', status: 'Settled' };
+
+  test('a Settled invoice short of the price is flagged with the measured fraction', async () => {
+    // Settled within its paymentTolerance: BTCPay reports plain Settled (no
+    // PaidPartial), so only the payment-methods read sees the shortfall.
+    stubInvoice({ ...DETAIL, additionalStatus: 'None' }, [
+      { amount: '0.00030000', totalPaid: '0.00028500', paymentMethodPaid: '0.00028500' },
+      { amount: '30000', totalPaid: '28500', paymentMethodPaid: '0' },
+    ]);
     const { body, signature } = await signed({
       type: 'InvoiceSettled',
       invoiceId: 'inv_pp',
@@ -642,14 +649,98 @@ describe('btcpay.verifyAndParse', () => {
       rawBody: body,
       signature,
       webhookSecret: SECRET,
-      cfg: { apiUrl: 'https://btcpay.test', storeId: 'store_1', apiKey: 'k' },
+      cfg: settleCfg,
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.status).toBe('confirming'); // never a grant
+      expect(r.status).toBe('paid'); // applyEvent decides against the tolerance
       expect(r.underpaid).toBe(true);
+      expect(r.paidRatio).toBeCloseTo(0.95, 9);
       expect(r.amountMinor).toBe(1500); // billed amount still reported for audit
     }
+  });
+
+  test('a Settled invoice paid in full is not flagged', async () => {
+    stubInvoice({ ...DETAIL, additionalStatus: 'PaidOver' }, [
+      { amount: '0.0003', totalPaid: '0.00031', paymentMethodPaid: '0.00031' },
+    ]);
+    const { body, signature } = await signed({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_full',
+      metadata: { orderId: 'o-full' },
+    });
+    const r = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature,
+      webhookSecret: SECRET,
+      cfg: settleCfg,
+    });
+    expect(r.ok && r.status).toBe('paid');
+    expect(r.ok && r.underpaid).toBeUndefined();
+  });
+
+  test('PaidPartial with unreadable payment methods is flagged with no ratio (never grants)', async () => {
+    stubInvoice({ ...DETAIL, additionalStatus: 'PaidPartial' }, {}, false);
+    const { body, signature } = await signed({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_pp2',
+      metadata: { orderId: 'o-pp2' },
+    });
+    const r = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature,
+      webhookSecret: SECRET,
+      cfg: settleCfg,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('paid');
+      expect(r.underpaid).toBe(true);
+      expect(r.paidRatio).toBeNull();
+    }
+  });
+
+  test('an invoice that expired holding a partial payment is held as underpaid', async () => {
+    stubInvoice(DETAIL, [{ amount: '0.0003', totalPaid: '0.00015', paymentMethodPaid: '0.00015' }]);
+    const { body, signature } = await signed({
+      type: 'InvoiceExpired',
+      invoiceId: 'inv_exp',
+      partiallyPaid: true,
+      metadata: { orderId: 'o-exp' },
+    });
+    const r = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature,
+      webhookSecret: SECRET,
+      cfg: settleCfg,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      // Never final on BTCPay (possibly unconfirmed): always held, never granted.
+      expect(r.status).toBe('underpaid');
+      expect(r.underpaid).toBe(true);
+      expect(r.paidRatio).toBeCloseTo(0.5, 9);
+    }
+  });
+
+  test('an invoice that expired with no payment stays expired (no API read)', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { body, signature } = await signed({
+      type: 'InvoiceExpired',
+      invoiceId: 'inv_none',
+      partiallyPaid: false,
+      metadata: { orderId: 'o-none' },
+    });
+    const r = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature,
+      webhookSecret: SECRET,
+      cfg: settleCfg,
+    });
+    expect(r.ok && r.status).toBe('expired');
+    expect(r.ok && r.underpaid).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test('settle still grants when the amount fetch is unavailable (invoice-id binding is the guard)', async () => {
@@ -826,6 +917,7 @@ describe('btcpay.createCheckout', () => {
         expirationMinutes: 90,
         monitoringMinutes: 1440,
         defaultPaymentMethod: 'BTC-LN',
+        paymentTolerancePct: 5,
       },
       params,
     );
@@ -835,6 +927,8 @@ describe('btcpay.createCheckout', () => {
       expirationMinutes: 90,
       monitoringMinutes: 1440,
       defaultPaymentMethod: 'BTC-LN',
+      // The underpayment tolerance: BTCPay settles what FCP would grant.
+      paymentTolerance: 5,
     });
     // Greenfield rejects these at top level — regression guard on the nesting.
     expect(body.expirationMinutes).toBeUndefined();
@@ -861,11 +955,13 @@ describe('btcpay.createCheckout', () => {
 });
 
 describe('nowpayments.mapStatus', () => {
-  test('partially_paid stays non-terminal (confirming) and never grants', () => {
-    expect(nowpayments.mapStatus('partially_paid')).toBe('confirming');
+  test('partially_paid is paid-class (the short funds have arrived); the tolerance decides', () => {
+    // verifyAndParse flags it underpaid; applyEvent grants only within the
+    // underpayment tolerance, else holds the order as `underpaid`.
+    expect(nowpayments.mapStatus('partially_paid')).toBe('paid');
   });
 
-  test('the full status map: only finished pays; unknowns stay pending', () => {
+  test('the full status map: finished/partially_paid pay; unknowns stay pending', () => {
     expect(nowpayments.mapStatus('finished')).toBe('paid');
     expect(nowpayments.mapStatus('waiting')).toBe('pending');
     expect(nowpayments.mapStatus('confirming')).toBe('confirming');
@@ -1128,7 +1224,7 @@ describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
     });
   });
 
-  test('the underpaid downgrade applies to the API record too', async () => {
+  test('the underpayment check applies to the API record too', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => res(apiPayment({ actually_paid: 0.0004 }))),
@@ -1139,7 +1235,12 @@ describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
       ipnSecret: SECRET,
       cfg,
     });
-    expect(r.ok && r.status).toBe('confirming');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('paid');
+      expect(r.underpaid).toBe(true);
+      expect(r.paidRatio).toBeLessThan(1);
+    }
   });
 
   test('rejects when the API lookup fails (postback is a fallback, not a bypass)', async () => {
@@ -1196,7 +1297,7 @@ describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
   });
 });
 
-describe('nowpayments partial-settle guard', () => {
+describe('nowpayments underpayment flag', () => {
   const SECRET = 'ipn-secret';
 
   // Mirror of the adapter's canonicalization so the test signs the same bytes.
@@ -1224,11 +1325,34 @@ describe('nowpayments partial-settle guard', () => {
     return { body, signature: await hmacSha512Hex(SECRET, body) };
   }
 
-  test('a `finished` IPN short on actually_paid downgrades to confirming (never grants)', async () => {
+  test('a `finished` IPN short on actually_paid is flagged with the fraction delivered', async () => {
     const { body, signature } = await signedIpn({ actually_paid: 0.008, pay_amount: 0.01 });
     const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.status).toBe('confirming');
+    if (r.ok) {
+      expect(r.status).toBe('paid');
+      expect(r.underpaid).toBe(true);
+      expect(r.paidRatio).toBeCloseTo(0.8, 9);
+    }
+  });
+
+  test('partially_paid short by an exchange withdrawal fee (the real TRX report)', async () => {
+    // 2 TRX taken out of a 42.404061 TRX invoice by the sending exchange.
+    const { body, signature } = await signedIpn({
+      payment_status: 'partially_paid',
+      pay_currency: 'trx',
+      pay_amount: 42.404061,
+      actually_paid: 40.404061,
+    });
+    const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('paid');
+      expect(r.underpaid).toBe(true);
+      expect(r.paidRatio).toBeCloseTo(0.9528, 4);
+      expect(r.dedupeId).toBe('nowpayments:12345:partially_paid');
+      expect(r.summary).toMatchObject({ pay_amount: 42.404061, actually_paid: 40.404061 });
+    }
   });
 
   test('a fully-paid `finished` IPN stays paid', async () => {
@@ -1237,15 +1361,16 @@ describe('nowpayments partial-settle guard', () => {
     expect(r.ok && r.status).toBe('paid');
   });
 
-  test('a `finished` IPN without the amount fields fails safe (confirming + underpaid)', async () => {
-    // A `finished` whose received-vs-expected amounts can't be verified is NOT
-    // treated as paid (a settle-tolerance `finished` looks exactly like this).
+  test('a `finished` IPN without the amount fields fails safe (underpaid, no ratio)', async () => {
+    // A `finished` whose received-vs-expected amounts can't be verified is
+    // flagged with a null ratio, which never grants (applyEvent holds it).
     const { body, signature } = await signedIpn({});
     const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.status).toBe('confirming');
+      expect(r.status).toBe('paid');
       expect(r.underpaid).toBe(true);
+      expect(r.paidRatio).toBeNull();
     }
   });
 

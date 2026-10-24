@@ -96,6 +96,61 @@ describe('retention sweeps (P2)', () => {
     });
   });
 
+  // The window runs from PAYMENT, not checkout: a gift order created days ago
+  // but paid (or granted by an operator) just now keeps its full 24 h.
+  test('clearStaleGiftReveals keeps a gift paid late on an old order', async () => {
+    const t = convexTest(schema, modules);
+    vi.useFakeTimers();
+    const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+    vi.setSystemTime(t0);
+    const orderId = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'member',
+        name: 'Member',
+        backend: 'remnawave',
+        monthlyTrafficGb: 0,
+        deviceLimit: 0,
+        hwidLimit: 0,
+        hwidEnabled: false,
+        trafficStrategy: 'NO_RESET',
+        isDefaultFree: false,
+        isActive: true,
+        priority: 10,
+        expirationDaysAfterMembershipLapse: 7,
+        updatedAt: t0,
+      });
+      const userId = await ctx.db.insert('users', { tierId, status: 'active', updatedAt: t0 });
+      return ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef: 'g-late',
+        userId,
+        tierId,
+        durationDays: 91,
+        amountCents: 1400,
+        currency: 'USD',
+        status: 'underpaid',
+        kind: 'gift',
+        updatedAt: t0,
+      });
+    });
+    // Three days later the operator grants it: the codes are minted now.
+    vi.setSystemTime(t0 + 3 * DAY);
+    await t.run((ctx) =>
+      ctx.db.patch(orderId, {
+        status: 'paid',
+        paidAt: Date.now(),
+        giftReveal: ['CODE-LATE'],
+        giftRevealPending: true,
+      }),
+    );
+    vi.setSystemTime(t0 + 3 * DAY + 60 * 60 * 1000);
+    expect((await t.mutation(internal.retention.clearStaleGiftReveals, {})).cleared).toBe(0);
+    expect((await t.run((ctx) => ctx.db.get(orderId)))?.giftReveal).toEqual(['CODE-LATE']);
+    // ...and 25 h after the payment it is due like any other.
+    vi.setSystemTime(t0 + 4 * DAY + 60 * 60 * 1000);
+    expect((await t.mutation(internal.retention.clearStaleGiftReveals, {})).cleared).toBe(1);
+  });
+
   // Review #5: gift orders paid before giftRevealPending existed carry a reveal but
   // no flag → invisible to clearStaleGiftReveals. The backfill flags exactly the
   // unacked pre-flag paid gift orders (not self orders, not acked, not already-flagged).

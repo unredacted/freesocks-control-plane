@@ -533,6 +533,7 @@
     "paidTitle": "Thank you!",
     "paidBody": "Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it.",
     "orderFailedBody": "The payment did not complete - nothing was charged, or the payment page expired. You can try again below.",
+    "orderUnderpaidBody": "Your payment arrived, but short of the amount, often because an exchange took its withdrawal fee out of it. We will review it by hand. Thank you for giving.",
     "unavailable": "Donations are not available right now. Please check back later."
   },
   "referral": {
@@ -616,6 +617,7 @@
     "payNowpaymentsHint": "Bitcoin, Monero, Zcash & more",
     "payNowpaymentsBadge": "Private",
     "cryptoPrivacyNote": "No account, email, or card needed - pay privately. Monero and Zcash offer the most privacy.",
+    "exchangeFeeNote": "Paying from an exchange? Many take their withdrawal fee out of the amount they send. Add the fee so the full amount shown arrives.",
     "payBtcpay": "Bitcoin",
     "payBtcpayHint": "On-chain or Lightning",
     "payBtcpayBadge": "No intermediary",
@@ -633,7 +635,9 @@
     "paidTitle": "Membership active",
     "paidBody": "Thank you! Your membership is now active.",
     "failedTitle": "Payment not completed",
-    "failedBody": "Your payment did not go through, or the checkout expired. You can try again."
+    "failedBody": "Your payment did not go through, or the checkout expired. You can try again.",
+    "underpaidTitle": "Your payment arrived short",
+    "underpaidBody": "We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out."
   },
   "gift": {
     "title": "Buy codes to share",
