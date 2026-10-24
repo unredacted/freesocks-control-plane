@@ -532,6 +532,29 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
     expect(panel.created).toHaveLength(1);
     expect(panel.deleted).toEqual([]);
     panel.failSquadsWith = null;
+    // A first account is never made while the groups cannot be read: asked again later.
+    const fresh = fakePanel({
+      squads: [{ uuid: 'sq-relay', inboundUuids: [FIXTURE_INBOUND] }],
+    });
+    fresh.failSquadsWith = 503;
+    const t2 = convexTest(schema, modules);
+    await insertPanelServer(t2);
+    const { relayId: second } = await registerRelay(t2);
+    expect(
+      await t2.action(internal.relayQualification.ensure, {
+        relayId: second,
+        purpose: 'rehearsal',
+      }),
+    ).toMatchObject({ ok: false, code: 'mode_groups_unknown' });
+    expect(fresh.created).toEqual([]);
+    fresh.failSquadsWith = null;
+    expect(
+      await t2.action(internal.relayQualification.ensure, {
+        relayId: second,
+        purpose: 'rehearsal',
+      }),
+    ).toMatchObject({ ok: true });
+    expect([...fresh.users.values()].map((u) => u.squads)).toEqual([['sq-relay']]);
     // An operator's chosen mode stands, whatever the groups hold.
     await t.run((ctx) => ctx.db.patch(relayId, { qualificationModeSlug: 'freedom-ws' }));
     await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' });

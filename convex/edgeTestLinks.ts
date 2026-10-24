@@ -407,7 +407,9 @@ export const build = internalAction({
         message:
           cred.code === 'test_account_used_up'
             ? 'The test account is used up and could not be reset'
-            : 'No test credential is available for this origin',
+            : cred.code === 'mode_groups_unknown'
+              ? "The panel's mode groups could not be read yet, so no test account was made"
+              : 'No test credential is available for this origin',
       });
     const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
       backend: cred.fetchRef.backend,

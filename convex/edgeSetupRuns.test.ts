@@ -1513,6 +1513,42 @@ describe('edgeSetupRuns: a used-up test account', () => {
   });
 });
 
+describe("edgeSetupRuns: the panel's mode groups not read yet", () => {
+  test('the test card waits for the check account instead of failing, and goes on once the groups are read', async () => {
+    // What edgeTestLinks.build throws while relayQualification.ensure cannot
+    // tell which group holds the transports (relayQualification.test.ts).
+    let unknown = true;
+    const { t, serverId, accountId } = await seed({
+      testLinkError: () =>
+        unknown
+          ? new ConvexError({ code: 'edge.mode_groups_unknown', message: 'not read yet' })
+          : null,
+    });
+    const { runId } = await startRun(t, serverId, accountId);
+    // A waiting step asks again on its own timer: driven a second at a time.
+    const step = async (until: (r: Awaited<ReturnType<typeof run>>) => boolean) => {
+      for (let i = 0; i < 2000; i++) {
+        const r = await run(t, runId);
+        if (until(r)) return r;
+        await vi.advanceTimersByTimeAsync(1000);
+        await t.finishInProgressScheduledFunctions();
+      }
+      throw new Error('stuck');
+    };
+    const waiting = await step(
+      (x) => x.stage === 'try_it' && x.events.at(-1)?.code === 'mode_groups_unknown',
+    );
+    expect(waiting.state).toBe('waiting');
+    expect(waiting.need ?? null).toBeNull();
+    const edgeId = waiting.listeners[0]!.edgeId!;
+    unknown = false;
+    const r = await step(settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.testLinks).toHaveLength(1);
+    expect(r.listeners[0]!.edgeId).toBe(edgeId);
+  });
+});
+
 describe("edgeSetupRuns: Doesn't work when no new address can be made", () => {
   /** The run at its test card, with the one address it built. */
   async function atTheCard(opts: Parameters<typeof seed>[0] = {}) {

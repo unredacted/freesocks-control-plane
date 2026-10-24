@@ -1297,7 +1297,9 @@ reach it through a load balancer the operator built by hand, by an operator Host
   every transport the origin protects, ahead of the default pool or an enrolled node's own group
   when that lacks one (the group a stored account sits in while it still holds them, else the
   first by uuid; nothing changes when none does). A listing that fails is unknown, never "none":
-  the stored account keeps its group, so a panel outage never re-mints it. This matters on a node with transports of different groups, such as an
+  the stored account keeps its group, so a panel outage never re-mints it; with no stored
+  account yet, nothing is minted until the groups can be read (`mode_groups_unknown`: a run's
+  credential, test card or hide step waits and asks again, event `mode_groups_unknown`). This matters on a node with transports of different groups, such as an
   enrolled node with a second, hand-built transport: every protected transport must sit in one
   group together, or the test link of the others is refused by the node.
 - **An inactive backend.** A backend out of the issuance pool (`isActive: false`; its members
@@ -1578,8 +1580,9 @@ one, it is raised instead, never disabled. Any other raises attention `direct_ho
 pass sees none). Both are suppressed while a restore workflow runs. The same look (and the
 setup run's rehearsal look, `observe`, before go-live) records the node's **operator fronts**
 (`relays.operatorFronts`, names only; `operatorFrontHosts`): enabled Hosts on a protected
-transport that dial neither the node nor an edge of the origin and are not FCP's, such as a
-load balancer the operator built by hand. A member render leaves their entries out like any it
+transport that dial an IP that is neither the node nor an edge of the origin and are not FCP's,
+such as a load balancer the operator built by hand. A Host by a name is never one (a lookup
+that failed would leave the node itself looking like a front), so it keeps the critical alarm. A member render leaves their entries out like any it
 cannot place, but an entry a known front names is not the node: it raises attention
 `front_host_unused` (info: members no longer get it, so it can be deleted at its provider, and
 its Host in the backend) instead of `direct_host_reappeared`. An entry left out that no look

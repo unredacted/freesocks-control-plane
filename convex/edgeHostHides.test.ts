@@ -1139,7 +1139,7 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     expect((await relay()).operatorFronts).toBeUndefined();
   });
 
-  test('a Host at the node itself, or at an edge, is never a front', async () => {
+  test('a Host at the node itself, or at an edge, is never a front; nor is one by a name (a failed lookup could hide the node)', async () => {
     const { t, relayId, relay } = await world({
       hosts: [
         ...panelHosts(),
@@ -1148,6 +1148,12 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
           uuid: 'f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f3f3',
           remark: 'by-edge',
           address: EDGE_A,
+        },
+        {
+          ...front(),
+          uuid: 'f4f4f4f4-f4f4-4f4f-8f4f-f4f4f4f4f4f4',
+          remark: `${FIXTURE_NODE}-relay`,
+          address: 'lb.example.net',
         },
       ],
     });

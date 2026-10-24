@@ -2028,9 +2028,27 @@ async function stageCredential(ctx: ActionCtx, run: Run): Promise<null> {
       relayId: run.relayId,
       purpose: anyL7 ? 'qualification' : 'rehearsal',
     });
+    if (res.code === 'mode_groups_unknown') return waitModeGroups(ctx, run);
     if (!res.ok) return needsYou(ctx, run, 'choose_mode', res.code ?? 'credential');
   }
   return advance(ctx, run);
+}
+
+/**
+ * The panel's mode groups could not be read for the first check account
+ * (relayQualification `mode_groups_unknown`): the step waits and asks again
+ * rather than minting it in a group that may not hold the transports.
+ */
+function waitModeGroups(ctx: ActionCtx, run: Run): Promise<null> {
+  return tr(ctx, run, {
+    state: 'waiting',
+    event: { level: 'info', code: 'mode_groups_unknown' },
+    scheduleMs: EDGE_PLUMBING.pollMs,
+  });
+}
+
+function modeGroupsUnknown(err: unknown): boolean {
+  return errCode(err).code === 'edge.mode_groups_unknown';
 }
 
 // --- stage 3: provision ---------------------------------------------------------------------------------
@@ -2366,6 +2384,7 @@ async function stageTryIt(ctx: ActionCtx, run: Run): Promise<null> {
     links = await pendingTestLinks(ctx, run, c);
   } catch (err) {
     if (testAccountUsedUp(err)) return needsYou(ctx, run, 'test_account_used_up');
+    if (modeGroupsUnknown(err)) return waitModeGroups(ctx, run);
     throw err;
   }
   if (links.length === 0) {
@@ -2472,6 +2491,7 @@ async function stageHide(ctx: ActionCtx, run: Run): Promise<null> {
       links = await pendingTestLinks(ctx, run, c);
     } catch (err) {
       if (testAccountUsedUp(err)) return needsYou(ctx, run, 'test_account_used_up');
+      if (modeGroupsUnknown(err)) return waitModeGroups(ctx, run);
       throw err;
     }
     const detail = stale.every((l) => vOf(c, l)?.keyChanged)

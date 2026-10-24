@@ -47,7 +47,7 @@ export interface FakePanelOptions {
   /** `GET /api/nodes` + `GET /api/config-profiles/{uuid}` payloads for transport discovery. */
   nodes?: unknown[];
   profiles?: Record<string, unknown>;
-  /** `GET /api/internal-squads`: the mode groups and the inbounds each holds (absent = 404). */
+  /** `GET /api/internal-squads`: the mode groups and the inbounds each holds (absent = none). */
   squads?: Array<{ uuid: string; name?: string; inboundUuids: string[] }>;
 }
 
@@ -203,11 +203,11 @@ export function fakePanel(opts: FakePanelOptions = {}): FakePanel {
     if (method === 'GET' && path === '/api/nodes') return jsonRes({ response: opts.nodes ?? [] });
     if (method === 'GET' && path === '/api/internal-squads' && panel.failSquadsWith !== null)
       return jsonRes({ message: 'listing failed' }, panel.failSquadsWith);
-    if (method === 'GET' && path === '/api/internal-squads' && opts.squads)
+    if (method === 'GET' && path === '/api/internal-squads')
       return jsonRes({
         response: {
-          total: opts.squads.length,
-          internalSquads: opts.squads.map((q) => ({
+          total: (opts.squads ?? []).length,
+          internalSquads: (opts.squads ?? []).map((q) => ({
             uuid: q.uuid,
             name: q.name ?? q.uuid,
             inbounds: q.inboundUuids.map((uuid) => ({ uuid, tag: uuid })),

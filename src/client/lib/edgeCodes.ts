@@ -1485,6 +1485,12 @@ const REFUSAL_COPY = {
     label: 'Node already covered',
     explain: 'Another origin already covers this node.',
   },
+  mode_groups_unknown: {
+    label: 'Mode groups not read yet',
+    explain:
+      "FCP could not read the panel's mode groups, so it does not yet know which one holds this node's transports, and makes no test account until it does.",
+    fix: 'It asks again by itself. If it keeps waiting, check that the panel answers.',
+  },
   origin_deleting: {
     label: 'Old protection still going',
     explain: "The node's earlier protection is still being removed.",

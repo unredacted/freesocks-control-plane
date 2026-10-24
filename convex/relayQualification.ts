@@ -512,7 +512,9 @@ export interface EnsureResult {
  * `choose_mode` (a placement backend with no usable placement),
  * `use_manual_setup` (a rehearsal on a backend with no name lookup: Outline),
  * `qualification_credential_unsupported` (the backend mints no protocol
- * credential), `credential_unresolved` (the settle rule is still running).
+ * credential), `credential_unresolved` (the settle rule is still running),
+ * `mode_groups_unknown` (the panel's groups could not be read for a first
+ * mint: retried).
  */
 export const ensure = internalAction({
   args: {
@@ -539,10 +541,14 @@ export const ensure = internalAction({
     // mode's group, when it lacks one); the group a stored account already sits
     // in is kept while it still holds them. A panel that cannot be read keeps
     // the stored account's group (unknown is not "none": no re-mint over an
-    // outage), and changes nothing when there is none.
+    // outage). With no stored account either, nothing is minted until the
+    // groups can be read (`mode_groups_unknown`, retried): an account in a group
+    // without the transport would make every test link fail at the node.
     if (!c.chosen && c.placementRequired && c.protectedInbounds.length > 0) {
       const holding = await groupsHolding(ctx, c.backendServerId, c.protectedInbounds);
       const stored = c.op?.state === 'stored' && c.stored ? c.op.placement : null;
+      if (holding === null && !stored)
+        return { ok: false, code: 'mode_groups_unknown', reused: false };
       const placement =
         holding === null
           ? stored
