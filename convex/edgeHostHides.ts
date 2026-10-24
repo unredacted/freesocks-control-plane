@@ -41,6 +41,7 @@ import {
   nodeNameHosts,
   nodeNamesOf,
   observedTuple,
+  operatorFrontHosts,
   sameTuple,
   toDirectHost,
   type DirectHost,
@@ -49,7 +50,8 @@ import {
 import { relayRemarkRegex, sameAddress } from './lib/edges/hosts';
 import { withheldFresh, withheldNoteDue } from './lib/edges/withheld';
 import { deliveryBindingFor } from './relays';
-import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
+import { bumpEpochAndRefresh, liveEdgesOfRelay } from './lib/edges/relayGuards';
+import { edgeAddressesOf } from './lib/edges/render';
 import { listenerRemark, listenersOf } from './relayListeners';
 import { nodeAddressesOf } from './nodeIntents';
 import { HOST_OP_TTL_MS, HOST_SETTLE_LOOKS, HOST_SETTLE_MS } from './hostOps';
@@ -169,6 +171,8 @@ export interface HideContext {
   nodeName: string | null;
   /** Deployed, enabled, non-retired listeners with a backend transport. */
   listenerInboundUuids: string[];
+  /** Every address the origin's live edges answer on (`edgeAddressesOf`). */
+  edgeAddresses: string[];
   /** The backend config profiles those transports belong to (the node's own). */
   configProfileUuids: string[];
   fcpRemarks: string[];
@@ -197,6 +201,7 @@ async function hideContext(
     backendServerId: relay.backendServerId,
     nodeName: relay.nodeName ?? null,
     listenerInboundUuids: live.map((l) => l.panelBinding!.configProfileInboundUuid),
+    edgeAddresses: edgeAddressesOf(await liveEdgesOfRelay(ctx.db, relay._id)),
     configProfileUuids: [...new Set(live.map((l) => l.panelBinding!.configProfileUuid))],
     fcpRemarks,
     legacyHostUuids,
@@ -573,6 +578,60 @@ export const clearWithheldForRollback = internalMutation({
     return { cleared };
   },
 });
+
+/**
+ * The node's operator fronts as one look at its Hosts saw them
+ * (`operatorFrontHosts`): names only, written when they changed. A withheld
+ * entry named by one is a known front, not the node (`front_host_unused`).
+ */
+export const noteFronts = internalMutation({
+  args: { relayId: v.id('relays'), remarks: v.array(v.string()) },
+  handler: async (ctx, { relayId, remarks }) => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay) return null;
+    const kept = [...new Set(remarks)].sort().slice(0, MAX_WITHHELD_REMARKS);
+    const prev = relay.operatorFronts?.remarks ?? [];
+    if (prev.length === kept.length && prev.every((r, i) => r === kept[i])) return null;
+    await ctx.db.patch(relayId, {
+      operatorFronts: kept.length > 0 ? { at: Date.now(), remarks: kept } : undefined,
+    });
+    return null;
+  },
+});
+
+/** Rollback (docs/edges.md "Deploy notes"): the older schema has no `operatorFronts`. */
+export const clearFrontsForRollback = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let cleared = 0;
+    for (const relay of await ctx.db.query('relays').collect()) {
+      // small operator table
+      if (!relay.operatorFronts) continue;
+      await ctx.db.patch(relay._id, { operatorFronts: undefined });
+      cleared++;
+    }
+    return { cleared };
+  },
+});
+
+/** Records the node's operator fronts from one listing (names only). */
+async function recordFronts(
+  ctx: ActionCtx,
+  c: HideContext,
+  hosts: readonly BackendHost[],
+  inbounds: string[],
+): Promise<void> {
+  const fronts = operatorFrontHosts(hosts, {
+    // The listeners' own remarks only: the origin convention also matches
+    // the bare `<node>-relay` an operator gives such a Host.
+    ...directContextOf(c, inbounds),
+    edgeAddresses: c.edgeAddresses,
+  });
+  await ctx.runMutation(internal.edgeHostHides.noteFronts, {
+    relayId: c.relay._id,
+    remarks: fronts.map((h) => h.remark),
+  });
+}
 
 /**
  * Origins the reconcile direct-Host check looks at: every BOUND origin whose
@@ -968,6 +1027,9 @@ export const observe = internalAction({
     const c = await withNodeNames(ctx, c0, hosts, nodeInbounds(c0, hosts, a.nodeInboundUuids));
     const inbounds = nodeInbounds(c, hosts, a.nodeInboundUuids);
     const dctx = directContextOf(c, inbounds, conventionRemarks(hosts, c.nodeName));
+    // The rehearsal's look, before go-live: a front the operator built is known
+    // by the time member renders leave it out.
+    await recordFronts(ctx, c, hosts, inbounds);
     return {
       listingHash: await listingHash(hosts, dctx),
       observedAt: Date.now(),
@@ -1049,6 +1111,7 @@ async function reobserveOne(
   const mayWrite = c.relay.hostMode === 'fcp' || st.rows.length > 0;
   const known = nodeInbounds(c, hosts, undefined);
   const dctx = directContextOf(c, known, conventionRemarks(hosts, c.nodeName));
+  await recordFronts(ctx, c, hosts, known);
   const enabledDirect = hosts.filter((h) => !h.isDisabled && isDirectHost(h, dctx));
   const covered = new Set(c.listenerInboundUuids.map((u) => u.toLowerCase()));
   const alerts: Array<{ uuid: string; remark: string; inboundUuid: string | null }> = [];

@@ -46,6 +46,17 @@ describe('nodeNameFromLink', () => {
     expect(nodeNameFromLink(`vless://u@x.org:443#${NODE_B}-relay-gc1`)).toBe(NODE_B);
     expect(nodeNameFromTag(`${NODE_B}-relay-a`)).toBe(NODE_B);
   });
+  test("an operator's hand-built front (<node>-relay) and the v1 role forms pin with their node", () => {
+    expect(nodeNameFromLink(`vless://u@198.51.100.20:443?security=reality#${NODE_B}-relay`)).toBe(
+      NODE_B,
+    );
+    expect(nodeNameFromTag(`${NODE_B}-relay`)).toBe(NODE_B);
+    expect(splitPanelRemark(`${NODE_B}-relay`)).toEqual({ node: NODE_B, entry: 'relay' });
+    expect(nodeNameFromTag(`${NODE_B}-reality`)).toBe(NODE_B);
+    expect(nodeNameFromTag(`${NODE_B}-ws-6a536a`)).toBe(NODE_B);
+    // A bare suffix names nothing on its own.
+    expect(nodeNameFromTag('-relay')).toBeNull();
+  });
 });
 
 describe('FCP address remarks (<node> | <server name>)', () => {

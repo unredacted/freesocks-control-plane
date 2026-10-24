@@ -891,6 +891,12 @@ const COPY = {
       'A backend Host on a protected node hands out the node address itself, or an address FCP cannot tell apart from it, and was re-enabled or added. Until it is hidden, members on the node are refused a body, or get one without that entry.',
     fix: 'Hide it in the backend, or add it to the protected node so FCP hides it for you.',
   },
+  front_host_unused: {
+    label: 'Old front no longer used',
+    explain:
+      'A backend Host on a protected node dials a front FCP did not build, such as a load balancer made by hand. It is not the node, and members no longer get it.',
+    fix: 'Delete that front at its provider, and its Host in the backend.',
+  },
   restore_in_progress: {
     label: 'Restoring the direct address',
     explain:
@@ -947,6 +953,12 @@ const COPY = {
     explain:
       'This size only accepts servers hosted at Scaleway. Pick a multi-cloud size (L or XL).',
     fix: "Set the location's size, or the node's own size option, to a multi-cloud one such as LB-GP-L or LB-GP-XL.",
+  },
+  origin_not_public: {
+    label: 'Address is not public',
+    explain:
+      "The node's address is private, loopback or reserved, so a provider's load balancer cannot reach it.",
+    fix: "Give the node's public address.",
   },
   l4_not_for_websocket: {
     label: 'No load balancer for WebSocket',
@@ -1467,6 +1479,22 @@ const REFUSAL_COPY = {
   node_already_bound: {
     label: 'Node already covered',
     explain: 'Another origin already covers this node.',
+  },
+  origin_deleting: {
+    label: 'Old protection still going',
+    explain: "The node's earlier protection is still being removed.",
+    fix: 'Wait until it is gone (the Edges page shows it), then protect the node again.',
+  },
+  origin_unresolved: {
+    label: 'Name has no address',
+    explain: 'The name given for the node answers with no address.',
+    fix: "Give the node's public address, or a name that has one.",
+  },
+  test_link_unavailable: {
+    label: 'New address could not be tested',
+    explain:
+      "No Host dials the node at its own address, and FCP cannot build this transport's entry from the node.",
+    fix: "Add a Host at the node's own address for this transport, or pick a CDN location.",
   },
   server_already_bound: {
     label: 'Backend server already covered',
@@ -2207,6 +2235,18 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     explain:
       'The node’s address or name leads to no public address, so no CDN can reach its WebSocket or HTTP transport. Checking again gives the same answer.',
     fix: 'Give the node a public address or point its name at one, then plan again.',
+  },
+  origin_private: {
+    label: 'Node address is private',
+    explain:
+      'The panel lists a private address for this node, so a load balancer at a provider cannot reach it.',
+    fix: "Give the node's public address on the first step.",
+  },
+  test_link_unavailable: {
+    label: 'New address could not be tested',
+    explain:
+      "No Host dials the node at its own address, and FCP cannot build this transport's entry from the node, so a new address here could not be tested before members get it.",
+    fix: "Add a Host at the node's own address for this transport, or pick a CDN location.",
   },
   origin_port_not_carried: {
     label: 'Wrong port for gRPC',

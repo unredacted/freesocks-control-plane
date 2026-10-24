@@ -367,6 +367,11 @@ export async function resolvePlacementTarget(
     // Injected PRNG for the anti-herding pick (queries must stay deterministic —
     // callers on the issuance path mint this in the ACTION and thread it down).
     rand?: () => number;
+    // With `onlyServerId`: the pinned instance counts even when it is out of
+    // the issuance pool (inactive). Only FCP's own check credential (a test
+    // link, a qualification, a rehearsal on a node being protected there) asks
+    // for this; a member key never lands on an inactive instance.
+    includeInactive?: boolean;
   } = {},
 ): Promise<{
   placement: string | null;
@@ -405,6 +410,13 @@ export async function resolvePlacementTarget(
     // and bring-up have no attribution yet); if it does turn out to be another
     // backend's mode group, the PATCH fails and the caller falls back to a re-issue.
     const ids = new Set(servers.map((s) => s._id as string));
+    // FCP's own check may use an instance out of the issuance pool too.
+    if (opts.includeInactive)
+      for (const s of await db
+        .query('backendServers')
+        .withIndex('by_backend_active', (q) => q.eq('backend', 'remnawave').eq('isActive', false))
+        .collect())
+        ids.add(s._id as string);
     if (!ids.has(opts.onlyServerId)) return { placement: null, serverId: null };
     const constrained = pool.filter((p) => {
       const attributed = statsByPlacement.get(p);

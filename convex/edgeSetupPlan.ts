@@ -30,9 +30,15 @@ import { locationKeyOf } from './lib/edges/locations';
 import { mapTransportsToListeners } from './lib/edges/inboundMapping';
 import { applyOriginProbes, originProbeTargets } from './edgeOriginProbe';
 import type { OriginProbeOutcome } from './lib/edges/originProbe';
-import { classifyDirectHosts, type DirectHostContext } from './lib/edges/directHosts';
+import {
+  classifyDirectHosts,
+  operatorFrontHosts,
+  type DirectHostContext,
+} from './lib/edges/directHosts';
 import { resolveNodeNames } from './edgeHostHides';
-import { templateHostRemark } from './lib/edges/hosts';
+import { normalizeAddress, sameAddress, templateHostRemark } from './lib/edges/hosts';
+import { addressFamily, isPublicIpLiteral, originNotPublic } from './lib/edges/ip';
+import { testLinkSourceOf } from './edgeTestLinks';
 import { accountsForSlot } from './lib/edges/rotation';
 import {
   edgeLayerOf,
@@ -40,6 +46,8 @@ import {
   originPortCarriedBy,
 } from './lib/edges/providers/capabilities';
 import type { EdgeProviderId } from './lib/edgeProviderIds';
+import type { BackendId } from './lib/backendIds';
+import { capabilitiesOf } from './lib/backends/capabilities';
 import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
 import {
   defaultLocationOf,
@@ -63,6 +71,8 @@ import {
   websocketNodeOf,
 } from './lib/edges/websocketNode';
 import { isTerminalRunState, planHashOf, slugForNode } from './lib/edges/setupRuns';
+import { edgeAddressesOf } from './lib/edges/render';
+import { liveEdgesOfRelay } from './lib/edges/relayGuards';
 import type {
   SetupPlanAccount,
   SetupPlanInbound,
@@ -75,6 +85,8 @@ import { SETUP_RUN_MAX_LISTENERS } from '../src/shared/contracts/edgeCodes';
 import { resolveModeCatalog } from './lib/connectionModes';
 
 const MAX_REQUIRED_LISTENERS = SETUP_RUN_MAX_LISTENERS;
+/** A load balancer pick for a transport no test link can be made for (`withTestLinkProblems`). */
+const TEST_LINK_UNAVAILABLE = 'test_link_unavailable';
 
 export interface PlanOps {
   listNodeInbounds(
@@ -89,6 +101,8 @@ export interface PlanOps {
   ): Promise<OriginProbeOutcome[]>;
   /** The wait before an origin that did not answer is probed again. */
   pause(ms: number): Promise<void>;
+  /** A and AAAA of each name (the origin an operator gives by name). */
+  resolveNames(ctx: ActionCtx, names: string[]): Promise<Record<string, string[]>>;
 }
 
 const defaultPlanOps: PlanOps = {
@@ -96,6 +110,7 @@ const defaultPlanOps: PlanOps = {
   listHosts: (ctx, a) => ctx.runAction(internal.backends.listHosts, a),
   probeOrigins: (ctx, a) => ctx.runAction(internal.edgeOriginProbeOps.probe, a),
   pause: (ms) => new Promise((r) => setTimeout(r, ms)),
+  resolveNames: (ctx, names) => ctx.runAction(internal.nodeIntentOps.resolveNames, { names }),
 };
 
 let planOps: PlanOps = defaultPlanOps;
@@ -292,6 +307,7 @@ async function planContextOf(
             deleting: relay.deleting === true,
             originAddress: relay.originAddress,
             nodeAddresses: await nodeAddressesOf(ctx, relay),
+            edgeAddresses: edgeAddressesOf(await liveEdgesOfRelay(ctx.db, relay._id)),
             listenerKeys: relayListeners.map((l) => l.listenerKey),
             legacyHostUuids: relayListeners.flatMap((l) =>
               (l.legacyHosts ?? []).map((h) => h.uuid),
@@ -362,9 +378,12 @@ function accountCompatibility(
   required: SetupPlanInbound[],
   relay: PlanContext['relay'],
   websocketNode: boolean,
+  originPrivate = false,
 ): SetupPlanAccount {
   const reasons: string[] = [];
   const layer = edgeLayerOf(a.provider);
+  // A load balancer forwards to the origin address: a private one is out of reach.
+  if (layer === 'l4' && originPrivate) reasons.push('origin_private');
   // A front of this account could get no certificate: named first, since a
   // test alone does not fix it.
   if (a.certificateRefusal) reasons.push(a.certificateRefusal);
@@ -493,6 +512,20 @@ function accountCompatibility(
  */
 /** What a run cannot be created with: a transport no pick carries, a set too large, a pick that cannot be used. */
 export function refuseSet(set: SetupPlanSet): void {
+  // A load balancer for a node whose address is private: it could reach nothing.
+  if (set.problems.some((p) => p.reason === 'origin_private'))
+    throw new ConvexError({
+      code: 'edge.origin_not_public',
+      message:
+        "The node's address is private, so a load balancer cannot reach it. Give its public address",
+    });
+  // A load balancer address no test link could be made for: refused before it is bought.
+  if (set.problems.some((p) => p.reason === TEST_LINK_UNAVAILABLE))
+    throw new ConvexError({
+      code: 'edge.test_link_unavailable',
+      message:
+        "FCP could not test a new address here: no Host dials the node at its own address, and this transport's entry cannot be built from the node",
+    });
   // A load balancer picked for a WebSocket node: refused in its own words (it
   // is why its transport is left uncovered).
   if (set.problems.some((p) => p.reason.replace(/^edge\./, '') === 'l4_not_for_websocket'))
@@ -813,6 +846,8 @@ export async function buildPlan(
     picks?: string[];
     /** Provider options per pick (location id -> values the operator chose). */
     pickOptions?: Record<string, unknown>;
+    /** The public address of a node FCP does not manage (the panel may list a private one). */
+    originAddress?: string;
   },
 ): Promise<{ plan: SetupPlanSnapshot; planHash: string }> {
   // Only the two keys: `create` hands its whole argument object here.
@@ -824,12 +859,25 @@ export async function buildPlan(
     nodeName: c.node.name,
     cursor: null,
   });
-  const originAddress = c.relay?.originAddress ?? c.enrolled?.originAddress ?? c.node.address;
+  const given = await givenOriginOf(ctx, c, args.originAddress);
+  const originSource = c.relay
+    ? ('relay' as const)
+    : c.enrolled
+      ? ('enrolled' as const)
+      : given
+        ? ('given' as const)
+        : ('panel' as const);
+  const originAddress =
+    c.relay?.originAddress ?? c.enrolled?.originAddress ?? given ?? c.node.address;
   if (!originAddress)
     throw new ConvexError({
       code: 'edge.node_address_missing',
       message: 'The backend reports no address for this node',
     });
+  // A load balancer forwards to the origin: one the panel lists as a private
+  // address (a node FCP does not manage is listed by its management address)
+  // is out of its reach, so no load balancer is offered for it.
+  const originPrivate = originNotPublic(originAddress);
   const origin = {
     kind: 'panel-node' as const,
     backendServerId: a.backendServerId,
@@ -916,9 +964,16 @@ export async function buildPlan(
   const hosts = await planStage('reading the Hosts from the backend', () =>
     planOps.listHosts(ctx, { backendServerId: a.backendServerId }),
   );
+  // The address the panel lists stays the node's when the operator gave another:
+  // a Host dialling it is a direct Host, never a front.
+  const managementAddress =
+    given && c.node.address && !sameAddress(c.node.address, originAddress) ? c.node.address : null;
   const dctx: DirectHostContext = {
     originAddress,
-    alsoAddresses: c.relay?.nodeAddresses ?? c.enrolled?.directAddresses ?? [],
+    alsoAddresses: [
+      ...(c.relay?.nodeAddresses ?? c.enrolled?.directAddresses ?? []),
+      ...(managementAddress ? [managementAddress] : []),
+    ],
     nodeInboundUuids,
     fcpRemarks: [
       ...(c.relay?.fcpRemarks ?? []),
@@ -949,12 +1004,41 @@ export async function buildPlan(
       covered: false,
     })),
   ];
+  // A Host on a protected transport that dials neither the node nor an edge:
+  // a front the operator built by hand, which members stop getting at go-live.
+  const fronts = operatorFrontHosts(hosts, {
+    ...dctx,
+    fcpRemarks: [
+      ...(c.relay?.fcpRemarks ?? []),
+      ...required.map((i) => templateHostRemark(c.node.name, i.listenerKey)),
+    ],
+    alsoAddresses: [...(dctx.alsoAddresses ?? []), ...names],
+    edgeAddresses: c.relay?.edgeAddresses ?? [],
+  }).map((h) => ({ uuid: h.uuid, remark: h.remark }));
+  // Each transport's test link source: a load balancer address of one with
+  // none would stop the run at its test card after the address was bought.
+  for (const i of required) {
+    const spec = i.listenerSpec as ListenerSpecInput;
+    const source = testLinkSourceOf(
+      { ...spec, panelBinding: spec.panelBinding ?? null },
+      {
+        backend: c.backend as BackendId,
+        hosts: capabilitiesOf(c.backend as BackendId).hostManagement ? hosts : null,
+        originAddress,
+        ownRemarks: [
+          templateHostRemark(c.node.name, i.listenerKey),
+          ...(c.relay?.fcpRemarks ?? []),
+        ],
+      },
+    );
+    if (!source) i.noTestLink = true;
+  }
   const accounts = c.accounts.map((acct) =>
-    accountCompatibility(acct, required, c.relay, c.websocketNode),
+    accountCompatibility(acct, required, c.relay, c.websocketNode, originPrivate),
   );
   const set =
     args.picks && args.picks.length > 0
-      ? setOfPicks(args.picks, accounts, required, c.accounts)
+      ? withTestLinkProblems(setOfPicks(args.picks, accounts, required, c.accounts), required)
       : undefined;
   if (set) {
     await applyPickChecks(ctx, set, args.pickOptions, {
@@ -969,11 +1053,16 @@ export async function buildPlan(
     nodeUuid: a.nodeUuid,
     nodeName: c.node.name,
     originAddress,
+    originSource,
+    originPrivate,
+    ...(managementAddress ? { managementAddress } : {}),
+    originDeleting: c.relay?.deleting === true,
     relaySlug: c.relay?.slug ?? slugForNode(c.node.name),
     inbounds: planInbounds,
     requiredListeners: required.map((i) => i.listenerKey),
     tooManyInbounds,
     directHosts,
+    frontHosts: fronts,
     accounts,
     renderGlobal: {
       willEnable: !c.renderEnabled,
@@ -1002,8 +1091,84 @@ export async function buildPlan(
     ...(set
       ? { pickOptions: Object.fromEntries(set.picks.map((p) => [p.locationId, p.options ?? {}])) }
       : {}),
+    ...(given ? { givenOrigin: originAddress } : {}),
   });
   return { plan, planHash };
+}
+
+/** Host names an operator may give as an origin (the shape `relays` accepts). */
+const ORIGIN_NAME_RE = /^[a-z0-9.-]{1,253}$/i;
+
+/**
+ * The public address the operator gave for a node FCP does not manage, checked:
+ * an IP or a host name; public (a name must answer, with public addresses
+ * only); refused for an enrolled node (its origin is its enrollment's) and for
+ * one whose earlier origin forwards elsewhere (`edge.origin_address_locked`).
+ * Null when none was given.
+ */
+async function givenOriginOf(
+  ctx: ActionCtx,
+  c: PlanContext,
+  raw: string | undefined,
+): Promise<string | null> {
+  const address = raw?.trim() ?? '';
+  if (!address) return null;
+  if (c.enrolled)
+    throw new ConvexError({
+      code: 'validation',
+      message: 'FCP manages this node: it is reached at the address it enrolled with',
+    });
+  if (c.relay) {
+    if (sameAddress(address, c.relay.originAddress)) return c.relay.originAddress;
+    throw new ConvexError({
+      code: 'edge.origin_address_locked',
+      message:
+        'An earlier setup of this node forwards to another address. Remove its protection first to use a new one',
+    });
+  }
+  if (!addressFamily(address) && !ORIGIN_NAME_RE.test(address))
+    throw new ConvexError({ code: 'validation', message: 'Give an IP address or a host name' });
+  if (addressFamily(address)) {
+    if (!isPublicIpLiteral(address))
+      throw new ConvexError({
+        code: 'edge.origin_not_public',
+        message: 'That address is private, so a provider cannot reach it. Give its public address',
+      });
+    return address;
+  }
+  const name = normalizeAddress(address);
+  const answers = (await planOps.resolveNames(ctx, [name]))[name] ?? [];
+  if (answers.length === 0)
+    throw new ConvexError({
+      code: 'edge.origin_unresolved',
+      message: 'That name has no address. Give the public address, or a name that has one',
+    });
+  if (!answers.every((x) => isPublicIpLiteral(x)))
+    throw new ConvexError({
+      code: 'edge.origin_not_public',
+      message: 'That name leads to a private address, so a provider cannot reach it',
+    });
+  return name;
+}
+
+/**
+ * A pick of a load balancer for a transport no test link can be made for (no
+ * Host dials the node at its origin, and the transport's entry cannot be built)
+ * is a problem of that pick: the run would stop at its test card after the
+ * address was bought (`test_link_unavailable`).
+ */
+function withTestLinkProblems(set: SetupPlanSet, required: SetupPlanInbound[]): SetupPlanSet {
+  for (const t of set.targets) {
+    const pick = set.picks.find((p) => p.locationId === t.locationId);
+    const inbound = required.find((i) => i.listenerKey === t.listenerKey);
+    if (!pick || !inbound?.noTestLink || edgeLayerOf(pick.provider) !== 'l4') continue;
+    if (
+      set.problems.some((p) => p.locationId === t.locationId && p.reason === TEST_LINK_UNAVAILABLE)
+    )
+      continue;
+    set.problems.push({ locationId: t.locationId, reason: TEST_LINK_UNAVAILABLE });
+  }
+  return set;
 }
 
 /**
@@ -1020,6 +1185,8 @@ export const plan = internalAction({
     picks: v.optional(v.array(v.string())),
     /** Provider options per pick (location id -> values). */
     pickOptions: v.optional(v.any()),
+    /** The public address of a node FCP does not manage. */
+    originAddress: v.optional(v.string()),
   },
   handler: async (ctx, a) => {
     const { plan, planHash } = await buildPlan(ctx, a);
@@ -1051,6 +1218,8 @@ export const create = internalAction({
     planHash: v.string(),
     approvedHideUuids: v.array(v.string()),
     keepDirect: v.optional(v.boolean()),
+    /** The public address of a node FCP does not manage, as the plan was shown with. */
+    originAddress: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
@@ -1060,7 +1229,15 @@ export const create = internalAction({
       listenerKeys: a.listenerKeys,
       picks: a.picks as string[] | undefined,
       pickOptions: a.pickOptions as Record<string, unknown> | undefined,
+      originAddress: a.originAddress,
     });
+    // The node's earlier protection is still being removed: its origin holds
+    // the node until then, so a run started now would find it taken.
+    if (plan.originDeleting)
+      throw new ConvexError({
+        code: 'edge.origin_deleting',
+        message: "The node's earlier protection is still being removed. Try again once it is gone",
+      });
     if (planHash !== a.planHash)
       throw new ConvexError({
         code: 'edge.plan_stale',
@@ -1113,7 +1290,10 @@ export const create = internalAction({
         backendServerId: a.backendServerId,
         nodeUuid: a.nodeUuid,
       });
-      set = setOfPicks([location.id], plan.accounts, required, context.accounts);
+      set = withTestLinkProblems(
+        setOfPicks([location.id], plan.accounts, required, context.accounts),
+        required,
+      );
       await applyPickChecks(ctx, set, undefined, {
         realityL4: servesReality(required),
         l4Barred: barsLoadBalancers(required, context.websocketNode),

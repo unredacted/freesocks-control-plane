@@ -188,6 +188,16 @@ export function isPublicIpLiteral(s: string): boolean {
   return false;
 }
 
+/**
+ * An origin no provider can reach: an IP literal that is not public (a private,
+ * loopback or reserved address, such as the management address a panel lists
+ * for a node FCP does not manage). A name is not judged here: it is resolved
+ * where that matters.
+ */
+export function originNotPublic(address: string): boolean {
+  return addressFamily(address) !== null && !isPublicIpLiteral(address);
+}
+
 // --- the address an edge PUBLISHES -------------------------------------------------------
 
 /**

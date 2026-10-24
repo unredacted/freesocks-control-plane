@@ -136,8 +136,13 @@ export const ensureContext = internalQuery({
     let resolved: string | null = null;
     if (placement !== undefined) resolved = placement;
     else if (caps.placement) {
+      // FCP's own check credential: an inactive instance (out of the issuance
+      // pool, its members still served) is tested where its nodes are.
       resolved = (
-        await resolvePlacementTarget(ctx.db, slug, { onlyServerId: server._id as string })
+        await resolvePlacementTarget(ctx.db, slug, {
+          onlyServerId: server._id as string,
+          includeInactive: true,
+        })
       ).placement;
     }
     // A Trojan transport's L7 proof authenticates with the account's Trojan
@@ -177,6 +182,7 @@ export const mintContext = internalQuery({
       relay.qualificationModeSlug ?? (await enrolledModeOf(ctx.db, relay)) ?? null;
     const { placement } = await resolvePlacementTarget(ctx.db, modeId, {
       onlyServerId: server._id as string,
+      includeInactive: true,
     });
     return {
       slug: relay.slug,
@@ -626,6 +632,7 @@ export const ensure = internalAction({
       issued = await ctx.runAction(internal.backends.issueUser, {
         backend: c.backend,
         pinServerId: c.backendServerId as Id<'backendServers'>,
+        ownCheck: true,
         spec: {
           username: op.username,
           trafficLimitBytes: QUALIFICATION_TRAFFIC_LIMIT_BYTES,

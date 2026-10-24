@@ -1873,6 +1873,14 @@ async function stagePrepare(ctx: ActionCtx, run: Run): Promise<null> {
   let relaySlug = run.relaySlug;
   if (!relayId) {
     // An origin a previous run left owned is reused; any other origin on the node refuses.
+    // One still being deleted (an earlier protection being removed) holds the node
+    // until it is gone: the run waits for it rather than failing as taken.
+    if (ctxRow.existingRelay?.deleting)
+      return tr(ctx, run, {
+        state: 'waiting',
+        event: { level: 'info', code: 'origin_deleting' },
+        scheduleMs: EDGE_PLUMBING.pollMs,
+      });
     if (ctxRow.existingRelay) {
       if (!ctxRow.existingRelay.setupOwned)
         return tr(ctx, run, {
@@ -1937,6 +1945,13 @@ async function stagePrepare(ctx: ActionCtx, run: Run): Promise<null> {
         });
       relayId = created.id;
       relaySlug = slug;
+      // The node is known by the address the panel lists too, when the
+      // operator gave another: a Host dialling it is the node's own.
+      if (plan.managementAddress)
+        await ctx.runMutation(internal.edgeHostHides.recordNodeAddresses, {
+          relayId,
+          addresses: [plan.managementAddress],
+        });
     }
   }
   // Each target's layer is its pick's provider's.
@@ -1991,6 +2006,7 @@ export const prepareContext = internalQuery({
             id: existing._id,
             slug: existing.slug,
             setupOwned: existing.setupOwned === true && !existing.deleting,
+            deleting: existing.deleting === true,
           }
         : null,
     };

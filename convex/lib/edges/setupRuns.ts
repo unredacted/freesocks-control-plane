@@ -130,6 +130,8 @@ export async function planHashOf(input: {
   pickIds?: readonly string[];
   /** Each pick's options (location id -> values), as the plan shows them. */
   pickOptions?: Readonly<Record<string, unknown>>;
+  /** The public address the operator gave for a node FCP does not manage. */
+  givenOrigin?: string;
 }): Promise<string> {
   return sha256Hex(
     canonicalJson({
@@ -143,6 +145,7 @@ export async function planHashOf(input: {
       ...(input.pickOptions && Object.keys(input.pickOptions).length > 0
         ? { pickOptions: input.pickOptions }
         : {}),
+      ...(input.givenOrigin ? { givenOrigin: input.givenOrigin } : {}),
     }),
   );
 }
@@ -162,6 +165,12 @@ export interface SetupPlanInbound {
   detail?: string;
   /** The origin probe got no answer for this HTTP transport (its short reason): L4-only for now. */
   probeFailed?: string;
+  /**
+   * No test link could be made for a load balancer address of it: no Host
+   * dials the node at its origin and its entry cannot be built from the
+   * transport (`test_link_unavailable` on an L4 pick).
+   */
+  noTestLink?: boolean;
 }
 
 export interface SetupPlanDirectHost {
@@ -278,12 +287,39 @@ export interface SetupPlanSnapshot {
   nodeUuid: string;
   nodeName: string;
   originAddress: string;
+  /**
+   * Where `originAddress` comes from: the origin an earlier run left (`relay`),
+   * an enrolled node's intent (`enrolled`), the public address the operator
+   * gave for a node FCP does not manage (`given`), or the address the panel
+   * lists for the node (`panel`, often its private management address).
+   * Absent on runs from before.
+   */
+  originSource?: 'relay' | 'enrolled' | 'given' | 'panel';
+  /**
+   * The origin is an IP no provider reaches (private, loopback, reserved):
+   * no load balancer is offered (`origin_private`). Absent on runs from before.
+   */
+  originPrivate?: boolean;
+  /**
+   * The address the panel lists for the node when the operator gave another
+   * origin: the node is known by it too (the run records it on the origin).
+   */
+  managementAddress?: string;
+  /** The node's earlier origin is still being removed (`edge.origin_deleting` at create). */
+  originDeleting?: boolean;
   relaySlug: string;
   inbounds: SetupPlanInbound[];
   /** Listener keys of the frontable transports (cap 8), or of the ones the operator chose. */
   requiredListeners: string[];
   tooManyInbounds: boolean;
   directHosts: SetupPlanDirectHost[];
+  /**
+   * Hosts on a protected transport that dial neither the node nor FCP: a
+   * front the operator built by hand. Members get them until go-live, then
+   * no longer; they can then be deleted at their provider. Absent on runs
+   * from before.
+   */
+  frontHosts?: Array<{ uuid: string; remark: string }>;
   accounts: SetupPlanAccount[];
   renderGlobal: { willEnable: boolean; affectedRelays: string[] };
   familiesDisabled: string[];

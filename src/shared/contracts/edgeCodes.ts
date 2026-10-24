@@ -177,6 +177,8 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'outside_approved_shape',
   // a load balancer for a WebSocket node's transport (lib/edges/websocketNode.ts)
   'l4_not_for_websocket',
+  // a load balancer for an origin at a private address (lib/edges/ip.ts originNotPublic)
+  'origin_not_public',
   // a Scaleway location with no Project id whose API key's default project is unknown
   'project_unresolved',
   // a load balancer size that takes only the provider's own servers (lib/edges/sizeCheck.ts)
@@ -291,6 +293,9 @@ export const ATTENTION_KINDS = [
   'freedom_node_withheld',
   // An account at its monthly spend cap: no new edge is created in it (docs/edges.md § "Plans and prices").
   'account_spend_cap',
+  // A Host on a protected transport dials a front the operator built by hand (not the node,
+  // not an edge): members no longer get it, so it can be deleted at its provider.
+  'front_host_unused',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -563,6 +568,9 @@ export const SETUP_ACCOUNT_REASONS = [
   // or whose address the probe refuses outright (private, or none at all).
   'origin_unreachable',
   'origin_not_public',
+  // A load balancer for a node whose origin is a private address (the
+  // management address a panel lists for a node FCP does not manage).
+  'origin_private',
   'origin_port_not_carried',
   'account_capacity_reached',
   'account_budget_exhausted',
@@ -589,6 +597,8 @@ export const SETUP_ACCOUNT_REASONS = [
   'size_not_multicloud',
   // The account is at (or these addresses would pass) its monthly spend cap (convex/edgePlans.ts).
   'account_spend_cap_reached',
+  // A load balancer address of a transport no test link can be made for (a set problem).
+  'test_link_unavailable',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 

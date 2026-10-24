@@ -714,7 +714,21 @@ describe('edgeSetupPlan', () => {
       configProfileInboundUuid: `44444444-4444-4444-8444-44444444440${i + 1}`,
       port: 8001 + i,
     }));
-    const { t, serverId, accountId } = await seed({ inbounds: many, hosts: [] });
+    // Members of the two the operator names dial the node directly (what their
+    // test links are built from).
+    const { t, serverId, accountId } = await seed({
+      inbounds: many,
+      hosts: [4, 8].map((n) => ({
+        ...directHostS(),
+        uuid: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaab0${n}`,
+        remark: `direct-ss-${n}`,
+        port: 8000 + n,
+        inbound: {
+          configProfileUuid: FIXTURE_CONFIG_PROFILE,
+          configProfileInboundUuid: `44444444-4444-4444-8444-44444444440${n}`,
+        },
+      })),
+    });
     const all = await planFor(t, serverId);
     expect(all.tooManyInbounds).toBe(true);
     expect(all.inbounds.filter((i) => i.frontable)).toHaveLength(9);
@@ -2442,5 +2456,252 @@ describe('edgeSetupRuns: a zone whose fronts could get no certificate', () => {
     expect(r.need).toMatchObject({ code: 'account_incompatible', detail: 'caa_forbids_ca' });
     const relay = r.relayId ? await t.run((ctx) => ctx.db.get(r.relayId!)) : null;
     expect(relay?.activeRotationId ?? null).toBeNull();
+  });
+});
+
+describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's own load balancer", () => {
+  // The panel lists the node by its private management address; members dial
+  // a load balancer the operator built, through a Host remarked `<node>-relay`
+  // at the load balancer's public address. No Host dials the node itself.
+  const MANAGEMENT = '10.0.0.5';
+  const LB = '198.51.100.20';
+  const HOST_LB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9';
+  const frontHost = (over: Partial<BackendAddress> = {}): BackendAddress => ({
+    uuid: HOST_LB,
+    remark: 'node-one-relay',
+    address: LB,
+    port: 443,
+    sni: 'a.example',
+    inbound: {
+      configProfileUuid: FIXTURE_CONFIG_PROFILE,
+      configProfileInboundUuid: FIXTURE_INBOUND,
+    },
+    ...over,
+  });
+  async function seedFronted(opts: Parameters<typeof seed>[0] = {}) {
+    const s = await seed({ hosts: [frontHost()], ...opts });
+    await s.t.run(async (ctx) => {
+      const row = (await ctx.db.query('backendNodeInventory').collect())[0]!;
+      await ctx.db.patch(row._id, { address: MANAGEMENT });
+    });
+    return s;
+  }
+  const planWith = (t: T, serverId: Id<'backendServers'>, extra: Record<string, unknown> = {}) =>
+    t.action(internal.edgeSetupPlan.plan, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      ...extra,
+    });
+  const codeOf = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (e: unknown) => (e as ConvexError<{ code: string }>).data?.code ?? String(e),
+    );
+
+  test('the panel address is private: no load balancer is offered and the run is refused; the public address the operator gives is checked, shown and used', async () => {
+    const { t, serverId, accountId } = await seedFronted();
+    const plan = await planWith(t, serverId);
+    expect(plan).toMatchObject({
+      originAddress: MANAGEMENT,
+      originSource: 'panel',
+      originPrivate: true,
+    });
+    const acct = plan.accounts.find((a) => a.id === (accountId as string))!;
+    expect(acct.compatible).toBe(false);
+    expect(acct.reasons).toContain('origin_private');
+    // The operator's front is known, and is no direct Host of the node.
+    expect(plan.frontHosts).toEqual([{ uuid: HOST_LB, remark: 'node-one-relay' }]);
+    expect(plan.directHosts).toEqual([]);
+    expect(
+      await codeOf(
+        t.action(internal.edgeSetupPlan.create, {
+          backendServerId: serverId,
+          nodeUuid: NODE_UUID,
+          accountId,
+          planHash: plan.planHash,
+          approvedHideUuids: [],
+        }),
+      ),
+    ).toBe('edge.origin_not_public');
+    // What the operator gives is checked: a private IP, a name that leads to
+    // one, a name with no address, something that is neither.
+    __setPlanOpsForTests({
+      listNodeInbounds: async () => [inboundA],
+      listHosts: async () => [{ ...frontHost(), isDisabled: false }],
+      resolveNames: async (_ctx, names) =>
+        Object.fromEntries(
+          names.map((n) => [
+            n,
+            n === 'inside.example.net' ? ['10.1.2.3'] : n === 'node.example.net' ? [ORIGIN] : [],
+          ]),
+        ),
+    });
+    expect(await codeOf(planWith(t, serverId, { originAddress: '10.0.0.9' }))).toBe(
+      'edge.origin_not_public',
+    );
+    expect(await codeOf(planWith(t, serverId, { originAddress: 'inside.example.net' }))).toBe(
+      'edge.origin_not_public',
+    );
+    expect(await codeOf(planWith(t, serverId, { originAddress: 'nowhere.example.net' }))).toBe(
+      'edge.origin_unresolved',
+    );
+    expect(await codeOf(planWith(t, serverId, { originAddress: 'not an address' }))).toBe(
+      'validation',
+    );
+    const byName = await planWith(t, serverId, { originAddress: 'node.example.net' });
+    expect(byName).toMatchObject({ originAddress: 'node.example.net', originPrivate: false });
+    // The public address: shown, a load balancer offered, the run forwards there.
+    const given = await planWith(t, serverId, { originAddress: ORIGIN });
+    expect(given).toMatchObject({
+      originAddress: ORIGIN,
+      originSource: 'given',
+      originPrivate: false,
+      managementAddress: MANAGEMENT,
+    });
+    expect(given.accounts.find((a) => a.id === (accountId as string))!.compatible).toBe(true);
+    expect(given.planHash).not.toBe(plan.planHash);
+    // A create naming another address than the plan showed is stale.
+    expect(
+      await codeOf(
+        t.action(internal.edgeSetupPlan.create, {
+          backendServerId: serverId,
+          nodeUuid: NODE_UUID,
+          accountId,
+          planHash: given.planHash,
+          approvedHideUuids: [],
+          originAddress: '203.0.113.99',
+        }),
+      ),
+    ).toBe('edge.plan_stale');
+    const res = await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      accountId,
+      planHash: given.planHash,
+      approvedHideUuids: [],
+      originAddress: ORIGIN,
+    });
+    const runId = res.runId as Id<'edgeSetupRuns'>;
+    const r = await pump(t, runId, (x) => !!x.relayId);
+    const created = await relayOf(t, r._id);
+    expect(created.originAddress).toBe(ORIGIN);
+    // The node is known by its management address too: a Host there is its own.
+    expect(created.nodeAddresses).toEqual([MANAGEMENT]);
+    // The origin is now fixed: another address is refused for it.
+    expect(await codeOf(planWith(t, serverId, { originAddress: '203.0.113.99' }))).toBe(
+      'edge.origin_address_locked',
+    );
+  });
+
+  test('a load balancer is never created for an origin at a private address, whoever asks', async () => {
+    const { t, accountId, world } = await seedFronted();
+    const { relayId } = await registerRelay(t, { originAddress: MANAGEMENT });
+    const listenerId = (await t.run((ctx) =>
+      ctx.db
+        .query('relayListeners')
+        .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+        .first(),
+    ))!._id;
+    // Named: refused before anything starts.
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'provision',
+        trigger: 'manual',
+        listenerId,
+        requestedAccountId: accountId,
+      }),
+    ).rejects.toThrow(/origin_not_public/);
+    // Chosen by FCP: no load balancer account is a candidate, nothing is bought.
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      publishOnDone: false,
+    });
+    for (let i = 0; i < 20; i++) {
+      await vi.runAllTimersAsync();
+      await t.finishInProgressScheduledFunctions();
+    }
+    const rot = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(rot.phase).toBe('failed');
+    expect(world.lbCreates()).toBe(0);
+  });
+
+  test('a transport no test link can be made for (no Host at the node, an entry FCP cannot build) is refused before any address is bought', async () => {
+    const { t, serverId, accountId, world } = await seedFronted({
+      inbounds: [inboundS],
+      hosts: [frontHost({ port: 8388, inbound: directHostS().inbound })],
+    });
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const plan = await planWith(t, serverId, { originAddress: ORIGIN, picks: [loc._id] });
+    expect(plan.inbounds.find((i) => i.sourceTag === 'SS_IN')?.noTestLink).toBe(true);
+    expect(plan.set?.problems).toContainEqual({
+      locationId: loc._id,
+      reason: 'test_link_unavailable',
+    });
+    expect(
+      await codeOf(
+        t.action(internal.edgeSetupPlan.create, {
+          backendServerId: serverId,
+          nodeUuid: NODE_UUID,
+          picks: [loc._id],
+          planHash: plan.planHash,
+          approvedHideUuids: [],
+          originAddress: ORIGIN,
+        }),
+      ),
+    ).toBe('edge.test_link_unavailable');
+    expect(world.lbCreates()).toBe(0);
+    // A REALITY transport needs no Host there: its entry is built from the node.
+    const { t: t2, serverId: s2, accountId: a2 } = await seedFronted();
+    const loc2 = (await defaultLocationRow(t2, a2))!;
+    const reality = await planWith(t2, s2, { originAddress: ORIGIN, picks: [loc2._id] });
+    expect(reality.inbounds.find((i) => i.sourceTag === 'VLESS_RELAY_A')?.noTestLink).toBe(
+      undefined,
+    );
+    expect(reality.set?.problems).toEqual([]);
+  });
+});
+
+describe('edgeSetupRuns: protecting a node whose earlier protection is still being removed', () => {
+  test('the plan says so and the create is refused in its own words; a run that meets it waits instead of failing as taken', async () => {
+    const { t, serverId, accountId } = await seed();
+    const { runId } = await startRun(t, serverId, accountId);
+    const r = await pump(t, runId, settled);
+    const relayId = r.relayId!;
+    await t.action(internal.edgeSetupRuns.cancel, { runId });
+    expect((await t.run((ctx) => ctx.db.get(relayId)))?.deleting).toBe(true);
+    const plan = await planFor(t, serverId);
+    expect(plan.originDeleting).toBe(true);
+    expect(plan.existingRelay).toBeNull();
+    await expect(
+      t.action(internal.edgeSetupPlan.create, {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        accountId,
+        planHash: plan.planHash,
+        approvedHideUuids: [],
+      }),
+    ).rejects.toThrow(/origin_deleting/);
+    // A run created just before the delete began meets it at prepare: it waits.
+    await t.run(async (ctx) => {
+      for (const e of await ctx.db.query('edges').collect())
+        await ctx.db.patch(e._id, { status: 'destroyed', publication: 'unpublished' });
+    });
+    await t.mutation(internal.relays.finalizeDelete, { id: relayId });
+    const { runId: run2 } = await startRun(t, serverId, accountId);
+    const { relayId: again } = await registerRelay(t, { slug: 'node-one-old' });
+    await t.run((ctx) => ctx.db.patch(again, { deleting: true }));
+    await vi.advanceTimersByTimeAsync(1);
+    await t.finishInProgressScheduledFunctions();
+    const waiting = await run(t, run2);
+    expect([waiting.stage, waiting.state]).toEqual(['prepare', 'waiting']);
+    expect(waiting.events.at(-1)?.code).toBe('origin_deleting');
+    expect(waiting.need ?? null).toBeNull();
+    // Once it is gone the run carries on with an origin of its own.
+    await t.run((ctx) => ctx.db.delete(again));
+    const r2 = await pump(t, run2, (x) => !!x.relayId);
+    expect(r2.relayId).not.toBe(again);
   });
 });

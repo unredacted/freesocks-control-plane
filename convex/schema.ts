@@ -1641,6 +1641,14 @@ export default defineSchema({
         remarks: v.array(v.string()),
       }),
     ),
+    // The node's OPERATOR FRONTS as the last look at its Hosts saw them
+    // (edgeHostHides.noteFronts): enabled Hosts on a protected transport that
+    // dial neither the node nor an edge of this origin (a load balancer the
+    // operator built by hand). A render leaves them out like any entry it cannot
+    // place, but they are known not to be the node: a withheld entry named by
+    // one raises attention `front_host_unused` (info), never
+    // `direct_host_reappeared`.
+    operatorFronts: v.optional(v.object({ at: v.number(), remarks: v.array(v.string()) })),
     // Block-detector state (convex/edgeDetector.ts).
     suspicion: v.optional(
       v.object({
