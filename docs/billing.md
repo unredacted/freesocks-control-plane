@@ -119,11 +119,13 @@ against the coins quoted. So:
   `pending` / `confirming` / `expired` order, for a payment the processor shows
   but FCP never saw settle (a webhook that never arrived, or a short payment
   from before the tolerance existed); never on `paid` or `failed`. A gift
-  order's codes come back once in the grant response so you can pass them to
-  the buyer through support. Route: `POST /api/v1/admin/billing/orders/{id}/grant|dismiss`
+  order's codes go to the **buyer's own account**, exactly as for a normal
+  purchase: the grant stores them in the order's one-time reveal, and the
+  buyer's `/account` opens it on their next visit (see "Gift purchases"). The
+  operator never sees them, so the grant response carries order facts only.
+  Route: `POST /api/v1/admin/billing/orders/{id}/grant|dismiss`
   (`admin:users:write`, the same scope as granting a membership from the user's
-  page; the response is HPKE-sealed like `POST /admin/membership-codes`, since a
-  gift grant carries bearer codes); audited `admin.billing.order_granted` / `admin.billing.underpaid_dismissed`.
+  page); audited `admin.billing.order_granted` / `admin.billing.underpaid_dismissed`.
 - **Prevention.** Checkout shows a note on the crypto rails: an exchange may take
   its withdrawal fee out of the amount it sends, so add the fee.
 
@@ -178,9 +180,15 @@ Flow (gift):
    same table admin-minted membership codes use — and stashes the **plaintexts**
    in a **transient `giftReveal` buffer** on the order row.
 3. The buyer polls the order, sees each plaintext code **once** (the
-   `GiftRevealModal`), and acknowledges saving them, which clears the buffer. The
+   `GiftRevealModal`), and acknowledges saving them, which clears the buffer. If
+   the codes were minted after the buyer left the return page (a slow crypto
+   confirmation, a top-up, an operator's grant), the account view carries the
+   order as `pendingGiftOrderRef` (`billing.pendingGiftReveal`) and `/account`
+   opens the same reveal on their next visit. The
    **`billing-gift-reveal-sweep`** cron (hourly) clears any un-acknowledged buffer
-   after its window, so plaintext gift codes never linger at rest.
+   `BILLING_GIFT_REVEAL_TTL_HOURS` (default 24) after **payment** (`paidAt`, not
+   order creation), so plaintext gift codes never linger at rest and a late
+   payment still gets its full window.
 4. Recipients redeem a code exactly like an admin-minted membership code (Account
    → redeem), extending their own membership by the purchased duration.
 

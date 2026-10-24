@@ -1157,7 +1157,10 @@ export default defineSchema({
     // cap bounds the SELECTED range instead of silently dropping old ranges
     // once the newest N paid orders no longer reach back that far.
     .index('by_status_paidAt', ['status', 'paidAt'])
-    .index('by_gift_reveal_pending', ['giftRevealPending']),
+    // Pending gift reveals ordered by when the codes were minted (paidAt), so the
+    // reveal sweep's 24 h runs from payment, not checkout: a gift paid or granted
+    // days after checkout keeps its full window.
+    .index('by_gift_reveal_pending_paid', ['giftRevealPending', 'paidAt']),
 
   apiTokens: defineTable({
     name: v.string(),

@@ -1103,17 +1103,13 @@ export const grantOrderByAdmin = internalMutation({
 
 /**
  * Action wrapper: gift orders need their codes minted with the CSPRNG first.
- * A gift's plaintext codes come back ONCE in the response so the operator can
- * pass them to the buyer through support (the buyer's own one-time reveal on
- * the order page lasts only until the gift-reveal sweep). An admin can mint
- * membership codes anyway, so this shows them nothing they couldn't create.
+ * The codes go ONLY to the buyer: grantOrder stores them in the order's
+ * one-time reveal, which the buyer's /account opens on their next visit
+ * (pendingGiftReveal). The operator never sees them.
  */
 export const adminGrantOrder = internalAction({
   args: { orderId: v.string(), actorAdminId: v.optional(v.id('adminUsers')) },
-  handler: async (
-    ctx,
-    a,
-  ): Promise<{ granted: boolean; kind: 'self' | 'gift' | 'donation'; giftCodes: string[] }> => {
+  handler: async (ctx, a): Promise<{ granted: boolean; kind: 'self' | 'gift' | 'donation' }> => {
     const plan = await ctx.runQuery(internal.billing.adminGrantPlan, { orderId: a.orderId });
     let giftCodes: GiftCode[] | undefined;
     if (plan?.kind === 'gift') {
@@ -1127,15 +1123,11 @@ export const adminGrantOrder = internalAction({
         });
       }
     }
-    const res = await ctx.runMutation(internal.billing.grantOrderByAdmin, {
+    return ctx.runMutation(internal.billing.grantOrderByAdmin, {
       orderId: a.orderId,
       giftCodes,
       actorAdminId: a.actorAdminId,
     });
-    return {
-      ...res,
-      giftCodes: res.kind === 'gift' ? (giftCodes ?? []).map((c) => c.plaintext) : [],
-    };
   },
 });
 
@@ -1367,6 +1359,32 @@ export const getAnonOrderStatus = internalQuery({
  * plaintext buffer (so the reveal is truly once). Member-scoped. The gift-reveal
  * sweep is the backstop for buyers who never return.
  */
+/**
+ * The member's oldest paid gift order whose codes they haven't seen yet (an
+ * unacknowledged one-time reveal), so /account can open the reveal on their next
+ * visit instead of only on the checkout return link. That matters whenever the
+ * codes are minted after the buyer left: a slow crypto confirmation, a short
+ * payment topped up later, or an operator's grant. Null when none.
+ */
+export const pendingGiftReveal = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<string | null> => {
+    const recent = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(50);
+    const pending = recent.filter(
+      (o) =>
+        o.kind === 'gift' &&
+        o.status === 'paid' &&
+        o.giftRevealPending === true &&
+        (o.giftReveal?.length ?? 0) > 0,
+    );
+    return pending.length > 0 ? pending[pending.length - 1]!.opaqueRef : null;
+  },
+});
+
 export const ackGiftReveal = internalMutation({
   args: { opaqueRef: v.string(), userId: v.id('users') },
   handler: async (ctx, { opaqueRef, userId }): Promise<{ ok: boolean }> => {
@@ -1378,7 +1396,7 @@ export const ackGiftReveal = internalMutation({
     await ctx.db.patch(order._id, {
       giftReveal: undefined,
       giftRevealAck: true,
-      giftRevealPending: undefined, // leaves the by_gift_reveal_pending index (Review #5)
+      giftRevealPending: undefined, // leaves the by_gift_reveal_pending_paid index (Review #5)
       updatedAt: Date.now(),
     });
     return { ok: true };

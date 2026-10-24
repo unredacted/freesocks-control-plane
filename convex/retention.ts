@@ -217,25 +217,28 @@ export const expireStalePendingOrders = internalMutation({
 });
 
 /**
- * Gift-reveal backstop: clear the transient plaintext code buffer from paid gift
- * orders older than BILLING_GIFT_REVEAL_TTL_HOURS (default 24) that the buyer
- * never acknowledged, so plaintext gift codes never linger at rest. (An explicit
- * ack clears it sooner; the codes themselves remain hash-only in redemptionCodes.)
+ * Gift-reveal backstop: clear the transient plaintext code buffer from gift
+ * orders PAID more than BILLING_GIFT_REVEAL_TTL_HOURS (default 24) ago that the
+ * buyer never acknowledged, so plaintext gift codes never linger at rest. (An
+ * explicit ack clears it sooner; the codes themselves remain hash-only in
+ * redemptionCodes.) The window runs from paidAt, not order creation: a slow
+ * crypto confirmation or an operator grant days after checkout used to lose its
+ * codes to the next hourly sweep before the buyer could see them.
  */
 export const clearStaleGiftReveals = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
     await recordHeartbeat(ctx, 'billing-gift-reveal-sweep');
     const cutoff = Date.now() - num('BILLING_GIFT_REVEAL_TTL_HOURS', 24) * HOUR;
-    // Scan ONLY unacked gift reveals (giftRevealPending=true) older than the TTL,
-    // via a dedicated index (Convex appends _creationTime → oldest first). The old
-    // by_status='paid' scan cleared nothing once >PAGE paid self-orders predated
-    // the window; here cleared rows drop giftRevealPending and leave the eq(true)
-    // index by construction, so the sweep always makes progress. (Review #5.)
+    // Scan ONLY unacked gift reveals (giftRevealPending=true) paid before the
+    // cutoff, via a dedicated index (oldest paidAt first). The old by_status='paid'
+    // scan cleared nothing once >PAGE paid self-orders predated the window; here
+    // cleared rows drop giftRevealPending and leave the eq(true) index by
+    // construction, so the sweep always makes progress. (Review #5.)
     const rows = await ctx.db
       .query('billingOrders')
-      .withIndex('by_gift_reveal_pending', (q) =>
-        q.eq('giftRevealPending', true).lt('_creationTime', cutoff),
+      .withIndex('by_gift_reveal_pending_paid', (q) =>
+        q.eq('giftRevealPending', true).lt('paidAt', cutoff),
       )
       .take(limit ?? PAGE);
     for (const r of rows) {
@@ -253,7 +256,7 @@ export const clearStaleGiftReveals = internalMutation({
 /**
  * One-off backfill (Review #5): gift orders paid BEFORE `giftRevealPending` existed
  * carry a plaintext `giftReveal` but no flag, so clearStaleGiftReveals (which scans
- * only the by_gift_reveal_pending index) never clears them. Flag any unacked paid
+ * only the by_gift_reveal_pending_paid index) never clears them. Flag any unacked paid
  * gift order so the normal sweep clears it on its next run. Paged by the by_status
  * index + a _creationTime cursor, idempotent (a flagged row no longer matches).
  * Run `bunx convex run retention:backfillGiftRevealPending '{}'`; if it returns a

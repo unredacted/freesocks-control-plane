@@ -391,6 +391,10 @@ interface AccountView {
   } | null;
   /** The member's stored location preference (a location code; null = automatic). */
   preferredLocation: string | null;
+  /** A paid gift order whose codes the member hasn't seen yet (its order ref,
+   *  the same poll token as /account?order=), so the SPA opens the one-time
+   *  reveal on the next visit. Null when none. */
+  pendingGiftOrderRef: string | null;
 }
 
 export const getAccountView = internalAction({
@@ -550,6 +554,7 @@ export const getAccountView = internalAction({
       },
       subscription,
       preferredLocation: user.preferredLocation ?? null,
+      pendingGiftOrderRef: await ctx.runQuery(internal.billing.pendingGiftReveal, { userId }),
     };
   },
 });

@@ -3896,15 +3896,13 @@ http.route({
 // POST /api/v1/admin/billing/orders/{id}/{op}, op ∈ grant | dismiss (no body).
 // grant: deliver what the order bought (the same grant as a full payment) for
 // a held `underpaid` order or one stuck pending/confirming/expired; a gift's
-// codes come back once in the response. dismiss: close a held `underpaid`
-// order as failed. Same scope as granting a membership from the user's page.
-// Sealed (response REVEAL): a gift grant returns bearer membership codes, the
-// same secret class as POST /admin/membership-codes, so they never cross a
-// TLS-terminating CDN in the clear.
+// codes go to the buyer's own account reveal, never into this response.
+// dismiss: close a held `underpaid` order as failed. Same scope as granting a
+// membership from the user's page. Unsealed: the response is order facts only.
 http.route({
   pathPrefix: '/api/v1/admin/billing/orders/',
   method: 'POST',
-  handler: sealed(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:users:write');
     if (!admin) return ADMIN_UNAUTH();
     const parts = new URL(req.url).pathname

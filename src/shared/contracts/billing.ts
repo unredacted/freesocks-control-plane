@@ -262,12 +262,10 @@ export const AdminBillingOverview = z.object({
 export type AdminBillingOverview = z.infer<typeof AdminBillingOverview>;
 
 /** `POST /api/v1/admin/billing/orders/{id}/grant`: a held underpaid order granted anyway. */
+/** A gift order's codes go to the buyer's own account reveal, never to the operator. */
 export const AdminBillingOrderGrantResponse = z.object({
   granted: z.boolean(),
   kind: z.enum(['self', 'gift', 'donation']),
-  /** Gift orders only: the minted codes, shown ONCE so the operator can pass
-   *  them to the buyer. Empty for a membership or donation. */
-  giftCodes: z.array(z.string()).default([]),
 });
 /** `POST /api/v1/admin/billing/orders/{id}/dismiss`: a held underpaid order closed as failed. */
 export const AdminBillingOrderDismissResponse = z.object({ ok: z.literal(true) });

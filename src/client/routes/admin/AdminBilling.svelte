@@ -25,7 +25,6 @@
   import { formatDate, formatMoney } from '../../lib/i18n/format';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import { copyText } from '../../lib/utils';
 
   const qc = useQueryClient();
   let statusFilter = $state('');
@@ -98,8 +97,6 @@
   // server re-checks the status, so this set only decides which rows offer it.
   const GRANTABLE = new Set(['underpaid', 'confirming', 'pending', 'expired']);
   let pendingAction = $state<{ order: AdminBillingOrder; op: 'grant' | 'dismiss' } | null>(null);
-  let giftReveal = $state<string[] | null>(null);
-  let giftAck = $state(false);
 
   const resolveOrder = createMutation(() => ({
     mutationFn: async ({ id, op }: { id: string; op: 'grant' | 'dismiss' }) => {
@@ -108,14 +105,10 @@
         ? apiClient.post(path, {}, AdminBillingOrderGrantResponse)
         : apiClient.post(path, {}, AdminBillingOrderDismissResponse);
     },
-    onSuccess: (res, vars) => {
+    onSuccess: (_res, vars) => {
       pendingAction = null;
       void qc.invalidateQueries({ queryKey: ['admin', 'billing'] });
       void qc.invalidateQueries({ queryKey: ['admin', 'billing-revenue'] });
-      if ('giftCodes' in res && res.giftCodes.length > 0) {
-        giftAck = false;
-        giftReveal = res.giftCodes;
-      }
       toast.success(vars.op === 'grant' ? 'Order granted' : 'Order dismissed');
     },
     onError: (err) => toast.error(apiErrorMessage(err)),
@@ -132,11 +125,6 @@
     }
     if (o.kind === 'donation') return 'the donation to the shared free-user bandwidth pool';
     return `${o.durationDays} days of membership for ${o.userHandle ?? 'the buyer'}`;
-  }
-
-  async function copyGiftCodes() {
-    if (giftReveal && (await copyText(giftReveal.join('\n')))) toast.success('Codes copied');
-    else toast.error('Copy failed: select the codes and copy them manually.');
   }
 
   function addDuration() {
@@ -1171,7 +1159,8 @@
               {/if}
               Granting delivers {grantDelivers(o)} and marks the order paid.
               {#if o.kind === 'gift'}
-                You'll see the codes once, to pass on to the buyer.
+                The codes go to the buyer's account, shown the next time they open it (within 24
+                hours, or they are cleared).
               {/if}
             {/if}
           </AlertDialog.Description>
@@ -1192,38 +1181,6 @@
           </AlertDialog.Action>
         </AlertDialog.Footer>
       {/if}
-    </AlertDialog.Content>
-  </AlertDialog.Root>
-
-  <!-- Gift codes from a hand grant: shown once, for the operator to pass on. -->
-  <AlertDialog.Root
-    open={!!giftReveal}
-    onOpenChange={(next) => {
-      if (!next && !giftAck) {
-        toast.warning('Save the codes first', { description: 'They are shown only once.' });
-        return;
-      }
-      if (!next) giftReveal = null;
-    }}
-  >
-    <AlertDialog.Content>
-      <AlertDialog.Header>
-        <AlertDialog.Title>Pass these codes to the buyer</AlertDialog.Title>
-        <AlertDialog.Description>
-          This is the only time the codes are shown here. Send them to the buyer through support.
-        </AlertDialog.Description>
-      </AlertDialog.Header>
-      <pre class="max-h-48 overflow-auto rounded bg-muted p-3 font-mono text-xs">{(
-          giftReveal ?? []
-        ).join('\n')}</pre>
-      <Button variant="outline" size="sm" class="w-fit" onclick={copyGiftCodes}>Copy all</Button>
-      <label class="flex cursor-pointer select-none items-center gap-2 text-sm">
-        <Checkbox bind:checked={giftAck} id="ack-gift-codes" />
-        I have saved these codes.
-      </label>
-      <AlertDialog.Footer>
-        <Button disabled={!giftAck} onclick={() => (giftReveal = null)}>Done</Button>
-      </AlertDialog.Footer>
     </AlertDialog.Content>
   </AlertDialog.Root>
 </AdminLayout>

@@ -2150,7 +2150,7 @@ describe('admin billing order resolve route', () => {
     expect((await post(`/api/v1/admin/billing/orders/${orderId}/grant`, reader)).status).toBe(401);
     const ok = await post(`/api/v1/admin/billing/orders/${orderId}/grant`, writer);
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ granted: true, kind: 'self', giftCodes: [] });
+    expect(await ok.json()).toEqual({ granted: true, kind: 'self' });
     const again = await post(`/api/v1/admin/billing/orders/${orderId}/dismiss`, writer);
     expect(again.status).toBe(409);
     expect((await post(`/api/v1/admin/billing/orders/${orderId}/refund`, writer)).status).toBe(404);

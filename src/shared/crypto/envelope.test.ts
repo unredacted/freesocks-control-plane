@@ -52,10 +52,6 @@ describe('routePolicy (method-aware)', () => {
     expect(routePolicy('/api/v1/admin/tokens', 'GET')).toBeUndefined(); // the list is not sealed
     expect(routePolicy('/api/v1/admin/membership-codes', 'POST')?.response).toBe('reveal');
     expect(routePolicy('/api/v1/admin/admins/invite', 'POST')?.response).toBe('reveal');
-    // A gift-order grant returns minted membership codes once.
-    expect(routePolicy('/api/v1/admin/billing/orders/abc/grant', 'POST')?.response).toBe('reveal');
-    // ...but the billing overview GET is not sealed.
-    expect(routePolicy('/api/v1/admin/billing', 'GET')).toBeUndefined();
   });
 
   test('admin credential uploads seal the request on the write verb, not the GET list', () => {

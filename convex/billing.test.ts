@@ -2495,7 +2495,7 @@ describe('admin: resolving an order by hand', () => {
     const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-admin-grant');
     await t.run((ctx) => ctx.db.patch(orderId, { status: 'underpaid', paidRatio: 0.8 }));
     const res = await t.action(internal.billing.adminGrantOrder, { orderId });
-    expect(res).toEqual({ granted: true, kind: 'self', giftCodes: [] });
+    expect(res).toEqual({ granted: true, kind: 'self' });
     await t.run(async (ctx) => {
       const order = await ctx.db.get(orderId);
       expect(order?.status).toBe('paid');
@@ -2536,25 +2536,50 @@ describe('admin: resolving an order by hand', () => {
     );
   });
 
-  test('granting a gift order mints its codes and returns them once to the operator', async () => {
+  test("granting a gift order sends the codes to the buyer's account, never the operator", async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
     const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-admin-gift');
     await t.run((ctx) => ctx.db.patch(orderId, { status: 'underpaid', kind: 'gift', quantity: 2 }));
     const res = await t.action(internal.billing.adminGrantOrder, { orderId });
-    expect(res.kind).toBe('gift');
-    expect(res.giftCodes).toHaveLength(2);
+    expect(res).toEqual({ granted: true, kind: 'gift' });
+    const order = await t.run((ctx) => ctx.db.get(orderId));
+    expect(order?.giftReveal).toHaveLength(2);
+    expect(order?.giftRevealPending).toBe(true);
+    // The buyer's /account surfaces it on their next visit...
+    expect(await t.query(internal.billing.pendingGiftReveal, { userId })).toBe('ref-admin-gift');
     await t.run(async (ctx) => {
-      const codes = await ctx.db.query('redemptionCodes').collect();
-      expect(codes).toHaveLength(2);
+      expect(await ctx.db.query('redemptionCodes').collect()).toHaveLength(2);
       // The buyer's own membership is untouched by a gift.
       expect((await ctx.db.get(userId))?.membershipExpiresAt).toBeUndefined();
       // Never the plaintext in the audit trail.
-      const audits = await ctx.db.query('auditLog').collect();
-      for (const c of res.giftCodes) {
-        expect(JSON.stringify(audits)).not.toContain(c);
-      }
+      const audits = JSON.stringify(await ctx.db.query('auditLog').collect());
+      for (const c of order!.giftReveal!) expect(audits).not.toContain(c);
     });
+    // ...until they acknowledge the reveal.
+    await t.mutation(internal.billing.ackGiftReveal, { opaqueRef: 'ref-admin-gift', userId });
+    expect(await t.query(internal.billing.pendingGiftReveal, { userId })).toBeNull();
+  });
+
+  test('pendingGiftReveal ignores self orders, acked gifts, and other members', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const self = await insertPendingOrder(t, userId, memberTierId, 'ref-self-paid');
+    await t.run((ctx) => ctx.db.patch(self, { status: 'paid', paidAt: Date.now() }));
+    const acked = await insertPendingOrder(t, userId, memberTierId, 'ref-gift-acked');
+    await t.run((ctx) =>
+      ctx.db.patch(acked, {
+        status: 'paid',
+        kind: 'gift',
+        paidAt: Date.now(),
+        giftRevealAck: true,
+      }),
+    );
+    expect(await t.query(internal.billing.pendingGiftReveal, { userId })).toBeNull();
+    const otherUser = await t.run((ctx) =>
+      ctx.db.insert('users', { tierId: memberTierId, status: 'active', updatedAt: Date.now() }),
+    );
+    expect(await t.query(internal.billing.pendingGiftReveal, { userId: otherUser })).toBeNull();
   });
 
   test('dismissing closes an underpaid order as failed; other statuses refuse', async () => {
