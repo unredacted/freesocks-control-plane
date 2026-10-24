@@ -20,6 +20,19 @@
 # postgres — the server pin is in the compose file, the sidecar's `pg_dump` is
 # `FROM postgres:…` in docker/backup.Dockerfile, and an older pg_dump refuses to
 # dump a newer-major server, so a compose-only bump silently breaks backups.
+#
+# SCHEDULE: the images production runs are checked every day. Dependabot does
+# not know about vulnerabilities inside an image: no security update ever fires
+# for one, so a fixed image reaches us only as a version update ("a newer tag or
+# digest exists"), and on a weekly schedule that meant up to a week. It came to
+# a head in Oct 2026: the Bun and Cap releases fixing three high Bun advisories
+# shipped on a Thursday and would have waited for the next Monday. `cron`, not
+# `interval: daily`, because daily skips weekends (same as the convex-node entry
+# below). GitHub's default 3-day cooldown still applies to every version update
+# here (no `cooldown` key = 3 days, since Jul 2026), so a new image is proposed
+# three to four days after it is published; bump by hand when a security fix
+# can't wait that long. The compose entry covers the test compose files too
+# (one grouped PR either way); the test-only Dockerfiles stay weekly.
 
 version: 2
 updates:
@@ -41,7 +54,9 @@ updates:
   #    § "Cap image provenance"). Pinned tag@digest on a real semver tag
   #    (was `latest` until 2026-08-25), so the PR names the actual version
   #    jump — check the upstream release notes (tiagorangel1/cap, releases
-  #    tagged `standalone@<version>`) before merging.
+  #    tagged `standalone@<version>`) before merging. Not every version gets a
+  #    release (none after 3.1.13 as of 3.1.17): then read the commits under
+  #    standalone/ and core/ since the pinned version.
   #  - `remnawave/backend` is only the throwaway integration-test panel in
   #    docker-compose.remnawave-test.yml, whose whole job is to catch provider
   #    contract drift. Bumping it is in scope, but it should track whatever
@@ -56,9 +71,8 @@ updates:
   - package-ecosystem: docker-compose
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-      time: '09:00'
+      interval: cron
+      cronjob: '0 9 * * *'
       timezone: Etc/UTC
     open-pull-requests-limit: 10
     labels: [dependencies, docker]
@@ -89,13 +103,29 @@ updates:
   # server pin, and `oven/bun` must equal `packageManager` in package.json —
   # which Dependabot does NOT touch, since the bun ecosystem is not enrolled.
   # Both are enforced by convex/deployPins.test.ts. The Convex images' Node
-  # (docker/convex-node/) has its own, faster entry below.
+  # (docker/convex-node/) has its own entry below, and the test images theirs.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: cron
+      cronjob: '0 9 * * *'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 10
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker)
+    groups:
+      base-images:
+        # Unfiltered for the same reason as the compose group above.
+        patterns: ['*']
+
+  # --- test-only Dockerfile base images --------------------------------------
   - package-ecosystem: docker
     # Not recursive: docker/compat/ (the client-compatibility images) and
     # docker/edge-connection-test/ must be listed explicitly or their base
     # images never get update PRs (the edge-connection runner's node pin sat
     # unwatched until Oct 2026). Their node pins are test-only, so weekly.
-    directories: [/docker, /docker/compat, /docker/edge-connection-test]
+    directories: [/docker/compat, /docker/edge-connection-test]
     schedule:
       interval: weekly
       day: monday
@@ -106,8 +136,7 @@ updates:
     commit-message:
       prefix: chore(docker)
     groups:
-      base-images:
-        # Unfiltered for the same reason as the compose group above.
+      test-images:
         patterns: ['*']
     ignore:
       # A new Node major is a person's call (the test images follow the one the

@@ -1,7 +1,7 @@
 # Known CVEs in every image the production stack runs.
 #
 # The update bots keep the pins moving: Dependabot re-pins the base and compose
-# images weekly and the Convex images' Node (docker/convex-node/) daily, and
+# images and the Convex images' Node (docker/convex-node/) daily, and
 # convex-repin.yml the Convex images monthly. None of them looks inside an
 # image. This does: the OS packages of the Ubuntu, Debian and Alpine bases, the
 # language packages (npm trees, the Go modules in Caddy) and the runtimes.
