@@ -464,15 +464,17 @@ export const createCheckout = internalAction({
 // the order forward — a late 'pending' after 'confirming', or 'confirming' after
 // a terminal 'failed'/'expired', is ignored rather than walking the lifecycle
 // backward. 'paid' is terminal and guarded separately at the top of applyEvent.
-// 'underpaid' outranks failed/expired: money arrived, so neither a late expiry
-// event nor an order the stale sweep already expired can bury it.
+// 'underpaid' outranks 'expired': money arrived, so neither a late expiry event
+// nor an order the stale sweep already expired can bury it. 'failed' outranks
+// 'underpaid': a refund/reversal (or BTCPay invalidating the payment) closes a
+// held short payment, and a late out-of-order partial event can't reopen it.
 const STATUS_RANK: Record<OrderStatus, number> = {
   pending: 0,
   confirming: 1,
-  failed: 2,
   expired: 2,
   underpaid: 3,
-  paid: 4,
+  failed: 4,
+  paid: 5,
 };
 
 /**
@@ -541,6 +543,20 @@ async function grantOrder(
   },
 ): Promise<{ applied: boolean; granted: boolean }> {
   const now = Date.now();
+  // A short payment accepted within the tolerance credits only the share of a
+  // donation that actually arrived (rounded down), so the shared pool and the
+  // donor's totals never count money that wasn't sent. The credited amount is
+  // written back as the order's donationCents, so a later refund unwinds
+  // exactly what was credited. The membership/gift part is delivered in full.
+  const requestedDonation =
+    order.kind === 'donation'
+      ? (order.donationCents ?? order.amountCents)
+      : (order.donationCents ?? 0);
+  const donated =
+    g.paidRatio != null && g.paidRatio < 1
+      ? Math.floor(requestedDonation * g.paidRatio)
+      : requestedDonation;
+  const donationPatch = donated !== requestedDonation ? { donationCents: donated } : {};
   // Standalone donation order: record the donation + fund the free-bandwidth
   // pool + stamp the donor badge; NO tier/membership grant. (Modeled on the
   // gift branch — "paid, but don't extend the buyer's own membership".)
@@ -550,9 +566,10 @@ async function grantOrder(
       paidAt: now,
       processorRef: g.processorRef || order.processorRef,
       ...(g.paidRatio != null ? { paidRatio: g.paidRatio } : {}),
+      ...donationPatch,
       updatedAt: now,
     });
-    await fundDonation(ctx, order.userId, order.donationCents ?? order.amountCents, now, order._id);
+    await fundDonation(ctx, order.userId, donated, now, order._id);
     await writeAuditLog(ctx, {
       actorType: g.actorType,
       actorId: g.actorId,
@@ -563,7 +580,7 @@ async function grantOrder(
         processor: g.processor,
         amountCents: order.amountCents,
         kind: 'donation',
-        donationCents: order.donationCents ?? order.amountCents,
+        donationCents: donated,
       },
     });
     return { applied: true, granted: true };
@@ -590,6 +607,7 @@ async function grantOrder(
       paidAt: now,
       processorRef: g.processorRef || order.processorRef,
       ...(g.paidRatio != null ? { paidRatio: g.paidRatio } : {}),
+      ...donationPatch,
       giftReveal: codes.map((c) => c.plaintext),
       giftRevealPending: true, // sweep/ack clears it — see retention.clearStaleGiftReveals (Review #5)
       updatedAt: now,
@@ -615,7 +633,7 @@ async function grantOrder(
       });
     }
     // A donation may ride a gift purchase too.
-    await fundDonation(ctx, buyerId, order.donationCents, now, order._id);
+    await fundDonation(ctx, buyerId, donated, now, order._id);
     await writeAuditLog(ctx, {
       actorType: g.actorType,
       actorId: g.actorId,
@@ -629,7 +647,7 @@ async function grantOrder(
         amountCents: order.amountCents,
         kind: 'gift',
         quantity: codes.length,
-        donationCents: order.donationCents ?? 0,
+        donationCents: donated,
       },
     });
     return { applied: true, granted: true };
@@ -642,6 +660,7 @@ async function grantOrder(
     paidAt: now,
     processorRef: g.processorRef || order.processorRef,
     ...(g.paidRatio != null ? { paidRatio: g.paidRatio } : {}),
+    ...donationPatch,
     updatedAt: now,
   });
   const expiresAtMs = Math.max(now, user.membershipExpiresAt ?? 0) + order.durationDays * DAY_MS;
@@ -653,7 +672,7 @@ async function grantOrder(
     triggeredBy: g.actorType,
   });
   // Apply any optional donation that rode on the membership charge.
-  await fundDonation(ctx, buyerId, order.donationCents, now, order._id);
+  await fundDonation(ctx, buyerId, donated, now, order._id);
   await writeAuditLog(ctx, {
     actorType: g.actorType,
     actorId: g.actorId,
@@ -665,7 +684,7 @@ async function grantOrder(
       tierSlug: tier?.slug,
       durationDays: order.durationDays,
       amountCents: order.amountCents,
-      donationCents: order.donationCents ?? 0,
+      donationCents: donated,
     },
   });
   return { applied: true, granted: true };
@@ -853,7 +872,7 @@ export const applyEvent = internalMutation({
       // undershoots the order, is a processor-side anomaly — e.g. a 1-cent
       // invoice forged with a victim's orderRef on a shared store/account.
       const refuse = async (
-        reason: 'ref_mismatch' | 'amount_mismatch',
+        reason: 'ref_mismatch' | 'amount_mismatch' | 'dismissed',
       ): Promise<{ applied: boolean; granted: boolean }> => {
         console.warn(
           `[billing] grant refused (${reason}) for order ${order.opaqueRef.slice(0, 8)}…`,
@@ -879,6 +898,10 @@ export const applyEvent = internalMutation({
         });
         return { applied: false, granted: false };
       };
+      // An operator dismissed this order (refunded or settled it off-platform):
+      // that decision is final, so a later payment event (a top-up, a status
+      // flipped by hand on the processor) is refused and audited, never granted.
+      if (order.dismissedAt != null) return refuse('dismissed');
       if (a.checkoutRef && order.processorRef && a.checkoutRef !== order.processorRef) {
         return refuse('ref_mismatch');
       }
@@ -1124,7 +1147,8 @@ export const dismissUnderpaidOrder = internalMutation({
   args: { orderId: v.string(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, a): Promise<{ ok: true }> => {
     const order = await loadOrderForAdmin(ctx, a.orderId, new Set<OrderStatus>(['underpaid']));
-    await ctx.db.patch(order._id, { status: 'failed', updatedAt: Date.now() });
+    const now = Date.now();
+    await ctx.db.patch(order._id, { status: 'failed', dismissedAt: now, updatedAt: now });
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId,

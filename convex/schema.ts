@@ -1114,6 +1114,9 @@ export default defineSchema({
     // a short payment granted within the tolerance. Absent = paid in full (or
     // not yet paid).
     paidRatio: v.optional(v.number()),
+    // Set when an operator dismissed this order from Admin → Billing (refunded
+    // or settled off-platform). Terminal: no later webhook may grant it.
+    dismissedAt: v.optional(v.number()),
     // Gift purchases: a 'gift' order mints `quantity` shareable codes (bound to
     // the buyer via redemptionCodes.purchasedByOrderId) instead of extending the
     // buyer's own membership. Absent ⇒ legacy self-upgrade. A 'donation' order

@@ -81,9 +81,10 @@ ids), enforced by an allowlist, and is covered by a test that asserts a
 - `underpaid`: the money arrived but short of the price by more than the
   underpayment tolerance (see below). Nothing is granted, and the sweep never
   expires it: it waits on Admin → Billing for the operator to grant or dismiss.
-  It outranks `expired`/`failed`, so a short payment landing on an
-  already-swept order is still held. A top-up payment (a later full `paid`
-  event on the same invoice) grants it.
+  It outranks `expired`, so a short payment landing on an already-swept order
+  is still held. A refund/reversal (`failed`) closes it, and a late
+  out-of-order partial event can't reopen a `failed` order. A top-up payment (a
+  later full `paid` event on the same invoice) grants it.
 
 ### Underpayments (exchange withdrawal fees)
 
@@ -101,7 +102,10 @@ against the coins quoted. So:
   crypto term ($14, 3 months); the worst a deliberate underpayer gains is 5%.
 - **Within the tolerance** the order grants as usual and is audited
   `billing.underpayment_accepted` (with `paidPermille` and `tolerancePct`); the
-  order records `paidRatio`.
+  order records `paidRatio`. The membership or gift is delivered in full, but a
+  donation (standalone or riding along) is credited only for the share that
+  arrived (`floor(donationCents x paidRatio)`), written back as the order's
+  `donationCents` so a later refund unwinds exactly that.
 - **Beyond it**, or when the shortfall can't be measured (amounts missing), the
   order is held as `underpaid` and audited `billing.underpayment_seen`. The
   member's return page tells them the payment arrived short and to contact
@@ -109,7 +113,9 @@ against the coins quoted. So:
 - **Resolving by hand.** Admin → Billing shows a banner and an `underpaid`
   filter. Each held order offers **Grant** (deliver what it bought, exactly the
   grant a full payment gets) and **Dismiss** (close it as `failed` once you have
-  refunded or settled it another way). **Grant** is also offered on a
+  refunded or settled it another way). Dismissal is terminal: it stamps
+  `dismissedAt`, and any later payment event for that order is refused and
+  audited `billing.grant_refused` (`reason: dismissed`). **Grant** is also offered on a
   `pending` / `confirming` / `expired` order, for a payment the processor shows
   but FCP never saw settle (a webhook that never arrived, or a short payment
   from before the tolerance existed); never on `paid` or `failed`. A gift

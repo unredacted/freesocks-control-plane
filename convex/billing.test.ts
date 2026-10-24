@@ -2578,3 +2578,119 @@ describe('admin: resolving an order by hand', () => {
     ).toBe('conflict');
   });
 });
+
+describe('underpayment review fixes', () => {
+  const applyPaid = (t: ReturnType<typeof convexTest>, ref: string, extra = {}) =>
+    t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: ref,
+      status: 'paid',
+      processorRef: `p-${ref}-${Math.random()}`,
+      ...extra,
+    });
+
+  test('a dismissed order is never granted by a later payment event', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, freeTierId, memberTierId } = await seedTiersAndUser(t);
+    const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-dismissed');
+    await t.run((ctx) => ctx.db.patch(orderId, { status: 'underpaid', paidRatio: 0.5 }));
+    await t.mutation(internal.billing.dismissUnderpaidOrder, { orderId });
+    // e.g. the payer tops up after the operator already refunded them.
+    expect(await applyPaid(t, 'ref-dismissed')).toEqual({ applied: false, granted: false });
+    await t.run(async (ctx) => {
+      const order = await ctx.db.get(orderId);
+      expect(order?.status).toBe('failed');
+      expect(order?.dismissedAt).toBeTypeOf('number');
+      expect((await ctx.db.get(userId))?.tierId).toBe(freeTierId);
+      const refused = (await ctx.db.query('auditLog').collect()).find(
+        (a) => a.action === 'billing.grant_refused',
+      );
+      expect(refused?.payload).toMatchObject({ reason: 'dismissed' });
+    });
+  });
+
+  test('a short donation credits only what arrived, and a refund unwinds exactly that', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTiersAndUser(t);
+    const orderId = await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef: 'ref-short-don',
+        userId,
+        durationDays: 0,
+        amountCents: 10000,
+        donationCents: 10000,
+        kind: 'donation',
+        currency: 'USD',
+        status: 'pending',
+        updatedAt: Date.now(),
+      }),
+    );
+    await applyPaid(t, 'ref-short-don', { underpaid: true, paidRatio: 0.9537 });
+    await t.run(async (ctx) => {
+      const order = await ctx.db.get(orderId);
+      expect(order?.status).toBe('paid');
+      expect(order?.donationCents).toBe(9537); // floor(10000 x 0.9537)
+      expect((await ctx.db.get(userId))?.donatedCentsTotal).toBe(9537);
+      expect((await readDonationState(ctx.db)).donatedCents).toBe(9537);
+    });
+    // Refund: the unwind takes back the credited amount, not the requested one.
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-short-don',
+      status: 'failed',
+      processorRef: 'p-refund',
+    });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))?.donatedCentsTotal).toBe(0);
+      expect((await readDonationState(ctx.db)).donatedCents).toBe(0);
+    });
+  });
+
+  test('a membership+donation paid short grants the membership and credits the donation pro rata', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-short-mix');
+    await t.run((ctx) => ctx.db.patch(orderId, { amountCents: 2400, donationCents: 1000 }));
+    await applyPaid(t, 'ref-short-mix', { underpaid: true, paidRatio: 0.96 });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(orderId))?.donationCents).toBe(960);
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(memberTierId);
+      expect(user?.donatedCentsTotal).toBe(960);
+    });
+  });
+
+  test('a refund closes a held underpaid order; a late partial event cannot reopen it', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-refund-held');
+    await t.run((ctx) => ctx.db.patch(orderId, { status: 'underpaid', paidRatio: 0.5 }));
+    // NOWPayments `refunded` normalizes to failed.
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-refund-held',
+      status: 'failed',
+      processorRef: 'p-r1',
+    });
+    expect((await t.run((ctx) => ctx.db.get(orderId)))?.status).toBe('failed');
+    // An out-of-order BTCPay-style held event (never final) after the refund.
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-refund-held',
+      status: 'underpaid',
+      processorRef: 'p-r2',
+      underpaid: true,
+      paidRatio: 0.5,
+    });
+    expect((await t.run((ctx) => ctx.db.get(orderId)))?.status).toBe('failed');
+    // And the admin queue no longer offers Grant on it.
+    let code: string | undefined;
+    try {
+      await t.action(internal.billing.adminGrantOrder, { orderId });
+    } catch (e) {
+      code = (e as ConvexError<{ code: string }>).data.code;
+    }
+    expect(code).toBe('conflict');
+  });
+});
