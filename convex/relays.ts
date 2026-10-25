@@ -9,6 +9,7 @@
  * inheritance and the publication epoch the render cache keys on). Rotation
  * state lives in edgeRotations.ts; edge rows in edges.ts.
  */
+import { clientConfirmationStands } from './lib/edges/tickedLocation';
 import { verificationListenerOf } from './lib/edges/verificationContext';
 import { ConvexError, v } from 'convex/values';
 import { resolveModeCatalog } from './lib/connectionModes';
@@ -1807,11 +1808,13 @@ export async function checkPublishable(
   // it holds now (lib/edges/verification.ts): the operator's own, or FCP's own
   // client check where it may stand in for one (a ticked location, the switch
   // on; edgeClientCheck.ts). A stale one (listener revision bump,
-  // re-addressing) is none at all. The L7 proof above is the L7 form.
+  // re-addressing) is none at all, and FCP's own stands only while the switch
+  // is on and the location is still ticked. The L7 proof above is the L7 form.
   if (
     !opts.skipVerification &&
     needsEndpointVerification(edge) &&
-    !verificationCurrent(edge, await verificationListenerOf(ctx.db, listener))
+    (!verificationCurrent(edge, await verificationListenerOf(ctx.db, listener)) ||
+      !(await clientConfirmationStands(ctx.db, edge)))
   )
     return { ok: false, code: 'unverified_endpoint' };
   if (edge.managed && !providerHealthSatisfies(edge.provider, edge.health, requireHealth))

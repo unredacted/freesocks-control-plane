@@ -33,6 +33,8 @@ import { defaultLocationRow } from './lib/edges/testing/reads';
 import { upsertSettingRow } from './appSettings';
 import { __setClientCheckLinks } from './edgeClientCheck';
 import { CLIENT_CHECK_FAIL_COOLDOWN_MS, reblockedSoon } from './edgeRotations';
+import { checkPublishable } from './relays';
+import { resolveEdgeConfig } from './lib/edgeConfig';
 import { DEFAULT_CLIENT_CHECK_URL } from './lib/edges/clientCheck/client';
 import {
   CLIENT_CHECK_SIGNATURE_HEADER,
@@ -361,6 +363,78 @@ describe('replacing a blocked address without a spare', () => {
     expect(now.verification).toMatchObject({ method: 'client_check' });
   });
 
+  test('a spare whose check found the address at fault is not taken again; the next replace buys a new one', async () => {
+    vi.useFakeTimers();
+    // The first address minted (the spare) never carries a session; the rest do.
+    const w = world((_engine, address) =>
+      address === NEW_EDGE ? { code: 'timeout' } : { code: 'ok' },
+    );
+    const { t, relayId, listenerId, oldEdgeId } = await seed();
+    const spare = (
+      await drain(
+        t,
+        (
+          await t.mutation(internal.edgeRotations.start, {
+            relayId,
+            kind: 'provision',
+            trigger: 'manual',
+            publishOnDone: false,
+            listenerId,
+          })
+        ).rotationId,
+      )
+    ).toEdgeId!;
+    const first = await drain(t, (await replace(t, relayId, oldEdgeId)).rotationId);
+    expect(first).toMatchObject({ phase: 'failed', outcome: 'client_check_failed' });
+    expect(first.viaStandby).toBe(true);
+    const failed = (await t.query(internal.edges.get, { id: spare }))!;
+    expect(failed).toMatchObject({ status: 'active', publication: 'unpublished' });
+    expect(failed.clientCheck).toMatchObject({ verdict: 'address_failed' });
+    await t.run((ctx) => ctx.db.patch(relayId, { cooldownUntil: undefined, rotationsToday: 0 }));
+    vi.advanceTimersByTime(1000);
+    const second = await drain(t, (await replace(t, relayId, oldEdgeId)).rotationId);
+    expect(second).toMatchObject({ phase: 'done', outcome: 'published' });
+    expect(second.viaStandby).toBeFalsy();
+    expect(second.toEdgeId).not.toBe(spare);
+    expect(w.lbs.size).toBe(2);
+  });
+
+  test('a confirmation FCP wrote opens the publication gate only on its terms: the switch on, the location ticked', async () => {
+    vi.useFakeTimers();
+    world(() => ({ code: 'ok' }));
+    const { t, relayId, listenerId, locationId } = await seed();
+    const spare = (
+      await drain(
+        t,
+        (
+          await t.mutation(internal.edgeRotations.start, {
+            relayId,
+            kind: 'provision',
+            trigger: 'manual',
+            publishOnDone: false,
+            listenerId,
+          })
+        ).rotationId,
+      )
+    ).toEdgeId!;
+    expect(await t.action(internal.edgeClientCheck.check, { edgeId: spare })).toMatchObject({
+      confirmed: true,
+    });
+    const gate = () =>
+      t.run(async (ctx) => checkPublishable(ctx, (await ctx.db.get(spare))!, false));
+    expect(await gate()).toEqual({ ok: true });
+    // The switch off: the record stays, but stands in for nobody's tick.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.clientCheck.enabled', 'false'));
+    expect(await gate()).toEqual({ ok: false, code: 'unverified_endpoint' });
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.clientCheck.enabled', 'true'));
+    expect(await gate()).toEqual({ ok: true });
+    // The location no longer ticked (its evidence gone, however that happened).
+    await t.run((ctx) =>
+      ctx.db.patch(locationId, { qualification: { by: 'admin', at: Date.now() } }),
+    );
+    expect(await gate()).toEqual({ ok: false, code: 'unverified_endpoint' });
+  });
+
   test('one address in use while replacements count on the check: single_address', async () => {
     world(() => ({ code: 'ok' }));
     const { t } = await seed();
@@ -384,6 +458,23 @@ describe('replacing a blocked address without a spare', () => {
     world(() => ({ code: 'ok' }));
     const { t, relayId, oldEdgeId } = await seed({ enabled: false });
     await expect(replace(t, relayId, oldEdgeId)).rejects.toThrow(/no_verified_spare/);
+  });
+
+  test('turning automation on keeps a spare unless the check answers its health check', async () => {
+    world(() => ({ code: 'ok' }));
+    const { t } = await seed({ enabled: false });
+    const cfg = () => t.run((ctx) => resolveEdgeConfig(ctx.db));
+    await t.mutation(internal.edgeAdmin.setAutomation, { on: true });
+    expect(await cfg()).toMatchObject({ standbyPerListener: 0, clientCheck: { enabled: true } });
+    await t.mutation(internal.edgeAdmin.setAutomation, { on: false });
+    await t.mutation(internal.edgeClientCheck.recordHealth, {
+      ok: false,
+      code: 'unavailable',
+      engines: [],
+      egressHost: null,
+    });
+    await t.mutation(internal.edgeAdmin.setAutomation, { on: true });
+    expect(await cfg()).toMatchObject({ standbyPerListener: 1, clientCheck: { enabled: true } });
   });
 
   test('the service not answering its health check: no waiver', async () => {
@@ -439,6 +530,31 @@ describe('replacing a blocked address without a spare', () => {
     });
     expect(resumed).toEqual({ ok: true, lifted: 1 });
     expect((await t.query(internal.relays.get, { id: relayId }))!.autoReplaceHolds).toBeUndefined();
+  });
+
+  test('the detector holds a rapid re-block whatever blocker its start named', async () => {
+    world(() => ({ code: 'ok' }));
+    const { t, relayId, oldEdgeId } = await seed();
+    // What the detector asks after ANY refused start (a fleet brake, the daily cap...).
+    const ask = () =>
+      t.mutation(internal.edgeRotations.holdAutoReplace, {
+        relayId,
+        edgeId: oldEdgeId,
+        code: 'replacement_reblocked',
+        ifReblocked: true,
+      });
+    // Not a replacement: nothing to hold.
+    expect(await ask()).toEqual({ held: false });
+    await t.run((ctx) =>
+      ctx.db.patch(oldEdgeId, {
+        publishedAt: Date.now(),
+        replacementOf: { edgeId: oldEdgeId, at: Date.now(), trigger: 'detector' },
+      }),
+    );
+    expect(await ask()).toEqual({ held: true });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.autoReplaceHolds).toEqual([
+      expect.objectContaining({ code: 'replacement_reblocked', edgeId: oldEdgeId }),
+    ]);
   });
 });
 

@@ -55,7 +55,13 @@ import { edgeClientCheckV } from './lib/edges/clientCheck/validators';
 import { canonicalIp } from './lib/edges/ip';
 import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { liveEdgesOfRelay } from './lib/edges/relayGuards';
-import { bindingMatches, verificationBinding, verificationCurrent } from './lib/edges/verification';
+import {
+  bindingMatches,
+  verificationBinding,
+  verificationCurrent,
+  type VerificationEdgeLike,
+  type VerificationListenerLike,
+} from './lib/edges/verification';
 import { resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
 import { locationTicked } from './lib/edges/tickedLocation';
 import { verificationListenerOf } from './lib/edges/verificationContext';
@@ -293,6 +299,35 @@ export async function clientCheckReadiness(
   const h = await readStateJson<ClientCheckHealthRecord>(db, CLIENT_CHECK_HEALTH_KEY);
   if (!h || !h.ok || now - h.at > CLIENT_CHECK_HEALTH_FRESH_MS) return 'unhealthy';
   return 'ready';
+}
+
+/**
+ * Whether the service could be counted on if the switch were on: configured,
+ * and its last health answer recent and healthy (`clientCheckReadiness`
+ * without the switch). The automation switch asks it before letting spares go.
+ */
+export async function clientCheckServiceReady(
+  db: DatabaseReader,
+  now: number = Date.now(),
+): Promise<boolean> {
+  return (await clientCheckReadiness(db, { clientCheck: { enabled: true } }, now)) === 'ready';
+}
+
+/**
+ * The address's latest check, taken against the configuration it holds now,
+ * found the ADDRESS at fault (not the node, not the checker). A spare like that
+ * is not picked for a replace again until a later check passes, so a failed
+ * gate does not make every later replace retry the same known-bad address.
+ */
+export function clientCheckFailedNow(
+  edge: Pick<Doc<'edges'>, 'clientCheck'> & VerificationEdgeLike,
+  listener: VerificationListenerLike | undefined,
+): boolean {
+  const c = edge.clientCheck;
+  if (!c || c.ok || !listener) return false;
+  if (c.verdict !== 'address_failed' && c.verdict !== 'egress_mismatch') return false;
+  const b = verificationBinding(edge, listener);
+  return !!b && b.configHash === c.configHash && b.listenerRevision === c.listenerRevision;
 }
 
 /** The admin view: whether the deployment has the service, and its last health answer. */

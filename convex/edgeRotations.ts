@@ -157,7 +157,7 @@ import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './e
 import { SPEND_CAP_REACHED, capRefusal, edgeCostAt, spendOf } from './edgePlans';
 import { atCap, passesCap, sizeKeyOf, sizeOf } from './lib/edges/pricing';
 import { l7PlaceOf, placeProblemOf } from './lib/edges/l7Place';
-import { clientCheckReadiness, runClientCheck } from './edgeClientCheck';
+import { clientCheckFailedNow, clientCheckReadiness, runClientCheck } from './edgeClientCheck';
 import { locationTicked } from './lib/edges/tickedLocation';
 import { REPLACEMENT_POLICY, replacementPlacement } from './lib/edges/replacementHolders';
 
@@ -395,19 +395,32 @@ export const recordClientGate = internalMutation({
 });
 
 /**
- * Hold automatic replacement of the target's transport on its node (the
- * detector, when a start is refused `edge.replacement_reblocked`): attention
+ * Hold automatic replacement of the target's transport on its node: attention
  * `auto_replace_held` until the operator resumes it. Idempotent per transport.
+ * The detector asks with `ifReblocked` whenever its start is refused, whatever
+ * blocker the refusal names (a fleet brake or the daily cap can win over
+ * `edge.replacement_reblocked`), so a rapid re-block is held all the same.
  */
 export const holdAutoReplace = internalMutation({
-  args: { relayId: v.id('relays'), edgeId: v.id('edges'), code: v.string() },
-  handler: async (ctx, { relayId, edgeId, code }) => {
+  args: {
+    relayId: v.id('relays'),
+    edgeId: v.id('edges'),
+    code: v.string(),
+    ifReblocked: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { relayId, edgeId, code, ifReblocked }) => {
     const origin = await ctx.db.get(relayId);
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId) return { held: false };
     const holds = origin.autoReplaceHolds ?? [];
     if (holds.some((h) => h.listenerId === edge.listenerId)) return { held: true };
     const now = Date.now();
+    if (
+      ifReblocked &&
+      (edge.publication !== 'published' ||
+        !reblockedSoon(edge, await resolveEdgeConfig(ctx.db), now))
+    )
+      return { held: false };
     await ctx.db.patch(relayId, {
       autoReplaceHolds: [...holds, { listenerId: edge.listenerId, code, at: now, edgeId }],
       updatedAt: now,
@@ -3207,8 +3220,16 @@ export async function selectionContext(
     return tickedCache.get(key)!;
   };
   const isL4 = (e: Edge) => (e.layer ?? edgeLayerOf(e.provider)) !== 'l7';
-  const checkableSpare = async (e: Edge) =>
-    clientCheckMode && isL4(e) && (await tickedAt(e.locationId));
+  // A confirmation FCP wrote counts only on the terms it was written on (the
+  // switch on, the location still ticked); the publication gate says the same.
+  const eligibleSpare = async (e: Edge, l: VerifiableListener | undefined) =>
+    standbyEligible(e, l) &&
+    (e.verification?.method !== 'client_check' ||
+      (cfg.clientCheck.enabled && (await tickedAt(e.locationId))));
+  // An untested spare the run checks itself; never one whose latest check
+  // found the address itself at fault (a later passing check lifts that).
+  const checkableSpare = async (e: Edge, l: VerifiableListener | undefined) =>
+    clientCheckMode && isL4(e) && !clientCheckFailedNow(e, l) && (await tickedAt(e.locationId));
   const inSet = origin.providerSet
     ? new Set(origin.providerSet.map((p) => p.locationId as string))
     : null;
@@ -3234,7 +3255,7 @@ export async function selectionContext(
       // account set to DNS only.
       hasAddress:
         hasPublishableAddress(e) &&
-        (standbyEligible(e, slotOfEdge) || (await checkableSpare(e))) &&
+        ((await eligibleSpare(e, slotOfEdge)) || (await checkableSpare(e, slotOfEdge))) &&
         // A load balancer the node already had is left as it is, never reused.
         !((barred || l4Problem) && (e.layer ?? edgeLayerOf(e.provider)) === 'l4') &&
         (edgeRoleOf(e.provider) !== 'dns' ||
@@ -3304,10 +3325,10 @@ export async function selectionContext(
       clientCheck:
         !!spare &&
         clientCheckMode &&
-        !standbyEligible(
+        !(await eligibleSpare(
           spare,
           slotRows.find((s) => s._id === spare.listenerId),
-        ),
+        )),
     };
   }
   // Which LAYERS the complete client-to-origin chain allows in front of this
