@@ -585,6 +585,41 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(refused.status).toBe(503);
   });
 
+  test('a placeholder on a bound node with no edge left to serve it is refused empty_pool', async () => {
+    stubPanel(`vless://${UUID}@0.0.0.0:1?${REALITY_QS}#Expired`);
+    const { t, relayId, edgeA } = await seed();
+    await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
+    const res = await get(t);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('x-fcp-delivery')).toBe('empty_pool');
+  });
+
+  test('a placeholder that names the node anywhere is refused, never handed out', async () => {
+    // A link list with another line (no codec reads it) is not a placeholder at all.
+    stubPanel(
+      [
+        `vless://${UUID}@0.0.0.0:1?${REALITY_QS}#${encodeURIComponent('⌛ Subscription expired')}`,
+        `socks://${ORIGIN}:1080`,
+      ].join('\n'),
+    );
+    const extraLine = await seed();
+    const r1 = await get(extraLine.t);
+    expect(r1.status).toBe(503);
+    expect(await r1.text()).not.toContain(ORIGIN);
+    // A config placeholder whose other fields name the node: the leak check refuses it.
+    stubPanel(
+      JSON.stringify({
+        dns: { servers: [{ address: `https://${ORIGIN}/dns-query` }] },
+        outbounds: [{ type: 'vless', tag: 'expired', server: '0.0.0.0', server_port: 1 }],
+      }),
+    );
+    const inField = await seed();
+    const r2 = await get(inField.t, 'SFA/1.10.0 (sing-box 1.10.0)');
+    expect(r2.status).toBe(503);
+    expect(r2.headers.get('x-fcp-delivery')).toBe('leak_detected');
+    expect(await r2.text()).not.toContain(ORIGIN);
+  });
+
   test('an emptied pool is 503 empty_pool, never a body with the template dropped', async () => {
     stubPanel();
     const { t, relayId, edgeA, serverId } = await seed();
