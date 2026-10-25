@@ -542,16 +542,16 @@ listener") a published edge, and, on a node with a provider set, what that set r
 coverage-listener count (the admin create and the listener upsert answer `warnings:
 ['edge.pool_raised']` when it did) on every origin create, admin listener add and listener
 re-enable, and the reconcile cron applies it each tick. A pool whose free slots cannot hold the
-deficit is **expanded** within the cap (`desiredPublished = min(16, desired + deficit - free)`,
-audited `edge.pool_expanded`); it is never shrunk. The pool cap is 16 (`MAX_DESIRED_PUBLISHED`)
+deficit is **expanded** within the cap (`desiredPublished = min(64, desired + deficit - free)`,
+audited `edge.pool_expanded`); it is never shrunk. The pool cap is 64 (`MAX_DESIRED_PUBLISHED`)
 and the listener cap 8 (`MAX_COVERAGE_LISTENERS`); both are enforced where the operator can act
 on them rather than clamped silently: a listener body (the create or the CMS upsert) that would
 leave more than eight deployed, enabled listeners is refused (`edge.listener_cap`; a
 pre-existing excess is not made worse), and `relays.update` refuses lowering
 `desiredPublished` below the coverage-listener count, or (with a set) below what is published
 plus the deficit (`edge.pool_below_coverage`). The fleet default `desiredPublishedDefault`
-stays within 1..8. **Reserved allocation** (`allocatePoolIndex`, `convex/lib/edges/pool.ts`,
-used by the rotation's `applyPublish`, the cron's `publishStandby` and both direct publish
+stays within 1..64 (default 2: every address costs money). **Reserved allocation**
+(`allocatePoolIndex`, `convex/lib/edges/pool.ts`, used by the rotation's `applyPublish`, the cron's `publishStandby` and both direct publish
 paths): an edge that lowers the deficit takes the lowest free index; any other edge only while
 the free slots exceed the deficit (`edge.pool_reserved`, a `pool_reserved_standby` rotation
 event), so a second copy for A never takes the slot B is waiting for. A shortfall only a cooling
@@ -731,6 +731,92 @@ or settings, the dependents are stamped `dependencyChangedAt` and both the test 
 must postdate it (a proof taken through the old dependency never re-trusts the account);
 evaluated after every passing proof and by the reconcile sweep. L4 accounts are never
 auto-trusted.
+
+### FCP's own client check
+
+A human test proves an L4 address with whatever client the operator has at hand, and on
+2026-10-25 that was not enough: a REALITY transport with no `minClientVer` on Xray 26 refused
+every sing-box client while the test, made with an Xray client, passed. **FCP's own client
+check** proves an address with real clients itself: FCP's check account, through the address,
+with sing-box and with Xray, out of the node.
+
+**What it runs.** The `edge-client-check` service (`docker/edge-client-check/`, a service of
+`docker-compose.stack.yml`) holds the official sing-box and Xray binaries (digest-pinned images,
+Dependabot daily) and a small Bun server (`server.ts`). For one check it takes ONE outbound,
+starts the engine with a loopback HTTP proxy inbound and that outbound as its only outbound (no
+direct outbound, no DNS server: nothing can leave any other way, and the egress page's name is
+resolved at the node), fetches the egress-IP page through it, kills the engine and answers
+`{ok, engine, engineVersion, egressIp, ms, code}`. One session runs at a time (a second request
+gets `busy`); the engine has 5 s to listen and the fetch 15 s. A body is read as a stream and
+refused past 16 KB, never buffered whole first. On FCP's side the whole check (both test links,
+every engine through the address and the control, busy waits) ends within 90 s, inside a
+self-hosted action's limit: a session that would not fit is not started (`out_of_time`).
+
+**Who may ask, and for what.** Every request is signed (HMAC-SHA256 over method, path, time
+and the body's SHA-256, `convex/lib/edges/clientCheck/signing.ts`) with `EDGE_CLIENT_CHECK_SECRET`;
+a time more than 60 s off or a signature already seen is refused, and with no secret every call
+is refused. The outbound is rebuilt from a per-engine allowlist (`sanitize.ts`): an allowlisted
+type (VLESS, Trojan, Shadowsocks, Hysteria2, TUIC), one server, and nothing that chains another
+outbound, binds an interface, sets a mark, reads a file or opens a second destination; the one
+destination must be a public IP literal. The egress page is the service's own setting
+(`EDGE_CLIENT_CHECK_EGRESS_URL`, a public plain-text IPv4 echo by default), never the caller's,
+so the service cannot be made to fetch anything else. FCP's one caller builds the outbound from
+the address's own **test link** (`edgeTestLinks.build`, the artifact a human test uses: the
+origin's qualification account, or a temporary Outline key of its own purpose, released right
+after), so no member credential has a path in. The service logs nothing per request: the
+configuration, the credential, the address and the engine's output stay in memory and are
+dropped; its answer carries a code (`reality_refused`, `tls_failed`, `timeout`, `refused`,
+`reset`, `unreachable`, `egress_unreadable`, `config_refused`, `session_failed`).
+
+**Engines.** `convex/lib/edges/clientCheck/outbound.ts` turns the test link into each engine's
+outbound. sing-box runs for every combination it speaks; it reports 1.8.1 to a REALITY server
+and offers no ML-KEM key share, so it is the client that catches the refusals in
+`docs/client-compatibility.md` § "REALITY client versions". Xray runs too, and alone for XHTTP and for VLESS with its own encryption (sing-box
+speaks neither); Hysteria2 and TUIC are sing-box only.
+
+**The verdict** (`verdict.ts`) judges each engine against a **control**: the same engine through
+another published, confirmed address of the same transport (an operator's tick first), from the
+same place. From outside the country a censor's block does not apply there, so the node's own
+refusals are never blamed on the address. `passed`: every engine connected and came out of the
+node. `passed_with_refusals`: at least one did, and each one refused here is refused through the
+control too (with no usable control: one the REALITY verdict, `relays.realityClients`, already
+predicts). `address_failed`: an engine that connects through the control does not here.
+`egress_mismatch`: a session came out somewhere that is neither the control's egress nor the
+node's known addresses (`originAddress`, an enrolled node's direct addresses, `nodeAddresses`;
+`nodeAddressesOf`): the address reaches another node that
+also knows the credential. `node_unreachable`: nothing connects here or through the control. The
+control runs only when it is needed (an engine failed, or an egress is not a known address).
+"Could not check" is never a verdict: `not_configured`, `unavailable`, `unauthorized`, `busy`,
+`link_unavailable` (the test link could not be built; `detail` carries its code), `no_engine`,
+`not_l4`, `out_of_time`.
+
+**What is kept.** `edges.clientCheck` holds the newest verdict (codes, engine versions, whether a
+control was used, who asked, and the listener revision and configuration hash it was taken
+against: the admin shows it out of date when they move); never an address or an egress IP.
+Audit `edge.client_check` (`relaySlug`, `edgeId`, `verdict`, `by`, `control`, `engines` as
+`sing-box:ok xray:reality_refused`). Attention reads a verdict only while it was taken against
+the configuration the address holds now. The service's health is read by every `edge-reconcile` pass
+(`GET /v1/health`) and kept in `appState` `edge:clientCheck`.
+
+**Where it shows.** "Check with FCP's client" on every L4 address and spare of a node page
+(`POST edges/{id}/client-check`, servers write scope, throttled like the test link), with the
+newest verdict on the line under the address. Edges settings, "FCP's own client check": set up or
+not, answering or not, the engines and their versions, the egress page's host, "Check now"
+(`GET client-check`, `POST client-check/refresh`). Attention `client_refused` (warning): an
+address in use whose newest check found a client that does not get through, named per client;
+`client_check_unavailable` (warning): the service is set up and did not answer its last health
+check. A check is advice: it does not confirm an address for publication (a human tick still
+does).
+
+**Setting it up.** One secret, in the compose env (`.env.beta`, or `.env.prod`): the service reads
+it, and the deployer sets the same value on the deployment (`docker/deploy-entrypoint.sh`), so
+the two cannot differ. `bun run bootstrap` fills it (docs/beta-deploy.md § "FCP's own client
+check"). FCP reaches the service at
+`http://edge-client-check:8080` (`EDGE_CLIENT_CHECK_URL` in `.env.convex` to change it). Proved
+in CI by the `client-check` job of `.github/workflows/client-compatibility.yml`
+(`bun run test:integration:client-check`): the service as the stack builds it, against two Xray
+cores of the fleet release, passes with `minClientVer` 1.8.1 and names sing-box refused (Xray
+connected) where it is unset.
 
 ### Rendering (what members receive)
 
@@ -1397,7 +1483,8 @@ What a protect run writes to such a panel, in order:
 
 Its own lazy chunk under `src/client/routes/admin/edges/`, reached from ONE sidebar leaf
 (**Servers -> Edges**, lit on every `/admin/edges/*` path). Inside, a quiet in-page header row
-`Nodes | Providers | Advanced` (`components/SectionNav.svelte`) sits at the top of every page.
+`Nodes | Countries | Providers | Advanced` (`components/SectionNav.svelte`) sits at the top of
+every page.
 The section has two faces:
 
 **The simple screens** (`simple/`, plain words: origin -> protected node, edge -> address,
@@ -1484,6 +1571,12 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   addresses blocked, Not checked yet, with the age), with the location marks (**Mark for a
   country**: Works there, Blocked there, Use the checks) and a conflict line where a mark
   disagrees with the checks; the inventory tab reads one location at a time.
+- **Countries** (`/admin/edges/countries`, `countries/CountriesPage`): every censored country in
+  one line each (addresses and names that work or are blocked there, nodes with no working
+  address there, how many members there hold a blocked address, the newest evidence); a country
+  (`/admin/edges/countries/<CC>`, `countries/CountryPage`) shows every node, transport, address
+  and name from there with the reason and its age, and what a member there is handed
+  (§ "The country view"). Read only: marks and checks stay on the node and name pages.
 - **Advanced** (`/admin/edges/advanced`): a plain list of links to the technical pages.
 
 **The technical pages**: **All origins** (`/admin/edges/advanced/origins`, the former
@@ -1877,6 +1970,20 @@ health was not refreshed for an hour (or 30 polls) shows as `health_stale` on it
 `account_budget_unlimited`.
 `billable_idle` lists edges that cost money while serving nobody: a quarantined origin's managed
 edges, or an edge parked at `needs_operator` whose resources are still present.
+
+**Account limits.** An account caps its live (not yet destroyed) edges at `maxLiveEdges`
+(1..1000, default 100; `account_capacity_reached`) and its new billable edges per UTC day at
+`dailyAllocationBudget` (1..1000, default 50; the runaway-loop guard). A location may set its
+own `maxLiveEdges` (1..1000, absent = only the account's applies; `location_capacity_reached`).
+The bounds and defaults live in `src/shared/contracts/edgeLimits.ts`, read by the server checks,
+the request contracts and the admin forms alike. The account and location scans read up to the
+ceiling per status (`ACCOUNT_EDGE_SCAN_LIMIT`), so every count is exact up to any cap; a pass
+over every account (the pick, the setup plan, provider usage) reads each account once
+(`managedLiveOfAccount`) and derives its location counts and spend from that read. The reconcile
+cron reads the fleet a page at a time per status (`edges.listLive`, `FLEET_EDGE_PAGE_SIZE`), as
+does its partial-rung sweep, so no edge is left out however large the fleet. Accounts created
+before these defaults kept what they were given; `edgeProviderAccounts:raiseOldDefaultLimits`
+raises the ones still on an old default pair (§ Runbooks).
 
 **Dark members.** Every refusal the subscription route answers under edge-required delivery
 (the 503 with `x-fcp-delivery: <reason>`) is counted per reason in a sharded `appState` counter
@@ -2387,6 +2494,115 @@ and the checks line ("From IR: failed from 3 vantages on 2 networks while other 
 through"). Reports pick which names are checked first, corroborate a single failing check, and
 veto "proven"; checks never create a report suspect.
 
+### Real-host controls
+
+Ships off: `edge.sni.vantage.realHost` (on the Server names page, "Also check each name against
+its real site"). Off, batches are exactly as above.
+
+**The question.** A name that fails on FCP's address from a country can mean three different
+things: the name is blocked there wherever it goes, FCP's address is blocked there, or the censor
+lets a name through only to the addresses it really lives on (it matches the name against its
+real IP or network). A control that gets through for ANOTHER name (above) separates the first
+from the second, but not the third. So each name of a batch also gets a twin measurement: the
+same name, from the same vantages, to the name's REAL site.
+
+- **The real site** is the name's public DNS answer, resolved on FCP's own host at execution
+  (`sniVantageOps.realSiteOf`), in the address family of FCP's address. Every answer must be
+  public (`real_private`), FCP's own addresses are skipped, compared in canonical form
+  (`real_is_ours` when nothing else is left), the LOWEST remaining answer is taken (a resolver
+  that rotates its answers still gives every source the same site), and a TLS handshake from
+  FCP's host must complete with a chain valid for the name before any vantage dials it
+  (`real_not_serving`); a name that does not resolve is `real_resolve`. The switch is read again
+  at execution: off since the plan, a twin is settled `gate_real_host`. A skipped twin is settled
+  with its code and nothing is dialled from the country. Port 443.
+- **The same vantages.** The twin is inserted right after its name's measurement in the same
+  batch and source, so Globalping reuses the first measurement's probes and Atlas the same probe
+  ids. Each vantage carries an opaque key (`results[].vantage`, a short hash of what identifies
+  it: Globalping's probe description, two look-alikes told apart by order; Atlas's probe id),
+  never stored in the clear, and failures carry a `stage` (`connect`, `handshake`, `response`)
+  read from the source's own words (`classifyStage`).
+- **Rows.** `sniVantageProbes.role: 'real_host'` with `realAddress`; `address` / `port` stay
+  FCP's (what the batch is about; a target that moved settles the twin `target_moved` like its
+  name). Twins are never part of the name's own evidence (`aggregateEvidence`), never of the
+  handshake track, and never of auto-apply. They count against `hourlyBudget` (a batch of N names
+  spends 2N per source).
+
+**Reading a pair** (`lib/edges/sni/realHost.ts`, pure), per vantage:
+
+| FCP's address                             | The real site | Reading           | What it says                                                 |
+| ----------------------------------------- | ------------- | ----------------- | ------------------------------------------------------------ |
+| works                                     | works         | `works`           | nothing is blocked                                           |
+| fails                                     | fails         | `name_blocked`    | the name is blocked wherever it goes (\*)                    |
+| fails to connect (refused, connect stage) | works         | `address_blocked` | FCP's address is blocked, not the name                       |
+| connects, the handshake fails or resets   | works         | `ip_name_match`   | the censor likely checks the name against its real address   |
+| works                                     | fails         | `ours_only`       | the real site's address is blocked; the name passes on FCP's |
+| anything else (errors, unknown stage)     |               | `inconclusive`    | nothing                                                      |
+
+(\*) only from a vantage that got through for something else in the batch (another name, or a
+real site): a vantage that reaches nothing says nothing. A failure of FCP's check AFTER the
+handshake (`response`: TLS completed, then no answer) is `inconclusive`: the name got through.
+Where the source did not report the stage of FCP's failure, the newest TCP path reading of that
+address from that country (the per-country checks', within the handshake pairing window) decides
+it; without one the pair is `inconclusive`. A batch's pairs give one reading per name: `thin`
+below `minVantages` decisive pairs on `minNetworks` networks (a vantage without an ASN or network
+adds none), else the class holding two thirds of them, else `mixed`; sources that dialled
+different real addresses are never pooled (the reading is that of the address with the most
+decisive pairs). It is stored on `sniVantageEvidence.realHost` (the newest batch that had twins:
+when, FCP's address measured, the real site's address, the reading, counts per class, vantages,
+networks), re-read whenever that row is, ages out with the window like the rest of the row, and
+the country view judges the reading again from the stored counts with the floors of the moment.
+
+**Handshake timing (what the target adds).** A REALITY address hands every unauthenticated
+handshake through the node to the transport's target, so from one vantage its TLS handshake also
+carries the node-to-target round trip, while the name's real site answers in about one round
+trip. A censor can time that as well as FCP can. The same measurements already report their
+phases, and nothing extra is dialled: Globalping's HTTP result carries `timings.tcp` (the
+connect) and `timings.tls` (the handshake after it); RIPE Atlas `sslcert` carries `ttc` (the
+connect) and `rt` (from starting to connect to the server's answer), so its handshake phase is
+`rt - ttc`. Both are stored per vantage (`results[].tcpMs`, `.tlsMs`; no DNS phase: vantages
+dial the address literal, which also keeps DNS poisoning out of the reading). For each pair in
+which BOTH handshakes completed with both phases, each side's handshake beyond one round trip is
+`tlsMs - tcpMs` (the connect stands in for the round trip), and the target's share is ours minus
+the real site's. `realHost.timing` keeps the medians (`oursMs`, `realMs`, `addsMs`) and the
+pairs they rest on. The country view shows each name's figures and, per transport, "the
+transport's target adds about X ms" (the median of its names' medians, only names measured on
+that transport's own addresses).
+
+Flag (a proposal; the owner decides): `addsMs` of **50 ms or more over at least 3 timed pairs**
+(`TARGET_ADDS_FLAG_MS`, `TARGET_ADDS_MIN_PAIRS`). A real site's own handshake adds a few
+milliseconds of work; a target in the node's metro adds under 10 ms, in its region 10 to 40 ms,
+across an ocean 80 ms or more. 50 ms sits above residential jitter between the paired checks and
+below any cross-continent leg, so a flagged transport is one whose target should move closer to
+its node (or the node to its target). The flag colours the line on the page and changes nothing
+else.
+
+**Shown, not applied.** The country view shows each name's reading ("Real-site check: ...") and,
+under each address's evidence, what the names measured on it said. Nothing here changes a mark,
+a track, a grade, a suggestion or what anyone is handed.
+
+**How it could feed the grades (a proposal; the owner decides):**
+
+1. `name_blocked` from enough vantages and networks is a name-specific failure that needs no
+   second look: the checks could suggest `blocked` for the name there on it alone (today a name
+   that never worked waits for a repeat, a transition or member reports).
+2. `address_blocked` across the names of one address is a blocked round for that address's
+   track with a better control than the control countries (the same vantages reached the real
+   sites): it could count as one, reason `real_host`.
+3. `ip_name_match` on some names of an address while others pass means the country matches
+   names to networks: the failing names are blocked FOR THAT ADDRESS, not the country. That needs
+   a scope marks do not have today (name x country x network), and it is the signal for
+   delivering names whose real sites sit on the same network as the edge. On every name of an
+   address it cannot be told apart from TLS to that address being blocked, so it should stay a
+   reading.
+4. `ours_only` is evidence that the name works on FCP's address there: it could count towards
+   `proven` like an `ok`.
+
+**Safety.** Everything in "Vantage-host safety" holds; the twin adds the most ordinary traffic
+there is (a visit to a public site with its own name, `HEAD /` on Globalping) from the same
+vantages, at the same frequency. The real site sees that visit. Whoever runs a vantage sees the
+name next to the real site's address as well as FCP's, which says nothing more about FCP's
+address than the name check itself. check-host.net and FCP's own host are still not sources.
+
 ### Networks
 
 A REALITY address is most plausible when its server names, and its transport's target, are real
@@ -2894,6 +3110,56 @@ the names and the edges (`locateMember` / `locateAt`).
   a member whose stored country that is (a listed one): names chosen for it and, with steering
   on, addresses ordered for it, with the tier each endpoint came from.
 
+### The country view
+
+One place that answers "from this country, which of my addresses and server names work right
+now, why do we think so, and what is a member there handed" (Admin -> Edges -> Countries).
+Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, pure builder
+`convex/lib/edges/country/view.ts`).
+
+- **Routes** (read scope): `GET countries/summary` (every censored country with its totals, the
+  switches that feed the view, the control countries) and `GET countries/{CC}` (one country in
+  full; a code off the list answers too, `listed: null`). Contracts `CountryViewSummaryResponse`
+  and `CountryViewResponse` in `src/shared/contracts/edges.ts`. Times are epoch ms. Unlike
+  `GET countries`, the view carries addresses and names: it is the admin page that shows them.
+- **What is read.** Every enabled origin, its non-retired listeners, its active edges (published
+  ones first in pool order, then spares) and its published pool as the assignment sees it
+  (`publishedEdgesOf`, ineligible kept); per edge every country's evidence row and mark, per
+  location every country's mark and grade, per name every country's `sniNameCountry` mark and
+  `sniVantageEvidence` aggregate (its suggestion judged now, like the family page): ONE index
+  range per edge, location and name whatever the number of countries, each country then built in
+  memory (a transaction may touch 4,096 ranges; the summary of a 40-country list costs what one
+  country does). The detail route also reads that country's member report counts
+  (`sniReportCounts`, suspects judged against EVERY name of the family, as on the family page).
+- **An address's state** is the one delivery acts on: `edges.countryState` (an entry past its
+  `until` reads as not graded), with the BASIS it rests on: `mark` (the edge's), `location_mark`,
+  `checks` (its own rounds), `handshake` (the handshake track), `never_reached` (sustained
+  unreachability), `location` (its location's block). With nothing graded it falls back to the
+  outside probes alone, basis `probes`: reached = works, failing there while another country
+  reaches it = blocked, failing everywhere = not known (broken, not blocked). A `probes` state
+  is shown, never acted on. Each address carries its evidence (mark, grade, tracks, last round,
+  probes) with ages.
+- **A name's state** is the copy on the listener (what selection reads; `mark` or
+  `checks_mark` by who wrote it). With no mark, a suggestion of the checks from inside shows as
+  basis `checks` ("not applied"). The checks' latest reading, the real-host controls' reading
+  (§ Real-host controls) and member reports are shown beside it, and `offered` says whether a
+  member there may be handed it (an `hrw1` listener never hands a name blocked there). Each
+  address also lists what the real-host controls of the names measured on it said.
+- **What a member there is handed** is `assignEndpoints` itself, run over 240 fixed synthetic
+  render keys, one listener at a time (every other listener's edges ineligible, as in a body
+  carrying only that transport), with the deployment's render rule for the `other` family as a
+  plain list of links, `delivery.country.steer` and `edge.country.minProvenForExclusive`, as a
+  freedom-family member whose stored country is this one. A country off the list is handed what
+  delivery hands it: the universal name pool and no steering. It reports shares: each address
+  as first address and as backup, each name, members with no address, holding an address
+  blocked there (first or backup; `onBlockedFirst` the first only), holding a name blocked
+  there (on either). No member row is read. Whatever changes in the assignment shows here by
+  itself.
+- **Totals**: published addresses by state, active names by the state delivery acts on (a mark;
+  an unapplied suggestion counts as not judged; each name once), nodes whose every published
+  address is blocked there (`atRisk`), the newest piece of evidence. The summary adds the worst
+  share of members holding a blocked address over every transport.
+
 **Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure, read per address
 family): `partial` = provider health + outside reachability over one family (at least
 `probe.agreementVantages` distinct vantages reachable) + a passing protocol-SHAPE check over
@@ -2952,8 +3218,8 @@ and `edge.burnedDrainMinutes` (default 120) the drain of a burned edge; neither 
 override, and a drain shorter than the hint allows is saved with a warning (§ "How fast members
 move").
 `desiredPublishedDefault` seeds an origin's `desiredPublished`, which is pool state (setup and
-re-protect runs widen it), bounded 1..16 (`MAX_DESIRED_PUBLISHED`); the fleet default stays
-within 1..8.
+re-protect runs widen it), bounded 1..64 (`MAX_DESIRED_PUBLISHED`); the fleet default stays
+within 1..64 and defaults to 2.
 
 The fleet guards: `detect.fleetBreakerPct` (1..100, default 30) and
 `detect.fleetRotationsPerDay` (0..500, default 12); `detect.allowProbeOnlyAutoRotate` defaults
@@ -2977,6 +3243,7 @@ block in that body, read by their own resolver so the render path never reads th
 | `windowDays`                              | 14              | 1..60        | the scoring window, and the measurement rows' retention                                   |
 | `minVantages`, `minNetworks`              | 3, 2            | 1..20, 1..10 | what a suggestion needs                                                                   |
 | `autoApply`                               | `false`         |              | apply suggestions by themselves (never over an operator's mark)                           |
+| `realHost`                                | `false`         |              | real-host controls: each name also checked against its real site (§ Real-host controls)   |
 
 The countries are not a key here: they are the listed countries with "Check names from inside"
 on (next section). At the defaults one source spends at most 12 measurements an hour (36 vantage
@@ -3124,6 +3391,16 @@ Node pinning understands the origin remark (`convex/lib/nodePinning.ts`), the v1
 and members see the neutral entry name, never the remark.
 
 ## Runbooks
+
+**Raise accounts still on the old default limits.** Accounts were once created with 6 live
+edges and 10 a day (an API create that left the limits out) or 4 and 6 (the admin form's
+pre-filled values). `edgeProviderAccounts:raiseOldDefaultLimits` raises every account that
+still holds exactly one of those pairs to today's defaults (100 live, 50 a day); an account
+where either limit was changed keeps both, and location caps are counted, never changed. It is
+idempotent. Run it with `{"dryRun": true}` (the default) to see `raised` (each account's limits
+before) and `kept`, then with `{"dryRun": false}`; each raised account is audited
+`admin.edge.limits_raised` with its limits before and after. On a stack, run it through the
+deployer container (docs/beta-deploy.md § "One-off functions").
 
 **Qualify a provider account.** Add the account and test its credentials, then:
 
@@ -4692,6 +4969,17 @@ deploy, no migration, no env change. The deploy's `seedCutover` settles listener
 it (`relayListeners.reconcileCountryMarks`): every listener with a judged name moves onto `hrw1`
 at once, its members re-ranked among names the node already accepts at their next refresh.
 
+**FCP's own client check** adds a service (`edge-client-check`, built from
+`docker/edge-client-check/`), one optional field (`edges.clientCheck`), a test-credential purpose
+(`client_check`) and two attention kinds (`client_refused`, `client_check_unavailable`). It does
+nothing until the secret is set: run `bun run bootstrap` (it adds
+`EDGE_CLIENT_CHECK_SECRET` to the compose env file), then
+`up -d --build edge-client-check` and recreate `deployer` with the usual release command (it sets
+the secret on the deployment). No migration. To roll back, run
+`edgeClientCheck:clearForRollback` with no arguments right before deploying the older build
+(it schedules itself over the edges, then the test keys; run it again if the push is refused),
+then stop the service.
+
 **The X25519MLKEM768 key share** changes what members receive, nothing stored: every Clash /
 Mihomo / Stash body FCP serves asks its REALITY entries for the key share (a cached body from its
 next serve). One deploy, no migration, no env change; rolling back only stops asking. Mihomo
@@ -4917,6 +5205,16 @@ sweeps (nothing to sweep). No migration, no env change (the probe credentials ar
 `EDGE_PROBE_GLOBALPING_TOKEN` / `EDGE_PROBE_RIPEATLAS_KEY`), and `sniNameCountry.source:
 'probe'` was already in the schema. Turning it on is an operator decision per country (§ Checks
 from inside a country, "Residual risk").
+
+**Real-host controls** add optional fields only (`sniVantageProbes.role`, `realAddress`,
+`results[].stage`, `.vantage`, `.tcpMs`, `.tlsMs`, `sniVantageEvidence.realHost` with its
+`timing`) and the `edge.sni.vantage.realHost` setting (off). One plain deploy, no migration, no
+env change. Every new measurement carries `results[].vantage` and its phase timings (and a
+failure its `stage`), switch on or off, so
+before deploying a build without them: set the switch off, then run
+`sniVantage:clearRealHostForRollback` (one page of 200 rows per call; call again with the
+returned `phase` and `cursor` until `done: true`: the measurements first, then the evidence). It
+deletes the twins and strips the new fields, so the older schema accepts what is left.
 
 The `"use node"` actions (provider SDKs, probes, the front qualification) run on the Node
 version baked into the self-hosted Convex backend image. The L7 adapters add `cloudflare` (the

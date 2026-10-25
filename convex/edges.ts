@@ -23,11 +23,12 @@ import { reserveAllocation } from './edgeProviderAccounts';
 import { defaultLocationOf, liveCountForLocation } from './edgeLocations';
 import { EDGE_OBSERVED_PLACEMENT, edgeResourceName } from './lib/edges/accountSettings';
 import { dropEdgeFromPool, liveEdgesOfAccount } from './relays';
-import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
+import { EDGE_LIVE_STATUSES, FLEET_EDGE_PAGE_SIZE } from './lib/edges/pool';
 import { parseIntent, parseObservedSettings, type ProvisionIntent } from './lib/edges/intent';
 import {
   holdLearnedAddresses,
   needsEndpointVerification,
+  verificationBinding,
   verificationCurrent,
   verificationStale,
 } from './lib/edges/verification';
@@ -143,8 +144,28 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
         }
       : null,
   };
+  // FCP's own client check: current while it was taken against the
+  // configuration the edge holds now (the same binding a tick binds to).
+  const cc = e.clientCheck;
+  const binding = cc && listener ? verificationBinding(e, listener) : null;
+  const clientCheck = cc
+    ? {
+        at: new Date(cc.at).toISOString(),
+        verdict: cc.verdict,
+        ok: cc.ok,
+        engines: cc.engines,
+        control: cc.control,
+        by: cc.by,
+        current: listener
+          ? !!binding &&
+            binding.configHash === cc.configHash &&
+            binding.listenerRevision === cc.listenerRevision
+          : null,
+      }
+    : null;
   return {
     verification,
+    clientCheck,
     id: e._id as string,
     relayId: e.relayId as string,
     listenerId: e.listenerId as string,
@@ -290,19 +311,21 @@ export const listByRelayForAdmin = internalQuery({
   },
 });
 
-/** All non-destroyed edges (small, admin-managed table) for the reconcile cron. */
+/**
+ * One page of the non-destroyed edges in one status, for the reconcile cron:
+ * it pages through every live status (`allLiveEdges` in edgeReconcile.ts), so
+ * a fleet of any size is read whole, each page within its own read budget.
+ */
 export const listLive = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const out: Edge[] = [];
-    for (const status of LIVE_STATUSES) {
-      const rows = await ctx.db
-        .query('edges')
-        .withIndex('by_status', (q) => q.eq('status', status))
-        .take(500);
-      out.push(...rows);
-    }
-    return out;
+  args: { status: v.string(), cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { status, cursor }) => {
+    if (!(LIVE_STATUSES as readonly string[]).includes(status))
+      throw new ConvexError({ code: 'validation', message: 'Not a live edge status' });
+    const page = await ctx.db
+      .query('edges')
+      .withIndex('by_status', (q) => q.eq('status', status as Edge['status']))
+      .paginate({ numItems: FLEET_EDGE_PAGE_SIZE, cursor });
+    return { page: page.page, isDone: page.isDone, continueCursor: page.continueCursor };
   },
 });
 

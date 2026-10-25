@@ -42,6 +42,7 @@ import {
   checkPublishable,
   liveEdgesOfAccount,
   liveEdgesOfRelay,
+  managedLiveOfAccount,
   poolAdmitOf,
   refreshTemplateEdges,
   scheduleMirrorRefresh,
@@ -3252,10 +3253,13 @@ export async function selectionContext(
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
     // Same rule as the insert-time capacity check: observe-only edges were not
-    // provisioned by FCP and never consume its allocation.
-    const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
+    // provisioned by FCP and never consume its allocation. One read of the
+    // account serves its total, each location's count and the spend.
+    const managed = await managedLiveOfAccount(ctx.db, a._id);
+    const live = managed.live;
     // The account's monthly estimate, when it has a cap (the budget guard).
-    const spend = typeof a.cost?.monthlyCap === 'number' ? await spendOf(ctx, a) : null;
+    const spend =
+      typeof a.cost?.monthlyCap === 'number' ? await spendOf(ctx, a, managed.edges) : null;
     for (const loc of await locationsOfAccount(ctx.db, a._id)) {
       // A zone where this front could not get its certificate is never picked.
       const certificate = certificateRefusalFor(
@@ -3337,7 +3341,7 @@ export async function selectionContext(
         maxLiveEdges: a.maxLiveEdges,
         liveEdges: live,
         locationMaxLiveEdges: loc.maxLiveEdges ?? null,
-        locationLiveEdges: await liveCountForLocation(ctx.db, loc),
+        locationLiveEdges: managed.atLocation(loc._id),
         monthlyCost: cost.monthly,
         costCurrency: cost.currency,
       });

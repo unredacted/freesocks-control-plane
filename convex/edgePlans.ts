@@ -25,7 +25,7 @@ import type { DatabaseReader, DatabaseWriter, MutationCtx } from './_generated/s
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { resolveBuildFor } from './edgeTemplates';
-import { EDGE_LIVE_STATUSES, LIVE_EDGE_SCAN_LIMIT } from './lib/edges/pool';
+import { ACCOUNT_EDGE_SCAN_LIMIT, EDGE_LIVE_STATUSES } from './lib/edges/pool';
 import { parseOptionValues } from './lib/edges/providers/options';
 import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { assertAdmission } from './lib/edges/maintenance';
@@ -183,7 +183,7 @@ export async function edgeCostAt(
   return { cost: edgeCostOf(account.provider, accountCostOf(account), storedPlanOf(plan)), plan };
 }
 
-/** Live edges FCP manages in the account (bounded per status, like the capacity reads). */
+/** Live edges FCP manages in the account (exact up to the live-edge ceiling, like the capacity reads). */
 async function managedLiveEdgesOf(
   db: DatabaseReader,
   accountId: Id<'edgeProviderAccounts'>,
@@ -194,7 +194,7 @@ async function managedLiveEdgesOf(
       ...(await db
         .query('edges')
         .withIndex('by_account_status', (q) => q.eq('accountId', accountId).eq('status', status))
-        .take(LIVE_EDGE_SCAN_LIMIT)),
+        .take(ACCOUNT_EDGE_SCAN_LIMIT)),
     );
   return out.filter((e) => e.managed);
 }
@@ -207,8 +207,10 @@ async function managedLiveEdgesOf(
 export async function spendOf(
   ctx: { db: DatabaseReader },
   account: Pick<Account, '_id' | 'provider' | 'defaultTemplateId' | 'cost'>,
+  /** The account's managed live edges when the caller already read them (`managedLiveOfAccount`). */
+  managed?: Doc<'edges'>[],
 ): Promise<SpendView> {
-  const edges = await managedLiveEdgesOf(ctx.db, account._id);
+  const edges = managed ?? (await managedLiveEdgesOf(ctx.db, account._id));
   const locations = new Map<string, Location | null>();
   const sizes = new Map<string, string | null>();
   const counted = new Map<string, { cost: EdgeCost; count: number }>();

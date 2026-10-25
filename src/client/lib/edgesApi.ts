@@ -41,9 +41,13 @@ import {
   AttentionResponse,
   CountryMarkResponse,
   type CountryMarkRequest,
+  CountryViewResponse,
+  CountryViewSummaryResponse,
   DeliveryBindingsResponse,
   EdgeAdmin,
   EdgeAdoptResponse,
+  EdgeClientCheckOutcome,
+  EdgeClientCheckStatus,
   EdgeConfigPatchResponse,
   EdgeConfigView,
   EdgeCountriesResponse,
@@ -672,6 +676,13 @@ export const unpublishEdge = (edgeId: string, keepActive?: boolean) =>
     keepActive === undefined ? {} : { keepActive },
     EdgeOkResponse,
   );
+/** FCP's own client check of one L4 address (real engines through its test link). */
+export const clientCheckEdge = (edgeId: string) =>
+  apiClient.post(`${BASE}/${enc(edgeId)}/client-check`, {}, EdgeClientCheckOutcome);
+export const fetchClientCheckStatus = () =>
+  apiClient.get(`${BASE}/client-check`, EdgeClientCheckStatus);
+export const refreshClientCheckStatus = () =>
+  apiClient.post(`${BASE}/client-check/refresh`, {}, EdgeClientCheckStatus);
 export const qualifyEdge = (edgeId: string) =>
   apiClient.post(`${BASE}/${enc(edgeId)}/qualify`, {}, EdgeQualifyResponse);
 export const retryDestroyEdge = (edgeId: string) =>
@@ -739,6 +750,12 @@ export const setCountryMark = (body: CountryMarkRequest) =>
 /** One round of one edge from every checked country now (throttled like a probe request). */
 export const requestCountryCheck = (edgeId: string) =>
   apiClient.post(`${BASE}/countries/check`, { edgeId }, ProbeRequestedResponse);
+/** The country view: every listed country with its totals. */
+export const fetchCountryViewSummary = () =>
+  apiClient.get(`${BASE}/countries/summary`, CountryViewSummaryResponse);
+/** The country view of one country (ISO code): origins -> transports -> addresses and names. */
+export const fetchCountryView = (country: string) =>
+  apiClient.get(`${BASE}/countries/${encodeURIComponent(country)}`, CountryViewResponse);
 
 // --- render / delivery bindings --------------------------------------------------------------------
 
@@ -761,6 +778,7 @@ export const edgeKeys = {
   setupDraft: (draftKey: string) => [...ROOT, 'setup-status', 'draft', draftKey] as const,
   config: [...ROOT, 'config'] as const,
   maintenance: [...ROOT, 'maintenance'] as const,
+  clientCheck: [...ROOT, 'client-check'] as const,
   freedom: [...ROOT, 'freedom'] as const,
   freedomPreview: [...ROOT, 'freedom', 'preview'] as const,
   setupRuns: [...ROOT, 'setup-runs'] as const,
@@ -799,6 +817,9 @@ export const edgeKeys = {
   probeAudit: [...ROOT, 'probes', 'audit'] as const,
   probeSources: [...ROOT, 'probes', 'sources'] as const,
   countries: [...ROOT, 'countries'] as const,
+  // Under `countries`: a mark or a check invalidates the view too.
+  countryViewSummary: [...ROOT, 'countries', 'view-summary'] as const,
+  countryView: (country: string) => [...ROOT, 'countries', 'view', country] as const,
   deliveryBindings: [...ROOT, 'delivery-bindings'] as const,
 };
 
@@ -939,6 +960,13 @@ export const freedomPreviewQuery = (enabled: () => boolean) =>
     queryKey: edgeKeys.freedomPreview,
     queryFn: fetchFreedomPreview,
     enabled: enabled(),
+    staleTime: 60_000,
+  }));
+
+export const clientCheckStatusQuery = () =>
+  createQuery(() => ({
+    queryKey: edgeKeys.clientCheck,
+    queryFn: fetchClientCheckStatus,
     staleTime: 60_000,
   }));
 
@@ -1202,6 +1230,24 @@ export const edgeCountriesQuery = (
         ? (false as const)
         : (q: { state: { data: EdgeCountriesResponse | undefined } }) =>
             liveInterval(!!o.busy?.(q.state.data)),
+  }));
+
+/** The country view's summary: 60 s (evidence moves on the probe cadence, 15 min). */
+export const countryViewSummaryQuery = () =>
+  createQuery(() => ({
+    queryKey: edgeKeys.countryViewSummary,
+    queryFn: fetchCountryViewSummary,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  }));
+
+/** One country's view: 60 s. */
+export const countryViewQuery = (country: () => string) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.countryView(country()),
+    queryFn: () => fetchCountryView(country()),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   }));
 
 export const probeSummaryQuery = (range: () => ProbeRange) =>

@@ -43,6 +43,7 @@ import {
 } from './lib/edges/verifyRung';
 import { verificationListenerOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { checkPublishable } from './relays';
+import { FLEET_EDGE_PAGE_SIZE } from './lib/edges/pool';
 import { applyQualification } from './edgeProviderAccounts';
 import { effectiveTemplateOfLocation, locationOfEdge } from './edgeLocations';
 
@@ -414,18 +415,18 @@ async function auditRung(
  * live rows (the edge was re-addressed or its listener changed and no probe
  * has settled since) is cleared, so a system rung never outlives the
  * configuration it was measured on. `verified` records are never touched.
- * Bounded: active edges are operator-scale.
+ * One page of the active edges per call: the cron pages through them all.
  */
 export const reconcilePartialRungs = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
     const now = Date.now();
     let cleared = 0;
-    const active = await ctx.db
+    const page = await ctx.db
       .query('edges')
       .withIndex('by_status', (q) => q.eq('status', 'active'))
-      .take(500);
-    for (const edge of active) {
+      .paginate({ numItems: FLEET_EDGE_PAGE_SIZE, cursor: cursor ?? null });
+    for (const edge of page.page) {
       const rec = edge.verification;
       if (!rec || rec.rung !== 'partial' || !needsEndpointVerification(edge)) continue;
       const listener = await ctx.db.get(edge.listenerId);
@@ -439,6 +440,6 @@ export const reconcilePartialRungs = internalMutation({
       await auditRung(ctx, edge, listener?.listenerKey ?? rec.listenerKey, 'cleared');
       cleared++;
     }
-    return { cleared };
+    return { cleared, isDone: page.isDone, continueCursor: page.continueCursor };
   },
 });

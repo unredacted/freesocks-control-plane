@@ -30,6 +30,8 @@ export const SniVantageConfig = z.object({
   minVantages: z.number(),
   minNetworks: z.number(),
   autoApply: z.boolean(),
+  /** Real-host controls: each name also checked against its real site from the same vantages. */
+  realHost: z.boolean().default(false),
 });
 export type SniVantageConfig = z.infer<typeof SniVantageConfig>;
 

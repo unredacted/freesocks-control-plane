@@ -47,11 +47,12 @@ only empty/`CHANGE_ME` placeholders; re-running never overwrites a set value.
 **Infra randoms → `.env.beta`** (the compose `${VAR:?}` guards need them present
 _before_ `up`):
 
-| Var                 | Purpose                                                 | Notes                                                                        |
-| ------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `INSTANCE_SECRET`   | Convex backend instance identity                        | Set once; changing it invalidates the admin key.                             |
-| `POSTGRES_PASSWORD` | Postgres superuser password (interpolated into the DSN) | URL-safe hex. Changing it needs a matching DB change.                        |
-| `CAP_ADMIN_KEY`     | Login to the self-hosted Cap captcha dashboard          | The bootstrap **prints it** (you need it to create the Cap site key/secret). |
+| Var                        | Purpose                                                                | Notes                                                                                                                                                                                                       |
+| -------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `INSTANCE_SECRET`          | Convex backend instance identity                                       | Set once; changing it invalidates the admin key.                                                                                                                                                            |
+| `POSTGRES_PASSWORD`        | Postgres superuser password (interpolated into the DSN)                | URL-safe hex. Changing it needs a matching DB change.                                                                                                                                                       |
+| `CAP_ADMIN_KEY`            | Login to the self-hosted Cap captcha dashboard                         | The bootstrap **prints it** (you need it to create the Cap site key/secret).                                                                                                                                |
+| `EDGE_CLIENT_CHECK_SECRET` | Signs FCP's requests to its client-check service (`edge-client-check`) | The service reads it from here; the deployer sets the same value on the deployment. Rotate by changing it here and recreating `edge-client-check` and `deployer`. docs/edges.md § "FCP's own client check". |
 
 **CDN-blinding keypair → split across both files, generated as a UNIT** so the
 public pins always match the secret keys (the feature is called **"HPKE"** in the

@@ -45,6 +45,8 @@ export type EdgesRoute =
   | { page: 'settings' }
   | { page: 'names' }
   | { page: 'family'; slug: string }
+  | { page: 'countries' }
+  | { page: 'country'; code: string }
   | { page: 'not-found' };
 
 export const EDGES_ROUTES = [
@@ -60,6 +62,8 @@ export const EDGES_ROUTES = [
   ['/admin/edges/settings', 'settings'],
   ['/admin/edges/names', 'names'],
   ['/admin/edges/names/:slug', 'family'],
+  ['/admin/edges/countries', 'countries'],
+  ['/admin/edges/countries/:code', 'country'],
 ] as const;
 
 export function resolveEdgesRoute(pathname: string): EdgesRoute {
@@ -69,6 +73,11 @@ export function resolveEdgesRoute(pathname: string): EdgesRoute {
     if (page === 'relay' || page === 'node' || page === 'family')
       return { page, slug: m.params.slug ?? '' };
     if (page === 'provider') return { page, id: m.params.id ?? '' };
+    if (page === 'country') {
+      // An ISO 3166-1 alpha-2 code; anything else is not a country page.
+      const code = (m.params.code ?? '').toUpperCase();
+      return /^[A-Z]{2}$/.test(code) ? { page, code } : { page: 'not-found' };
+    }
     return { page };
   }
   return { page: 'not-found' };
@@ -90,14 +99,17 @@ export function legacyEdgesRedirect(pathname: string, search = ''): string | nul
   return null;
 }
 
-/** The in-page header: Nodes | Providers | Advanced. */
-export type SectionTab = 'nodes' | 'providers' | 'advanced';
+/** The in-page header: Nodes | Countries | Providers | Advanced. */
+export type SectionTab = 'nodes' | 'countries' | 'providers' | 'advanced';
 export function sectionTabOf(route: EdgesRoute): SectionTab {
   switch (route.page) {
     case 'home':
     case 'node':
     case 'not-found':
       return 'nodes';
+    case 'countries':
+    case 'country':
+      return 'countries';
     case 'providers':
     case 'provider':
       return 'providers';
@@ -159,6 +171,10 @@ export const edgesPaths = {
   /** Server-name families (under Advanced). */
   names: () => '/admin/edges/names',
   family: (slug: string) => `/admin/edges/names/${enc(slug)}`,
+  /** The country view: every censored country, and one country in full (`?node=<slug>` jumps to a node). */
+  countries: () => '/admin/edges/countries',
+  country: (code: string, params?: { node?: string | null }) =>
+    withSearch(`/admin/edges/countries/${enc(code.toUpperCase())}`, params),
 };
 
 /**

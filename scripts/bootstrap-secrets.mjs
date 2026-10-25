@@ -94,6 +94,9 @@ for (const [key, n] of [
   ['INSTANCE_SECRET', 32],
   ['POSTGRES_PASSWORD', 24],
   ['CAP_ADMIN_KEY', 24],
+  // FCP's own client check: the edge-client-check service and (through the
+  // deployer) the deployment read it from here.
+  ['EDGE_CLIENT_CHECK_SECRET', 32],
 ]) {
   if (isPlaceholder(beta.get(key))) {
     setEnv(beta, key, randHex(n));

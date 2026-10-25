@@ -3,6 +3,7 @@
  * ordered by pool index, nulls are gaps). Generic over the id type so the
  * `Id<'edges'>` brand survives a round trip.
  */
+import { MAX_LIVE_EDGES_CEILING } from '../../../src/shared/contracts/edgeLimits';
 
 /**
  * Every edge status that is NOT `destroyed`. Reads that must exclude destroyed
@@ -26,8 +27,22 @@ export const EDGE_LIVE_STATUSES = [
 
 export type EdgeLiveStatus = (typeof EDGE_LIVE_STATUSES)[number];
 
-/** Rows read per status per live-edge scan: an origin/account far past this is a bug, not a pool. */
+/** Rows read per status per live-edge scan of ONE origin: an origin far past this is a bug, not a pool. */
 export const LIVE_EDGE_SCAN_LIMIT = 200;
+
+/**
+ * Rows read per status by the per-account and per-location scans (the
+ * `maxLiveEdges` gates, spend, usage): the live-edge ceiling, so a count is
+ * exact up to any cap an account or location may set (a status holding this
+ * many rows already reaches every cap). An edge row is a few KB, so one scan
+ * of an account at the ceiling stays well within a function's read limit;
+ * callers that need an account's total, per-location counts and spend read
+ * the account ONCE (`managedLiveOfAccount` in convex/relays.ts).
+ */
+export const ACCOUNT_EDGE_SCAN_LIMIT = MAX_LIVE_EDGES_CEILING;
+
+/** Rows per page when the reconcile cron reads every live edge of the fleet (`edges.listLive`). */
+export const FLEET_EDGE_PAGE_SIZE = 500;
 
 export function nextFreePoolIndex(
   published: readonly (string | null)[],

@@ -25,6 +25,7 @@
   import DeliveryBindingsCard from './settings/DeliveryBindingsCard.svelte';
   import MaintenanceCard from './settings/MaintenanceCard.svelte';
   import FreedomDeliveryCard from './settings/FreedomDeliveryCard.svelte';
+  import ClientCheckCard from './settings/ClientCheckCard.svelte';
   import { ConfigForm } from './settings/form.svelte';
   import {
     AUTO_PROVISION,
@@ -335,6 +336,7 @@
     </SettingsSectionCard>
 
     <FreedomDeliveryCard />
+    <ClientCheckCard />
     <MaintenanceCard />
     <DeliveryBindingsCard />
   </div>

@@ -356,6 +356,43 @@ services:
       cap:
         condition: service_healthy
 
+  # FCP's own client check (docs/edges.md § "FCP's own client check"): FCP asks
+  # it to connect through an edge address with a REAL sing-box or Xray client,
+  # using FCP's own check account, and to read the egress-IP page through it.
+  # Internal only (no published port). It answers only requests signed with
+  # EDGE_CLIENT_CHECK_SECRET (.env.beta; the deployer hands the same value to the
+  # deployment) and refuses every call while it is unset. Nothing is logged per
+  # request. Built from digest-pinned engine images, so a deploy needs `--build`.
+  edge-client-check:
+    build:
+      context: .
+      dockerfile: docker/edge-client-check/Dockerfile
+    pids_limit: 128
+    restart: unless-stopped
+    logging: *log
+    stop_grace_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    environment:
+      - EDGE_CLIENT_CHECK_SECRET=${EDGE_CLIENT_CHECK_SECRET:-}
+      # The egress-IP page (plain text, one address). Empty = the service's default.
+      - EDGE_CLIENT_CHECK_EGRESS_URL=${EDGE_CLIENT_CHECK_EGRESS_URL:-}
+    healthcheck:
+      # Liveness only (no detail): bun is the image's runtime.
+      test:
+        [
+          'CMD',
+          'bun',
+          '-e',
+          "const r = await fetch('http://127.0.0.1:8080/healthz'); process.exit(r.ok ? 0 : 1)",
+        ]
+      interval: 30s
+      start_period: 10s
+      retries: 3
+
   # One-shot: derive a valid admin key from INSTANCE_NAME + INSTANCE_SECRET (a
   # standalone derivation via the backend image's generate_admin_key.sh, no
   # running server needed) and write it to the shared `convexkey` volume for the
@@ -392,6 +429,9 @@ services:
     logging: *log
     environment:
       - CONVEX_SELF_HOSTED_URL=http://backend:3210
+      # FCP's own client check: the same secret the edge-client-check service
+      # holds, set on the deployment by the entrypoint (one place to set it).
+      - EDGE_CLIENT_CHECK_SECRET=${EDGE_CLIENT_CHECK_SECRET:-}
     volumes:
       - convexkey:/keys:ro
       # The application secrets to apply (copy .env.convex.example -> .env.convex).

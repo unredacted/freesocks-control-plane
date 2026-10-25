@@ -309,6 +309,10 @@ export const ATTENTION_KINDS = [
   // An address in use on a transport scoped to a network is not on that network
   // (docs/edges.md "Networks").
   'edge_off_network',
+  // FCP's own client check (docs/edges.md § "FCP's own client check"): a client family
+  // that cannot get through an address in use; the check service not answering.
+  'client_refused',
+  'client_check_unavailable',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -698,6 +702,70 @@ export const COUNTRY_STATE_FROM = ['edge', 'group', 'mark'] as const;
 export type CountryStateFrom = (typeof COUNTRY_STATE_FROM)[number];
 
 /**
+ * The country view (docs/edges.md "The country view", convex/lib/edges/country/view.ts):
+ * why an address counts as it does from one country. Every basis but `probes`
+ * and `none` is what delivery acts on (`edges.countryState`).
+ */
+export const COUNTRY_VIEW_ADDRESS_BASES = [
+  'mark',
+  'location_mark',
+  'checks',
+  'handshake',
+  'never_reached',
+  'location',
+  'probes',
+  'none',
+] as const;
+export type CountryViewAddressBasis = (typeof COUNTRY_VIEW_ADDRESS_BASES)[number];
+
+/** Why a server name counts as it does from one country (`checks` = suggested, not applied). */
+export const COUNTRY_VIEW_NAME_BASES = ['mark', 'checks_mark', 'checks', 'none'] as const;
+export type CountryViewNameBasis = (typeof COUNTRY_VIEW_NAME_BASES)[number];
+
+/**
+ * Real-host controls (docs/edges.md "Real-host controls", convex/lib/edges/sni/realHost.ts):
+ * one vantage's check of FCP's address and of the name's real site, read together.
+ */
+export const REAL_HOST_PAIRS = [
+  'works',
+  'name_blocked',
+  'address_blocked',
+  'ip_name_match',
+  'ours_only',
+  'inconclusive',
+] as const;
+export type RealHostPair = (typeof REAL_HOST_PAIRS)[number];
+
+/** What one batch's pairs say about a name in a country (`thin`: too few to say, `mixed`: no majority). */
+export const REAL_HOST_READINGS = [
+  'works',
+  'name_blocked',
+  'address_blocked',
+  'ip_name_match',
+  'ours_only',
+  'mixed',
+  'thin',
+] as const;
+export type RealHostReading = (typeof REAL_HOST_READINGS)[number];
+
+/** Why a real-site check was not dialled (`sniVantageProbes.error` on a `real_host` row). */
+export const REAL_HOST_SKIPS = [
+  'real_resolve',
+  'real_private',
+  'real_is_ours',
+  'real_not_serving',
+] as const;
+export type RealHostSkip = (typeof REAL_HOST_SKIPS)[number];
+
+/** Why the view could not work out what a member there is handed on a transport. */
+export const COUNTRY_VIEW_HANDED_REASONS = [
+  'render_off',
+  'origin_disabled',
+  'no_published',
+] as const;
+export type CountryViewHandedReason = (typeof COUNTRY_VIEW_HANDED_REASONS)[number];
+
+/**
  * Every reason the server records on a round or a track (verdict.ts). The
  * admin words them in one place (routes/admin/edges/lib/statusWords.ts, pinned
  * by a test that reads the server's rules for the literals it writes).
@@ -743,3 +811,58 @@ export const PROBE_FAILURE_CLASSES = [
   'failed',
 ] as const;
 export type ProbeFailureClass = (typeof PROBE_FAILURE_CLASSES)[number];
+
+/**
+ * FCP's own client check (docs/edges.md § "FCP's own client check"): a real
+ * client engine connects through an address with FCP's check credential and
+ * fetches an egress-IP page. The engines it runs, in the order it runs them.
+ */
+export const CLIENT_CHECK_ENGINES = ['sing-box', 'xray'] as const;
+export type ClientCheckEngine = (typeof CLIENT_CHECK_ENGINES)[number];
+
+/** What one engine's session through an address answered (`ok`, else why not). */
+export const CLIENT_CHECK_SESSION_CODES = [
+  'ok',
+  // A REALITY server handed the client to its target: it refused this client.
+  'reality_refused',
+  'tls_failed',
+  'timeout',
+  'refused',
+  'reset',
+  'unreachable',
+  // Connected, but the egress page answered something that is not an address.
+  'egress_unreadable',
+  // The engine would not start with the configuration (a field it does not know).
+  'config_refused',
+  'session_failed',
+] as const;
+export type ClientCheckSessionCode = (typeof CLIENT_CHECK_SESSION_CODES)[number];
+
+/**
+ * The verdict over every engine, judged against a control address when one was
+ * checked too (lib/edges/clientCheck/verdict.ts). `passed_with_refusals`: an
+ * engine was refused here AND through the control (or a refusal the REALITY
+ * verdict already predicts), so the address is as good as what members have.
+ */
+export const CLIENT_CHECK_VERDICTS = [
+  'passed',
+  'passed_with_refusals',
+  'address_failed',
+  'egress_mismatch',
+  'node_unreachable',
+] as const;
+export type ClientCheckVerdict = (typeof CLIENT_CHECK_VERDICTS)[number];
+
+/** Why no verdict was reached: nothing about the address itself. */
+export const CLIENT_CHECK_UNCHECKED_CODES = [
+  'not_configured',
+  'unavailable',
+  'unauthorized',
+  'busy',
+  'link_unavailable',
+  'no_engine',
+  'not_l4',
+  // The check's whole budget ran out before every session could run.
+  'out_of_time',
+] as const;
+export type ClientCheckUncheckedCode = (typeof CLIENT_CHECK_UNCHECKED_CODES)[number];

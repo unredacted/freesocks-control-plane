@@ -87,6 +87,7 @@ const RESERVED = new Set([
   'sni',
   'countries',
   'networks',
+  'client-check',
 ]);
 
 /**
@@ -116,6 +117,8 @@ function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 4 && parts[0] === 'sni' && parts[1] === 'bindings' && parts[3] === 'plan')
     return true;
   if (parts.length === 3 && parts[0] === 'relays' && parts[2] === 'preflight') return true;
+  // Asks the client-check service how it is; stores nothing but that answer.
+  if (parts.length === 2 && parts[0] === 'client-check' && parts[1] === 'refresh') return true;
   return (
     parts.length === 2 &&
     ((parts[0] === 'render' && parts[1] === 'preview') ||
@@ -213,6 +216,9 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   }
   // The test link fetches the credential body and lists the backend Hosts.
   if (a === 'edges' && b && c === 'test-link' && !d) return 'admin.edges.provider-call';
+  // FCP's own client check builds test links and runs real sessions through the address.
+  if (a === 'edges' && b && c === 'client-check' && !d) return 'admin.edges.provider-call';
+  if (a === 'client-check' && b === 'refresh' && !c) return 'admin.edges.provider-call';
   if (a === 'relays' && b === 'node-candidates' && c === 'refresh') {
     return 'admin.edges.provider-call';
   }
@@ -304,6 +310,9 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   if (a === 'config') return json(await ctx.runQuery(internal.edgeAdmin.configView, {}));
   if (a === 'networks' && !b) return json(await ctx.runQuery(internal.edgeNetworks.list, {}));
   if (a === 'attention' && !b) return json(await ctx.runQuery(internal.edgeOperator.attention, {}));
+  // FCP's own client check: whether the service is set up, and its last health answer.
+  if (a === 'client-check' && !b)
+    return json(await ctx.runQuery(internal.edgeClientCheck.status, {}));
   if (a === 'setup-status' && !b) {
     const relaySlug = query.get('relay') ?? undefined;
     return json(
@@ -498,6 +507,12 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     });
     return r ? json(r) : notFound();
   }
+  // The country view (edgeCountryView.ts): every listed country with its totals,
+  // or one country in full (origins -> transports -> addresses and names).
+  if (a === 'countries' && b === 'summary' && !c)
+    return json(await ctx.runQuery(internal.edgeCountryView.summary, {}));
+  if (a === 'countries' && b && /^[A-Za-z]{2}$/.test(b) && !c)
+    return json(await ctx.runQuery(internal.edgeCountryView.country, { country: b }));
   if (a === 'countries' && !b) {
     // Per-country checks of edges (edgeCountry.ts): grades, tracks, marks, sources.
     const [overview, sources] = await Promise.all([
@@ -721,6 +736,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         draft: (body.draft ?? body) as never,
       }),
     );
+  }
+  if (a === 'client-check' && b === 'refresh' && !c) {
+    await ctx.runAction(internal.edgeClientCheck.refreshHealth, {});
+    return json(await ctx.runQuery(internal.edgeClientCheck.status, {}));
   }
   if (a === 'maintenance' && (b === 'freeze' || b === 'thaw') && !c) {
     if (b === 'freeze')
@@ -1503,6 +1522,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         // user, or a temporary Outline key) and record it. Throttled like the
         // other provider-calling POSTs.
         return json(await ctx.runAction(internal.edgeTestLinks.build, { edgeId }));
+      case 'client-check':
+        // FCP's own client check of this L4 address: real engines through its
+        // test link, judged against an address members already use.
+        if (d) return notFound();
+        return json(await ctx.runAction(internal.edgeClientCheck.check, { edgeId, ...act }));
       case 'qualify':
         // Run the authenticated end-to-end session through this L7 front now and
         // store the verdict with the configuration it proved.

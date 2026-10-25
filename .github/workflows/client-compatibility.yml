@@ -101,6 +101,24 @@ jobs:
       # carry the per-run client id.
       - run: bun run test:integration:reality-keyshare
 
+  client-check:
+    # FCP's own client check (docs/edges.md § "FCP's own client check"): the
+    # edge-client-check service as the stack builds it, through real Xray-cores
+    # of the fleet release. It must pass with minClientVer 1.8.1, and must name
+    # sing-box refused (Xray connected) where minClientVer is unset.
+    name: FCP's client check vs Xray-core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      # Tears the containers down itself. No logs or configs are kept: they
+      # carry the per-run client id.
+      - run: bun run test:integration:client-check
+
   edge-connection:
     # The release gate for edges and the proof behind the supported matrix
     # (docs/edges.md "Supported matrix"): a member connects THROUGH an edge with

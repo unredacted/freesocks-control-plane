@@ -412,6 +412,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.locations.l7_migrated': ['moved', 'created', 'incomplete', 'edgesDiffer'],
   // An operator confirmed an L4 endpoint (lib/edges/verification.ts): never the address.
   'edge.verified': ['relaySlug', 'edgeId', 'listenerKey', 'method'],
+  // FCP's own client check of one address (edgeClientCheck.ts): codes only, never an
+  // address or an egress IP. `engines` = `sing-box:ok xray:reality_refused`.
+  'edge.client_check': ['relaySlug', 'edgeId', 'verdict', 'by', 'control', 'engines'],
   // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
   'edge.verification.rung': ['relaySlug', 'edgeId', 'listenerKey', 'rung'],
   // Rotation keeps the qualification: booleans only, never a key or identifier.
@@ -610,6 +613,16 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.host.released': ['relaySlug', 'listenerKey'],
   'relay.delivery.released': ['relaySlug'],
   'admin.edge.reset': ['phase', 'deleted'],
+  // Operator-run raise of accounts still on an old default limit pair
+  // (`edgeProviderAccounts.raiseOldDefaultLimits`): the limits before and after.
+  'admin.edge.limits_raised': [
+    'name',
+    'provider',
+    'fromMaxLiveEdges',
+    'maxLiveEdges',
+    'fromDailyAllocationBudget',
+    'dailyAllocationBudget',
+  ],
   'admin.edge.render.change': ['changedKeys'],
   'admin.edge.probe.change': ['changedKeys'],
   // `forceGeoEvidence` records that an operator waived the affected-country

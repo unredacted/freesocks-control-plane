@@ -75,8 +75,17 @@ export interface TestLinkResult {
 }
 
 export const context = internalQuery({
-  args: { edgeId: v.id('edges') },
-  handler: async (ctx, { edgeId }) => {
+  args: {
+    edgeId: v.id('edges'),
+    /**
+     * FCP's client check only (edgeClientCheckOps): a new address is checked
+     * while its rotation still holds it in `verifying`, before it can be used.
+     */
+    allowVerifying: v.optional(v.boolean()),
+    /** FCP's client check only: the address members are served, never a held (learned) one. */
+    servedOnly: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { edgeId, allowVerifying, servedOnly }) => {
     const edge = await ctx.db.get(edgeId);
     if (!edge) throw new ConvexError({ code: 'not_found', message: 'Edge not found' });
     if (!needsEndpointVerification(edge))
@@ -84,7 +93,7 @@ export const context = internalQuery({
         code: 'edge.l7_proof_required',
         message: 'A CDN front is verified by its authenticated proof, not by a test link',
       });
-    if (edge.status !== 'active')
+    if (edge.status !== 'active' && !(allowVerifying && edge.status === 'verifying'))
       throw new ConvexError({ code: 'edge.edge_not_active', message: 'The edge is not active' });
     const listener = await ctx.db.get(edge.listenerId);
     if (!listener || listener.retired)
@@ -94,7 +103,7 @@ export const context = internalQuery({
     const vl = await verificationListenerOf(ctx.db, listener);
     // An address the edge learned after its confirmation is tested on its own:
     // the link carries that address only, and the binding is the one that serves it.
-    const learned = learnedBinding(edge, vl);
+    const learned = servedOnly ? null : learnedBinding(edge, vl);
     const binding = learned ?? verificationBinding(edge, vl);
     if (!binding)
       throw new ConvexError({ code: 'edge.no_address', message: 'The edge has no address yet' });
@@ -384,9 +393,18 @@ export const build = internalAction({
      * The name reaches no subscription through this path.
      */
     candidateSni: v.optional(v.string()),
+    /**
+     * FCP's client check (edgeClientCheckOps): its own temporary Outline key
+     * (an operator's open test sheet keeps its own), the address members are
+     * served, and an address its rotation still holds in `verifying`.
+     */
+    clientCheck: v.optional(v.boolean()),
   },
-  handler: async (ctx, { edgeId, candidateSni }): Promise<TestLinkResult> => {
-    const base = await ctx.runQuery(internal.edgeTestLinks.context, { edgeId });
+  handler: async (ctx, { edgeId, candidateSni, clientCheck }): Promise<TestLinkResult> => {
+    const base = await ctx.runQuery(internal.edgeTestLinks.context, {
+      edgeId,
+      ...(clientCheck ? { allowVerifying: true, servedOnly: true } : {}),
+    });
     const c = candidateSni
       ? {
           ...base,
@@ -399,7 +417,7 @@ export const build = internalAction({
       : base;
     const cred = await ctx.runAction(internal.edgeTestCredentials.ensure, {
       relayId: c.relayId as Id<'relays'>,
-      purpose: 'test_link',
+      purpose: clientCheck ? 'client_check' : 'test_link',
     });
     if (!cred.ok)
       throw new ConvexError({

@@ -43,13 +43,19 @@ const SWEEP_BATCH = 50;
 const SWEEP_PAGES = 10;
 export const TEST_CREDENTIAL_TAG = 'fcp-test';
 
-const purposeValidator = v.union(v.literal('rehearsal'), v.literal('test_link'));
-type Purpose = 'rehearsal' | 'test_link';
+// `client_check`: FCP's own client check (edgeClientCheckOps) keeps its own
+// temporary key, so releasing it never cuts off an operator's open test sheet.
+const purposeValidator = v.union(
+  v.literal('rehearsal'),
+  v.literal('test_link'),
+  v.literal('client_check'),
+);
+type Purpose = 'rehearsal' | 'test_link' | 'client_check';
 
 /** Within the backend's username cap: the node or origin name is cut first, never the nonce. */
 export function testCredentialUsername(relaySlug: string, purpose: Purpose, nonce: string): string {
   return boundedUsername(
-    `fcp-test-${purpose === 'test_link' ? 'link' : 'rehearse'}-`,
+    `fcp-test-${purpose === 'test_link' ? 'link' : purpose === 'client_check' ? 'check' : 'rehearse'}-`,
     relaySlug,
     nonce,
   );
