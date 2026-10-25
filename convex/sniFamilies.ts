@@ -42,6 +42,7 @@ import {
 } from './lib/sniConfig';
 import { resolveEdgeSecrets } from './lib/edgeConfig';
 import { decide, suggest, type Mark } from './lib/edges/sni/vantage';
+import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/sni/marks';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -426,43 +427,53 @@ export const importNames = internalMutation({
   args: { slug: v.string(), lines: v.array(v.string()), ...actor },
   handler: async (ctx, a) => {
     const f = await familyBySlug(ctx, a.slug);
-    const existing = new Map<string, { familyId: string; status: string }>();
-    const wanted = new Set(a.lines.map((l) => normalizeName(l)).filter((n): n is string => !!n));
-    for (const name of wanted) {
-      const row = await ctx.db
-        .query('sniNames')
-        .withIndex('by_name', (q) => q.eq('name', name))
-        .unique();
-      if (row) existing.set(name, { familyId: row.familyId as string, status: row.status });
-    }
-    const verdicts = judgeImport(a.lines, f._id as string, existing);
-    const current = (await namesOf(ctx, f._id)).length;
-    let seq = f.nextSeq;
-    let added = 0;
-    for (const l of verdicts) {
-      if (l.verdict !== 'added' || !l.name) continue;
-      if (current + added >= MAX_NAMES_PER_FAMILY)
-        return refuse('edge.sni.cap', `A family holds at most ${MAX_NAMES_PER_FAMILY} names`);
-      await ctx.db.insert('sniNames', {
-        familyId: f._id,
-        name: l.name,
-        seq: seq++,
-        status: 'active',
-        qualification: { state: 'pending', consecutiveFails: 0 },
-        checkedAt: 0,
-        updatedAt: Date.now(),
-      });
-      added++;
-    }
-    await ctx.db.patch(f._id, { nextSeq: seq, updatedAt: Date.now() });
+    const { added, lines } = await addFamilyNames(ctx, f, a.lines);
     await audit(ctx, 'edge.sni.names.import', a.actorAdminId, {
       slug: f.slug,
       added,
-      rejected: verdicts.length - added,
+      rejected: lines.length - added,
     });
-    return { added, lines: verdicts };
+    return { added, lines };
   },
 });
+
+/**
+ * Add names to a family, each judged like a pasted line (`judgeImport`):
+ * added (active, waiting for its first qualification), or the reason it is
+ * not. Refused past the family cap.
+ */
+async function addFamilyNames(ctx: MutationCtx, f: Doc<'sniFamilies'>, input: readonly string[]) {
+  const existing = new Map<string, { familyId: string; status: string }>();
+  const wanted = new Set(input.map((l) => normalizeName(l)).filter((n): n is string => !!n));
+  for (const name of wanted) {
+    const row = await ctx.db
+      .query('sniNames')
+      .withIndex('by_name', (q) => q.eq('name', name))
+      .unique();
+    if (row) existing.set(name, { familyId: row.familyId as string, status: row.status });
+  }
+  const verdicts = judgeImport([...input], f._id as string, existing);
+  const current = (await namesOf(ctx, f._id)).length;
+  let seq = f.nextSeq;
+  let added = 0;
+  for (const l of verdicts) {
+    if (l.verdict !== 'added' || !l.name) continue;
+    if (current + added >= MAX_NAMES_PER_FAMILY)
+      return refuse('edge.sni.cap', `A family holds at most ${MAX_NAMES_PER_FAMILY} names`);
+    await ctx.db.insert('sniNames', {
+      familyId: f._id,
+      name: l.name,
+      seq: seq++,
+      status: 'active',
+      qualification: { state: 'pending', consecutiveFails: 0 },
+      checkedAt: 0,
+      updatedAt: Date.now(),
+    });
+    added++;
+  }
+  await ctx.db.patch(f._id, { nextSeq: seq, updatedAt: Date.now() });
+  return { added, lines: verdicts };
+}
 
 /** retire / reactivate / burn / recheck, by name. A burned name never comes back. */
 export const setNames = internalMutation({
@@ -517,22 +528,7 @@ export const setNames = internalMutation({
 
 /** The marks of one name, as they are copied onto a listener's entry for it. */
 export async function countryMarks(ctx: { db: QueryCtx['db'] }, name: string) {
-  const rows = await ctx.db
-    .query('sniNameCountry')
-    .withIndex('by_name', (q) => q.eq('name', name))
-    .collect();
-  const blockedIn = rows
-    .filter((r) => r.state === 'blocked')
-    .map((r) => r.country)
-    .sort();
-  const provenIn = rows
-    .filter((r) => r.state === 'proven')
-    .map((r) => r.country)
-    .sort();
-  return {
-    ...(blockedIn.length ? { blockedIn } : {}),
-    ...(provenIn.length ? { provenIn } : {}),
-  };
+  return marksOfName(ctx.db, name);
 }
 
 /**
@@ -550,7 +546,7 @@ export async function writeCountryMarks(
   country: string,
   state: 'proven' | 'blocked' | 'unknown',
   source: 'operator' | 'probe',
-): Promise<{ count: number; relays: number }> {
+): Promise<{ count: number; relays: number; switched: number }> {
   const wanted = [...new Set(names)];
   const now = Date.now();
   for (const name of wanted) {
@@ -567,6 +563,7 @@ export async function writeCountryMarks(
   const touched = new Set(wanted);
   const listeners = await ctx.db.query('relayListeners').collect();
   const relays = new Set<Id<'relays'>>();
+  let switched = 0;
   // Listeners whose backend Host name (`hostSniOf`) moves with the marks.
   const hostMoved = new Map<Id<'relayListeners'>, Id<'relays'>>();
   for (const l of listeners) {
@@ -580,11 +577,18 @@ export async function writeCountryMarks(
       const { blockedIn: _b, provenIn: _p, ...rest } = n;
       next.push({ ...rest, ...(await countryMarks(ctx, n.name)) });
     }
+    // A judged name only counts on the growth-stable pick (lib/edges/sni/marks.ts).
+    const pick = pickForJudgedNames(l.sniPick, next);
     await ctx.db.patch(l._id, {
       tlsNames: next,
+      ...(pick !== l.sniPick ? { sniPick: pick } : {}),
       namesRevision: (l.namesRevision ?? 0) + 1,
       updatedAt: now,
     });
+    if (pick !== l.sniPick) {
+      switched++;
+      await auditPickForMarks(ctx, l, pick);
+    }
     relays.add(l.relayId);
     if (l.host?.uuid && hostSniOf(l) !== hostSniOf({ tlsNames: next }))
       hostMoved.set(l._id, l.relayId);
@@ -601,7 +605,7 @@ export async function writeCountryMarks(
       if (rid === relayId)
         await ctx.scheduler.runAfter(0, internal.hostOps.resyncSni, { listenerId });
   }
-  return { count: wanted.length, relays: relays.size };
+  return { count: wanted.length, relays: relays.size, switched };
 }
 
 /**
@@ -627,14 +631,14 @@ export const setCountry = internalMutation({
     const wanted = [
       ...new Set(a.names.map((n) => normalizeName(n)).filter((n): n is string => !!n)),
     ].filter((n) => mine.has(n));
-    const { relays } = await writeCountryMarks(ctx, wanted, country, a.state, 'operator');
+    const { relays, switched } = await writeCountryMarks(ctx, wanted, country, a.state, 'operator');
     await audit(ctx, 'edge.sni.names.country', a.actorAdminId, {
       slug: f.slug,
       country,
       state: a.state,
       count: wanted.length,
     });
-    return { count: wanted.length, relays };
+    return { count: wanted.length, relays, switched };
   },
 });
 
@@ -734,6 +738,11 @@ export const bind = internalMutation({
     // unique per profile, so a second profile reusing a conventional tag such
     // as VLESS_REALITY must not make an unambiguous binding fail.
     inboundUuid: v.optional(v.string()),
+    // Take the names the transport lists now into the family (a transport whose
+    // names were set by hand: an unmanaged or adopted node). They then qualify,
+    // can be judged per country and stay on the transport through every
+    // rollout, like any family name.
+    importNames: v.optional(v.boolean()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -776,6 +785,7 @@ export const bind = internalMutation({
       )
       .unique();
     if (taken) refuse('conflict', 'This transport already has a family');
+    const imported = a.importNames ? await addFamilyNames(ctx, f, i.reality.serverNames) : null;
     // Everything the transport lists today has been accepted before: none of it
     // can ever serve as a witness that a NEW generation was applied.
     for (const name of i.reality.serverNames) {
@@ -809,8 +819,11 @@ export const bind = internalMutation({
       slug: f.slug,
       backendSlug: server.slug,
       inboundTag: i.tag,
+      ...(imported
+        ? { imported: imported.added, notImported: imported.lines.length - imported.added }
+        : {}),
     });
-    return { id: id as string };
+    return { id: id as string, ...(imported ? { imported } : {}) };
   },
 });
 

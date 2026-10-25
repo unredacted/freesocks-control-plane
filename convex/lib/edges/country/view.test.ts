@@ -296,9 +296,10 @@ describe('handedOn', () => {
     );
     expect(h.primary).toEqual([{ id: 'b', share: 1 }]);
     expect(h.onBlockedFirst).toBe(0);
-    // ... and it is still everyone's backup, which counts as holding it.
-    expect(h.backup).toEqual([{ id: 'a', share: 1 }]);
-    expect(h.onBlockedAddress).toBe(1);
+    // ... nor as the backup: a steered member's backup blocked there behind a
+    // primary that is not is left out, so nobody holds it.
+    expect(h.backup).toEqual([]);
+    expect(h.onBlockedAddress).toBe(0);
     expect(h.steered).toBe(true);
   });
 

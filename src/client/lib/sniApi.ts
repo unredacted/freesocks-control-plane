@@ -7,6 +7,7 @@ import { createQuery, type QueryClient } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
 import {
+  SniBindResult,
   SniConfigView,
   SniFamilyDetail,
   SniFamilyList,
@@ -70,11 +71,16 @@ export const applyVantage = (slug: string, snis: string[], country: string) =>
     SniVantageApplied,
   );
 
-export const bindFamily = (slug: string, backendSlug: string, transportTag: string) =>
+export const bindFamily = (
+  slug: string,
+  backendSlug: string,
+  transportTag: string,
+  opts: { transportUuid?: string; takeNames?: boolean } = {},
+) =>
   apiClient.post(
     `${BASE}/families/${enc(slug)}/bind`,
-    { backendSlug, transportTag } satisfies SniBindRequest,
-    Loose,
+    { backendSlug, transportTag, ...opts } satisfies SniBindRequest,
+    SniBindResult,
   );
 export const unbindFamily = (bindingId: string) =>
   apiClient.delete(`${BASE}/bindings/${enc(bindingId)}`, Loose);

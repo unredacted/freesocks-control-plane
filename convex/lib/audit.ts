@@ -584,7 +584,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.listener.update': ['relaySlug', 'listenerKey', 'enabled'],
   'relay.listener.name.retire': ['relaySlug', 'listenerKey', 'count', 'everywhere'],
   'relay.listener.name.reactivate': ['relaySlug', 'listenerKey', 'count'],
-  'relay.listener.sni_pick': ['relaySlug', 'listenerKey', 'version'],
+  'relay.listener.sni_pick': ['relaySlug', 'listenerKey', 'version', 'reason'],
   // Server-name families: slugs and COUNTS only, never a hostname.
   'edge.sni.config.update': ['changedKeys'],
   'edge.sni.family.create': ['slug', 'targetKind'],
@@ -595,7 +595,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.sni.names.reactivate': ['slug', 'count'],
   'edge.sni.names.burn': ['slug', 'count', 'listeners', 'skipped'],
   'edge.sni.names.recheck': ['slug', 'count'],
-  'edge.sni.inbound.bind': ['slug', 'backendSlug', 'inboundTag'],
+  'edge.sni.inbound.bind': ['slug', 'backendSlug', 'inboundTag', 'imported', 'notImported'],
   'edge.sni.inbound.unbind': ['slug', 'backendSlug', 'inboundTag'],
   'edge.sni.names.country': ['slug', 'country', 'state', 'count'],
   'edge.sni.names.accepted': ['relaySlug', 'listenerKey', 'generation', 'count', 'witness'],

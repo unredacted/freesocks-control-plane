@@ -188,10 +188,28 @@ function backupSniFor(
   const plain = sniFor(subscriberKey, edge, where);
   if (!plain.ok || plain.sni === null) return plain;
   if (edge.sniPick !== 'hrw1' || edgeHostname(edge) || taken.size === 0) return plain;
-  const fresh = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames, where).find(
-    (n) => !taken.has(n),
-  );
+  const fresh = preferUntaken(
+    rankSniHrwTiered(subscriberKey, edge.edgeId, edge.serverNames, where),
+    taken,
+  )[0];
   return { ok: true, sni: fresh ?? plain.sni };
+}
+
+/**
+ * Ranked names with the ones in `taken` after the others OF THE SAME TIER:
+ * an endpoint spreads over names its sibling does not carry, but a name
+ * proven where the member is still beats one nobody judged there (a member in
+ * a country with three proven names on the primary keeps proven names on the
+ * backup too). Without a country every name is in one tier, so this is plain
+ * "untaken first". Stable: the rendezvous order holds inside each group.
+ */
+function preferUntaken(
+  ranked: readonly { sni: string; tier: number }[],
+  taken: ReadonlySet<string>,
+): string[] {
+  return [...ranked]
+    .sort((a, b) => a.tier - b.tier || Number(taken.has(a.sni)) - Number(taken.has(b.sni)))
+    .map((x) => x.sni);
 }
 
 /**
@@ -249,12 +267,10 @@ function namesFor(
 ): string[] {
   if (first === null || want <= 1) return [];
   if (edge.sniPick !== 'hrw1' || edgeHostname(edge) || !protocolUsesSni(edge.proto)) return [];
-  const ranked = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames, where).filter(
-    (n) => n !== first,
+  const ranked = rankSniHrwTiered(subscriberKey, edge.edgeId, edge.serverNames, where).filter(
+    (n) => n.sni !== first,
   );
-  const fresh = ranked.filter((n) => !avoid.has(n));
-  const pool = fresh.length >= want - 1 ? fresh : [...fresh, ...ranked.filter((n) => avoid.has(n))];
-  return pool.slice(0, want - 1);
+  return preferUntaken(ranked, avoid).slice(0, want - 1);
 }
 
 export interface Assignment {
@@ -362,6 +378,16 @@ export function rankSniHrw(
   serverNames: readonly AssignableSni[],
   where?: CountryContext,
 ): string[] {
+  return rankSniHrwTiered(subscriberKey, edgeId, serverNames, where).map((x) => x.sni);
+}
+
+/** `rankSniHrw` with each name's country tier (0 proven where the member is, 1 not judged). */
+function rankSniHrwTiered(
+  subscriberKey: string,
+  edgeId: string,
+  serverNames: readonly AssignableSni[],
+  where?: CountryContext,
+): { sni: string; tier: number }[] {
   const scored: { sni: string; score: number; tier: number }[] = [];
   const seen = new Set<string>();
   for (const s of serverNames) {
@@ -377,7 +403,7 @@ export function rankSniHrw(
   scored.sort(
     (a, b) => a.tier - b.tier || b.score - a.score || (a.sni < b.sni ? -1 : a.sni > b.sni ? 1 : 0),
   );
-  return scored.map((x) => x.sni);
+  return scored.map((x) => ({ sni: x.sni, tier: x.tier }));
 }
 
 export interface AssignOptions {
@@ -449,7 +475,8 @@ function assignableFor(
  * assignable edge has (blocked only when nothing else is left), so a member
  * moves only when a tier changes and the modulus spread holds inside a tier;
  * the backup prefers, in order: not blocked, another provider, the better
- * tier, another location, the walk order.
+ * tier, another location, the walk order, and is left out when every
+ * candidate is blocked there while the primary is not.
  */
 export function assignEndpoints(
   subscriberKey: string,
@@ -459,11 +486,17 @@ export function assignEndpoints(
   const pool = [...published].sort((a, b) => a.poolIndex - b.poolIndex);
   if (pool.length === 0) return { primary: null, backup: null };
   if (opts.edgeCountry)
-    return assignByTier(subscriberKey, pool, opts, (e) => edgeTier(e, opts.edgeCountry!));
+    return assignByTier(subscriberKey, pool, opts, (e) => edgeTier(e, opts.edgeCountry!), {
+      dropBlockedBackup: true,
+    });
   if (opts.avoidBlockedIn && opts.avoidBlockedIn.length > 0) {
     const avoid = opts.avoidBlockedIn;
-    return assignByTier(subscriberKey, pool, opts, (e) =>
-      (e.blockedIn ?? []).some((c) => avoid.includes(c)) ? 2 : 1,
+    return assignByTier(
+      subscriberKey,
+      pool,
+      opts,
+      (e) => ((e.blockedIn ?? []).some((c) => avoid.includes(c)) ? 2 : 1),
+      { dropBlockedBackup: false },
     );
   }
   // An edge every one of whose names is excluded for this member's country is
@@ -505,12 +538,19 @@ function differentLocation(a: PublishedEdge, b: PublishedEdge): boolean {
   return !!a.locationKey && !!b.locationKey && a.locationKey !== b.locationKey;
 }
 
-/** The tiered walk of `assignEndpoints` (see there); `ownTier` is an edge's tier where the member is. */
+/**
+ * The tiered walk of `assignEndpoints` (see there); `ownTier` is an edge's tier
+ * where the member is. `dropBlockedBackup`: the member's own country is known,
+ * so a backup blocked THERE behind a primary that is not adds nothing but an
+ * address that fails; it is left out. A mirror without the member's choice
+ * keeps it (its reader may be anywhere).
+ */
 function assignByTier(
   subscriberKey: string,
   pool: readonly PublishedEdge[],
   opts: AssignOptions,
   ownTier: (e: PublishedEdge) => EdgeTier,
+  rule: { dropBlockedBackup: boolean },
 ): Assignment {
   const assignable = pool.map((e) => assignableFor(subscriberKey, e, opts));
   const proven = pool.filter((e, i) => assignable[i] && ownTier(e) === 0).length;
@@ -561,6 +601,9 @@ function assignByTier(
       return 0;
     });
     backupEdge = candidates[0]?.e ?? null;
+    // Blocked ones sort last, so a blocked first candidate means every one is.
+    if (backupEdge && rule.dropBlockedBackup && primaryTier < 2 && ownTier(backupEdge) === 2)
+      backupEdge = null;
   }
   const out = endpointsFor(subscriberKey, primaryEdge, backupEdge, opts);
   return {

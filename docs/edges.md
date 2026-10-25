@@ -2214,11 +2214,29 @@ most two handshakes a second, oldest-checked first, `qualifyPerTick` per run, ag
 words (`q_cert`, `q_tls12`, `q_no_h2`, `q_timeout`, `q_resolve`, `q_private_target`,
 `q_unreachable`), never a handshake error string.
 
-**Binding** (`POST sni/families/{slug}/bind {backendSlug, transportTag}`) is refused unless the
-transport is REALITY, is on the backend as Servers last read it, has no family yet, and its target
-**is** the family's target (`edge.sni.target_mismatch`). From then on the transport's names and
-target are no longer edited by hand (`servers.inbound_sni_managed`): they have one author.
-Unbinding keeps the names on the backend and on the origins, and keeps the history.
+**Binding** (`POST sni/families/{slug}/bind {backendSlug, transportTag, transportUuid?,
+takeNames?}`; `transportUuid` names the exact transport, since a tag is unique per profile only)
+is refused unless the transport is REALITY, is on the backend as Servers last read it, has no
+family yet, and its target **is** the family's target (`edge.sni.target_mismatch`). From then on
+the transport's names and target are no longer edited by hand (`servers.inbound_sni_managed`):
+they have one author. Unbinding keeps the names on the backend and on the origins, and keeps the
+history.
+
+**A transport whose names were set by hand** (a node FCP does not manage, an adopted node, any
+REALITY transport configured on the panel before FCP) has only those few names, and nothing in
+Servers or on the panel gives it more that members could use: an edit there reaches no member
+(names reach members only through a rollout's per-node receipt), and a name outside a family can
+be neither qualified nor judged per country. Its names reach FCP's machinery by binding a family
+with the transport's own target and `takeNames: true` (on the family page, "Take the names it
+lists now into this family"): each name it lists becomes a family name (a verdict per name, as
+for a pasted list: `in_other_family` and `burned` names are left out), is qualified against the
+target, can be judged per country, and stays on the transport through every rollout. They are
+recorded as seen, so none of them is ever a witness. More names (for one country, from the
+discovery of names that work there) are then added to the family and reach the node the usual
+way: rollout, then a receipt through one of its addresses. A taken name that fails qualification
+leaves the origins like any family name (never the last one: § When a name leaves): the target
+not serving a name is exactly what an active prober would see. Audit `edge.sni.inbound.bind`
+carries `imported` / `notImported` counts.
 
 **What goes onto a transport** (`planAllowlist`, `convex/lib/edges/sni/family.ts`). The backend
 allowlist is one list with one cap (512; production Xray takes 1024, measured) and three kinds
@@ -2319,7 +2337,26 @@ curated country only. The marks are **copied onto every origin listener entry** 
 at once. It is a names change, not a material one: no retest. Audit rows carry the country, the
 state and a count, never a hostname.
 
-**Selecting** (`countryTier`, `convex/lib/edges/assignment.ts`; only for a listener on `hrw1`):
+Every writer that puts a name on a listener copies its marks too (`lib/edges/sni/marks.ts`
+`withCountryMarks`): registration (the node role's body, an admin's form, a guided setup), a
+reactivated name and a rollout's activation. A name judged before it reaches a listener is
+therefore never offered where it is known blocked.
+
+**The pick.** Per-country selection needs the growth-stable pick (`hrw1`): the legacy modulus
+ignores the member's country. A listener whose active names carry any mark is moved onto `hrw1`
+(`pickForJudgedNames`) by whichever write gives it the first one (a mark, a registration, a
+reactivation), once and for good (it never moves back when marks are cleared, which would move
+everyone twice). Members are re-ranked among names the node already accepts, so nothing loses
+its connection; the move is audited `relay.listener.sni_pick` with `reason: country_marks`
+(actor system) and the mark's answer counts it (`switched`). A new listener carrying a judged
+name starts on `hrw1`, and the legacy pick is refused (`POST listeners/{id}/sni-pick {version:
+null}`, `conflict`) while any of its names is judged. Rows written before this was kept (a
+listener created after its names were judged, one still on the legacy pick) are settled by
+`relayListeners.reconcileCountryMarks`, which `seed:seedCutover` runs on every deploy (a no-op
+once settled; a listener it changes moves its origin's epoch).
+
+**Selecting** (`countryTier`, `convex/lib/edges/assignment.ts`; a listener on `hrw1`, which
+every listener with a judged name is):
 
 | The member is             | They are offered                                                                                                                                                              |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2327,9 +2364,14 @@ state and a count, never a hostname.
 | anywhere else, or unknown | The **universal pool**: names not blocked in **any** curated country.                                                                                                         |
 | reading an S3 mirror      | The same universal pool (a mirror has no request to infer anything from, and exists for exactly the people who are blocked), unless they said where they are.                 |
 
-Each tier keeps the rendezvous order, so the stability properties hold inside it. If every name
-of an edge is excluded for a member's country, that edge is not assignable **for them** and the
-walk moves to the next edge; with none left the existing edge-required behaviour applies.
+Each tier keeps the rendezvous order, so the stability properties hold inside it. An endpoint's
+further names, and the backup's, spread over names the other endpoint does not carry only
+**within a tier**: a name proven there, even one the primary already carries, comes before one
+nobody judged there (with the default three names on the primary and three proven names, the
+backup keeps a proven one). Without a country every name is in one tier and nothing changes. If
+every name of an edge is excluded for a member's country, that edge is not assignable **for
+them** and the walk moves to the next edge; with none left the existing edge-required behaviour
+applies.
 
 **Where the member is** (`convex/lib/memberCountry.ts` `memberWhere`; the privacy rules are
 docs/privacy.md §1 "Where a member connects from"). Only a key of a freedom-family mode has a
@@ -3008,8 +3050,11 @@ the names and the edges (`locateMember` / `locateAt`).
   a tier, and a blocked edge is used only when nothing else is assignable. With fewer proven
   edges than `edge.country.minProvenForExclusive` (default 1), proven and not-known edges share
   the first tier. The backup prefers, in order: not blocked, another provider, the better tier,
-  another location, the walk order. Without a country the assignment is byte for byte what it
-  was (pinned over a fixed corpus).
+  another location, the walk order. A backup blocked in the member's country behind a primary
+  that is not is left out (it adds nothing but an address that fails there; a mirror without the
+  member's choice keeps it, its reader may be anywhere), so a member in a country gets only
+  addresses not known blocked there while one exists. Without a country the assignment is byte
+  for byte what it was (pinned over a fixed corpus).
 - **Caching.** The cache token is unchanged (it also drives the before/after check, the mirror
   barrier and the stale fallback). Entries are keyed by the stored country as before; a change
   of an edge's tier reaches a member within the cache's 30 seconds, or, for an app that asks
@@ -4899,6 +4944,14 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Country delivery, walk fixes** change what members receive, nothing in the schema: a listener
+whose names carry a per-country mark is on `hrw1` (each move audited `relay.listener.sni_pick`,
+`reason: country_marks`), names that reach a listener carry their marks, a steered member no
+longer gets a backup known blocked in their country, and a backup keeps names proven there. One
+deploy, no migration, no env change. The deploy's `seedCutover` settles listeners written before
+it (`relayListeners.reconcileCountryMarks`): every listener with a judged name moves onto `hrw1`
+at once, its members re-ranked among names the node already accepts at their next refresh.
 
 **Replacing a blocked address without a spare** adds optional fields only
 (`edges.verification.method` gains `client_check` and `engines`, `edges.replacementOf`,
