@@ -555,6 +555,8 @@ export function mapLocationAdmin(
     sharedUsers?: number;
     orderedByFcp?: boolean;
     pricing?: LocationCostAdmin;
+    /** Its network's slug and label (docs/edges.md "Networks"). */
+    network?: { slug: string; label: string } | null;
   },
 ) {
   const { type: _t, ...placement } = r.placement as { type: string } & Record<string, unknown>;
@@ -607,6 +609,10 @@ export function mapLocationAdmin(
       : null,
     // Its plans and prices, and what one edge here costs now (`edgePlans`).
     pricing: extras.pricing ?? null,
+    // The network its addresses come from: set by an operator, or learned.
+    network: extras.network
+      ? { ...extras.network, source: r.networkSource ?? ('operator' as const) }
+      : null,
     createdAt: new Date(r.createdAt).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
   };
@@ -641,6 +647,9 @@ export async function locationsAdminOf(
           r.sharedCertificate,
         ),
         pricing: await locationCostAdmin({ db }, account, r),
+        network: r.networkId
+          ? await db.get(r.networkId).then((n) => (n ? { slug: n.slug, label: n.label } : null))
+          : null,
       }),
     );
   }

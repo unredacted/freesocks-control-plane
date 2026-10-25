@@ -223,6 +223,19 @@ interface LocationTrustLike {
   qualification: { by: 'admin' | 'auto'; at: string; edgeId: string | null } | null;
 }
 
+/**
+ * Where a location's network came from (docs/edges.md "Networks"), next to its
+ * picker: learned from the addresses of its edges, or set here.
+ */
+export function networkSourceWords(
+  n: { source: 'operator' | 'address' } | null | undefined,
+): string {
+  if (!n) return 'Only transports on no network are fronted from here.';
+  return n.source === 'address'
+    ? 'Learned from the addresses of its edges.'
+    : 'Set here. Its addresses are checked against it.';
+}
+
 /** A location's trust in words: the badge and one line on how it was taken. */
 export function locationTrustWords(
   l: LocationTrustLike,

@@ -223,6 +223,14 @@ export const EdgeLocationAdmin = z.object({
     .default(null),
   /** Its plans and prices, and what one edge here costs now. */
   pricing: EdgeLocationPricing.nullable().default(null),
+  /**
+   * The network its addresses come from (docs/edges.md "Networks"): set by an
+   * operator, or learned from the addresses of its edges.
+   */
+  network: z
+    .object({ slug: z.string(), label: z.string(), source: z.enum(['operator', 'address']) })
+    .nullable()
+    .default(null),
   createdAt: iso,
   updatedAt: iso,
 });
@@ -2725,6 +2733,11 @@ export const SetupPlanInbound = z.object({
   noTestLink: z.boolean().optional(),
   /** The clients this REALITY transport refuses (`reality_refuses_clients`, a warning). */
   refusesClients: RealityClientRefusal.optional(),
+  /**
+   * The network its server-name family is on (docs/edges.md "Networks"): only
+   * a location on it may front the transport.
+   */
+  networkId: z.string().optional(),
 });
 export const SetupPlanDirectHost = z.object({
   uuid: z.string(),
@@ -2749,6 +2762,8 @@ export const SetupPlanLocation = z.object({
    * pickable: a node may choose another certificate under its Options.
    */
   certificateRefusal: z.string().nullable().default(null),
+  /** The network its addresses come from, when known (docs/edges.md "Networks"). */
+  networkId: z.string().nullable().default(null),
 });
 export type SetupPlanLocation = z.infer<typeof SetupPlanLocation>;
 export const SetupPlanAccount = z.object({

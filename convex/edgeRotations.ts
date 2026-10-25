@@ -158,6 +158,8 @@ import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './e
 import { SPEND_CAP_REACHED, capRefusal, edgeCostAt, spendOf } from './edgePlans';
 import { atCap, passesCap, sizeKeyOf, sizeOf } from './lib/edges/pricing';
 import { l7PlaceOf, placeProblemOf } from './lib/edges/l7Place';
+import { networkPrefixes } from './edgeNetworks';
+import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { clientCheckFailedNow, clientCheckReadiness, runClientCheck } from './edgeClientCheck';
 import { locationTicked } from './lib/edges/tickedLocation';
 import { REPLACEMENT_POLICY, replacementPlacement } from './lib/edges/replacementHolders';
@@ -3236,6 +3238,14 @@ export async function selectionContext(
     : null;
   const skipLocations = new Set<string>();
   const standbyCandidates = [];
+  // A transport scoped to a network takes a spare only from it (docs/edges.md "Networks").
+  const rangesOf = new Map<string, NetworkPrefixes | null>();
+  const onItsNetwork = async (e: Doc<'edges'>, l: Doc<'relayListeners'> | undefined) => {
+    if (!l?.networkId) return true;
+    const key = l.networkId as string;
+    if (!rangesOf.has(key)) rangesOf.set(key, await networkPrefixes(ctx.db, l.networkId));
+    return edgeNetworkVerdict(e.addresses, rangesOf.get(key)) === 'on';
+  };
   for (const e of edges) {
     const slotOfEdge = slotRows.find((s) => s._id === e.listenerId);
     const loc = (e.locationId as string | undefined) ?? null;
@@ -3257,6 +3267,7 @@ export async function selectionContext(
       hasAddress:
         hasPublishableAddress(e) &&
         ((await eligibleSpare(e, slotOfEdge)) || (await checkableSpare(e, slotOfEdge))) &&
+        (await onItsNetwork(e, slotOfEdge)) &&
         // A load balancer the node already had is left as it is, never reused.
         !((barred || l4Problem) && (e.layer ?? edgeLayerOf(e.provider)) === 'l4') &&
         (edgeRoleOf(e.provider) !== 'dns' ||
@@ -3400,6 +3411,8 @@ export async function selectionContext(
     const where = named ?? (await defaultLocationOf(ctx.db, a));
     if (!where) return failure('no_location');
     if (!where.enabled) return failure('location_disabled');
+    // A transport scoped to a network is fronted from it only (docs/edges.md "Networks").
+    if (listener.networkId && where.networkId !== listener.networkId) return failure('off_network');
     // A place a new edge cannot be planned in (a CDN place with no zone, a
     // refused check, its DNS account gone or off, its encryption mode never
     // read; a Scaleway location with no project to create in).
@@ -3472,6 +3485,7 @@ export async function selectionContext(
   let certificateRefused: string | null = null;
   let sizeRefused: string | null = null;
   let spendRefused: string | null = null;
+  let offNetwork = 0;
   for (const a of accounts) {
     // An account-scoped profile provisions from that account only.
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId) continue;
@@ -3499,6 +3513,11 @@ export async function selectionContext(
       // refused check, its DNS account off, an unread encryption mode; a
       // Scaleway location with no project to create in).
       if (!loc.enabled || (await placeProblemOf(ctx.db, a, loc))) continue;
+      // A transport scoped to a network is fronted from it only (docs/edges.md "Networks").
+      if (listener.networkId && loc.networkId !== listener.networkId) {
+        offNetwork++;
+        continue;
+      }
       // What an edge here builds (a load balancer's size: its check and its cost).
       const built = sizeKeyOf(a.provider)
         ? await resolveBuildFor(
@@ -3644,7 +3663,9 @@ export async function selectionContext(
               ? sizeRefused
               : candidates.length === 0 && spendRefused
                 ? spendRefused
-                : picked.code,
+                : candidates.length === 0 && offNetwork > 0
+                  ? 'off_network'
+                  : picked.code,
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;

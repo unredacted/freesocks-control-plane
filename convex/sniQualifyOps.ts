@@ -17,6 +17,7 @@ import { runWithCronOutcome } from './cronHeartbeat';
 import { isPublicIpLiteral } from './lib/edges/ip';
 import { classifyHandshakeError, resolvePublic } from './lib/edges/probes/internal';
 import { judgeHandshake, type HandshakeResult } from './lib/edges/sni/family';
+import { qualificationNetworkCode } from './lib/edges/networks';
 
 const TIMEOUT_MS = 8000;
 const GAP_MS = 500;
@@ -65,28 +66,52 @@ export async function tlsInspect(args: {
 
 async function dialAddress(
   address: string,
-): Promise<{ ok: true; host: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; host: string; all: string[] } | { ok: false; error: string }> {
   const literal = /^[0-9.]+$/.test(address) || address.includes(':');
   if (literal)
     return isPublicIpLiteral(address)
-      ? { ok: true, host: address }
+      ? { ok: true, host: address, all: [address] }
       : { ok: false, error: 'private_address' };
   const r = await resolvePublic(address, lookup);
-  return r.ok ? { ok: true, host: r.addresses[0]! } : { ok: false, error: r.error };
+  return r.ok
+    ? { ok: true, host: r.addresses[0]!, all: r.addresses }
+    : { ok: false, error: r.error };
+}
+
+/** Every address a name resolves to (none when it does not resolve). */
+async function answersOf(name: string): Promise<string[]> {
+  try {
+    return await lookup(name);
+  } catch {
+    return [];
+  }
 }
 
 export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<{ checked: number; ok: number }> =>
     runWithCronOutcome(ctx, 'sni-qualify', async () => {
-      const { names } = await ctx.runQuery(internal.sniFamilies.dueForQualification, {});
+      const { names, networks, defer } = await ctx.runQuery(
+        internal.sniFamilies.dueForQualification,
+        {},
+      );
+      // What the pass walked past steps out of the head of the queue.
+      if (defer.length > 0)
+        await ctx.runMutation(internal.sniFamilies.deferQualification, { names: defer });
       let ok = 0;
       const dialled = new Map<string, Awaited<ReturnType<typeof dialAddress>>>();
       for (const n of names) {
         if (!dialled.has(n.address)) dialled.set(n.address, await dialAddress(n.address));
         const at = dialled.get(n.address)!;
+        // A family on a network: the target and the name must both live on it
+        // (lib/edges/networks.ts), before any handshake is worth making.
+        const net = n.network ? networks[n.network] : undefined;
+        const offNetwork =
+          net && at.ok ? qualificationNetworkCode(at.all, await answersOf(n.name), net) : null;
         const shake: HandshakeResult = at.ok
-          ? await tlsInspect({ host: at.host, port: n.port, servername: n.name })
+          ? offNetwork
+            ? { ok: false, error: offNetwork }
+            : await tlsInspect({ host: at.host, port: n.port, servername: n.name })
           : { ok: false, error: at.error };
         const verdict = judgeHandshake(shake, { requireH2: n.requireH2 });
         if (verdict.ok) ok++;

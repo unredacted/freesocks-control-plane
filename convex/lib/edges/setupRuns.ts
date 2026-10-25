@@ -186,6 +186,11 @@ export interface SetupPlanInbound {
    * a warning, the run goes on (`reality_refuses_clients`).
    */
   refusesClients?: RealityClientRefusal;
+  /**
+   * The network its server-name family is on (docs/edges.md "Networks"): only
+   * a location on it may front the transport.
+   */
+  networkId?: string;
 }
 
 export interface SetupPlanDirectHost {
@@ -210,6 +215,8 @@ export interface SetupPlanLocation {
    * zone's wildcard). It stays pickable: a node may choose another certificate.
    */
   certificateRefusal?: string | null;
+  /** The network its addresses come from, when known (docs/edges.md "Networks"). */
+  networkId?: string | null;
 }
 
 export interface SetupPlanAccount {

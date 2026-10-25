@@ -145,6 +145,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Server-name families: check names from inside opted-in countries',
   },
   {
+    name: 'edge-networks',
+    everyMs: 60 * MIN,
+    description: 'Networks: read announced ranges once a day, learn each location’s network',
+  },
+  {
     name: 'backend-reconcile',
     everyMs: 5 * MIN,
     description: 'Server management: settle open backend changes by looking at the backend',

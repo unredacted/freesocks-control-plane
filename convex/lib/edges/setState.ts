@@ -84,7 +84,7 @@ export interface SetPickRow {
  * (`websocketNode`, lib/edges/websocketNode.ts).
  */
 export function carries(
-  row: Pick<SetPickRow, 'account'>,
+  row: Pick<SetPickRow, 'account'> & { location?: Pick<SetPickRow['location'], 'networkId'> },
   listener: Pick<
     Listener,
     | 'protocol'
@@ -94,12 +94,16 @@ export function carries(
     | 'originTransport'
     | 'providerScope'
     | 'tlsNames'
+    | 'networkId'
   >,
   opts: { websocketNode?: boolean } = {},
 ): boolean {
   const scope = listener.providerScope;
   if (scope?.provider && scope.provider !== row.account.provider) return false;
   if (scope?.accountId && scope.accountId !== row.account._id) return false;
+  // A transport scoped to a network (docs/edges.md "Networks") is fronted only
+  // from a location on it; a location whose network is not known carries none.
+  if (listener.networkId && row.location?.networkId !== listener.networkId) return false;
   const proto = {
     protocol: listener.protocol,
     streamTransport: listener.streamTransport,

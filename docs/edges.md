@@ -2688,6 +2688,99 @@ vantages, at the same frequency. The real site sees that visit. Whoever runs a v
 name next to the real site's address as well as FCP's, which says nothing more about FCP's
 address than the name check itself. check-host.net and FCP's own host are still not sources.
 
+### Networks
+
+A REALITY address is most plausible when its server names, and its transport's target, are real
+sites on the **same provider network** as the address: an active prober presenting a name sees
+a real certificate served from that network's ranges, and a censor comparing the name's DNS (or
+its ASN) with the address dialled sees a match. A transport has ONE target, so this means one
+transport (port) per network, each bound to a family whose target and names live on that
+network, each fronted only by addresses from it. Nothing here names a provider: a network is
+data (ASNs and ranges), entered by an operator or by a later discovery of names per network.
+
+**The network** (`edgeNetworks`, `convex/edgeNetworks.ts`, pure rules in
+`lib/edges/networks.ts`): a slug, a label, up to 8 ASNs and the ranges they announce, plus up to
+256 ranges entered by hand. The announced ranges are read from RIPEstat (`announced-prefixes`)
+when the network is created or its ASNs change, and then by cron `edge-networks` (hourly tick,
+each network once a day); **the request carries the ASN and nothing else**. A failed read keeps
+the ranges read before and records a code (`timeout`, `rate_limited`, `service_error`,
+`too_large`, `bad_answer`, `unreachable`). At most 4,000 ranges per address family are kept:
+every range entered by hand first (`combinePrefixes`: they are few and chosen on purpose, so the
+cap never drops one), then the announced ones (`truncated` when some were dropped: an address in a
+dropped range reads as off the network, never the other way). Every membership check is local,
+against these ranges: an address is on the network when a range of its own family holds it. A
+deployment holds at most 200 networks (`edge.network.cap`).
+
+**When the ranges move** (an edit of the ASNs or of the ranges by hand, a read that finds other
+ranges): every name of every family on the network is due for qualification again
+(`requeueFamilyNames`, a page at a time), since a name checked against the old ranges may resolve
+off the network now, and the locations learn their network again.
+
+**A family on a network** (`sniFamilies.networkId`; `network` on `POST sni/families` and
+`PATCH sni/families/{slug}`, changeable only while no transport is bound,
+`edge.sni.network_bound`; a change puts every name back to waiting for its first check, so none is
+used, by a rebind either, until it was checked against the new network): qualification adds two
+checks before the handshake. Every address the target resolves to must be on the network
+(`q_target_off_network`), and the name must resolve, every answer on it (`q_off_network`: a name
+that does not resolve is not a site there). A name of such a family is not checked at all while
+its network has no ranges yet (it waits; it is never failed for that).
+
+**What qualification walks past steps aside.** A pass takes the oldest-checked names first. A
+name it cannot check now (retired or burned, its family switched off, its network without ranges
+yet) is deferred (`sniFamilies.deferQualification`: its `checkedAt` becomes now, its state stays,
+and only when nothing moved it meanwhile), so it leaves the head of the queue and can never crowd
+out the names that are due. Whatever makes it checkable again marks it due: a reactivation, the
+family switched back on, the network's ranges moving.
+
+**A transport scoped to a network.** Binding a family on a network to a transport scopes it:
+`relayListeners.networkId` is written on every listener of that transport (by the bind, on every
+origin of its backend; by registration for a listener that appears later; cleared by the
+unbind). The bind is refused while the network has no ranges (`edge.sni.network_unknown`) or
+while an address in use on the transport is not on it (`edge.sni.network_edges_off`). Then:
+
+- only a **location on the network** fronts it (`carries` in `lib/edges/setState.ts`: provider
+  sets, the protect plan's set (`setOfPicks`), and the rotation's selection, `off_network`); a
+  location whose network is not known carries none, and a region not yet a location is not on
+  any network. The protect plan names such a location `off_network` when every transport the
+  account would carry there is scoped to another network;
+- an address **off** the network (any address the edge serves, IPv4 and IPv6) is never
+  published there (`checkPublishable` `off_network`), and a spare off it is never the standby a
+  rotation takes;
+- one already published that falls off it (the ranges moved, the edge was re-addressed) is the
+  warning attention item `edge_off_network`, and so is every address in use when the network has
+  no ranges left at all (code `network_no_ranges`: nothing shows those addresses are on it).
+
+**Where a location is** (`edgeLocations.networkId`, `networkSource`): set by an operator (the
+provider account page, a location's Network; `POST providers/{id}/locations/{locationId}/network
+{network: slug | null}`, audited `edge.location.network`), or learned from the addresses of its
+newest live edges (`status: active`, up to 10, every one of them on one network; a destroyed edge
+keeps its address for a while and teaches nothing) whenever ranges move, a network is created with
+ranges by hand, an operator clears a location's network, and by the cron. An operator's choice is
+never overwritten by what is learned; clearing it lets the addresses teach it again. A location
+set by hand is still checked: an address off the network is never published.
+
+**The renderer needs nothing new.** An edge presents its own transport's family names, and the
+assignment already walks every published edge of an origin, whatever its transport, so a member
+of a node with one transport per network gets an address and the names of that address's
+network. Per-country names and per-country addresses (§ "Delivery by country") work within each
+transport as for any other.
+
+**For a later discovery of names per network.** Everything it needs is an API call: create a
+network with the provider's ASNs (`POST networks {slug, label, asns, manualPrefixes?}`), create a
+family on it with a target on that network (`POST sni/families {..., network}`), paste names
+(`POST sni/families/{slug}/names`): only names that resolve on the network and that the target
+serves qualify. The operator then deploys a REALITY transport on a new port with that target,
+binds the family, sets the locations' network (or lets their addresses teach it) and protects
+the transport from those locations.
+
+Routes (under `/api/v1/admin/edges/`): `GET networks` (counts only, never a range),
+`POST networks`, `PATCH networks/{slug} {label?, asns?, manualPrefixes?}`,
+`DELETE networks/{slug}` (refused while a family or a transport is on it, `edge.network.in_use`;
+locations set to it go back to none), `POST networks/{slug}/refresh` (throttled like a provider
+call). Audit: `edge.network.create|update|delete` (slug and counts, never a range or an address),
+`edge.location.network`. Admin: Server names, Networks (add, edit, read ranges again, remove), a
+family's Network, and a location's Network on its provider account page.
+
 ### The page
 
 Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/names/{slug}`).
@@ -4944,6 +5037,15 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Networks** add one table (`edgeNetworks`), optional fields (`sniFamilies.networkId`,
+`relayListeners.networkId`, `edgeLocations.networkId` / `networkSource`), two indexes, one cron
+(`edge-networks`), one attention kind (`edge_off_network`) and two refusal codes (`off_network`,
+the qualification words `q_off_network` / `q_target_off_network`): one deploy, no migration, no
+env change. Nothing changes until an operator adds a network: the cron reads nothing, no family
+or transport is on one, and `carries` and publication behave as before. To roll back, delete every
+network first (unbind or move its families, then `DELETE networks/{slug}`): the older schema has
+none of those fields, and a location's learned network is cleared with its network.
 
 **Country delivery, walk fixes** change what members receive, nothing in the schema: a listener
 whose names carry a per-country mark is on `hrw1` (each move audited `relay.listener.sni_pick`,

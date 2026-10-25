@@ -22,9 +22,11 @@
     createFamily,
     familiesQuery,
     invalidateSni,
+    networksQuery,
     patchSniConfig,
     sniConfigQuery,
   } from '@client/lib/sniApi';
+  import NetworksCard from './NetworksCard.svelte';
   import { router } from '@client/stores/router.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
   import { edgesPaths } from '../lib/routes';
@@ -82,6 +84,8 @@
   let target = $state('');
   let port = $state('443');
   let requireH2 = $state(false);
+  let network = $state('');
+  const networks = networksQuery();
   let busy = $state(false);
   let slugOk = $derived(/^[a-z0-9][a-z0-9-]{0,39}$/.test(slug.trim()));
   let valid = $derived(
@@ -98,6 +102,7 @@
         targetAddress: target.trim(),
         targetPort: Number(port),
         requireH2,
+        ...(network ? { network } : {}),
       });
       open = false;
       invalidateSni(qc);
@@ -144,13 +149,15 @@
             <span class="text-muted-foreground block text-sm">{familyLine(f)}</span>
           </span>
           <span class="text-muted-foreground hidden text-sm break-all sm:block">
-            {f.target.address}:{f.target.port}
+            {f.target.address}:{f.target.port}{f.network ? ` · ${f.network.label}` : ''}
           </span>
         </Link>
       </li>
     {/each}
   </ul>
 {/if}
+
+<NetworksCard />
 
 {#if vantage}
   <Card class="mt-8">
@@ -330,6 +337,24 @@
         <Label for={`${uid}-h2`} class="leading-snug font-normal">
           Only accept names the target serves over HTTP/2
         </Label>
+      </div>
+      <div class="space-y-1.5">
+        <Label for={`${uid}-network`}>Network (optional)</Label>
+        <select
+          id={`${uid}-network`}
+          bind:value={network}
+          class="border-input bg-background h-11 w-full rounded-md border px-2 text-sm sm:h-9"
+          aria-describedby={`${uid}-network-help`}
+        >
+          <option value="">Anywhere</option>
+          {#each networks.data?.networks ?? [] as n (n.slug)}
+            <option value={n.slug}>{n.label}</option>
+          {/each}
+        </select>
+        <p id={`${uid}-network-help`} class="text-muted-foreground text-sm">
+          On a network, the target and every name must resolve inside it, and a transport bound to
+          the family is fronted only by addresses from it.
+        </p>
       </div>
       <Dialog.Footer class={STICKY_FOOTER}>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>

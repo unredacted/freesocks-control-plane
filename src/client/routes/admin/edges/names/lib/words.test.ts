@@ -7,7 +7,11 @@ import {
   importWords,
   matchesFilter,
   nameWords,
+  networkLine,
+  NETWORK_REFRESH_WORDS,
   nodeLine,
+  parseAsns,
+  parseRanges,
   planWords,
   rolloutWords,
   sniErrorWords,
@@ -30,6 +34,7 @@ const family = (over: Record<string, unknown> = {}, counts: Record<string, numbe
   target: { kind: 'static', address: 'target.example', port: 443 },
   enabled: true,
   requireH2: false,
+  network: null,
   bindings: 1,
   counts: {
     total: 3,
@@ -78,6 +83,58 @@ const status = (over: Record<string, unknown> = {}) => ({
     },
   ],
   ...over,
+});
+
+describe('networks', () => {
+  const net = (over: Record<string, unknown> = {}) => ({
+    id: 'n1',
+    slug: 'net-a',
+    label: 'Net A',
+    asns: [64500],
+    manualPrefixes: [] as string[],
+    ranges: { v4: 3, v6: 1 },
+    truncated: false,
+    refreshedAt: new Date(1_000_000).toISOString(),
+    refreshError: null as string | null,
+    families: [{ slug: 'fam-a', label: 'Family A' }],
+    locations: [] as { id: string; label: string; provider: string; source: 'operator' }[],
+    ...over,
+  });
+  test('a network in one line', () => {
+    expect(networkLine(net(), 1_000_000)).toBe('AS64500 · 4 ranges · read today · 1 family on it');
+    expect(
+      networkLine(
+        net({ refreshError: 'timeout', families: [], ranges: { v4: 0, v6: 0 }, truncated: true }),
+        1_000_000,
+      ),
+    ).toBe('AS64500 · no ranges yet · the last read failed (no answer in time) · no family on it');
+    expect(
+      networkLine(net({ asns: [], manualPrefixes: ['192.0.2.0/24'], refreshedAt: null })),
+    ).toBe('4 ranges · 1 by hand · 1 family on it');
+  });
+  test('every refresh failure the server records has words', async () => {
+    const src = import.meta.glob('../../../../../../../convex/lib/edges/networks.ts', {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>;
+    const codes = new Set<string>();
+    for (const text of Object.values(src)) {
+      const list = /NETWORK_REFRESH_ERRORS = \[([^\]]*)\]/.exec(text)?.[1] ?? '';
+      for (const m of list.matchAll(/'([a-z_]+)'/g)) codes.add(m[1]!);
+    }
+    expect(codes.size).toBeGreaterThan(3);
+    expect([...codes].filter((c) => !NETWORK_REFRESH_WORDS[c])).toEqual([]);
+  });
+  test('typed ASNs and ranges', () => {
+    expect(parseAsns('AS64500 64501, as64502 64500')).toEqual([64500, 64501, 64502]);
+    expect(parseAsns('')).toEqual([]);
+    expect(parseAsns('AS-1')).toBeNull();
+    expect(parseAsns('1 2 3 4 5 6 7 8 9')).toBeNull();
+    expect(parseRanges('192.0.2.0/24\n2001:db8::/32')).toEqual(['192.0.2.0/24', '2001:db8::/32']);
+    expect(parseRanges('192.0.2.0')).toBeNull();
+    expect(parseRanges('not/24')).toBeNull();
+  });
 });
 
 describe('families', () => {
