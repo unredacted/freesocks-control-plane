@@ -2614,12 +2614,17 @@ async function stageRehearse(ctx: ActionCtx, run: Run): Promise<null> {
   }
   // Bodies with no backup in another failure domain are reported, with why.
   const reduced = [...new Set((res.reduced ?? []).map((r) => r.reason))];
+  // Cohorts with no candidate to prove anything with (expired keys' placeholders,
+  // moved pins) are named, with why: the operator sees what was not rendered.
+  const unrepresented = (res.unrepresented ?? []).map((u) => `${u.cohortKey}(${u.reason})`);
   return advance(ctx, run, {
     rehearsal: rehearsalRecord(res, attempts, run),
     event: {
       level: 'info',
       code: 'rehearsed',
-      detail: `attempt ${attempts}${reduced.length > 0 ? `; reduced: ${reduced.join(',')}` : ''}`,
+      detail: `attempt ${attempts}${reduced.length > 0 ? `; reduced: ${reduced.join(',')}` : ''}${
+        unrepresented.length > 0 ? `; unrepresented: ${unrepresented.join(',')}` : ''
+      }; source: ${res.source}`,
     },
   });
 }

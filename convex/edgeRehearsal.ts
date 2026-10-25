@@ -10,6 +10,14 @@
  *    client user agents), run through `applyEdgeRender` in dry-run: no
  *    persistence, no snapshot write. Every non-dark cohort must yield `serve`
  *    in every format. An approved dark cohort (`darkCohortKeys`) is excluded.
+ *    A cohort's first key is not always one: its body may be the backend's
+ *    placeholder for an expired or disabled key, or resolve to another node (a
+ *    stale pin). The next candidates of the cohort (`edgeCohorts.candidates`,
+ *    active accounts first, up to REHEARSAL_CANDIDATES) are tried; a cohort
+ *    with none that can stand for it is reported `unrepresented`, never failed
+ *    (delivery hands a placeholder out as it is, and another node's binding
+ *    judges a moved body). When EVERY cohort is unrepresented the credential
+ *    stands in, as for an empty node.
  *  - An EMPTY backend node has no cohort: the rehearsal credential (the origin's
  *    qualification user, minted on demand) is the single representative body.
  *    An empty Outline server has no credential path (`use_manual_setup`); an
@@ -37,7 +45,8 @@ import { capabilitiesOf } from './lib/backends/capabilities';
 import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
 import { classifyClient } from './lib/edges/clientFamilies';
 import type { Cohort } from './lib/edges/cohorts';
-import { cohortValidator, walkRelayCohorts } from './edgeCohorts';
+import { cohortValidator, walkRelayCohorts, type CohortCandidate } from './edgeCohorts';
+import { placeholderBody } from './lib/nodePinning';
 import { formatSupported, type RenderFormat } from './lib/edges/protocols';
 import { fnv1a64Hex } from './lib/edges/registration';
 import { effectiveRule, ruleForDelivery, type DeliveryStyle } from './lib/edges/render';
@@ -86,6 +95,24 @@ export interface RehearsalReduced {
   format: RenderFormat;
   reason: ReducedReason;
 }
+/**
+ * Candidate members one cohort tries before it counts as unrepresented: the
+ * first key of a placement may be an expired or disabled one (the backend
+ * serves it a placeholder) or one whose pin moved to another node.
+ */
+export const REHEARSAL_CANDIDATES = 10;
+/**
+ * A cohort none of whose candidates could prove anything about this node
+ * (reported, not failed): `placeholder` = every body was the backend's
+ * placeholder for an expired or disabled key, which delivery hands out as it
+ * is; `moved` = every body resolved to another node, whose own binding judges
+ * it; `mixed` = both.
+ */
+export interface RehearsalUnrepresented {
+  cohortKey: string;
+  reason: 'placeholder' | 'moved' | 'mixed';
+  tried: number;
+}
 
 export interface RehearsalResult {
   ok: boolean;
@@ -104,6 +131,8 @@ export interface RehearsalResult {
   formats: RenderFormat[];
   /** Bodies with no backup in another failure domain, and why. */
   reduced?: RehearsalReduced[];
+  /** Cohorts with no candidate whose body proves anything about this node. */
+  unrepresented?: RehearsalUnrepresented[];
 }
 
 function canonicalJson(x: unknown): string {
@@ -276,33 +305,118 @@ export function __setHostObserverForTests(f: Observer | null): void {
 
 type RehearsalContext = NonNullable<FunctionReturnType<typeof internal.edgeRehearsal.context>>;
 
-async function rehearseBody(
+type BodyRef = { backendShortId: string; subscriptionUrl: string; excludeNode: string | null };
+type FetchedBody =
+  | { kind: 'body'; content: string; pinnedNode?: string; nodeless: boolean }
+  | { kind: 'failed' };
+
+/** One representative body, fetched FRESH from the backend in `format`. */
+async function fetchBody(
   ctx: ActionCtx,
   c: RehearsalContext,
-  cohortKey: string,
   format: RenderFormat,
-  ref: { backendShortId: string; subscriptionUrl: string; excludeNode: string | null },
-  renderKey: string,
-  onReduced?: (r: RehearsalReduced) => void,
-): Promise<RehearsalFailure | null> {
-  const ua = REHEARSAL_USER_AGENTS[format];
-  let content: string;
-  let pinnedNode: string | undefined;
+  ref: BodyRef,
+): Promise<FetchedBody> {
   try {
     const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
       backend: c.backend,
       backendServerId: c.backendServerId,
       backendShortId: ref.backendShortId,
       subscriptionUrl: ref.subscriptionUrl,
-      userAgent: ua,
+      userAgent: REHEARSAL_USER_AGENTS[format],
       ...(ref.excludeNode ? { excludeNode: ref.excludeNode } : {}),
       nodeCheck: true,
     });
-    content = fetched.content;
-    pinnedNode = fetched.pinnedNode;
+    return {
+      kind: 'body',
+      content: fetched.content,
+      pinnedNode: fetched.pinnedNode,
+      nodeless: fetched.nodeless === true,
+    };
   } catch {
-    return { cohortKey, format, reason: 'fetch_failed' };
+    return { kind: 'failed' };
   }
+}
+
+/**
+ * Whether a candidate's body can stand for its cohort on THIS node: not the
+ * backend's placeholder for an expired or disabled key (delivery hands that
+ * out as it is), and not resolved to another node. An empty body still counts
+ * (and fails as `empty_body`): it is a hidden-out cohort's signature.
+ */
+function candidateVerdict(
+  c: RehearsalContext,
+  f: FetchedBody,
+): 'use' | 'placeholder' | 'moved' | 'failed' {
+  if (f.kind === 'failed') return 'failed';
+  if (f.nodeless && placeholderBody(f.content)) return 'placeholder';
+  if (c.nodeName && f.pinnedNode && f.pinnedNode !== c.nodeName) return 'moved';
+  return 'use';
+}
+
+type Representative =
+  | { kind: 'use'; ref: BodyRef & { renderKey: string | null }; fetched: FetchedBody }
+  | { kind: 'unrepresented'; reason: RehearsalUnrepresented['reason']; tried: number }
+  | { kind: 'failed' };
+
+/**
+ * The cohort's representative: its own first key, else the next candidates
+ * (`edgeCohorts.candidates`, active accounts first) up to
+ * REHEARSAL_CANDIDATES, judged on the first format's body. Every fetch failing
+ * is `failed` (an outage is never read as an empty cohort).
+ */
+async function pickRepresentative(
+  ctx: ActionCtx,
+  c: RehearsalContext,
+  cohort: RehearsalContext['cohorts'][number],
+  first: BodyRef & { renderKey: string | null },
+): Promise<Representative> {
+  const format = c.formats[0];
+  const seen = new Set<string>([cohort.subscriptionId as string]);
+  let rest: CohortCandidate[] | null = null;
+  let next: (BodyRef & { renderKey: string | null }) | undefined = first;
+  let placeholders = 0;
+  let moved = 0;
+  let tried = 0;
+  while (next && tried < REHEARSAL_CANDIDATES) {
+    tried++;
+    const fetched = await fetchBody(ctx, c, format, next);
+    const verdict = candidateVerdict(c, fetched);
+    if (verdict === 'use') return { kind: 'use', ref: next, fetched };
+    if (verdict === 'placeholder') placeholders++;
+    else if (verdict === 'moved') moved++;
+    rest ??= await ctx.runQuery(internal.edgeCohorts.candidates, {
+      backendServerId: cohort.backendServerId,
+      ...(cohort.nodeName ? { nodeName: cohort.nodeName } : {}),
+      placement: cohort.placement,
+      limit: REHEARSAL_CANDIDATES + 1,
+    });
+    const candidate = rest.find((x) => !seen.has(x.subscriptionId as string));
+    if (candidate) seen.add(candidate.subscriptionId as string);
+    next = candidate;
+  }
+  if (placeholders === 0 && moved === 0) return { kind: 'failed' };
+  return {
+    kind: 'unrepresented',
+    reason: placeholders > 0 && moved > 0 ? 'mixed' : placeholders > 0 ? 'placeholder' : 'moved',
+    tried,
+  };
+}
+
+async function rehearseBody(
+  ctx: ActionCtx,
+  c: RehearsalContext,
+  cohortKey: string,
+  format: RenderFormat,
+  ref: BodyRef,
+  renderKey: string,
+  onReduced?: (r: RehearsalReduced) => void,
+  prefetched?: FetchedBody,
+): Promise<RehearsalFailure | null> {
+  const ua = REHEARSAL_USER_AGENTS[format];
+  const fetched = prefetched ?? (await fetchBody(ctx, c, format, ref));
+  if (fetched.kind === 'failed') return { cohortKey, format, reason: 'fetch_failed' };
+  const { content, pinnedNode } = fetched;
   if (!content.trim()) return { cohortKey, format, reason: 'empty_body' };
   // The representative must resolve to THIS node, or it says nothing about it.
   if (c.nodeName && pinnedNode && pinnedNode !== c.nodeName)
@@ -363,13 +477,14 @@ export const run = internalAction({
       if (!c) throw new Error('rehearsal: the origin has no backend origin');
       const failures: RehearsalFailure[] = [];
       const reduced: RehearsalReduced[] = [];
+      const unrepresented: RehearsalUnrepresented[] = [];
       const noteReduced = (r: RehearsalReduced) => reduced.push(r);
       let source: RehearsalResult['source'] = 'members';
       if (!c.activationCurrent) {
         // A newer approval (or none) owns the node now: this run proves nothing.
         for (const f of c.formats.length ? c.formats : (['links'] as RenderFormat[]))
           failures.push({ cohortKey: 'activation', format: f, reason: 'activation_superseded' });
-      } else if (c.cohorts.length > 0) {
+      } else if (c.cohorts.length > 0 && c.formats.length > 0) {
         for (const cohort of c.cohorts) {
           const sub = c.subs[cohort.key];
           if (!sub) {
@@ -377,21 +492,39 @@ export const run = internalAction({
               failures.push({ cohortKey: cohort.key, format: f, reason: 'subscription_missing' });
             continue;
           }
-          for (const format of c.formats) {
+          const rep = await pickRepresentative(ctx, c, cohort, sub);
+          if (rep.kind === 'failed') {
+            for (const f of c.formats)
+              failures.push({ cohortKey: cohort.key, format: f, reason: 'fetch_failed' });
+            continue;
+          }
+          if (rep.kind === 'unrepresented') {
+            unrepresented.push({ cohortKey: cohort.key, reason: rep.reason, tried: rep.tried });
+            continue;
+          }
+          for (const [i, format] of c.formats.entries()) {
             const fail = await rehearseBody(
               ctx,
               c,
               cohort.key,
               format,
-              sub,
-              sub.renderKey ?? `rehearsal:${cohort.key}`,
+              rep.ref,
+              rep.ref.renderKey ?? `rehearsal:${cohort.key}`,
               noteReduced,
+              i === 0 ? rep.fetched : undefined,
             );
             if (fail) failures.push(fail);
           }
         }
-      } else {
-        // An empty node: the rehearsal credential is the single representative.
+      }
+      // An empty node, or one whose every cohort had no candidate to prove
+      // anything with: the rehearsal credential is the single representative,
+      // so a binding is never claimed on no rendered body at all.
+      const noMembers =
+        c.activationCurrent &&
+        (c.cohorts.length === 0 ||
+          (failures.length === 0 && unrepresented.length === c.cohorts.length));
+      if (noMembers) {
         source = 'credential';
         const cred = await ctx.runAction(internal.edgeTestCredentials.ensure, {
           relayId,
@@ -438,6 +571,7 @@ export const run = internalAction({
         source,
         formats: c.formats,
         reduced,
+        unrepresented,
       };
       if (!listingChanged) return last;
     }

@@ -34,6 +34,7 @@ import type { ResolvedWhere } from './edges/sni/country';
 import { resolveClientIp, resolveCountry } from './http';
 import { memberWhere, nextGuess, steeringCountry, type CountryFields } from './memberCountry';
 import { relabelMemberEntries } from './memberEntryNames';
+import { placeholderBody } from './nodePinning';
 import { isOwnExit } from './ownExits';
 import { subscriptionNow, withinValidity } from './subscriptionEtag';
 
@@ -273,6 +274,13 @@ export async function deliverBody(
   // unknown shapes.
   const node = fetched.pinnedNode ?? sub.pinnedNode;
   const placeholder = fetched.nodeless === true && !node;
+  // A backend placeholder (an expired or disabled key: every entry at a
+  // placeholder host, no node named) carries nothing an origin serves and no
+  // node address, so it passes through unrendered whatever the stored pin
+  // says: the member keeps reading the backend's own "expired" entries
+  // instead of a refusal once that node is bound. An EMPTY body is not one: it
+  // is still judged (and refused), since an empty 200 would wipe the client.
+  const passthrough = fetched.nodeless === true && placeholderBody(fetched.content);
   if (fetched.pinnedNode && fetched.pinnedNode !== sub.pinnedNode) {
     await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
       subscriptionId: sub.subscriptionId,
@@ -303,7 +311,7 @@ export async function deliverBody(
   let render: RenderSnapshot | null = null;
   // What the served pass left out, noted only once that pass is the one served.
   let withheld: WithheldNote | null = null;
-  if (sub.backendServerId) {
+  if (sub.backendServerId && !passthrough) {
     const family = classifyClient(input.ua).family;
     let renderedUnder: string | null = null;
     for (let pass = 0; pass < 2; pass++) {
