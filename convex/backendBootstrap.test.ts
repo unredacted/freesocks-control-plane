@@ -2042,3 +2042,77 @@ describe('an address belongs to exactly one node', () => {
     expect(addressesOf(intent, hosts, null).map((h) => h.hostUuid)).toEqual(['h1']);
   });
 });
+
+/**
+ * Whether a backend already has nodes or addresses is read from the backend
+ * itself, not only from what FCP last saw: a backend FCP has never read is
+ * judged by the setup run's own look, before anything is written.
+ */
+describe('a backend FCP has never read', () => {
+  function legacyLayout(panel: Panel) {
+    panel.nodes.push({
+      uuid: UUID(1),
+      name: 'legacy',
+      address: '192.0.2.5',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: { activeConfigProfileUuid: UUID(2), activeInbounds: [] },
+    });
+    panel.squads.push({
+      uuid: UUID(3),
+      name: 'FreeSocks-Reality',
+      inbounds: [{ uuid: UUID(9), tag: 'VLESS_OLD' }],
+    });
+    panel.hosts.push({
+      uuid: UUID(4),
+      remark: 'legacy-reality',
+      address: 'legacy.example.net',
+      port: 443,
+      inbound: { configProfileUuid: UUID(2), configProfileInboundUuid: UUID(9) },
+      isDisabled: false,
+    });
+  }
+
+  test('a setup that does not adopt stops at its own look, with nothing written', async () => {
+    const { t, serverId, panel } = await seed();
+    legacyLayout(panel);
+    // FCP's cache knows nothing yet, so the request itself is taken...
+    const row = await runSetup(t, serverId);
+    // ...and the run's own look stops it before any write.
+    expect(row).toMatchObject({ state: 'failed', code: 'servers.adopt_required', step: 'observe' });
+    expect(row.adopted).toBe(false);
+    expect(panel.writes).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query('sniInboundBindings').collect())).toEqual([]);
+  });
+
+  test('adopting it keeps every group members hold: the narrowing guard runs', async () => {
+    const { t, serverId, panel } = await seed();
+    legacyLayout(panel);
+    const row = await runSetup(t, serverId, { ...setupInput, adopt: true });
+    expect(row).toMatchObject({
+      state: 'failed',
+      code: 'servers.adopt_group_narrows:privacy-reality',
+      adopted: true,
+    });
+    expect(panel.writes.filter((w) => w.call.includes('/api/internal-squads'))).toEqual([]);
+    expect(panel.squads.find((s) => s.uuid === UUID(3))).toMatchObject({
+      name: 'FreeSocks-Reality',
+      inbounds: [{ uuid: UUID(9) }],
+    });
+  });
+
+  // A stop before the groups leaves the transports as they were: no family
+  // owns their names yet, so nothing rolls a family out to a backend whose
+  // setup never finished.
+  test('a setup stopped for narrowing a group has bound no family', async () => {
+    const { t, serverId, panel } = await seed();
+    legacyLayout(panel);
+    await t.action(internal.backendObserve.refresh, { backendServerId: serverId });
+    const row = await runSetup(t, serverId, { ...setupInput, adopt: true });
+    expect(row.code).toBe('servers.adopt_group_narrows:privacy-reality');
+    expect(await t.run((ctx) => ctx.db.query('sniInboundBindings').collect())).toEqual([]);
+    expect(row.modes!.every((m) => m.family !== 'bound')).toBe(true);
+  });
+});

@@ -32,7 +32,12 @@ import { nodeGateOf, type NodeGate } from './lib/backend/deliveryGate';
 import { CLAIM_LEASE_MS, claimAvailable, desiredHashOf, fenceHolds } from './lib/backend/fencing';
 import { ingressRoute, type IngressMapping, type IngressRoute } from './lib/backend/ingress';
 import { LABEL_RE, originHostname, originLabel } from './lib/backend/originDns';
-import { ADDRESS_SEP, addressRemark, ownsAddress } from './lib/backend/hostRemark';
+import {
+  ADDRESS_SEP,
+  addressRemark,
+  ownsAddress,
+  roleWroteAddress,
+} from './lib/backend/hostRemark';
 import { type ModeShape } from './lib/backend/profileTemplate';
 import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
@@ -502,16 +507,27 @@ export const enroll = internalMutation({
   },
 });
 
+/** The country a backend row carries when it has none (Remnawave's own default). */
+const NO_COUNTRY = 'XX';
+
+/** The most addresses an admin may name for one adopted node. */
+const MAX_ADOPT_ADDRESSES = 64;
+
 /**
  * Adopt an existing backend node as a LIVE enrolled node (docs/servers.md
  * "Adopting a backend"): it already serves members, so nothing changes for
  * them. The node row must already run the mode's transport; a direct node's
- * addresses (those carrying its name or its address) become its committed
- * set. A fronted node whose edge FCP does not run yet is `externallyFronted`
- * until Edges protects it. The role is never run for an adopted machine. Its
- * row keeps its port and every transport it serves, and its addresses keep
- * their remarks: a reconcile never narrows it, nor adds or removes an address
- * by FCP's remark scheme.
+ * addresses on it become its committed set: the ones the admin names
+ * (`hostUuids`), else those carrying its name (FCP's `<node> | ` form, or the
+ * node role's v1 `<node>-reality` / `<node>-ws[-<hex>]`) or its row's
+ * address, never one another node recorded. A direct node with none is
+ * refused: nothing would tell members' Hosts from anybody else's. Where
+ * members reach it is read from those Hosts, never from the row, which may
+ * hold a private management address. A fronted node whose edge FCP does not
+ * run yet is `externallyFronted` until Edges protects it. The role is never
+ * run for an adopted machine. Its row keeps its port and every transport it
+ * serves, and its addresses keep their remarks: a reconcile never narrows it,
+ * nor adds or removes an address by FCP's remark scheme.
  */
 export const adoptNode = internalMutation({
   args: {
@@ -519,6 +535,7 @@ export const adoptNode = internalMutation({
     nodeUuid: v.string(),
     mode: v.string(),
     externallyFronted: v.optional(v.boolean()),
+    hostUuids: v.optional(v.array(v.string())),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
@@ -548,13 +565,46 @@ export const adoptNode = internalMutation({
       .query('panelHosts')
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
       .collect();
-    const addresses = direct
-      ? hosts.filter(
-          (h) =>
-            h.configProfileInboundUuid === t.uuid &&
-            (ownsAddress(node.name, h.remark) || (!!node.address && h.address === node.address)),
-        )
-      : [];
+    // An address belongs to one node: another's recorded one is never taken.
+    const taken = new Set(
+      (
+        await ctx.db
+          .query('panelNodeIntents')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+          .collect()
+      ).flatMap((i) => i.addressUuids ?? []),
+    );
+    // Only what the backend serves now is live: a turned-off Host was retired
+    // by someone, and a re-approval would turn it back on as a candidate.
+    const usable = hosts.filter(
+      (h) => h.configProfileInboundUuid === t.uuid && !h.isDisabled && !taken.has(h.hostUuid),
+    );
+    if (a.hostUuids && !direct)
+      refuse('validation', 'A node members reach through an edge is adopted without addresses');
+    // Never a partial set: an address left out would serve members unmanaged.
+    if (a.hostUuids && a.hostUuids.length > MAX_ADOPT_ADDRESSES)
+      refuse('validation', `Name at most ${MAX_ADOPT_ADDRESSES} addresses`);
+    const named = a.hostUuids ? [...new Set(a.hostUuids)] : null;
+    if (named?.some((u) => !usable.some((h) => h.hostUuid === u)))
+      refuse(
+        'servers.adopt_address_unknown',
+        `An address you named is off, not on the ${mode.name} transport, or another node's. Refresh Servers`,
+      );
+    const addresses = !direct
+      ? []
+      : named
+        ? usable.filter((h) => named.includes(h.hostUuid))
+        : usable.filter(
+            (h) =>
+              ownsAddress(node.name, h.remark) ||
+              roleWroteAddress(node.name, h.remark) ||
+              (!!node.address && h.address === node.address),
+          );
+    if (direct && addresses.length === 0)
+      refuse(
+        'servers.adopt_addresses_missing',
+        'No address turned on on its transport carries this node’s name or address. Name its addresses',
+      );
     const profile = await ctx.db
       .query('panelProfiles')
       .withIndex('by_server_uuid', (q) =>
@@ -569,9 +619,15 @@ export const adoptNode = internalMutation({
     if (isWs(mode.shape)) settings.originHostnameSource = 'explicit';
     // The port it talks to the backend on stays: its row is reconciled as it is.
     if (node.port) settings.nodePort = node.port;
+    // Where members reach it is what its Hosts dial; the row's address is
+    // only how the backend reaches it (often a private one). A Host that dials
+    // a name (or an IPv6 address) is the origin edges dial once Edges protects
+    // the node, never the management address.
+    const v4 = addresses.map((h) => h.address).find((x) => IPV4.test(x));
+    if (!v4 && addresses[0]) settings.originAddressOverride = addresses[0].address;
     const observed: Intent['observed'] = {
       management: { address: node.address ?? '', port: node.port ?? 2222 },
-      publicIps: node.address && IPV4.test(node.address) ? { v4: node.address } : {},
+      publicIps: v4 ? { v4 } : {},
       capabilities: { caddy: isWs(mode.shape), ipv6: false },
       at: now,
     };
@@ -892,7 +948,8 @@ export const patchSettings = internalMutation({
     if (p.countryCode !== undefined) {
       if (p.countryCode !== null && !/^[A-Za-z]{2}$/.test(p.countryCode))
         refuse('validation', 'A country is two letters');
-      next.countryCode = p.countryCode?.toUpperCase() ?? undefined;
+      // Cleared is the backend's own "no country", written to its row like any other.
+      next.countryCode = p.countryCode?.toUpperCase() ?? NO_COUNTRY;
     }
     const kind = classifyChange({ addsPath, rewritesPath });
     if (kind === 'none' && p.countryCode === undefined) refuse('validation', 'Nothing to change');
@@ -930,6 +987,9 @@ export const patchSettings = internalMutation({
     });
     const next2 = (await ctx.db.get(intent._id))!;
     if (kind !== 'none') await scheduleReconcile(ctx, next2);
+    // A country alone moves no revision, but it is the backend row's to carry:
+    // reconciled now (an attempt that read the old one is fenced and runs again).
+    else await reconcileOrFence(ctx, next2);
     return { change: kind, machineRevision: next2.machineRevision };
   },
 });
@@ -1023,6 +1083,12 @@ export const applied = internalMutation({
     if (!intent) return refuse('not_found', 'No such node');
     if (intent.state === 'retiring' || intent.state === 'retired')
       refuse('servers.node_retiring', 'This node is being retired');
+    // No role runs an adopted machine: a report for it confirms nothing.
+    if (intent.adopted)
+      refuse(
+        'servers.node_adopted',
+        'This node was adopted as it was. The node role does not run its machine',
+      );
     if (a.appliedRevision < intent.machineRevision)
       refuse(
         'servers.revision_stale',
@@ -1181,6 +1247,8 @@ const progressPatch = v.object({
     }),
   ),
   release: v.optional(v.boolean()),
+  // How many of an adopted node's `portMoves` (the first ones) are applied.
+  portMovesApplied: v.optional(v.number()),
 });
 
 type ProgressPatch = Infer<typeof progressPatch>;
@@ -1348,6 +1416,10 @@ export const progress = internalMutation({
     if (patch.authRevision !== undefined) next.authRevision = patch.authRevision ?? undefined;
     if (patch.deliveryRevision !== undefined) next.deliveryRevision = patch.deliveryRevision;
     if (patch.origin !== undefined) next.origin = patch.origin;
+    if (patch.portMovesApplied !== undefined && intent.adopted) {
+      const left = (intent.adopted.portMoves ?? []).slice(patch.portMovesApplied);
+      next.adopted = { ...intent.adopted, portMoves: left.length > 0 ? left : undefined };
+    }
     let activation = intent.activation;
     if (patch.addEvidence) {
       const kinds = new Set(patch.addEvidence.map((e) => e.kind));
@@ -1560,6 +1632,17 @@ export const reconcile = internalAction({
       const extra = adopted
         ? []
         : c.addresses.filter((h) => !wanted.some((w) => w.remark === h.remark));
+      // An adopted node's recorded addresses that named a transport's old port
+      // follow a settled port change (`adopted.portMoves`, in order); one
+      // naming any other port is a forwarder's mapping and keeps it.
+      const portMoves = adopted?.portMoves ?? [];
+      const repointedOf = (addresses: typeof c.addresses) =>
+        addresses.flatMap((h) => {
+          let port = h.port;
+          for (const m of portMoves)
+            if (h.configProfileInboundUuid === m.inboundUuid && port === m.from) port = m.to;
+          return port !== h.port ? [{ h, port }] : [];
+        });
       // A name the family added: the address for it does not exist yet. What
       // members hold keeps working, so this is not drift; it is a CANDIDATE the
       // node has to be verified and approved for before it is delivered.
@@ -1569,7 +1652,7 @@ export const reconcile = internalAction({
         configRevision,
         authRevision,
         addressAdded,
-        hostMoved: moved.length > 0 || extra.length > 0,
+        hostMoved: moved.length > 0 || extra.length > 0 || repointedOf(c.addresses).length > 0,
         // The observer marks a token move nobody's ledger op expected as a
         // foreign edit; anything else was FCP's own write.
         ownChange: !c.profile?.foreignEditAt,
@@ -1624,6 +1707,15 @@ export const reconcile = internalAction({
               actorRun: `node:${c.intent._id}`,
             }),
           );
+        for (const { h, port } of repointedOf(c.addresses))
+          ops.push(() =>
+            ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
+              backendServerId: sid,
+              hostUuid: h.hostUuid,
+              port,
+              actorRun: `node:${c.intent._id}`,
+            }),
+          );
         if (ops.length > 0) {
           for (const make of ops) {
             const { opId } = await make();
@@ -1637,6 +1729,15 @@ export const reconcile = internalAction({
           c = await load();
         }
         await record({ addressUuids: c.addresses.map((h) => h.hostUuid) });
+      }
+      // The moves this run read are done once the backend shows them (a later
+      // change appends after them). A write that did not land is tried again.
+      if (portMoves.length > 0) {
+        if (repointedOf(c.addresses).length > 0) {
+          await stop('pending', 'servers.observe_lag');
+          return null;
+        }
+        await record({ portMovesApplied: portMoves.length });
       }
 
       // 4. A WebSocket node's origin name: obligations through the node runtime.
@@ -1867,6 +1968,13 @@ export const bootstrap = internalAction({
       throw new ConvexError({
         code: 'servers.node_retiring',
         message: 'This node is being retired',
+      });
+    // The node secret is for a machine the role sets up; nobody needs it for
+    // an adopted one, so it is never read for it.
+    if (c.intent.adopted)
+      throw new ConvexError({
+        code: 'servers.node_adopted',
+        message: 'This node was adopted as it was. The node role does not run its machine',
       });
     const writes = PROVIDERS[c.server.backend].backendWrites;
     if (!writes)

@@ -38,3 +38,15 @@ export function addressRemark(nodeName: string, sni: string): string {
 /** Whether a remark FCP wrote names this node. */
 export const ownsAddress = (nodeName: string, remark: string): boolean =>
   remark.startsWith(`${nodeName}${ADDRESS_SEP}`);
+
+/**
+ * The suffixes the node role's contract v1 gave the Hosts it wrote, the forms
+ * node pinning also reads (`lib/nodePinning.ts`): `<node>-reality`,
+ * `<node>-ws`, `<node>-xhttp`, each optionally with a 6-hex tag of a second
+ * address. An origin listener's `<node>-relay-<key>` is the edges', never a node's.
+ */
+const ROLE_REMARK_SUFFIX = /^-(reality|ws|xhttp)(-[0-9a-f]{6})?$/i;
+
+/** Whether a remark the node role (contract v1) wrote names exactly this node. */
+export const roleWroteAddress = (nodeName: string, remark: string): boolean =>
+  remark.startsWith(nodeName) && ROLE_REMARK_SUFFIX.test(remark.slice(nodeName.length));
