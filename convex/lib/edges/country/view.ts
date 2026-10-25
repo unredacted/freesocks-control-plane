@@ -173,8 +173,8 @@ export interface NameRealHost {
 
 /**
  * What the transport's target adds to a handshake from this country, over the
- * timed real-host pairs of the transport's names (medians of the names'
- * medians). `flagged` = at least `TARGET_ADDS_MIN_PAIRS` timed pairs and
+ * timed real-host pairs of the transport's names (the median of the names'
+ * medians, each weighted by its timed pairs). `flagged` = at least `TARGET_ADDS_MIN_PAIRS` timed pairs and
  * `TARGET_ADDS_FLAG_MS` or more: a proposal, the owner decides.
  */
 export interface TargetAdds {
@@ -196,6 +196,14 @@ const medianOf = (xs: readonly number[]) => {
   return Math.round(s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2);
 };
 
+/**
+ * The median of the names' medians, each counted once per timed pair behind
+ * it: a name timed from one vantage weighs a third of one timed from three,
+ * so a single outlier cannot carry the transport's figure.
+ */
+const pairWeightedMedian = (xs: ReadonlyArray<{ value: number; pairs: number }>) =>
+  medianOf(xs.flatMap((x) => Array.from({ length: Math.max(1, x.pairs) }, () => x.value)));
+
 /** The target leg of one transport, from its names' timed real-host pairs on its own addresses. */
 function targetAddsOn(
   prefixes: readonly string[],
@@ -208,12 +216,14 @@ function targetAddsOn(
         !!r?.timing && prefixes.some((p) => r.target.startsWith(p)),
     );
   if (timed.length === 0) return null;
-  const ms = medianOf(timed.map((r) => r.timing.addsMs));
+  const weighted = (pick: (t: HandshakeTiming) => number) =>
+    pairWeightedMedian(timed.map((r) => ({ value: pick(r.timing), pairs: r.timing.pairs })));
+  const ms = weighted((t) => t.addsMs);
   const pairs = timed.reduce((s, r) => s + r.timing.pairs, 0);
   return {
     ms,
-    oursMs: medianOf(timed.map((r) => r.timing.oursMs)),
-    realMs: medianOf(timed.map((r) => r.timing.realMs)),
+    oursMs: weighted((t) => t.oursMs),
+    realMs: weighted((t) => t.realMs),
     pairs,
     names: timed.length,
     at: Math.max(...timed.map((r) => r.at)),

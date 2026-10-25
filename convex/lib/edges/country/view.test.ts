@@ -498,7 +498,7 @@ describe('buildCountryView', () => {
   });
 
   test('what the transport’s target adds: its names measured on its own addresses only', () => {
-    const timed = (addsMs: number, target: string): NameFacts => ({
+    const timed = (addsMs: number, target: string, pairs = 2): NameFacts => ({
       family: 'f',
       qualified: true,
       mark: null,
@@ -519,7 +519,7 @@ describe('buildCountryView', () => {
         },
         vantages: 3,
         networks: 2,
-        timing: { pairs: 2, oursMs: addsMs + 5, realMs: 5, addsMs },
+        timing: { pairs, oursMs: addsMs + 5, realMs: 5, addsMs },
       },
     });
     const facts: Record<string, NameFacts> = {
@@ -544,6 +544,16 @@ describe('buildCountryView', () => {
       SETTINGS,
     );
     expect(quiet.origins[0]!.listeners[0]!.targetAdds).toMatchObject({ ms: 20, flagged: false });
+    // Each name weighs by its timed pairs: one vantage's 367 ms beside three
+    // vantages' 60 ms reads 60, not the 214 of a plain median of the two names.
+    const skewed: Record<string, NameFacts> = {
+      'n1.example': timed(367, 'edge:a:198.51.100.1:443', 1),
+      'n2.example': timed(60, 'edge:b:198.51.100.1:443', 3),
+    };
+    expect(
+      buildCountryView([origin()], (n) => skewed[n] ?? null, SETTINGS).origins[0]!.listeners[0]!
+        .targetAdds,
+    ).toMatchObject({ ms: 60, oursMs: 65, pairs: 4, names: 2, flagged: true });
   });
 
   test('a retired name still draining is listed; one past its drain is not', () => {
