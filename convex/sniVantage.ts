@@ -44,7 +44,9 @@ import {
   type PlanName,
 } from './lib/edges/sni/vantage';
 import type { VantageSource } from './lib/edges/probes/nameCheck';
+import { readRealHost } from './lib/edges/sni/realHost';
 import {
+  measurementsPerName,
   resolveSniConfig,
   resolveSniVantageConfig,
   usableSources,
@@ -63,8 +65,11 @@ export const TICK_MS = 10 * MIN;
 const RUN_TIMEOUT_MS = 15 * MIN;
 /** Documents one tick's planning may read, every country together (a read limit is a 500). */
 const MAX_SCAN = 3000;
-/** Measurements of one (name, country) read to refresh its evidence, newest first. */
-const MAX_HISTORY = 40;
+/**
+ * Measurements of one (name, country) read to refresh its evidence, newest
+ * first (real-host controls share the range: twice the old 40).
+ */
+const MAX_HISTORY = 80;
 /** Rows read to learn which of a name's addresses it was checked on last. */
 const MAX_TARGET_HISTORY = 30;
 /** Evidence rows the sweep re-aggregates per run as their oldest measurement leaves the window. */
@@ -349,6 +354,7 @@ async function startBatch(
   sources: VantageSource[],
   trigger: 'cron' | 'manual',
   now: number,
+  realHost: boolean,
 ): Promise<{ batch: string; measurements: number }> {
   const { target, country } = plan;
   // The port too: one origin can have two REALITY listeners on one address.
@@ -356,7 +362,7 @@ async function startBatch(
   let measurements = 0;
   for (const source of sources) {
     for (const n of plan.names) {
-      await ctx.db.insert('sniVantageProbes', {
+      const row = {
         name: n.name,
         familyId: n.familyId,
         country,
@@ -367,12 +373,19 @@ async function startBatch(
         address: target.address,
         port: target.port,
         trigger,
-        status: 'requested',
+        status: 'requested' as const,
         requestedAt: now,
         scheduledAt: now,
         results: [],
-      });
+      };
+      await ctx.db.insert('sniVantageProbes', row);
       measurements++;
+      // Its real-host control: the same name to the name's real site, right after
+      // it, so a source measures both from the same vantages.
+      if (realHost) {
+        await ctx.db.insert('sniVantageProbes', { ...row, role: 'real_host' });
+        measurements++;
+      }
     }
     // One executor per source; calls inside it are spaced (probe.sourceSpacingMs).
     await ctx.scheduler.runAfter(0, internal.sniVantageOps.executeBatch, { batch, source });
@@ -380,7 +393,14 @@ async function startBatch(
       actorType: 'system',
       action: 'edge.sni.vantage.batch',
       targetType: 'sni_vantage',
-      payload: { country, source, targetKind: target.kind, count: plan.names.length, trigger },
+      payload: {
+        country,
+        source,
+        targetKind: target.kind,
+        count: plan.names.length,
+        trigger,
+        realHost,
+      },
     });
   }
   // The interval's clock, for every name of the batch (its control included):
@@ -535,9 +555,9 @@ export const tick = internalMutation({
     for (const country of countriesForTick(countries, now, TICK_MS)) {
       const plan = await planForCountry(ctx.db, country, cfg, now, scan);
       if (!plan) continue;
-      const names = fitToBudget(plan.names, sources.length, remaining);
+      const names = fitToBudget(plan.names, sources.length * measurementsPerName(cfg), remaining);
       if (names.length === 0) return idle('budget');
-      const r = await startBatch(ctx, { ...plan, names }, sources, 'cron', now);
+      const r = await startBatch(ctx, { ...plan, names }, sources, 'cron', now, cfg.realHost);
       return { started: 1, measurements: r.measurements, reason: null };
     }
     return idle('nothing_due');
@@ -620,11 +640,10 @@ export const batchContext = internalQuery({
             : !(await admitted(ctx.db))
               ? 'gate_maintenance'
               : null;
-    const current = gate
-      ? []
-      : (await targetsFor(ctx.db, country)).filter(
-          (t) => t.kind === rows[0]!.targetKind && t.ref === rows[0]!.targetRef,
-        );
+    const all = gate ? [] : await targetsFor(ctx.db, country);
+    const current = all.filter(
+      (t) => t.kind === rows[0]!.targetKind && t.ref === rows[0]!.targetRef,
+    );
     return {
       gate,
       country,
@@ -632,12 +651,16 @@ export const batchContext = internalQuery({
       preferEyeball: edgeCfg.probe.preferEyeball,
       spacingMs: EDGE_PLUMBING.probeSourceSpacingMs,
       secrets,
+      // FCP's own addresses: a real-site answer among them is never dialled as one.
+      own: rows.some((r) => r.role === 'real_host') ? await ownAddresses(ctx.db, all) : [],
       rows: rows.map((r) => ({
         id: r._id,
         name: r.name,
         address: r.address,
         port: r.port,
-        // The address moved, the listener went, or the name left it: not dialled.
+        role: r.role ?? null,
+        // The address moved, the listener went, or the name left it: not dialled
+        // (its real-host control neither: it controls exactly that measurement).
         valid: current.some(
           (t) =>
             t.address === r.address &&
@@ -648,6 +671,22 @@ export const batchContext = internalQuery({
     };
   },
 });
+
+/** Every address FCP members are handed or nodes listen on (bounded: operator scale). */
+async function ownAddresses(db: Db, dialled: readonly Target[]): Promise<string[]> {
+  const out = new Set<string>(dialled.map((t) => t.address));
+  for (const relay of await db.query('relays').take(500)) {
+    out.add(relay.originAddress);
+    for (const a of relay.nodeAddresses ?? []) out.add(a);
+    for (const status of ['active', 'draining'] as const)
+      for (const e of await db
+        .query('edges')
+        .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id).eq('status', status))
+        .take(200))
+        for (const a of [e.addresses.v4, e.addresses.v6]) if (a) out.add(a);
+  }
+  return [...out];
+}
 
 export const markRunning = internalMutation({
   args: { ids: v.array(v.id('sniVantageProbes')) },
@@ -674,6 +713,8 @@ const vantageResult = v.object({
     v.literal('refused'),
     v.literal('error'),
   ),
+  stage: v.optional(v.union(v.literal('connect'), v.literal('handshake'), v.literal('response'))),
+  vantage: v.optional(v.string()),
   rttMs: v.optional(v.number()),
   error: v.optional(v.string()),
 });
@@ -690,9 +731,17 @@ export const finishBatch = internalMutation({
         id: v.id('sniVantageProbes'),
         externalId: v.optional(v.string()),
         results: v.array(vantageResult),
+        // A real-host control: the real site's address it dialled.
+        realAddress: v.optional(v.string()),
       }),
     ),
-    failed: v.array(v.object({ id: v.id('sniVantageProbes'), error: v.string() })),
+    failed: v.array(
+      v.object({
+        id: v.id('sniVantageProbes'),
+        error: v.string(),
+        realAddress: v.optional(v.string()),
+      }),
+    ),
   },
   handler: async (ctx, a) => {
     const now = Date.now();
@@ -704,6 +753,9 @@ export const finishBatch = internalMutation({
         finishedAt: now,
         results: d.results.slice(0, 20),
         ...(d.externalId ? { externalId: d.externalId.slice(0, 120) } : {}),
+        ...(d.realAddress && r!.role === 'real_host'
+          ? { realAddress: d.realAddress.slice(0, 64) }
+          : {}),
       });
     }
     for (const f of a.failed) {
@@ -713,6 +765,9 @@ export const finishBatch = internalMutation({
         status: f.error === 'timeout' ? 'timeout' : 'failed',
         finishedAt: now,
         error: f.error.slice(0, 40),
+        ...(f.realAddress && r!.role === 'real_host'
+          ? { realAddress: f.realAddress.slice(0, 64) }
+          : {}),
       });
     }
     await settleBatch(ctx, a.batch, now);
@@ -746,8 +801,9 @@ async function settleBatch(ctx: MutationCtx, batch: string, now: number) {
     address: first.address,
     port: first.port,
     country,
+    // Real-host controls dial another site: they say nothing about this address.
     measurements: rows
-      .filter((r) => r.status === 'finished')
+      .filter((r) => r.status === 'finished' && r.role !== 'real_host')
       .map((r) => ({ name: r.name, source: r.source, results: r.results })),
     at: Math.max(...rows.map((r) => r.finishedAt ?? r.requestedAt)),
   });
@@ -758,6 +814,73 @@ async function settleBatch(ctx: MutationCtx, batch: string, now: number) {
  * and their batches' controls. Only measurements taken while the name was in
  * its CURRENT family count (a name removed and imported elsewhere starts over).
  */
+/**
+ * The newest TCP reading of FCP's address from `country` around `at` (the
+ * per-country checks' path reading, within the handshake pairing window), for
+ * a real-host pair whose source did not say where our check stopped.
+ */
+async function tcpReadingAt(
+  db: Db,
+  r: Pick<Doc<'sniVantageProbes'>, 'targetKind' | 'targetRef' | 'address' | 'port'>,
+  country: string,
+  at: number,
+): Promise<'works' | 'fails' | null> {
+  if (r.targetKind !== 'edge') return null;
+  const edgeId = db.normalizeId('edges', r.targetRef);
+  if (!edgeId) return null;
+  const ev = await db
+    .query('edgeCountryEvidence')
+    .withIndex('by_edge_country', (q) => q.eq('edgeId', edgeId).eq('country', country))
+    .unique();
+  const p = (ev?.paths ?? []).find(
+    (x) =>
+      x.address === r.address &&
+      x.port === r.port &&
+      Math.abs(x.at - at) <= EDGE_PLUMBING.countryHandshakePairMs,
+  );
+  return p?.tcp === 'works' ? 'works' : p?.tcp === 'fails' ? 'fails' : null;
+}
+
+/**
+ * What the real-host controls of the newest batch that had one for `name` say
+ * (lib/edges/sni/realHost.ts). Null: no real-host control finished in the window.
+ */
+async function realHostOf(
+  db: Db,
+  name: string,
+  country: string,
+  mine: readonly Doc<'sniVantageProbes'>[],
+  batches: ReadonlyMap<string, Doc<'sniVantageProbes'>[]>,
+  cfg: SniVantageConfig,
+) {
+  const reals = mine.filter((r) => r.role === 'real_host');
+  if (reals.length === 0) return null;
+  const newest = reals.reduce((a, b) => ((b.finishedAt ?? 0) > (a.finishedAt ?? 0) ? b : a));
+  const rows = batches.get(newest.batch) ?? [];
+  const at = Math.max(...rows.map((r) => r.finishedAt ?? r.requestedAt));
+  const s = readRealHost(
+    name,
+    rows.map((r) => ({
+      name: r.name,
+      source: r.source,
+      role: r.role === 'real_host' ? ('real' as const) : ('ours' as const),
+      results: r.results,
+    })),
+    {
+      minVantages: cfg.minVantages,
+      minNetworks: cfg.minNetworks,
+      tcp: await tcpReadingAt(db, newest, country, at),
+    },
+  );
+  if (!s) return null;
+  return {
+    at,
+    target: targetKeyOf(newest),
+    ...(newest.realAddress ? { realAddress: newest.realAddress } : {}),
+    ...s,
+  };
+}
+
 async function refreshEvidence(ctx: MutationCtx, name: string, country: string, now: number) {
   const cfg = await resolveSniVantageConfig(ctx.db);
   const current = await ctx.db
@@ -769,7 +892,7 @@ async function refreshEvidence(ctx: MutationCtx, name: string, country: string, 
     if (ev) await ctx.db.delete(ev._id);
     return;
   }
-  const own = (
+  const mine = (
     await ctx.db
       .query('sniVantageProbes')
       .withIndex('by_name_country_requested', (q) =>
@@ -781,6 +904,9 @@ async function refreshEvidence(ctx: MutationCtx, name: string, country: string, 
       .order('desc')
       .take(MAX_HISTORY)
   ).filter((r) => r.status === 'finished' && r.familyId === current.familyId);
+  // The name's own evidence is about FCP's addresses only: a real-host control
+  // dials the name's real site and is read beside it (`realHostOf`), never in it.
+  const own = mine.filter((r) => r.role !== 'real_host');
   const measurements = new Map<string, Measurement>();
   const toMeasurement = (r: Doc<'sniVantageProbes'>): Measurement => ({
     batch: r.batch,
@@ -791,13 +917,19 @@ async function refreshEvidence(ctx: MutationCtx, name: string, country: string, 
     results: r.results,
   });
   for (const r of own) measurements.set(r._id, toMeasurement(r));
-  for (const batch of new Set(own.map((r) => r.batch)))
-    for (const r of await ctx.db
-      .query('sniVantageProbes')
-      .withIndex('by_batch_source', (q) => q.eq('batch', batch))
-      .collect())
-      if (r.status === 'finished') measurements.set(r._id, toMeasurement(r));
+  const batches = new Map<string, Doc<'sniVantageProbes'>[]>();
+  for (const batch of new Set(mine.map((r) => r.batch))) {
+    const rows = (
+      await ctx.db
+        .query('sniVantageProbes')
+        .withIndex('by_batch_source', (q) => q.eq('batch', batch))
+        .collect()
+    ).filter((r) => r.status === 'finished');
+    batches.set(batch, rows);
+    for (const r of rows) if (r.role !== 'real_host') measurements.set(r._id, toMeasurement(r));
+  }
   const agg = aggregateEvidence(name, [...measurements.values()], ev?.everOkAt ?? null);
+  const realHost = await realHostOf(ctx.db, name, country, mine, batches, cfg);
   const everOkAt = Math.max(ev?.everOkAt ?? 0, agg.lastOkAt ?? 0) || undefined;
   const row = {
     familyId: current.familyId,
@@ -812,6 +944,7 @@ async function refreshEvidence(ctx: MutationCtx, name: string, country: string, 
     oldestAt: own.length > 0 ? Math.min(...own.map((r) => r.requestedAt)) : undefined,
     latest: agg.latest,
     streak: agg.streak ?? undefined,
+    realHost: realHost ?? undefined,
     updatedAt: now,
   };
   // `undefined` removes a field: a streak that ended is gone, not kept stale.
@@ -897,6 +1030,43 @@ async function autoApply(
     }
   }
 }
+
+/**
+ * Before deploying a build without real-host controls: delete the twins and
+ * strip every field they added (`results[].stage` / `.vantage`, the evidence's
+ * `realHost`), so the older schema accepts what is left. One page per call;
+ * `done: false` means call it again. Turn `edge.sni.vantage.realHost` off first.
+ */
+export const clearRealHostForRollback = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, a) => {
+    const page = await ctx.db
+      .query('sniVantageProbes')
+      .paginate({ cursor: a.cursor ?? null, numItems: 200 });
+    let deleted = 0;
+    let stripped = 0;
+    for (const r of page.page) {
+      if (r.role === 'real_host') {
+        await ctx.db.delete(r._id);
+        deleted++;
+        continue;
+      }
+      if (!r.results.some((x) => x.stage !== undefined || x.vantage !== undefined)) continue;
+      await ctx.db.patch(r._id, {
+        results: r.results.map(({ stage: _s, vantage: _v, ...x }) => x),
+      });
+      stripped++;
+    }
+    let evidence = 0;
+    if (page.isDone)
+      for (const ev of await ctx.db.query('sniVantageEvidence').take(4000))
+        if (ev.realHost !== undefined) {
+          await ctx.db.patch(ev._id, { realHost: undefined });
+          evidence++;
+        }
+    return { deleted, stripped, evidence, done: page.isDone, cursor: page.continueCursor };
+  },
+});
 
 /** A stored evidence row in the shape the pure scoring reads. */
 export function evidenceShape(ev: Doc<'sniVantageEvidence'>) {
@@ -1029,12 +1199,16 @@ export const requestNow = internalMutation({
       const control = pickBatchNames(candidates, 1)[1];
       if (control) plan.names.push(docs.get(control)!);
     }
-    const cost = [...plans.values()].reduce((s, p) => s + p.names.length * sources.length, 0);
+    const cost = [...plans.values()].reduce(
+      (s, p) => s + p.names.length * sources.length * measurementsPerName(cfg),
+      0,
+    );
     if (cost > cfg.hourlyBudget - (await spentThisHour(ctx.db, now, cfg.hourlyBudget)))
       refuse('edge.sni.vantage_budget', 'The hourly budget for checks is spent; try again later');
     let measurements = 0;
     for (const plan of plans.values())
-      measurements += (await startBatch(ctx, plan, sources, 'manual', now)).measurements;
+      measurements += (await startBatch(ctx, plan, sources, 'manual', now, cfg.realHost))
+        .measurements;
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,

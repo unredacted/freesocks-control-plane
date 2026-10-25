@@ -9,6 +9,7 @@ import {
   atlasNameBody,
   atlasProbeQuery,
   classifyConnectError,
+  classifyStage,
   globalpingNameRequest,
   isNoProbesError,
   parseAtlasNameResults,
@@ -171,5 +172,74 @@ describe('what comes back', () => {
     ).toBe(true);
     expect(isNoProbesError(422, { error: { type: 'validation_error' } })).toBe(false);
     expect(isNoProbesError(429, {})).toBe(false);
+  });
+});
+
+describe('where a failure stopped, and which vantage it was', () => {
+  test('the stage, from what each source reports', () => {
+    // Globalping's own timeout phrases and the socket errors it passes through.
+    expect(classifyStage('Request timed out while establishing the TCP connection.')).toBe(
+      'connect',
+    );
+    expect(classifyStage('connect ECONNREFUSED 198.51.100.9:443')).toBe('connect');
+    expect(classifyStage('connect ETIMEDOUT 198.51.100.9:443')).toBe('connect');
+    expect(classifyStage('Request timed out during the TLS handshake.')).toBe('handshake');
+    expect(classifyStage('read ECONNRESET')).toBe('handshake');
+    expect(
+      classifyStage(
+        'Client network socket disconnected before secure TLS connection was established',
+      ),
+    ).toBe('handshake');
+    expect(classifyStage('Request timed out while waiting for the first response byte.')).toBe(
+      'response',
+    );
+    // Atlas: a `connect:` prefix, a reset while reading, a bare timeout.
+    expect(classifyStage('connect: Connection refused')).toBe('connect');
+    expect(classifyStage('read: Connection reset by peer')).toBe('handshake');
+    expect(classifyStage('timeout')).toBeUndefined();
+    expect(classifyStage(undefined)).toBeUndefined();
+  });
+
+  test('a Globalping vantage keeps its key across measurements; look-alikes are told apart', () => {
+    const probe = (asn: number, city: string) => ({
+      country: 'IR',
+      asn,
+      network: `net-${asn}`,
+      city,
+      latitude: 35.7,
+      longitude: 51.4,
+      tags: [],
+    });
+    const items = (outcome: 'ok' | 'fail') =>
+      [probe(64501, 'A'), probe(64501, 'A'), probe(64502, 'B')].map((p) => ({
+        probe: p,
+        result:
+          outcome === 'ok'
+            ? { status: 'finished', tls: { authorized: true } }
+            : { status: 'failed', rawOutput: 'read ECONNRESET' },
+      }));
+    const a = parseGlobalpingNameResults(items('ok'), 'IR');
+    const b = parseGlobalpingNameResults(items('fail'), 'IR');
+    expect(a.map((x) => x.vantage)).toEqual(b.map((x) => x.vantage));
+    expect(new Set(a.map((x) => x.vantage)).size).toBe(3);
+    for (const k of a.map((x) => x.vantage)) expect(k).toMatch(/^[0-9a-f]{8}$/);
+    expect(b[0]).toMatchObject({ outcome: 'reset', stage: 'handshake' });
+    expect(a[0]!.stage).toBeUndefined();
+  });
+
+  test('an Atlas vantage is keyed by its probe, never by the id in the clear', () => {
+    const cover = () => true;
+    const r = parseAtlasNameResults(
+      [
+        { prb_id: 1001, err: 'connect: Connection refused' },
+        { prb_id: 1002, cert: ['PEM'], rt: 40 },
+      ],
+      'site.example',
+      { asnByProbe: { 1001: 'AS64501' }, certCovers: cover },
+    );
+    expect(r[0]).toMatchObject({ outcome: 'refused', stage: 'connect' });
+    expect(r[0]!.vantage).toMatch(/^[0-9a-f]{8}$/);
+    expect(r[0]!.vantage).not.toContain('1001');
+    expect(r[1]!.vantage).not.toBe(r[0]!.vantage);
   });
 });

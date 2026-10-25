@@ -32,11 +32,27 @@ export type NameOutcome =
 
 export type VantageSource = 'globalping' | 'ripeatlas';
 
+/**
+ * Where a failed check stopped: before the connection was up (`connect`),
+ * during the TLS handshake (`handshake`), or after it while waiting for the
+ * answer (`response`). Absent = not known from what the source reported.
+ */
+export type NameStage = 'connect' | 'handshake' | 'response';
+
 export interface NameVantageResult {
   asn?: string;
   network?: string;
   vantageClass: VantageClass;
   outcome: NameOutcome;
+  /** Failures only: where it stopped (`classifyStage`). */
+  stage?: NameStage;
+  /**
+   * An opaque key of the vantage (a short hash), equal for the same vantage
+   * across the measurements of one batch: what pairs a check of FCP's address
+   * with the check of the name's real site (lib/edges/sni/realHost.ts).
+   * Never a location or a probe id in the clear.
+   */
+  vantage?: string;
   rttMs?: number;
   /** A short storable class of what went wrong (never a name or an address). */
   error?: string;
@@ -64,6 +80,38 @@ export function classifyConnectError(text: unknown): NameOutcome {
     return 'reset';
   if (/timeout|timed out|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT/i.test(s)) return 'timeout';
   return 'error';
+}
+
+/**
+ * Where a failure stopped, from its text: Globalping names the phase of a
+ * timeout ("... establishing the TCP connection", "... during the TLS
+ * handshake", "... first response byte") and passes socket errors through
+ * (`connect ECONNREFUSED`, `read ECONNRESET`); Atlas prefixes a connect
+ * failure with `connect:`. A reset or an early close after the connection was
+ * up is the handshake (it is the first thing sent). Unknown = undefined.
+ */
+export function classifyStage(text: unknown): NameStage | undefined {
+  const s = typeof text === 'string' ? text : text instanceof Error ? text.message : '';
+  if (/first response byte|downloading the response/i.test(s)) return 'response';
+  if (/TCP connection|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|\bconnect\b/i.test(s)) return 'connect';
+  if (
+    /TLS handshake|ECONNRESET|reset|socket hang up|disconnected before secure|EPROTO|\bEOF\b|\bread\b|alert/i.test(
+      s,
+    )
+  )
+    return 'handshake';
+  return undefined;
+}
+
+/** A short opaque key for one vantage (FNV-1a over what identifies it), never the parts. */
+export function vantageKeyOf(parts: readonly unknown[]): string {
+  let h = 0x811c9dc5;
+  const s = parts.map((p) => String(p ?? '')).join('|');
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
 }
 
 // --- Globalping ----------------------------------------------------------------------------------
@@ -100,7 +148,15 @@ export function globalpingNameRequest(t: NameCheckTarget, where: GlobalpingLocat
 }
 
 interface GlobalpingItem {
-  probe?: { country?: unknown; asn?: unknown; network?: unknown; tags?: unknown };
+  probe?: {
+    country?: unknown;
+    asn?: unknown;
+    network?: unknown;
+    tags?: unknown;
+    city?: unknown;
+    latitude?: unknown;
+    longitude?: unknown;
+  };
   result?: {
     status?: unknown;
     statusCode?: unknown;
@@ -132,14 +188,29 @@ export function parseGlobalpingNameResults(
 ): NameVantageResult[] {
   if (!Array.isArray(items)) return [];
   const out: NameVantageResult[] = [];
+  // Globalping gives no probe id: a vantage is what describes it (a measurement
+  // that reuses another's probes reports the same descriptions). Two probes
+  // described alike are told apart by their order.
+  const seen = new Map<string, number>();
   for (const raw of items as GlobalpingItem[]) {
     if (normalizeCountry(raw.probe?.country) !== country) continue;
     const asn = raw.probe?.asn != null ? `AS${String(raw.probe.asn)}` : undefined;
     const network = typeof raw.probe?.network === 'string' ? raw.probe.network : undefined;
+    const described = vantageKeyOf([
+      'gp',
+      raw.probe?.asn,
+      network,
+      raw.probe?.city,
+      raw.probe?.latitude,
+      raw.probe?.longitude,
+    ]);
+    const nth = seen.get(described) ?? 0;
+    seen.set(described, nth + 1);
     const base = {
       ...(asn ? { asn } : {}),
       ...(network ? { network: network.slice(0, 80) } : {}),
       vantageClass: vantageClassOf(raw.probe?.tags),
+      vantage: nth === 0 ? described : vantageKeyOf([described, nth]),
     };
     const status = String(raw.result?.status ?? '');
     if (status === 'finished') {
@@ -158,9 +229,11 @@ export function parseGlobalpingNameResults(
       }
     } else if (status === 'failed') {
       const text = raw.result?.rawOutput;
+      const stage = classifyStage(text);
       out.push({
         ...base,
         outcome: classifyConnectError(text),
+        ...(stage ? { stage } : {}),
         error: shortError(text ?? 'failed', 60, redact),
       });
     }
@@ -271,14 +344,20 @@ export function parseAtlasNameResults(
   for (const raw of body as Array<Record<string, unknown>>) {
     const prb = typeof raw.prb_id === 'number' ? raw.prb_id : Number(raw.prb_id);
     const asn = Number.isFinite(prb) ? opts.asnByProbe[prb] : undefined;
-    const base = { ...(asn ? { asn } : {}), vantageClass: 'unknown' as const };
+    const base = {
+      ...(asn ? { asn } : {}),
+      vantageClass: 'unknown' as const,
+      ...(Number.isFinite(prb) ? { vantage: vantageKeyOf(['atlas', prb]) } : {}),
+    };
     const rt = Number(raw.rt);
     const rttMs = Number.isFinite(rt) ? { rttMs: Math.round(rt) } : {};
     if (raw.err !== undefined || raw.dnserr !== undefined) {
       const text = raw.err ?? raw.dnserr;
+      const stage = raw.err !== undefined ? classifyStage(text) : undefined;
       out.push({
         ...base,
         outcome: classifyConnectError(text),
+        ...(stage ? { stage } : {}),
         error: shortError(text, 60, [name, ...(opts.redact ?? [])]),
       });
     } else if (Array.isArray(raw.cert) && typeof raw.cert[0] === 'string') {

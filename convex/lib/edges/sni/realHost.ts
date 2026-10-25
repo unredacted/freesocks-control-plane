@@ -1,0 +1,202 @@
+/**
+ * Real-host controls (pure; unit-tested), docs/edges.md "Real-host controls".
+ *
+ * A check from inside a country presents a server name to one of FCP's own
+ * addresses. Its control here is the same name presented to the name's REAL
+ * site (its public DNS answer), from the same vantage, in the same batch. Read
+ * together, per vantage:
+ *
+ *  - both work                                    -> `works`
+ *  - both fail                                    -> `name_blocked` (the name is blocked
+ *                                                    wherever it goes)
+ *  - the real site works, ours fails to connect   -> `address_blocked` (our address)
+ *  - the real site works, ours connects but the
+ *    handshake with the name fails or resets      -> `ip_name_match` (the censor likely checks
+ *                                                    the name against its real address or network)
+ *  - the real site fails, ours works              -> `ours_only` (the real site's address is
+ *                                                    blocked, the name passes on ours)
+ *  - anything else                                -> `inconclusive`
+ *
+ * "Both fail" counts only from a vantage that got through for something else
+ * in the batch (another name, or a real site): a vantage that reaches nothing
+ * says nothing. Where the source did not say at which stage ours failed, a
+ * working or failing TCP reading of our address from that country (the
+ * per-country checks' newest path reading, paired in time) decides the stage.
+ * The reading is evidence only: nothing here changes a mark or a grade.
+ */
+import type { NameOutcome, NameStage } from '../probes/nameCheck';
+import type { RealHostPair, RealHostReading } from '../../../../src/shared/contracts/edgeCodes';
+import { networkOf } from './vantage';
+
+export type { RealHostPair, RealHostReading };
+
+export interface PairReading {
+  asn?: string;
+  network?: string;
+  outcome: NameOutcome;
+  stage?: NameStage;
+  vantage?: string;
+}
+
+/** One stored measurement of a batch, ours or the real site's. */
+export interface PairMeasurement {
+  name: string;
+  source: string;
+  role: 'ours' | 'real';
+  results: readonly PairReading[];
+}
+
+/** The path was open for that name: a completed handshake, or an answer without TLS details. */
+const reached = (o: NameOutcome) => o === 'ok' || o === 'answered';
+/** What a censor's interference looks like (a refusal included: an RST to the SYN). */
+const failed = (o: NameOutcome) =>
+  o === 'reset' || o === 'timeout' || o === 'cert_mismatch' || o === 'refused';
+
+/** Where OUR check failed: as reported, else from the TCP reading of the address there. */
+function oursStage(r: PairReading, tcp: 'works' | 'fails' | null): 'connect' | 'handshake' | null {
+  if (r.outcome === 'refused') return 'connect';
+  if (r.outcome === 'cert_mismatch') return 'handshake';
+  if (r.stage === 'connect') return 'connect';
+  if (r.stage === 'handshake' || r.stage === 'response') return 'handshake';
+  if (tcp === 'works') return 'handshake';
+  if (tcp === 'fails') return 'connect';
+  return null;
+}
+
+/** One vantage's pair, read. `reachedElse`: that vantage got through for something else in the batch. */
+export function pairClass(
+  ours: PairReading,
+  real: PairReading,
+  o: { reachedElse: boolean; tcp: 'works' | 'fails' | null },
+): RealHostPair {
+  if (reached(ours.outcome) && reached(real.outcome)) return 'works';
+  if (reached(ours.outcome) && failed(real.outcome)) return 'ours_only';
+  if (failed(ours.outcome) && failed(real.outcome))
+    return o.reachedElse ? 'name_blocked' : 'inconclusive';
+  if (reached(real.outcome) && failed(ours.outcome)) {
+    const stage = oursStage(ours, o.tcp);
+    if (stage === 'connect') return 'address_blocked';
+    if (stage === 'handshake') return 'ip_name_match';
+  }
+  return 'inconclusive';
+}
+
+export interface PairCounts {
+  works: number;
+  nameBlocked: number;
+  addressBlocked: number;
+  ipNameMatch: number;
+  oursOnly: number;
+  inconclusive: number;
+}
+
+const COUNT_KEY: Record<RealHostPair, keyof PairCounts> = {
+  works: 'works',
+  name_blocked: 'nameBlocked',
+  address_blocked: 'addressBlocked',
+  ip_name_match: 'ipNameMatch',
+  ours_only: 'oursOnly',
+  inconclusive: 'inconclusive',
+};
+
+export const EMPTY_COUNTS: PairCounts = {
+  works: 0,
+  nameBlocked: 0,
+  addressBlocked: 0,
+  ipNameMatch: 0,
+  oursOnly: 0,
+  inconclusive: 0,
+};
+
+export interface RealHostSummary {
+  reading: RealHostReading;
+  counts: PairCounts;
+  /** Decisive pairs (every class but `inconclusive`) and the distinct networks among them. */
+  vantages: number;
+  networks: number;
+}
+
+/** A majority needs this share of the decisive pairs. */
+const MAJORITY = 2 / 3;
+
+/** Counts -> a reading: thin below the floors, the class holding two thirds, else mixed. */
+export function readingOf(
+  counts: PairCounts,
+  networks: number,
+  o: { minVantages: number; minNetworks: number },
+): RealHostReading {
+  const decisive: Array<[RealHostReading, number]> = [
+    ['works', counts.works],
+    ['name_blocked', counts.nameBlocked],
+    ['address_blocked', counts.addressBlocked],
+    ['ip_name_match', counts.ipNameMatch],
+    ['ours_only', counts.oursOnly],
+  ];
+  const total = decisive.reduce((s, [, n]) => s + n, 0);
+  if (total < o.minVantages || networks < o.minNetworks) return 'thin';
+  const [top, n] = [...decisive].sort((a, b) => b[1] - a[1])[0]!;
+  return n >= total * MAJORITY ? top : 'mixed';
+}
+
+/** Pair one source's readings of `name`: by vantage key, else by network, in order. */
+function pairsOf(
+  ours: readonly PairReading[],
+  real: readonly PairReading[],
+): Array<[PairReading, PairReading]> {
+  const out: Array<[PairReading, PairReading]> = [];
+  const left = [...real];
+  for (const r of ours) {
+    let i = r.vantage ? left.findIndex((x) => x.vantage === r.vantage) : -1;
+    if (i < 0 && !r.vantage) i = left.findIndex((x) => !x.vantage && networkOf(x) === networkOf(r));
+    if (i < 0) continue;
+    out.push([r, left[i]!]);
+    left.splice(i, 1);
+  }
+  return out;
+}
+
+/**
+ * What one batch (every source) says about `name` from its real-host pairs.
+ * Null when the batch holds no real-site check of the name (nothing to read).
+ */
+export function readRealHost(
+  name: string,
+  batch: readonly PairMeasurement[],
+  o: { minVantages: number; minNetworks: number; tcp: 'works' | 'fails' | null },
+): RealHostSummary | null {
+  if (!batch.some((m) => m.role === 'real' && m.name === name)) return null;
+  const counts: PairCounts = { ...EMPTY_COUNTS };
+  const networks = new Set<string>();
+  for (const source of new Set(batch.map((m) => m.source))) {
+    const of = batch.filter((m) => m.source === source);
+    const ours = of.filter((m) => m.role === 'ours' && m.name === name).flatMap((m) => m.results);
+    const real = of.filter((m) => m.role === 'real' && m.name === name).flatMap((m) => m.results);
+    // Which vantages (or networks, without a key) got through for anything else in the batch.
+    const elsewhere = of
+      .filter((m) => m.name !== name)
+      .flatMap((m) => m.results)
+      .filter((r) => reached(r.outcome));
+    for (const [a, b] of pairsOf(ours, real)) {
+      const reachedElse = elsewhere.some((x) =>
+        a.vantage && x.vantage ? x.vantage === a.vantage : networkOf(x) === networkOf(a),
+      );
+      const c = pairClass(a, b, { reachedElse, tcp: o.tcp });
+      counts[COUNT_KEY[c]]++;
+      // A vantage that names neither an ASN nor a network adds a pair, never a network.
+      const net = networkOf(a);
+      if (c !== 'inconclusive' && net !== 'unknown') networks.add(net);
+    }
+  }
+  const vantages =
+    counts.works +
+    counts.nameBlocked +
+    counts.addressBlocked +
+    counts.ipNameMatch +
+    counts.oursOnly;
+  return {
+    reading: readingOf(counts, networks.size, o),
+    counts,
+    vantages,
+    networks: networks.size,
+  };
+}

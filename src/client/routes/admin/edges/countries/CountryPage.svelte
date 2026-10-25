@@ -34,6 +34,8 @@
     percent,
     probesLine,
     reportsLine,
+    realHostLine,
+    addressRealHostLine,
     roundLine,
     switchNotes,
     totalsLine,
@@ -58,9 +60,13 @@
       : edgesPaths.relay(o.slug);
   }
   function evidenceLines(a: CountryViewAddress): string[] {
-    return [markLine(a, now), roundLine(a, now), handshakeLine(a, now), probesLine(a, now)].filter(
-      (x): x is string => !!x,
-    );
+    return [
+      markLine(a, now),
+      roundLine(a, now),
+      handshakeLine(a, now),
+      probesLine(a, now),
+      addressRealHostLine(a, now),
+    ].filter((x): x is string => !!x);
   }
   function handedLine(a: CountryViewAddress): string | null {
     const parts: string[] = [];
@@ -246,6 +252,9 @@
                         </p>
                         {#if checksLine(n, now)}
                           <p class="text-muted-foreground">{checksLine(n, now)}</p>
+                        {/if}
+                        {#if realHostLine(n, now)}
+                          <p class="text-muted-foreground">{realHostLine(n, now)}</p>
                         {/if}
                         {#if reportsLine(n)}
                           <p class="text-muted-foreground">{reportsLine(n)}</p>

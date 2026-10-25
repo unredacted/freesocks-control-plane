@@ -185,6 +185,7 @@ async function settingsOf(db: Db) {
       render: cfg.enabled && cfg.render.enabled && rule.enabled,
       names: sni.enabled,
       nameChecks: vantageOn,
+      realHost: vantageOn && vantage.realHost,
     },
     nameCheckCountries: vantageOn ? vantageCountries(vantage, sni.curatedCountries) : [],
     controls: controlCountriesOf(cfg, censored.codes),
@@ -290,6 +291,17 @@ async function nameFactsFor(
         weight !== undefined
           ? { weight: Math.round(weight * 100) / 100, suspect: suspects.has(name) }
           : null,
+      realHost: ev?.realHost
+        ? {
+            at: ev.realHost.at,
+            target: ev.realHost.target,
+            realAddress: ev.realHost.realAddress ?? null,
+            reading: ev.realHost.reading,
+            counts: ev.realHost.counts,
+            vantages: ev.realHost.vantages,
+            networks: ev.realHost.networks,
+          }
+        : null,
     });
   }
   return out;

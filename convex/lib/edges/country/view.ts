@@ -27,7 +27,9 @@ import type {
   CountryViewAddressBasis,
   CountryViewHandedReason,
   CountryViewNameBasis,
+  RealHostReading,
 } from '../../../../src/shared/contracts/edgeCodes';
+import type { PairCounts } from '../sni/realHost';
 
 export type ViewState = 'proven' | 'blocked' | 'unknown';
 
@@ -153,6 +155,44 @@ export interface NameFacts {
     lastOkAt: number | null;
   } | null;
   reports: { weight: number; suspect: boolean } | null;
+  /** The real-host controls of the newest batch that had them (lib/edges/sni/realHost.ts). */
+  realHost?: NameRealHost | null;
+}
+
+export interface NameRealHost {
+  at: number;
+  /** FCP's address the batch measured (`<kind>:<ref>:<address>:<port>`). */
+  target: string;
+  realAddress: string | null;
+  reading: RealHostReading;
+  counts: PairCounts;
+  vantages: number;
+  networks: number;
+}
+
+/** What the real-host controls of the names checked on one address say about it. */
+export interface AddressRealHost {
+  /** The newest of them. */
+  at: number;
+  /** Each name's reading, as checked on this address. */
+  names: Array<{ name: string; reading: RealHostReading }>;
+}
+
+/** The names whose newest real-host batch measured the address with key prefix `prefix`. */
+function realHostOn(
+  prefix: string,
+  names: ReadonlyArray<{ n: NameInput; f: NameFacts | null }>,
+): AddressRealHost | null {
+  const byName = new Map<string, { name: string; reading: RealHostReading; at: number }>();
+  for (const { n, f } of names)
+    if (f?.realHost?.target.startsWith(prefix))
+      byName.set(n.name, { name: n.name, reading: f.realHost.reading, at: f.realHost.at });
+  const hits = [...byName.values()];
+  if (hits.length === 0) return null;
+  return {
+    at: Math.max(...hits.map((h) => h.at)),
+    names: hits.map(({ name, reading }) => ({ name, reading })),
+  };
 }
 
 export interface ListenerInput {
@@ -436,6 +476,8 @@ export interface AddressView {
     handshake: (Omit<EvidenceRow['handshake'], 'pathBatches'> & { batches: number }) | null;
     round: EvidenceRow['lastRound'] | null;
     probes: ReachRow | null;
+    /** The real-host controls of the names checked on it (null: none). */
+    realHost: AddressRealHost | null;
   };
   /** Shares of the sampled members holding it as primary / backup. */
   handed: { primary: number; backup: number };
@@ -454,6 +496,7 @@ export interface NameView {
   offered: boolean;
   checks: NameFacts['checks'];
   reports: NameFacts['reports'];
+  realHost: NameRealHost | null;
   handed: number;
 }
 
@@ -502,6 +545,7 @@ function edgeView(
   country: string,
   now: number,
   handed: { primary: Map<string, number>; backup: Map<string, number> },
+  realHost: AddressRealHost | null,
 ): AddressView {
   const st = addressState(e, country, now);
   const v6 = e.addresses.v4 && e.addresses.v6 ? e.addresses.v6 : null;
@@ -539,6 +583,7 @@ function edgeView(
           : null,
       round: ev?.lastRound ?? null,
       probes: reachIn(e.reachability, country),
+      realHost,
     },
     handed: {
       primary: handed.primary.get(e.edgeId) ?? 0,
@@ -547,7 +592,11 @@ function edgeView(
   };
 }
 
-function originAddressView(d: NonNullable<OriginInput['direct']>, country: string): AddressView {
+function originAddressView(
+  d: NonNullable<OriginInput['direct']>,
+  country: string,
+  realHost: AddressRealHost | null,
+): AddressView {
   const probes = reachIn(d.reachability, country);
   const state = probesState(d.reachability, country);
   return {
@@ -563,7 +612,15 @@ function originAddressView(d: NonNullable<OriginInput['direct']>, country: strin
     state,
     basis: probes ? 'probes' : 'none',
     until: null,
-    evidence: { mark: null, grade: null, address: null, handshake: null, round: null, probes },
+    evidence: {
+      mark: null,
+      grade: null,
+      address: null,
+      handshake: null,
+      round: null,
+      probes,
+      realHost,
+    },
     handed: { primary: 0, backup: 0 },
   };
 }
@@ -576,6 +633,7 @@ function newestOf(a: AddressView): number | null {
     a.evidence.handshake?.lastBatchAt,
     a.evidence.round?.at,
     a.evidence.probes?.lastAt,
+    a.evidence.realHost?.at,
   ].filter((t): t is number => typeof t === 'number');
   return ts.length > 0 ? Math.max(...ts) : null;
 }
@@ -643,7 +701,13 @@ export function buildCountryView(
       const backupShare = new Map(members.backup.map((x) => [x.id, x.share]));
       const nameShare = new Map(members.names.map((x) => [x.id, x.share]));
       const addresses = edges.map((e) =>
-        edgeView(e, s.country, s.now, { primary: primaryShare, backup: backupShare }),
+        edgeView(
+          e,
+          s.country,
+          s.now,
+          { primary: primaryShare, backup: backupShare },
+          realHostOn(`edge:${e.edgeId}:`, nameViews0),
+        ),
       );
       for (const a of addresses) {
         if (a.publication === 'published') {
@@ -660,6 +724,7 @@ export function buildCountryView(
         if (n.status === 'active' && !seenNames.has(n.name)) seenNames.set(n.name, st.state);
         noteAt(f?.mark?.at);
         noteAt(f?.checks?.lastAt);
+        noteAt(f?.realHost?.at);
         return {
           name: n.name,
           family: f?.family ?? null,
@@ -671,6 +736,7 @@ export function buildCountryView(
           offered,
           checks: f?.checks ?? null,
           reports: f?.reports ?? null,
+          realHost: f?.realHost ?? null,
           handed: nameShare.get(n.name) ?? 0,
         };
       });
@@ -686,7 +752,16 @@ export function buildCountryView(
         members,
       });
     }
-    const direct = o.direct ? originAddressView(o.direct, s.country) : null;
+    const direct = o.direct
+      ? originAddressView(
+          o.direct,
+          s.country,
+          realHostOn(
+            `relay:${o.relayId}:`,
+            o.listeners.flatMap((l) => l.names.map((n) => ({ n, f: facts(n.name) }))),
+          ),
+        )
+      : null;
     if (direct) noteAt(newestOf(direct));
     const atRisk = o.enabled && published > 0 && publishedBlocked === published;
     if (atRisk) totals.originsAtRisk++;

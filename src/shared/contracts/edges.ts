@@ -18,6 +18,7 @@ import {
   COUNTRY_VIEW_HANDED_REASONS,
   COUNTRY_VIEW_NAME_BASES,
   FREEDOM_WITHHELD_REASONS,
+  REAL_HOST_READINGS,
   INBOUND_UNSUPPORTED_CODES,
   PREFLIGHT_KINDS,
   RESTORE_PHASES,
@@ -1418,6 +1419,35 @@ export const CountryMarkResponse = z.object({ ok: z.literal(true), edges: z.numb
 // Times are epoch ms. Addresses and names are shown (an admin page); see convex/edgeCountryView.ts.
 
 const ViewState = z.enum(COUNTRY_TRACK_STATES);
+const RealHostReadingZ = z.enum(REAL_HOST_READINGS);
+
+/** What the real-host controls of the newest batch said about a name (docs/edges.md "Real-host controls"). */
+export const CountryViewNameRealHost = z.object({
+  at: z.number(),
+  /** FCP's address the batch measured (`<kind>:<ref>:<address>:<port>`). */
+  target: z.string(),
+  /** The real site's address the vantages dialled. */
+  realAddress: z.string().nullable(),
+  reading: RealHostReadingZ,
+  counts: z.object({
+    works: z.number(),
+    nameBlocked: z.number(),
+    addressBlocked: z.number(),
+    ipNameMatch: z.number(),
+    oursOnly: z.number(),
+    inconclusive: z.number(),
+  }),
+  vantages: z.number(),
+  networks: z.number(),
+});
+export type CountryViewNameRealHost = z.infer<typeof CountryViewNameRealHost>;
+
+/** The real-host readings of the names checked on one address. */
+export const CountryViewAddressRealHost = z.object({
+  at: z.number(),
+  names: z.array(z.object({ name: z.string(), reading: RealHostReadingZ })),
+});
+export type CountryViewAddressRealHost = z.infer<typeof CountryViewAddressRealHost>;
 const reachVerdict = z.enum(['reachable', 'unreachable', 'mixed', 'unknown']);
 
 /** The address-level probes from one country (the edge's or origin's reachability summary). */
@@ -1499,6 +1529,7 @@ export const CountryViewAddress = z.object({
       })
       .nullable(),
     probes: CountryViewProbes.nullable(),
+    realHost: CountryViewAddressRealHost.nullable().default(null),
   }),
   /** Shares (0..1) of the sampled members there holding it as primary / backup. */
   handed: z.object({ primary: z.number(), backup: z.number() }),
@@ -1533,6 +1564,7 @@ export const CountryViewName = z.object({
     })
     .nullable(),
   reports: z.object({ weight: z.number(), suspect: z.boolean() }).nullable(),
+  realHost: CountryViewNameRealHost.nullable().default(null),
   /** Share of the sampled members there handed it on their primary address. */
   handed: z.number(),
 });
@@ -1608,6 +1640,8 @@ export const CountryViewSwitches = z.object({
   render: z.boolean(),
   names: z.boolean(),
   nameChecks: z.boolean(),
+  /** Real-host controls run beside the name checks. */
+  realHost: z.boolean().default(false),
 });
 export type CountryViewSwitches = z.infer<typeof CountryViewSwitches>;
 

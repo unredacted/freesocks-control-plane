@@ -159,6 +159,14 @@ export interface SniVantageConfig {
   minNetworks: number;
   /** Apply suggestions by themselves (never over an operator's mark). */
   autoApply: boolean;
+  /**
+   * Real-host controls: every name of a batch is also presented to its REAL
+   * site (its public DNS answer) from the same vantages, to tell a blocked
+   * name from a blocked address from a censor that checks the name against
+   * its real address (docs/edges.md "Real-host controls"). Doubles a batch's
+   * measurements (the hourly budget counts them). Evidence only.
+   */
+  realHost: boolean;
 }
 
 export const SNI_VANTAGE_DEFAULTS: SniVantageConfig = {
@@ -173,6 +181,7 @@ export const SNI_VANTAGE_DEFAULTS: SniVantageConfig = {
   minVantages: 3,
   minNetworks: 2,
   autoApply: false,
+  realHost: false,
 };
 
 export const SNI_VANTAGE_BOUNDS = {
@@ -198,6 +207,7 @@ export const SNI_VANTAGE_KEYS = {
   minVantages: 'edge.sni.vantage.minVantages',
   minNetworks: 'edge.sni.vantage.minNetworks',
   autoApply: 'edge.sni.vantage.autoApply',
+  realHost: 'edge.sni.vantage.realHost',
 } as const;
 type VantagePath = keyof typeof SNI_VANTAGE_KEYS;
 const VANTAGE_BOOLS: readonly VantagePath[] = [
@@ -205,6 +215,7 @@ const VANTAGE_BOOLS: readonly VantagePath[] = [
   'sources.globalping',
   'sources.ripeatlas',
   'autoApply',
+  'realHost',
 ];
 
 export async function resolveSniVantageConfig(db: DatabaseReader): Promise<SniVantageConfig> {
@@ -232,7 +243,13 @@ export async function resolveSniVantageConfig(db: DatabaseReader): Promise<SniVa
     minVantages: int('minVantages'),
     minNetworks: int('minNetworks'),
     autoApply: sanitizeBool(raw.autoApply, D.autoApply),
+    realHost: sanitizeBool(raw.realHost, D.realHost),
   };
+}
+
+/** Measurements a batch of `names` names costs per source: the real-host twins count too. */
+export function measurementsPerName(v: Pick<SniVantageConfig, 'realHost'>): number {
+  return v.realHost ? 2 : 1;
 }
 
 /** The opted-in countries that are also curated: the only ones ever checked. */
