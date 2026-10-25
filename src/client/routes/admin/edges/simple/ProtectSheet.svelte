@@ -92,6 +92,7 @@
   import { edgeErrorIssue, edgeErrorMessage } from '../lib/edgeErrors';
   import { gradeWords } from '../lib/statusWords';
   import { providerLabel, transportName } from '../lib/format';
+  import { realityRefusalWords } from '@client/lib/realityClientWords';
   import { countryLabel } from '../../servers/lib/words';
   import { edgesPaths } from '../lib/routes';
   import { router } from '@client/stores/router.svelte';
@@ -267,6 +268,8 @@
   const required = $derived(
     plan ? plan.inbounds.filter((i) => plan!.requiredListeners.includes(i.listenerKey)) : [],
   );
+  // REALITY transports that refuse sing-box or Mihomo clients (a warning in the review).
+  const refusing = $derived(required.filter((i) => !!i.refusesClients));
   const frontable = $derived(plan?.inbounds.filter((i) => i.frontable) ?? []);
   const notChosen = $derived(
     chosenKeys ? frontable.filter((i) => !plan!.requiredListeners.includes(i.listenerKey)) : [],
@@ -740,7 +743,15 @@
                 </p>
                 <ul class="space-y-1">
                   {#each required as i (i.listenerKey)}
-                    <li class="font-medium">{inboundLine(i)}</li>
+                    <li class="font-medium">
+                      {inboundLine(i)}
+                      {#if i.refusesClients}
+                        <!-- A warning, not a refusal: the review says why and the fix. -->
+                        <span class="block text-xs font-normal text-amber-700 dark:text-amber-300"
+                          >{realityRefusalWords(i.refusesClients).title}</span
+                        >
+                      {/if}
+                    </li>
                   {/each}
                 </ul>
                 <p class="text-muted-foreground text-xs">
@@ -1131,6 +1142,20 @@
             >
           </div>
         {/if}
+        {#each refusing as i (i.listenerKey)}
+          {@const r = realityRefusalWords(i.refusesClients!)}
+          <!-- A REALITY transport that lets in Xray clients only: a test with one passes, so
+               members on sing-box and Mihomo would break unseen. A warning; Create still works. -->
+          <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            <p class="font-medium">{inboundLine(i)}: {r.title}</p>
+            <p class="mt-1">{r.why}</p>
+            <p class="mt-1">{r.fix}</p>
+            <p class="text-muted-foreground mt-1 text-xs">
+              You can protect the node all the same. Once it is live, it shows this warning until
+              the transport lets them in.
+            </p>
+          </div>
+        {/each}
         {#if plan.frontHosts.length > 0}
           <!-- A front the operator built by hand (its own load balancer): members stop getting it. -->
           <div class="rounded-md border p-3 text-sm">

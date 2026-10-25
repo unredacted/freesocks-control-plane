@@ -261,6 +261,12 @@ const COPY = {
     explain: 'The protocol, stream transport and security fields do not form a supported listener.',
     fix: 'Choose one of the catalogued combinations.',
   },
+  reality_refuses_clients: {
+    label: 'REALITY refuses sing-box and Mihomo clients',
+    explain:
+      'A REALITY transport here lets in only clients that send a recent Xray version: members on sing-box-based clients (Hiddify, Karing) or Mihomo-based ones (Clash Verge, FlClash) cannot connect, while a test made with an Xray client passes. It sets no minClientVer on an Xray that then defaults to 26.3.27, or bounds that leave those clients out.',
+    fix: 'Add "minClientVer": "1.8.1" to the transport\'s realitySettings in the backend (FCP\'s own template sets it). The warning clears at the next look, within a few minutes.',
+  },
   members_dark: {
     label: 'Members dark',
     explain:

@@ -75,6 +75,7 @@ import {
 } from './relays';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
 import { mapEdgeAdmin } from './edges';
+import { REALITY_CLIENT_FAMILIES } from '../src/shared/contracts/realityClients';
 import {
   mapRotationAdmin,
   collectStartBlockers,
@@ -175,6 +176,18 @@ interface ListenerLike {
 
 function udpProviderAvailable(): boolean {
   return Object.values(EDGE_PROVIDER_CAPABILITIES).some((c) => c.udp);
+}
+
+/** The listeners' facts with the clients each REALITY one refuses (`reality_refuses_clients`). */
+function withRefusals(
+  relay: Pick<Doc<'relays'>, 'realityClients'>,
+  listeners: SetupInput['listeners'],
+): SetupInput['listeners'] {
+  const refusals = relay.realityClients?.refusals ?? [];
+  return listeners.map((l) => {
+    const cause = refusals.find((r) => r.listenerKey === l.key)?.cause;
+    return cause ? { ...l, refusesClients: cause } : l;
+  });
 }
 
 function listenerFacts(l: ListenerLike): SetupInput['listeners'][number] {
@@ -548,7 +561,7 @@ export const setupStatus = internalQuery({
       const f = await relayFacts(ctx, relay, cfg, { withPreview: true });
       const input: SetupInput = {
         origin: await originFacts(ctx.db, relay.origin),
-        listeners: f.listeners.map(listenerFacts),
+        listeners: withRefusals(relay, f.listeners.map(listenerFacts)),
         accounts: await accountFacts(ctx, accounts, f.listeners),
         relay: f.relay,
         render: f.render,
@@ -672,7 +685,7 @@ export const setupStatus = internalQuery({
       const f = await relayFacts(ctx, relay, cfg, { withPreview: false });
       const input: SetupInput = {
         origin: await originFacts(ctx.db, relay.origin),
-        listeners: f.listeners.map(listenerFacts),
+        listeners: withRefusals(relay, f.listeners.map(listenerFacts)),
         accounts: await accountFacts(ctx, accounts, f.listeners),
         relay: f.relay,
         render: f.render,
@@ -1063,6 +1076,31 @@ export function frontHostFacts(
 }
 
 /**
+ * The REALITY transports of the origin that refuse sing-box or Mihomo clients,
+ * as the reconcile's last look saw them (`relays.realityClients`): how many,
+ * which families (any of them), their tags, and the cause of the first (a
+ * cause FCP is sure of before `core_unknown`). Null when none does.
+ */
+export function realityRefusalFacts(relay: Pick<Doc<'relays'>, 'realityClients'>): {
+  count: number;
+  refuses: string[];
+  tags: string[];
+  cause: string;
+  since: number;
+} | null {
+  const rows = relay.realityClients?.refusals ?? [];
+  if (rows.length === 0) return null;
+  const sure = rows.find((r) => r.cause !== 'core_unknown') ?? rows[0]!;
+  return {
+    count: rows.length,
+    refuses: REALITY_CLIENT_FAMILIES.filter((f) => rows.some((r) => r.refuses.includes(f))),
+    tags: rows.map((r) => r.tag),
+    cause: sure.cause,
+    since: relay.realityClients!.at,
+  };
+}
+
+/**
  * Server-ranked list of what needs the operator, one action per item, plus the
  * one status of every origin (`origins`, deleting ones included, slug order)
  * and the fleet headline (`fleet`), judged in lib/edges/originStatus.ts.
@@ -1252,6 +1290,22 @@ export const attention = internalQuery({
           facts: { count: front.count, remarks: front.remarks },
           action: 'open_relay',
           since: iso(front.since),
+        });
+      }
+      // A REALITY transport that refuses sing-box and Mihomo clients (no
+      // `minClientVer` on an Xray that then refuses them): members on those
+      // clients cannot connect while an Xray client can. A warning with the fix.
+      const refusing = realityRefusalFacts(relay);
+      if (refusing) {
+        items.push({
+          ...base(relay),
+          id: `reality_refuses_clients:${relay._id}`,
+          kind: 'reality_refuses_clients',
+          severity: 'warning',
+          code: refusing.cause,
+          facts: { count: refusing.count, refuses: refusing.refuses, tags: refusing.tags },
+          action: 'open_relay',
+          since: iso(refusing.since),
         });
       }
       // The restore workflow: informational, one phase per reconcile tick.

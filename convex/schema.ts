@@ -3,6 +3,7 @@ import { v } from 'convex/values';
 import { backendIdValidator } from './lib/backendIds';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
+import { realityClientRefusalFields, realityClientRefusalV } from './lib/realityClients';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target. Ported from
@@ -1667,6 +1668,18 @@ export default defineSchema({
     // one raises attention `front_host_unused` (info), never
     // `direct_host_reappeared`.
     operatorFronts: v.optional(v.object({ at: v.number(), remarks: v.array(v.string()) })),
+    // The node's REALITY transports that refuse sing-box or Mihomo clients, as
+    // the reconcile's last look at the panel saw them (edgeRealityClients.note;
+    // src/shared/contracts/realityClients.ts): attention `reality_refuses_clients`
+    // (warning). Absent = none refuses, or never looked at.
+    realityClients: v.optional(
+      v.object({
+        at: v.number(),
+        refusals: v.array(
+          v.object({ listenerKey: v.string(), tag: v.string(), ...realityClientRefusalFields }),
+        ),
+      }),
+    ),
     // Block-detector state (convex/edgeDetector.ts).
     suspicion: v.optional(
       v.object({
@@ -2291,6 +2304,10 @@ export default defineSchema({
             configHash: v.string(),
             issuedAt: v.number(),
           }),
+          // A REALITY line: the clients its transport refuses when the card was
+          // built (null = it admits sing-box and Mihomo too; absent = not
+          // REALITY, or the panel could not say).
+          realityClients: v.optional(v.union(realityClientRefusalV, v.null())),
         }),
       ),
     ),
@@ -2899,6 +2916,9 @@ export default defineSchema({
     configProfileUuid: v.optional(v.string()),
     activeInboundUuids: v.array(v.string()),
     tags: v.array(v.string()),
+    // The node's Xray version as the backend reports it: which clients a
+    // REALITY transport admits depends on it (src/shared/contracts/realityClients.ts).
+    xrayVersion: v.optional(v.string()),
     observedAt: v.number(),
   })
     .index('by_server', ['backendServerId'])
@@ -2944,6 +2964,14 @@ export default defineSchema({
             digest: v.union(v.string(), v.null()),
             publicKey: v.union(v.string(), v.null()),
             publicKeyMismatch: v.boolean(),
+          }),
+        ),
+        // A REALITY transport's client version bounds (`minClientVer` /
+        // `maxClientVer`): version numbers, never key material.
+        realityClients: v.optional(
+          v.object({
+            minClientVer: v.union(v.string(), v.null()),
+            maxClientVer: v.union(v.string(), v.null()),
           }),
         ),
       }),

@@ -283,6 +283,12 @@ describe('attention', () => {
       'Account acct-a, Region B',
     );
     expect(attentionFactsLine(item({ facts: { name: 'acct-a' } }))).toBe('Account acct-a');
+    // A REALITY transport that refuses clients: which, and the transports' tags.
+    expect(
+      attentionFactsLine(
+        item({ facts: { count: 1, refuses: ['singbox', 'mihomo'], tags: ['VLESS_IN'] } }),
+      ),
+    ).toBe('1 affected · Refuses sing-box and Mihomo · VLESS_IN');
     // A failed run's kind is its title, never a "Provision run" fact.
     expect(attentionFactsLine(item({ facts: { kind: 'provision', phase: 'failed' } }))).toBe('');
     expect(attentionSubject(item({ listenerKey: 'main' }))).toBe('Origin relay-a, listener main');

@@ -6,6 +6,7 @@
  * short ids or the client list.
  */
 import { z } from 'zod';
+import { RealityClientRefusal } from './realityClients';
 
 export const ServerManageConfig = z.object({
   'manage.enabled': z.boolean(),
@@ -102,6 +103,8 @@ export const NodeView = z.object({
   isDisabled: z.boolean(),
   usersOnline: z.number(),
   tags: z.array(z.string()),
+  /** The node's Xray version as the backend reports it (null until observed). */
+  xrayVersion: z.string().nullable().default(null),
   profile: z
     .object({
       profileUuid: z.string(),
@@ -114,6 +117,11 @@ export const NodeView = z.object({
     TransportView.extend({
       addresses: z.array(AddressView),
       modeGroups: z.array(z.object({ groupUuid: z.string(), name: z.string() })),
+      /**
+       * The clients this REALITY transport refuses on this node's Xray
+       * (src/shared/contracts/realityClients.ts); null when it admits them, or is not known yet.
+       */
+      realityRefusal: RealityClientRefusal.nullable().default(null),
     }),
   ),
 });

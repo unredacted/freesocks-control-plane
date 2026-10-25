@@ -52,6 +52,7 @@ import { farFutureExpiryIso, isFarFutureExpiry, SUBSCRIPTION_PASSTHROUGH_HEADERS
 import { changeToken, realityAuthDigest, shapeHash } from '../backend/digest';
 import { applyPatchOps, type PatchOp } from '../backend/patchOps';
 import { PRIVACY_XRAY_LOG } from './xrayPrivacy';
+import { realityClientBoundsOf } from '../../../src/shared/contracts/realityClients';
 
 export interface RemnawaveConfig {
   baseUrl: string;
@@ -895,6 +896,7 @@ export async function remnawaveGetNodeInventory(cfg: RemnawaveConfig): Promise<N
     address: n.address ?? undefined,
     port: n.port ?? undefined,
     countryCode: n.countryCode ?? undefined,
+    xrayVersion: nodeXrayVersion(n) ?? undefined,
   }));
 }
 
@@ -920,6 +922,20 @@ const InternalSquadsResponse = z.object({
 // the schema, so zod strips it at the boundary.
 const ConfigProfileInboundRef = z.object({ uuid: z.string(), tag: z.string() });
 
+// The node's Xray version: 3.x reports `versions.xray` (null while the node has
+// not answered), 2.x a top-level `xrayVersion`. Which clients a REALITY
+// transport admits depends on it (src/shared/contracts/realityClients.ts).
+const NodeXrayVersionFields = {
+  versions: z.object({ xray: z.string().nullish() }).nullish(),
+  xrayVersion: z.string().nullish(),
+};
+function nodeXrayVersion(n: {
+  versions?: { xray?: string | null } | null;
+  xrayVersion?: string | null;
+}): string | null {
+  return n.versions?.xray?.trim() || n.xrayVersion?.trim() || null;
+}
+
 // /api/nodes → (unwrapped) an array of nodes. The load-relevant fields, plus
 // the node's active config profile for inbound discovery. Verified against
 // remnawave/backend `libs/contract/models/nodes.schema.ts`
@@ -936,6 +952,7 @@ const NodesResponse = z.array(
     isDisabled: z.boolean().nullish(),
     usersOnline: z.number().nullish(),
     trafficUsedBytes: z.number().nullish(),
+    ...NodeXrayVersionFields,
     configProfile: z
       .object({
         activeConfigProfileUuid: z.string().nullish(),
@@ -1552,6 +1569,7 @@ const ObservedNodesResponse = z.array(
     isDisabled: z.boolean().nullish(),
     usersOnline: z.number().nullish(),
     tags: z.array(z.string()).nullish(),
+    ...NodeXrayVersionFields,
     configProfile: z
       .object({
         activeConfigProfileUuid: z.string().nullish(),
@@ -1595,6 +1613,7 @@ export async function observeConfigProfile(
     if (inbound.security === 'reality') {
       const rs = obj(obj(obj(raw)?.streamSettings)?.realitySettings);
       out.realityAuth = await realityAuthDigest(rs, digestKey);
+      out.realityClients = realityClientBoundsOf(rs);
     }
     inbounds.push(out);
   }
@@ -1653,6 +1672,7 @@ export async function remnawaveObservePanel(
         n.configProfile?.activeConfigProfileUuid ?? n.configProfile?.configProfileUuid ?? null,
       activeInboundUuids: (n.configProfile?.activeInbounds ?? []).map((i) => i.uuid),
       tags: n.tags ?? [],
+      xrayVersion: nodeXrayVersion(n),
     })),
     profiles,
     hosts: mapObservedHosts(hostRows),
@@ -2157,6 +2177,7 @@ export async function remnawaveReadInboundForTest(
     target: projected.reality?.target ?? null,
     authDigest: auth.digest,
     changeToken: await changeToken(full.config, digestKey),
+    clientBounds: realityClientBoundsOf(rs),
   };
 }
 

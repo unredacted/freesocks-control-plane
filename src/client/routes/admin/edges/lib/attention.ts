@@ -282,6 +282,19 @@ export function attentionFactsLine(item: AttentionItem): string {
       .map(([reason, n]) => `${codeLabel(reason)} ${n}`);
     if (top.length > 0) out.push(top.join(', '));
   }
+  const refuses = f['refuses'];
+  if (Array.isArray(refuses) && refuses.length > 0)
+    out.push(
+      `Refuses ${refuses
+        .map((x): string | null =>
+          x === 'singbox' ? 'sing-box' : x === 'mihomo' ? 'Mihomo' : null,
+        )
+        .filter((x): x is string => x !== null)
+        .join(' and ')}`,
+    );
+  const tags = f['tags'];
+  if (Array.isArray(tags) && tags.length > 0)
+    out.push(tags.filter((x): x is string => typeof x === 'string').join(', '));
   const families = f['families'];
   if (Array.isArray(families) && families.length > 0)
     out.push(families.filter((x): x is string => typeof x === 'string').join(', '));

@@ -58,6 +58,8 @@ export const SETUP_BLOCKER_CODES = [
   'no_udp_provider',
   'invalid_combination',
   'members_dark',
+  // a warning: a REALITY listener refuses sing-box or Mihomo clients (subject = listener key)
+  'reality_refuses_clients',
   // publish (a guided relay whose binding is claimed at go-live)
   'binding_deferred',
   // first edge
@@ -298,6 +300,9 @@ export const ATTENTION_KINDS = [
   // A Host on a protected transport dials a front the operator built by hand (not the node,
   // not an edge): members no longer get it, so it can be deleted at its provider.
   'front_host_unused',
+  // A protected REALITY transport refuses sing-box or Mihomo clients (no `minClientVer` on an
+  // Xray that then refuses them, or bounds that leave them out; src/shared/contracts/realityClients.ts).
+  'reality_refuses_clients',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

@@ -747,6 +747,14 @@ export const reconcileHosts = internalAction({
     } catch (err) {
       console.warn(`[edge-reconcile] direct hosts: ${err instanceof Error ? err.name : 'error'}`);
     }
+    // Which clients each bound origin's REALITY transports admit (attention).
+    try {
+      await ctx.runAction(internal.edgeRealityClients.reobserve, {});
+    } catch (err) {
+      console.warn(
+        `[edge-reconcile] reality clients: ${err instanceof Error ? err.name : 'error'}`,
+      );
+    }
     return { looked, deleted };
   },
 });

@@ -42,6 +42,9 @@ const observedInbound = v.object({
   realityAuth: v.optional(
     v.object({ digest: nullableString, publicKey: nullableString, publicKeyMismatch: v.boolean() }),
   ),
+  realityClients: v.optional(
+    v.object({ minClientVer: nullableString, maxClientVer: nullableString }),
+  ),
 });
 
 /** One Host as the provider reads it (`ObservedAddress`). */
@@ -84,6 +87,7 @@ export function toStoredInbound(i: ObservedTransport): StoredInbound {
   if (path !== undefined) out.path = path;
   if (i.grpc) out.serviceName = i.grpc.serviceName;
   if (i.realityAuth) out.realityAuth = i.realityAuth;
+  if (i.realityClients) out.realityClients = i.realityClients;
   return out;
 }
 
@@ -187,6 +191,7 @@ export const record = internalMutation({
         configProfileUuid: nullableString,
         activeInboundUuids: v.array(v.string()),
         tags: v.array(v.string()),
+        xrayVersion: v.optional(nullableString),
       }),
     ),
     profiles: v.array(
@@ -231,6 +236,7 @@ export const record = internalMutation({
         configProfileUuid: opt(n.configProfileUuid),
         activeInboundUuids: n.activeInboundUuids,
         tags: n.tags,
+        xrayVersion: opt(n.xrayVersion ?? null),
         observedAt: now,
       };
       const prev = nodeBy.get(n.nodeUuid);

@@ -1290,6 +1290,31 @@ reach it through a load balancer the operator built by hand, by an operator Host
   (the test link refuses an ambiguous entry), is marked `noTestLink` in the plan; a load balancer pick that would carry it is a set problem
   (`test_link_unavailable`) and the create is refused with `edge.test_link_unavailable`, before
   any address is bought. Add a Host at the node's own address for it, or pick a CDN location.
+- **Which clients its REALITY transport lets in.** A REALITY client puts a version in its
+  Client Hello and the server checks it against the transport's `minClientVer` /
+  `maxClientVer`: an Xray-based client sends its Xray version, sing-box (and Hiddify, Karing)
+  sends 1.8.1, Mihomo (Clash Verge, FlClash) 1.8.2. On Xray-core v26.7.11 to v26.7.28 a transport
+  that sets no `minClientVer` takes 26.3.27 as its minimum (the node logs `The default minimal
+client version is Xray-core v26.3.27`), so every sing-box and Mihomo member is refused
+  (`reality verification failed` on the client) while the test link passes in an up-to-date
+  Xray client. FCP's own profile template sets `1.8.1`; a hand-built transport often sets
+  nothing. The plan reads the transport's two bounds and the node's Xray version from the panel
+  (`edgeRealityClients.check`; the version is `versions.xray` on the node row, `xrayVersion` on
+  a 2.x panel) and judges them (`src/shared/contracts/realityClients.ts`): a transport that
+  refuses a family is marked `refusesClients {cause, refuses, xrayVersion, minClientVer,
+maxClientVer}` in the plan, `cause` one of `core_default` (no `minClientVer` on such an Xray),
+  `core_unknown` (no `minClientVer`, and the node's version could not be read), `min_above` or
+  `max_below` (bounds that leave a family out). It is a warning: the Protect sheet names it on
+  the transport and in the review with the fix (`"minClientVer": "1.8.1"` in the transport's
+  `realitySettings`), and the create goes on. The test card reads it again when it is built
+  (`testLinks[].realityClients`, null when every family gets in): a REALITY line that refuses
+  them says why and to test with one of those clients; every other REALITY line says to try a
+  sing-box or Mihomo client too. Once the node is protected the reconcile keeps looking (§
+  "Direct-Host hides and the restore workflow"). Xray v26.9.9 dropped the default minimum again,
+  but from that release on a REALITY server refuses a Client Hello that does not offer
+  X25519MLKEM768 ahead of X25519, which is a client setting (Mihomo's
+  `support-x25519mlkem768`), not one of the transport's: test with each client family after a
+  node upgrade.
 - **Its check account's group.** A test entry built from a transport carries the check account,
   and the node accepts it there only from a mode group (internal squad) holding that transport.
   So unless a placement or the origin's qualification mode was chosen, `relayQualification.ensure`
@@ -1594,6 +1619,16 @@ its Host in the backend) instead of `direct_host_reappeared`. An entry left out 
 knows stays the critical alarm. An origin whose Hosts cannot
 be read is skipped for that pass (unknown is not an observation), and one that fails does not
 stop the others.
+
+After the Host look, the same pass judges every bound origin's REALITY listeners from the panel
+(`edgeRealityClients.reobserve`: each transport's `minClientVer` / `maxClientVer` and the node's
+Xray version, read live; § "Protecting a node FCP does not manage"). A transport that refuses
+sing-box or Mihomo clients is kept on the origin (`relays.realityClients`, rewritten only when
+the verdict moves) and raises attention `reality_refuses_clients` (warning, the cause as its code,
+facts `count`, `refuses`, `tags`; Open the node) and the `relay` step's warning in
+`setup-status` (subject the listener key, detail the cause). Members on Xray clients keep
+connecting, so nothing else changes. A transport the panel could not describe this pass keeps
+what was known of it; the fix clears both at the next pass.
 
 **The restore workflow** (`relays.restore {purpose, phase, ...}`, `convex/edgeRestore.ts`;
 `edgeRestore.step` advances one phase, and each `edge-reconcile` tick chains steps until a phase
@@ -4453,6 +4488,17 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**REALITY transports that refuse sing-box and Mihomo clients** add optional fields only
+(`relays.realityClients`, `edgeSetupRuns.testLinks[].realityClients`, `panelNodes.xrayVersion`,
+`panelProfiles.inbounds[].realityClients`), one attention kind and setup-status warning
+(`reality_refuses_clients`) and plan field (`inbounds[].refusesClients`): one deploy, no
+migration, no env change. From the first edge-reconcile pass after it, each bound origin with a
+REALITY listener costs one more panel read per transport and one node listing per pass; a
+hand-built transport with no `minClientVer` on Xray v26.7.11 to v26.7.28 raises the warning
+within minutes. Nothing is refused for it. To roll back, run `edgeRealityClients:clearForRollback`
+with no arguments right before deploying the older build: its schema has none of those fields (a
+pass or a healthcheck may write one again in between; run it again if the push is refused).
 
 **Protecting a node FCP does not manage** adds one optional field (`relays.operatorFronts`),
 one attention kind (`front_host_unused`) and plan fields (`originSource`, `originPrivate`,

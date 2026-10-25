@@ -951,6 +951,21 @@ describe('hosts + node inventory (origin edges)', () => {
     ).rejects.toThrow(/400 on \/api\/hosts/);
   });
 
+  test("remnawaveGetNodeInventory reads each node's Xray version (3.x `versions.xray`, 2.x `xrayVersion`)", async () => {
+    mockFetch(() =>
+      jsonRes({
+        response: [
+          { uuid: 'n-1', name: 'a', versions: { xray: '26.7.28', node: '3.4.2' } },
+          { uuid: 'n-2', name: 'b', xrayVersion: '25.10.15' },
+          // A node that has not answered yet: no version known.
+          { uuid: 'n-3', name: 'c', versions: null },
+        ],
+      }),
+    );
+    const rows = await remnawaveGetNodeInventory(cfg);
+    expect(rows.map((r) => r.xrayVersion)).toEqual(['26.7.28', '25.10.15', undefined]);
+  });
+
   test('remnawaveGetNodeInventory maps /api/nodes rows (name falls back to uuid)', async () => {
     mockFetch(() =>
       jsonRes({
