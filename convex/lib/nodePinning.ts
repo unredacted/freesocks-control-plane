@@ -312,38 +312,57 @@ const NON_PROXY_TYPES = new Set([
  * neither is a shape the pinner does not know (HTML, another JSON, free text).
  */
 export function nodelessBody(content: string): boolean {
+  return placeholderVerdict(content).nodeless;
+}
+
+/**
+ * The backend's placeholder for a key that serves nothing (an expired or
+ * disabled key): at least one proxy entry, every one naming no node AND at an
+ * unusable address. Unlike `nodelessBody`, an empty body is not one: handing
+ * an empty body out would wipe a client's configuration.
+ */
+export function placeholderBody(content: string): boolean {
+  const v = placeholderVerdict(content);
+  return v.nodeless && v.entries > 0;
+}
+
+/** `nodelessBody`'s verdict, with how many proxy entries it judged. */
+function placeholderVerdict(content: string): { nodeless: boolean; entries: number } {
+  const no = { nodeless: false, entries: 0 };
   try {
     const trimmed = content.trim();
-    if (!trimmed) return true;
+    if (!trimmed) return { nodeless: true, entries: 0 };
     if (trimmed.startsWith('{')) {
       const cfg = JSON.parse(trimmed) as { outbounds?: unknown };
-      if (!cfg || typeof cfg !== 'object' || !Array.isArray(cfg.outbounds)) return false;
+      if (!cfg || typeof cfg !== 'object' || !Array.isArray(cfg.outbounds)) return no;
       return placeholderEntries(cfg.outbounds, 'tag', 'server');
     }
-    if (trimmed.startsWith('<')) return false;
+    if (trimmed.startsWith('<')) return no;
     if (/^proxies:/m.test(trimmed) || /^proxy-groups:/m.test(trimmed)) {
       const doc = YAML.parse(trimmed) as { proxies?: unknown } | null;
-      if (!doc || typeof doc !== 'object' || !Array.isArray(doc.proxies)) return false;
+      if (!doc || typeof doc !== 'object' || !Array.isArray(doc.proxies)) return no;
       return placeholderEntries(doc.proxies, 'name', 'server');
     }
     let body = trimmed;
     if (!PROXY_LINE_RE.test(trimmed)) {
       const decoded = decodeBase64Loose(trimmed);
-      if (decoded === null) return false;
-      if (!decoded.trim()) return true;
-      if (!PROXY_LINE_RE.test(decoded.trim())) return false;
+      if (decoded === null) return no;
+      if (!decoded.trim()) return { nodeless: true, entries: 0 };
+      if (!PROXY_LINE_RE.test(decoded.trim())) return no;
       body = decoded;
     }
     const lines = body
       .split('\n')
       .map((l) => l.trim())
       .filter((l) => PROXY_LINE_RE.test(l));
-    return (
-      lines.length > 0 &&
-      lines.every((l) => nodeNameFromLink(l) === null && placeholderHost(parseProxyUri(l)?.host))
-    );
+    return {
+      nodeless:
+        lines.length > 0 &&
+        lines.every((l) => nodeNameFromLink(l) === null && placeholderHost(parseProxyUri(l)?.host)),
+      entries: lines.length,
+    };
   } catch {
-    return false;
+    return no;
   }
 }
 
@@ -352,16 +371,19 @@ function placeholderEntries(
   entries: unknown[],
   nameKey: 'tag' | 'name',
   hostKey: 'server',
-): boolean {
+): { nodeless: boolean; entries: number } {
+  let proxies = 0;
   for (const e of entries) {
-    if (typeof e !== 'object' || e === null) return false;
+    if (typeof e !== 'object' || e === null) return { nodeless: false, entries: proxies };
     const o = e as Record<string, unknown>;
     if (typeof o.type === 'string' && NON_PROXY_TYPES.has(o.type)) continue;
+    proxies++;
     const name = o[nameKey];
-    if (typeof name === 'string' && nodeNameFromTag(name, configServerName(o))) return false;
-    if (!placeholderHost(o[hostKey])) return false;
+    if (typeof name === 'string' && nodeNameFromTag(name, configServerName(o)))
+      return { nodeless: false, entries: proxies };
+    if (!placeholderHost(o[hostKey])) return { nodeless: false, entries: proxies };
   }
-  return true;
+  return { nodeless: true, entries: proxies };
 }
 
 function finish(original: string, pin: ConfigPin): PinResult {

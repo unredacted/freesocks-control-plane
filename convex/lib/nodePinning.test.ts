@@ -5,6 +5,7 @@ import {
   nodeNameFromLink,
   nodeNameFromTag,
   nodelessBody,
+  placeholderBody,
   pickNode,
   pinSubscriptionToNode,
   splitPanelRemark,
@@ -480,5 +481,46 @@ describe('nodelessBody (the backend placeholder the fronted route never caches)'
     expect(nodelessBody('RAW-CONFIG-1')).toBe(false);
     expect(nodelessBody('<html></html>')).toBe(false);
     expect(nodelessBody('{"error":"x"}')).toBe(false);
+  });
+});
+
+describe('placeholderBody (an expired or disabled key: delivery hands it out as it is)', () => {
+  const link = (remark: string, host = '198.51.100.9', port = 443) =>
+    `vless://11111111-2222-4333-8444-555555555555@${host}:${port}?security=reality#${remark}`;
+  const expired = [
+    link('⌛ Subscription expired', '0.0.0.0', 1),
+    link('Contact support', '0.0.0.0', 1),
+  ];
+  test('placeholder entries in every shape are one', () => {
+    expect(placeholderBody(expired.join('\n'))).toBe(true);
+    expect(placeholderBody(Buffer.from(expired.join('\n')).toString('base64'))).toBe(true);
+    expect(
+      placeholderBody(
+        JSON.stringify({
+          outbounds: [
+            { tag: 'select', type: 'selector', outbounds: ['expired'] },
+            { tag: 'expired', type: 'vless', server: '0.0.0.0', server_port: 1 },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      placeholderBody(
+        YAML.stringify({ proxies: [{ name: 'expired', type: 'vless', server: '0.0.0.0' }] }),
+      ),
+    ).toBe(true);
+  });
+  test('an EMPTY body is not one (an empty 200 would wipe the client), nor a body with no proxy entry', () => {
+    expect(placeholderBody('')).toBe(false);
+    expect(placeholderBody('  \n ')).toBe(false);
+    expect(placeholderBody(btoa(''))).toBe(false);
+    expect(
+      placeholderBody(JSON.stringify({ outbounds: [{ tag: 'direct', type: 'direct' }] })),
+    ).toBe(false);
+    expect(placeholderBody(YAML.stringify({ proxies: [] }))).toBe(false);
+  });
+  test('any real entry, or a node-named one, makes it a real body', () => {
+    expect(placeholderBody([...expired, link('my-host')].join('\n'))).toBe(false);
+    expect(placeholderBody(link('node-one-reality', '0.0.0.0', 1))).toBe(false);
   });
 });

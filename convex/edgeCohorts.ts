@@ -10,7 +10,9 @@ import type { ActionCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import {
+  MAX_CANDIDATES,
   MAX_COHORTS,
+  cohortCandidates,
   cohortOriginOf,
   cohortPage,
   type Cohort,
@@ -45,6 +47,52 @@ export const page = internalQuery({
       { backendServerId: a.backendServerId, ...(a.nodeName ? { nodeName: a.nodeName } : {}) },
       a.cursor as CohortCursor | null,
     ),
+});
+
+/** One candidate representative of a cohort: what a body fetch needs. */
+export interface CohortCandidate {
+  subscriptionId: Id<'subscriptions'>;
+  backendShortId: string;
+  subscriptionUrl: string;
+  renderKey: string | null;
+  excludeNode: string | null;
+}
+
+/**
+ * Up to `limit` candidate representatives of one cohort (lib/edges/cohorts.ts
+ * `cohortCandidates`), members whose account is active first, then the rest,
+ * each group in index order. The rehearsal walks them when a key's body is
+ * the backend's placeholder or resolves to another node.
+ */
+export const candidates = internalQuery({
+  args: {
+    backendServerId: v.id('backendServers'),
+    nodeName: v.optional(v.string()),
+    placement: v.union(v.string(), v.null()),
+    limit: v.number(),
+  },
+  handler: async (ctx, a): Promise<CohortCandidate[]> => {
+    const subs = await cohortCandidates(
+      ctx.db,
+      { backendServerId: a.backendServerId, ...(a.nodeName ? { nodeName: a.nodeName } : {}) },
+      a.placement,
+      Math.max(1, Math.min(a.limit, MAX_CANDIDATES)),
+    );
+    const active: CohortCandidate[] = [];
+    const rest: CohortCandidate[] = [];
+    for (const s of subs) {
+      const user = await ctx.db.get(s.userId);
+      const ref: CohortCandidate = {
+        subscriptionId: s._id,
+        backendShortId: s.backendShortId,
+        subscriptionUrl: s.subscriptionUrl,
+        renderKey: s.renderKey ?? null,
+        excludeNode: s.excludeNode ?? null,
+      };
+      (user?.status === 'active' ? active : rest).push(ref);
+    }
+    return [...active, ...rest];
+  },
 });
 
 /** The cohort origin of a relay (null: a manual origin serves nobody; or no such relay). */
