@@ -330,6 +330,18 @@ export function clientCheckFailedNow(
   return !!b && b.configHash === c.configHash && b.listenerRevision === c.listenerRevision;
 }
 
+/** Whether the address holds a confirmation that describes it now (the client gate's "passed already"). */
+export const confirmationCurrent = internalQuery({
+  args: { edgeId: v.id('edges') },
+  handler: async (ctx, { edgeId }): Promise<boolean> => {
+    const edge = await ctx.db.get(edgeId);
+    if (!edge) return false;
+    const raw = await ctx.db.get(edge.listenerId);
+    if (!raw || raw.retired) return false;
+    return verificationCurrent(edge, await verificationListenerOf(ctx.db, raw));
+  },
+});
+
 /** The admin view: whether the deployment has the service, and its last health answer. */
 export const status = internalQuery({
   args: {},

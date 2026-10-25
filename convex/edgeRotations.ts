@@ -4817,6 +4817,15 @@ export const CLIENT_CHECK_FAIL_COOLDOWN_MS = 60 * 60_000;
 async function clientGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyGate> {
   const { rotation: r } = c;
   const g = r.clientCheckGate!;
+  // Passed already in this run (the country wait comes back through
+  // `verifying` every poll): the confirmation that pass wrote is what the
+  // publication gate reads, so while it still describes the address the check
+  // is not run again. A changed address or listener runs it again.
+  if (
+    (g.lastCode === 'passed' || g.lastCode === 'passed_with_refusals') &&
+    (await ctx.runQuery(internal.edgeClientCheck.confirmationCurrent, { edgeId: edge._id }))
+  )
+    return { kind: 'ok' };
   const now = Date.now();
   const since = g.since ?? now;
   const out = await runClientCheck(ctx, {

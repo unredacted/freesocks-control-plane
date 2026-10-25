@@ -858,7 +858,9 @@ marked `clientCheckGate`.
 clock, `CLIENT_GATE`): the check runs against the replace's target, the address members use now,
 as the control (from outside the country the block does not apply). A pass that confirmed the
 address (`edges.verification`, method `client_check`, the engines that proved it) goes on to
-publish, the Host flip, the drain and the retire, as any replace. A verdict that the address does
+publish, the Host flip, the drain and the retire, as any replace. The country wait that follows
+comes back through `verifying` every poll; a pass is not repeated there while the confirmation it
+wrote still describes the address (a changed address or listener runs the check again). A verdict that the address does
 not work is tried three times, 30 seconds apart, then the run fails `client_check_failed`: the
 new load balancer is destroyed by the reconcile like every failed run's, nothing is published
 and the origin cools down for an hour (`CLIENT_CHECK_FAIL_COOLDOWN_MS`, the existing cooldown

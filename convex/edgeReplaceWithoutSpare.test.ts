@@ -304,6 +304,24 @@ describe('replacing a blocked address without a spare', () => {
     expect(w.panelHosts[0]!.address).toBe(NEW_EDGE);
   });
 
+  test('the country wait after a pass does not run the check again on every poll', async () => {
+    vi.useFakeTimers();
+    const w = world(() => ({ code: 'ok' }));
+    const { t, relayId, oldEdgeId } = await seed();
+    // Country checks on: `verifying` comes back for the country round, poll after poll.
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.country.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.country.preUseWaitMinutes', '1');
+    });
+    const r = await drain(t, (await replace(t, relayId, oldEdgeId)).rotationId);
+    expect(r).toMatchObject({ phase: 'done', outcome: 'published' });
+    expect(r.events.map((e) => e.code)).toContain('progress');
+    expect(r.events.filter((e) => e.code === 'client_check')).toHaveLength(1);
+    // One session per engine through the new address, however long the wait.
+    expect(w.checks.filter((c) => c.address === NEW_EDGE)).toHaveLength(2);
+  }, 60_000);
+
   test('a new address that fails the check: nothing published, the edge failed, the next try waits an hour', async () => {
     vi.useFakeTimers();
     // sing-box gets through the address in use, never through the new one.
