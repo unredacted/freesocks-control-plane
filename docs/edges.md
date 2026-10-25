@@ -1008,9 +1008,24 @@ over every page; a backend-server origin is one cohort of the whole server), nev
 snapshots. Each representative body is fetched FRESH per supported format (links, sing-box,
 Clash, through catalogued client user agents) and run through `applyEdgeRender` in dry-run: no
 persistence, no snapshot. Every non-dark cohort must yield `serve` in every format; an approved
-dark cohort (`darkCohortKeys`) is excluded. An empty backend node is rehearsed from the rehearsal
-credential (the qualification user on the node's placement; no usable placement ->
-`choose_mode`); an Outline server with members from its real single-key subscriptions. The
+dark cohort (`darkCohortKeys`) is excluded. A cohort's first key does not always stand for it:
+its body may be the backend's placeholder for an expired or disabled key (every entry at an
+unusable address, no node named: `placeholderBody`, `convex/lib/nodePinning.ts`), or resolve to
+another node because the stored pin is stale. The rehearsal then tries the cohort's next keys
+(`edgeCohorts.candidates`: the same index range, members whose account is active first, up to
+`REHEARSAL_CANDIDATES`), each judged in every supported format (the backend picks each format's
+body from the user agent): a candidate stands for the cohort when ANY format's body does, and
+every format is rehearsed from its bodies (a format whose body is the placeholder passes, as
+delivery hands it out as it is). A cohort none of whose candidates does is reported in
+`unrepresented` (`placeholder`, `moved` or `mixed`, with how many were tried) and named in the
+run's `rehearsed` event, never failed: delivery hands a placeholder out as it is, and a moved body
+is judged by its own node's binding. An EMPTY body is not a placeholder (it is a hidden-out
+cohort's signature) and still fails `empty_body`; a cohort none of whose candidates stands for
+it while any candidate's body could not be fetched fails `fetch_failed` (an outage is never read
+as an unrepresented cohort). An empty backend node is rehearsed from the rehearsal credential (the
+qualification user on the node's placement; no usable placement -> `choose_mode`), and so is a
+node whose EVERY cohort is unrepresented, so a binding is never claimed on no rendered body at
+all; an Outline server with members from its real single-key subscriptions. The
 result lists `familiesDisabled` (render rules off) and `proofsExpired` (published L7 fronts
 whose proof lapsed), the **vector** the go-live mutation compares with `vectorNow`
 (`listenerRevisions`, `renderConfigHash`, `publicationEpoch`, `qualificationEvidenceIds`, and for
@@ -1862,6 +1877,15 @@ rotation creates the Host afresh. An adopted Host (the operator's) is never dele
 (the backend's answer for a key whose node serves nothing yet) carries a cache token without a
 node, so a node going live could not re-key it; the route answers it `private, no-store` and
 never caches it. Unknown body shapes keep caching as before.
+
+**A placeholder body is handed out as it is.** The backend's placeholder for an expired or
+disabled key (at least one proxy entry, every one at an unusable address and naming no node:
+`placeholderBody`) carries nothing an origin serves and no node address, so delivery passes it
+through unrendered even when the key's stored pin names a bound node: the member keeps reading
+the backend's own "expired" entries instead of a refusal. An EMPTY body is not one and is still
+judged (and refused), since an empty 200 would wipe the client's configuration. Like any
+placeholder, it is never cached (`private, no-store`), whatever the stored pin: the account may be
+usable again on the next fetch.
 
 **Read limits.** No transaction reads an origin's keys or a whole report window: the cohort walk
 (`lib/edges/cohorts.ts`) reads the first key of each DISTINCT placement over the

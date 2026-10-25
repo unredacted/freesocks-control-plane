@@ -558,6 +558,33 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(all.matchers).toEqual([]);
   });
 
+  test("an expired key pinned to a bound node gets the backend's placeholder as it is; an EMPTY body is still refused", async () => {
+    const placeholder = [
+      `vless://${UUID}@0.0.0.0:1?${REALITY_QS}#${encodeURIComponent('⌛ Subscription expired')}`,
+      `vless://${UUID}@0.0.0.0:1?${REALITY_QS}#Contact%20support`,
+    ].join('\n');
+    stubPanel(placeholder);
+    const expired = await seed();
+    const res = await get(expired.t);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const lines = proxyLines(text.includes('://') ? text : atob(text));
+    expect(lines.map((l) => new URL(l).hostname)).toEqual(['0.0.0.0', '0.0.0.0']);
+    expect(labelOf(lines[0])).toBe('⌛ Subscription expired');
+    // Nothing was rendered for it (no snapshot, no rendered epoch), and it is
+    // never cached: the account may be usable again on the next fetch.
+    const sub = (await expired.t.run((ctx) => ctx.db.get(expired.subId)))!;
+    expect(sub.lastRender).toBeUndefined();
+    expect(sub.lastRenderedEpoch).toBeUndefined();
+    expect(sub.subCache).toBeUndefined();
+    expect(res.headers.get('cache-control')).toContain('no-store');
+    // An empty body is not a placeholder: an empty 200 would wipe the client.
+    stubPanel('');
+    const emptied = await seed();
+    const refused = await get(emptied.t);
+    expect(refused.status).toBe(503);
+  });
+
   test('an emptied pool is 503 empty_pool, never a body with the template dropped', async () => {
     stubPanel();
     const { t, relayId, edgeA, serverId } = await seed();

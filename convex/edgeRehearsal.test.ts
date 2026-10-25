@@ -106,6 +106,24 @@ rules:
 `;
 }
 
+/** The backend's placeholder for an expired or disabled key, per format (no node, unusable address). */
+function placeholderFor(format: 'links' | 'singbox' | 'clash') {
+  if (format === 'links')
+    return [
+      `vless://${UUID}@0.0.0.0:1?${REALITY_QS}#${encodeURIComponent('⌛ Subscription expired')}`,
+      `vless://${UUID}@0.0.0.0:1?${REALITY_QS}#Contact%20support`,
+    ].join('\n');
+  if (format === 'singbox')
+    return JSON.stringify({
+      outbounds: [
+        { type: 'selector', tag: 'proxy', outbounds: ['expired'], default: 'expired' },
+        { type: 'vless', tag: 'expired', server: '0.0.0.0', server_port: 1, uuid: UUID },
+        { type: 'direct', tag: 'direct' },
+      ],
+    });
+  return `proxies:\n  - name: expired\n    type: vless\n    server: 0.0.0.0\n    port: 1\n    uuid: ${UUID}\n`;
+}
+
 function formatOfUa(ua: string): 'links' | 'singbox' | 'clash' {
   if (ua === REHEARSAL_USER_AGENTS.singbox) return 'singbox';
   if (ua === REHEARSAL_USER_AGENTS.clash) return 'clash';
@@ -157,7 +175,11 @@ async function seed(opts: { body?: BodyRule; bindPool?: boolean } = {}) {
   await adoptL4Edge(t, fx.relayId, fx.listenerIds.a, { ipv4: EDGE_A, publish: true });
   await adoptL4Edge(t, fx.relayId, fx.listenerIds.b, { ipv4: EDGE_B, port: 8443, publish: true });
   let n = 0;
-  const addMember = async (placement: 'sq-a' | 'sq-b', pinned = NODE) => {
+  const addMember = async (
+    placement: 'sq-a' | 'sq-b',
+    pinned = NODE,
+    status: 'active' | 'disabled' = 'active',
+  ) => {
     n++;
     const short = `member${n}`;
     shortToPlacement.set(short, placement);
@@ -181,7 +203,7 @@ async function seed(opts: { body?: BodyRule; bindPool?: boolean } = {}) {
         }));
       const userId = await ctx.db.insert('users', {
         tierId,
-        status: 'active',
+        status,
         supportId: `SUP-${n}`,
         updatedAt: Date.now(),
       });
@@ -395,6 +417,147 @@ describe('the delivery rehearsal', () => {
     const r2 = await run();
     expect(r2).toMatchObject({ ok: false, attempts: REHEARSAL_MAX_ATTEMPTS, listingChanged: true });
     expect(r2.failures).toEqual([]);
+  });
+});
+
+describe('choosing a cohort representative', () => {
+  /** The member short ids whose bodies were fetched, in order, for one user agent. */
+  const fetchedShorts = (
+    panel: Awaited<ReturnType<typeof seed>>['panel'],
+    ua = REHEARSAL_USER_AGENTS.links,
+  ) =>
+    panel.calls
+      .filter((c) => c.path.startsWith('/api/sub/') && c.headers['user-agent'] === ua)
+      .map((c) => c.path.slice('/api/sub/'.length));
+
+  test('a cohort whose first member is expired (the panel serves its placeholder) is rehearsed from the next candidate', async () => {
+    const { panel, addMember, run } = await seed({
+      body: (u, short, ua) =>
+        short === 'member1'
+          ? placeholderFor(formatOfUa(ua))
+          : bodyFor(formatOfUa(ua), REMARK_A, EDGE_A, 443),
+    });
+    await addMember('sq-a');
+    await addMember('sq-a');
+    const r = await run();
+    expect(r).toMatchObject({ ok: true, failures: [], unrepresented: [], source: 'members' });
+    expect(fetchedShorts(panel)).toEqual(['member1', 'member2']);
+    // Each candidate is judged in every format, and the chosen one is not fetched again.
+    expect(fetchedShorts(panel, REHEARSAL_USER_AGENTS.singbox)).toEqual(['member1', 'member2']);
+  });
+
+  test('members whose account is active are tried before the rest', async () => {
+    const { panel, addMember, run } = await seed({
+      body: (u, short, ua) =>
+        short === 'member1'
+          ? placeholderFor(formatOfUa(ua))
+          : bodyFor(formatOfUa(ua), REMARK_A, EDGE_A, 443),
+    });
+    await addMember('sq-a');
+    await addMember('sq-a', NODE, 'disabled');
+    await addMember('sq-a');
+    const r = await run();
+    expect(r).toMatchObject({ ok: true, failures: [] });
+    expect(fetchedShorts(panel)).toEqual(['member1', 'member3']);
+  });
+
+  test('a cohort of only placeholders beside a real one is reported unrepresented, never failed', async () => {
+    const { panel, addMember, run } = await seed({
+      body: (u, short, ua) =>
+        short === 'member1'
+          ? bodyFor(formatOfUa(ua), REMARK_A, EDGE_A, 443)
+          : placeholderFor(formatOfUa(ua)),
+    });
+    await addMember('sq-a');
+    await addMember('sq-b');
+    await addMember('sq-b');
+    const r = await run();
+    expect(r).toMatchObject({
+      ok: true,
+      failures: [],
+      cohorts: 2,
+      source: 'members',
+      unrepresented: [{ cohortKey: 'sq-b', reason: 'placeholder', tried: 2 }],
+    });
+    // Every candidate of the placeholder cohort was judged in every format.
+    expect(fetchedShorts(panel, REHEARSAL_USER_AGENTS.clash)).toEqual([
+      'member1',
+      'member2',
+      'member3',
+    ]);
+  });
+
+  test('a candidate whose links body is a placeholder but whose sing-box and Clash bodies are real stands for the cohort', async () => {
+    const { addMember, run } = await seed({
+      body: (u, short, ua) =>
+        formatOfUa(ua) === 'links'
+          ? placeholderFor('links')
+          : bodyFor(formatOfUa(ua), REMARK_A, EDGE_A, 443),
+    });
+    await addMember('sq-a');
+    const r = await run();
+    // Its real formats are rendered; its placeholder one passes (delivery hands it out as it is).
+    expect(r).toMatchObject({ ok: true, failures: [], unrepresented: [], source: 'members' });
+  });
+
+  test('no candidate standing for the cohort while one could not be fetched fails it, never unrepresented', async () => {
+    const { addMember, run } = await seed({
+      // An expired first member, then an active one the backend could not serve just now.
+      body: (u, short, ua) => (short === 'member1' ? placeholderFor(formatOfUa(ua)) : null),
+    });
+    await addMember('sq-a');
+    await addMember('sq-a');
+    const r = await run();
+    expect(r.ok).toBe(false);
+    expect(r.unrepresented).toEqual([]);
+    expect(r.failures.map((f) => `${f.format}:${f.reason}`).sort()).toEqual([
+      'clash:fetch_failed',
+      'links:fetch_failed',
+      'singbox:fetch_failed',
+    ]);
+  });
+
+  test('a cohort whose members now resolve to another node is unrepresented; with no cohort left the credential stands in', async () => {
+    const { panel, addMember, run } = await seed({
+      // Members' pins are stale: their bodies carry another node's entry. The
+      // credential (a backend user) still gets this node's.
+      body: (u, short, ua) =>
+        u
+          ? bodyFor(formatOfUa(ua), REMARK_A, EDGE_A, 443)
+          : `vless://${UUID}@203.0.113.9:443?${REALITY_QS}#node-two-relay-a`,
+    });
+    await addMember('sq-a');
+    const r = await run();
+    expect(r).toMatchObject({
+      ok: true,
+      failures: [],
+      source: 'credential',
+      unrepresented: [{ cohortKey: 'sq-a', reason: 'moved', tried: 1 }],
+    });
+    expect(panel.created).toHaveLength(1);
+  });
+
+  test('an empty body still fails (a hidden-out cohort), and a cohort no candidate could be fetched for fails', async () => {
+    const empty = await seed({ body: (u) => (u ? null : '') });
+    await empty.addMember('sq-a');
+    const r1 = await empty.run();
+    expect(r1.ok).toBe(false);
+    expect(r1.failures.map((f) => `${f.format}:${f.reason}`).sort()).toEqual([
+      'clash:empty_body',
+      'links:empty_body',
+      'singbox:empty_body',
+    ]);
+    const gone = await seed({ body: () => null });
+    await gone.addMember('sq-a');
+    await gone.addMember('sq-a');
+    const r2 = await gone.run();
+    expect(r2.ok).toBe(false);
+    expect(r2.failures.map((f) => `${f.format}:${f.reason}`).sort()).toEqual([
+      'clash:fetch_failed',
+      'links:fetch_failed',
+      'singbox:fetch_failed',
+    ]);
+    expect(r2.unrepresented).toEqual([]);
   });
 });
 

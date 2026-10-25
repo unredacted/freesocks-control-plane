@@ -52,6 +52,8 @@ export const COHORT_PAGE = 50;
  * membership: the restore and the rehearsal fail closed.
  */
 export const MAX_COHORTS = 5000;
+/** The most candidate representatives one cohort read returns (`cohortCandidates`). */
+export const MAX_CANDIDATES = 25;
 
 export function cohortKeyOf(placement: string | null | undefined): string {
   return placement && placement.length > 0 ? placement : 'default';
@@ -127,6 +129,47 @@ export async function cohortPage(
     after = s.backendPlacement;
   }
   return { cohorts, next: { phase: 'named', after } };
+}
+
+/**
+ * Up to `limit` active keys of ONE cohort, in index order (the cohort's own
+ * representative first): the rehearsal's further candidates when a key's body
+ * is the backend's placeholder (an expired or disabled key) or its pin moved.
+ * One bounded index range, never the whole placement.
+ */
+export async function cohortCandidates(
+  db: DatabaseReader,
+  origin: CohortOrigin,
+  placement: string | null,
+  limit: number,
+): Promise<Doc<'subscriptions'>[]> {
+  const range = (value: string | undefined) =>
+    origin.nodeName !== undefined
+      ? db
+          .query('subscriptions')
+          .withIndex('by_backend_server_pinned', (ix) =>
+            ix
+              .eq('backendServerId', origin.backendServerId)
+              .eq('pinnedNode', origin.nodeName)
+              .eq('state', 'active')
+              .eq('backendPlacement', value),
+          )
+          .take(limit)
+      : db
+          .query('subscriptions')
+          .withIndex('by_backend_server_state', (ix) =>
+            ix
+              .eq('backendServerId', origin.backendServerId)
+              .eq('state', 'active')
+              .eq('backendPlacement', value),
+          )
+          .take(limit);
+  if (placement) return range(placement);
+  // The default cohort: keys with no placement, then keys with an empty one.
+  const none = await range(undefined);
+  return none.length >= limit
+    ? none
+    : [...none, ...(await range('')).slice(0, limit - none.length)];
 }
 
 export function cohortOriginOf(relay: Doc<'relays'>): CohortOrigin | null {
