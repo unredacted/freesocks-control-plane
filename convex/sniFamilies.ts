@@ -546,7 +546,7 @@ export async function writeCountryMarks(
   country: string,
   state: 'proven' | 'blocked' | 'unknown',
   source: 'operator' | 'probe',
-): Promise<{ count: number; relays: number }> {
+): Promise<{ count: number; relays: number; switched: number }> {
   const wanted = [...new Set(names)];
   const now = Date.now();
   for (const name of wanted) {
@@ -631,13 +631,7 @@ export const setCountry = internalMutation({
     const wanted = [
       ...new Set(a.names.map((n) => normalizeName(n)).filter((n): n is string => !!n)),
     ].filter((n) => mine.has(n));
-    const { relays, switched } = await writeCountryMarks(
-      ctx,
-      wanted,
-      country,
-      a.state,
-      'operator',
-    );
+    const { relays, switched } = await writeCountryMarks(ctx, wanted, country, a.state, 'operator');
     await audit(ctx, 'edge.sni.names.country', a.actorAdminId, {
       slug: f.slug,
       country,

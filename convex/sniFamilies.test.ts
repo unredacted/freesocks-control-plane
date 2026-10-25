@@ -307,11 +307,13 @@ describe('binding a family to a transport', () => {
       'in_other_family',
     ]);
     const detail = await (await call('GET', 'families/fam-a')).json();
-    expect(detail.names.map((n: { name: string; status: string; qualification: string }) => [
-      n.name,
-      n.status,
-      n.qualification,
-    ])).toEqual([['old-a.example', 'active', 'pending']]);
+    expect(
+      detail.names.map((n: { name: string; status: string; qualification: string }) => [
+        n.name,
+        n.status,
+        n.qualification,
+      ]),
+    ).toEqual([['old-a.example', 'active', 'pending']]);
     // They are what the transport listed, so they are SEEN, never a witness.
     expect(
       (await t.run((ctx) => ctx.db.query('sniInboundNameHistory').collect()))

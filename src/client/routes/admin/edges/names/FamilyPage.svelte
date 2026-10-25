@@ -147,9 +147,9 @@
   let bindOpen = $state(false);
   let backends = $state<{ slug: string; name: string }[]>([]);
   let backendSlug = $state('');
-  let transports = $state<
-    { tag: string; uuid: string; target: string | null; names: string[] }[]
-  >([]);
+  let transports = $state<{ tag: string; uuid: string; target: string | null; names: string[] }[]>(
+    [],
+  );
   let transportUuid = $state('');
   let takeNames = $state(true);
   let chosen = $derived(transports.find((t) => t.uuid === transportUuid) ?? null);
@@ -276,9 +276,9 @@
             <div class="flex basis-full items-start gap-2">
               <Checkbox id={`${uid}-take`} bind:checked={takeNames} />
               <Label for={`${uid}-take`} class="leading-snug font-normal">
-                Take the {chosen.names.length === 1 ? 'name' : `${chosen.names.length} names`} it
-                lists now into this family. Names set by hand are then checked against the target,
-                can be judged per country, and stay on the transport with every write.
+                Take the {chosen.names.length === 1 ? 'name' : `${chosen.names.length} names`} it lists
+                now into this family. Names set by hand are then checked against the target, can be judged
+                per country, and stay on the transport with every write.
               </Label>
             </div>
           {/if}

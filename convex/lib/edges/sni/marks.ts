@@ -65,7 +65,8 @@ export async function withCountryMarks(
 /** Whether any active entry is judged in some country. */
 export function namesJudged(names: readonly ListenerName[] | undefined): boolean {
   return (names ?? []).some(
-    (n) => n.status === 'active' && ((n.blockedIn?.length ?? 0) > 0 || (n.provenIn?.length ?? 0) > 0),
+    (n) =>
+      n.status === 'active' && ((n.blockedIn?.length ?? 0) > 0 || (n.provenIn?.length ?? 0) > 0),
   );
 }
 

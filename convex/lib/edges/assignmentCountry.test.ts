@@ -195,7 +195,11 @@ describe('assignEndpoints by tier', () => {
       ).toBe('e1');
     }
     // Every edge blocked there: the primary is blocked too, and so may the backup be.
-    const all = four({ 0: { blockedIn: ['IR'] }, 1: { blockedIn: ['IR'] }, 2: { eligible: false } });
+    const all = four({
+      0: { blockedIn: ['IR'] },
+      1: { blockedIn: ['IR'] },
+      2: { eligible: false },
+    });
     const b = assignEndpoints(keyOf(5), all.slice(0, 3), { ...OPTS, edgeCountry: 'IR' });
     expect(b.primaryTier).toBe(2);
     expect(b.backupTier).toBe(2);
