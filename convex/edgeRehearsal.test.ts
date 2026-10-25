@@ -500,6 +500,22 @@ describe('choosing a cohort representative', () => {
     expect(r).toMatchObject({ ok: true, failures: [], unrepresented: [], source: 'members' });
   });
 
+  test("a member's placeholder format that names the node fails leak_detected, as delivery would refuse it", async () => {
+    const { addMember, run } = await seed({
+      body: (u, short, ua) =>
+        formatOfUa(ua) === 'singbox'
+          ? JSON.stringify({
+              dns: { servers: [{ address: `https://${ORIGIN}/dns-query` }] },
+              outbounds: [{ type: 'vless', tag: 'expired', server: '0.0.0.0', server_port: 1 }],
+            })
+          : bodyFor(formatOfUa(ua), REMARK_A, EDGE_A, 443),
+    });
+    await addMember('sq-a');
+    const r = await run();
+    expect(r.ok).toBe(false);
+    expect(r.failures).toEqual([{ cohortKey: 'sq-a', format: 'singbox', reason: 'leak_detected' }]);
+  });
+
   test('no candidate standing for the cohort while one could not be fetched fails it, never unrepresented', async () => {
     const { addMember, run } = await seed({
       // An expired first member, then an active one the backend could not serve just now.

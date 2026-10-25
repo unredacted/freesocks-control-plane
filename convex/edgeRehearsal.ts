@@ -47,6 +47,7 @@ import { classifyClient } from './lib/edges/clientFamilies';
 import type { Cohort } from './lib/edges/cohorts';
 import { cohortValidator, walkRelayCohorts, type CohortCandidate } from './edgeCohorts';
 import { placeholderBody } from './lib/nodePinning';
+import { bodyMentionsAny } from './lib/subscriptionDelivery';
 import { formatSupported, type RenderFormat } from './lib/edges/protocols';
 import { fnv1a64Hex } from './lib/edges/registration';
 import { effectiveRule, ruleForDelivery, type DeliveryStyle } from './lib/edges/render';
@@ -436,7 +437,11 @@ async function rehearseBody(
   const ua = REHEARSAL_USER_AGENTS[format];
   const fetched = prefetched ?? (await fetchBody(ctx, c, format, ref));
   if (fetched.kind === 'failed') return { cohortKey, format, reason: 'fetch_failed' };
-  if (placeholderPasses && candidateVerdict(c, fetched) === 'placeholder') return null;
+  if (placeholderPasses && candidateVerdict(c, fetched) === 'placeholder')
+    // As delivery: handed out as it is unless it names the node anywhere.
+    return bodyMentionsAny(fetched.content, [c.originAddress, ...(c.nodeAddresses ?? [])])
+      ? { cohortKey, format, reason: 'leak_detected' }
+      : null;
   const { content, pinnedNode } = fetched;
   if (!content.trim()) return { cohortKey, format, reason: 'empty_body' };
   // The representative must resolve to THIS node, or it says nothing about it.

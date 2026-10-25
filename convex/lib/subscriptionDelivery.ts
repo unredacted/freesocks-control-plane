@@ -28,6 +28,7 @@ import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import type { CountryContext } from './edges/assignment';
 import { classifyClient } from './edges/clientFamilies';
+import { decodeBase64Loose } from './edges/render/base64';
 import { applyEdgeRender } from './edges/renderPipeline';
 import { withheldNoteDue } from './edges/withheld';
 import type { ResolvedWhere } from './edges/sni/country';
@@ -240,6 +241,29 @@ export async function noteWithheldEntries(
 }
 
 /**
+ * Whether a body mentions any of the addresses anywhere in its text (or its
+ * base64 decoding): the leak check of a body handed out unrendered. A substring
+ * match, so an address inside a URL, or in a line or field no codec reads,
+ * counts; a false match only refuses. IPv6 literals are compared without
+ * brackets.
+ */
+export function bodyMentionsAny(body: string, addresses: readonly string[]): boolean {
+  const wanted = addresses
+    .map((a) =>
+      a
+        .trim()
+        .replace(/^\[|\]$/g, '')
+        .toLowerCase(),
+    )
+    .filter((a) => a.length > 0);
+  if (wanted.length === 0) return false;
+  const texts = [body.toLowerCase()];
+  const decoded = decodeBase64Loose(body.trim());
+  if (decoded) texts.push(decoded.toLowerCase());
+  return texts.some((t) => wanted.some((a) => t.includes(a)));
+}
+
+/**
  * Decide, render and relabel one fetched body. A place an origin covers gets a
  * rendered body that passed every check, or a refusal (a `DELIVERY_UNAVAILABLE_CODES`
  * reason, counted per reason here); a place none covers passes through. The
@@ -397,6 +421,26 @@ export async function deliverBody(
     )
       return refuse('policy_moved');
     relay = renderedUnder;
+  } else if (sub.backendServerId) {
+    // A placeholder handed out as it is skips the renderer, so it gets the
+    // decision and the leak check here: a place no origin can serve is still
+    // refused, and a body that names the node by any address FCP knows for it
+    // (in any line or field, the parts no codec reads included) is never handed
+    // out, as the renderer's own leak check would refuse it.
+    const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
+      subscriptionId: sub.subscriptionId,
+      family: classifyClient(input.ua).family,
+      nodeName: node ?? undefined,
+    });
+    if (decision.kind === 'unavailable') return refuse(decision.reason);
+    if (
+      decision.kind === 'render' &&
+      bodyMentionsAny(fetched.content, [
+        decision.context.originAddress,
+        ...(decision.context.nodeAddresses ?? []),
+      ])
+    )
+      return refuse('leak_detected');
   }
   // Member-facing names (docs/privacy.md): an entry the backend named after its
   // node and server name gets a neutral label. Last, because pinning and the

@@ -1882,7 +1882,12 @@ never caches it. Unknown body shapes keep caching as before.
 disabled key (at least one proxy entry, every one at an unusable address and naming no node:
 `placeholderBody`) carries nothing an origin serves and no node address, so delivery passes it
 through unrendered even when the key's stored pin names a bound node: the member keeps reading
-the backend's own "expired" entries instead of a refusal. An EMPTY body is not one and is still
+the backend's own "expired" entries instead of a refusal. Because it skips the renderer, it gets
+the decision and a leak check of its own: a place no origin can serve is still refused, a link
+list with any line other than placeholder entries is not a placeholder at all (so no line passes
+unread), and a body that names the node anywhere, by any address FCP knows for it (a config's
+other fields and the base64 decoding included: `bodyMentionsAny`), is refused `leak_detected`.
+The rehearsal judges a member's placeholder format the same way. An EMPTY body is not one and is still
 judged (and refused), since an empty 200 would wipe the client's configuration. Like any
 placeholder, it is never cached (`private, no-store`), whatever the stored pin: the account may be
 usable again on the next fetch.

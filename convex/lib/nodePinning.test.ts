@@ -519,6 +519,13 @@ describe('placeholderBody (an expired or disabled key: delivery hands it out as 
     ).toBe(false);
     expect(placeholderBody(YAML.stringify({ proxies: [] }))).toBe(false);
   });
+  test('a link list with any other line is not one: no line may pass unread', () => {
+    expect(placeholderBody([...expired, 'socks://203.0.113.7:1080'].join('\n'))).toBe(false);
+    expect(placeholderBody([...expired, 'https://203.0.113.7/'].join('\n'))).toBe(false);
+    expect(
+      placeholderBody(Buffer.from([...expired, 'note 203.0.113.7'].join('\n')).toString('base64')),
+    ).toBe(false);
+  });
   test('any real entry, or a node-named one, makes it a real body', () => {
     expect(placeholderBody([...expired, link('my-host')].join('\n'))).toBe(false);
     expect(placeholderBody(link('node-one-reality', '0.0.0.0', 1))).toBe(false);

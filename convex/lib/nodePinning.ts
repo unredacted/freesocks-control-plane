@@ -319,15 +319,21 @@ export function nodelessBody(content: string): boolean {
  * The backend's placeholder for a key that serves nothing (an expired or
  * disabled key): at least one proxy entry, every one naming no node AND at an
  * unusable address. Unlike `nodelessBody`, an empty body is not one: handing
- * an empty body out would wipe a client's configuration.
+ * an empty body out would wipe a client's configuration. A link list with any
+ * other line is not one either: delivery hands the body out whole, so no line
+ * may pass unread. (A config's other fields are the caller's leak scan.)
  */
 export function placeholderBody(content: string): boolean {
-  const v = placeholderVerdict(content);
+  const v = placeholderVerdict(content, true);
   return v.nodeless && v.entries > 0;
 }
 
 /** `nodelessBody`'s verdict, with how many proxy entries it judged. */
-function placeholderVerdict(content: string): { nodeless: boolean; entries: number } {
+function placeholderVerdict(
+  content: string,
+  /** Every non-empty line of a link list must be a proxy entry (no other line passes unread). */
+  strict = false,
+): { nodeless: boolean; entries: number } {
   const no = { nodeless: false, entries: 0 };
   try {
     const trimmed = content.trim();
@@ -351,10 +357,12 @@ function placeholderVerdict(content: string): { nodeless: boolean; entries: numb
       if (!PROXY_LINE_RE.test(decoded.trim())) return no;
       body = decoded;
     }
-    const lines = body
+    const all = body
       .split('\n')
       .map((l) => l.trim())
-      .filter((l) => PROXY_LINE_RE.test(l));
+      .filter((l) => l.length > 0);
+    const lines = all.filter((l) => PROXY_LINE_RE.test(l));
+    if (strict && lines.length !== all.length) return no;
     return {
       nodeless:
         lines.length > 0 &&
