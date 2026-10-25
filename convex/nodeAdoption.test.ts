@@ -545,6 +545,100 @@ describe('re-approving an adopted direct node', () => {
   });
 });
 
+describe('a run that throws after turning an address on', () => {
+  test('turns it off again', async () => {
+    const s = await seed();
+    const { nodeUuid, hostUuid } = await legacyDirect(s);
+    const { intentId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    await throughMaintenance(s.t, intentId);
+    s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled = true;
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const built = await s.t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await s.t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    // The rehearsal's body fetch fails outright.
+    s.panel.stub.route(
+      routeFetch(
+        (c: Captured) =>
+          c.path.startsWith('/api/sub/') ? jsonRes({ message: 'down' }, 500) : null,
+        s.panel.handle,
+      ),
+    );
+    const review = await s.t.query(internal.nodeActivation.review, { intentId });
+    const { runId } = await s.t.mutation(internal.nodeActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    await until(
+      () => s.t.run((ctx) => ctx.db.get(runId)),
+      (r) => !!r && r.state !== 'running',
+    );
+    await until(
+      () => s.t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect()),
+      (rows) => rows.every((r) => r.state.kind !== 'pending' && r.state.kind !== 'inProgress'),
+    );
+    expect((await s.t.run((ctx) => ctx.db.get(runId)))!.state).toBe('blocked');
+    expect(s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled).toBe(true);
+    expect((await s.t.run((ctx) => ctx.db.get(runId)))!.enabledHostUuids).toBeUndefined();
+  });
+});
+
+describe('an enable whose outcome is not known yet', () => {
+  test('stays owned, and the next approval takes it over though the cache still shows it off', async () => {
+    const s = await seed();
+    const { nodeUuid, hostUuid } = await legacyDirect(s);
+    const { intentId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    await throughMaintenance(s.t, intentId);
+    s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled = true;
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const built = await s.t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await s.t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    // The backend never answers the enable clearly.
+    s.panel.stub.route(
+      routeFetch((c: Captured) => {
+        const body = c.body as { isDisabled?: boolean } | undefined;
+        return c.method === 'PATCH' && c.path === '/api/hosts' && body?.isDisabled === false
+          ? jsonRes({ message: 'Bad Gateway' }, 502)
+          : null;
+      }, s.panel.handle),
+    );
+    const review = await s.t.query(internal.nodeActivation.review, { intentId });
+    const { runId } = await s.t.mutation(internal.nodeActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    await until(
+      () => s.t.run((ctx) => ctx.db.get(runId)),
+      (r) => !!r && r.state !== 'running',
+    );
+    await until(
+      () => s.t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect()),
+      (rows) => rows.every((r) => r.state.kind !== 'pending' && r.state.kind !== 'inProgress'),
+    );
+    expect((await s.t.run((ctx) => ctx.db.get(runId)))!.enabledHostUuids).toEqual([hostUuid]);
+    const again = await s.t.query(internal.nodeActivation.review, { intentId });
+    const { runId: runId2 } = await s.t.mutation(internal.nodeActivation.approve, {
+      intentId,
+      reviewHash: again.reviewHash,
+    });
+    const [older, newer] = await s.t.run(async (ctx) => [
+      await ctx.db.get(runId),
+      await ctx.db.get(runId2),
+    ]);
+    expect(newer!.enabledHostUuids).toEqual([hostUuid]);
+    expect(older!.enabledHostUuids).toBeUndefined();
+  });
+});
+
 describe('a rollback the backend refuses', () => {
   test('keeps the address owned, so the next approval can still turn it off', async () => {
     const s = await seed();
@@ -781,6 +875,7 @@ describe('removing a backend server', () => {
     'sniRollouts',
     'sniAcceptanceReceipts',
     'edgeDeliveryBindings',
+    'edgeHostHides',
   ] as const;
   const counts = (t: T) =>
     t.run(async (ctx) => {
@@ -892,6 +987,22 @@ describe('removing a backend server', () => {
     expect(await s.t.run((ctx) => ctx.db.get(s.serverId))).toBeNull();
   });
 
+  test("refused while a removed origin's key cleanup has not run yet", async () => {
+    const s = await seed();
+    const jobId = await s.t.run((ctx) =>
+      ctx.scheduler.runAfter(600_000, internal.relayQualification.removeByUsername, {
+        backendServerId: s.serverId,
+        username: 'fcp_qual_a',
+      }),
+    );
+    await expect(
+      s.t.mutation(internal.adminApi.deleteBackendServer, { id: s.serverId }),
+    ).rejects.toThrow(/server\.keys_pending/);
+    await s.t.run((ctx) => ctx.scheduler.cancel(jobId));
+    await s.t.mutation(internal.adminApi.deleteBackendServer, { id: s.serverId });
+    expect(await s.t.run((ctx) => ctx.db.get(s.serverId))).toBeNull();
+  });
+
   test('once its nodes are retired, it goes with every server-management row', async () => {
     const s = await seed();
     const intentId = await adoptedAndRetired(s);
@@ -928,6 +1039,25 @@ describe('removing a backend server', () => {
         startedAt: Date.now(),
         updatedAt: Date.now(),
       });
+      // A hide a keep-dark removal left confirmed.
+      await ctx.db.insert('edgeHostHides', {
+        relayId,
+        backendServerId: s.serverId,
+        hostUuid: UUID(201),
+        observed: {
+          remark: 'legacy-a-reality',
+          address: 'legacy-a.example.net',
+          port: 443,
+          sni: 'decoy-a.example',
+          host: null,
+          inboundUuid: null,
+          isDisabled: false,
+        },
+        intent: 'disable',
+        state: 'confirmed',
+        attempt: 1,
+        updatedAt: Date.now(),
+      });
       await ctx.db.insert('sniAcceptanceReceipts', {
         rolloutId,
         generation: 2,
@@ -961,6 +1091,7 @@ describe('removing a backend server', () => {
       sniInboundBindings: 1,
       sniRollouts: 1,
       sniAcceptanceReceipts: 1,
+      edgeHostHides: 1,
     });
     expect(await counts(s.t)).toEqual(before);
     await s.t.mutation(internal.serverAdmin.purgeRemovedBackend, {

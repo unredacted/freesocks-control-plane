@@ -2433,7 +2433,9 @@ export default defineSchema({
     .index('by_relay', ['relayId'])
     .index('by_run', ['runId'])
     .index('by_host', ['hostUuid'])
-    .index('by_state_updated', ['state', 'updatedAt']),
+    .index('by_state_updated', ['state', 'updatedAt'])
+    // What a removed backend server's purge clears (serverAdmin.purgeRemovedBackend).
+    .index('by_server', ['backendServerId']),
 
   // External / internal reachability probe requests against one edge.
   // Operator-entered probe targets (any host:port), alongside the derived ones

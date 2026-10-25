@@ -939,21 +939,11 @@ export const approve = internalMutation({
     // candidates stay isolated from members (the gate counts every
     // uncommitted run's resources) until this run commits or they are released.
     // What an older run turned on, never committed and never turned off again
-    // (a run's ownership is cleared once its rollback sent the disables) is
-    // this run's to turn off if it fails, while it is still on: the older one
-    // gives it up here, so nothing is owned twice or after an operator took
-    // it back.
+    // (a run gives an address up only once the backend shows it off) is this
+    // run's to turn off if it fails, whatever the cache shows now: an enable
+    // still in flight may land after this approval. The older run gives it up
+    // here, so nothing is owned twice.
     const committedHosts = new Set(intent.approved?.committed.hostUuids ?? []);
-    const stillOn = new Set(
-      (
-        await ctx.db
-          .query('panelHosts')
-          .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
-          .collect()
-      )
-        .filter((h) => !h.isDisabled)
-        .map((h) => h.hostUuid),
-    );
     const inherited = new Set<string>();
     for (const r of await ctx.db
       .query('panelActivationRuns')
@@ -962,8 +952,7 @@ export const approve = internalMutation({
       const open = r.state === 'running' || r.state === 'blocked' || r.state === 'review';
       const owned = r.state !== 'committed' ? (r.enabledHostUuids ?? []) : [];
       for (const u of owned)
-        if (!committedHosts.has(u) && stillOn.has(u) && (intent.addressUuids ?? []).includes(u))
-          inherited.add(u);
+        if (!committedHosts.has(u) && (intent.addressUuids ?? []).includes(u)) inherited.add(u);
       if (open || owned.length > 0)
         await ctx.db.patch(r._id, {
           ...(open ? { state: 'superseded' as const } : {}),
@@ -1167,10 +1156,11 @@ export const noteEnabled = internalMutation({
 
 /**
  * The rollback of a failed or superseded run sent its disables: it owns none
- * of the addresses the backend now shows off (or gone) any more. One whose
- * disable was refused or has no known outcome stays owned, for a retry or the
- * next approval to take over. A disable that landed was seen by its ledger
- * look, which brought the cache in line.
+ * of the addresses the backend now shows off (or gone) any more, unless a
+ * write to one is still open (an enable or a disable whose outcome nobody
+ * knows yet may still land). One whose disable was refused stays owned too,
+ * for a retry or the next approval to take over. A disable that landed was
+ * seen by its ledger look, which brought the cache in line.
  */
 export const releaseEnabled = internalMutation({
   args: { runId: v.id('panelActivationRuns'), hostUuids: v.array(v.string()) },
@@ -1181,10 +1171,22 @@ export const releaseEnabled = internalMutation({
       .query('panelHosts')
       .withIndex('by_server', (q) => q.eq('backendServerId', run.backendServerId))
       .collect();
+    const inFlight = new Set(
+      (
+        await ctx.db
+          .query('panelOps')
+          .withIndex('by_open', (q) =>
+            q.eq('open', true).eq('backendServerId', run.backendServerId),
+          )
+          .collect()
+      )
+        .filter((o) => o.kind === 'host' && o.objectUuid)
+        .map((o) => o.objectUuid!),
+    );
     const off = new Set(
       hostUuids.filter((u) => {
         const h = hosts.find((x) => x.hostUuid === u);
-        return !h || h.isDisabled;
+        return !inFlight.has(u) && (!h || h.isDisabled);
       }),
     );
     if (off.size === 0) return null;
@@ -1260,18 +1262,53 @@ export const runDirect = internalAction({
         state: 'blocked',
         code,
       });
+    // A run that fails, blocks or is superseded closes what it opened, and
+    // only that: an address that was on before it ran (an adopted node's, a
+    // live node's committed one) stays on. Each disable stands alone: one the
+    // backend refuses, or one a write still in flight holds, stays owned for
+    // the next approval to take over, and the rest go.
+    const rollback = async () => {
+      const off: string[] = await ctx.runQuery(internal.nodeActivation.enabledToRelease, {
+        runId,
+      });
+      for (const hostUuid of off) {
+        try {
+          const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
+            backendServerId: c.server._id,
+            hostUuid,
+            isDisabled: true,
+            ...activationActor(c.run),
+          });
+          await ctx.runAction(internal.backendWrites.run, { opId });
+        } catch {
+          // Stays owned: releaseEnabled reads what the backend shows.
+        }
+      }
+      // Turned off: the run owns none of them any more, so a later approval
+      // never takes over one an operator turns on again.
+      if (off.length > 0)
+        await ctx.runMutation(internal.nodeActivation.releaseEnabled, {
+          runId,
+          hostUuids: off,
+        });
+    };
+    const fail = async (code: string) => {
+      await block(code);
+      await rollback();
+      return null;
+    };
     try {
       if (c.run.stage === 'hosts') {
         // The candidate addresses: enabled now, kept from members by the
         // closed gate until the commit. A LIVE node's gate is open, and a
         // direct body cannot be filtered, so a new address waits for maintenance.
-        if (c.addresses.length === 0) return block('servers.host_missing').then(() => null);
+        if (c.addresses.length === 0) return fail('servers.host_missing');
         const committed = c.intent.approved?.committed.hostUuids ?? [];
         if (
           c.intent.delivery.disposition === 'live' &&
           c.addresses.some((h) => !committed.includes(h.hostUuid))
         )
-          return block('servers.maintenance_required').then(() => null);
+          return fail('servers.maintenance_required');
         for (const h of c.addresses) {
           if (!h.isDisabled) continue;
           // Recorded before the write: an address this run may have turned on
@@ -1290,7 +1327,7 @@ export const runDirect = internalAction({
             ...activationActor(c.run),
           });
           const r = await ctx.runAction(internal.backendWrites.run, { opId });
-          if (r.open) return block('servers.op_running').then(() => null);
+          if (r.open) return fail('servers.op_running');
         }
         await ctx.runMutation(internal.nodeActivation.step, {
           runId,
@@ -1304,7 +1341,7 @@ export const runDirect = internalAction({
         const cred = (await ctx.runQuery(internal.nodeActivation.credentialContext, {
           intentId: c.intent._id,
         })) as CredentialCtx | null;
-        if (!cred?.reusable) return block('servers.credential_unavailable').then(() => null);
+        if (!cred?.reusable) return fail('servers.credential_unavailable');
         const publicKey = c.transport.publicKey ?? '';
         const families: RehearsalFamily[] = ['links', 'singbox', 'clash'];
         const failed: string[] = [];
@@ -1347,29 +1384,7 @@ export const runDirect = internalAction({
             : { state: 'blocked' as const, code: 'servers.rehearsal_failed' }),
         });
         if (!ok || !s.ok) {
-          // A failed (or superseded) run closes what it opened, and only that:
-          // an address that was on before it ran (an adopted node's, a live
-          // node's committed one) stays on.
-          const off: string[] = await ctx.runQuery(internal.nodeActivation.enabledToRelease, {
-            runId,
-          });
-          for (const hostUuid of off) {
-            const { opId } = await ctx.runMutation(internal.backendWrites.requestAddressUpdate, {
-              backendServerId: c.server._id,
-              hostUuid,
-              isDisabled: true,
-              ...activationActor(c.run),
-            });
-            await ctx.runAction(internal.backendWrites.run, { opId });
-          }
-          // Turned off: the run owns none of them any more, so a later
-          // approval never takes over one an operator turns on again. One
-          // the backend did not turn off stays owned.
-          if (off.length > 0)
-            await ctx.runMutation(internal.nodeActivation.releaseEnabled, {
-              runId,
-              hostUuids: off,
-            });
+          await rollback();
           return null;
         }
         await ctx.runMutation(internal.nodeActivation.commit, {
@@ -1384,8 +1399,13 @@ export const runDirect = internalAction({
         err instanceof ConvexError && typeof (err.data as { code?: unknown })?.code === 'string'
           ? (err.data as { code: string }).code
           : 'servers.activation_failed';
-      await block(code);
-      return null;
+      // An exception after an address was turned on (a later enable, a body
+      // fetch) closes what the run opened too.
+      try {
+        return await fail(code);
+      } catch {
+        return null;
+      }
     }
   },
 });

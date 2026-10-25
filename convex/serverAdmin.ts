@@ -530,6 +530,14 @@ export async function removalBlocker(
         .map((r) => r.slug)
         .join(', ')}). Remove ${origins.length === 1 ? 'its' : 'their'} protection in Edges first`,
     };
+  // A removed origin's qualification user is removed after its row, by a
+  // scheduled action that needs this backend to reach it.
+  if (await qualificationCleanupPending(db, sid))
+    return {
+      code: 'server.keys_pending',
+      message:
+        'A removed origin’s temporary key on this backend is still being removed. Try again shortly',
+    };
   for (const removal of ['pending', 'failed'] as const) {
     const key = await db
       .query('edgeTestCredentials')
@@ -568,6 +576,33 @@ export async function removalBlocker(
       message: 'A change to this backend is still being made. Try again once it is done',
     };
   return null;
+}
+
+/** How far back a removed origin's scheduled key cleanup is looked for (it is scheduled to run at once). */
+const CLEANUP_LOOKBACK_MS = 15 * 60_000;
+
+/**
+ * A removed origin's qualification user (or an unsettled mint of one) is
+ * removed after its row by a scheduled action (`relays.finalizeDelete`),
+ * which reads this backend to reach the user: true while one for this
+ * backend has not run yet.
+ */
+async function qualificationCleanupPending(
+  db: DatabaseReader,
+  sid: Id<'backendServers'>,
+): Promise<boolean> {
+  const since = Date.now() - CLEANUP_LOOKBACK_MS;
+  const recent = await db.system
+    .query('_scheduled_functions')
+    .withIndex('by_creation_time', (q) => q.gt('_creationTime', since))
+    .collect();
+  return recent.some(
+    (f) =>
+      (f.state.kind === 'pending' || f.state.kind === 'inProgress') &&
+      f.name.includes('relayQualification') &&
+      /remove(BackendUser|ByUsername)$/.test(f.name) &&
+      (f.args[0] as { backendServerId?: string } | undefined)?.backendServerId === sid,
+  );
 }
 
 /** A dry run reads at most this many rows of each table; a purge deletes at most this many per call. */
@@ -647,6 +682,16 @@ async function rowsOfBackend(
         await db
           .query('edgeSetupRuns')
           .withIndex('by_origin', (q) => q.eq('backendServerId', sid))
+          .take(cap),
+      ),
+    ],
+    // A keep-dark removal of an origin leaves its confirmed hides behind.
+    [
+      'edgeHostHides',
+      ids(
+        await db
+          .query('edgeHostHides')
+          .withIndex('by_server', (q) => q.eq('backendServerId', sid))
           .take(cap),
       ),
     ],
@@ -903,6 +948,8 @@ export const removedBackends = internalQuery({
     for (const r of await ctx.db.query('panelNodeIntents').collect()) sids.add(r.backendServerId);
     for (const r of await ctx.db.query('sniInboundBindings').collect()) sids.add(r.backendServerId);
     for (const r of await ctx.db.query('edgeDeliveryBindings').collect())
+      sids.add(r.backendServerId);
+    for (const r of await ctx.db.query('edgeHostHides').take(PURGE_READ_CAP))
       sids.add(r.backendServerId);
     for (const r of await ctx.db.query('panelOwnership').take(PURGE_READ_CAP))
       sids.add(r.backendServerId);
