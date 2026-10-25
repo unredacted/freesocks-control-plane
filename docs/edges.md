@@ -4573,6 +4573,14 @@ lifecycle runs in that test and its rows appear here.
 
 ## Deploy notes
 
+**Country delivery, walk fixes** change what members receive, nothing in the schema: a listener
+whose names carry a per-country mark moves onto `hrw1` the next time a mark, a registration or a
+reactivation touches it (each move audited `relay.listener.sni_pick`, `reason: country_marks`),
+names that reach a listener carry their marks, and a steered member no longer gets a backup known
+blocked in their country. One deploy, no migration, no env change. A listener marked before the
+deploy moves at its next mark; to move it at once, set its pick (`POST listeners/{id}/sni-pick
+{version: 'hrw1'}`) or mark any of its names again.
+
 **The X25519MLKEM768 key share** changes what members receive, nothing stored: every Clash /
 Mihomo / Stash body FCP serves asks its REALITY entries for the key share (a cached body from its
 next serve). One deploy, no migration, no env change; rolling back only stops asking. Mihomo
