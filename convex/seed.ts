@@ -665,6 +665,10 @@ export const seedCutover = internalAction({
     await ctx.runMutation(internal.edgeProviderAccounts.migrateDnsFronting, {});
     // Locations still named after a bare region id get their provider's name.
     await ctx.scheduler.runAfter(0, internal.edgeProviderOps.relabelLocations, {});
+    // Listener names carry their per-country marks, and a listener with a judged
+    // name is on the growth-stable pick (rows written before that was kept; a
+    // no-op afterwards). docs/edges.md § "Names for the member's country".
+    await ctx.runMutation(internal.relayListeners.reconcileCountryMarks, {});
     return {
       freeTierId,
       memberTierId,

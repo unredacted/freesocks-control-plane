@@ -47,7 +47,13 @@ import {
 } from './lib/edges/relayGuards';
 import { protocolLabel, protocolUsesSni } from './lib/edges/protocols';
 import { nameRetireKeepsVerification } from './lib/edges/verification';
-import { auditPickForMarks, pickForJudgedNames, withCountryMarks } from './lib/edges/sni/marks';
+import {
+  auditPickForMarks,
+  namesJudged,
+  pickForJudgedNames,
+  sameCountryMarks,
+  withCountryMarks,
+} from './lib/edges/sni/marks';
 import { listenerNetworkOf } from './lib/edges/networkScope';
 
 export type Listener = Doc<'relayListeners'>;
@@ -948,6 +954,13 @@ export const setSniPick = internalMutation({
         code: 'conflict',
         message: `listener ${l.listenerKey} presents no server name`,
       });
+    // The legacy pick ignores the member's country: a listener whose names are
+    // judged per country stays on `hrw1` (lib/edges/sni/marks.ts).
+    if (version === null && namesJudged(l.tlsNames))
+      throw new ConvexError({
+        code: 'conflict',
+        message: `listener ${l.listenerKey} has names judged per country; the legacy pick would ignore them`,
+      });
     const changed = (l.sniPick ?? null) !== version;
     if (changed) {
       await ctx.db.patch(id, {
@@ -966,6 +979,48 @@ export const setSniPick = internalMutation({
       payload: { relaySlug: relay.slug, listenerKey: l.listenerKey, version: version ?? 'legacy' },
     });
     return { ok: true as const, changed, sniPick: version };
+  },
+});
+
+/**
+ * Every live listener's names carry the per-country marks they have now, and a
+ * listener with a judged name is on `hrw1` (lib/edges/sni/marks.ts). The
+ * writers keep this true; this settles rows written before they did (a
+ * listener created after its names were judged, or one still on the legacy
+ * pick). Run by `seed:seedCutover` on every deploy: a no-op once settled. A
+ * listener that changes moves its origin's publication epoch.
+ */
+export const reconcileCountryMarks = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const origins = new Set<Id<'relays'>>();
+    let changed = 0;
+    let switched = 0;
+    // Small operator table (as `writeCountryMarks` reads it).
+    for (const l of await ctx.db.query('relayListeners').collect()) {
+      if (l.retired || !l.tlsNames?.length) continue;
+      const next = await withCountryMarks(ctx.db, l.tlsNames);
+      const pick = protocolUsesSni(l) ? pickForJudgedNames(l.sniPick, next) : l.sniPick;
+      const namesMoved = !sameCountryMarks(l.tlsNames, next);
+      if (!namesMoved && pick === l.sniPick) continue;
+      await ctx.db.patch(l._id, {
+        ...(namesMoved ? { tlsNames: next, namesRevision: (l.namesRevision ?? 0) + 1 } : {}),
+        ...(pick !== l.sniPick ? { sniPick: pick } : {}),
+        updatedAt: now,
+      });
+      if (pick !== l.sniPick) {
+        switched++;
+        await auditPickForMarks(ctx, l, pick);
+      }
+      changed++;
+      origins.add(l.relayId);
+    }
+    for (const id of origins) {
+      const relay = await ctx.db.get(id);
+      if (relay) await bumpEpochAndRefresh(ctx, relay);
+    }
+    return { changed, switched };
   },
 });
 
