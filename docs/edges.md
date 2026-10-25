@@ -1397,7 +1397,8 @@ What a protect run writes to such a panel, in order:
 
 Its own lazy chunk under `src/client/routes/admin/edges/`, reached from ONE sidebar leaf
 (**Servers -> Edges**, lit on every `/admin/edges/*` path). Inside, a quiet in-page header row
-`Nodes | Providers | Advanced` (`components/SectionNav.svelte`) sits at the top of every page.
+`Nodes | Countries | Providers | Advanced` (`components/SectionNav.svelte`) sits at the top of
+every page.
 The section has two faces:
 
 **The simple screens** (`simple/`, plain words: origin -> protected node, edge -> address,
@@ -1484,6 +1485,12 @@ setup-runs/plan` lists the transports in words, a closed "Not supported yet" dis
   addresses blocked, Not checked yet, with the age), with the location marks (**Mark for a
   country**: Works there, Blocked there, Use the checks) and a conflict line where a mark
   disagrees with the checks; the inventory tab reads one location at a time.
+- **Countries** (`/admin/edges/countries`, `countries/CountriesPage`): every censored country in
+  one line each (addresses and names that work or are blocked there, nodes with no working
+  address there, how many members there hold a blocked address, the newest evidence); a country
+  (`/admin/edges/countries/<CC>`, `countries/CountryPage`) shows every node, transport, address
+  and name from there with the reason and its age, and what a member there is handed
+  (§ "The country view"). Read only: marks and checks stay on the node and name pages.
 - **Advanced** (`/admin/edges/advanced`): a plain list of links to the technical pages.
 
 **The technical pages**: **All origins** (`/admin/edges/advanced/origins`, the former
@@ -2769,6 +2776,55 @@ the names and the edges (`locateMember` / `locateAt`).
 - **Preview.** `POST render/preview {country}` (and "As a member in" on the preview) renders as
   a member whose stored country that is (a listed one): names chosen for it and, with steering
   on, addresses ordered for it, with the tier each endpoint came from.
+
+### The country view
+
+One place that answers "from this country, which of my addresses and server names work right
+now, why do we think so, and what is a member there handed" (Admin -> Edges -> Countries).
+Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, pure builder
+`convex/lib/edges/country/view.ts`).
+
+- **Routes** (read scope): `GET countries/summary` (every censored country with its totals, the
+  switches that feed the view, the control countries) and `GET countries/{CC}` (one country in
+  full; a code off the list answers too, `listed: null`). Contracts `CountryViewSummaryResponse`
+  and `CountryViewResponse` in `src/shared/contracts/edges.ts`. Times are epoch ms. Unlike
+  `GET countries`, the view carries addresses and names: it is the admin page that shows them.
+- **What is read.** Every enabled origin, its non-retired listeners, its active edges (published
+  ones first in pool order, then spares) and its published pool as the assignment sees it
+  (`publishedEdgesOf`, ineligible kept); per edge every country's evidence row and mark, per
+  location every country's mark and grade, per name every country's `sniNameCountry` mark and
+  `sniVantageEvidence` aggregate (its suggestion judged now, like the family page): ONE index
+  range per edge, location and name whatever the number of countries, each country then built in
+  memory (a transaction may touch 4,096 ranges; the summary of a 40-country list costs what one
+  country does). The detail route also reads that country's member report counts
+  (`sniReportCounts`, suspects judged against EVERY name of the family, as on the family page).
+- **An address's state** is the one delivery acts on: `edges.countryState` (an entry past its
+  `until` reads as not graded), with the BASIS it rests on: `mark` (the edge's), `location_mark`,
+  `checks` (its own rounds), `handshake` (the handshake track), `never_reached` (sustained
+  unreachability), `location` (its location's block). With nothing graded it falls back to the
+  outside probes alone, basis `probes`: reached = works, failing there while another country
+  reaches it = blocked, failing everywhere = not known (broken, not blocked). A `probes` state
+  is shown, never acted on. Each address carries its evidence (mark, grade, tracks, last round,
+  probes) with ages.
+- **A name's state** is the copy on the listener (what selection reads; `mark` or
+  `checks_mark` by who wrote it). With no mark, a suggestion of the checks from inside shows as
+  basis `checks` ("not applied"). The checks' latest reading and member reports are shown beside
+  it, and `offered` says whether a member there may be handed it (an `hrw1` listener never hands
+  a name blocked there).
+- **What a member there is handed** is `assignEndpoints` itself, run over 240 fixed synthetic
+  render keys, one listener at a time (every other listener's edges ineligible, as in a body
+  carrying only that transport), with the deployment's render rule for the `other` family as a
+  plain list of links, `delivery.country.steer` and `edge.country.minProvenForExclusive`, as a
+  freedom-family member whose stored country is this one. A country off the list is handed what
+  delivery hands it: the universal name pool and no steering. It reports shares: each address
+  as first address and as backup, each name, members with no address, holding an address
+  blocked there (first or backup; `onBlockedFirst` the first only), holding a name blocked
+  there (on either). No member row is read. Whatever changes in the assignment shows here by
+  itself.
+- **Totals**: published addresses by state, active names by the state delivery acts on (a mark;
+  an unapplied suggestion counts as not judged; each name once), nodes whose every published
+  address is blocked there (`atRisk`), the newest piece of evidence. The summary adds the worst
+  share of members holding a blocked address over every transport.
 
 **Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure, read per address
 family): `partial` = provider health + outside reachability over one family (at least

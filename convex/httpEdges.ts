@@ -487,6 +487,12 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     });
     return r ? json(r) : notFound();
   }
+  // The country view (edgeCountryView.ts): every listed country with its totals,
+  // or one country in full (origins -> transports -> addresses and names).
+  if (a === 'countries' && b === 'summary' && !c)
+    return json(await ctx.runQuery(internal.edgeCountryView.summary, {}));
+  if (a === 'countries' && b && /^[A-Za-z]{2}$/.test(b) && !c)
+    return json(await ctx.runQuery(internal.edgeCountryView.country, { country: b }));
   if (a === 'countries' && !b) {
     // Per-country checks of edges (edgeCountry.ts): grades, tracks, marks, sources.
     const [overview, sources] = await Promise.all([

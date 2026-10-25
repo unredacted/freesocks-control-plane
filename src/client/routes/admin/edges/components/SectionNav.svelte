@@ -19,6 +19,7 @@
 
   const LINKS: Array<{ id: SectionTab; label: string; href: string }> = [
     { id: 'nodes', label: 'Nodes', href: edgesPaths.home() },
+    { id: 'countries', label: 'Countries', href: edgesPaths.countries() },
     { id: 'providers', label: 'Providers', href: edgesPaths.providers() },
     { id: 'advanced', label: 'Advanced', href: edgesPaths.advanced() },
   ];

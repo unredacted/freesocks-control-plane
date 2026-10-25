@@ -14,6 +14,9 @@ import {
   COUNTRY_ROUND_RESULTS,
   COUNTRY_STATE_FROM,
   COUNTRY_TRACK_STATES,
+  COUNTRY_VIEW_ADDRESS_BASES,
+  COUNTRY_VIEW_HANDED_REASONS,
+  COUNTRY_VIEW_NAME_BASES,
   FREEDOM_WITHHELD_REASONS,
   INBOUND_UNSUPPORTED_CODES,
   PREFLIGHT_KINDS,
@@ -1411,6 +1414,246 @@ export const CountryMarkRequest = z.object({
 });
 export type CountryMarkRequest = z.infer<typeof CountryMarkRequest>;
 export const CountryMarkResponse = z.object({ ok: z.literal(true), edges: z.number() });
+
+// --- the country view (docs/edges.md "The country view") ----------------------------------------
+// Times are epoch ms. Addresses and names are shown (an admin page); see convex/edgeCountryView.ts.
+
+const ViewState = z.enum(COUNTRY_TRACK_STATES);
+const reachVerdict = z.enum(['reachable', 'unreachable', 'mixed', 'unknown']);
+
+/** The address-level probes from one country (the edge's or origin's reachability summary). */
+export const CountryViewProbes = z.object({
+  country: z.string(),
+  verdict: reachVerdict,
+  v6Verdict: reachVerdict.optional(),
+  nameVerdict: reachVerdict.optional(),
+  okVantages: z.number(),
+  failVantages: z.number(),
+  lastAt: z.number(),
+  wasReachable: z.boolean().optional(),
+  neverReached: z
+    .object({ checks: z.number(), networks: z.number(), since: z.number(), lastAt: z.number() })
+    .optional(),
+});
+
+/** One address (an edge, or the origin itself) of one transport, from one country. */
+export const CountryViewAddress = z.object({
+  edgeId: z.string().nullable(),
+  kind: z.enum(['edge', 'origin']),
+  layer: z.enum(['l4', 'l7']),
+  provider: z.string().nullable(),
+  /** The provider location's label (admin display). */
+  location: z.string().nullable(),
+  publication: z.string().nullable(),
+  poolIndex: z.number().nullable(),
+  /** The hostname of an L7 front, else IPv4, else IPv6. */
+  address: z.string(),
+  /** The IPv6 address beside an IPv4 one, with its own state from there (null = not known). */
+  v6: z.object({ address: z.string(), state: ViewState.nullable() }).nullable(),
+  state: ViewState,
+  basis: z.enum(COUNTRY_VIEW_ADDRESS_BASES),
+  /** How long a graded state holds (null: a mark, or not graded). */
+  until: z.number().nullable(),
+  evidence: z.object({
+    mark: z
+      .object({
+        state: z.enum(['proven', 'blocked']),
+        at: z.number(),
+        scope: z.enum(['edge', 'location']),
+      })
+      .nullable(),
+    grade: z
+      .object({
+        state: z.string(),
+        counts: z.object({ edges: z.number(), proven: z.number(), blocked: z.number() }),
+        until: z.number().optional(),
+      })
+      .nullable(),
+    address: z
+      .object({
+        state: ViewState,
+        reason: z.string().optional(),
+        decidedAt: z.number().optional(),
+        until: z.number().optional(),
+        blockedRounds: z.number(),
+      })
+      .nullable(),
+    handshake: z
+      .object({
+        state: z.enum(['blocked', 'none']),
+        reason: z.string().optional(),
+        until: z.number().optional(),
+        lastBatchAt: z.number().optional(),
+        batches: z.number(),
+      })
+      .nullable(),
+    round: z
+      .object({
+        at: z.number(),
+        result: z.string(),
+        reason: z.string().optional(),
+        ok: z.number(),
+        fail: z.number(),
+        networks: z.number(),
+        controlsOk: z.number(),
+        v6Result: z.string().optional(),
+      })
+      .nullable(),
+    probes: CountryViewProbes.nullable(),
+  }),
+  /** Shares (0..1) of the sampled members there holding it as primary / backup. */
+  handed: z.object({ primary: z.number(), backup: z.number() }),
+});
+export type CountryViewAddress = z.infer<typeof CountryViewAddress>;
+
+/** One server name of one transport, from one country. */
+export const CountryViewName = z.object({
+  name: z.string(),
+  family: z.string().nullable(),
+  status: z.enum(['active', 'retired']),
+  drainUntil: z.number().nullable(),
+  /** Its family's target serves it (null: not a family name). */
+  qualified: z.boolean().nullable(),
+  state: ViewState,
+  basis: z.enum(COUNTRY_VIEW_NAME_BASES),
+  markAt: z.number().nullable(),
+  /** A member there may be offered it (on an `hrw1` transport never one blocked there). */
+  offered: z.boolean(),
+  checks: z
+    .object({
+      latest: z.enum(['ok', 'failing', 'mixed', 'none']),
+      okVantages: z.number(),
+      okNetworks: z.number(),
+      failVantages: z.number(),
+      failNetworks: z.number(),
+      pathFailures: z.number(),
+      suggestion: z.enum(['proven', 'blocked']).nullable(),
+      reason: z.string().nullable(),
+      lastAt: z.number().nullable(),
+      lastOkAt: z.number().nullable(),
+    })
+    .nullable(),
+  reports: z.object({ weight: z.number(), suspect: z.boolean() }).nullable(),
+  /** Share of the sampled members there handed it on their primary address. */
+  handed: z.number(),
+});
+export type CountryViewName = z.infer<typeof CountryViewName>;
+
+const CountryViewShare = z.object({ id: z.string(), share: z.number() });
+
+/** What a freedom-family member there is handed on one transport (the assignment over a sample). */
+export const CountryViewHanded = z.object({
+  computed: z.boolean(),
+  reason: z.enum(COUNTRY_VIEW_HANDED_REASONS).nullable(),
+  /** Addresses ordered by this country (`delivery.country.steer`). */
+  steered: z.boolean(),
+  /** Names chosen for this country (an `hrw1` transport). */
+  namesByCountry: z.boolean(),
+  sample: z.number(),
+  primary: z.array(CountryViewShare),
+  backup: z.array(CountryViewShare),
+  names: z.array(CountryViewShare),
+  none: z.number(),
+  /** Members holding an address blocked there, as their first address or their backup. */
+  onBlockedAddress: z.number(),
+  /** Members whose first address is blocked there (part of `onBlockedAddress`). */
+  onBlockedFirst: z.number(),
+  /** Members holding a server name blocked there, on either address. */
+  onBlockedName: z.number(),
+});
+export type CountryViewHanded = z.infer<typeof CountryViewHanded>;
+
+export const CountryViewListener = z.object({
+  listenerId: z.string(),
+  key: z.string(),
+  protocol: ListenerProtocolId,
+  streamTransport: ListenerStreamTransport,
+  security: ListenerSecurity,
+  usable: z.boolean(),
+  addresses: z.array(CountryViewAddress),
+  names: z.array(CountryViewName),
+  members: CountryViewHanded,
+});
+export type CountryViewListener = z.infer<typeof CountryViewListener>;
+
+export const CountryViewOrigin = z.object({
+  relayId: z.string(),
+  slug: z.string(),
+  label: z.string().nullable(),
+  kind: z.string(),
+  nodeName: z.string().nullable(),
+  enabled: z.boolean(),
+  listeners: z.array(CountryViewListener),
+  direct: CountryViewAddress.nullable(),
+  /** Every published address of it is blocked there. */
+  atRisk: z.boolean(),
+});
+export type CountryViewOrigin = z.infer<typeof CountryViewOrigin>;
+
+const CountryViewCounts = z.object({
+  proven: z.number(),
+  blocked: z.number(),
+  unknown: z.number(),
+});
+export const CountryViewTotals = z.object({
+  /** Published addresses. */
+  addresses: CountryViewCounts,
+  /** Active names, each counted once. */
+  names: CountryViewCounts,
+  originsAtRisk: z.number(),
+  lastEvidenceAt: z.number().nullable(),
+});
+export type CountryViewTotals = z.infer<typeof CountryViewTotals>;
+
+/** What feeds the view, switched on or not. */
+export const CountryViewSwitches = z.object({
+  probes: z.boolean(),
+  countryChecks: z.boolean(),
+  steering: z.boolean(),
+  render: z.boolean(),
+  names: z.boolean(),
+  nameChecks: z.boolean(),
+});
+export type CountryViewSwitches = z.infer<typeof CountryViewSwitches>;
+
+const CountryViewListed = z.object({
+  checkEdges: z.boolean(),
+  checkNamesInside: z.boolean(),
+  /** Name checks actually run from there (switch on, a usable source, opted in). */
+  nameChecksRun: z.boolean(),
+});
+
+/** `GET countries/summary`: every listed country with its totals. */
+export const CountryViewSummaryResponse = z.object({
+  generatedAt: z.number(),
+  switches: CountryViewSwitches,
+  controls: z.array(z.string()),
+  origins: z.number(),
+  countries: z.array(
+    z.object({
+      country: z.string(),
+      listed: CountryViewListed,
+      totals: CountryViewTotals,
+      /** The worst share of members there on an address blocked there (null: nothing rendered). */
+      worstOnBlocked: z.number().nullable(),
+    }),
+  ),
+});
+export type CountryViewSummaryResponse = z.infer<typeof CountryViewSummaryResponse>;
+
+/** `GET countries/{CC}`: one country in full. */
+export const CountryViewResponse = z.object({
+  country: z.string(),
+  generatedAt: z.number(),
+  /** Null: not on the censored-country list (nothing is checked from there). */
+  listed: CountryViewListed.nullable(),
+  switches: CountryViewSwitches,
+  controls: z.array(z.string()),
+  curated: z.boolean(),
+  totals: CountryViewTotals,
+  origins: z.array(CountryViewOrigin),
+});
+export type CountryViewResponse = z.infer<typeof CountryViewResponse>;
 
 export const ProbeRunsResponse = z.object({ runs: z.array(ProbeRunAdmin) });
 
