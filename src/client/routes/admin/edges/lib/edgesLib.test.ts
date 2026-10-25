@@ -97,6 +97,14 @@ describe('resolveEdgesRoute / edgesPaths', () => {
     ] as const)
       expect(sectionTabOf({ page })).toBe('advanced');
     expect(sectionTabOf({ page: 'family', slug: 'a' })).toBe('advanced');
+    expect(sectionTabOf({ page: 'countries' })).toBe('countries');
+    expect(sectionTabOf({ page: 'country', code: 'IR' })).toBe('countries');
+    expect(resolveEdgesRoute('/admin/edges/countries')).toEqual({ page: 'countries' });
+    expect(resolveEdgesRoute(edgesPaths.country('ir'))).toEqual({ page: 'country', code: 'IR' });
+    expect(edgesPaths.country('ir', { node: 'node a' })).toBe(
+      '/admin/edges/countries/IR?node=node+a',
+    );
+    expect(resolveEdgesRoute('/admin/edges/countries/iran')).toEqual({ page: 'not-found' });
     expect(resolveEdgesRoute('/admin/edges/names')).toEqual({ page: 'names' });
     expect(resolveEdgesRoute(edgesPaths.family('fam a'))).toEqual({
       page: 'family',

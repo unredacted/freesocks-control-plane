@@ -689,6 +689,35 @@ export const COUNTRY_STATE_FROM = ['edge', 'group', 'mark'] as const;
 export type CountryStateFrom = (typeof COUNTRY_STATE_FROM)[number];
 
 /**
+ * The country view (docs/edges.md "The country view", convex/lib/edges/country/view.ts):
+ * why an address counts as it does from one country. Every basis but `probes`
+ * and `none` is what delivery acts on (`edges.countryState`).
+ */
+export const COUNTRY_VIEW_ADDRESS_BASES = [
+  'mark',
+  'location_mark',
+  'checks',
+  'handshake',
+  'never_reached',
+  'location',
+  'probes',
+  'none',
+] as const;
+export type CountryViewAddressBasis = (typeof COUNTRY_VIEW_ADDRESS_BASES)[number];
+
+/** Why a server name counts as it does from one country (`checks` = suggested, not applied). */
+export const COUNTRY_VIEW_NAME_BASES = ['mark', 'checks_mark', 'checks', 'none'] as const;
+export type CountryViewNameBasis = (typeof COUNTRY_VIEW_NAME_BASES)[number];
+
+/** Why the view could not work out what a member there is handed on a transport. */
+export const COUNTRY_VIEW_HANDED_REASONS = [
+  'render_off',
+  'origin_disabled',
+  'no_published',
+] as const;
+export type CountryViewHandedReason = (typeof COUNTRY_VIEW_HANDED_REASONS)[number];
+
+/**
  * Every reason the server records on a round or a track (verdict.ts). The
  * admin words them in one place (routes/admin/edges/lib/statusWords.ts, pinned
  * by a test that reads the server's rules for the literals it writes).
