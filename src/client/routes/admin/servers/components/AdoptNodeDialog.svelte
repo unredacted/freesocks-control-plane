@@ -57,7 +57,10 @@
         p.transports.filter((x) => x.tag === picked!.tag).map((x) => x.transportUuid),
       ),
     );
-    return tree.addresses.filter((a) => !!a.transportUuid && uuids.has(a.transportUuid));
+    // Only what serves members now: a turned-off address is not adopted as live.
+    return tree.addresses.filter(
+      (a) => !a.isDisabled && !!a.transportUuid && uuids.has(a.transportUuid),
+    );
   });
   const toggle = (uuid: string, on: boolean) => {
     hostUuids = on ? [...new Set([...hostUuids, uuid])] : hostUuids.filter((u) => u !== uuid);

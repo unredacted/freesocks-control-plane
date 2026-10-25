@@ -828,7 +828,7 @@ export const confirmDirect = internalMutation({
       inboundUuid: reality.uuid,
       endpoint: adopted
         ? endpointOf(adopted)
-        : `${originAddressOf(intent, hostname)}:${reality.port}`,
+        : hostPort(originAddressOf(intent, hostname), reality.port),
       machineRevision: intent.machineRevision,
       configRevision: intent.configRevision ?? '',
       authRevision: intent.authRevision ?? null,
@@ -1157,13 +1157,30 @@ export const noteEnabled = internalMutation({
   },
 });
 
-/** The rollback of a failed or superseded run sent its disables: it owns none of them any more. */
+/**
+ * The rollback of a failed or superseded run sent its disables: it owns none
+ * of the addresses the backend now shows off (or gone) any more. One whose
+ * disable was refused or has no known outcome stays owned, for a retry or the
+ * next approval to take over. A disable that landed was seen by its ledger
+ * look, which brought the cache in line.
+ */
 export const releaseEnabled = internalMutation({
   args: { runId: v.id('panelActivationRuns'), hostUuids: v.array(v.string()) },
   handler: async (ctx, { runId, hostUuids }) => {
     const run = await ctx.db.get(runId);
     if (!run?.enabledHostUuids) return null;
-    const left = run.enabledHostUuids.filter((u) => !hostUuids.includes(u));
+    const hosts = await ctx.db
+      .query('panelHosts')
+      .withIndex('by_server', (q) => q.eq('backendServerId', run.backendServerId))
+      .collect();
+    const off = new Set(
+      hostUuids.filter((u) => {
+        const h = hosts.find((x) => x.hostUuid === u);
+        return !h || h.isDisabled;
+      }),
+    );
+    if (off.size === 0) return null;
+    const left = run.enabledHostUuids.filter((u) => !off.has(u));
     await ctx.db.patch(runId, {
       enabledHostUuids: left.length > 0 ? left : undefined,
       updatedAt: Date.now(),
@@ -1338,7 +1355,8 @@ export const runDirect = internalAction({
             await ctx.runAction(internal.backendWrites.run, { opId });
           }
           // Turned off: the run owns none of them any more, so a later
-          // approval never takes over one an operator turns on again.
+          // approval never takes over one an operator turns on again. One
+          // the backend did not turn off stays owned.
           if (off.length > 0)
             await ctx.runMutation(internal.nodeActivation.releaseEnabled, {
               runId,

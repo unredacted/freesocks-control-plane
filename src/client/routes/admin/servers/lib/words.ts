@@ -398,7 +398,7 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.adopt_addresses_missing':
     "No address on this node's transport carries its name or address. Tick the addresses members use for it.",
   'servers.adopt_address_unknown':
-    'An address you ticked is not on that transport any more, or another node has it. Refresh and pick again.',
+    'An address you ticked is turned off, not on that transport any more, or another node has it. Refresh and pick again.',
   'servers.mode_change_needs_admin':
     'A node keeps its mode. Change it from here, then run the role again.',
   'servers.node_exists_unowned':

@@ -571,8 +571,10 @@ export const adoptNode = internalMutation({
           .collect()
       ).flatMap((i) => i.addressUuids ?? []),
     );
+    // Only what the backend serves now is live: a turned-off Host was retired
+    // by someone, and a re-approval would turn it back on as a candidate.
     const usable = hosts.filter(
-      (h) => h.configProfileInboundUuid === t.uuid && !taken.has(h.hostUuid),
+      (h) => h.configProfileInboundUuid === t.uuid && !h.isDisabled && !taken.has(h.hostUuid),
     );
     if (a.hostUuids && !direct)
       refuse('validation', 'A node members reach through an edge is adopted without addresses');
@@ -583,7 +585,7 @@ export const adoptNode = internalMutation({
     if (named?.some((u) => !usable.some((h) => h.hostUuid === u)))
       refuse(
         'servers.adopt_address_unknown',
-        `An address you named is not free on the ${mode.name} transport. Refresh Servers`,
+        `An address you named is off, not on the ${mode.name} transport, or another node's. Refresh Servers`,
       );
     const addresses = !direct
       ? []
@@ -598,7 +600,7 @@ export const adoptNode = internalMutation({
     if (direct && addresses.length === 0)
       refuse(
         'servers.adopt_addresses_missing',
-        'No address on its transport carries this node’s name or address. Name its addresses',
+        'No address turned on on its transport carries this node’s name or address. Name its addresses',
       );
     const profile = await ctx.db
       .query('panelProfiles')

@@ -16,6 +16,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { insertPanelServer, registerRelay } from './lib/edges/testing/fixtures';
 import { installFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBackend';
+import { jsonRes, routeFetch, type Captured } from './lib/edges/testing/mockFetch';
 import { gateOfNode } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -222,6 +223,41 @@ describe('adopting a direct node the node role set up', () => {
     });
     expect(r.addresses).toBe(1);
     expect((await intentOf(s.t, r.intentId))!.addressUuids).toEqual([hostUuid]);
+  });
+
+  test('a turned-off Host is never adopted as live, found or named', async () => {
+    const s = await seed();
+    const { nodeUuid, hostUuid } = await legacyDirect(s);
+    s.panel.hosts.push({
+      uuid: UUID(202),
+      remark: 'legacy-a-reality-0a0b0c',
+      address: 'old-a.example.net',
+      port: 443,
+      sni: 'decoy-a.example',
+      inbound: {
+        configProfileUuid: s.panel.profiles[0].uuid,
+        configProfileInboundUuid: s.reality.uuid,
+      },
+      isDisabled: true,
+    });
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    await expect(
+      s.t.mutation(internal.nodeIntents.adoptNode, {
+        backendServerId: s.serverId,
+        nodeUuid,
+        mode: 'privacy-reality',
+        hostUuids: [hostUuid, UUID(202)],
+      }),
+    ).rejects.toThrow(/servers\.adopt_address_unknown/);
+    const r = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    expect((await intentOf(s.t, r.intentId))!).toMatchObject({
+      addressUuids: [hostUuid],
+      approved: { committed: { hostUuids: [hostUuid] } },
+    });
   });
 
   test('an IPv6 Host is dialed in brackets by the test link and its binding', async () => {
@@ -476,6 +512,50 @@ describe('re-approving an adopted direct node', () => {
   });
 });
 
+describe('a rollback the backend refuses', () => {
+  test('keeps the address owned, so the next approval can still turn it off', async () => {
+    const s = await seed();
+    const { nodeUuid, hostUuid } = await legacyDirect(s);
+    const { intentId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    await throughMaintenance(s.t, intentId);
+    s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled = true;
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const built = await s.t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await s.t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    s.panel.profiles[0].publicKeyByTag[TAG] = 'not-the-key';
+    // The backend refuses every write that turns a Host off.
+    s.panel.stub.route(
+      routeFetch((c: Captured) => {
+        const body = c.body as { isDisabled?: boolean } | undefined;
+        return c.method === 'PATCH' && c.path === '/api/hosts' && body?.isDisabled === true
+          ? jsonRes({ message: 'Bad Request' }, 400)
+          : null;
+      }, s.panel.handle),
+    );
+    const review = await s.t.query(internal.nodeActivation.review, { intentId });
+    const { runId } = await s.t.mutation(internal.nodeActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    await until(
+      () => s.t.run((ctx) => ctx.db.get(runId)),
+      (r) => !!r && r.state !== 'running',
+    );
+    // Let the rollback finish trying.
+    await until(
+      () => s.t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect()),
+      (rows) => rows.every((r) => r.state.kind !== 'pending' && r.state.kind !== 'inProgress'),
+    );
+    expect(s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled).toBe(false);
+    expect((await s.t.run((ctx) => ctx.db.get(runId)))!.enabledHostUuids).toEqual([hostUuid]);
+  });
+});
+
 describe('an adopted node whose edge FCP does not run', () => {
   test('comes back live after maintenance: the approval commits, nothing is left waiting', async () => {
     const s = await seed();
@@ -598,6 +678,25 @@ describe('an enrolled node', () => {
       (c) => c === 'DE',
     );
     expect((await idle(s.t, intentId)).settings.countryCode).toBe('DE');
+  });
+
+  test('one reached at an IPv6 address is confirmed at the bracketed endpoint it was tested at', async () => {
+    const s = await seed();
+    const intentId = await enrolled(s);
+    await s.t.run(async (ctx) => {
+      const i = (await ctx.db.get(intentId))!;
+      await ctx.db.patch(intentId, {
+        settings: { ...i.settings, originAddressOverride: '2001:db8::10' },
+      });
+    });
+    const built = await s.t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    expect(built.binding.endpoint).toBe('[2001:db8::10]:443');
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    const confirmed = await s.t.mutation(internal.nodeActivation.confirmDirect, {
+      intentId,
+      binding,
+    });
+    expect(confirmed.stage).toBe('candidates_verified');
   });
 
   test('its test link is built while the backend is out of the issuance pool', async () => {
