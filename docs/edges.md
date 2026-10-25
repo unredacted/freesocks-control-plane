@@ -1298,23 +1298,28 @@ reach it through a load balancer the operator built by hand, by an operator Host
 client version is Xray-core v26.3.27`), so every sing-box and Mihomo member is refused
   (`reality verification failed` on the client) while the test link passes in an up-to-date
   Xray client. FCP's own profile template sets `1.8.1`; a hand-built transport often sets
-  nothing. The plan reads the transport's two bounds and the node's Xray version from the panel
-  (`edgeRealityClients.check`; the version is `versions.xray` on the node row, `xrayVersion` on
-  a 2.x panel) and judges them (`src/shared/contracts/realityClients.ts`): a transport that
-  refuses a family is marked `refusesClients {cause, refuses, xrayVersion, minClientVer,
-maxClientVer}` in the plan, `cause` one of `core_default` (no `minClientVer` on such an Xray),
-  `core_unknown` (no `minClientVer`, and the node's version could not be read), `min_above` or
-  `max_below` (bounds that leave a family out). It is a warning: the Protect sheet names it on
-  the transport and in the review with the fix (`"minClientVer": "1.8.1"` in the transport's
-  `realitySettings`), and the create goes on. The test card reads it again when it is built
-  (`testLinks[].realityClients`, null when every family gets in): a REALITY line that refuses
-  them says why and to test with one of those clients; every other REALITY line says to try a
-  sing-box or Mihomo client too. Once the node is protected the reconcile keeps looking (§
-  "Direct-Host hides and the restore workflow"). Xray v26.9.9 dropped the default minimum again,
-  but from that release on a REALITY server refuses a Client Hello that does not offer
-  X25519MLKEM768 ahead of X25519, which is a client setting (Mihomo's
-  `support-x25519mlkem768`), not one of the transport's: test with each client family after a
-  node upgrade.
+  nothing. From v26.9.8 on the default is gone, but the server refuses a Client Hello without an
+  X25519MLKEM768 key share ahead of X25519, and sing-box strips that share (SagerNet/sing-box
+  issue 4520, open as of 1.14.1), so no setting of the transport lets sing-box in there; recent
+  Mihomo sends it. The plan reads the transport's two bounds and the node's Xray version from the
+  panel (`edgeRealityClients.check`; the version is `versions.xray` on the node row,
+  `xrayVersion` on a 2.x panel) and judges them (`src/shared/contracts/realityClients.ts`): a
+  transport that refuses a family is marked `refusesClients {refuses, reasons, xrayVersion,
+minClientVer, maxClientVer}` in the plan. Each restriction is its own reason with the families
+  it refuses (`reasons[] {cause, families}`), so a low minimum and a low maximum are both named
+  with both fixes: `min_above` (`minClientVer` above what the family sends), `core_default` (no
+  `minClientVer` on v26.7.11 to v26.7.28), `max_below` (`maxClientVer` below it), `core_key_share`
+  (v26.9.8 on: sing-box, whatever the transport sets) and `core_unknown` (the node's version could
+  not be read and a core rule may hold: never "they get in" while it is unknown). It is a
+  warning: the Protect sheet names it on the transport and in the review with each reason and
+  its fix (`"minClientVer": "1.8.1"`, or removing a low `maxClientVer`; for the key share, a node
+  on v26.7.28 or earlier, or another node for sing-box members), and the create goes on. The test
+  card reads it again when it is built (`testLinks[].realityClients`, null when every family
+  gets in): a REALITY line that refuses them says why and to test with one of those clients;
+  every other REALITY line says to try a sing-box or Mihomo client too. Once the node is
+  protected the reconcile keeps looking (§ "Direct-Host hides and the restore workflow"). An
+  older Mihomo may need `support-x25519mlkem768` in its client configuration on v26.9.8 on, which
+  FCP does not judge: test with each client family after a node upgrade.
 - **Its check account's group.** A test entry built from a transport carries the check account,
   and the node accepts it there only from a mode group (internal squad) holding that transport.
   So unless a placement or the origin's qualification mode was chosen, `relayQualification.ensure`
@@ -1624,11 +1629,13 @@ After the Host look, the same pass judges every bound origin's REALITY listeners
 (`edgeRealityClients.reobserve`: each transport's `minClientVer` / `maxClientVer` and the node's
 Xray version, read live; § "Protecting a node FCP does not manage"). A transport that refuses
 sing-box or Mihomo clients is kept on the origin (`relays.realityClients`, rewritten only when
-the verdict moves) and raises attention `reality_refuses_clients` (warning, code `reality_<cause>`,
-facts `count`, `refuses`, `tags`; Open the node) and the `relay` step's warning in
-`setup-status` (subject the listener key, detail the same `reality_<cause>`, which the admin words with its fix). Members on Xray clients keep
-connecting, so nothing else changes. A transport the panel could not describe this pass keeps
-what was known of it; the fix clears both at the next pass.
+the verdict moves) and raises attention `reality_refuses_clients` (warning, Open the node; facts
+`count`, `refuses` and `transports[] {tag, refusal}`, from which the admin words the row: each
+transport's families, reasons and fixes) and, per reason, a `relay` step warning in
+`setup-status` (subject the listener key, detail `reality_<cause>`, which the admin shows in its
+own words with its fix). Members on Xray clients keep connecting, so nothing else changes. A
+transport the panel could not describe this pass keeps what was known of it; the fix clears
+both at the next pass.
 
 **The restore workflow** (`relays.restore {purpose, phase, ...}`, `convex/edgeRestore.ts`;
 `edgeRestore.step` advances one phase, and each `edge-reconcile` tick chains steps until a phase

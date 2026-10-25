@@ -54,8 +54,8 @@ export interface SetupListenerFacts {
   activeNames: number;
   l7Only: boolean;
   templateEdgeId: string | null;
-  /** Why this REALITY listener refuses sing-box or Mihomo clients (`reality_<cause>`), when it does. */
-  refusesClients?: string;
+  /** Why this REALITY listener refuses sing-box or Mihomo clients (one `reality_<cause>` per reason), when it does. */
+  refusesClients?: string[];
 }
 
 export interface SetupAccountFacts {
@@ -295,7 +295,8 @@ export function computeSetupStatus(input: SetupInput): SetupResult {
         if (l.excluded.l4 === 'no_udp_provider' && l.layers.length === 0)
           b.push(blocker('no_udp_provider', l.key));
         // A warning: members on those clients cannot connect, the rest can.
-        if (l.refusesClients) w.push(blocker('reality_refuses_clients', l.key, l.refusesClients));
+        for (const why of l.refusesClients ?? [])
+          w.push(blocker('reality_refuses_clients', l.key, why));
       }
       if (relay.deliveryRequired && relay.publishedCount === 0)
         w.push(blocker('members_dark', relay.slug));

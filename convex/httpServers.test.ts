@@ -401,8 +401,8 @@ describe('/api/v1/admin/servers', () => {
     expect(tree.nodes[0]!.xrayVersion).toBe('26.7.28');
     // What the adopt dialog names before members are put on the node.
     expect(tree.nodes[0]!.transports[0]!.realityRefusal).toEqual({
-      cause: 'core_default',
       refuses: ['singbox', 'mihomo'],
+      reasons: [{ cause: 'core_default', families: ['singbox', 'mihomo'] }],
       xrayVersion: '26.7.28',
       minClientVer: null,
       maxClientVer: null,
@@ -415,7 +415,9 @@ describe('/api/v1/admin/servers', () => {
     panel.nodes[0]!.versions = null;
     tree = ServerTree.parse(await (await call('POST', 'panel-a/refresh')).json());
     expect(tree.nodes[0]!.xrayVersion).toBeNull();
-    expect(tree.nodes[0]!.transports[0]!.realityRefusal?.cause).toBe('core_unknown');
+    expect(tree.nodes[0]!.transports[0]!.realityRefusal?.reasons).toEqual([
+      { cause: 'core_unknown', families: ['singbox', 'mihomo'] },
+    ]);
   });
 
   test('no response carries a secret', async () => {

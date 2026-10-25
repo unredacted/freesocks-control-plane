@@ -75,7 +75,10 @@ import {
 } from './relays';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
 import { mapEdgeAdmin } from './edges';
-import { REALITY_CLIENT_FAMILIES } from '../src/shared/contracts/realityClients';
+import {
+  REALITY_CLIENT_FAMILIES,
+  type RealityClientRefusal,
+} from '../src/shared/contracts/realityClients';
 import {
   mapRotationAdmin,
   collectStartBlockers,
@@ -185,8 +188,10 @@ function withRefusals(
 ): SetupInput['listeners'] {
   const refusals = relay.realityClients?.refusals ?? [];
   return listeners.map((l) => {
-    const cause = refusals.find((r) => r.listenerKey === l.key)?.cause;
-    return cause ? { ...l, refusesClients: `reality_${cause}` } : l;
+    const reasons = refusals.find((r) => r.listenerKey === l.key)?.reasons ?? [];
+    return reasons.length > 0
+      ? { ...l, refusesClients: reasons.map((r) => `reality_${r.cause}`) }
+      : l;
   });
 }
 
@@ -1078,24 +1083,22 @@ export function frontHostFacts(
 /**
  * The REALITY transports of the origin that refuse sing-box or Mihomo clients,
  * as the reconcile's last look saw them (`relays.realityClients`): how many,
- * which families (any of them), their tags, and the cause of the first (a
- * cause FCP is sure of before `core_unknown`). Null when none does.
+ * which families (any of them), and each transport's tag with its verdict, from
+ * which the admin words the row (its families, reasons and fixes). Null when
+ * none does.
  */
 export function realityRefusalFacts(relay: Pick<Doc<'relays'>, 'realityClients'>): {
   count: number;
   refuses: string[];
-  tags: string[];
-  cause: string;
+  transports: Array<{ tag: string; refusal: RealityClientRefusal }>;
   since: number;
 } | null {
   const rows = relay.realityClients?.refusals ?? [];
   if (rows.length === 0) return null;
-  const sure = rows.find((r) => r.cause !== 'core_unknown') ?? rows[0]!;
   return {
     count: rows.length,
     refuses: REALITY_CLIENT_FAMILIES.filter((f) => rows.some((r) => r.refuses.includes(f))),
-    tags: rows.map((r) => r.tag),
-    cause: sure.cause,
+    transports: rows.map(({ listenerKey: _key, tag, ...refusal }) => ({ tag, refusal })),
     since: relay.realityClients!.at,
   };
 }
@@ -1302,8 +1305,12 @@ export const attention = internalQuery({
           id: `reality_refuses_clients:${relay._id}`,
           kind: 'reality_refuses_clients',
           severity: 'warning',
-          code: `reality_${refusing.cause}`,
-          facts: { count: refusing.count, refuses: refusing.refuses, tags: refusing.tags },
+          code: null,
+          facts: {
+            count: refusing.count,
+            refuses: refusing.refuses,
+            transports: refusing.transports,
+          },
           action: 'open_relay',
           since: iso(refusing.since),
         });

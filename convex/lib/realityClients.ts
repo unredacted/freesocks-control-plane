@@ -11,9 +11,16 @@ import {
 
 const nullableString = v.union(v.string(), v.null());
 
+const familyV = v.union(...REALITY_CLIENT_FAMILIES.map((f) => v.literal(f)));
+
 export const realityClientRefusalFields = {
-  cause: v.union(...REALITY_REFUSAL_CAUSES.map((c) => v.literal(c))),
-  refuses: v.array(v.union(...REALITY_CLIENT_FAMILIES.map((f) => v.literal(f)))),
+  refuses: v.array(familyV),
+  reasons: v.array(
+    v.object({
+      cause: v.union(...REALITY_REFUSAL_CAUSES.map((c) => v.literal(c))),
+      families: v.array(familyV),
+    }),
+  ),
   xrayVersion: nullableString,
   minClientVer: nullableString,
   maxClientVer: nullableString,

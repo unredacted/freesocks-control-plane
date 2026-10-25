@@ -114,8 +114,8 @@ describe('checking a REALITY transport on the panel', () => {
         key: 'a',
         tag: 'VLESS_RELAY_A',
         refusal: {
-          cause: 'core_default',
           refuses: ['singbox', 'mihomo'],
+          reasons: [{ cause: 'core_default', families: ['singbox', 'mihomo'] }],
           xrayVersion: '26.7.28',
           minClientVer: null,
           maxClientVer: null,
@@ -124,20 +124,30 @@ describe('checking a REALITY transport on the panel', () => {
     ]);
   });
 
-  test('"minClientVer": "1.8.1" lets them in; an Xray without the default needs none', async () => {
+  test('"minClientVer": "1.8.1" lets them in; an Xray before the default needs none', async () => {
     expect(
       (await check(await world({ bounds: { minClientVer: '1.8.1' } })))[0]!.refusal,
     ).toBeNull();
-    expect((await check(await world({ xray: '26.10.21' })))[0]!.refusal).toBeNull();
+    expect((await check(await world({ xray: '26.6.27' })))[0]!.refusal).toBeNull();
+  });
+
+  test('from Xray 26.9.8 on, sing-box is refused whatever the transport sets', async () => {
+    expect(
+      (await check(await world({ bounds: { minClientVer: '1.8.1' }, xray: '26.10.21' })))[0]!
+        .refusal,
+    ).toMatchObject({
+      refuses: ['singbox'],
+      reasons: [{ cause: 'core_key_share', families: ['singbox'] }],
+    });
   });
 
   test('a minClientVer above 1.8.1 refuses sing-box; a node that has not answered is unknown', async () => {
     expect(
-      (await check(await world({ bounds: { minClientVer: '1.8.2' }, xray: '26.10.21' })))[0]!
+      (await check(await world({ bounds: { minClientVer: '1.8.2' }, xray: '26.6.27' })))[0]!
         .refusal,
-    ).toMatchObject({ cause: 'min_above', refuses: ['singbox'] });
+    ).toMatchObject({ refuses: ['singbox'], reasons: [{ cause: 'min_above' }] });
     expect((await check(await world({ xray: null })))[0]!.refusal).toMatchObject({
-      cause: 'core_unknown',
+      reasons: [{ cause: 'core_unknown', families: ['singbox', 'mihomo'] }],
       xrayVersion: null,
     });
   });
@@ -153,7 +163,7 @@ describe('checking a REALITY transport on the panel', () => {
 });
 
 describe('a protected origin whose REALITY transport refuses clients', () => {
-  test('the reconcile records it, attention and setup-status warn with the cause, and a fix clears both at the next look', async () => {
+  test('the reconcile records it, attention and setup-status warn with each reason, and a fix clears both at the next look', async () => {
     const w = await world();
     expect(await w.attention()).toEqual([]);
     // The edge reconcile's Host pass runs the look after the direct-Host check.
@@ -162,8 +172,8 @@ describe('a protected origin whose REALITY transport refuses clients', () => {
       {
         listenerKey: 'a',
         tag: 'VLESS_RELAY_A',
-        cause: 'core_default',
         refuses: ['singbox', 'mihomo'],
+        reasons: [{ cause: 'core_default', families: ['singbox', 'mihomo'] }],
         xrayVersion: '26.7.28',
         minClientVer: null,
         maxClientVer: null,
@@ -174,8 +184,24 @@ describe('a protected origin whose REALITY transport refuses clients', () => {
       kind: 'reality_refuses_clients',
       severity: 'warning',
       relaySlug: 'node-one',
-      code: 'reality_core_default',
-      facts: { count: 1, refuses: ['singbox', 'mihomo'], tags: ['VLESS_RELAY_A'] },
+      // The row is worded from the verdict it carries (families, reasons, fixes).
+      code: null,
+      facts: {
+        count: 1,
+        refuses: ['singbox', 'mihomo'],
+        transports: [
+          {
+            tag: 'VLESS_RELAY_A',
+            refusal: {
+              refuses: ['singbox', 'mihomo'],
+              reasons: [{ cause: 'core_default', families: ['singbox', 'mihomo'] }],
+              xrayVersion: '26.7.28',
+              minClientVer: null,
+              maxClientVer: null,
+            },
+          },
+        ],
+      },
       action: 'open_relay',
     });
     expect(await w.relayWarnings()).toEqual([
@@ -186,6 +212,14 @@ describe('a protected origin whose REALITY transport refuses clients', () => {
     await w.t.action(internal.edgeRealityClients.reobserve, {});
     expect((await w.relay()).realityClients!.at).toBe(at);
 
+    // A second restriction is its own warning, with its own reason.
+    w.served.profiles = { [FIXTURE_CONFIG_PROFILE]: profile({ maxClientVer: '1.8.1' }) };
+    await w.t.action(internal.edgeRealityClients.reobserve, {});
+    expect(await w.relayWarnings()).toEqual([
+      { code: 'reality_refuses_clients', subject: 'a', detail: 'reality_core_default' },
+      { code: 'reality_refuses_clients', subject: 'a', detail: 'reality_max_below' },
+    ]);
+
     // The operator adds the fix in the backend: the next look clears it.
     w.served.profiles = { [FIXTURE_CONFIG_PROFILE]: profile({ minClientVer: '1.8.1' }) };
     await w.t.action(internal.edgeRealityClients.reobserve, {});
@@ -194,7 +228,7 @@ describe('a protected origin whose REALITY transport refuses clients', () => {
     expect(await w.relayWarnings()).toEqual([]);
   });
 
-  test('a look the panel could not answer keeps what was known; a node upgraded past the default clears it', async () => {
+  test('a look the panel could not answer keeps what was known; a node moved off the default release clears it', async () => {
     const w = await world();
     await w.t.action(internal.edgeRealityClients.reobserve, {});
     expect((await w.relay()).realityClients?.refusals).toHaveLength(1);
@@ -203,9 +237,15 @@ describe('a protected origin whose REALITY transport refuses clients', () => {
     await w.t.action(internal.edgeRealityClients.reobserve, {});
     expect((await w.relay()).realityClients?.refusals).toHaveLength(1);
     w.served.profiles = known;
-    w.served.nodes = [nodeRow('26.10.21')];
+    w.served.nodes = [nodeRow('26.6.27')];
     await w.t.action(internal.edgeRealityClients.reobserve, {});
     expect((await w.relay()).realityClients).toBeUndefined();
+    // Past 26.9.8 the default is gone, but sing-box is refused for another reason.
+    w.served.nodes = [nodeRow('26.10.21')];
+    await w.t.action(internal.edgeRealityClients.reobserve, {});
+    expect((await w.relay()).realityClients?.refusals[0]?.reasons).toEqual([
+      { cause: 'core_key_share', families: ['singbox'] },
+    ]);
   });
 
   test('an origin that is not bound yet is not looked at', async () => {

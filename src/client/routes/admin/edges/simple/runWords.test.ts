@@ -226,8 +226,10 @@ describe('runTestItems', () => {
     ...over,
   });
   const refusal = {
-    cause: 'core_default' as const,
     refuses: ['singbox' as const, 'mihomo' as const],
+    reasons: [
+      { cause: 'core_default' as const, families: ['singbox' as const, 'mihomo' as const] },
+    ],
     xrayVersion: '26.7.28',
     minClientVer: null,
     maxClientVer: null,

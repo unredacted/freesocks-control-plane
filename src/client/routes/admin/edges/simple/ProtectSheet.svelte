@@ -1152,7 +1152,7 @@
             <p class="mt-1">{r.fix}</p>
             <p class="text-muted-foreground mt-1 text-xs">
               You can protect the node all the same. Once it is live, it shows this warning until
-              the transport lets them in.
+              these clients can connect.
             </p>
           </div>
         {/each}

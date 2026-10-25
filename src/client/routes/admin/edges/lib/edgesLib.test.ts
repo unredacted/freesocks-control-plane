@@ -283,12 +283,10 @@ describe('attention', () => {
       'Account acct-a, Region B',
     );
     expect(attentionFactsLine(item({ facts: { name: 'acct-a' } }))).toBe('Account acct-a');
-    // A REALITY transport that refuses clients: which, and the transports' tags.
-    expect(
-      attentionFactsLine(
-        item({ facts: { count: 1, refuses: ['singbox', 'mihomo'], tags: ['VLESS_IN'] } }),
-      ),
-    ).toBe('1 affected · Refuses sing-box and Mihomo · VLESS_IN');
+    // A REALITY transport that refuses clients: which (the row words the rest).
+    expect(attentionFactsLine(item({ facts: { count: 1, refuses: ['singbox', 'mihomo'] } }))).toBe(
+      '1 affected · Refuses sing-box and Mihomo',
+    );
     // A failed run's kind is its title, never a "Provision run" fact.
     expect(attentionFactsLine(item({ facts: { kind: 'provision', phase: 'failed' } }))).toBe('');
     expect(attentionSubject(item({ listenerKey: 'main' }))).toBe('Origin relay-a, listener main');
@@ -481,5 +479,43 @@ describe('a failed run in the attention list', () => {
     expect(attentionActionLabel(failed({ kind: 'provision' }), true)).toBe('Open the run');
     expect(attentionActionLabel(failed({ kind: 'provision' }), false)).toBe('Open run');
     expect(attentionTarget(failed({ kind: 'provision' }))).toContain('rotation=r1');
+  });
+});
+
+describe('a REALITY refusal row', () => {
+  const row = (facts: Record<string, unknown>) =>
+    ({ ...item({ kind: 'reality_refuses_clients' }), facts }) as AttentionItem;
+  it('is worded from the verdict it carries: each reason with its own fix', () => {
+    const h = attentionHeading(
+      row({
+        count: 1,
+        refuses: ['singbox', 'mihomo'],
+        transports: [
+          {
+            tag: 'VLESS_IN',
+            refusal: {
+              refuses: ['singbox', 'mihomo'],
+              reasons: [
+                { cause: 'min_above', families: ['singbox'] },
+                { cause: 'max_below', families: ['mihomo'] },
+              ],
+              xrayVersion: '26.6.27',
+              minClientVer: '1.8.2',
+              maxClientVer: '1.8.1',
+            },
+          },
+        ],
+      }),
+      true,
+    );
+    expect(h.final).toBe(true);
+    expect(h.label).toBe('REALITY refuses sing-box or Mihomo');
+    expect(h.explain).toMatch(/^VLESS_IN: Refuses sing-box .* and Mihomo .* clients\./);
+    expect(h.explain).toMatch(/minClientVer is 1\.8\.2, above what sing-box sends \(1\.8\.1\)/);
+    expect(h.explain).toMatch(/Set "minClientVer" to "1\.8\.1"/);
+    expect(h.explain).toMatch(/Remove "maxClientVer"/);
+  });
+  it("falls back to the kind's words when it carries no verdict", () => {
+    expect(attentionHeading(row({ count: 1 }), true)).toMatchObject({ final: false });
   });
 });

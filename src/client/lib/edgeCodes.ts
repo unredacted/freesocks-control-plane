@@ -262,35 +262,41 @@ const COPY = {
     fix: 'Choose one of the catalogued combinations.',
   },
   reality_refuses_clients: {
-    label: 'REALITY refuses sing-box and Mihomo clients',
+    label: 'REALITY refuses sing-box or Mihomo',
     explain:
-      'A REALITY transport here lets in only clients that send a recent Xray version: members on sing-box-based clients (Hiddify, Karing) or Mihomo-based ones (Clash Verge, FlClash) cannot connect, while a test made with an Xray client passes. It sets no minClientVer on an Xray that then defaults to 26.3.27, or bounds that leave those clients out.',
-    fix: 'Add "minClientVer": "1.8.1" to the transport\'s realitySettings in the backend (FCP\'s own template sets it). The warning clears at the next look, within a few minutes.',
+      'A REALITY transport here refuses members on sing-box-based clients (Hiddify, Karing), Mihomo-based ones (Clash Verge, FlClash) or both, while a test made with an Xray client passes. Each reason is named with the change that lifts it.',
+    fix: "Make the change its reason names, in the transport's realitySettings or on the node. The warning clears at the next look, within a few minutes.",
   },
-  // Why (the attention item's code, the setup-status warning's detail).
-  reality_core_default: {
-    label: 'No minClientVer, Xray defaults to 26.3.27',
-    explain:
-      'The transport sets no minClientVer, and Xray 26.7.11 to 26.7.28 then let in only Xray clients from 26.3.27 on.',
-    fix: 'Add "minClientVer": "1.8.1" to the transport\'s realitySettings in the backend.',
-  },
-  reality_core_unknown: {
-    label: 'No minClientVer, Xray version unknown',
-    explain:
-      "The transport sets no minClientVer and FCP could not read the node's Xray version: Xray 26.7.11 to 26.7.28 then let in only Xray clients from 26.3.27 on.",
-    fix: 'Add "minClientVer": "1.8.1" to the transport\'s realitySettings in the backend: it lets every client in on any Xray.',
-  },
+  // Each reason (a setup-status warning's detail; the attention row words the verdict itself).
   reality_min_above: {
     label: 'Its minClientVer is too high',
     explain:
       "The transport's minClientVer is above what sing-box (1.8.1) or Mihomo (1.8.2) sends, so the server refuses them.",
     fix: 'Set "minClientVer" to "1.8.1" in the transport\'s realitySettings in the backend.',
   },
+  reality_core_default: {
+    label: 'No minClientVer, Xray defaults to 26.3.27',
+    explain:
+      'The transport sets no minClientVer, and Xray 26.7.11 to 26.7.28 then let in only Xray clients from 26.3.27 on: sing-box and Mihomo are refused.',
+    fix: 'Add "minClientVer": "1.8.1" to the transport\'s realitySettings in the backend.',
+  },
   reality_max_below: {
     label: 'Its maxClientVer is too low',
     explain:
-      "The transport's maxClientVer is below what sing-box (1.8.1) or Mihomo (1.8.2) sends, so the server refuses them.",
+      "The transport's maxClientVer is below what Mihomo (1.8.2) or sing-box (1.8.1) sends, so the server refuses them.",
     fix: 'Remove "maxClientVer" from the transport\'s realitySettings in the backend, or raise it to 1.8.2 or above.',
+  },
+  reality_core_key_share: {
+    label: 'sing-box lacks the needed key share',
+    explain:
+      'From Xray 26.9.8 on, a REALITY server refuses a Client Hello without an X25519MLKEM768 key share, and sing-box sends none, whatever the transport sets.',
+    fix: 'No setting of the transport lets sing-box in on this Xray: run the node on Xray 26.7.28 or earlier with "minClientVer": "1.8.1", or give sing-box members another node.',
+  },
+  reality_core_unknown: {
+    label: "The node's Xray version is unknown",
+    explain:
+      "FCP could not read the node's Xray version. Xray 26.7.11 to 26.7.28 refuse sing-box and Mihomo when the transport sets no minClientVer, and from 26.9.8 on no setting lets sing-box in.",
+    fix: 'Check the node\'s Xray version in the backend, and set "minClientVer": "1.8.1" in the transport\'s realitySettings if it has none.',
   },
   members_dark: {
     label: 'Members dark',

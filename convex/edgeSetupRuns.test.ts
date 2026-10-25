@@ -2846,8 +2846,8 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
   test('a REALITY transport that refuses sing-box and Mihomo clients is named on the plan, protected all the same, and its test card line says so', async () => {
     // The beta case: hand-built, no minClientVer, Xray 26.7.28.
     const refusal: RealityClientRefusal = {
-      cause: 'core_default',
       refuses: ['singbox', 'mihomo'],
+      reasons: [{ cause: 'core_default', families: ['singbox', 'mihomo'] }],
       xrayVersion: '26.7.28',
       minClientVer: null,
       maxClientVer: null,
