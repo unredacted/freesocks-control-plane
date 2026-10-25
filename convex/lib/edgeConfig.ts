@@ -153,6 +153,26 @@ export interface EdgeConfig {
     sustainedNetworks: number;
     sustainedMinutes: number;
   };
+  /**
+   * FCP's own client check (docs/edges.md § "FCP's own client check"). On: a
+   * passing check of an L4 address in a location the owner has ticked an
+   * address in confirms it for publication, and a replace with no tested spare
+   * creates a new address there and checks it itself (§ "Replacing a blocked
+   * address without a spare"). Off: checks are advice only. Ships off.
+   */
+  clientCheck: {
+    enabled: boolean;
+  };
+  /** Automatic replacement of a blocked address. */
+  replacement: {
+    /**
+     * A replacement judged blocked again within this many hours of going into
+     * use holds automatic replacement of its transport on that node until the
+     * operator resumes it (the same accounts would receive the next one too).
+     * 0 = never held.
+     */
+    reblockHours: number;
+  };
   /** L7 (CDN front) edges. */
   l7: {
     /** Automatic selection of L7 accounts (detector replacements, auto-provision); a guided setup run's chosen account is used either way. Ships off. */
@@ -280,6 +300,12 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     sustainedChecks: 12,
     sustainedNetworks: 2,
     sustainedMinutes: 120,
+  },
+  clientCheck: {
+    enabled: false,
+  },
+  replacement: {
+    reblockHours: 24,
   },
   l7: {
     autoSelect: false,
@@ -435,6 +461,8 @@ export const EDGE_KEYS = {
   'detect.sustainedChecks': 'edge.detect.sustainedChecks',
   'detect.sustainedNetworks': 'edge.detect.sustainedNetworks',
   'detect.sustainedMinutes': 'edge.detect.sustainedMinutes',
+  'clientCheck.enabled': 'edge.clientCheck.enabled',
+  'replacement.reblockHours': 'edge.replacement.reblockHours',
   'l7.autoSelect': 'edge.l7.autoSelect',
   'l7.maxSameProviderReplacementsPerDay': 'edge.l7.maxSameProviderReplacementsPerDay',
   'render.enabled': 'edge.render.enabled',
@@ -588,6 +616,17 @@ export function sanitizeRelayConfig(
         30,
         2880,
         D.detect.sustainedMinutes,
+      ),
+    },
+    clientCheck: {
+      enabled: sanitizeBool(raw['clientCheck.enabled'], D.clientCheck.enabled),
+    },
+    replacement: {
+      reblockHours: sanitizeInt(
+        raw['replacement.reblockHours'],
+        0,
+        168,
+        D.replacement.reblockHours,
       ),
     },
     l7: {
@@ -1056,6 +1095,7 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'detect.sustainedChecks': { min: 3, max: 500 },
   'detect.sustainedNetworks': { min: 2, max: 10 },
   'detect.sustainedMinutes': { min: 30, max: 2880 },
+  'replacement.reblockHours': { min: 0, max: 168 },
   'l7.maxSameProviderReplacementsPerDay': { min: 0, max: 50 },
   'render.namesPerEndpoint': { min: 1, max: 5 },
   'render.backupNames': { min: 1, max: 5 },

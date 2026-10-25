@@ -639,6 +639,13 @@ export const cancelRelayRotation = (relayId: string) =>
 export const resolveRelayQuarantine = (relayId: string, body: ResolveQuarantineBody) =>
   apiClient.post(`${BASE}/relays/${enc(relayId)}/resolve-quarantine`, body, EdgeOkResponse);
 /** Coverage at the cap: send ONE duplicate edge back to standby so an uncovered listener can be published. */
+/** Lift the hold on automatic replacement (one transport, or every one of the node). */
+export const resumeAutoReplace = (relayId: string, listenerId?: string) =>
+  apiClient.post(
+    `${BASE}/relays/${enc(relayId)}/auto-replace/resume`,
+    listenerId ? { listenerId } : {},
+    EdgeOkResponse,
+  );
 export const rebalanceRelay = (relayId: string) =>
   apiClient.post(`${BASE}/relays/${enc(relayId)}/rebalance`, {}, RelayRebalanceResponse);
 export const probeRelay = (relayId: string) =>

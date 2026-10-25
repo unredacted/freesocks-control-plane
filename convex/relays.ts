@@ -463,6 +463,11 @@ export function mapRelayAdmin(
     standbyPerListener: policy.standbyPerListener,
     bindingDeferred: r.bindingDeferred ?? false,
     setupOwned: r.setupOwned ?? false,
+    autoReplaceHolds: (r.autoReplaceHolds ?? []).map((h) => ({
+      listenerId: h.listenerId as string,
+      code: h.code,
+      at: new Date(h.at).toISOString(),
+    })),
     cooldownMinutes: Math.round(policy.cooldownMs / 60_000),
     maxRotationsPerDay: policy.maxRotationsPerDay,
     drainMinutes: Math.round(policy.drainMs / 60_000),
@@ -1798,10 +1803,11 @@ export async function checkPublishable(
     listener.providerScope.accountId !== edge.accountId
   )
     return { ok: false, code: 'account_mismatch' };
-  // An L4 endpoint goes live only with the operator's OWN confirmation against
-  // the configuration it holds now (lib/edges/verification.ts): nothing
-  // server-side can prove an L4 address, and a stale tick (listener revision
-  // bump, re-addressing) is no tick at all. The L7 proof above is the L7 form.
+  // An L4 endpoint goes live only with a confirmation against the configuration
+  // it holds now (lib/edges/verification.ts): the operator's own, or FCP's own
+  // client check where it may stand in for one (a ticked location, the switch
+  // on; edgeClientCheck.ts). A stale one (listener revision bump,
+  // re-addressing) is none at all. The L7 proof above is the L7 form.
   if (
     !opts.skipVerification &&
     needsEndpointVerification(edge) &&

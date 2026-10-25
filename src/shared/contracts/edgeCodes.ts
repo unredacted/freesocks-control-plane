@@ -143,8 +143,13 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'account_mismatch',
   'unverified_endpoint',
   'edge_unhealthy',
-  // replace: no tested spare on the listener (L4)
+  // replace: no tested spare on the listener (L4), or (FCP's own client check on)
+  // no location where an address was tested
   'no_verified_spare',
+  'no_ticked_location',
+  // automatic replace: held for the transport, or a replacement blocked again soon
+  'auto_replace_held',
+  'replacement_reblocked',
   // selection
   'no_compatible_listener',
   'no_compatible_layer',
@@ -307,6 +312,11 @@ export const ATTENTION_KINDS = [
   // that cannot get through an address in use; the check service not answering.
   'client_refused',
   'client_check_unavailable',
+  // Replacing a blocked address without a spare: automatic replacement held for a
+  // transport (a replacement blocked again soon after going into use); a protected
+  // node with one address in use (no backup while a replacement is made).
+  'auto_replace_held',
+  'single_address',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

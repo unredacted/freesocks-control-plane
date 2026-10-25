@@ -25,6 +25,7 @@ import {
   resolveEdgeSecrets,
   type RenderClientFamily,
 } from './lib/edgeConfig';
+import { clientCheckService } from './lib/edges/clientCheck/client';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { resolveSniConfig } from './lib/sniConfig';
 import { resolveMemberCountryConfig } from './memberCountry';
@@ -228,9 +229,12 @@ export const patchConfig = internalMutation({
 /**
  * The one automation switch (`POST /api/v1/admin/edges/automation {on}`): in
  * ONE mutation set `edge.enabled`, `edge.autoRotate`, `edge.probe.enabled` and
- * `edge.autoProvisionToDesired` to `on`, and keep one verified spare per
- * listener (`edge.standbyPerListener = 1`) when turning on (left as-is when
- * turning off, so nobody's bill changes twice). Never `render.enabled` or
+ * `edge.autoProvisionToDesired` to `on`. With FCP's own client check set up on
+ * this deployment it also sets `edge.clientCheck.enabled`: a blocked address is
+ * replaced by a new one FCP checks itself, so no spare is required and
+ * `standbyPerListener` is left as it is. Without it, one verified spare per
+ * listener is kept (`edge.standbyPerListener = 1`) when turning on (left as-is
+ * when turning off, so nobody's bill changes twice). Never `render.enabled` or
  * `l7.autoSelect`; no origin row is touched (an origin's own `autoRotate` keeps
  * its meaning under the global gate). Audited as the boolean only.
  */
@@ -238,12 +242,14 @@ export const setAutomation = internalMutation({
   args: { on: v.boolean(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { on, actorAdminId }) => {
     const flag = JSON.stringify(on);
+    const clientCheck = clientCheckService(process.env) !== null;
     const writes: Array<{ key: string; value: string }> = [
       { key: EDGE_KEYS.enabled, value: flag },
       { key: EDGE_KEYS.autoRotate, value: flag },
       { key: EDGE_KEYS['probe.enabled'], value: flag },
       { key: EDGE_KEYS.autoProvisionToDesired, value: flag },
-      ...(on ? [{ key: EDGE_KEYS.standbyPerListener, value: '1' }] : []),
+      ...(clientCheck ? [{ key: EDGE_KEYS['clientCheck.enabled'], value: flag }] : []),
+      ...(on && !clientCheck ? [{ key: EDGE_KEYS.standbyPerListener, value: '1' }] : []),
     ];
     for (const w of writes) await upsertSettingRow(ctx, w.key, w.value, actorAdminId);
     await writeAuditLog(ctx, {

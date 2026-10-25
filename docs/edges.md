@@ -629,16 +629,19 @@ which stay revision bumps until something has proven the node accepts the name. 
 condition is applied again **at render time**
 (`edgeRender.publishedEdgesOf`): a published L4 edge whose confirmation is no longer current
 is ineligible exactly like a stale L7 proof, so nothing is rendered for it until it is
-retested; it stays published (nothing unpublishes automatically). Nothing server-side can
-promote an L4 edge past the probe ceiling (`partial`, see § Probes, written by the system
-from probe evidence and never satisfying the gate): there is no authenticated REALITY client
-in this stack, and backend online bits do not identify the path a member used.
+retested; it stays published (nothing unpublishes automatically). Probe evidence never
+promotes an L4 edge past its ceiling (`partial`, see § Probes, written by the system and never
+satisfying the gate), and backend online bits do not identify the path a member used. The one
+server-side confirmation is **FCP's own client check** (`method: client_check`, `by: system`,
+§ "FCP's own client check"): real sing-box and Xray sessions through the address, which count
+only in a location the owner ticked an address in and only while `edge.clientCheck.enabled` is
+on (§ "Replacing a blocked address without a spare").
 
-Consequences, applied consistently: a **replace** of an L4 edge switches ONLY to an
-already-tested spare of the same listener; with none the start is refused
-(`edge.no_verified_spare`, not waived by `force`) instead of provisioning a doomed candidate
-(the L7 path is unchanged: a listener that can be fronted at L7 with L7 selection allowed keeps
-provisioning and proving a new front). A `provision` run that would publish an untested L4
+Consequences, applied consistently: a **replace** of an L4 edge switches to an already-tested
+spare of the same listener; with none, and FCP's own client check unable to prove a new one,
+the start is refused (`edge.no_verified_spare`, not waived by `force`) instead of provisioning a
+doomed candidate (the L7 path is unchanged: a listener that can be fronted at L7 with L7
+selection allowed keeps provisioning and proving a new front). A `provision` run that would publish an untested L4
 edge ends with it as a **spare** instead (`unverified_standby`, attention `spare_untested`),
 never failed and never destroyed; reconcile upkeep skips such a spare and does not provision
 another. The detector records the refusal on the origin's suspicion (`lastRotateError`) and
@@ -804,9 +807,9 @@ newest verdict on the line under the address. Edges settings, "FCP's own client 
 not, answering or not, the engines and their versions, the egress page's host, "Check now"
 (`GET client-check`, `POST client-check/refresh`). Attention `client_refused` (warning): an
 address in use whose newest check found a client that does not get through, named per client;
-`client_check_unavailable` (warning): the service is set up and did not answer its last health
-check. A check is advice: it does not confirm an address for publication (a human tick still
-does).
+`client_check_unavailable` (warning; critical while `edge.clientCheck.enabled` is on): the
+service is set up and did not answer its last health check. With the switch off a check is
+advice only; with it on, a pass in a ticked location confirms the address (next section).
 
 **Setting it up.** One secret, in the compose env (`.env.beta`, or `.env.prod`): the service reads
 it, and the deployer sets the same value on the deployment (`docker/deploy-entrypoint.sh`), so
@@ -817,6 +820,76 @@ in CI by the `client-check` job of `.github/workflows/client-compatibility.yml`
 (`bun run test:integration:client-check`): the service as the stack builds it, against two Xray
 cores of the fleet release, passes with `minClientVer` 1.8.1 and names sing-box refused (Xray
 connected) where it is unset.
+
+### Replacing a blocked address without a spare
+
+Standing spares cost money every hour and still need a human tick, which is made from outside
+the censored country like FCP's own check. With **`edge.clientCheck.enabled`** on (the
+automation switch sets it when the client-check service is set up), FCP instead makes the
+replacement when it is needed and proves it itself.
+
+**Where.** Only in a **ticked location** (`lib/edges/tickedLocation.ts`): a location trusted by
+an operator on the evidence of an L4 endpoint they confirmed there with a real session
+(`edgeLocations.qualification` with `by: admin` and `evidence`). Every invalidation that clears a
+location's trust clears this too (a manual untrust, a credential or settings change, a template
+edit), so new load balancers of a template nobody tested never count. A trust override without a
+ticked endpoint does not count; a tick made later in such a location becomes its evidence
+(`confirmEndpoint`), a re-trust of the same template keeps it, and the reconcile pass fills it
+from a still-current ticked address there (`edgeVerification.fillTickedEvidence`, which also
+covers ticks made before this). The first address in any other location still needs a human.
+A manual untrust removes the `client_check` confirmation of that location's spares (an address
+in use keeps serving).
+
+**Starting.** A replace of an L4 address (the detector's, "Replace now, address is blocked",
+"Replace address") with no tested spare is no longer refused `edge.no_verified_spare` when the
+check is ready (`clientCheckReadiness`: the switch on, the service configured, its last health
+answer ok and under 30 minutes old) and the start's own selection finds a candidate. The
+selection, in client-check mode, takes a tested spare first, then an untested L4 spare in a ticked
+location, then a new load balancer in a ticked location (L4 locations elsewhere do not count as
+trusted for it); none is `edge.no_ticked_location` (attention `needs_test` says so). The run is
+marked `clientCheckGate`.
+
+**The gate** (`verifying`, after the describe and before the country wait; its own attempts and
+clock, `CLIENT_GATE`): the check runs against the replace's target, the address members use now,
+as the control (from outside the country the block does not apply). A pass that confirmed the
+address (`edges.verification`, method `client_check`, the engines that proved it) goes on to
+publish, the Host flip, the drain and the retire, as any replace. A verdict that the address does
+not work is tried three times, 30 seconds apart, then the run fails `client_check_failed`: the
+new load balancer is destroyed by the reconcile like every failed run's, nothing is published
+and the origin cools down for an hour (`CLIENT_CHECK_FAIL_COOLDOWN_MS`, the existing cooldown
+guard: a manual replace can force). "Could not check" (the service down, busy or refusing, no
+test link) waits up to 15 minutes; a new address then ends as an untested spare
+(`unverified_standby`, never published), which the next replace takes and checks instead of
+buying another; a spare taken for the replace fails the run (`client_check_unavailable`). A pass
+that could not confirm (the location stopped being ticked, the switch went off) is the same
+fallback (`client_check_unconfirmed`).
+
+**Guards.** Everything that bounds a replace still applies: the per-origin daily cap
+(`maxRotationsPerRelayPerDay`) and cooldown, the detector's fleet brake and fleet daily cap, the
+concurrency limit, the account's daily allocation budget, live caps and monthly spend cap (the
+selection refuses), and the node's approved shape. Worst case per origin per day: as many
+short-lived load balancers as the daily cap, each destroyed after a failed check.
+
+**Who receives a replacement** is one decision, `replacementPlacement()`
+(`lib/edges/replacementHolders.ts`), called by `applyPublish` for every replace. Its one policy
+today, `inherit`, gives the replacement its target's pool index, so exactly the members who held
+the blocked address get the new one. That includes an account a censor holds; spreading or
+screening those holders belongs in that function and nowhere else.
+
+**The re-block guard.** A replacement records where it came from (`edges.replacementOf`). When
+the detector would replace an address that a replace put in use less than
+`edge.replacement.reblockHours` ago (default 24, 0 = never), the start is refused
+`edge.replacement_reblocked` and the detector holds automatic replacement of that transport on
+the node (`relays.autoReplaceHolds`, audited `edge.auto_replace_held`): attention
+`auto_replace_held` (critical) until the operator presses "Resume automatic replacement" on the
+node page (`POST relays/{id}/auto-replace/resume {listenerId?}`, audited
+`edge.auto_replace_resumed`). Later automatic starts are refused `edge.auto_replace_held`. An
+operator's own replace is never held.
+
+**A backup entry.** Members fall back to the node's other published address while a
+replacement is made (about 10 to 15 minutes): keep at least two in use. The automation card and
+the node page say so, and attention `single_address` (warning) lists protected nodes with one
+address in use while `edge.clientCheck.enabled` is on. Nothing is refused for it.
 
 ### Rendering (what members receive)
 
@@ -4623,6 +4696,19 @@ lifecycle runs in that test and its rows appear here.
 
 ## Deploy notes
 
+**Replacing a blocked address without a spare** adds optional fields only
+(`edges.verification.method` gains `client_check` and `engines`, `edges.replacementOf`,
+`relays.autoReplaceHolds`, `edgeRotations.clientCheckGate`) and two settings with defaults
+(`edge.clientCheck.enabled` off, `edge.replacement.reblockHours` 24): one deploy, no migration.
+Nothing changes until the switch is on (Edges, Settings, or the automation switch once the
+client-check service is set up). From the first reconcile pass, a trusted L4 location with a
+still-current ticked address records it as its evidence. Turning automation on with the service
+set up no longer raises `standbyPerListener` (a deployment that already stores 1 keeps it: lower
+it in Edges, Settings, to stop paying for spares). To roll back, turn the switch off, let running
+rotations finish, then run `edgeClientCheck:clearForRollback` with no arguments before deploying
+the older build (it clears the new fields and keeps an address FCP's check confirmed serving as a
+`named_connection`; run it again if the push is refused).
+
 **FCP's own client check** adds a service (`edge-client-check`, built from
 `docker/edge-client-check/`), one optional field (`edges.clientCheck`), a test-credential purpose
 (`client_check`) and two attention kinds (`client_refused`, `client_check_unavailable`). It does
@@ -4631,8 +4717,8 @@ nothing until the secret is set: run `bun run bootstrap` (it adds
 `up -d --build edge-client-check` and recreate `deployer` with the usual release command (it sets
 the secret on the deployment). No migration. To roll back, run
 `edgeClientCheck:clearForRollback` with no arguments right before deploying the older build
-(it schedules itself over the edges, then the test keys; run it again if the push is refused),
-then stop the service.
+(it schedules itself over the edges, the rotations and the test keys; run it again if the push
+is refused), then stop the service.
 
 **The X25519MLKEM768 key share** changes what members receive, nothing stored: every Clash /
 Mihomo / Stash body FCP serves asks its REALITY entries for the key share (a cached body from its

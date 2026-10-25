@@ -474,6 +474,13 @@ const relayEdgeVerification = v.object({
     v.literal('named_connection'),
     v.literal('l7_proof'),
     v.literal('probe'),
+    // FCP's own client check, in a location the owner ticked an address in
+    // (`by: 'system'`; docs/edges.md § "Replacing a blocked address without a spare").
+    v.literal('client_check'),
+  ),
+  // `client_check` only: the engines whose sessions proved it, with their versions.
+  engines: v.optional(
+    v.array(v.object({ engine: v.string(), version: v.union(v.string(), v.null()) })),
   ),
   // An enrolled node's REALITY auth revision the record was taken under (it is
   // folded into `configHash` too): only read to SAY why a record went stale
@@ -1553,6 +1560,19 @@ export default defineSchema({
     cooling: v.optional(
       v.array(v.object({ locationId: v.id('edgeLocations'), until: v.number() })),
     ),
+    // Transports whose automatic replacement is held until the operator resumes
+    // it: a replacement judged blocked again soon after it went into use
+    // (`replacement_reblocked`), so the node does not cycle through addresses.
+    autoReplaceHolds: v.optional(
+      v.array(
+        v.object({
+          listenerId: v.id('relayListeners'),
+          code: v.string(),
+          at: v.number(),
+          edgeId: v.optional(v.id('edges')),
+        }),
+      ),
+    ),
     // The published-pool size (state: setup runs and re-protect widen it), seeded
     // from `edge.desiredPublishedDefault`.
     desiredPublished: v.number(),
@@ -2079,6 +2099,11 @@ export default defineSchema({
     burnedAt: v.optional(v.number()),
     drainUntil: v.optional(v.number()),
     destroyedAt: v.optional(v.number()),
+    // The address this one replaced (set when a replace put it in use): the
+    // re-block guard reads it.
+    replacementOf: v.optional(
+      v.object({ edgeId: v.id('edges'), at: v.number(), trigger: v.string() }),
+    ),
     updatedAt: v.number(),
   })
     .index('by_relay_status', ['relayId', 'status'])
@@ -2152,6 +2177,16 @@ export default defineSchema({
     // provisioned by this run (`createdEdgeId`, the only edge a failure may mark).
     viaStandby: v.optional(v.boolean()),
     createdEdgeId: v.optional(v.id('edges')),
+    // The run proves its L4 candidate with FCP's own client check (a replace
+    // whose candidate is in a ticked location): the gate's own attempts and
+    // clock, apart from the describe polls.
+    clientCheckGate: v.optional(
+      v.object({
+        attempts: v.number(),
+        since: v.optional(v.number()),
+        lastCode: v.optional(v.string()),
+      }),
+    ),
     // The Host plan was captured from the live list (an empty plan is then final).
     hostPlanCaptured: v.optional(v.boolean()),
     // A forward Host PATCH was CLAIMED (set in the same mutation as the claim): the

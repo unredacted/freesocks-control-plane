@@ -67,6 +67,7 @@
   import { searchParam } from '@client/lib/urlState.svelte';
   import {
     PLAIN_ATTENTION_ACTION_LABELS,
+    codeExplain,
     plainAuditActionLabel,
     plainWords,
     restorePhaseWords,
@@ -87,6 +88,7 @@
     reprotectRelay,
     requireRelayEdges,
     resolveEdgeOperator,
+    resumeAutoReplace,
     retrySetupRun,
     updateRelay,
   } from '@client/lib/edgesApi';
@@ -151,6 +153,27 @@
   const listeners = $derived((listenersQ.data?.listeners ?? []).filter((l) => !l.retired));
   const edges = $derived((edgesQ.data ?? []).filter((e) => e.status !== 'destroyed'));
   const published = $derived(edges.filter((e) => e.publication === 'published'));
+  // Automatic replacement held for some transports (a replacement blocked again soon).
+  const heldNames = $derived(
+    (relay?.autoReplaceHolds ?? [])
+      .map((h) => listeners.find((l) => l.id === h.listenerId))
+      .filter((l) => !!l)
+      .map((l) => transportName(l)),
+  );
+  let resumeBusy = $state(false);
+  async function resume() {
+    if (!relay) return;
+    resumeBusy = true;
+    try {
+      await resumeAutoReplace(relay.id);
+      toast.success('Automatic replacement resumed.');
+      invalidateRelay(qc, slug);
+    } catch (e) {
+      toast.error(edgeErrorMessage(e));
+    } finally {
+      resumeBusy = false;
+    }
+  }
   // The ONE status the server judged for this origin (the attention response).
   const status = $derived(statusOf(attention.data?.origins, slug));
   const runId = $derived(status?.runId ?? null);
@@ -467,6 +490,29 @@
       />
     {/if}
 
+    {#if relay && relay.autoReplaceHolds.length > 0}
+      <section
+        class="border-destructive/40 rounded-lg border p-3"
+        role="alert"
+        aria-labelledby={`${uid}-held`}
+      >
+        <h3 id={`${uid}-held`} class="text-sm font-semibold">Automatic replacement is held</h3>
+        <p class="text-muted-foreground mt-1 text-sm">
+          {codeExplain('auto_replace_held')}
+          {#if heldNames.length > 0}Transport: {heldNames.join(', ')}.{/if}
+        </p>
+        <Button
+          class="mt-2"
+          size="sm"
+          variant="outline"
+          disabled={resumeBusy}
+          onclick={() => void resume()}
+        >
+          Resume automatic replacement
+        </Button>
+      </section>
+    {/if}
+
     <section aria-labelledby={`${uid}-addresses`}>
       <h3 id={`${uid}-addresses`} class="mb-3 text-sm font-semibold">Addresses in use</h3>
       {#if listenersQ.isPending || edgesQ.isPending}
@@ -496,6 +542,12 @@
             </li>
           {/each}
         </ul>
+        {#if config.data?.config.clientCheck.enabled && published.length === 1}
+          <p class="text-muted-foreground mt-2 text-xs">
+            Keep at least 2 addresses in use: members fall back to the other one while FCP replaces
+            a blocked address.
+          </p>
+        {/if}
       {/if}
     </section>
 
