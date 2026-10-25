@@ -2807,6 +2807,8 @@ export const ProviderSetView = z.object({
       spare: z.number(),
       /** A burn here: automatic work keeps away until then. */
       coolingUntil: iso.nullable(),
+      /** The provider refused to create one of this node's addresses here: automatic work keeps away until then. */
+      refusedUntil: iso.nullable().default(null),
       addedAt: iso,
       /** The provider options its addresses are built with (null: from before options). */
       options: z.record(z.string(), z.unknown()).nullable().default(null),

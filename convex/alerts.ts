@@ -43,6 +43,8 @@ const PROMPT_KINDS: ReadonlySet<string> = new Set([
   'node_awaiting_approval',
   // Freedom members are not handed a node until an edge covers it.
   'freedom_node_withheld',
+  // A provider refused to create a node's address (a quota): only the operator can raise it.
+  'location_refused',
 ]);
 
 export interface AlertItem {

@@ -2369,16 +2369,27 @@ describe('edgeRotations: a provision step that keeps failing', () => {
     const error = r.events.find((e) => e.level === 'error');
     expect(error).toMatchObject({ code: 'create_refused' });
     expect(error?.detail).toContain('is not a valid network address');
-    // The edge needs the operator at once, with the provider's reason, never an address.
+    // The provider's reason is kept, never an address. The refused create was
+    // the provider's first call and built nothing, so the edge fails like any
+    // other (nothing billed, no operator needed), the day's allocation comes
+    // back, and the node's automatic work keeps out of the location for a while.
     const edge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
-    expect(edge.status).toBe('needs_operator');
-    expect(edge.failure).toMatchObject({ step: 'lb', code: 'create_refused' });
+    expect(edge.status).toBe('failed');
+    expect(edge.failure).toMatchObject({ step: 'lb', code: 'create_refused', status: 400 });
     expect(edge.failure?.detail).toContain('is not a valid network address');
     expect(JSON.stringify([r.events, edge.failure])).not.toContain('192.0.2.10');
     expect(edge.resources).toEqual([]);
+    expect(r.events.map((e) => e.code)).toEqual(
+      expect.arrayContaining(['location_held', 'allocation_refunded']),
+    );
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.refusedLocations).toEqual([
+      expect.objectContaining({ locationId: edge.locationId, code: 'create_refused' }),
+    ]);
     const attention = await t.query(internal.edgeOperator.attention, {});
-    expect(attention.items.find((i) => i.kind === 'needs_operator')).toMatchObject({
-      edgeId: edge._id,
+    expect(attention.items.some((i) => i.kind === 'needs_operator')).toBe(false);
+    expect(attention.items.find((i) => i.kind === 'location_refused')).toMatchObject({
+      relayId,
       code: 'create_refused',
     });
     // A spare that could not be built, named as one, with the provider's reason from the

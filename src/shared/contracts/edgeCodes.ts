@@ -157,6 +157,9 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'no_account_for_provider',
   'no_qualified_account',
   'accounts_exhausted',
+  // automatic selection: what it would pick is a location whose provider just refused
+  // to create an address for this node (`relays.refusedLocations`)
+  'locations_refused',
   'account_not_found',
   'account_disabled',
   'account_untested',
@@ -323,6 +326,10 @@ export const ATTENTION_KINDS = [
   // node with one address in use (no backup while a replacement is made).
   'auto_replace_held',
   'single_address',
+  // A location whose provider refused, for good, to create one of a node's addresses
+  // (a quota, a setting it rejects): the node's automatic work takes another location
+  // for a while (`relays.refusedLocations`).
+  'location_refused',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

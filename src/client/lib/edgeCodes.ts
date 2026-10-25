@@ -676,6 +676,18 @@ const COPY = {
     label: 'Accounts exhausted',
     explain: 'Every candidate account is out of budget or capacity.',
   },
+  locations_refused: {
+    label: 'Locations refused recently',
+    explain:
+      'Every location that could take this refused to create an address for this node in the last few hours, so automatic work waits instead of being refused again.',
+    fix: 'Raise the quota or fix the setting the provider named, then add an address there by hand, or add another location to the node.',
+  },
+  // A rotation event: the run's create was refused for good, so the node's automatic work keeps out of the location.
+  location_held: {
+    label: 'Location held',
+    explain:
+      "The provider refused to create this address for good, so this node's automatic work keeps out of the location for 6 hours and takes the next one.",
+  },
   account_not_found: {
     label: 'Account not found',
     explain: 'The named account does not exist.',
@@ -978,6 +990,12 @@ const COPY = {
       'A replacement address was blocked again soon after it went into use, so FCP stopped replacing this transport automatically instead of burning address after address.',
     fix: 'Find out who receives this transport, then resume automatic replacement on the node page.',
   },
+  location_refused: {
+    label: 'A location refused an address',
+    explain:
+      "The provider refused to create an address for this node in this location (a quota, or a setting it rejects), so automatic work makes this node's next address in another location for a while.",
+    fix: "Read the provider's reason on the failed run, then raise the quota or fix the setting. Adding an address there by hand lifts the hold once it is created.",
+  },
   single_address: {
     label: 'One address in use',
     explain:
@@ -1183,8 +1201,8 @@ const COPY = {
   create_refused: {
     label: 'Create refused',
     explain:
-      'The provider refused to create this with the settings FCP sent, so trying again would be refused the same way. Its own reason is shown with the failure.',
-    fix: "Read the provider's reason, change the location or template setting it names, then delete this address and try again.",
+      "The provider refused to create this with the settings FCP sent (a quota, or a setting it rejects), so trying again would be refused the same way. Its own reason is shown with the failure, and this node's automatic work takes another location for a while.",
+    fix: "Read the provider's reason, then raise the quota or change the location or template setting it names. An address the provider built nothing for is removed by itself; delete any other one once you have read it.",
   },
   // A provider refused the arguments of an address allocation (a 400): retrying cannot help.
   ip_allocation_refused: {

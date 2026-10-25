@@ -100,6 +100,9 @@ export const view = internalQuery({
       const until = (relay.cooling ?? []).find(
         (c) => c.locationId === p.location._id && c.until > now,
       )?.until;
+      const refusedUntil = (relay.refusedLocations ?? []).find(
+        (r) => r.locationId === p.location._id && r.until > now,
+      )?.until;
       return {
         locationId: p.location._id as string,
         accountId: p.account._id as string,
@@ -112,6 +115,8 @@ export const view = internalQuery({
         spare: mine.filter((e) => e.publication === 'unpublished' && e.status === 'active').length,
         coolingUntil:
           until && cooling.has(p.location._id as string) ? new Date(until).toISOString() : null,
+        // The provider refused to create one of this node's addresses here: automatic work keeps away until then.
+        refusedUntil: refusedUntil ? new Date(refusedUntil).toISOString() : null,
         addedAt: new Date(
           relay.providerSet?.find((x) => x.locationId === p.location._id)?.addedAt ?? now,
         ).toISOString(),

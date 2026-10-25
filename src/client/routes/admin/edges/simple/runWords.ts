@@ -650,7 +650,12 @@ export function providerPickWords(
     Partial<Pick<ProviderSetView, 'outside' | 'missing'>>,
   opts: { nameOf?: (listenerKey: string) => string; now?: number; upkeepAdds?: boolean } = {},
 ): {
-  picks: Array<{ locationId: string; counts: string; cooling: string | null }>;
+  picks: Array<{
+    locationId: string;
+    counts: string;
+    cooling: string | null;
+    refused: string | null;
+  }>;
   outside: Array<{ locationId: string; counts: string; why: string }>;
   notes: string[];
 } {
@@ -660,12 +665,19 @@ export function providerPickWords(
     const left = p.coolingUntil
       ? Math.max(1, Math.ceil((Date.parse(p.coolingUntil) - now) / 60_000))
       : 0;
+    const refusedLeft = p.refusedUntil
+      ? Math.max(1, Math.ceil((Date.parse(p.refusedUntil) - now) / 3_600_000))
+      : 0;
     return {
       locationId: p.locationId,
       counts: `${p.inUse} in use, ${p.spare} spare.`,
       cooling:
         left > 0
           ? `An address here was just blocked: automatic work keeps away for about ${plural(left, 'minute', 'minutes')}.`
+          : null,
+      refused:
+        refusedLeft > 0
+          ? `The provider refused to create an address here (a quota, or a setting it rejects): automatic work uses the other locations for about ${plural(refusedLeft, 'hour', 'hours')}. Adding an address here by hand lifts this once it is created.`
           : null,
     };
   });
