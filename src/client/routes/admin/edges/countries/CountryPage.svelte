@@ -30,6 +30,7 @@
     handedWords,
     handshakeLine,
     markLine,
+    gradeLine,
     nameWhy,
     percent,
     probesLine,
@@ -58,9 +59,13 @@
       : edgesPaths.relay(o.slug);
   }
   function evidenceLines(a: CountryViewAddress): string[] {
-    return [markLine(a, now), roundLine(a, now), handshakeLine(a, now), probesLine(a, now)].filter(
-      (x): x is string => !!x,
-    );
+    return [
+      markLine(a, now),
+      gradeLine(a, now),
+      roundLine(a, now),
+      handshakeLine(a, now),
+      probesLine(a, now),
+    ].filter((x): x is string => !!x);
   }
   function handedLine(a: CountryViewAddress): string | null {
     const parts: string[] = [];

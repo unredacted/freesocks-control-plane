@@ -58,7 +58,8 @@ const handed = (over: Partial<CountryViewHanded> = {}): CountryViewHanded => ({
   backup: [],
   names: [],
   none: 0,
-  onBlockedAddress: 0.5,
+  onBlockedAddress: 1,
+  onBlockedFirst: 0.5,
   onBlockedName: 0,
   ...over,
 });
@@ -148,10 +149,11 @@ describe('country view words', () => {
     );
   });
 
-  it('words the round, the mark and the handshake track with their age', () => {
+  it('words the round, the mark, the location and the handshake track with their age', () => {
     const a = address({
       evidence: {
         ...address().evidence,
+        grade: { state: 'blocked', counts: { edges: 3, proven: 0, blocked: 2 }, until: NOW + H },
         mark: { state: 'blocked', at: NOW - 2 * H, scope: 'location' },
         round: { at: NOW - H, result: 'blocked', ok: 0, fail: 3, networks: 2, controlsOk: 2 },
         handshake: { state: 'blocked', lastBatchAt: NOW - H, batches: 2 },
@@ -160,6 +162,10 @@ describe('country view words', () => {
     expect(W.markLine(a, NOW)).toBe(
       'An operator marked its provider location blocked here, 2 h ago.',
     );
+    expect(W.gradeLine(a, NOW)).toBe(
+      'Its provider location here: blocked, 2 of 3 addresses blocked and 0 working, for another 1 h.',
+    );
+    expect(W.gradeLine(address(), NOW)).toBeNull();
     expect(W.roundLine(a, NOW)).toBe(
       'Last round: blocked, 0 reached and 3 failed on 2 networks, 2 controls reached it, 1 h ago.',
     );
@@ -191,7 +197,10 @@ describe('country view words', () => {
   it('says what a member is handed, steered or not', () => {
     expect(W.handedWords(handed())[0]).toContain('not chosen by country');
     expect(W.handedWords(handed())[1]).toBe(
-      '50% of members here hold an address blocked here as their first one.',
+      '100% of members here hold an address blocked here (50% as their first one).',
+    );
+    expect(W.handedWords(handed({ onBlockedFirst: 0 }))[1]).toBe(
+      '100% of members here hold an address blocked here, as their backup only.',
     );
     expect(W.handedWords(handed({ steered: true, onBlockedAddress: 0 }))[0]).toContain(
       'chosen for this country',

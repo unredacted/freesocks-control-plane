@@ -128,6 +128,49 @@ describe('addressState', () => {
     ).toEqual({ state: 'proven', basis: 'checks', until: NOW + H });
   });
 
+  test('IPv6 beside IPv4: blocked only while another country reaches it over IPv6', () => {
+    const dual = (rows: ReachRow[]) =>
+      buildCountryView(
+        [
+          {
+            relayId: 'r1',
+            slug: 's',
+            label: null,
+            kind: 'panel-node',
+            nodeName: null,
+            enabled: true,
+            direct: null,
+            listeners: [
+              {
+                listenerId: 'L',
+                key: 'a',
+                protocol: 'vless',
+                streamTransport: 'raw',
+                security: 'reality',
+                usable: true,
+                sniPick: null,
+                names: [],
+              },
+            ],
+            edges: [
+              edge({ addresses: { v4: '198.51.100.1', v6: '2001:db8::1' }, reachability: rows }),
+            ],
+            published: [],
+          },
+        ],
+        () => null,
+        { ...SETTINGS, render: false },
+      ).origins[0]!.listeners[0]!.addresses[0]!.v6;
+    const v6 = (country: string, v6Verdict: ReachRow['verdict']) => ({
+      ...reach(country, 'reachable'),
+      v6Verdict,
+    });
+    expect(dual([v6('IR', 'unreachable'), v6('DE', 'reachable')])?.state).toBe('blocked');
+    // Unreachable over IPv6 everywhere: broken, not blocked.
+    expect(dual([v6('IR', 'unreachable'), v6('DE', 'unreachable')])?.state).toBeNull();
+    expect(dual([v6('IR', 'reachable')])?.state).toBe('proven');
+  });
+
   test('a state past its until reads as not graded (the probes, else nothing)', () => {
     const lapsed = [
       { country: 'IR', state: 'blocked' as const, from: 'edge' as const, until: NOW - 1 },
@@ -236,12 +279,14 @@ describe('handedOn', () => {
     expect(h.computed).toBe(true);
     expect(h.sample).toBe(200);
     expect(h.primary.map((p) => p.id).sort()).toEqual(['a', 'b']);
-    expect(h.onBlockedAddress).toBeGreaterThan(0.2);
-    expect(h.onBlockedAddress).toBeLessThan(0.8);
+    expect(h.onBlockedFirst).toBeGreaterThan(0.2);
+    expect(h.onBlockedFirst).toBeLessThan(0.8);
+    // Two addresses, one blocked: every member holds it, first or as the backup.
+    expect(h.onBlockedAddress).toBe(1);
     expect(h.none).toBe(0);
   });
 
-  test('steering on: nobody is handed the address blocked there while another works', () => {
+  test('steering on: nobody gets the address blocked there first while another works', () => {
     const h = handedOn(
       { enabled: true, published: blockedOne },
       { listenerId: 'L', sniPick: null },
@@ -250,8 +295,37 @@ describe('handedOn', () => {
       new Set(),
     );
     expect(h.primary).toEqual([{ id: 'b', share: 1 }]);
-    expect(h.onBlockedAddress).toBe(0);
+    expect(h.onBlockedFirst).toBe(0);
+    // ... and it is still everyone's backup, which counts as holding it.
+    expect(h.backup).toEqual([{ id: 'a', share: 1 }]);
+    expect(h.onBlockedAddress).toBe(1);
     expect(h.steered).toBe(true);
+  });
+
+  test('a country off the list: the universal pool, no steering, whatever the switch says', () => {
+    // One listener: both edges carry the same names (the copies ride on the listener).
+    const serverNames = NAMES.map((sni) => ({
+      sni,
+      status: 'active' as const,
+      ...(sni === 'n1.example' ? { blockedIn: ['IR'] } : {}),
+    }));
+    const named = [
+      pub({ edgeId: 'a', poolIndex: 0, blockedIn: ['IR'], sniPick: 'hrw1', serverNames }),
+      pub({ edgeId: 'b', poolIndex: 1, provider: 'p2', sniPick: 'hrw1', serverNames }),
+    ];
+    const h = handedOn(
+      { enabled: true, published: named },
+      { listenerId: 'L', sniPick: 'hrw1' },
+      { ...SETTINGS, country: 'DE', steering: true },
+      new Set(),
+      new Set(),
+    );
+    expect(h.steered).toBe(false);
+    expect(h.namesByCountry).toBe(false);
+    // Not steered: members still land on the address blocked in IR.
+    expect(h.primary.map((p) => p.id).sort()).toEqual(['a', 'b']);
+    // The universal pool never carries a name blocked in any listed country.
+    expect(h.names.map((x) => x.id)).not.toContain('n1.example');
   });
 
   test('names: an hrw1 transport never hands a name blocked there; the legacy pick still does', () => {

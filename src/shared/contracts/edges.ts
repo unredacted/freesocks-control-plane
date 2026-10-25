@@ -1553,7 +1553,11 @@ export const CountryViewHanded = z.object({
   backup: z.array(CountryViewShare),
   names: z.array(CountryViewShare),
   none: z.number(),
+  /** Members holding an address blocked there, as their first address or their backup. */
   onBlockedAddress: z.number(),
+  /** Members whose first address is blocked there (part of `onBlockedAddress`). */
+  onBlockedFirst: z.number(),
+  /** Members holding a server name blocked there, on either address. */
   onBlockedName: z.number(),
 });
 export type CountryViewHanded = z.infer<typeof CountryViewHanded>;

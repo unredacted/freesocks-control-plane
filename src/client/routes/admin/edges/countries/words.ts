@@ -27,7 +27,7 @@ import type {
 } from '@shared/contracts/edgeCodes';
 import { countryName } from '@client/lib/countries';
 import { durationLabel, relativeTime } from '../lib/time';
-import { countryReasonSentence, ROUND_RESULT_WORDS } from '../lib/statusWords';
+import { countryReasonSentence, GROUP_GRADE_WORDS, ROUND_RESULT_WORDS } from '../lib/statusWords';
 import { VANTAGE_REASON_WORDS } from '../names/lib/words';
 import type { Dot } from '../simple/runStages';
 import type { Tone } from '@client/lib/edgeCodes';
@@ -144,6 +144,16 @@ export function handshakeLine(a: CountryViewAddress, now = Date.now()): string |
     : null;
 }
 
+/** Its provider location's grade there, in one line (null: not graded). */
+export function gradeLine(a: CountryViewAddress, now = Date.now()): string | null {
+  const g = a.evidence.grade;
+  if (!g) return null;
+  const words = GROUP_GRADE_WORDS[g.state as keyof typeof GROUP_GRADE_WORDS];
+  const label = (words?.label ?? g.state).toLowerCase();
+  const until = g.until && g.until > now ? `, for another ${durationLabel(g.until - now)}` : '';
+  return `Its provider location here: ${label}, ${g.counts.blocked} of ${plural(g.counts.edges, 'address', 'addresses')} blocked and ${g.counts.proven} working${until}.`;
+}
+
 /** A mark, in one line. */
 export function markLine(a: CountryViewAddress, now = Date.now()): string | null {
   const m = a.evidence.mark;
@@ -201,18 +211,20 @@ export function handedWords(m: CountryViewHanded): string[] {
   out.push(
     m.steered
       ? `Addresses are chosen for this country: members here are spread over ${plural(addresses, 'address', 'addresses')}, blocked ones only when nothing else is left.`
-      : `Addresses are not chosen by country (delivery by country is off): members here are spread over ${plural(addresses, 'address', 'addresses')}, whatever they count as here.`,
+      : `Addresses are not chosen by country here: members here are spread over ${plural(addresses, 'address', 'addresses')}, whatever they count as here.`,
   );
   if (m.onBlockedAddress > 0)
     out.push(
-      `${percent(m.onBlockedAddress)} of members here hold an address blocked here as their first one.`,
+      m.onBlockedFirst > 0
+        ? `${percent(m.onBlockedAddress)} of members here hold an address blocked here (${percent(m.onBlockedFirst)} as their first one).`
+        : `${percent(m.onBlockedAddress)} of members here hold an address blocked here, as their backup only.`,
     );
   if (m.none > 0)
     out.push(`${percent(m.none)} of members here get no address at all on this transport.`);
   out.push(
     m.namesByCountry
       ? 'Server names are chosen for this country: never one blocked here.'
-      : 'Server names are not chosen by country on this transport (the legacy pick).',
+      : 'Server names are not chosen for this country here (a transport on the legacy pick, or a country off the list).',
   );
   if (m.onBlockedName > 0)
     out.push(`${percent(m.onBlockedName)} of members here hold a server name blocked here.`);

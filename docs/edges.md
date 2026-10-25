@@ -2777,11 +2777,13 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   `GET countries`, the view carries addresses and names: it is the admin page that shows them.
 - **What is read.** Every enabled origin, its non-retired listeners, its active edges (published
   ones first in pool order, then spares) and its published pool as the assignment sees it
-  (`publishedEdgesOf`, ineligible kept); per (edge, country) the evidence row, the edge's mark,
-  its location's mark and grade, and the edge's `reachability`; per (name, country) the
-  `sniNameCountry` mark, the `sniVantageEvidence` aggregate (its suggestion judged now, like the
-  family page) and, for one country, the member report counts (`sniReportCounts`, suspects per
-  family as on the family page).
+  (`publishedEdgesOf`, ineligible kept); per edge every country's evidence row and mark, per
+  location every country's mark and grade, per name every country's `sniNameCountry` mark and
+  `sniVantageEvidence` aggregate (its suggestion judged now, like the family page): ONE index
+  range per edge, location and name whatever the number of countries, each country then built in
+  memory (a transaction may touch 4,096 ranges; the summary of a 40-country list costs what one
+  country does). The detail route also reads that country's member report counts
+  (`sniReportCounts`, suspects judged against EVERY name of the family, as on the family page).
 - **An address's state** is the one delivery acts on: `edges.countryState` (an entry past its
   `until` reads as not graded), with the BASIS it rests on: `mark` (the edge's), `location_mark`,
   `checks` (its own rounds), `handshake` (the handshake track), `never_reached` (sustained
@@ -2799,13 +2801,16 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   render keys, one listener at a time (every other listener's edges ineligible, as in a body
   carrying only that transport), with the deployment's render rule for the `other` family as a
   plain list of links, `delivery.country.steer` and `edge.country.minProvenForExclusive`, as a
-  freedom-family member whose stored country is this one. It reports shares: each address as
-  first address and as backup, each name, members with no address, on an address blocked there,
-  on a name blocked there. No member row is read. Whatever changes in the assignment shows here
-  by itself.
-- **Totals**: published addresses by state, active names by state (each name once), nodes whose
-  every published address is blocked there (`atRisk`), the newest piece of evidence. The
-  summary adds the worst share of members on a blocked address over every transport.
+  freedom-family member whose stored country is this one. A country off the list is handed what
+  delivery hands it: the universal name pool and no steering. It reports shares: each address
+  as first address and as backup, each name, members with no address, holding an address
+  blocked there (first or backup; `onBlockedFirst` the first only), holding a name blocked
+  there (on either). No member row is read. Whatever changes in the assignment shows here by
+  itself.
+- **Totals**: published addresses by state, active names by the state delivery acts on (a mark;
+  an unapplied suggestion counts as not judged; each name once), nodes whose every published
+  address is blocked there (`atRisk`), the newest piece of evidence. The summary adds the worst
+  share of members holding a blocked address over every transport.
 
 **Verification rungs of an L4 edge** (`lib/edges/verifyRung.ts`, pure, read per address
 family): `partial` = provider health + outside reachability over one family (at least
