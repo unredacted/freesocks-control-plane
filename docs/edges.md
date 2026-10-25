@@ -823,7 +823,12 @@ safety, attention `delivery_refusals`). The policy is judged AFTER the fetch aga
 the body actually belongs to, so a first fetch without a stored pin and a pin that moved onto an
 origin node are both classified correctly. A place no origin covers and whose gate is open passes
 the body through. Either way, the last step renames the entries the backend named after a node
-(`docs/servers.md` § "A direct node's addresses"); a rendered edge entry keeps its label.
+(`docs/servers.md` § "A direct node's addresses"); a rendered edge entry keeps its label. It
+also asks every REALITY entry of a Clash / Mihomo / Stash body for the X25519MLKEM768 key share
+(`support-x25519mlkem768: true`, unless the entry sets the key itself), which a node on Xray
+v26.9.8 or later requires (`finishMemberBody`, `convex/lib/realityKeyShares.ts`;
+docs/client-compatibility.md § "REALITY client versions"). A cached or stale body goes through
+both again when it is served.
 
 **The cache token** (`epochTokenFor`, `convex/edgeRender.ts`): on a bound place
 `<binding policyVersion>[:g<gateToken>]:<publicationEpoch>` (the epoch is -1 when the origin is
@@ -1315,9 +1320,10 @@ client version is Xray-core v26.3.27`), so every sing-box and Mihomo member is r
   Xray client. FCP's own profile template sets `1.8.1`; a hand-built transport often sets
   nothing. From v26.9.8 on the default is gone, but the server refuses a Client Hello without an
   X25519MLKEM768 key share ahead of X25519, and sing-box strips that share (SagerNet/sing-box
-  issue 4520, open as of 1.14.1), so no setting of the transport lets sing-box in there; recent
-  Mihomo sends it. The plan reads the transport's two bounds and the node's Xray version from the
-  panel (`edgeRealityClients.check`; the version is `versions.xray` on the node row,
+  issue 4520, open as of 1.14.1), so no setting of the transport lets sing-box in there. Mihomo
+  sends it only when its configuration asks (`support-x25519mlkem768`), which every body FCP
+  serves does (§ "Rendering"). The plan reads the transport's two bounds and the node's Xray
+  version from the panel (`edgeRealityClients.check`; the version is `versions.xray` on the node row,
   `xrayVersion` on a 2.x panel) and judges them (`src/shared/contracts/realityClients.ts`): a
   transport that refuses a family is marked `refusesClients {refuses, reasons, xrayVersion,
 minClientVer, maxClientVer}` in the plan. Each restriction is its own reason with the families
@@ -1332,9 +1338,10 @@ minClientVer, maxClientVer}` in the plan. Each restriction is its own reason wit
   card reads it again when it is built (`testLinks[].realityClients`, null when every family
   gets in): a REALITY line that refuses them says why and to test with one of those clients;
   every other REALITY line says to try a sing-box or Mihomo client too. Once the node is
-  protected the reconcile keeps looking (§ "Direct-Host hides and the restore workflow"). An
-  older Mihomo may need `support-x25519mlkem768` in its client configuration on v26.9.8 on, which
-  FCP does not judge: test with each client family after a node upgrade.
+  protected the reconcile keeps looking (§ "Direct-Host hides and the restore workflow"). A
+  Mihomo before v1.19.9, or one that imports a share link instead of its body, does not send the
+  key share either, which FCP does not judge (docs/client-compatibility.md § "REALITY client
+  versions"): test with each client family after a node upgrade.
 - **Its check account's group.** A test entry built from a transport carries the check account,
   and the node accepts it there only from a mode group (internal squad) holding that transport.
   So unless a placement or the origin's qualification mode was chosen, `relayQualification.ensure`
@@ -4519,6 +4526,12 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**The X25519MLKEM768 key share** changes what members receive, nothing stored: every Clash /
+Mihomo / Stash body FCP serves asks its REALITY entries for the key share (a cached body from its
+next serve). One deploy, no migration, no env change; rolling back only stops asking. Mihomo
+members keep connecting to today's nodes (Xray v26.7.28 accepts the key share, proved by the
+`reality-key-share` job), and once a node moves to v26.9.8 or later they need it.
 
 **REALITY transports that refuse sing-box and Mihomo clients** add optional fields only
 (`relays.realityClients`, `edgeSetupRuns.testLinks[].realityClients`, `panelNodes.xrayVersion`,

@@ -58,6 +58,55 @@ services:
         # depend on name resolution inside it (the outbound redirects here).
         ipv4_address: 10.89.71.10
 
+  # REALITY key shares (scripts/compat/reality-keyshare.sh,
+  # convex/lib/realityKeyShares.integration.test.ts): the pinned sing-box and
+  # Mihomo against two real Xray-cores, the one the node image runs (the same
+  # pin as the front check above) and a release from v26.9.8 on, which refuses
+  # a Client Hello without X25519MLKEM768. The test writes the Xray config (a
+  # fresh key and client id per run) before it starts these. Both Xray pins
+  # move by hand: the latest one stays past v26.9.8 on purpose.
+  compat-reality-xray-fleet:
+    platform: linux/amd64
+    image: ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558
+    volumes:
+      - ./.cache/compat/reality/xray.json:/etc/xray/config.json:ro
+    command: [run, -c, /etc/xray/config.json]
+    depends_on: [compat-reality-target]
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.11
+      compat-reality-origin:
+        ipv4_address: 10.89.73.11
+  compat-reality-xray-latest:
+    platform: linux/amd64
+    image: ghcr.io/xtls/xray-core:26.10.21@sha256:d5c3729dfeed7c412af17a63b941c48c76ba68afee5b6184fe4078f8fa8bedcc
+    volumes:
+      - ./.cache/compat/reality/xray.json:/etc/xray/config.json:ro
+    command: [run, -c, /etc/xray/config.json]
+    depends_on: [compat-reality-target]
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.12
+      compat-reality-origin:
+        ipv4_address: 10.89.73.12
+  # The REALITY target (TLS 1.3, a name only it serves) and the page the
+  # tunnels reach, on a network the client is not on.
+  compat-reality-target:
+    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    volumes:
+      - ./docker/compat/reality-target.Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      compat-reality-origin:
+        ipv4_address: 10.89.73.20
+  compat-reality-client:
+    platform: linux/amd64
+    image: fcp-compat-engine:local
+    volumes:
+      - ./.cache/compat/reality/client:/work
+    networks:
+      compat-reality-edge:
+        ipv4_address: 10.89.72.100
+
 networks:
   compat-origin:
     internal: true
@@ -68,3 +117,15 @@ networks:
     ipam:
       config:
         - subnet: 10.89.71.0/24
+  # Nothing here reaches the internet: the client reaches the two Xray-cores
+  # only, and they reach the target and the page only.
+  compat-reality-edge:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.89.72.0/24
+  compat-reality-origin:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.89.73.0/24
