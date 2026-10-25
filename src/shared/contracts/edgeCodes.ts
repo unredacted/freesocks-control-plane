@@ -303,6 +303,10 @@ export const ATTENTION_KINDS = [
   // A protected REALITY transport refuses sing-box or Mihomo clients (no `minClientVer` on an
   // Xray that then refuses them, or bounds that leave them out; src/shared/contracts/realityClients.ts).
   'reality_refuses_clients',
+  // FCP's own client check (docs/edges.md § "FCP's own client check"): a client family
+  // that cannot get through an address in use; the check service not answering.
+  'client_refused',
+  'client_check_unavailable',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -734,3 +738,56 @@ export const PROBE_FAILURE_CLASSES = [
   'failed',
 ] as const;
 export type ProbeFailureClass = (typeof PROBE_FAILURE_CLASSES)[number];
+
+/**
+ * FCP's own client check (docs/edges.md § "FCP's own client check"): a real
+ * client engine connects through an address with FCP's check credential and
+ * fetches an egress-IP page. The engines it runs, in the order it runs them.
+ */
+export const CLIENT_CHECK_ENGINES = ['sing-box', 'xray'] as const;
+export type ClientCheckEngine = (typeof CLIENT_CHECK_ENGINES)[number];
+
+/** What one engine's session through an address answered (`ok`, else why not). */
+export const CLIENT_CHECK_SESSION_CODES = [
+  'ok',
+  // A REALITY server handed the client to its target: it refused this client.
+  'reality_refused',
+  'tls_failed',
+  'timeout',
+  'refused',
+  'reset',
+  'unreachable',
+  // Connected, but the egress page answered something that is not an address.
+  'egress_unreadable',
+  // The engine would not start with the configuration (a field it does not know).
+  'config_refused',
+  'session_failed',
+] as const;
+export type ClientCheckSessionCode = (typeof CLIENT_CHECK_SESSION_CODES)[number];
+
+/**
+ * The verdict over every engine, judged against a control address when one was
+ * checked too (lib/edges/clientCheck/verdict.ts). `passed_with_refusals`: an
+ * engine was refused here AND through the control (or a refusal the REALITY
+ * verdict already predicts), so the address is as good as what members have.
+ */
+export const CLIENT_CHECK_VERDICTS = [
+  'passed',
+  'passed_with_refusals',
+  'address_failed',
+  'egress_mismatch',
+  'node_unreachable',
+] as const;
+export type ClientCheckVerdict = (typeof CLIENT_CHECK_VERDICTS)[number];
+
+/** Why no verdict was reached: nothing about the address itself. */
+export const CLIENT_CHECK_UNCHECKED_CODES = [
+  'not_configured',
+  'unavailable',
+  'unauthorized',
+  'busy',
+  'link_unavailable',
+  'no_engine',
+  'not_l4',
+] as const;
+export type ClientCheckUncheckedCode = (typeof CLIENT_CHECK_UNCHECKED_CODES)[number];

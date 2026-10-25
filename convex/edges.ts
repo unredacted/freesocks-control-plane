@@ -28,6 +28,7 @@ import { parseIntent, parseObservedSettings, type ProvisionIntent } from './lib/
 import {
   holdLearnedAddresses,
   needsEndpointVerification,
+  verificationBinding,
   verificationCurrent,
   verificationStale,
 } from './lib/edges/verification';
@@ -143,8 +144,28 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
         }
       : null,
   };
+  // FCP's own client check: current while it was taken against the
+  // configuration the edge holds now (the same binding a tick binds to).
+  const cc = e.clientCheck;
+  const binding = cc && listener ? verificationBinding(e, listener) : null;
+  const clientCheck = cc
+    ? {
+        at: new Date(cc.at).toISOString(),
+        verdict: cc.verdict,
+        ok: cc.ok,
+        engines: cc.engines,
+        control: cc.control,
+        by: cc.by,
+        current: listener
+          ? !!binding &&
+            binding.configHash === cc.configHash &&
+            binding.listenerRevision === cc.listenerRevision
+          : null,
+      }
+    : null;
   return {
     verification,
+    clientCheck,
     id: e._id as string,
     relayId: e.relayId as string,
     listenerId: e.listenerId as string,

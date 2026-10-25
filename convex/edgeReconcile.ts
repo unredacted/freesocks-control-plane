@@ -387,6 +387,15 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     console.warn(`[edge-reconcile] test credential sweep: ${errText(err)}`);
   }
 
+  // 4d'. FCP's own client check (edgeClientCheck.ts): ask the service how it is,
+  // so attention says when it stopped answering (nothing when it is not set up).
+  try {
+    await ctx.runAction(internal.edgeClientCheck.refreshHealth, {});
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] client check health: ${errText(err)}`);
+  }
+
   // 4e. Shared certificates (one wildcard per account and zone, docs/edges.md
   // § "L7 edges"): its state on the zone's location, so a renewal or a
   // failure is visible (and raised) without a rotation having to wait on it.

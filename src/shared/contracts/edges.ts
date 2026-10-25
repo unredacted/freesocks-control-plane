@@ -10,6 +10,10 @@ import {
   ATTENTION_ACTIONS,
   ATTENTION_KINDS,
   ATTENTION_SEVERITIES,
+  CLIENT_CHECK_ENGINES,
+  CLIENT_CHECK_SESSION_CODES,
+  CLIENT_CHECK_UNCHECKED_CODES,
+  CLIENT_CHECK_VERDICTS,
   COUNTRY_GROUP_GRADES,
   COUNTRY_ROUND_RESULTS,
   COUNTRY_STATE_FROM,
@@ -869,6 +873,68 @@ export const ProbeReachabilityCountry = z.object({
   failVantages: z.number(),
   lastAt: iso,
 });
+/**
+ * FCP's own client check (docs/edges.md § "FCP's own client check"): what one
+ * engine's session through the address answered. `excused`: refused here and
+ * through the control address too (the node's doing, not the address's).
+ */
+export const ClientCheckEngineVerdict = z.object({
+  engine: z.enum(CLIENT_CHECK_ENGINES),
+  code: z.enum(CLIENT_CHECK_SESSION_CODES),
+  engineVersion: z.string().nullable(),
+  egress: z.enum(['matched', 'mismatch']).nullable(),
+  excused: z.boolean(),
+});
+export type ClientCheckEngineVerdict = z.infer<typeof ClientCheckEngineVerdict>;
+
+/** The newest client check of an address (see `EdgeAdmin.clientCheck`). */
+export const EdgeClientCheck = z.object({
+  at: iso,
+  verdict: z.enum(CLIENT_CHECK_VERDICTS),
+  ok: z.boolean(),
+  engines: z.array(ClientCheckEngineVerdict),
+  /** A control address was checked too; the verdict is relative to it. */
+  control: z.boolean(),
+  by: z.enum(['admin', 'system']),
+  /** Taken against the configuration the address holds now (null: unknown). */
+  current: z.boolean().nullable(),
+});
+export type EdgeClientCheck = z.infer<typeof EdgeClientCheck>;
+
+/** `POST edges/{id}/client-check`: a verdict, or why none was reached. */
+export const EdgeClientCheckOutcome = z.discriminatedUnion('checked', [
+  z.object({
+    checked: z.literal(false),
+    code: z.enum(CLIENT_CHECK_UNCHECKED_CODES),
+    /** The test link's own refusal code when it could not be built. */
+    detail: z.string().optional(),
+  }),
+  z.object({
+    checked: z.literal(true),
+    at: z.number(),
+    verdict: z.enum(CLIENT_CHECK_VERDICTS),
+    ok: z.boolean(),
+    engines: z.array(ClientCheckEngineVerdict),
+    control: z.boolean(),
+  }),
+]);
+export type EdgeClientCheckOutcome = z.infer<typeof EdgeClientCheckOutcome>;
+
+/** `GET client-check`: whether the deployment has the service, and its last health answer. */
+export const EdgeClientCheckStatus = z.object({
+  configured: z.boolean(),
+  health: z
+    .object({
+      at: z.number(),
+      ok: z.boolean(),
+      code: z.string().nullable(),
+      engines: z.array(z.object({ engine: z.string(), version: z.string().nullable() })),
+      egressHost: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type EdgeClientCheckStatus = z.infer<typeof EdgeClientCheckStatus>;
+
 /** The L4 endpoint-verification view an admin edge carries (see `EdgeAdmin.verification`). */
 export const EdgeVerificationView = z.object({
   required: z.boolean(),
@@ -1048,6 +1114,8 @@ export const EdgeAdmin = z.object({
     stale: null,
     record: null,
   }),
+  /** FCP's own client check, newest result (null: never checked, or an L7 edge). */
+  clientCheck: EdgeClientCheck.nullable().default(null),
   publication: z.enum(['unpublished', 'published', 'draining']),
   poolIndex: z.number().nullable(),
   publishedAt: isoN,
