@@ -520,42 +520,57 @@ export function assignEndpoints(
   }
   // An edge every one of whose names is excluded for this member's country is
   // not assignable FOR THEM: the walk moves on to the next edge. Without a
-  // country, edges with a universal name are walked first and the others only
-  // when none has one (`universalNameOn`).
-  const assignable = (e: PublishedEdge) => assignableFor(subscriberKey, e, opts);
-  const preferred = (e: PublishedEdge) => assignable(e) && universalNameOn(e, opts.where);
+  // country, an edge with no universal name stays out while any edge has one,
+  // the backup included, and is the last resort only when none has one
+  // (`lastResortOnly`).
+  const assignable = lastResortOnly(
+    pool.map((e) => assignableFor(subscriberKey, e, opts)),
+    pool,
+    opts.where,
+  );
   const start = poolSeed(subscriberKey) % pool.length;
   // Walk forward (wrapping) from the seeded index to the first assignable edge.
-  const walk = (ok: (e: PublishedEdge) => boolean) => {
-    for (let step = 0; step < pool.length; step++) {
-      const i = (start + step) % pool.length;
-      if (ok(pool[i])) return i;
+  let pIdx = -1;
+  for (let step = 0; step < pool.length; step++) {
+    const i = (start + step) % pool.length;
+    if (assignable[i]) {
+      pIdx = i;
+      break;
     }
-    return -1;
-  };
-  let pIdx = walk(preferred);
-  if (pIdx < 0) pIdx = walk(assignable);
+  }
   if (pIdx < 0) return { primary: null, backup: null };
   const primaryEdge = pool[pIdx];
   if (!opts.includeBackup) return endpointsFor(subscriberKey, primaryEdge, null, opts);
   // Backup: the next assignable edge after the primary in pool order, away
   // from the primary's failure domain: another provider first, then another
-  // location (a missing key counts as unknown, never as "different"); one
-  // with a universal name before one without.
+  // location (a missing key counts as unknown, never as "different").
   const ordered: PublishedEdge[] = [];
   for (let step = 1; step < pool.length; step++) {
-    const e = pool[(pIdx + step) % pool.length];
-    if (assignable(e)) ordered.push(e);
+    const i = (pIdx + step) % pool.length;
+    if (assignable[i]) ordered.push(pool[i]);
   }
-  const pick = (list: PublishedEdge[]): PublishedEdge | null =>
-    list.length === 0
+  const backupEdge =
+    ordered.length === 0
       ? null
       : ((opts.preferDistinctProviders
-          ? (list.find((e) => e.provider !== primaryEdge.provider) ??
-            list.find((e) => differentLocation(e, primaryEdge)))
-          : undefined) ?? list[0]);
-  const backupEdge = pick(ordered.filter((e) => universalNameOn(e, opts.where))) ?? pick(ordered);
+          ? (ordered.find((e) => e.provider !== primaryEdge.provider) ??
+            ordered.find((e) => differentLocation(e, primaryEdge)))
+          : undefined) ?? ordered[0]);
   return endpointsFor(subscriberKey, primaryEdge, backupEdge, opts);
+}
+
+/**
+ * Which edges a member may be handed, from which are assignable at all: with
+ * no country, only those with a universal name while any has one; every
+ * assignable one (the last resort) when none has one. Unchanged otherwise.
+ */
+function lastResortOnly(
+  assignable: readonly boolean[],
+  pool: readonly PublishedEdge[],
+  where?: CountryContext,
+): boolean[] {
+  const universal = assignable.map((ok, i) => ok && universalNameOn(pool[i]!, where));
+  return universal.some(Boolean) ? universal : [...assignable];
 }
 
 /** Two known, different locations (a missing key counts as unknown, never as "different"). */
@@ -577,12 +592,11 @@ function assignByTier(
   ownTier: (e: PublishedEdge) => EdgeTier,
   rule: { dropBlockedBackup: boolean },
 ): Assignment {
-  const loose = pool.map((e) => assignableFor(subscriberKey, e, opts));
-  // Without a country, edges with a universal name first (`universalNameOn`):
-  // the others are walked only when none has one, and back up last.
-  const nameLast = pool.map((e) => !universalNameOn(e, opts.where));
-  const strict = loose.map((ok, i) => ok && !nameLast[i]);
-  const assignable = strict.some(Boolean) ? strict : loose;
+  const assignable = lastResortOnly(
+    pool.map((e) => assignableFor(subscriberKey, e, opts)),
+    pool,
+    opts.where,
+  );
   const proven = pool.filter((e, i) => assignable[i] && ownTier(e) === 0).length;
   // Fewer proven edges than the exclusivity floor: proven and not-known share tier 1.
   const exclusive = proven >= Math.max(1, opts.minProvenForExclusive ?? 1);
@@ -611,13 +625,12 @@ function assignByTier(
     const candidates: Array<{ e: PublishedEdge; key: number[] }> = [];
     for (let step = 1; step < pool.length; step++) {
       const i = (pIdx + step) % pool.length;
-      if (!loose[i]) continue;
+      if (!assignable[i]) continue;
       const e = pool[i]!;
       const distinct = opts.preferDistinctProviders;
       candidates.push({
         e,
         key: [
-          nameLast[i] ? 1 : 0,
           tiers[i] === 2 ? 1 : 0,
           distinct && e.provider === primaryEdge.provider ? 1 : 0,
           tiers[i]!,
@@ -632,8 +645,7 @@ function assignByTier(
       return 0;
     });
     backupEdge = candidates[0]?.e ?? null;
-    // Blocked ones sort last, so a blocked first candidate means every one is
-    // (`nameLast` only ever differs without a country, where nothing is dropped).
+    // Blocked ones sort last, so a blocked first candidate means every one is.
     if (backupEdge && rule.dropBlockedBackup && primaryTier < 2 && ownTier(backupEdge) === 2)
       backupEdge = null;
   }

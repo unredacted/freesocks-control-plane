@@ -2371,11 +2371,11 @@ once settled; a listener it changes moves its origin's epoch).
 **Selecting** (`countryTier`, `convex/lib/edges/assignment.ts`; a listener on `hrw1`, which
 every listener with a judged name is):
 
-| The member is             | They are offered                                                                                                                                                               |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| in a curated country      | **Never** a name blocked there. Names proven there first; names nobody has judged there fill the remaining slots. With three or more proven names they hold only proven ones.  |
-| anywhere else, or unknown | The **universal pool**: names not blocked in **any** curated country. An edge with no such name offers its names blocked somewhere as the last resort, fewest countries first. |
-| reading an S3 mirror      | The same universal pool (a mirror has no request to infer anything from, and exists for exactly the people who are blocked), unless they said where they are.                  |
+| The member is             | They are offered                                                                                                                                                                 |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| in a curated country      | **Never** a name blocked there. Names proven there first; names nobody has judged there fill the remaining slots. With three or more proven names they hold only proven ones.    |
+| anywhere else, or unknown | The **universal pool**: names not blocked in **any** curated country. Only when no edge has one are names blocked somewhere offered, as the last resort, fewest countries first. |
+| reading an S3 mirror      | The same universal pool (a mirror has no request to infer anything from, and exists for exactly the people who are blocked), unless they said where they are.                    |
 
 Each tier keeps the rendezvous order, so the stability properties hold inside it. An endpoint's
 further names, and the backup's, spread over names the other endpoint does not carry only
@@ -2387,14 +2387,14 @@ them** and the walk moves to the next edge; with none left the existing edge-req
 applies.
 
 **The last resort without a country.** A member with no country (and a mirror) may be in none of
-the countries that block a name, so an edge whose every name is blocked somewhere is not dropped
-for them: its names are offered by how many curated countries block each (fewest first), and
-only on such an edge, never beside a universal name (`countryTier`, `rankSniHrwTiered`). The walk
-takes edges with a universal name first and turns to the others only when none has one; the
-backup prefers one with a universal name and otherwise takes such an edge rather than none
-(`universalNameOn`). So a small family, such as one matched to a network, no longer leaves those
-members with nothing (a 503 `empty_pool`) once each of its names is blocked in one country or
-another; a member in a curated country still never gets a name blocked there.
+the countries that block a name, so names blocked somewhere are not dropped for good: while any
+name blocked nowhere is available, they stay out (an edge without one is not handed out at all,
+not even as the backup); only when no edge has one do they become the last resort, each edge's
+names by how many curated countries block each, fewest first (`countryTier`,
+`rankSniHrwTiered`, `lastResortOnly`). So a small family, such as one matched to a network, no
+longer leaves those members with nothing (a 503 `empty_pool`) once each of its names is blocked
+in one country or another. A member in a curated country keeps the rule above: never a name
+blocked there.
 
 **Where the member is** (`convex/lib/memberCountry.ts` `memberWhere`; the privacy rules are
 docs/privacy.md §1 "Where a member connects from"). Only a key of a freedom-family mode has a
@@ -5086,9 +5086,9 @@ lifecycle runs in that test and its rows appear here.
 ## Deploy notes
 
 **Names blocked somewhere, as the last resort** change what members receive, nothing stored: a
-member with no country (and a mirror) on an edge whose every name is blocked in some curated
-country gets those names, fewest countries first, instead of a 503 `empty_pool`; anyone with a
-universal name sees no change. The detector's `country_scoped` veto no longer counts an edge
+member with no country (and a mirror) for whom no edge has a name blocked nowhere gets the names
+blocked somewhere, fewest countries first, instead of a 503 `empty_pool`; everyone else gets
+exactly what they got before. The detector's `country_scoped` veto no longer counts an edge
 whose names are all blocked somewhere as a way around for mirror readers. One deploy, no
 migration, no env change.
 

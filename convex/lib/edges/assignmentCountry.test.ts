@@ -91,11 +91,6 @@ describe('assignEndpoints without a country', () => {
     // in the member's country over an untaken one nobody judged there: every
     // assignment whose `where` names no country was checked identical to the
     // previous code over this corpus and three more seeds (36,665 of them).
-    // Re-pinned again when a name blocked somewhere became the last resort for a
-    // member with no country instead of never: over the same four seeds, both
-    // walks (96,000 assignments) were identical except 56 with no country and
-    // an edge carrying no universal name, 16 of them now served at all and 40
-    // with the same primary and a backup where there was none.
     let digest = 0x811c9dc5;
     let pool = 0;
     for (const { edges, rnd } of corpus(7, 300)) {
@@ -118,7 +113,7 @@ describe('assignEndpoints without a country', () => {
       }
       pool++;
     }
-    expect(digest).toBe(3013099625);
+    expect(digest).toBe(1819980137);
   });
 });
 
@@ -172,7 +167,7 @@ describe('a member with no country and names blocked somewhere', () => {
     }
   });
 
-  test('edges with a universal name come first; the others only as the last resort', () => {
+  test('while any edge has a universal name, an edge without one stays out, the backup included', () => {
     const pool = [
       hrw({ edgeId: 'blocked-names', poolIndex: 0, serverNames: named({ 'ir.example': ['IR'] }) }),
       hrw({ edgeId: 'universal', poolIndex: 1, serverNames: named({ 'ok.example': [] }) }),
@@ -181,11 +176,32 @@ describe('a member with no country and names blocked somewhere', () => {
       for (let i = 0; i < 200; i++) {
         const a = assignEndpoints(keyOf(i), pool, { ...OPTS, ...extra, where: NOWHERE });
         expect(a.primary?.edge.edgeId).toBe('universal');
-        // Better a backup that works outside IR than none.
-        expect(a.backup?.edge.edgeId).toBe('blocked-names');
-        expect(a.backup?.sni).toBe('ir.example');
+        expect(a.backup).toBeNull();
       }
     }
+  });
+
+  test('no edge with a universal name: every edge is the last resort, primary and backup', () => {
+    const pool = [
+      hrw({ edgeId: 'e0', poolIndex: 0, serverNames: named({ 'ir.example': ['IR'] }) }),
+      hrw({ edgeId: 'e1', poolIndex: 1, serverNames: named({ 'ru.example': ['RU'] }) }),
+    ];
+    for (const extra of [{}, { avoidBlockedIn: ['IR', 'RU', 'CN'] }]) {
+      const seen = new Set<string>();
+      for (let i = 0; i < 200; i++) {
+        const a = assignEndpoints(keyOf(i), pool, { ...OPTS, ...extra, where: NOWHERE });
+        expect(a.primary).not.toBeNull();
+        expect(a.backup).not.toBeNull();
+        expect(a.backup!.edge.edgeId).not.toBe(a.primary!.edge.edgeId);
+        seen.add(a.primary!.edge.edgeId);
+      }
+      // The seeded walk still spreads members over both.
+      if (!('avoidBlockedIn' in extra)) expect([...seen].sort()).toEqual(['e0', 'e1']);
+    }
+    // A member in IR gets only the edge whose name is not blocked there.
+    const ir = assignEndpoints(keyOf(3), pool, { ...OPTS, where: { ...NOWHERE, country: 'IR' } });
+    expect(ir.primary?.edge.edgeId).toBe('e1');
+    expect(ir.backup).toBeNull();
   });
 
   test('the veto never counts an edge whose names are all blocked somewhere as a way around', () => {
