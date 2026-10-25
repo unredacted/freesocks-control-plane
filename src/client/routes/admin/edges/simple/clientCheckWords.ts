@@ -38,9 +38,15 @@ export function clientCheckToast(outcome: EdgeClientCheckOutcome): {
   }
   const copy = CLIENT_CHECK_COPY[outcome.verdict];
   const engines = engineWords(outcome.engines);
+  // In a location you tested an address in, with the switch on, a pass counts as your test.
+  const confirmed = outcome.confirmed
+    ? 'It now counts as tested: it was checked in a location where you tested an address before.'
+    : '';
   return {
     tone: outcome.ok ? (engines ? 'warning' : 'success') : 'error',
     title: copy.label,
-    body: [copy.explain, engines ? `${engines}.` : '', copy.fix ?? ''].filter(Boolean).join(' '),
+    body: [copy.explain, engines ? `${engines}.` : '', confirmed, copy.fix ?? '']
+      .filter(Boolean)
+      .join(' '),
   };
 }

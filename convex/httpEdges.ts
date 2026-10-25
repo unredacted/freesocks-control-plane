@@ -1174,6 +1174,18 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         }),
       );
     }
+    // Automatic replacement held for a transport (a replacement blocked again
+    // soon after going into use): the operator resumes it, one transport or all.
+    if (c === 'auto-replace' && d === 'resume' && !parts[4])
+      return json(
+        await ctx.runMutation(internal.edgeRotations.resumeAutoReplace, {
+          relayId,
+          ...(typeof body.listenerId === 'string' && body.listenerId
+            ? { listenerId: id<'relayListeners'>(body.listenerId) }
+            : {}),
+          ...act,
+        }),
+      );
     switch (c) {
       case 'rebalance':
         // Coverage at the cap: unpublish ONE duplicate back to standby so

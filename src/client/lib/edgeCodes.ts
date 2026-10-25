@@ -617,8 +617,37 @@ const COPY = {
   no_verified_spare: {
     label: 'No tested spare',
     explain:
-      'Replacing this address needs a spare you have already tested; a new address cannot go live untested.',
-    fix: 'Create a spare address, test it, then replace.',
+      "Replacing this address needs a spare you have already tested; a new address cannot go live untested. With FCP's own client check on and answering, FCP can make and check one itself instead.",
+    fix: "Create a spare address and test it, or turn on FCP's own client check (Edges settings).",
+  },
+  no_ticked_location: {
+    label: 'No tested location',
+    explain:
+      'FCP makes a replacement itself only in a location where you have tested an address before, and no such location can take this one.',
+    fix: 'Add a spare address in a location you trust, test it with a real session, then replace.',
+  },
+  replacement_reblocked: {
+    label: 'Replacement blocked again',
+    explain:
+      'This address replaced a blocked one and looks blocked again soon after going into use: the members who received it likely include the account that gave it away, so FCP stopped replacing it automatically.',
+    fix: 'Look at who receives this transport, then resume automatic replacement on the node page.',
+  },
+  // --- FCP's own client check in a replacement (rotation events and outcomes) ---------------
+  client_check: {
+    label: "FCP's client check",
+    explain: 'FCP checked the new address with its own sing-box and Xray clients.',
+  },
+  client_check_failed: {
+    label: "Failed FCP's client check",
+    explain:
+      "FCP's own clients did not get through the new address the way they get through the one in use, so it was not put in use. It is removed, and the next automatic try waits an hour.",
+    fix: 'Check the node and the provider location, or replace by hand.',
+  },
+  client_check_unconfirmed: {
+    label: 'Checked but not confirmed',
+    explain:
+      "FCP's own clients got through, but the check could not stand in for your test: the location is no longer one you tested an address in, or the client check was turned off.",
+    fix: 'Test the address yourself, then put it in use.',
   },
   // --- preflight: selection -------------------------------------------------------------
   no_compatible_listener: {
@@ -940,8 +969,20 @@ const COPY = {
   needs_test: {
     label: 'Blocked and the spare is untested',
     explain:
-      'The address on this node looks blocked and automatic replacement has no spare you have tested.',
+      'The address on this node looks blocked and automatic replacement has no spare you have tested, and no location you tested an address in where FCP could make one.',
     fix: 'Test the spare address with a real session, then replace.',
+  },
+  auto_replace_held: {
+    label: 'Automatic replacement held',
+    explain:
+      'A replacement address was blocked again soon after it went into use, so FCP stopped replacing this transport automatically instead of burning address after address.',
+    fix: 'Find out who receives this transport, then resume automatic replacement on the node page.',
+  },
+  single_address: {
+    label: 'One address in use',
+    explain:
+      'Members of this node have no second address to fall back on while FCP replaces a blocked one, which takes about 10 to 15 minutes.',
+    fix: 'Keep at least 2 addresses in use on each node.',
   },
   spare_untested: {
     label: 'Spare address untested',
@@ -2831,6 +2872,8 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.destroyed': 'Address destroyed',
   'edge.verified': 'Address tested with a real session',
   'edge.client_check': "Address checked with FCP's client",
+  'edge.auto_replace_held': 'Automatic replacement held',
+  'edge.auto_replace_resumed': 'Automatic replacement resumed',
   'edge.block_suspected': 'Address looks blocked',
   'edge.block_cleared': 'Address no longer looks blocked',
   'edge.block_simulation.started': 'Test block started',

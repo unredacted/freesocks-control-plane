@@ -120,14 +120,38 @@ describe('automation state and words', () => {
   const noEmDash = (s: string | null) => expect(s ?? '').not.toContain('—');
 
   it('replacement is the master switch and automatic rotation, not spares or probes', () => {
-    expect(automationState(on)).toEqual({ replaces: true, makesSpares: true, probes: true });
-    expect(automationState(walk)).toEqual({ replaces: true, makesSpares: false, probes: true });
+    expect(automationState(on)).toEqual({
+      replaces: true,
+      makesSpares: true,
+      probes: true,
+      checksItself: false,
+    });
+    expect(automationState(walk)).toEqual({
+      replaces: true,
+      makesSpares: false,
+      probes: true,
+      checksItself: false,
+    });
     expect(automationState({ ...on, enabled: false })).toEqual({
       replaces: false,
       makesSpares: false,
       probes: true,
+      checksItself: false,
     });
     expect(automationState({ ...on, autoRotate: false }).replaces).toBe(false);
+    expect(automationState({ ...on, clientCheck: { enabled: true } }).checksItself).toBe(true);
+  });
+
+  it("with FCP's own client check, spares are optional and the words say so", () => {
+    const checks = { ...walk, clientCheck: { enabled: true } };
+    expect(automationNote(automationState(checks))).toBeNull();
+    expect(automationNote(automationState({ ...checks, probe: { enabled: false } }))).toMatch(
+      /probes are off/,
+    );
+    const words = nodeAutomationWords(checks, { autoRotate: true, setupOwned: false });
+    expect(words.line).toMatch(/makes a new one in a location you tested/);
+    expect(words.spares).toBeNull();
+    noEmDash(words.line);
   });
 
   it('the Edges home says what is left to the operator under an ON switch', () => {

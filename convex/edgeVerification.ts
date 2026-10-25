@@ -45,7 +45,13 @@ import { verificationListenerOf, type VerifiableListener } from './lib/edges/ver
 import { checkPublishable } from './relays';
 import { FLEET_EDGE_PAGE_SIZE } from './lib/edges/pool';
 import { applyQualification } from './edgeProviderAccounts';
-import { effectiveTemplateOfLocation, locationOfEdge } from './edgeLocations';
+import {
+  effectiveTemplateOfLocation,
+  liveEdgesOfLocation,
+  locationOfEdge,
+  noteTickedEvidence,
+} from './edgeLocations';
+import { edgeLayerOf } from './lib/edges/providers/capabilities';
 
 const methodValidator = v.union(v.literal('test_link'), v.literal('named_connection'));
 
@@ -216,8 +222,23 @@ export async function confirmEndpoint(
       const location = await locationOfEdge(ctx.db, edge);
       if (!account) accountTrustReason = 'account_not_found';
       else if (!location) accountTrustReason = 'no_location';
-      else if (location.qualified) accountTrustReason = 'already_qualified';
-      else if (location.autoQualifyHold) accountTrustReason = 'hold';
+      else if (location.qualified) {
+        accountTrustReason = 'already_qualified';
+        // Trusted by the override alone: this tick becomes its evidence, so
+        // FCP's own client check may stand in for a tick here from now on.
+        if (!location.qualification?.evidence) {
+          const trust = await accountTrustEvidence(ctx, account, location, edge);
+          if (trust.ok)
+            await noteTickedEvidence(ctx, location, {
+              edgeId: edge._id,
+              endpoint: current!.endpoint,
+              accountTestedAt: trust.testedAt,
+              templateHash: trust.templateHash,
+              listenerId: listener._id as Id<'relayListeners'>,
+              listenerRevision: listener.revision,
+            });
+        }
+      } else if (location.autoQualifyHold) accountTrustReason = 'hold';
       else {
         const trust = await accountTrustEvidence(ctx, account, location, edge);
         if (!trust.ok) accountTrustReason = trust.code;
@@ -248,6 +269,52 @@ export async function confirmEndpoint(
     };
   }
 }
+
+/**
+ * The reconcile pass's fill (docs/edges.md § "Replacing a blocked address
+ * without a spare"): an L4 location trusted by the override, with no endpoint
+ * behind its trust, takes as its evidence an address there the owner ticked
+ * that still holds: confirmed by an operator against the configuration it
+ * holds now, built with the location's template, the account tested after its
+ * last change. Covers ticks made before the evidence was kept for an already
+ * trusted location. Bounded: locations are operator-scale.
+ */
+export const fillTickedEvidence = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let filled = 0;
+    for (const location of await ctx.db.query('edgeLocations').collect()) {
+      if (!location.enabled || !location.qualified || location.qualification?.evidence) continue;
+      if (edgeLayerOf(location.provider) !== 'l4') continue;
+      const account = await ctx.db.get(location.accountId);
+      if (!account) continue;
+      for (const edge of await liveEdgesOfLocation(ctx.db, location)) {
+        const rec = edge.verification;
+        if (edge.status !== 'active' || !rec || rec.by !== 'admin') continue;
+        if (rec.method !== 'test_link' && rec.method !== 'named_connection') continue;
+        const raw = await ctx.db.get(edge.listenerId);
+        if (!raw) continue;
+        const listener = await verificationListenerOf(ctx.db, raw);
+        if (!verificationCurrent(edge, listener)) continue;
+        const trust = await accountTrustEvidence(ctx, account, location, edge);
+        if (!trust.ok) continue;
+        if (
+          await noteTickedEvidence(ctx, location, {
+            edgeId: edge._id,
+            endpoint: rec.endpoint,
+            accountTestedAt: trust.testedAt,
+            templateHash: trust.templateHash,
+            listenerId: raw._id,
+            listenerRevision: rec.listenerRevision,
+          })
+        )
+          filled++;
+        break;
+      }
+    }
+    return { filled };
+  },
+});
 
 /**
  * Whether a confirmed endpoint of `edge` is trust evidence for `account` NOW

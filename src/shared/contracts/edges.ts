@@ -685,6 +685,13 @@ export const OriginAdmin = z.object({
   bindingDeferred: z.boolean().default(false),
   /** A guided setup owns the relay: upkeep and automatic replacement skip it. */
   setupOwned: z.boolean().default(false),
+  /**
+   * Transports whose automatic replacement is held until the operator resumes it
+   * (`replacement_reblocked`: a replacement blocked again soon after going into use).
+   */
+  autoReplaceHolds: z
+    .array(z.object({ listenerId: z.string(), code: z.string(), at: iso }))
+    .default([]),
   cooldownMinutes: z.number(),
   maxRotationsPerDay: z.number(),
   drainMinutes: z.number(),
@@ -921,6 +928,8 @@ export const EdgeClientCheckOutcome = z.discriminatedUnion('checked', [
     ok: z.boolean(),
     engines: z.array(ClientCheckEngineVerdict),
     control: z.boolean(),
+    /** The check confirmed the address for publication (a ticked location, the switch on). */
+    confirmed: z.boolean().default(false),
   }),
 ]);
 export type EdgeClientCheckOutcome = z.infer<typeof EdgeClientCheckOutcome>;
@@ -951,8 +960,11 @@ export const EdgeVerificationView = z.object({
       rung: z.enum(['partial', 'verified']),
       by: z.enum(['admin', 'system']),
       at: iso,
-      /** `probe` = the system's `partial` rung from probe evidence (never satisfies the gate). */
-      method: z.enum(['test_link', 'named_connection', 'l7_proof', 'probe']),
+      /**
+       * `probe` = the system's `partial` rung from probe evidence (never satisfies the gate);
+       * `client_check` = FCP's own client check in a location the owner ticked.
+       */
+      method: z.enum(['test_link', 'named_connection', 'l7_proof', 'probe', 'client_check']),
       listenerKey: z.string(),
       listenerRevision: z.number(),
     })
@@ -2160,6 +2172,9 @@ export const EdgeConfigView = z.object({
       requireProviderHealth: z.boolean(),
       refreshMirrorsAfterFlip: z.boolean(),
       detect: z.record(z.string(), z.unknown()),
+      /** FCP's own client check confirms and replaces (absent from an older server: off). */
+      clientCheck: z.object({ enabled: z.boolean() }).default({ enabled: false }),
+      replacement: z.object({ reblockHours: z.number() }).default({ reblockHours: 24 }),
       render: z
         .object({
           enabled: z.boolean(),
