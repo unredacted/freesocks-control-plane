@@ -1387,10 +1387,15 @@ export const runDirect = internalAction({
           await rollback();
           return null;
         }
-        await ctx.runMutation(internal.nodeActivation.commit, {
+        const committed = await ctx.runMutation(internal.nodeActivation.commit, {
           runId,
           stepVersion: s.stepVersion,
         });
+        // The commit re-validates everything and may refuse the candidate (a
+        // revision, the review, the evidence or an obligation moved since the
+        // rehearsal): the run is blocked, and closes what it opened. A stale
+        // step means something else moved the run on, which decides.
+        if (!committed.ok && committed.code !== 'stale') await rollback();
         return null;
       }
       return null;

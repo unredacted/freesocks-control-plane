@@ -639,6 +639,60 @@ describe('an enable whose outcome is not known yet', () => {
   });
 });
 
+describe('a commit that refuses the candidate after its rehearsal passed', () => {
+  test('turns off what the run turned on', async () => {
+    const s = await seed();
+    const { nodeUuid, hostUuid } = await legacyDirect(s);
+    const { intentId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    await throughMaintenance(s.t, intentId);
+    s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled = true;
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const built = await s.t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await s.t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    // Something of the node's is still outstanding: only the commit checks it.
+    await s.t.run((ctx) =>
+      ctx.db.insert('backendObligations', {
+        backendServerId: s.serverId,
+        ownerKind: 'intent',
+        ownerId: intentId,
+        ownerGeneration: 1,
+        attemptId: 'a1',
+        kind: 'dns.record',
+        identity: 'legacy-a.example.net',
+        verb: 'create',
+        ownership: 'created',
+        state: 'unresolved',
+        intent: '{}',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const review = await s.t.query(internal.nodeActivation.review, { intentId });
+    const { runId } = await s.t.mutation(internal.nodeActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+    });
+    await until(
+      () => s.t.run((ctx) => ctx.db.get(runId)),
+      (r) => !!r && r.state !== 'running',
+    );
+    await until(
+      () => s.t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect()),
+      (rows) => rows.every((r) => r.state.kind !== 'pending' && r.state.kind !== 'inProgress'),
+    );
+    const run = (await s.t.run((ctx) => ctx.db.get(runId)))!;
+    expect(run).toMatchObject({ state: 'blocked', code: 'servers.obligation_unresolved' });
+    expect(run.rehearsal?.ok).toBe(true);
+    expect(s.panel.hosts.find((h) => h.uuid === hostUuid)!.isDisabled).toBe(true);
+    expect(run.enabledHostUuids).toBeUndefined();
+  });
+});
+
 describe('a rollback the backend refuses', () => {
   test('keeps the address owned, so the next approval can still turn it off', async () => {
     const s = await seed();
