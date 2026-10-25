@@ -9,6 +9,7 @@
  * inheritance and the publication epoch the render cache keys on). Rotation
  * state lives in edgeRotations.ts; edge rows in edges.ts.
  */
+import { clientConfirmationStands } from './lib/edges/tickedLocation';
 import { verificationListenerOf } from './lib/edges/verificationContext';
 import { edgeNetworkVerdict } from './lib/edges/networks';
 import { networkPrefixes } from './edgeNetworks';
@@ -492,6 +493,11 @@ export function mapRelayAdmin(
     standbyPerListener: policy.standbyPerListener,
     bindingDeferred: r.bindingDeferred ?? false,
     setupOwned: r.setupOwned ?? false,
+    autoReplaceHolds: (r.autoReplaceHolds ?? []).map((h) => ({
+      listenerId: h.listenerId as string,
+      code: h.code,
+      at: new Date(h.at).toISOString(),
+    })),
     cooldownMinutes: Math.round(policy.cooldownMs / 60_000),
     maxRotationsPerDay: policy.maxRotationsPerDay,
     drainMinutes: Math.round(policy.drainMs / 60_000),
@@ -1834,14 +1840,17 @@ export async function checkPublishable(
     edgeNetworkVerdict(edge.addresses, await networkPrefixes(ctx.db, listener.networkId)) !== 'on'
   )
     return { ok: false, code: 'off_network' };
-  // An L4 endpoint goes live only with the operator's OWN confirmation against
-  // the configuration it holds now (lib/edges/verification.ts): nothing
-  // server-side can prove an L4 address, and a stale tick (listener revision
-  // bump, re-addressing) is no tick at all. The L7 proof above is the L7 form.
+  // An L4 endpoint goes live only with a confirmation against the configuration
+  // it holds now (lib/edges/verification.ts): the operator's own, or FCP's own
+  // client check where it may stand in for one (a ticked location, the switch
+  // on; edgeClientCheck.ts). A stale one (listener revision bump,
+  // re-addressing) is none at all, and FCP's own stands only while the switch
+  // is on and the location is still ticked. The L7 proof above is the L7 form.
   if (
     !opts.skipVerification &&
     needsEndpointVerification(edge) &&
-    !verificationCurrent(edge, await verificationListenerOf(ctx.db, listener))
+    (!verificationCurrent(edge, await verificationListenerOf(ctx.db, listener)) ||
+      !(await clientConfirmationStands(ctx.db, edge)))
   )
     return { ok: false, code: 'unverified_endpoint' };
   if (edge.managed && !providerHealthSatisfies(edge.provider, edge.health, requireHealth))

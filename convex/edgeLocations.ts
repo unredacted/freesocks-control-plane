@@ -329,10 +329,20 @@ export async function applyLocationQualification(
 ): Promise<void> {
   const effective = await effectiveTemplateOfLocation(ctx, account, location);
   const now = Date.now();
+  // Trusting a location that is already trusted by an endpoint the owner ticked
+  // keeps that endpoint as the evidence while the template is the same: it is
+  // what lets FCP's own client check stand in for a tick there (lib/edges/tickedLocation.ts).
+  const kept =
+    !opts.evidence &&
+    location.qualified &&
+    location.qualification?.evidence &&
+    location.qualification.evidence.templateHash === effective.hash
+      ? location.qualification
+      : null;
   await ctx.db.patch(location._id, {
     qualified: true,
     qualifiedTemplateHash: effective.hash,
-    qualification: {
+    qualification: kept ?? {
       by: opts.by,
       at: now,
       ...(opts.evidence
@@ -378,6 +388,36 @@ export async function applyLocationQualification(
  * Untrust one location. `hold` (a manual untrust) keeps the automatic rules
  * off until an operator trusts again or the account's credentials change.
  */
+/**
+ * A location trusted by the override (no endpoint behind it) gets the
+ * endpoint the owner just ticked there as its evidence, without a second
+ * "trusted" record: what makes it a ticked location (lib/edges/tickedLocation.ts).
+ * A location with evidence already, or untrusted, is left alone.
+ */
+export async function noteTickedEvidence(
+  ctx: MutationCtx,
+  location: Location,
+  evidence: Omit<AutoQualifyEvidence, 'proofCheckedAt'>,
+): Promise<boolean> {
+  if (!location.qualified || location.qualification?.evidence) return false;
+  await ctx.db.patch(location._id, {
+    qualification: {
+      by: 'admin',
+      at: location.qualification?.at ?? Date.now(),
+      evidence: {
+        edgeId: evidence.edgeId as Id<'edges'>,
+        endpoint: evidence.endpoint,
+        accountTestedAt: evidence.accountTestedAt,
+        templateHash: evidence.templateHash,
+        listenerId: evidence.listenerId as Id<'relayListeners'>,
+        listenerRevision: evidence.listenerRevision,
+      },
+    },
+    updatedAt: Date.now(),
+  });
+  return true;
+}
+
 export async function untrustLocation(
   ctx: MutationCtx,
   account: Account,
@@ -391,6 +431,12 @@ export async function untrustLocation(
     ...(opts.hold ? { autoQualifyHold: true } : {}),
     updatedAt: Date.now(),
   });
+  // A spare that only FCP's own client check confirmed was confirmed because the
+  // owner trusted this location: with the trust gone, it needs a test again.
+  // An address in use keeps serving (nothing is taken out of use here).
+  for (const e of await liveEdgesOfLocation(ctx.db, location))
+    if (e.publication === 'unpublished' && e.verification?.method === 'client_check')
+      await ctx.db.patch(e._id, { verification: undefined, updatedAt: Date.now() });
   await writeAuditLog(ctx, {
     actorType: 'admin',
     actorId: opts.actorAdminId ?? undefined,

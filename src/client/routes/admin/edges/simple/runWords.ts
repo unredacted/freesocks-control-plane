@@ -303,6 +303,8 @@ type AutomationConfig = {
   autoRotate: boolean;
   autoProvisionToDesired: boolean;
   probe: { enabled: boolean };
+  /** FCP's own client check replaces a blocked address without a spare (absent: off). */
+  clientCheck?: { enabled: boolean };
 };
 
 /** A missing address as the providers view names it (`ProviderSetView['missing']`). */
@@ -395,29 +397,38 @@ export function automationOn(config: AutomationConfig): boolean {
 }
 
 /**
- * What the four switches mean apart (a test deployment keeps spares by hand,
+ * What the switches mean apart (a test deployment keeps spares by hand,
  * docs/beta-deploy.md "Walking automatic rotation"):
- *   replaces    a blocked address can be replaced on its own: the master switch
- *               and automatic rotation (each node also opts in)
- *   makesSpares upkeep makes new spares and fills pools (billable)
- *   probes      reachability probes run
+ *   replaces     a blocked address can be replaced on its own: the master switch
+ *                and automatic rotation (each node also opts in)
+ *   makesSpares  upkeep makes new spares and fills pools (billable)
+ *   probes       reachability probes run
+ *   checksItself FCP makes the replacement and checks it with its own clients
+ *                (no tested spare needed)
  */
 export interface AutomationState {
   replaces: boolean;
   makesSpares: boolean;
   probes: boolean;
+  checksItself: boolean;
 }
 export function automationState(config: AutomationConfig): AutomationState {
   return {
     replaces: config.enabled && config.autoRotate,
     makesSpares: config.enabled && config.autoProvisionToDesired,
     probes: config.probe.enabled,
+    checksItself: config.enabled && config.clientCheck?.enabled === true,
   };
 }
 
 /** The Edges home's line under the switch when replacement is on but not all of it. */
 export function automationNote(state: AutomationState): string | null {
   if (!state.replaces) return null;
+  // Replacements are made and checked by FCP: spares are optional.
+  if (state.checksItself)
+    return state.probes
+      ? null
+      : 'Reachability probes are off, so the detector only has member reports to go on.';
   if (!state.makesSpares && !state.probes)
     return 'FCP does not make new spares on its own, and reachability probes are off.';
   if (!state.makesSpares)
@@ -465,6 +476,11 @@ export function nodeAutomationWords(
   if (!node.autoRotate)
     return {
       line: 'Off for this node: an address that looks blocked shows under Needs you and waits for you to replace it.',
+      spares: null,
+    };
+  if (config.clientCheck?.enabled)
+    return {
+      line: 'When an address looks blocked, FCP makes a new one in a location you tested an address in, checks it with its own clients and moves members to it.',
       spares: null,
     };
   return {

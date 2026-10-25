@@ -235,6 +235,7 @@ export const disableSwitches = internalMutation({
       'edge.render.enabled',
       'edge.probe.enabled',
       'edge.l7.autoSelect',
+      EDGE_KEYS['clientCheck.enabled'],
     ];
     for (const key of keys) await upsertSettingRow(ctx, key, 'false');
     await writeAuditLog(ctx, {

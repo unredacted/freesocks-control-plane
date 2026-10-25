@@ -31,6 +31,7 @@
   import { searchParam, setSearchParams } from '@client/lib/urlState.svelte';
   import {
     attentionQuery,
+    clientCheckStatusQuery,
     edgeConfigQuery,
     edgeKeys,
     edgeSummaryQuery,
@@ -80,6 +81,12 @@
   const autoState = $derived(config.data ? automationState(config.data.config) : null);
   const automation = $derived(autoState ? autoState.replaces : null);
   const autoNote = $derived(autoState ? automationNote(autoState) : null);
+  // FCP's own client check is set up and answering: the switch then turns on
+  // replacement without spares (edgeAdmin.setAutomation).
+  const clientCheckStatus = clientCheckStatusQuery();
+  const clientCheckReady = $derived(
+    clientCheckStatus.data?.configured === true && clientCheckStatus.data.health?.ok === true,
+  );
   const updatedAt = $derived(Math.min(summary.dataUpdatedAt, attention.dataUpdatedAt));
   const refreshNow = () =>
     Promise.all([
@@ -268,14 +275,26 @@
   {#if automation === false && anyLive}
     <section class="rounded-lg border p-4" aria-labelledby="auto-title">
       <h2 id="auto-title" class="font-semibold">Turn on automatic protection</h2>
-      <p class="text-muted-foreground mt-1 max-w-prose text-sm">
-        FCP watches every protected node and replaces an address that looks blocked. It keeps one
-        spare address per listener, which your provider bills.
-      </p>
-      <p class="text-muted-foreground mt-2 max-w-prose text-sm">
-        Automatic replacement switches to a spare address you have already tested. FCP asks you to
-        test each new spare address at the top of this page before it can be used.
-      </p>
+      {#if clientCheckReady}
+        <p class="text-muted-foreground mt-1 max-w-prose text-sm">
+          FCP watches every protected node. When an address looks blocked, it makes a new one in a
+          location where you have tested an address before, checks it with its own sing-box and Xray
+          clients, and moves members to it. Nothing extra is billed while no address is blocked.
+        </p>
+        <p class="text-muted-foreground mt-2 max-w-prose text-sm">
+          Keep at least 2 addresses in use on each node: members use the other one while FCP
+          replaces a blocked address.
+        </p>
+      {:else}
+        <p class="text-muted-foreground mt-1 max-w-prose text-sm">
+          FCP watches every protected node and replaces an address that looks blocked. It keeps one
+          spare address per listener, which your provider bills.
+        </p>
+        <p class="text-muted-foreground mt-2 max-w-prose text-sm">
+          Automatic replacement switches to a spare address you have already tested. FCP asks you to
+          test each new spare address at the top of this page before it can be used.
+        </p>
+      {/if}
       <Button class="mt-3" disabled={automationBusy} onclick={() => setAutomation(true)}>
         Turn on
       </Button>

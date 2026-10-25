@@ -50,6 +50,13 @@ export const BASIC_SWITCHES: Field[] = [
   },
   {
     kind: 'switch',
+    path: 'clientCheck.enabled',
+    label: "Replace without a spare (FCP's own client check)",
+    helper:
+      "On: with no tested spare, a blocked address is replaced by a new one in a location where you tested an address before, and FCP's own sing-box and Xray clients stand in for your test there. Off: a replacement needs a spare you tested, and the check is advice only.",
+  },
+  {
+    kind: 'switch',
     path: 'render.enabled',
     label: 'Render edge addresses into subscriptions',
     helper:
@@ -176,6 +183,14 @@ export const ROTATION_FIELDS: Field[] = [
     label: 'Rotations running at once',
     unit: 'runs',
     helper: 'Fleet-wide limit. Further rotations are refused until one finishes.',
+  },
+  {
+    kind: 'number',
+    path: 'replacement.reblockHours',
+    label: 'Hold when a replacement is blocked again within',
+    unit: 'hours',
+    helper:
+      'A replacement that looks blocked again this soon after going into use stops automatic replacement of its transport on that node until you resume it. 0 never holds.',
   },
 ];
 

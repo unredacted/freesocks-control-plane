@@ -160,6 +160,9 @@ import { atCap, passesCap, sizeKeyOf, sizeOf } from './lib/edges/pricing';
 import { l7PlaceOf, placeProblemOf } from './lib/edges/l7Place';
 import { networkPrefixes } from './edgeNetworks';
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
+import { clientCheckFailedNow, clientCheckReadiness, runClientCheck } from './edgeClientCheck';
+import { locationTicked } from './lib/edges/tickedLocation';
+import { REPLACEMENT_POLICY, replacementPlacement } from './lib/edges/replacementHolders';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -348,6 +351,123 @@ export const autoProvisionBackingOff = internalQuery({
       last.phase === 'failed' &&
       (last.finishedAt ?? last.updatedAt) > now - EDGE_PLUMBING.autoProvisionBackoffMs
     );
+  },
+});
+
+/**
+ * The re-block guard (docs/edges.md § "Replacing a blocked address without a
+ * spare"): `edge` was put in use by a replace less than
+ * `edge.replacement.reblockHours` ago, so a block now means the accounts that
+ * received it burn every address it gets.
+ */
+export function reblockedSoon(
+  edge: Pick<Edge, 'replacementOf' | 'publishedAt'>,
+  cfg: Pick<EdgeConfig, 'replacement'>,
+  now: number,
+): boolean {
+  if (!edge.replacementOf || cfg.replacement.reblockHours <= 0) return false;
+  const since = edge.publishedAt ?? edge.replacementOf.at;
+  return now - since < cfg.replacement.reblockHours * 3_600_000;
+}
+
+/** The client gate's own progress on the run (attempts, clock, last code). */
+export const recordClientGate = internalMutation({
+  args: {
+    rotationId: v.id('edgeRotations'),
+    stepVersion: v.number(),
+    attempts: v.number(),
+    since: v.number(),
+    lastCode: v.string(),
+  },
+  handler: async (ctx, a) => {
+    const r = await guard(ctx, a.rotationId, a.stepVersion);
+    if (!r || !r.clientCheckGate) return null;
+    const now = Date.now();
+    await ctx.db.patch(r._id, {
+      clientCheckGate: { attempts: a.attempts, since: a.since, lastCode: a.lastCode },
+      events: appendEvent(r.events, {
+        at: now,
+        level: a.lastCode === 'passed' || a.lastCode === 'passed_with_refusals' ? 'info' : 'warn',
+        code: 'client_check',
+        detail: a.lastCode,
+      }),
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
+/**
+ * Hold automatic replacement of the target's transport on its node: attention
+ * `auto_replace_held` until the operator resumes it. Idempotent per transport.
+ * The detector asks with `ifReblocked` whenever its start is refused, whatever
+ * blocker the refusal names (a fleet brake or the daily cap can win over
+ * `edge.replacement_reblocked`), so a rapid re-block is held all the same.
+ */
+export const holdAutoReplace = internalMutation({
+  args: {
+    relayId: v.id('relays'),
+    edgeId: v.id('edges'),
+    code: v.string(),
+    ifReblocked: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { relayId, edgeId, code, ifReblocked }) => {
+    const origin = await ctx.db.get(relayId);
+    const edge = await ctx.db.get(edgeId);
+    if (!origin || !edge || edge.relayId !== relayId) return { held: false };
+    const holds = origin.autoReplaceHolds ?? [];
+    if (holds.some((h) => h.listenerId === edge.listenerId)) return { held: true };
+    const now = Date.now();
+    if (
+      ifReblocked &&
+      (edge.publication !== 'published' ||
+        !reblockedSoon(edge, await resolveEdgeConfig(ctx.db), now))
+    )
+      return { held: false };
+    await ctx.db.patch(relayId, {
+      autoReplaceHolds: [...holds, { listenerId: edge.listenerId, code, at: now, edgeId }],
+      updatedAt: now,
+    });
+    const listener = await ctx.db.get(edge.listenerId);
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'edge.auto_replace_held',
+      targetType: 'relay',
+      targetId: relayId,
+      payload: { relaySlug: origin.slug, listenerKey: listener?.listenerKey ?? '', code, edgeId },
+    });
+    return { held: true };
+  },
+});
+
+/** `POST relays/{id}/auto-replace/resume {listenerId?}`: the operator lifts a hold (one transport, or all). */
+export const resumeAutoReplace = internalMutation({
+  args: {
+    relayId: v.id('relays'),
+    listenerId: v.optional(v.id('relayListeners')),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { relayId, listenerId, actorAdminId }) => {
+    const origin = await ctx.db.get(relayId);
+    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    const holds = origin.autoReplaceHolds ?? [];
+    const kept = listenerId ? holds.filter((h) => h.listenerId !== listenerId) : [];
+    const lifted = holds.length - kept.length;
+    if (lifted > 0) {
+      await ctx.db.patch(relayId, {
+        autoReplaceHolds: kept.length > 0 ? kept : undefined,
+        updatedAt: Date.now(),
+      });
+      await writeAuditLog(ctx, {
+        actorType: actorAdminId ? 'admin' : 'system',
+        actorId: actorAdminId ?? undefined,
+        action: 'edge.auto_replace_resumed',
+        targetType: 'relay',
+        targetId: relayId,
+        payload: { relaySlug: origin.slug, lifted },
+      });
+    }
+    return { ok: true as const, lifted };
   },
 });
 
@@ -688,6 +808,24 @@ export async function collectStartBlockers(
         targetEdge = null;
       }
     }
+    // Automatic replacement of a transport the operator holds, or of an
+    // address that was itself a replacement and is judged blocked again soon
+    // after going into use: the same accounts would receive the next address
+    // too (lib/edges/replacementHolders.ts), so FCP stops instead of cycling.
+    // The detector records the hold on the second refusal (`holdAutoReplace`).
+    // An operator's own replace is never held.
+    if (targetEdge && (a.trigger === 'detector' || a.trigger === 'reconcile')) {
+      if ((origin.autoReplaceHolds ?? []).some((h) => h.listenerId === targetEdge!.listenerId))
+        push(
+          'edge.auto_replace_held',
+          'Automatic replacement of this transport is held; resume it on the node page',
+        );
+      else if (reblockedSoon(targetEdge, cfg, now))
+        push(
+          'edge.replacement_reblocked',
+          'This address replaced a blocked one and looks blocked again already',
+        );
+    }
     if (targetEdge) {
       if (origin.hostMode === 'operator' && (await isTemplateEdge(ctx, targetEdge)) && !force) {
         push(
@@ -705,11 +843,12 @@ export async function collectStartBlockers(
         push('edge.daily_cap', 'Daily rotation cap reached');
     }
     if (targetEdge) listenerId = targetEdge.listenerId;
-    // Replacing an L4 edge switches ONLY to an already-tested spare: a freshly
+    // Replacing an L4 edge switches to an already-tested spare, unless FCP's
+    // own client check can prove the replacement (below): otherwise a freshly
     // provisioned L4 candidate could never pass the publication gate (an L4
-    // endpoint needs the operator's own confirmation, lib/edges/verification.ts),
-    // so a replace that would have to provision is refused here instead of
-    // paying for a doomed candidate. An L7 replace keeps its proof-based path.
+    // endpoint needs a confirmation, lib/edges/verification.ts), so a replace
+    // that would have to provision is refused here instead of paying for a
+    // doomed candidate. An L7 replace keeps its proof-based path.
     // Not waived by `force`: verification is evidence, not a guard. When the
     // listener can be fronted at L7 and the selection may pick an L7 account,
     // the replacement may be a NEW front proven by its own session, so the
@@ -723,10 +862,32 @@ export async function collectStartBlockers(
         (a.trigger === 'manual' || l7SelectionAllowed(cfg) || (await setHasL7Pick(ctx.db, origin)));
       const automatic = a.trigger === 'detector' || a.trigger === 'reconcile';
       if (!couldGoL7 && !(await verifiedSpareFor(ctx, origin, targetEdge, cfg, automatic))) {
-        push(
-          'edge.no_verified_spare',
-          'No tested spare address exists for this listener; test a spare first',
-        );
+        // FCP may make the replacement itself and prove it with its own client
+        // check, in a location the owner ticked an address in (docs/edges.md
+        // § "Replacing a blocked address without a spare"). The start asks the
+        // same selection the run will, so it is not waived for nothing.
+        const ready = (await clientCheckReadiness(ctx.db, cfg, now)) === 'ready';
+        const sel = ready
+          ? await selectionContext(
+              ctx,
+              { ...a, listenerId: targetEdge.listenerId, requestedOptions: undefined },
+              origin,
+              targetEdge,
+              cfg,
+            )
+          : null;
+        if (!sel || (!sel.standbyId && !sel.account)) {
+          if (sel?.accountFailure === 'no_ticked_location')
+            push(
+              'edge.no_ticked_location',
+              'No location where an address was tested can take the replacement; test an address there first',
+            );
+          else if (!sel || sel.accountFailure !== 'outside_approved_shape')
+            push(
+              'edge.no_verified_spare',
+              'No tested spare address exists for this listener; test a spare first',
+            );
+        }
       }
     }
   }
@@ -1329,7 +1490,12 @@ async function followHostIntent(
 }
 
 const advanceEvent = v.union(
-  v.object({ type: v.literal('selected'), toEdgeId: v.id('edges'), viaStandby: v.boolean() }),
+  v.object({
+    type: v.literal('selected'),
+    toEdgeId: v.id('edges'),
+    viaStandby: v.boolean(),
+    clientCheck: v.optional(v.boolean()),
+  }),
   v.object({
     type: v.literal('progress'),
     delayMs: v.number(),
@@ -1547,6 +1713,7 @@ export const advance = internalMutation({
         await ctx.db.patch(rotationId, {
           toEdgeId: event.toEdgeId,
           viaStandby: event.viaStandby,
+          ...(event.clientCheck ? { clientCheckGate: { attempts: 0 } } : {}),
           createdEdgeId: event.viaStandby ? undefined : event.toEdgeId,
           phase: event.viaStandby ? 'verifying' : 'provisioning',
           stepVersion: next,
@@ -1694,7 +1861,16 @@ export const advance = internalMutation({
           }),
           updatedAt: now,
         });
-        await releaseOrigin(ctx, r);
+        // A replacement FCP's own check found not working is not bought again
+        // at once: the cooldown holds the next automatic try (a manual replace
+        // can force), and the address still in use keeps serving meanwhile.
+        await releaseOrigin(
+          ctx,
+          r,
+          event.code === 'client_check_failed'
+            ? { cooldownUntil: now + CLIENT_CHECK_FAIL_COOLDOWN_MS }
+            : {},
+        );
         await auditFailure(ctx, r, r.phase, 'failed', event.code);
         return { ok: true as const };
       }
@@ -1812,6 +1988,8 @@ export const commitSelection = internalMutation({
     ),
     /** The EFFECTIVE rendered template params (adapter defaults applied), frozen into the intent. */
     templateParams: v.optional(v.any()),
+    /** The run proves the new L4 address with FCP's own client check. */
+    clientCheck: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const r = await guard(ctx, a.rotationId, a.stepVersion);
@@ -1898,6 +2076,7 @@ export const commitSelection = internalMutation({
       toEdgeId: inserted.id,
       createdEdgeId: inserted.id,
       viaStandby: false,
+      ...(a.clientCheck ? { clientCheckGate: { attempts: 0 } } : {}),
       phase: 'provisioning',
       stepVersion: a.stepVersion + 1,
       events: appendEvent(r.events, {
@@ -2010,11 +2189,15 @@ export const applyPublish = internalMutation({
       const target = r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null;
       if (!target || target.publication !== 'published' || target.poolIndex === undefined)
         return { ok: false as const, code: 'target_gone' as const };
-      poolIndex = target.poolIndex;
+      // Who receives the replacement: ONE decision (lib/edges/replacementHolders.ts).
+      poolIndex = replacementPlacement({
+        policy: REPLACEMENT_POLICY,
+        target: { poolIndex: target.poolIndex },
+      }).poolIndex;
       previousBinding = {
         edgeId: target._id,
         listenerId: target.listenerId,
-        poolIndex,
+        poolIndex: target.poolIndex,
       };
       await ctx.db.patch(target._id, {
         publication: 'draining',
@@ -2066,6 +2249,10 @@ export const applyPublish = internalMutation({
       publication: 'published',
       poolIndex,
       publishedAt: now,
+      // The re-block guard reads where a replacement came from.
+      ...(previousBinding
+        ? { replacementOf: { edgeId: previousBinding.edgeId, at: now, trigger: r.trigger } }
+        : {}),
       updatedAt: now,
     });
     const epoch = origin.publicationEpoch + 1;
@@ -2856,6 +3043,8 @@ export interface SelectionContext {
     zonePlan?: string | null;
   } | null;
   accountFailure: string | null;
+  /** The run proves its L4 candidate with FCP's own client check (`clientCheckGate`). */
+  clientCheck?: boolean;
   template: {
     id: Id<'edgeTemplates'> | null;
     /** What the edge builds with: the template, with the pick's tuning choices laid over it. */
@@ -3015,6 +3204,35 @@ export async function selectionContext(
   const automatic = rotation.trigger === 'detector' || rotation.trigger === 'reconcile';
   const now = Date.now();
   const cooling = coolingOf(origin, now);
+  // A replace of an L4 address with FCP's own client check on and answering:
+  // the replacement may be an untested L4 spare or a NEW load balancer, both in
+  // a location the owner ticked an address in, proven by the check in
+  // `verifying` before anything is published (docs/edges.md § "Replacing a
+  // blocked address without a spare").
+  const clientCheckMode =
+    rotation.kind === 'replace' &&
+    !!targetEdge &&
+    (targetEdge.layer ?? edgeLayerOf(targetEdge.provider)) !== 'l7' &&
+    (await clientCheckReadiness(ctx.db, cfg, now)) === 'ready';
+  const tickedCache = new Map<string, boolean>();
+  const tickedAt = async (locationId: Id<'edgeLocations'> | string | null | undefined) => {
+    if (!locationId) return false;
+    const key = locationId as string;
+    if (!tickedCache.has(key))
+      tickedCache.set(key, locationTicked(await ctx.db.get(locationId as Id<'edgeLocations'>)));
+    return tickedCache.get(key)!;
+  };
+  const isL4 = (e: Edge) => (e.layer ?? edgeLayerOf(e.provider)) !== 'l7';
+  // A confirmation FCP wrote counts only on the terms it was written on (the
+  // switch on, the location still ticked); the publication gate says the same.
+  const eligibleSpare = async (e: Edge, l: VerifiableListener | undefined) =>
+    standbyEligible(e, l) &&
+    (e.verification?.method !== 'client_check' ||
+      (cfg.clientCheck.enabled && (await tickedAt(e.locationId))));
+  // An untested spare the run checks itself; never one whose latest check
+  // found the address itself at fault (a later passing check lifts that).
+  const checkableSpare = async (e: Edge, l: VerifiableListener | undefined) =>
+    clientCheckMode && isL4(e) && !clientCheckFailedNow(e, l) && (await tickedAt(e.locationId));
   const inSet = origin.providerSet
     ? new Set(origin.providerSet.map((p) => p.locationId as string))
     : null;
@@ -3048,7 +3266,7 @@ export async function selectionContext(
       // account set to DNS only.
       hasAddress:
         hasPublishableAddress(e) &&
-        standbyEligible(e, slotOfEdge) &&
+        ((await eligibleSpare(e, slotOfEdge)) || (await checkableSpare(e, slotOfEdge))) &&
         (await onItsNetwork(e, slotOfEdge)) &&
         // A load balancer the node already had is left as it is, never reused.
         !((barred || l4Problem) && (e.layer ?? edgeLayerOf(e.provider)) === 'l4') &&
@@ -3108,12 +3326,21 @@ export async function selectionContext(
     !rotation.requestedLocationId &&
     (rotation.kind === 'replace' || rotation.publishOnDone)
   ) {
+    const spare = edges.find((e) => e._id === standby.id);
     return {
       listener,
       standbyId: standby.id as Id<'edges'>,
       account: null,
       accountFailure: null,
       template: null,
+      // An untested spare in a ticked location: the run checks it itself.
+      clientCheck:
+        !!spare &&
+        clientCheckMode &&
+        !(await eligibleSpare(
+          spare,
+          slotRows.find((s) => s._id === spare.listenerId),
+        )),
     };
   }
   // Which LAYERS the complete client-to-origin chain allows in front of this
@@ -3192,6 +3419,10 @@ export async function selectionContext(
     const placeProblem = await placeProblemOf(ctx.db, a, where);
     if (placeProblem) return failure(placeProblem);
     if (!where.qualified && !rotation.allowUnqualified) return failure('no_qualified_account');
+    // With FCP's own client check, an L4 replacement is made only where the
+    // owner ticked an address (the check stands in for a tick only there).
+    const namedCheck = clientCheckMode && edgeLayerOf(a.provider) === 'l4';
+    if (namedCheck && !locationTicked(where)) return failure('no_ticked_location');
     if (listener.providerScope?.accountId && a._id !== listener.providerScope.accountId)
       return failure('account_mismatch');
     const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
@@ -3235,7 +3466,13 @@ export async function selectionContext(
       ))
     )
       return failure('outside_approved_shape');
-    return { listener, standbyId: null, ...(await describeAccount(ctx, a, where)), template };
+    return {
+      listener,
+      standbyId: null,
+      ...(await describeAccount(ctx, a, where)),
+      template,
+      clientCheck: namedCheck,
+    };
   }
   if (accounts.length === 0) {
     return failure(layers.length === 0 ? 'no_compatible_layer' : 'no_account_for_layer');
@@ -3334,7 +3571,11 @@ export async function selectionContext(
         id: a._id as string,
         locationId: loc._id as string,
         provider: a.provider,
-        qualified: loc.qualified,
+        // With FCP's own client check, an L4 location counts only where the
+        // owner ticked an address (lib/edges/tickedLocation.ts).
+        qualified:
+          loc.qualified &&
+          (!clientCheckMode || edgeLayerOf(a.provider) !== 'l4' || locationTicked(loc)),
         priority: a.priority,
         dailyAllocationBudget: a.dailyAllocationBudget,
         allocationsToday: a.allocationsDayKey === todayKey() ? a.allocationsToday : 0,
@@ -3397,6 +3638,14 @@ export async function selectionContext(
           origin.providerPreference ?? null,
         );
   }
+  if (!picked.ok && clientCheckMode && picked.code === 'no_qualified_account')
+    return {
+      listener,
+      standbyId: null,
+      account: null,
+      accountFailure: 'no_ticked_location',
+      template: null,
+    };
   if (!picked.ok)
     return {
       listener,
@@ -3435,6 +3684,7 @@ export async function selectionContext(
     standbyId: null,
     ...(await describeAccount(ctx, account, location)),
     template,
+    clientCheck: clientCheckMode && edgeLayerOf(account.provider) === 'l4',
   };
 }
 
@@ -3745,6 +3995,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       type: 'selected',
       toEdgeId: selection.standbyId,
       viaStandby: true,
+      ...(selection.clientCheck ? { clientCheck: true } : {}),
     });
     return;
   }
@@ -3882,6 +4133,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     nameNonce: nonce,
     listeners,
     templateParams: effectiveParams,
+    ...(selection.clientCheck ? { clientCheck: true } : {}),
     steps: steps.map((s) => ({
       id: s.id,
       kind: s.kind,
@@ -4516,6 +4768,29 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'no_address', rollback: false });
     return;
   }
+  // FCP's own client check: a replacement made (or an untested spare taken) in
+  // a ticked location is proven by real clients before it is published.
+  if ((edge.layer ?? 'l4') !== 'l7' && r.clientCheckGate) {
+    const gate = await clientGate(ctx, c, edge);
+    if (gate.kind === 'fail') {
+      await advanceCall(ctx, r._id, sv, {
+        type: 'fail',
+        code: gate.code,
+        detail: gate.detail,
+        rollback: false,
+      });
+      return;
+    }
+    if (gate.kind === 'wait') {
+      // Bounded by the gate's own attempts and clock, not the describe polls.
+      await advanceCall(ctx, r._id, sv, {
+        type: 'progress',
+        delayMs: CLIENT_GATE.retryMs,
+        detail: gate.detail,
+      });
+      return;
+    }
+  }
   // Per-country checks: an L4 address gets its first round from every checked
   // country before it goes out (the L7 geo gate above is its own rule). A
   // provision that only makes a spare does not wait: spares are checked on
@@ -4543,6 +4818,71 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
     }
   }
   await advanceCall(ctx, r._id, sv, { type: 'verified' });
+}
+
+/** FCP's own client check in `verifying`: attempts, their spacing, and how long "could not check" may last. */
+const CLIENT_GATE = { attempts: 3, retryMs: 30_000, clockMs: 15 * 60_000 } as const;
+/** After a replacement failed the check: the next automatic try waits this long. */
+export const CLIENT_CHECK_FAIL_COOLDOWN_MS = 60 * 60_000;
+
+/**
+ * The client gate (docs/edges.md § "Replacing a blocked address without a
+ * spare"). The check runs against the address members use now as the control
+ * (the replace's target), and a pass in a ticked location confirms the new
+ * address (`edges.verification`, method `client_check`), which is what the
+ * publication gate then reads. A verdict that the address does not work is
+ * tried three times, 30 s apart, then fails the run (`client_check_failed`):
+ * the new address is destroyed like every failed run's. "Could not check" (the
+ * service down or busy, no test link) waits up to 15 minutes; then a NEW
+ * address goes on as today (it ends an untested spare, never published) and a
+ * spare taken for the replace fails the run (`client_check_unavailable`). A
+ * check that passed but could not confirm (the location is no longer ticked,
+ * the switch went off) is the same fallback.
+ */
+async function clientGate(ctx: ActionCtx, c: Ctx, edge: Edge): Promise<VerifyGate> {
+  const { rotation: r } = c;
+  const g = r.clientCheckGate!;
+  // Passed already in this run (the country wait comes back through
+  // `verifying` every poll): the confirmation that pass wrote is what the
+  // publication gate reads, so while it still describes the address the check
+  // is not run again. A changed address or listener runs it again.
+  if (
+    (g.lastCode === 'passed' || g.lastCode === 'passed_with_refusals') &&
+    (await ctx.runQuery(internal.edgeClientCheck.confirmationCurrent, { edgeId: edge._id }))
+  )
+    return { kind: 'ok' };
+  const now = Date.now();
+  const since = g.since ?? now;
+  const out = await runClientCheck(ctx, {
+    edgeId: edge._id,
+    by: 'system',
+    ...(r.targetEdgeId ? { controlEdgeId: r.targetEdgeId } : {}),
+  });
+  const note = (patch: { attempts?: number; lastCode: string }) =>
+    ctx.runMutation(internal.edgeRotations.recordClientGate, {
+      rotationId: r._id,
+      stepVersion: r.stepVersion,
+      attempts: patch.attempts ?? g.attempts,
+      since,
+      lastCode: patch.lastCode,
+    });
+  const fallBack = (code: string): VerifyGate =>
+    r.viaStandby ? { kind: 'fail', code, detail: g.lastCode } : { kind: 'ok' };
+  if (!out.checked) {
+    await note({ lastCode: out.code });
+    if (now - since >= CLIENT_GATE.clockMs) return fallBack('client_check_unavailable');
+    return { kind: 'wait', detail: `client check could not run: ${out.code}` };
+  }
+  if (out.ok) {
+    await note({ lastCode: out.verdict });
+    return out.confirmed ? { kind: 'ok' } : fallBack('client_check_unconfirmed');
+  }
+  const attempts = g.attempts + 1;
+  await note({ attempts, lastCode: out.verdict });
+  const engines = out.engines.map((e) => `${e.engine}:${e.code}`).join(' ');
+  if (attempts < CLIENT_GATE.attempts)
+    return { kind: 'wait', detail: `client check ${out.verdict} (${engines}), try ${attempts}` };
+  return { kind: 'fail', code: 'client_check_failed', detail: `${out.verdict}: ${engines}` };
 }
 
 /**

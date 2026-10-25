@@ -40,6 +40,7 @@ import { isTerminalRunState } from './setupRuns';
 export const ATTENTION_RANK = [
   'quarantine',
   'fleet_brake',
+  'auto_replace_held',
   'needs_operator',
   'account_api_failing',
   'rotation_stuck',
@@ -76,6 +77,7 @@ export const ATTENTION_RANK = [
   'pool_rebalance',
   'spare_untested',
   'pool_below_desired',
+  'single_address',
   'reduced_resilience',
   'pick_cooling',
   'account_budget_unlimited',
