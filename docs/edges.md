@@ -2663,8 +2663,9 @@ which BOTH handshakes completed with both phases, each side's handshake beyond o
 `tlsMs - tcpMs` (the connect stands in for the round trip), and the target's share is ours minus
 the real site's. `realHost.timing` keeps the medians (`oursMs`, `realMs`, `addsMs`) and the
 pairs they rest on. The country view shows each name's figures and, per transport, "the
-transport's target adds about X ms" (the median of its names' medians, only names measured on
-that transport's own addresses).
+transport's target adds about X ms" (the median of its names' medians, each counted once per
+timed pair behind it, so a name timed from one vantage cannot carry the figure; only names
+measured on that transport's own addresses).
 
 Flag (a proposal; the owner decides): `addsMs` of **50 ms or more over at least 3 timed pairs**
 (`TARGET_ADDS_FLAG_MS`, `TARGET_ADDS_MIN_PAIRS`). A real site's own handshake adds a few
