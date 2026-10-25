@@ -239,6 +239,7 @@
                 </p>
                 <p class="text-muted-foreground text-xs">{line?.counts}</p>
                 {#if line?.cooling}<p class="text-xs">{line.cooling}</p>{/if}
+                {#if line?.refused}<p class="text-xs">{line.refused}</p>{/if}
                 {#if o && frontsNode(p.provider, websocketNode)}
                   {@const said = optionSummary(o.fields, o.chosen)}
                   <p class="text-muted-foreground text-xs">

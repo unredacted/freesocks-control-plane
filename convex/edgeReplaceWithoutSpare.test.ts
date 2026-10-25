@@ -32,7 +32,8 @@ import {
 import { defaultLocationRow } from './lib/edges/testing/reads';
 import { upsertSettingRow } from './appSettings';
 import { __setClientCheckLinks } from './edgeClientCheck';
-import { CLIENT_CHECK_FAIL_COOLDOWN_MS, reblockedSoon } from './edgeRotations';
+import { CLIENT_CHECK_FAIL_COOLDOWN_MS, reblockedSoon, selectionContext } from './edgeRotations';
+import { REFUSED_LOCATION_HOLD_MS } from './lib/edges/refusedLocations';
 import { checkPublishable } from './relays';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import { DEFAULT_CLIENT_CHECK_URL } from './lib/edges/clientCheck/client';
@@ -68,8 +69,14 @@ type Answer = { code: ClientCheckSessionCode; egressIp?: string } | { status: nu
 /**
  * UpCloud + a panel Host table (as edgeRotations.test.ts) and, in front, the
  * client-check service answering `script(engine, address)` for each signed call.
+ * `refuseIn`: zones whose load balancer create the provider refuses for good
+ * (a quota, as a 400); each refused create's zone is kept in `refused`.
+ * `refuseAddress`: the floating address for a created load balancer is refused.
  */
-function world(script: (engine: ClientCheckEngine, address: string) => Answer) {
+function world(
+  script: (engine: ClientCheckEngine, address: string) => Answer,
+  opts: { refuseIn?: string[]; refuseAddress?: boolean } = {},
+) {
   const panelHosts = [
     {
       uuid: HOST_UUID,
@@ -83,6 +90,7 @@ function world(script: (engine: ClientCheckEngine, address: string) => Answer) {
   const lbs = new Map<string, { uuid: string; name: string; operational_state: string }>();
   const mint = [NEW_EDGE, SECOND_NEW];
   let minted = 0;
+  const refused: string[] = [];
   const stub = mockFetch((c) => {
     if (new URL(c.url).hostname === 'panel.example') {
       if (c.path === '/api/hosts' && c.method === 'GET') return jsonRes({ response: panelHosts });
@@ -99,6 +107,19 @@ function world(script: (engine: ClientCheckEngine, address: string) => Answer) {
       return jsonRes({ message: 'not found' }, 404);
     }
     if (c.path === '/1.3/load-balancer' && c.method === 'POST') {
+      const zone = (c.body as { zone: string }).zone;
+      if (opts.refuseIn?.includes(zone)) {
+        refused.push(zone);
+        return jsonRes(
+          {
+            error: {
+              error_code: 'QUOTA_EXCEEDED',
+              error_message: 'The account has reached its load balancer quota.',
+            },
+          },
+          400,
+        );
+      }
       const uuid = `lb-${lbs.size + 1}`;
       lbs.set(uuid, {
         uuid,
@@ -107,6 +128,11 @@ function world(script: (engine: ClientCheckEngine, address: string) => Answer) {
       });
       return jsonRes(lbs.get(uuid));
     }
+    if (c.path === '/1.3/ip_address' && c.method === 'POST' && opts.refuseAddress)
+      return jsonRes(
+        { error: { error_code: 'QUOTA_EXCEEDED', error_message: 'No more addresses.' } },
+        400,
+      );
     if (c.path === '/1.3/ip_address' && c.method === 'POST')
       return jsonRes({ ip_address: { address: mint[minted++] ?? NEW_EDGE, floating: 'yes' } });
     if (/^\/1\.3\/load-balancer\/[^/]+\/ip-addresses$/.test(c.path) && c.method === 'POST')
@@ -156,7 +182,7 @@ function world(script: (engine: ClientCheckEngine, address: string) => Answer) {
       code: a.code,
     });
   });
-  return { stub, lbs, panelHosts, checks };
+  return { stub, lbs, panelHosts, checks, refused };
 }
 
 /** The check's test link: the address's own binding, as `edgeTestLinks.build` would show it. */
@@ -573,6 +599,205 @@ describe('replacing a blocked address without a spare', () => {
     expect((await t.query(internal.relays.get, { id: relayId }))!.autoReplaceHolds).toEqual([
       expect.objectContaining({ code: 'replacement_reblocked', edgeId: oldEdgeId }),
     ]);
+  });
+});
+
+/**
+ * A second location of the account, ticked like the first (an address the owner
+ * confirmed there), after the first in the node's provider set: the set's order
+ * makes the first location automatic selection's pick.
+ */
+async function withSecondLocation(
+  t: ReturnType<typeof convexTest>,
+  s: Awaited<ReturnType<typeof seed>>,
+) {
+  const second = (
+    await t.mutation(internal.edgeLocations.create, {
+      accountId: s.accountId,
+      placement: { zone: 'nl-ams1' },
+      label: 'Zone two',
+    })
+  ).id as Id<'edgeLocations'>;
+  await t.mutation(internal.edgeLocations.setQualified, { id: second, qualified: true });
+  await t.run(async (ctx) => {
+    const first = (await ctx.db.get(s.locationId))!;
+    await ctx.db.patch(second, { qualification: first.qualification });
+    await ctx.db.patch(s.relayId, {
+      providerSet: [
+        { locationId: s.locationId, addedAt: 1 },
+        { locationId: second, addedAt: 2 },
+      ],
+    });
+  });
+  return second;
+}
+
+/** The detector may replace on this node (the switches it asks for). */
+async function detectorOn(t: ReturnType<typeof convexTest>, relayId: Id<'relays'>) {
+  await t.run(async (ctx) => {
+    await upsertSettingRow(ctx, 'edge.enabled', 'true');
+    await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+    await ctx.db.patch(relayId, { autoRotate: true });
+  });
+}
+
+describe('a location whose provider refused the create', () => {
+  test('a quota refusal holds that location for the node: the next automatic replace provisions in the next one', async () => {
+    vi.useFakeTimers();
+    const w = world(() => ({ code: 'ok' }), { refuseIn: ['de-fra1'] });
+    const s = await seed();
+    const { t, accountId, relayId, oldEdgeId, locationId } = s;
+    const second = await withSecondLocation(t, s);
+    await detectorOn(t, relayId);
+    const allocations = async () => (await t.run((ctx) => ctx.db.get(accountId)))!.allocationsToday;
+
+    const first = await drain(t, (await replace(t, relayId, oldEdgeId, 'detector')).rotationId);
+    expect(first).toMatchObject({ phase: 'failed', outcome: 'create_refused' });
+    expect(w.refused).toEqual(['de-fra1']);
+    expect(first.events.map((e) => e.code)).toEqual(
+      expect.arrayContaining(['create_refused', 'location_held', 'allocation_refunded']),
+    );
+    // Nothing was built: the edge fails like any other (no operator needed), its
+    // record keeps the provider's reason, and the day's allocation is given back.
+    const closed = (await t.query(internal.edges.get, { id: first.createdEdgeId! }))!;
+    expect(closed).toMatchObject({
+      status: 'failed',
+      resources: [],
+      failure: { step: 'lb', code: 'create_refused', status: 400 },
+    });
+    expect(closed.steps.every((x) => x.state === 'pending')).toBe(true);
+    expect(await allocations()).toBe(0);
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.refusedLocations).toEqual([
+      expect.objectContaining({ locationId, code: 'create_refused', status: 400 }),
+    ]);
+    expect(origin.refusedLocations![0]!.until - origin.refusedLocations![0]!.at).toBe(
+      REFUSED_LOCATION_HOLD_MS,
+    );
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.some((i) => i.kind === 'needs_operator')).toBe(false);
+    expect(attention.items.find((i) => i.kind === 'location_refused')).toMatchObject({
+      severity: 'warning',
+      relayId,
+      accountId,
+      code: 'create_refused',
+      action: 'open_account',
+      facts: { location: expect.any(String), minutesLeft: 360 },
+    });
+    // The node's set card says it too.
+    const view = await t.query(internal.edgeProviderSets.view, { relayId });
+    expect(view!.picks.find((p) => p.locationId === locationId)!.refusedUntil).not.toBeNull();
+    expect(view!.picks.find((p) => p.locationId === second)!.refusedUntil).toBeNull();
+
+    // Automatic selection takes the next location; an operator's own is not held.
+    const select = (trigger: 'detector' | 'manual') =>
+      t.run(async (ctx) =>
+        selectionContext(
+          ctx,
+          { kind: 'replace', trigger },
+          (await ctx.db.get(relayId))!,
+          (await ctx.db.get(oldEdgeId))!,
+          await resolveEdgeConfig(ctx.db),
+        ),
+      );
+    expect((await select('detector')).account?.locationId).toBe(second);
+    expect((await select('manual')).account?.locationId).toBe(locationId);
+
+    const next = await drain(t, (await replace(t, relayId, oldEdgeId, 'detector')).rotationId);
+    expect(next).toMatchObject({ phase: 'done', outcome: 'published' });
+    const fresh = (await t.query(internal.edges.get, { id: next.toEdgeId! }))!;
+    expect(fresh).toMatchObject({ publication: 'published', locationId: second });
+    expect(fresh.addresses.v4).toBe(NEW_EDGE);
+    // The refusing location was never asked again.
+    expect(w.refused).toEqual(['de-fra1']);
+    expect(w.lbs.size).toBe(1);
+    // The refused edge has nothing to delete at the provider: the reconcile closes it.
+    await t.mutation(internal.edgeClientCheck.recordHealth, {
+      ok: true,
+      code: null,
+      engines: [],
+      egressHost: null,
+    });
+    await t.action(internal.edgeReconcile.run, {});
+    expect((await t.query(internal.edges.get, { id: closed._id }))!.status).toBe('destroyed');
+  });
+
+  test('every location refused recently: the automatic start is refused as such; a create that succeeds there lifts the hold', async () => {
+    vi.useFakeTimers();
+    world(() => ({ code: 'ok' }));
+    const s = await seed();
+    const { t, relayId, listenerId, oldEdgeId, locationId } = s;
+    const second = await withSecondLocation(t, s);
+    await detectorOn(t, relayId);
+    const until = Date.now() + 60 * 60_000;
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        refusedLocations: [locationId, second].map((id) => ({
+          locationId: id,
+          code: 'create_refused',
+          status: 400,
+          at: Date.now(),
+          until,
+        })),
+      }),
+    );
+    await expect(replace(t, relayId, oldEdgeId, 'detector')).rejects.toThrow(/locations_refused/);
+    // The operator raised the quota and adds an address there by hand (a named
+    // location asks for a tested account).
+    await t.run((ctx) => ctx.db.patch(s.accountId, { lastTestOkAt: Date.now() }));
+    const r = await drain(
+      t,
+      (
+        await t.mutation(internal.edgeRotations.start, {
+          relayId,
+          kind: 'provision',
+          trigger: 'manual',
+          publishOnDone: false,
+          listenerId,
+          requestedLocationId: locationId,
+        })
+      ).rotationId,
+    );
+    expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!.locationId).toBe(locationId);
+    expect(
+      (await t.query(internal.relays.get, { id: relayId }))!.refusedLocations!.map(
+        (x) => x.locationId,
+      ),
+    ).toEqual([second]);
+    // Before a rollback: every hold goes, the field with it.
+    expect(await t.mutation(internal.edgeRotations.clearRefusedLocations, {})).toEqual({
+      cleared: 1,
+    });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.refusedLocations).toBeUndefined();
+  });
+
+  test('a refusal after something was built still needs the operator; the location is held all the same', async () => {
+    vi.useFakeTimers();
+    // The load balancer is created; the address for it is refused for good.
+    world(() => ({ code: 'ok' }), { refuseAddress: true });
+    const { t, relayId, listenerId, locationId } = await seed();
+    const r = await drain(
+      t,
+      (
+        await t.mutation(internal.edgeRotations.start, {
+          relayId,
+          kind: 'provision',
+          trigger: 'manual',
+          publishOnDone: false,
+          listenerId,
+        })
+      ).rotationId,
+    );
+    expect(r).toMatchObject({ phase: 'failed', outcome: 'create_refused' });
+    const edge = (await t.query(internal.edges.get, { id: r.createdEdgeId! }))!;
+    expect(edge.status).toBe('needs_operator');
+    expect(edge.resources.map((x) => x.kind)).toEqual(['lb']);
+    expect(r.events.map((e) => e.code)).not.toContain('allocation_refunded');
+    expect(
+      (await t.query(internal.relays.get, { id: relayId }))!.refusedLocations!.map(
+        (x) => x.locationId,
+      ),
+    ).toEqual([locationId]);
   });
 });
 

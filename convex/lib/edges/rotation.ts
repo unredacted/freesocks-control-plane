@@ -377,7 +377,9 @@ export type AccountPickFailure =
   | 'no_qualified_account'
   | 'accounts_exhausted'
   /** Every pick of the node's set that could carry it cools (D6). */
-  | 'set_picks_cooling';
+  | 'set_picks_cooling'
+  /** What would be picked is a location whose provider just refused a create for this node. */
+  | 'locations_refused';
 
 /**
  * A trusted location of the provider whose account has capacity + budget (and

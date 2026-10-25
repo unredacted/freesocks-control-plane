@@ -1560,6 +1560,24 @@ export default defineSchema({
     cooling: v.optional(
       v.array(v.object({ locationId: v.id('edgeLocations'), until: v.number() })),
     ),
+    // Locations whose provider refused, for good, to create one of this node's
+    // addresses (a quota, a setting it rejects; `refusedCreate`): automatic work
+    // creates nothing more there for this node until `until`, so it takes the
+    // next location instead of being refused the same way. Manual work is not
+    // held, and a create that succeeds there lifts it
+    // (lib/edges/refusedLocations.ts).
+    refusedLocations: v.optional(
+      v.array(
+        v.object({
+          locationId: v.id('edgeLocations'),
+          // The refusal's code (`create_refused`, ...) and the provider's HTTP status.
+          code: v.string(),
+          status: v.optional(v.number()),
+          at: v.number(),
+          until: v.number(),
+        }),
+      ),
+    ),
     // Transports whose automatic replacement is held until the operator resumes
     // it: a replacement judged blocked again soon after it went into use
     // (`replacement_reblocked`), so the node does not cycle through addresses.

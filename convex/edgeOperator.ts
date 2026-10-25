@@ -1729,6 +1729,32 @@ export const attention = internalQuery({
           since: null,
         });
       }
+      // A location whose provider refused, for good, to create one of this
+      // node's addresses (a quota, a setting it rejects): the node's automatic
+      // work takes another location until the hold ends. FCP cannot raise a
+      // quota, so the operator is told (lib/edges/refusedLocations.ts).
+      if (relay.enabled) {
+        for (const h of relay.refusedLocations ?? []) {
+          if (h.until <= now) continue;
+          const loc = await ctx.db.get(h.locationId);
+          const acct = loc ? await ctx.db.get(loc.accountId) : null;
+          items.push({
+            ...base(relay),
+            id: `location_refused:${relay._id}:${h.locationId}`,
+            kind: 'location_refused',
+            severity: 'warning',
+            accountId: acct ? (acct._id as string) : null,
+            code: h.code,
+            facts: {
+              name: acct?.name ?? '',
+              location: loc?.label ?? '',
+              minutesLeft: Math.ceil((h.until - now) / 60_000),
+            },
+            action: acct ? 'open_account' : 'open_relay',
+            since: isoN(h.at),
+          });
+        }
+      }
       // The node's provider set: a pick that cools after a burn (no automatic
       // work goes there until it ends), and transports whose picks give no
       // backup in another failure domain (reported, never hidden).

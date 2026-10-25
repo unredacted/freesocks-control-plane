@@ -514,7 +514,7 @@ describe('planWords: the fleet-wide sentence', () => {
 });
 
 describe('providerPickWords', () => {
-  it('counts per location, a cooling line, and what members miss', () => {
+  it('counts per location, a cooling line, a refused line, and what members miss', () => {
     const now = Date.parse('2026-10-18T12:00:00Z');
     const w = providerPickWords(
       {
@@ -531,6 +531,7 @@ describe('providerPickWords', () => {
             inUse: 2,
             spare: 1,
             coolingUntil: '2026-10-18T12:30:00Z',
+            refusedUntil: '2026-10-18T14:40:00Z',
             addedAt: '2026-10-01T00:00:00Z',
             options: null,
           },
@@ -546,6 +547,8 @@ describe('providerPickWords', () => {
       locationId: 'x',
       counts: '2 in use, 1 spare.',
       cooling: 'An address here was just blocked: automatic work keeps away for about 30 minutes.',
+      refused:
+        'The provider refused to create an address here (a quota, or a setting it rejects): automatic work uses the other locations for about 3 hours. Adding an address here by hand lifts this once it is created.',
     });
     expect(w.notes).toEqual([
       'Members on REALITY have no backup at another provider.',

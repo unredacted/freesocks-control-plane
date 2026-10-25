@@ -105,6 +105,12 @@ import {
   type SetLocationCandidate,
 } from './lib/edges/rotation';
 import { admissionOf, coolingOf, setPicksOf, setStateOf, withCooling } from './lib/edges/setState';
+import {
+  REFUSED_LOCATION_HOLD_MS,
+  refusedLocationsOf,
+  withoutRefusedLocation,
+  withRefusedLocation,
+} from './lib/edges/refusedLocations';
 import { locationKeyOf } from './lib/edges/locations';
 import {
   protocolIsHttpTransport,
@@ -434,6 +440,25 @@ export const holdAutoReplace = internalMutation({
       payload: { relaySlug: origin.slug, listenerKey: listener?.listenerKey ?? '', code, edgeId },
     });
     return { held: true };
+  },
+});
+
+/**
+ * Drop every node's refused-location holds (`relays.refusedLocations`, origins
+ * are operator-scale): the step before rolling back to a build without the
+ * field (docs/edges.md § "Deploy notes"). Automatic work may use those
+ * locations again at once.
+ */
+export const clearRefusedLocations = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let cleared = 0;
+    for (const relay of await ctx.db.query('relays').collect())
+      if (relay.refusedLocations !== undefined) {
+        await ctx.db.patch(relay._id, { refusedLocations: undefined });
+        cleared++;
+      }
+    return { cleared };
   },
 });
 
@@ -878,6 +903,11 @@ export async function collectStartBlockers(
             push(
               'edge.no_ticked_location',
               'No location where an address was tested can take the replacement; test an address there first',
+            );
+          else if (sel?.accountFailure === 'locations_refused')
+            push(
+              'edge.locations_refused',
+              'Every location that could take the replacement refused to create an address for this node recently',
             );
           else if (!sel || sel.accountFailure !== 'outside_approved_shape')
             push(
@@ -1528,6 +1558,12 @@ const advanceEvent = v.union(
     code: v.string(),
     detail: v.optional(v.string()),
     rollback: v.boolean(),
+    /**
+     * The provider refused the new edge's create for good (`refusedCreate`):
+     * its location is held on the node for automatic work. `nothingBuilt`:
+     * the ledger is empty, so the edge is closed instead of needing an operator.
+     */
+    refused: v.optional(v.object({ status: v.optional(v.number()), nothingBuilt: v.boolean() })),
   }),
   v.object({ type: v.literal('rolled_back') }),
   v.object({ type: v.literal('quarantine'), reason: v.string() }),
@@ -1618,12 +1654,23 @@ function createdEdgeId(r: Rotation): Id<'edges'> | null {
 /**
  * Give an allocation back when a provision failed BEFORE any provider call
  * (nothing was created, so the day's budget was not spent). Only when every
- * step is still pending and the ledger is empty; same-day only.
+ * step is still pending and the ledger is empty; same-day only. `refused`: the
+ * provider refused the first create for good, so a step was sent but nothing
+ * was created either.
  */
-async function refundAllocation(ctx: MutationCtx, edge: Edge): Promise<boolean> {
+async function refundAllocation(
+  ctx: MutationCtx,
+  edge: Edge,
+  opts: { refused?: boolean } = {},
+): Promise<boolean> {
   if (!edge.accountId) return false;
   if (edge.resources.length > 0) return false;
-  if (edge.steps.some((s) => s.state !== 'pending' || s.attempt > 0 || s.startedAt)) return false;
+  if (
+    edge.steps.some(
+      (s) => s.state !== 'pending' || (!opts.refused && (s.attempt > 0 || s.startedAt)),
+    )
+  )
+    return false;
   const acct = await ctx.db.get(edge.accountId);
   if (!acct || acct.allocationsDayKey !== dayKey() || acct.allocationsToday <= 0) return false;
   await ctx.db.patch(acct._id, {
@@ -1745,12 +1792,24 @@ export const advance = internalMutation({
         return { ok: true as const };
       }
       case 'provisioned': {
-        if (r.toEdgeId)
+        if (r.toEdgeId) {
           await ctx.db.patch(r.toEdgeId, {
             status: 'verifying',
             statusChangedAt: now,
             updatedAt: now,
           });
+          // A create that succeeded where the provider refused one before (an
+          // operator's own provision, or the hold ran out): the quota or the
+          // setting was fixed, so automatic work may come back at once.
+          const to = await ctx.db.get(r.toEdgeId);
+          const origin = to?.locationId ? await ctx.db.get(r.relayId) : null;
+          const lifted =
+            origin && to?.locationId
+              ? withoutRefusedLocation(origin.refusedLocations, to.locationId, now)
+              : null;
+          if (origin && lifted)
+            await ctx.db.patch(origin._id, { refusedLocations: lifted, updatedAt: now });
+        }
         await ctx.db.patch(rotationId, {
           phase: 'verifying',
           stepVersion: next,
@@ -1828,17 +1887,29 @@ export const advance = internalMutation({
         }
         const created = createdEdgeId(r);
         let refunded = false;
+        let refusedAt: Id<'edgeLocations'> | null = null;
         if (created) {
           const e = await ctx.db.get(created);
+          // A create the provider refused for good: the node's automatic work
+          // keeps out of that location for a while (lib/edges/refusedLocations.ts).
+          if (event.refused && e?.locationId) refusedAt = e.locationId;
           if (e && !['needs_operator', 'destroyed'].includes(e.status)) {
             // The template changed under a provision that had not called the
-            // provider yet: nothing exists, so the day's allocation is given back.
+            // provider yet, or the provider refused its first create: nothing
+            // exists, so the day's allocation is given back.
             if (event.code === 'template_changed') refunded = await refundAllocation(ctx, e);
+            else if (event.refused?.nothingBuilt)
+              refunded = await refundAllocation(ctx, e, { refused: true });
             await ctx.db.patch(created, {
               status: 'failed',
               statusChangedAt: now,
-              // The provider's last answer stays (`nextFailure`): it is why the run ended.
-              failure: nextFailure(e.failure, { step: r.phase, code: event.code }),
+              // The provider's last answer stays (`nextFailure`): it is why the
+              // run ended. A refusal's own record (its step, status and words)
+              // stands as the step wrote it.
+              failure:
+                event.refused && e.failure
+                  ? e.failure
+                  : nextFailure(e.failure, { step: r.phase, code: event.code }),
               // A failed edge waits on nothing any more (the code is the failure now).
               waiting: undefined,
               updatedAt: now,
@@ -1851,23 +1922,44 @@ export const advance = internalMutation({
           outcome: event.code,
           finishedAt: now,
           nextStepAt: undefined,
-          events: appendEvent(ev('error', event.code, event.detail), {
-            at: now,
-            level: 'info',
-            code: refunded ? 'allocation_refunded' : 'failed',
-          }),
+          events: appendEvent(
+            refusedAt
+              ? appendEvent(ev('error', event.code, event.detail), {
+                  at: now,
+                  level: 'warn',
+                  code: 'location_held',
+                })
+              : ev('error', event.code, event.detail),
+            { at: now, level: 'info', code: refunded ? 'allocation_refunded' : 'failed' },
+          ),
           updatedAt: now,
         });
+        const origin = refusedAt ? await ctx.db.get(r.relayId) : null;
         // A replacement FCP's own check found not working is not bought again
         // at once: the cooldown holds the next automatic try (a manual replace
         // can force), and the address still in use keeps serving meanwhile.
-        await releaseOrigin(
-          ctx,
-          r,
-          event.code === 'client_check_failed'
+        await releaseOrigin(ctx, r, {
+          ...(event.code === 'client_check_failed'
             ? { cooldownUntil: now + CLIENT_CHECK_FAIL_COOLDOWN_MS }
-            : {},
-        );
+            : {}),
+          ...(refusedAt && origin
+            ? {
+                refusedLocations: withRefusedLocation(
+                  origin.refusedLocations,
+                  {
+                    locationId: refusedAt,
+                    code: event.code,
+                    ...(event.refused?.status !== undefined
+                      ? { status: event.refused.status }
+                      : {}),
+                    at: now,
+                    until: now + REFUSED_LOCATION_HOLD_MS,
+                  },
+                  now,
+                ),
+              }
+            : {}),
+        });
         await auditFailure(ctx, r, r.phase, 'failed', event.code);
         return { ok: true as const };
       }
@@ -3201,6 +3293,10 @@ export async function selectionContext(
   const automatic = rotation.trigger === 'detector' || rotation.trigger === 'reconcile';
   const now = Date.now();
   const cooling = coolingOf(origin, now);
+  // Nor (automatic work only) into a location whose provider just refused to
+  // create one of this node's addresses: the same request would be refused the
+  // same way, so the next location is taken (lib/edges/refusedLocations.ts).
+  const refused = automatic ? refusedLocationsOf(origin, now) : new Set<string>();
   // A replace of an L4 address with FCP's own client check on and answering:
   // the replacement may be an untested L4 spare or a NEW load balancer, both in
   // a location the owner ticked an address in, proven by the check in
@@ -3465,7 +3561,10 @@ export async function selectionContext(
   }
   // One candidate per enabled LOCATION of each eligible account: the account
   // brings its budget, live cap and priority; the location its trust and cap.
+  // A location the node's automatic work keeps out of after a refused create
+  // is set aside (`refusedCandidates`): only to name why nothing was picked.
   const candidates: AccountCandidate[] = [];
+  const refusedCandidates: AccountCandidate[] = [];
   const keyOfLocation = new Map<string, string>();
   let outsideShape = 0;
   let certificateRefused: string | null = null;
@@ -3544,7 +3643,7 @@ export async function selectionContext(
           continue;
         }
       }
-      candidates.push({
+      (refused.has(loc._id as string) ? refusedCandidates : candidates).push({
         id: a._id as string,
         locationId: loc._id as string,
         provider: a.provider,
@@ -3570,14 +3669,22 @@ export async function selectionContext(
   // published for the listener. Without a set: a provider-scoped profile binds
   // the slot to that network; an unscoped one takes the best trusted location
   // of any provider.
-  let picked: ReturnType<typeof pickAccount>;
-  if (origin.providerSet) {
+  const pickAmong = async (among: AccountCandidate[]): Promise<ReturnType<typeof pickAccount>> => {
+    if (!origin.providerSet)
+      return listener.providerScope?.provider
+        ? pickAccount(among, listener.providerScope.provider)
+        : pickAccountAny(
+            among,
+            publishedProviders,
+            cfg.render.preferDistinctProviders,
+            origin.providerPreference ?? null,
+          );
     const order = origin.providerSet.map((p) => p.locationId as string);
     const state = await setStateOf(ctx.db, origin, now);
     const mine = state.published.filter((p) => p.listenerKey === listener.listenerKey);
     const setCandidates: SetLocationCandidate[] = [];
     let coolingOnly = 0;
-    for (const c of candidates) {
+    for (const c of among) {
       const at = c.locationId ? order.indexOf(c.locationId) : -1;
       if (at < 0) continue;
       // A provider-scoped profile binds the slot to that network, set or not.
@@ -3601,20 +3708,19 @@ export async function selectionContext(
         locationKeyNew: !mine.some((p) => p.locationKey === locationKey),
       });
     }
-    picked =
-      setCandidates.length === 0 && coolingOnly > 0
-        ? { ok: false, code: 'set_picks_cooling' }
-        : pickLocation(setCandidates, { allowUnqualified: rotation.allowUnqualified === true });
-  } else {
-    picked = listener.providerScope?.provider
-      ? pickAccount(candidates, listener.providerScope.provider)
-      : pickAccountAny(
-          candidates,
-          publishedProviders,
-          cfg.render.preferDistinctProviders,
-          origin.providerPreference ?? null,
-        );
-  }
+    return setCandidates.length === 0 && coolingOnly > 0
+      ? { ok: false, code: 'set_picks_cooling' }
+      : pickLocation(setCandidates, { allowUnqualified: rotation.allowUnqualified === true });
+  };
+  let picked = await pickAmong(candidates);
+  // Nothing to pick, though a location set aside after a refused create would
+  // have been: that refusal is why (`locations_refused`), not the generic code.
+  if (
+    !picked.ok &&
+    refusedCandidates.length > 0 &&
+    (await pickAmong([...candidates, ...refusedCandidates])).ok
+  )
+    picked = { ok: false, code: 'locations_refused' };
   if (!picked.ok && clientCheckMode && picked.code === 'no_qualified_account')
     return {
       listener,
@@ -3631,16 +3737,19 @@ export async function selectionContext(
       // Every account that could front the listener is outside what the node
       // was approved for: a new review is the way forward, not another account.
       // Nothing left but accounts whose fronts could get no certificate: say so.
+      // A refused create set aside what would have been picked: that first.
       accountFailure:
-        candidates.length === 0 && outsideShape > 0
-          ? 'outside_approved_shape'
-          : candidates.length === 0 && certificateRefused
-            ? certificateRefused
-            : candidates.length === 0 && sizeRefused
-              ? sizeRefused
-              : candidates.length === 0 && spendRefused
-                ? spendRefused
-                : picked.code,
+        picked.code === 'locations_refused'
+          ? picked.code
+          : candidates.length === 0 && outsideShape > 0
+            ? 'outside_approved_shape'
+            : candidates.length === 0 && certificateRefused
+              ? certificateRefused
+              : candidates.length === 0 && sizeRefused
+                ? sizeRefused
+                : candidates.length === 0 && spendRefused
+                  ? spendRefused
+                  : picked.code,
       template: null,
     };
   const account = accounts.find((a) => (a._id as string) === picked.account.id)!;
@@ -3942,7 +4051,13 @@ async function advanceCall(
     | { type: 'host_converged'; flipped: number; target?: HostTarget }
     | { type: 'reflip' }
     | { type: 'confirmed' }
-    | { type: 'fail'; code: string; detail?: string; rollback: boolean }
+    | {
+        type: 'fail';
+        code: string;
+        detail?: string;
+        rollback: boolean;
+        refused?: { status?: number; nothingBuilt: boolean };
+      }
     | { type: 'rolled_back' }
     | { type: 'quarantine'; reason: string }
     | { type: 'cancelled' },
@@ -4271,8 +4386,24 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
       // for the operator to read; the provider's reason lives there, never here.
       // The EDGE needs the operator too (the fail below keeps such an edge as it
       // is), so its billed resources stay raised until someone deletes them.
+      // Unless the refused call was the first the provider was sent (not a
+      // poll of a request it had taken) and built nothing: then nothing is
+      // billed and nothing is left to read there, so the step stays pending
+      // (never built), the edge fails like any other and the reconcile closes
+      // it. Either way the run's failure keeps the provider's words, and the
+      // node's automatic work keeps out of the location for a while
+      // (`refused`, lib/edges/refusedLocations.ts).
+      const nothingBuilt =
+        pending.state === 'pending' &&
+        out.resources.length === 0 &&
+        edge.resources.length === 0 &&
+        edge.steps.every(
+          (s) => s.stepId === pending.stepId || (s.state === 'pending' && !s.startedAt),
+        );
       await settle(opId, {
-        stepPatch: { stepId: pending.stepId, state: 'needs_operator', started: true },
+        stepPatch: nothingBuilt
+          ? { stepId: pending.stepId, state: 'pending', opRef: null }
+          : { stepId: pending.stepId, state: 'needs_operator', started: true },
         addResources: out.resources,
         failure: {
           step: pending.stepId,
@@ -4281,13 +4412,17 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           ...(out.detail ? { detail: out.detail } : {}),
         },
         waiting: null,
-        status: 'needs_operator',
+        ...(nothingBuilt ? {} : { status: 'needs_operator' }),
       });
       await advanceCall(ctx, r._id, sv, {
         type: 'fail',
         code: out.code ?? 'step_refused',
         detail: withProviderAnswer(pending.stepId, out.detail),
         rollback: false,
+        refused: {
+          nothingBuilt,
+          ...(out.httpStatus !== undefined ? { status: out.httpStatus } : {}),
+        },
       });
     } else {
       // `partial` means the call REACHED the provider and created some children

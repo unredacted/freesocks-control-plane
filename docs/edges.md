@@ -877,7 +877,10 @@ makes it a candidate again.
 **Guards.** Everything that bounds a replace still applies: the per-origin daily cap
 (`maxRotationsPerRelayPerDay`) and cooldown, the detector's fleet brake and fleet daily cap, the
 concurrency limit, the account's daily allocation budget, live caps and monthly spend cap (the
-selection refuses), and the node's approved shape. Worst case per origin per day: as many
+selection refuses), and the node's approved shape. A location whose provider refused the new
+load balancer for good (a quota) is held on the node for six hours, so the next automatic
+replace provisions in the next ticked location (§ "Provider sets", "A location that refused a
+create"). Worst case per origin per day: as many
 short-lived load balancers as the daily cap, each destroyed after a failed check.
 
 **Who receives a replacement** is one decision, `replacementPlacement()`
@@ -1934,7 +1937,17 @@ any point, and never writes twice what it cannot prove:
   answer"), instead of sending the same request until `step_retries_exhausted`; the outcome
   carries the status (`httpStatus`, kept as the edge's `failure.status`), and a 401 or 403 also
   counts against the account's API health (`noteRefusedCredential`), as a thrown one would, so a
-  revoked or narrowed key still raises `account_api_failing`. Each adapter
+  revoked or narrowed key still raises `account_api_failing`. **When the refused call was the
+  first the provider was sent and built nothing** (the step's own first call, not a poll of a
+  request the provider had taken; its outcome lists nothing, the ledger is empty and no other
+  step started), nothing is billed and nothing is left to read at the provider: the step stays
+  `pending`, the edge fails like any other failed run's (`failed`, not `needs_operator`; the
+  reconcile closes it with no provider call, since its ledger is empty), its `failure` keeps the
+  step, the status and the provider's words, and the day's allocation is given back
+  (`allocation_refunded`). Every refused create, built or not, also holds its location on the
+  node for automatic work (`location_held`, § "Provider sets", "A location that refused a
+  create"), so the next automatic run takes the next location instead of being refused the
+  same way. Each adapter
   applies it only where the refused call is the step's one create, so nothing built by the
   step is left off the ledger: Gcore's and OVH's compound create, each UpCloud and Scaleway
   step, Cloudflare's record and rules, Fastly's service, backend, snippets, domain, certificate
@@ -3595,7 +3608,8 @@ target of its listener and its requested location (a publish, the target of its 
 verification is keyed by each target's edge. `retry {replacePick: {from, to}}` swaps one pick
 before its addresses are published (`edge.pick_switch_late` after). Go-live records the set.
 
-**Selection with a set**: the set's usable picks, minus cooling ones for automatic work, ranked
+**Selection with a set**: the set's usable picks, minus cooling ones and ones that just refused
+a create for this node for automatic work (§ "A location that refused a create"), ranked
 by what they add for the listener: lowers the deficit, a provider not yet published for it, a
 location not yet published for it, set order, fewest live edges (`pickLocation`). A set pick
 counts as the operator's choice, so automatic work on that node may use its L7 picks
@@ -3612,6 +3626,28 @@ the origin's cooldown (`relays.cooling`). No automatic path allocates, provision
 into it meanwhile: selection (`set_picks_cooling` when every carrying pick cools), standby
 publish, desired fill and spare replenishment all skip it; its shortfall is not part of the
 deficit. Manual work is not held. Attention: info `pick_cooling` with the minutes left.
+
+**A location that refused a create.** When a provider refuses, for good, to create one of a
+node's addresses (`create_refused` and the other refused-create codes of § "The rotation
+machine": a quota, a setting it rejects, a forbidden call), the same request would be refused
+the same way, so the run that saw it holds that location on the node for automatic work for six
+hours (`relays.refusedLocations`, `REFUSED_LOCATION_HOLD_MS`, `lib/edges/refusedLocations.ts`;
+the run's event `location_held`). Automatic selection (the detector, upkeep) then leaves it out,
+with or without a provider set, so the next automatic run takes the next location of the set
+instead of picking the refusing one again until the node's daily cap stops it. It is held per
+node, not for the whole location: a refusal of one node's request (its origin address, its
+ports) says nothing about another node's, and a quota refuses each node once. When what would
+be picked is a held location, selection names it (`locations_refused`), and a replace with
+FCP's own client check is refused at the start as `edge.locations_refused`. Unlike cooling it
+does not change the requirement or what is published: spares and addresses in use there are
+untouched. An operator's own request is never held, and an edge created there (by hand once the
+quota is raised, or by any run after the hold ends) lifts it at once. Attention: warning
+`location_refused` per (node, location), with the account, the location, the minutes left and
+the refusal's code; it alerts (FCP cannot raise a quota). The node's card says it per pick
+(`refusedUntil`). Why a hold and not a fallback inside the run: the hold is remembered by every
+later run on the node, and it changes only selection, not the step machine (a run that went
+back to `select` from `provisioning` would have to give back its edge, its reservation and its
+check gate); the cost is one detector pass (5 minutes) before the next location is tried.
 
 **Members.** The renderer's backup prefers another provider, then another location
 (§ Rendering). The rehearsal checks each (cohort, format) body under the EFFECTIVE delivery rule:
@@ -4977,3 +5013,11 @@ runtime is below it (`DEPLOY_SKIP_NODE_FLOOR=true` bypasses). The check runs BEF
 the running deployment already exposes the runtime probe (so incompatible code is never
 published first) and again after it; only the first deploy of the guard checks after its own
 push. The observed version shows on the admin dashboard.
+
+**A location that refused a create** adds one optional field (`relays.refusedLocations`): one
+deploy, no migration, no setting. From the first refused create after the deploy, the node's
+automatic work takes the next location for six hours, and a refused create that built nothing
+fails its edge instead of leaving it waiting for an operator (the reconcile closes it). An edge
+already parked in `needs_operator` from before stays where it is: close it with Destroy. To roll
+back, run `edgeRotations:clearRefusedLocations` with no arguments before deploying the older
+build (an older schema refuses the push while a node still carries the field).
