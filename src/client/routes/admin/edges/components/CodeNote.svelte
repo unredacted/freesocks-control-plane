@@ -6,7 +6,8 @@
    * Props:
    *   issue: { code: string; subject?: string | null; detail?: string | null }
    *       SetupBlocker and PreflightIssue both fit. `subject` names the thing
-   *       (a slug, an account, a listener key); `detail` is a short server hint.
+   *       (a slug, an account, a listener key); `detail` is a short server hint,
+   *       shown in words (and with its fix) when it is itself a known code.
    *   tone?: 'blocker' | 'warning' | 'info'     default 'blocker'
    *   compact?: boolean                         label + fix on one line, no explanation
    *   actions?: Snippet                         e.g. a "Fix it" link, right-aligned
@@ -39,9 +40,17 @@
   const code = $derived(issue.code.replace(/^edge\./, ''));
   const known = $derived(EDGE_CODE_COPY[code] !== undefined);
   const subject = $derived('subject' in issue ? (issue.subject ?? null) : null);
+  // A hint that is itself a code with words (a reason) is shown in those words, with its fix.
+  const reason = $derived.by(() => {
+    const d = issue.detail?.replace(/^edge\./, '');
+    return d && d !== code && EDGE_CODE_COPY[d] ? d : null;
+  });
   // The server hint is shown only when it adds something: never when it merely repeats the code.
   const detail = $derived(
-    issue.detail && issue.detail !== issue.code && humanizeCode(issue.detail) !== codeLabel(code)
+    !reason &&
+      issue.detail &&
+      issue.detail !== issue.code &&
+      humanizeCode(issue.detail) !== codeLabel(code)
       ? issue.detail
       : null,
   );
@@ -80,11 +89,16 @@
     {#if !compact && known}
       <p class="text-muted-foreground">{codeExplain(code)}</p>
     {/if}
-    {#if detail}
+    {#if reason}
+      <p class="break-words">Reason: {codeLabel(reason)}.</p>
+    {:else if detail}
       <p class="text-muted-foreground break-words">Detail: {detail}</p>
     {/if}
     {#if codeFix(code)}
       <p class={cn(!compact && 'mt-0.5')}>{codeFix(code)}</p>
+    {/if}
+    {#if reason && codeFix(reason) && codeFix(reason) !== codeFix(code)}
+      <p class="mt-0.5">{codeFix(reason)}</p>
     {/if}
   </div>
   {#if actions}

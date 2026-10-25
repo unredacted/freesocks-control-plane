@@ -115,6 +115,8 @@ import { SETUP_RUN_STAGES, type SetupRunStage } from '../src/shared/contracts/ed
 import type { HideResult, HideStatus } from './edgeHostHides';
 import type { RehearsalResult } from './edgeRehearsal';
 import type { TestLinkResult } from './edgeTestLinks';
+import type { RealityClientsCheck } from './edgeRealityClients';
+import { realityClientRefusalV } from './lib/realityClients';
 import type { ReapplyOutcome } from './lib/edges/providers/types';
 import {
   activatingRunFor,
@@ -265,6 +267,7 @@ const testLinkV = v.object({
     configHash: v.string(),
     issuedAt: v.number(),
   }),
+  realityClients: v.optional(v.union(realityClientRefusalV, v.null())),
 });
 const rehearsalV = v.object({
   at: v.number(),
@@ -312,6 +315,11 @@ export interface StageOps {
   reapplyEdge(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<ReapplyResult>;
   runFrontProof(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<{ ok: boolean; code: string | null }>;
   buildTestLink(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<TestLinkResult>;
+  /** Which clients the origin's REALITY listeners refuse, read now (edgeRealityClients.ts; never throws). */
+  realityClients(
+    ctx: ActionCtx,
+    a: { relayId: Id<'relays'>; listenerKeys: string[] },
+  ): Promise<RealityClientsCheck[]>;
   hideHosts(
     ctx: ActionCtx,
     a: { relayId: Id<'relays'>; runId: Id<'edgeSetupRuns'>; approvedUuids: string[] },
@@ -357,6 +365,7 @@ const defaultOps: StageOps = {
   },
   runFrontProof: (ctx, edgeId) => ctx.runAction(internal.frontQualifyOps.run, { edgeId }),
   buildTestLink: (ctx, edgeId) => ctx.runAction(internal.edgeTestLinks.build, { edgeId }),
+  realityClients: (ctx, a) => ctx.runAction(internal.edgeRealityClients.forRelay, a),
   hideHosts: (ctx, a) => ctx.runAction(internal.edgeHostHides.hide, a),
   hideStatus: (ctx, relayId) => ctx.runQuery(internal.edgeHostHides.status, { relayId }),
   rehearse: (ctx, a) => ctx.runAction(internal.edgeRehearsal.run, a),
@@ -518,6 +527,7 @@ export function mapRunAdmin(r: Run, enrolled: RunEnrolled | null = null) {
         configHash: t.binding.configHash,
         issuedAt: new Date(t.binding.issuedAt).toISOString(),
       },
+      ...(t.realityClients !== undefined ? { realityClients: t.realityClients } : {}),
     })),
     testedEndpoints: (r.testedEndpoints ?? []).map((t) => ({
       edgeId: t.edgeId as string,
@@ -2360,7 +2370,29 @@ async function pendingTestLinks(
       },
     });
   }
-  return links;
+  return withRealityClients(ctx, run, links);
+}
+
+/**
+ * Each REALITY line of the card says which clients its transport refuses,
+ * read when the card is built: a transport that refuses sing-box and Mihomo
+ * passes a test made with an Xray client. A line the panel could not describe
+ * says nothing more than any other.
+ */
+async function withRealityClients(
+  ctx: ActionCtx,
+  run: Run,
+  links: NonNullable<Run['testLinks']>,
+): Promise<NonNullable<Run['testLinks']>> {
+  if (!run.relayId || links.length === 0) return links;
+  const checks = await ops.realityClients(ctx, {
+    relayId: run.relayId,
+    listenerKeys: [...new Set(links.map((l) => l.listenerKey))],
+  });
+  return links.map((l) => {
+    const check = checks.find((c) => c.key === l.listenerKey);
+    return check ? { ...l, realityClients: check.refusal } : l;
+  });
 }
 
 async function relayContextOf(ctx: ActionCtx, run: Run) {

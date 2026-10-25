@@ -20,6 +20,7 @@ import { resolveModeCatalog } from './lib/connectionModes';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { flattenServerConfig, resolveServerConfig, serverConfigWrites } from './lib/serverConfig';
 import { modeRefOf } from './nodeIntents';
+import { realityClientRefusal } from '../src/shared/contracts/realityClients';
 
 const iso = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 
@@ -324,6 +325,10 @@ export const tree = internalQuery({
             for (const h of mine) placedHosts.add(h.hostUuid);
             return {
               ...mapInbound(i),
+              // Which clients it refuses on this node's Xray (unknown until observed with it).
+              realityRefusal: i.realityClients
+                ? realityClientRefusal(i.realityClients, n.xrayVersion ?? null)
+                : null,
               addresses: mine
                 .sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0))
                 .map(mapHost),
@@ -342,6 +347,7 @@ export const tree = internalQuery({
           isDisabled: n.isDisabled,
           usersOnline: n.usersOnline,
           tags: n.tags,
+          xrayVersion: n.xrayVersion ?? null,
           profile: profile
             ? {
                 profileUuid: profile.profileUuid,

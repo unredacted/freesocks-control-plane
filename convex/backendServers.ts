@@ -16,6 +16,7 @@ import type { Id } from './_generated/dataModel';
 import type { BackendConfig, RemnawaveServerConfig } from './lib/backends/registry';
 import { PROVIDERS } from './lib/backends/registry';
 import { observeInstance } from './backendObserve';
+import { inventoryRows } from './backendNodes';
 import {
   remnawaveFleetStats,
   remnawaveMajorVersion,
@@ -308,7 +309,7 @@ export const healthcheck = internalAction({
               const nodes = await provider.getNodeInventory(s.config as BackendConfig);
               await ctx.runMutation(internal.backendNodes.markNodeInventory, {
                 backendServerId: s._id,
-                nodes,
+                nodes: inventoryRows(nodes),
               });
             } catch {
               /* inventory unavailable this cycle; the detector reads stale/unknown */

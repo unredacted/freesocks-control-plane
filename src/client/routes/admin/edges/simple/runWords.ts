@@ -3,6 +3,7 @@
  *
  * Exports:
  *   TestItem, runTestItems(run)      the test card's lines from a run's `testLinks`
+ *   isRealityLink(link)              whether a test link is a REALITY one (its line says to try sing-box too)
  *   runTestLines(run)                every line of the card, the ones already ticked included
  *   TEST_PROFILE_NOTE                under every test link: a short test only, remove the profile after
  *   replaceWords(item)               the "Doesn't work" confirmation: the address it removes and replaces
@@ -22,6 +23,7 @@ import type {
   SetupPlanResponse,
 } from '../../../../../shared/contracts/edges';
 import { transportName } from '../lib/format';
+import type { RealityClientRefusal } from '../../../../../shared/contracts/realityClients';
 
 export interface TestItem {
   edgeId: string;
@@ -34,6 +36,11 @@ export interface TestItem {
   endpoint: string;
   listenerRevision: number;
   configHash: string;
+  /**
+   * A REALITY line: what its transport refuses when the card was built (null =
+   * sing-box and Mihomo get in too, or the panel could not say). Absent: not REALITY.
+   */
+  reality?: { refusal: RealityClientRefusal | null };
 }
 
 /** A run listener's transport in words, by key (null when the run predates it). */
@@ -101,7 +108,24 @@ export function runTestItems(
     endpoint: l.binding.endpoint,
     listenerRevision: l.binding.listenerRevision,
     configHash: l.binding.configHash,
+    ...(isRealityLine(run, l) ? { reality: { refusal: l.realityClients ?? null } } : {}),
   }));
+}
+
+/** Whether a share link is a REALITY one (`security=reality`). */
+export function isRealityLink(link: string): boolean {
+  return /^vless:\/\/[^?#]*\?[^#]*\bsecurity=reality(?:&|#|$)/.test(link);
+}
+
+/** Whether a test line is a REALITY transport's: its verdict came back, or its listener says so. */
+function isRealityLine(
+  run: Partial<Pick<SetupRunAdmin, 'listeners'>>,
+  l: SetupRunAdmin['testLinks'][number],
+): boolean {
+  if (l.realityClients !== undefined || isRealityLink(l.link)) return true;
+  return (
+    run.listeners?.find((x) => x.listenerKey === l.listenerKey)?.transport?.security === 'reality'
+  );
 }
 
 /**

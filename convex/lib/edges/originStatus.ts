@@ -48,6 +48,7 @@ export const ATTENTION_RANK = [
   'delivery_refusals',
   'freedom_node_withheld',
   'direct_host_reappeared',
+  'reality_refuses_clients',
   'node_awaiting_approval',
   'go_live_pending',
   'setup_run_failed',

@@ -352,9 +352,12 @@ export interface NodeInventoryRow {
   address?: string;
   port?: number;
   countryCode?: string;
+  /** The node's Xray version as the backend reports it (absent while unknown). */
+  xrayVersion?: string;
 }
 
 import type { PatchChange, PatchMaterial, PatchOp } from '../backend/patchOps';
+import type { RealityClientBounds } from '../../../src/shared/contracts/realityClients';
 
 // --- Backend observation (server management) -----------------------------------
 //
@@ -376,6 +379,8 @@ export interface PanelRealityAuth {
 
 export type ObservedTransport = Omit<BackendTransport, 'active'> & {
   realityAuth?: PanelRealityAuth;
+  /** A REALITY transport's `minClientVer` / `maxClientVer` (version numbers, never key material). */
+  realityClients?: RealityClientBounds;
 };
 
 export interface ObservedProfile {
@@ -400,6 +405,8 @@ export interface ObservedNode {
   configProfileUuid: string | null;
   activeInboundUuids: string[];
   tags: string[];
+  /** The node's Xray version as the backend reports it; null while unknown. */
+  xrayVersion: string | null;
 }
 
 export interface ObservedAddress {
@@ -551,6 +558,8 @@ export interface PanelInboundTestParams {
   target: string | null;
   authDigest: string | null;
   changeToken: string;
+  /** Its `minClientVer` / `maxClientVer`: which clients it admits (src/shared/contracts/realityClients.ts). */
+  clientBounds: RealityClientBounds;
 }
 
 /**

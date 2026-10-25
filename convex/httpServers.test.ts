@@ -59,6 +59,8 @@ afterEach(() => {
 interface FakePanel {
   names: string[];
   shortIds: string[];
+  /** The REALITY transport's `minClientVer` (absent: not set). */
+  minClientVer?: string;
   hosts: Record<string, unknown>[];
   nodes: Record<string, unknown>[];
   fail: boolean;
@@ -125,6 +127,7 @@ function installPanel(panel: FakePanel) {
               serverNames: panel.names,
               privateKey: PRIVATE_KEY,
               shortIds: panel.shortIds,
+              ...(panel.minClientVer !== undefined ? { minClientVer: panel.minClientVer } : {}),
             },
           },
         },
@@ -389,6 +392,32 @@ describe('/api/v1/admin/servers', () => {
     // GET serves the same thing from the cache, with no backend call.
     const cached = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
     expect(cached.nodes[0].transports[0].serverNames).toEqual(['a.example', 'b.example']);
+  });
+
+  test('a REALITY transport with no minClientVer on Xray 26.7.28 is marked as refusing sing-box and Mihomo on that node; 1.8.1 admits them', async () => {
+    const { call, panel } = await seed();
+    panel.nodes[0]!.versions = { xray: '26.7.28', node: '3.4.2' };
+    let tree = ServerTree.parse(await (await call('POST', 'panel-a/refresh')).json());
+    expect(tree.nodes[0]!.xrayVersion).toBe('26.7.28');
+    // What the adopt dialog names before members are put on the node.
+    expect(tree.nodes[0]!.transports[0]!.realityRefusal).toEqual({
+      refuses: ['singbox', 'mihomo'],
+      reasons: [{ cause: 'core_default', families: ['singbox', 'mihomo'] }],
+      xrayVersion: '26.7.28',
+      minClientVer: null,
+      maxClientVer: null,
+    });
+    panel.minClientVer = '1.8.1';
+    tree = ServerTree.parse(await (await call('POST', 'panel-a/refresh')).json());
+    expect(tree.nodes[0]!.transports[0]!.realityRefusal).toBeNull();
+    // A node whose version the panel does not know (it has not answered): it may refuse them.
+    delete panel.minClientVer;
+    panel.nodes[0]!.versions = null;
+    tree = ServerTree.parse(await (await call('POST', 'panel-a/refresh')).json());
+    expect(tree.nodes[0]!.xrayVersion).toBeNull();
+    expect(tree.nodes[0]!.transports[0]!.realityRefusal?.reasons).toEqual([
+      { cause: 'core_unknown', families: ['singbox', 'mihomo'] },
+    ]);
   });
 
   test('no response carries a secret', async () => {

@@ -5,7 +5,8 @@
    * with its current addresses, nothing a member holds changes. A direct node's
    * addresses are found by its name or address unless the operator ticks them.
    * A fronted node whose edge FCP does not run yet is marked so; Edges takes
-   * over later.
+   * over later. A REALITY transport that refuses sing-box or Mihomo clients
+   * (no minClientVer on an Xray that then refuses them) is named with its fix.
    *
    * Props: open (bindable), slug, node (name + uuid), modes (the setup's), tree (the backend's)
    */
@@ -20,6 +21,7 @@
   import type { ModeSetupView, ServerTree } from '../../../../../shared/contracts/servers';
   import { codeOf } from '../lib/run';
   import { serverErrorWords, shapeWords } from '../lib/words';
+  import { realityRefusalWords } from '@client/lib/realityClientWords';
 
   interface Props {
     open: boolean;
@@ -61,6 +63,14 @@
     return tree.addresses.filter(
       (a) => !a.isDisabled && !!a.transportUuid && uuids.has(a.transportUuid),
     );
+  });
+  // The picked mode's transport on this node, when it refuses sing-box or Mihomo
+  // clients: adopting puts members on it at once, so the fix is named first.
+  let refusal = $derived.by(() => {
+    if (!picked || !tree || !node) return null;
+    const view = tree.nodes.find((n) => n.nodeUuid === node!.nodeUuid);
+    const t = view?.transports.find((x) => x.tag === picked!.tag && x.realityRefusal);
+    return t?.realityRefusal ? realityRefusalWords(t.realityRefusal) : null;
   });
   const toggle = (uuid: string, on: boolean) => {
     hostUuids = on ? [...new Set([...hostUuids, uuid])] : hostUuids.filter((u) => u !== uuid);
@@ -121,6 +131,17 @@
           {/each}
         </select>
       </div>
+      {#if refusal}
+        <!-- A warning: adopting still works, and members on Xray clients connect. -->
+        <div
+          class="space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+          role="status"
+        >
+          <p class="font-medium">{picked?.tag}: {refusal.title}</p>
+          <p>{refusal.why}</p>
+          <p>{refusal.fix}</p>
+        </div>
+      {/if}
       {#if candidates.length > 0}
         <fieldset class="space-y-1.5">
           <legend class="text-sm font-medium">Its addresses</legend>

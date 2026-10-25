@@ -9,6 +9,15 @@ import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
+import type { NodeInventoryRow } from './lib/backends/types';
+
+/**
+ * The rows as this cache keeps them: the node's Xray version is read live
+ * where it matters (edgeRealityClients.ts), never cached here.
+ */
+export function inventoryRows(nodes: readonly NodeInventoryRow[]) {
+  return nodes.map(({ xrayVersion: _xray, ...row }) => row);
+}
 
 export const markNodeInventory = internalMutation({
   args: {
@@ -70,7 +79,10 @@ export const refreshNodeInventory = internalAction({
     const provider = PROVIDERS[server.backend];
     if (!provider.getNodeInventory) return { nodes: 0 };
     const nodes = await provider.getNodeInventory(server.config as BackendConfig);
-    await ctx.runMutation(internal.backendNodes.markNodeInventory, { backendServerId, nodes });
+    await ctx.runMutation(internal.backendNodes.markNodeInventory, {
+      backendServerId,
+      nodes: inventoryRows(nodes),
+    });
     return { nodes: nodes.length };
   },
 });

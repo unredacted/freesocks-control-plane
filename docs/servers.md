@@ -712,6 +712,16 @@ rename would leave it naming the old name. A re-approval (after maintenance) tur
 recorded addresses that are off, and a failed or superseded run turns off only those (§ Node
 lifecycle, `activating`): the address members held stays on.
 
+Before the admin adopts, the dialog says whether the mode's transport on that node lets every
+client in: the tree carries each node's Xray version (`xrayVersion`, from the panel's node row)
+and, per transport it serves, `realityRefusal`, judged from the transport's `minClientVer` /
+`maxClientVer` as the last look read them (`src/shared/contracts/realityClients.ts`; docs/edges.md
+§ "Protecting a node FCP does not manage"). A REALITY transport with no `minClientVer` on Xray
+v26.7.11 to v26.7.28 refuses every sing-box and Mihomo client, and from v26.9.8 on the node
+refuses sing-box whatever the transport sets; adopting puts members on it at once, so the dialog
+names the families, each reason and its fix (`"minClientVer": "1.8.1"` in its `realitySettings`,
+for the first). A warning: Adopt still works.
+
 ### Moving to modes
 
 The release that introduced modes carried a one-shot mutation, `backendSetup:migrateContractV2`,

@@ -25,6 +25,7 @@ import {
   SETUP_STEP_STATUSES,
 } from './edgeCodes';
 import { EDGE_PROVIDER_IDS } from './edgeProviderIds';
+import { RealityClientRefusal } from './realityClients';
 import { ModeFronting } from './servers';
 import {
   LISTENER_PROTOCOL_IDS,
@@ -2339,6 +2340,8 @@ export const SetupPlanInbound = z.object({
   probeFailed: z.string().optional(),
   /** No test link could be made for a load balancer address of it (`test_link_unavailable`). */
   noTestLink: z.boolean().optional(),
+  /** The clients this REALITY transport refuses (`reality_refuses_clients`, a warning). */
+  refusesClients: RealityClientRefusal.optional(),
 });
 export const SetupPlanDirectHost = z.object({
   uuid: z.string(),
@@ -2629,6 +2632,11 @@ export const SetupRunTestLink = z.object({
     configHash: z.string(),
     issuedAt: iso,
   }),
+  /**
+   * A REALITY line: the clients its transport refuses when the card was built
+   * (null = sing-box and Mihomo get in too). Absent: not REALITY, or the panel could not say.
+   */
+  realityClients: RealityClientRefusal.nullable().optional(),
 });
 export type SetupRunTestLink = z.infer<typeof SetupRunTestLink>;
 

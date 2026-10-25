@@ -11,6 +11,7 @@ import {
 } from '../../../src/shared/contracts/edgeCodes';
 import { sha256Hex } from '../crypto';
 import { MAX_EVENT_DETAIL_CHARS } from './rotation';
+import type { RealityClientRefusal } from '../../../src/shared/contracts/realityClients';
 
 export { SETUP_RUN_STAGES };
 
@@ -180,6 +181,11 @@ export interface SetupPlanInbound {
    * transport (`test_link_unavailable` on an L4 pick).
    */
   noTestLink?: boolean;
+  /**
+   * The clients this REALITY transport refuses (src/shared/contracts/realityClients.ts):
+   * a warning, the run goes on (`reality_refuses_clients`).
+   */
+  refusesClients?: RealityClientRefusal;
 }
 
 export interface SetupPlanDirectHost {

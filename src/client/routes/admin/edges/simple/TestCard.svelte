@@ -21,12 +21,17 @@
    *   onFails?: (item: TestItem) => void   "Doesn't work" (no button without it)
    *   confirmFails?: boolean               ask before `onFails` (default false)
    *   intro?: string                       the sentence above the lines
+   *
+   * A REALITY line (`item.reality`) also says to try a sing-box or Mihomo
+   * client, or, when its transport refuses them, why and the fix: a test with
+   * an Xray client alone would pass while those members cannot connect.
    */
   import Check from '@lucide/svelte/icons/check';
   import { Button } from '@client/components/ui/button';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import TestLink from './TestLink.svelte';
   import { replaceWords, type TestItem } from './runWords';
+  import { REALITY_TEST_ADVICE, realityRefusalWords } from '@client/lib/realityClientWords';
 
   interface Props {
     items: TestItem[];
@@ -93,6 +98,17 @@
                 label={`Copy the test link for ${item.name ?? item.endpoint}`}
               />
             </div>
+          {/if}
+          {#if item.reality?.refusal}
+            {@const r = realityRefusalWords(item.reality.refusal)}
+            <!-- An Xray client passes here while members on the others cannot connect. -->
+            <div class="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+              <p class="font-medium">{r.title}</p>
+              <p class="mt-1">{r.why}</p>
+              <p class="mt-1">{r.fix} Test with one of those clients, not only an Xray one.</p>
+            </div>
+          {:else if item.reality}
+            <p class="text-muted-foreground mt-2 text-xs">{REALITY_TEST_ADVICE}</p>
           {/if}
           <div class="mt-3 flex flex-wrap gap-2">
             <Button

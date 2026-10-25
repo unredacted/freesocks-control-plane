@@ -23,7 +23,13 @@ import {
   registerRelay,
   setFrontsTraffic,
 } from './lib/edges/testing/fixtures';
-import { __setStageOpsForTests, approvedDarkCohorts, type StageOps } from './edgeSetupRuns';
+import {
+  __setStageOpsForTests,
+  approvedDarkCohorts,
+  mapRunAdmin,
+  type StageOps,
+} from './edgeSetupRuns';
+import type { RealityClientRefusal } from '../src/shared/contracts/realityClients';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
 import { upsertSettingRow } from './appSettings';
 import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
@@ -32,6 +38,7 @@ import { MAX_OBSERVATION_AGE_MS, slugForNode, vectorsEqual } from './lib/edges/s
 import { signValue } from './lib/cookies';
 import {
   SetupPlanResponse,
+  SetupRunAdmin,
   type SetupRunCreateRequest,
   type SetupRunRetryRequest,
 } from '../src/shared/contracts/edges';
@@ -131,6 +138,8 @@ async function seed(
     testLinkError?: () => Error | null;
     /** Runs inside the restore start, before it is recorded (a race lands here). */
     onRestoreStart?: () => Promise<void>;
+    /** What the run's test card reads of the REALITY transports (default: nothing known). */
+    realityClients?: StageOps['realityClients'];
   } = {},
 ) {
   vi.useFakeTimers();
@@ -244,6 +253,7 @@ async function seed(
       await opts.onRestoreStart?.();
       calls.restore.push(a.purpose);
     },
+    realityClients: opts.realityClients ?? (async () => []),
   };
   __setStageOpsForTests(ops);
   return {
@@ -2531,7 +2541,12 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
     ...over,
   });
   async function seedFronted(
-    opts: Parameters<typeof seed>[0] & { panelAddress?: string; synthesisReady?: boolean } = {},
+    opts: Parameters<typeof seed>[0] & {
+      panelAddress?: string;
+      synthesisReady?: boolean;
+      /** What the plan reads of each REALITY transport (null = it admits every client). */
+      realityRefusal?: RealityClientRefusal | null;
+    } = {},
   ) {
     const s = await seed({ hosts: [frontHost()], ...opts });
     await s.t.run(async (ctx) => {
@@ -2541,6 +2556,7 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
     // What the panel says of the REALITY transport (its key and names), read
     // by the plan as the test link will.
     const ready: Array<{ tag: string }> = [];
+    const clientsAsked: unknown[] = [];
     __setPlanOpsForTests({
       listNodeInbounds: async () => opts.inbounds ?? [inboundA],
       listHosts: async () =>
@@ -2549,8 +2565,14 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
         ready.push({ tag: a.tag });
         return opts.synthesisReady ?? true;
       },
+      realityClients: async (_ctx, a) => {
+        clientsAsked.push(a);
+        return opts.realityRefusal === undefined
+          ? []
+          : a.transports.map((x) => ({ key: x.key, tag: x.tag, refusal: opts.realityRefusal! }));
+      },
     });
-    return { ...s, ready };
+    return { ...s, ready, clientsAsked };
   }
   const planWith = (t: T, serverId: Id<'backendServers'>, extra: Record<string, unknown> = {}) =>
     t.action(internal.edgeSetupPlan.plan, {
@@ -2819,6 +2841,80 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
       locationId: loc3._id,
       reason: 'test_link_unavailable',
     });
+  });
+
+  test('a REALITY transport that refuses sing-box and Mihomo clients is named on the plan, protected all the same, and its test card line says so', async () => {
+    // The beta case: hand-built, no minClientVer, Xray 26.7.28.
+    const refusal: RealityClientRefusal = {
+      refuses: ['singbox', 'mihomo'],
+      reasons: [{ cause: 'core_default', families: ['singbox', 'mihomo'] }],
+      xrayVersion: '26.7.28',
+      minClientVer: null,
+      maxClientVer: null,
+    };
+    const { t, serverId, accountId, clientsAsked } = await seedFronted({
+      realityRefusal: refusal,
+      realityClients: async (_ctx, a) =>
+        a.listenerKeys.map((key) => ({ key, tag: 'VLESS_RELAY_A', refusal })),
+    });
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const plan = await planWith(t, serverId, { originAddress: ORIGIN, picks: [loc._id] });
+    const inbound = plan.inbounds.find((i) => i.sourceTag === 'VLESS_RELAY_A')!;
+    expect(inbound.refusesClients).toEqual(refusal);
+    // The plan asked the panel about the transport it protects, on its node.
+    expect(clientsAsked).toEqual([
+      {
+        backendServerId: serverId,
+        nodeUuid: NODE_UUID,
+        nodeName: 'node-one',
+        transports: [
+          {
+            key: inbound.listenerKey,
+            profileUuid: FIXTURE_CONFIG_PROFILE,
+            tag: 'VLESS_RELAY_A',
+          },
+        ],
+      },
+    ]);
+    // A warning: the set has no problem and the run is created.
+    expect(plan.set?.problems).toEqual([]);
+    const res = await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+      planHash: plan.planHash,
+      approvedHideUuids: [],
+      originAddress: ORIGIN,
+    });
+    const r = await pump(t, res.runId as Id<'edgeSetupRuns'>, settled);
+    expect(r.need?.code).toBe('try_it');
+    expect(r.testLinks?.map((l) => l.realityClients)).toEqual([refusal]);
+    // The card reads it from the run's admin view.
+    const view = SetupRunAdmin.parse(JSON.parse(JSON.stringify(mapRunAdmin(r))));
+    expect(view.testLinks[0]!.realityClients).toEqual(refusal);
+  });
+
+  test('a REALITY transport that admits every client: no warning on the plan, and its test line still says it is REALITY', async () => {
+    const { t, serverId, accountId } = await seedFronted({
+      realityRefusal: null,
+      realityClients: async (_ctx, a) =>
+        a.listenerKeys.map((key) => ({ key, tag: 'VLESS_RELAY_A', refusal: null })),
+    });
+    const loc = (await defaultLocationRow(t, accountId))!;
+    const plan = await planWith(t, serverId, { originAddress: ORIGIN, picks: [loc._id] });
+    expect(plan.inbounds.find((i) => i.sourceTag === 'VLESS_RELAY_A')?.refusesClients).toBe(
+      undefined,
+    );
+    const res = await t.action(internal.edgeSetupPlan.create, {
+      backendServerId: serverId,
+      nodeUuid: NODE_UUID,
+      picks: [loc._id],
+      planHash: plan.planHash,
+      approvedHideUuids: [],
+      originAddress: ORIGIN,
+    });
+    const r = await pump(t, res.runId as Id<'edgeSetupRuns'>, settled);
+    expect(r.testLinks?.map((l) => l.realityClients)).toEqual([null]);
   });
 });
 

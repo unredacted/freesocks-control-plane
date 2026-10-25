@@ -80,12 +80,20 @@ const panel = (p: ReturnType<typeof profile>) => (path: string) => {
         isDisabled: false,
         usersOnline: 4,
         tags: ['FCP_MANAGED'],
+        versions: { xray: '26.7.28', node: '3.4.2' },
         configProfile: {
           activeConfigProfileUuid: 'p-1',
           activeInbounds: [{ uuid: 'i-reality', tag: 'reality-in' }],
         },
       },
-      { uuid: 'n-2', name: 'node-two', isConnected: true, isDisabled: true },
+      // A 2.x backend reports the version at the top level.
+      {
+        uuid: 'n-2',
+        name: 'node-two',
+        isConnected: true,
+        isDisabled: true,
+        xrayVersion: '25.10.15',
+      },
     ]);
   if (path === '/api/hosts')
     return json([
@@ -179,6 +187,7 @@ describe('remnawaveObservePanel', () => {
         configProfileUuid: 'p-1',
         activeInboundUuids: ['i-reality'],
         tags: ['FCP_MANAGED'],
+        xrayVersion: '26.7.28',
       },
       // Connected but disabled is not "online"; missing fields degrade to unknowns.
       expect.objectContaining({
@@ -186,6 +195,7 @@ describe('remnawaveObservePanel', () => {
         online: false,
         isDisabled: true,
         configProfileUuid: null,
+        xrayVersion: '25.10.15',
       }),
     ]);
     const [p] = o.profiles;
@@ -207,6 +217,9 @@ describe('remnawaveObservePanel', () => {
       publicKeyMismatch: false,
     });
     expect(p.inbounds[1].realityAuth).toBeUndefined();
+    // Its client bounds (none set here): which clients it admits depends on them.
+    expect(p.inbounds[0].realityClients).toEqual({ minClientVer: null, maxClientVer: null });
+    expect(p.inbounds[1].realityClients).toBeUndefined();
     expect(o.hosts[0]).toMatchObject({
       hostUuid: 'h-1',
       sni: 'a.example',
@@ -220,6 +233,21 @@ describe('remnawaveObservePanel', () => {
     expect(o.squads).toEqual([
       { squadUuid: 's-1', name: 'free', inboundUuids: ['i-reality'], membersCount: 12 },
     ]);
+  });
+
+  test("a REALITY transport's minClientVer and maxClientVer are read, and nothing else of its settings", async () => {
+    const p = profile(['a.example']);
+    const rs = (p.config.inbounds[0] as ReturnType<typeof realityInbound>).streamSettings
+      .realitySettings as Record<string, unknown>;
+    rs.minClientVer = '1.8.1';
+    rs.maxClientVer = '';
+    mockFetch(panel(p));
+    const o = await remnawaveObservePanel(cfg, KEY);
+    expect(o.profiles[0].inbounds[0].realityClients).toEqual({
+      minClientVer: '1.8.1',
+      maxClientVer: null,
+    });
+    for (const s of SECRETS) expect(JSON.stringify(o)).not.toContain(s);
   });
 
   test('a name change moves both digests; a short-id change moves only the keyed ones', async () => {

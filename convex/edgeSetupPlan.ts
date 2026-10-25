@@ -84,6 +84,7 @@ import type { ListenerSpecInput } from './lib/edges/registration';
 import type { EdgeLayer } from './lib/edges/providers/capabilities';
 import { SETUP_RUN_MAX_LISTENERS } from '../src/shared/contracts/edgeCodes';
 import { resolveModeCatalog } from './lib/connectionModes';
+import type { RealityClientsCheck, RealityTransportRef } from './edgeRealityClients';
 
 const MAX_REQUIRED_LISTENERS = SETUP_RUN_MAX_LISTENERS;
 /** A load balancer pick for a transport no test link can be made for (`withTestLinkProblems`). */
@@ -107,6 +108,16 @@ export interface PlanOps {
     ctx: ActionCtx,
     a: { backendServerId: Id<'backendServers'>; profileUuid: string; tag: string },
   ): Promise<boolean>;
+  /** Which clients the node's REALITY transports refuse (edgeRealityClients.ts; never throws). */
+  realityClients(
+    ctx: ActionCtx,
+    a: {
+      backendServerId: Id<'backendServers'>;
+      nodeUuid: string;
+      nodeName: string;
+      transports: RealityTransportRef[];
+    },
+  ): Promise<RealityClientsCheck[]>;
 }
 
 const defaultPlanOps: PlanOps = {
@@ -115,6 +126,7 @@ const defaultPlanOps: PlanOps = {
   probeOrigins: (ctx, a) => ctx.runAction(internal.edgeOriginProbeOps.probe, a),
   pause: (ms) => new Promise((r) => setTimeout(r, ms)),
   synthesisReady: (ctx, a) => ctx.runAction(internal.edgeTestLinks.synthesisReady, a),
+  realityClients: (ctx, a) => ctx.runAction(internal.edgeRealityClients.check, a),
 };
 
 let planOps: PlanOps = defaultPlanOps;
@@ -1057,6 +1069,32 @@ export async function buildPlan(
           )
         : source !== null;
     if (!ready) i.noTestLink = true;
+  }
+  // Which clients each REALITY transport lets in: one that refuses sing-box and
+  // Mihomo passes a test made with an Xray client while those members break.
+  // A warning on the transport (`reality_refuses_clients`); nothing is refused.
+  const reality = required.filter((i) => {
+    const spec = i.listenerSpec as ListenerSpecInput;
+    return spec.security === 'reality' && !!spec.panelBinding;
+  });
+  if (reality.length > 0) {
+    const checks = await planOps.realityClients(ctx, {
+      backendServerId: a.backendServerId,
+      nodeUuid: a.nodeUuid,
+      nodeName: c.node.name,
+      transports: reality.map((i) => {
+        const binding = (i.listenerSpec as ListenerSpecInput).panelBinding!;
+        return {
+          key: i.listenerKey,
+          profileUuid: binding.configProfileUuid,
+          tag: binding.inboundTag,
+        };
+      }),
+    });
+    for (const check of checks) {
+      const inbound = reality.find((i) => i.listenerKey === check.key);
+      if (inbound && check.refusal) inbound.refusesClients = check.refusal;
+    }
   }
   const accounts = c.accounts.map((acct) =>
     accountCompatibility(acct, required, c.relay, c.websocketNode, l4Problem),

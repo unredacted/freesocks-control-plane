@@ -33,7 +33,7 @@
   import AdminListState from '../../AdminListState.svelte';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import TestCard from './TestCard.svelte';
-  import type { TestItem } from './runWords';
+  import { isRealityLink, type TestItem } from './runWords';
 
   interface Props {
     edgeIds: string[];
@@ -66,6 +66,7 @@
       endpoint: l.binding.endpoint,
       listenerRevision: l.binding.listenerRevision,
       configHash: l.binding.configHash,
+      ...(isRealityLink(l.link) ? { reality: { refusal: null } } : {}),
     })),
   );
   let done = $state(new Set<string>());

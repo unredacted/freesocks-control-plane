@@ -19,6 +19,7 @@ import {
   runNotCheckedLines,
   runTestItems,
   runTestLines,
+  isRealityLink,
   TEST_PROFILE_NOTE,
 } from './runWords';
 
@@ -213,6 +214,72 @@ describe('runTestItems', () => {
         configHash: 'h',
       },
     ]);
+  });
+
+  const line = (over: Record<string, unknown> = {}) => ({
+    edgeId: 'e1',
+    listenerKey: 'main',
+    link: 'vless://u@192.0.2.4:443?security=reality&sni=a.example#t',
+    format: 'links',
+    method: 'test_link' as const,
+    binding: { endpoint: '192.0.2.4:443', listenerRevision: 3, configHash: 'h', issuedAt: 'x' },
+    ...over,
+  });
+  const refusal = {
+    refuses: ['singbox' as const, 'mihomo' as const],
+    reasons: [
+      { cause: 'core_default' as const, families: ['singbox' as const, 'mihomo' as const] },
+    ],
+    xrayVersion: '26.7.28',
+    minClientVer: null,
+    maxClientVer: null,
+  };
+
+  it('a REALITY line carries what its transport refuses, so the card can say to test with sing-box', () => {
+    expect(runTestItems({ testLinks: [line({ realityClients: refusal })] })[0]!.reality).toEqual({
+      refusal,
+    });
+    // It admits every client: still a REALITY line (the card says to try sing-box too).
+    expect(runTestItems({ testLinks: [line({ realityClients: null })] })[0]!.reality).toEqual({
+      refusal: null,
+    });
+    // The panel could not say: a REALITY link is still known as one.
+    expect(runTestItems({ testLinks: [line()] })[0]!.reality).toEqual({ refusal: null });
+    // A named connection's retest has no link: its listener says it is REALITY.
+    expect(
+      runTestItems({
+        testLinks: [line({ link: '', method: 'named_connection' })],
+        listeners: [
+          {
+            listenerKey: 'main',
+            locationId: null,
+            layer: 'l4',
+            edgeId: 'e1',
+            verify: 'partial',
+            published: true,
+            notChecked: [],
+            transport: {
+              protocol: 'vless',
+              streamTransport: 'raw',
+              security: 'reality',
+              originPort: 443,
+            },
+          },
+        ],
+      })[0]!.reality,
+    ).toEqual({ refusal: null });
+    // Not REALITY: nothing more.
+    expect(
+      runTestItems({ testLinks: [line({ link: 'ss://x@192.0.2.4:8388#t' })] })[0]!.reality,
+    ).toBeUndefined();
+  });
+
+  it('isRealityLink reads the security parameter only', () => {
+    expect(isRealityLink('vless://u@192.0.2.4:443?type=tcp&security=reality#x')).toBe(true);
+    expect(isRealityLink('vless://u@192.0.2.4:443?security=reality')).toBe(true);
+    expect(isRealityLink('vless://u@192.0.2.4:443?security=tls#security=reality')).toBe(false);
+    expect(isRealityLink('vless://u@192.0.2.4:443?security=realityx')).toBe(false);
+    expect(isRealityLink('trojan://p@192.0.2.4:443?security=reality')).toBe(false);
   });
 });
 

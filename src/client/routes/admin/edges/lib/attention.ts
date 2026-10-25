@@ -20,6 +20,8 @@ import type { AttentionAction } from '../../../../../shared/contracts/edgeCodes'
 import { edgesPaths } from './routes';
 import { serversPaths } from '../../servers/lib/routes';
 import { durationLabel } from './time';
+import { RealityClientRefusal } from '../../../../../shared/contracts/realityClients';
+import { realityRefusalWords } from '../../../../lib/realityClientWords';
 import {
   ATTENTION_ACTION_LABELS,
   PLAIN_ATTENTION_ACTION_LABELS,
@@ -282,6 +284,16 @@ export function attentionFactsLine(item: AttentionItem): string {
       .map(([reason, n]) => `${codeLabel(reason)} ${n}`);
     if (top.length > 0) out.push(top.join(', '));
   }
+  const refuses = f['refuses'];
+  if (Array.isArray(refuses) && refuses.length > 0)
+    out.push(
+      `Refuses ${refuses
+        .map((x): string | null =>
+          x === 'singbox' ? 'sing-box' : x === 'mihomo' ? 'Mihomo' : null,
+        )
+        .filter((x): x is string => x !== null)
+        .join(' and ')}`,
+    );
   const families = f['families'];
   if (Array.isArray(families) && families.length > 0)
     out.push(families.filter((x): x is string => typeof x === 'string').join(', '));
@@ -305,7 +317,26 @@ export function attentionHeading(
 ): { label: string; explain: string; final: boolean } {
   const run = item.kind === 'rotation_failed' ? failedRunLabel(item.facts, plain) : null;
   if (run) return { ...run, final: true };
+  const reality = item.kind === 'reality_refuses_clients' ? realityRowWords(item.facts) : null;
+  if (reality) return { label: codeLabel(item.kind), explain: reality, final: true };
   return { label: codeLabel(item.kind), explain: codeExplain(item.kind), final: false };
+}
+
+/**
+ * A REALITY refusal row in words, from the verdicts it carries (`transports`:
+ * tag + verdict each): which clients each transport refuses, why and the fix.
+ * Null when the facts hold none (the kind's own words then).
+ */
+function realityRowWords(facts: AttentionItem['facts']): string | null {
+  const rows = Array.isArray(facts.transports) ? facts.transports : [];
+  const words = rows.flatMap((row: unknown) => {
+    const r = row as { tag?: unknown; refusal?: unknown };
+    const verdict = RealityClientRefusal.safeParse(r.refusal);
+    if (!verdict.success || typeof r.tag !== 'string') return [];
+    const w = realityRefusalWords(verdict.data);
+    return [`${r.tag}: ${w.title}. ${w.why} ${w.fix}`];
+  });
+  return words.length > 0 ? words.join(' ') : null;
 }
 
 /** The row's button: a failed run opens that run (its drawer), whatever its action says. */
