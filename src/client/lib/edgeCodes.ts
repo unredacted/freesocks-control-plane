@@ -267,6 +267,31 @@ const COPY = {
       'A REALITY transport here lets in only clients that send a recent Xray version: members on sing-box-based clients (Hiddify, Karing) or Mihomo-based ones (Clash Verge, FlClash) cannot connect, while a test made with an Xray client passes. It sets no minClientVer on an Xray that then defaults to 26.3.27, or bounds that leave those clients out.',
     fix: 'Add "minClientVer": "1.8.1" to the transport\'s realitySettings in the backend (FCP\'s own template sets it). The warning clears at the next look, within a few minutes.',
   },
+  // Why (the attention item's code, the setup-status warning's detail).
+  reality_core_default: {
+    label: 'No minClientVer, Xray defaults to 26.3.27',
+    explain:
+      'The transport sets no minClientVer, and Xray 26.7.11 to 26.7.28 then let in only Xray clients from 26.3.27 on.',
+    fix: 'Add "minClientVer": "1.8.1" to the transport\'s realitySettings in the backend.',
+  },
+  reality_core_unknown: {
+    label: 'No minClientVer, Xray version unknown',
+    explain:
+      "The transport sets no minClientVer and FCP could not read the node's Xray version: Xray 26.7.11 to 26.7.28 then let in only Xray clients from 26.3.27 on.",
+    fix: 'Add "minClientVer": "1.8.1" to the transport\'s realitySettings in the backend: it lets every client in on any Xray.',
+  },
+  reality_min_above: {
+    label: 'Its minClientVer is too high',
+    explain:
+      "The transport's minClientVer is above what sing-box (1.8.1) or Mihomo (1.8.2) sends, so the server refuses them.",
+    fix: 'Set "minClientVer" to "1.8.1" in the transport\'s realitySettings in the backend.',
+  },
+  reality_max_below: {
+    label: 'Its maxClientVer is too low',
+    explain:
+      "The transport's maxClientVer is below what sing-box (1.8.1) or Mihomo (1.8.2) sends, so the server refuses them.",
+    fix: 'Remove "maxClientVer" from the transport\'s realitySettings in the backend, or raise it to 1.8.2 or above.',
+  },
   members_dark: {
     label: 'Members dark',
     explain:

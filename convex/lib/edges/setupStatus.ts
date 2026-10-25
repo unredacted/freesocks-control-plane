@@ -54,7 +54,7 @@ export interface SetupListenerFacts {
   activeNames: number;
   l7Only: boolean;
   templateEdgeId: string | null;
-  /** Why this REALITY listener refuses sing-box or Mihomo clients (a refusal cause), when it does. */
+  /** Why this REALITY listener refuses sing-box or Mihomo clients (`reality_<cause>`), when it does. */
   refusesClients?: string;
 }
 

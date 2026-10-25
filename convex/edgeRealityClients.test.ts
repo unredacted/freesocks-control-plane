@@ -174,12 +174,12 @@ describe('a protected origin whose REALITY transport refuses clients', () => {
       kind: 'reality_refuses_clients',
       severity: 'warning',
       relaySlug: 'node-one',
-      code: 'core_default',
+      code: 'reality_core_default',
       facts: { count: 1, refuses: ['singbox', 'mihomo'], tags: ['VLESS_RELAY_A'] },
       action: 'open_relay',
     });
     expect(await w.relayWarnings()).toEqual([
-      { code: 'reality_refuses_clients', subject: 'a', detail: 'core_default' },
+      { code: 'reality_refuses_clients', subject: 'a', detail: 'reality_core_default' },
     ]);
     // A look that sees the same writes nothing.
     const at = (await w.relay()).realityClients!.at;

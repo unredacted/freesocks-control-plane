@@ -186,7 +186,7 @@ function withRefusals(
   const refusals = relay.realityClients?.refusals ?? [];
   return listeners.map((l) => {
     const cause = refusals.find((r) => r.listenerKey === l.key)?.cause;
-    return cause ? { ...l, refusesClients: cause } : l;
+    return cause ? { ...l, refusesClients: `reality_${cause}` } : l;
   });
 }
 
@@ -1302,7 +1302,7 @@ export const attention = internalQuery({
           id: `reality_refuses_clients:${relay._id}`,
           kind: 'reality_refuses_clients',
           severity: 'warning',
-          code: refusing.cause,
+          code: `reality_${refusing.cause}`,
           facts: { count: refusing.count, refuses: refusing.refuses, tags: refusing.tags },
           action: 'open_relay',
           since: iso(refusing.since),

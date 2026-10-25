@@ -1624,9 +1624,9 @@ After the Host look, the same pass judges every bound origin's REALITY listeners
 (`edgeRealityClients.reobserve`: each transport's `minClientVer` / `maxClientVer` and the node's
 Xray version, read live; § "Protecting a node FCP does not manage"). A transport that refuses
 sing-box or Mihomo clients is kept on the origin (`relays.realityClients`, rewritten only when
-the verdict moves) and raises attention `reality_refuses_clients` (warning, the cause as its code,
+the verdict moves) and raises attention `reality_refuses_clients` (warning, code `reality_<cause>`,
 facts `count`, `refuses`, `tags`; Open the node) and the `relay` step's warning in
-`setup-status` (subject the listener key, detail the cause). Members on Xray clients keep
+`setup-status` (subject the listener key, detail the same `reality_<cause>`, which the admin words with its fix). Members on Xray clients keep
 connecting, so nothing else changes. A transport the panel could not describe this pass keeps
 what was known of it; the fix clears both at the next pass.
 
