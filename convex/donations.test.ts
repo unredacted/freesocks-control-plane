@@ -545,7 +545,8 @@ describe('donation pool windows (lib/donationBonus)', () => {
 
   test('same-day donations merge into one bucket', async () => {
     const { t } = await setup();
-    const now = Date.now();
+    // Midday today (UTC): the minute between the two payments never crosses midnight.
+    const now = Math.floor(Date.now() / DAY) * DAY + DAY / 2;
     await t.run(async (ctx) => recordDonation(ctx, 1000, now));
     await t.run(async (ctx) => recordDonation(ctx, 250, now + 60_000));
 
