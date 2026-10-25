@@ -9,7 +9,18 @@ import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { createAccount } from './lib/edges/testing/fixtures';
+import {
+  createAccount,
+  insertPanelServer,
+  realityListener,
+  registerRelay,
+} from './lib/edges/testing/fixtures';
+import { insertPlanned } from './lib/edges/testing/reads';
+import { liveCountForAccount } from './edges';
+import { liveCountForLocation } from './edgeLocations';
+import { spendOf } from './edgePlans';
+import { managedLiveOfAccount } from './relays';
+import { FLEET_EDGE_PAGE_SIZE, LIVE_EDGE_SCAN_LIMIT } from './lib/edges/pool';
 import { EDGE_CONFIG_BOUNDS, EDGE_DEFAULTS, sanitizeRelayConfig } from './lib/edgeConfig';
 import {
   DAILY_ALLOCATION_CEILING,
@@ -279,5 +290,109 @@ describe('edge limits: raiseOldDefaultLimits', () => {
     expect(again.raised).toEqual([]);
     expect(again.kept).toBe(6);
     expect(await audits(t)).toHaveLength(2);
+  });
+});
+
+describe('edge limits: counts past the old scan bound', () => {
+  const plan = {
+    templateHash: 'h1',
+    listeners: [{ edgePort: 443, originAddress: '203.0.113.10', originPort: 443 }],
+    steps: [{ id: 'lb', kind: 'loadbalancer', resourceName: 'fcp-relay-x' }],
+  };
+
+  /** An account capped at `cap` with `count` managed active edges in its default location. */
+  async function fleet(cap: number, count: number) {
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    const accountId = await createAccount(t, {
+      provider: 'upcloud',
+      name: 'acct-big',
+      maxLiveEdges: cap,
+      dailyAllocationBudget: DAILY_ALLOCATION_CEILING,
+    });
+    const { relayId, listenerId } = await registerRelay(t, {
+      listeners: [
+        realityListener({
+          listenerKey: 'u',
+          tlsNames: ['a.example'],
+          providerScope: { provider: 'upcloud' },
+          panelBinding: {
+            inboundTag: 'VLESS_RELAY_U',
+            configProfileUuid: '11111111-1111-4111-8111-111111111111',
+            configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+          },
+        }),
+      ],
+    });
+    const first = await insertPlanned(t, { relayId, listenerId, accountId, ...plan });
+    await t.run(async (ctx) => {
+      const { _id, _creationTime, ...row } = (await ctx.db.get(first.id))!;
+      await ctx.db.patch(_id, { status: 'active' });
+      for (let i = 1; i < count; i++)
+        await ctx.db.insert('edges', { ...row, status: 'active', name: `${row.name}-${i}` });
+    });
+    const locationId = (await accountOf(t, accountId))!.defaultLocationId!;
+    return { t, accountId, relayId, listenerId, locationId };
+  }
+
+  test('an account and its location count every live edge up to the ceiling, not the first 200', async () => {
+    const count = LIVE_EDGE_SCAN_LIMIT + 50;
+    const { t, accountId, relayId, listenerId, locationId } = await fleet(300, count);
+    const counts = await t.run(async (ctx) => {
+      const account = (await ctx.db.get(accountId))!;
+      const location = (await ctx.db.get(locationId))!;
+      const managed = await managedLiveOfAccount(ctx.db, accountId);
+      return {
+        account: await liveCountForAccount(ctx, accountId),
+        location: await liveCountForLocation(ctx.db, location),
+        managed: managed.live,
+        atLocation: managed.atLocation(locationId),
+        spend: (await spendOf(ctx, account)).edges,
+        spendFromRead: (await spendOf(ctx, account, managed.edges)).edges,
+      };
+    });
+    expect(counts).toEqual({
+      account: count,
+      location: count,
+      managed: count,
+      atLocation: count,
+      spend: count,
+      spendFromRead: count,
+    });
+    // The cap is reached at 300, past the old scan bound.
+    await t.run(async (ctx) => {
+      const { _id, _creationTime, ...row } = (await ctx.db
+        .query('edges')
+        .withIndex('by_account_status', (q) => q.eq('accountId', accountId).eq('status', 'active'))
+        .first())!;
+      for (let i = count; i < 299; i++)
+        await ctx.db.insert('edges', { ...row, name: `${row.name}-more-${i}` });
+    });
+    await insertPlanned(t, { relayId, listenerId, accountId, ...plan });
+    await expect(insertPlanned(t, { relayId, listenerId, accountId, ...plan })).rejects.toThrow(
+      /live-edge cap/,
+    );
+  });
+
+  test('the reconcile reads the whole fleet a page at a time', async () => {
+    const count = FLEET_EDGE_PAGE_SIZE + 20;
+    const { t } = await fleet(MAX_LIVE_EDGES_CEILING, count);
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    let pages = 0;
+    for (;;) {
+      const res: { page: Array<{ _id: string }>; isDone: boolean; continueCursor: string } =
+        await t.query(internal.edges.listLive, { status: 'active', cursor });
+      expect(res.page.length).toBeLessThanOrEqual(FLEET_EDGE_PAGE_SIZE);
+      for (const e of res.page) seen.add(e._id);
+      pages++;
+      if (res.isDone) break;
+      cursor = res.continueCursor;
+    }
+    expect(seen.size).toBe(count);
+    expect(pages).toBeGreaterThan(1);
+    await expect(
+      t.query(internal.edges.listLive, { status: 'destroyed', cursor: null }),
+    ).rejects.toThrow(/Not a live edge status/);
   });
 });

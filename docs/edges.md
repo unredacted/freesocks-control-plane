@@ -1883,9 +1883,14 @@ edges, or an edge parked at `needs_operator` whose resources are still present.
 `dailyAllocationBudget` (1..1000, default 50; the runaway-loop guard). A location may set its
 own `maxLiveEdges` (1..1000, absent = only the account's applies; `location_capacity_reached`).
 The bounds and defaults live in `src/shared/contracts/edgeLimits.ts`, read by the server checks,
-the request contracts and the admin forms alike. Accounts created before these defaults kept
-what they were given; `edgeProviderAccounts:raiseOldDefaultLimits` raises the ones still on an
-old default pair (§ Runbooks).
+the request contracts and the admin forms alike. The account and location scans read up to the
+ceiling per status (`ACCOUNT_EDGE_SCAN_LIMIT`), so every count is exact up to any cap; a pass
+over every account (the pick, the setup plan, provider usage) reads each account once
+(`managedLiveOfAccount`) and derives its location counts and spend from that read. The reconcile
+cron reads the fleet a page at a time per status (`edges.listLive`, `FLEET_EDGE_PAGE_SIZE`), as
+does its partial-rung sweep, so no edge is left out however large the fleet. Accounts created
+before these defaults kept what they were given; `edgeProviderAccounts:raiseOldDefaultLimits`
+raises the ones still on an old default pair (§ Runbooks).
 
 **Dark members.** Every refusal the subscription route answers under edge-required delivery
 (the 503 with `x-fcp-delivery: <reason>`) is counted per reason in a sharded `appState` counter

@@ -69,8 +69,8 @@ import type { SetupStepId } from '../src/shared/contracts/edgeCodes';
 import {
   checkPublishable,
   deliveryBindingFor,
-  liveEdgesOfAccount,
   liveEdgesOfRelay,
+  managedLiveOfAccount,
   mapRelayAdmin,
 } from './relays';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
@@ -90,7 +90,6 @@ import { accountOptionDefaultsOf } from './lib/edges/choices';
 import {
   defaultLocationOf,
   effectiveTemplateOfLocation,
-  liveCountForLocation,
   locationsOfAccount,
   sharedCertificateUsers as zoneSharedCertificateUsers,
 } from './edgeLocations';
@@ -2635,7 +2634,9 @@ export const providersUsage = internalQuery({
     }
     const accountRows = [];
     for (const a of accounts) {
-      const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
+      // One read of the account serves its total and each location's count.
+      const managed = await managedLiveOfAccount(ctx.db, a._id);
+      const live = managed.live;
       totals.liveEdges += live;
       const counts = perAccount.get(a._id as string) ?? { published: 0, standby: 0, draining: 0 };
       // Per location: its live edges against its own cap, and its trust.
@@ -2647,7 +2648,7 @@ export const providersUsage = internalQuery({
           placeKey: loc.placeKey,
           enabled: loc.enabled,
           qualified: loc.qualified,
-          liveEdges: await liveCountForLocation(ctx.db, loc),
+          liveEdges: managed.atLocation(loc._id),
           maxLiveEdges: loc.maxLiveEdges ?? null,
         });
       accountRows.push({

@@ -825,8 +825,8 @@
           </div>
           <p class="text-muted-foreground text-xs">
             {#if compact}
-              The account keeps the default limits (4 addresses at most, 6 new per day). Change them
-              later from Providers.
+              The account keeps the default limits ({DEFAULT_MAX_LIVE_EDGES} addresses at most, {DEFAULT_DAILY_ALLOCATION_BUDGET}
+              new per day). Change them later from Providers.
             {:else}
               A new account is tested but not trusted: it can only be used for a test edge until one
               of its addresses is confirmed with a real session, or you trust it by hand.

@@ -13,6 +13,7 @@ import { filterCountries } from './countries';
 import { auditDetailLine, displayValue, formatBytes, protocolLine } from './format';
 import { parseBounded } from './number';
 import { poolSlots, poolSummary, showsPublication } from './pool';
+import { MAX_DESIRED_PUBLISHED } from '../../../../../shared/contracts/edgeLimits';
 import {
   ROTATION_KIND_LABELS,
   ROTATION_TRIGGER_LABELS,
@@ -178,7 +179,21 @@ describe('poolSlots', () => {
     expect(poolSlots({ publishedEdgeIds: [], desired: -3, standbys: NaN, draining: -1 })).toEqual(
       [],
     );
-    expect(poolSlots({ publishedEdgeIds: [], desired: 1e9 }).length).toBe(24);
+    expect(poolSlots({ publishedEdgeIds: [], desired: 1e9 }).length).toBe(MAX_DESIRED_PUBLISHED);
+  });
+  it('shows every slot of a pool at the published-pool cap', () => {
+    const ids = Array.from({ length: MAX_DESIRED_PUBLISHED }, (_, i) => `e${i}`);
+    const input = { publishedEdgeIds: ids, desired: MAX_DESIRED_PUBLISHED };
+    const slots = poolSlots(input);
+    expect(slots).toHaveLength(MAX_DESIRED_PUBLISHED);
+    expect(slots.every((s) => s.kind === 'published')).toBe(true);
+    expect(slots[MAX_DESIRED_PUBLISHED - 1]?.edgeId).toBe(`e${MAX_DESIRED_PUBLISHED - 1}`);
+    expect(poolSummary(input)).toBe(
+      `${MAX_DESIRED_PUBLISHED} of ${MAX_DESIRED_PUBLISHED} published`,
+    );
+    const wanted = poolSlots({ publishedEdgeIds: ['e0'], desired: 40 });
+    expect(wanted.filter((s) => s.kind === 'missing')).toHaveLength(39);
+    expect(poolSummary({ publishedEdgeIds: ['e0'], desired: 40 })).toBe('1 of 40 published');
   });
   it('summarises in words', () => {
     expect(poolSummary({ publishedEdgeIds: ['a', null, 'b'], desired: 3 })).toBe(
