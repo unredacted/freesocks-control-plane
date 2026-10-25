@@ -194,7 +194,10 @@ export type DeliveryOutcome =
       content: string;
       /** The node the body was judged for (the fetched pin, else the stored one). */
       node: string | null;
-      /** A body that names no node while the key has no pin either: never cached. */
+      /**
+       * Never cached: the backend's placeholder handed out as it is, or a body
+       * that names no node while the key has no pin either.
+       */
       placeholder: boolean;
       /** The cache token it was rendered under (null: no origin covers the place). */
       relay: string | null;
@@ -273,7 +276,6 @@ export async function deliverBody(
   // reports a node for every known body shape, so the stored pin only covers
   // unknown shapes.
   const node = fetched.pinnedNode ?? sub.pinnedNode;
-  const placeholder = fetched.nodeless === true && !node;
   // A backend placeholder (an expired or disabled key: every entry at a
   // placeholder host, no node named) carries nothing an origin serves and no
   // node address, so it passes through unrendered whatever the stored pin
@@ -281,6 +283,9 @@ export async function deliverBody(
   // instead of a refusal once that node is bound. An EMPTY body is not one: it
   // is still judged (and refused), since an empty 200 would wipe the client.
   const passthrough = fetched.nodeless === true && placeholderBody(fetched.content);
+  // Never cached: a placeholder passed through (whatever the stored pin), or
+  // a nodeless body of a key with no pin at all.
+  const placeholder = passthrough || (fetched.nodeless === true && !node);
   if (fetched.pinnedNode && fetched.pinnedNode !== sub.pinnedNode) {
     await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
       subscriptionId: sub.subscriptionId,

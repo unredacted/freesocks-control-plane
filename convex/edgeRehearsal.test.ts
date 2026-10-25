@@ -442,8 +442,8 @@ describe('choosing a cohort representative', () => {
     const r = await run();
     expect(r).toMatchObject({ ok: true, failures: [], unrepresented: [], source: 'members' });
     expect(fetchedShorts(panel)).toEqual(['member1', 'member2']);
-    // The other formats are fetched from the chosen representative only.
-    expect(fetchedShorts(panel, REHEARSAL_USER_AGENTS.singbox)).toEqual(['member2']);
+    // Each candidate is judged in every format, and the chosen one is not fetched again.
+    expect(fetchedShorts(panel, REHEARSAL_USER_AGENTS.singbox)).toEqual(['member1', 'member2']);
   });
 
   test('members whose account is active are tried before the rest', async () => {
@@ -479,8 +479,42 @@ describe('choosing a cohort representative', () => {
       source: 'members',
       unrepresented: [{ cohortKey: 'sq-b', reason: 'placeholder', tried: 2 }],
     });
-    // A placeholder cohort is judged on one format only.
-    expect(fetchedShorts(panel, REHEARSAL_USER_AGENTS.clash)).toEqual(['member1']);
+    // Every candidate of the placeholder cohort was judged in every format.
+    expect(fetchedShorts(panel, REHEARSAL_USER_AGENTS.clash)).toEqual([
+      'member1',
+      'member2',
+      'member3',
+    ]);
+  });
+
+  test('a candidate whose links body is a placeholder but whose sing-box and Clash bodies are real stands for the cohort', async () => {
+    const { addMember, run } = await seed({
+      body: (u, short, ua) =>
+        formatOfUa(ua) === 'links'
+          ? placeholderFor('links')
+          : bodyFor(formatOfUa(ua), REMARK_A, EDGE_A, 443),
+    });
+    await addMember('sq-a');
+    const r = await run();
+    // Its real formats are rendered; its placeholder one passes (delivery hands it out as it is).
+    expect(r).toMatchObject({ ok: true, failures: [], unrepresented: [], source: 'members' });
+  });
+
+  test('no candidate standing for the cohort while one could not be fetched fails it, never unrepresented', async () => {
+    const { addMember, run } = await seed({
+      // An expired first member, then an active one the backend could not serve just now.
+      body: (u, short, ua) => (short === 'member1' ? placeholderFor(formatOfUa(ua)) : null),
+    });
+    await addMember('sq-a');
+    await addMember('sq-a');
+    const r = await run();
+    expect(r.ok).toBe(false);
+    expect(r.unrepresented).toEqual([]);
+    expect(r.failures.map((f) => `${f.format}:${f.reason}`).sort()).toEqual([
+      'clash:fetch_failed',
+      'links:fetch_failed',
+      'singbox:fetch_failed',
+    ]);
   });
 
   test('a cohort whose members now resolve to another node is unrepresented; with no cohort left the credential stands in', async () => {

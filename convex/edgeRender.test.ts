@@ -571,10 +571,13 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     const lines = proxyLines(text.includes('://') ? text : atob(text));
     expect(lines.map((l) => new URL(l).hostname)).toEqual(['0.0.0.0', '0.0.0.0']);
     expect(labelOf(lines[0])).toBe('⌛ Subscription expired');
-    // Nothing was rendered for it: no snapshot, no rendered epoch.
+    // Nothing was rendered for it (no snapshot, no rendered epoch), and it is
+    // never cached: the account may be usable again on the next fetch.
     const sub = (await expired.t.run((ctx) => ctx.db.get(expired.subId)))!;
     expect(sub.lastRender).toBeUndefined();
     expect(sub.lastRenderedEpoch).toBeUndefined();
+    expect(sub.subCache).toBeUndefined();
+    expect(res.headers.get('cache-control')).toContain('no-store');
     // An empty body is not a placeholder: an empty 200 would wipe the client.
     stubPanel('');
     const emptied = await seed();

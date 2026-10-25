@@ -355,15 +355,23 @@ function candidateVerdict(
 }
 
 type Representative =
-  | { kind: 'use'; ref: BodyRef & { renderKey: string | null }; fetched: FetchedBody }
+  | {
+      kind: 'use';
+      ref: BodyRef & { renderKey: string | null };
+      fetched: Map<RenderFormat, FetchedBody>;
+    }
   | { kind: 'unrepresented'; reason: RehearsalUnrepresented['reason']; tried: number }
   | { kind: 'failed' };
 
 /**
  * The cohort's representative: its own first key, else the next candidates
  * (`edgeCohorts.candidates`, active accounts first) up to
- * REHEARSAL_CANDIDATES, judged on the first format's body. Every fetch failing
- * is `failed` (an outage is never read as an empty cohort).
+ * REHEARSAL_CANDIDATES. A candidate stands for the cohort when ANY supported
+ * format's body does (the backend picks each format's body from the user
+ * agent, so one format may be a placeholder while another is real); every
+ * format it was fetched in is then rehearsed from those bodies. No candidate
+ * standing for it while any candidate's body could not be fetched is `failed`:
+ * an outage is never read as an unrepresented cohort.
  */
 async function pickRepresentative(
   ctx: ActionCtx,
@@ -371,20 +379,26 @@ async function pickRepresentative(
   cohort: RehearsalContext['cohorts'][number],
   first: BodyRef & { renderKey: string | null },
 ): Promise<Representative> {
-  const format = c.formats[0];
   const seen = new Set<string>([cohort.subscriptionId as string]);
   let rest: CohortCandidate[] | null = null;
   let next: (BodyRef & { renderKey: string | null }) | undefined = first;
   let placeholders = 0;
   let moved = 0;
+  let unfetched = 0;
   let tried = 0;
   while (next && tried < REHEARSAL_CANDIDATES) {
     tried++;
-    const fetched = await fetchBody(ctx, c, format, next);
-    const verdict = candidateVerdict(c, fetched);
-    if (verdict === 'use') return { kind: 'use', ref: next, fetched };
-    if (verdict === 'placeholder') placeholders++;
-    else if (verdict === 'moved') moved++;
+    const fetched = new Map<RenderFormat, FetchedBody>();
+    const verdicts = new Set<ReturnType<typeof candidateVerdict>>();
+    for (const format of c.formats) {
+      const body = await fetchBody(ctx, c, format, next);
+      fetched.set(format, body);
+      verdicts.add(candidateVerdict(c, body));
+    }
+    if (verdicts.has('use')) return { kind: 'use', ref: next, fetched };
+    if (verdicts.has('failed')) unfetched++;
+    if (verdicts.has('placeholder')) placeholders++;
+    if (verdicts.has('moved')) moved++;
     rest ??= await ctx.runQuery(internal.edgeCohorts.candidates, {
       backendServerId: cohort.backendServerId,
       ...(cohort.nodeName ? { nodeName: cohort.nodeName } : {}),
@@ -395,7 +409,7 @@ async function pickRepresentative(
     if (candidate) seen.add(candidate.subscriptionId as string);
     next = candidate;
   }
-  if (placeholders === 0 && moved === 0) return { kind: 'failed' };
+  if (unfetched > 0 || (placeholders === 0 && moved === 0)) return { kind: 'failed' };
   return {
     kind: 'unrepresented',
     reason: placeholders > 0 && moved > 0 ? 'mixed' : placeholders > 0 ? 'placeholder' : 'moved',
@@ -412,10 +426,17 @@ async function rehearseBody(
   renderKey: string,
   onReduced?: (r: RehearsalReduced) => void,
   prefetched?: FetchedBody,
+  /**
+   * A member representative's placeholder body in THIS format passes:
+   * delivery hands it out as it is. Never for the rehearsal credential, whose
+   * placeholder means FCP's own check key cannot be served.
+   */
+  placeholderPasses = false,
 ): Promise<RehearsalFailure | null> {
   const ua = REHEARSAL_USER_AGENTS[format];
   const fetched = prefetched ?? (await fetchBody(ctx, c, format, ref));
   if (fetched.kind === 'failed') return { cohortKey, format, reason: 'fetch_failed' };
+  if (placeholderPasses && candidateVerdict(c, fetched) === 'placeholder') return null;
   const { content, pinnedNode } = fetched;
   if (!content.trim()) return { cohortKey, format, reason: 'empty_body' };
   // The representative must resolve to THIS node, or it says nothing about it.
@@ -502,7 +523,7 @@ export const run = internalAction({
             unrepresented.push({ cohortKey: cohort.key, reason: rep.reason, tried: rep.tried });
             continue;
           }
-          for (const [i, format] of c.formats.entries()) {
+          for (const format of c.formats) {
             const fail = await rehearseBody(
               ctx,
               c,
@@ -511,7 +532,8 @@ export const run = internalAction({
               rep.ref,
               rep.ref.renderKey ?? `rehearsal:${cohort.key}`,
               noteReduced,
-              i === 0 ? rep.fetched : undefined,
+              rep.fetched.get(format),
+              true,
             );
             if (fail) failures.push(fail);
           }
