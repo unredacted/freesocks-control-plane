@@ -463,20 +463,23 @@ function definitiveCreateFailure(err: unknown): boolean {
 
 /**
  * Which mode groups of the backend hold every one of `inbounds`, by uuid
- * (sorted, so the same panel gives the same answer): `unknown` when the panel
- * could not be read (never "none"), `unlisted` when it lists no group at all
- * (mock mode, a backend without the listing): there is nothing to choose from.
+ * (sorted, so the same panel gives the same answer; empty when the panel lists
+ * none that does, or no group at all): `unknown` when the panel could not be
+ * read (never "none"), `unlisted` when the backend has no group listing (mock
+ * mode, no such endpoint): there is nothing to choose from.
  */
 async function groupsHolding(
   ctx: { runAction: ActionCtx['runAction'] },
   backendServerId: Id<'backendServers'>,
   inbounds: readonly string[],
 ): Promise<{ holding: string[] } | 'unknown' | 'unlisted'> {
-  const groups: ObservedModeGroup[] | null = await ctx
-    .runAction(internal.backends.listModeGroups, { backendServerId })
-    .catch(() => null);
-  if (!groups) return 'unknown';
-  if (groups.length === 0) return 'unlisted';
+  let groups: ObservedModeGroup[] | null;
+  try {
+    groups = await ctx.runAction(internal.backends.listModeGroups, { backendServerId });
+  } catch {
+    return 'unknown';
+  }
+  if (!groups) return 'unlisted';
   return {
     holding: groups
       .filter((g) => {

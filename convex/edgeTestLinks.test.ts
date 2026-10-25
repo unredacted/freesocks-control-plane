@@ -24,7 +24,12 @@ import {
   seedEdgeFixture,
   shadowsocksListener,
 } from './lib/edges/testing/fixtures';
-import { realityEntryLine, selectTestEntry, TEST_LINK_USER_AGENT } from './edgeTestLinks';
+import {
+  realityEntryLine,
+  selectTestEntry,
+  testLinkSourceOf,
+  TEST_LINK_USER_AGENT,
+} from './edgeTestLinks';
 import { parseProxyUri } from './lib/edges/render/uri';
 import { expireTestCredential } from './lib/edges/testing/reads';
 
@@ -484,6 +489,44 @@ describe('the isolated test link', () => {
     await expect(t.action(internal.edgeTestLinks.build, { edgeId })).rejects.toThrow(
       /l7_proof_required/,
     );
+  });
+});
+
+describe('testLinkSourceOf (what a protect plan promises before it buys)', () => {
+  const host = (n: number, over: Partial<FakePanelHost> = {}) => ({
+    ...directHost({ uuid: H(n), remark: `h-${n}`, ...over }),
+    isDisabled: false,
+    sni: null,
+    host: null,
+  });
+  const reality = {
+    protocol: 'vless' as const,
+    streamTransport: 'raw' as const,
+    security: 'reality' as const,
+    originPort: 443,
+    panelBinding: { configProfileInboundUuid: FIXTURE_INBOUND },
+  };
+  const ss = { ...reality, protocol: 'shadowsocks' as const, security: 'none' as const };
+  const at = (hosts: ReturnType<typeof host>[] | null, ownRemarks: string[] = []) => ({
+    backend: 'remnawave' as const,
+    hosts,
+    originAddress: ORIGIN,
+    ownRemarks,
+  });
+
+  test('exactly one Host at the origin, else exactly one of its own; two are ambiguous as the test link finds them', () => {
+    expect(testLinkSourceOf(ss, at([host(1)]))).toBe('host');
+    expect(testLinkSourceOf(ss, at([host(1), host(2)]))).toBeNull();
+    // Two at the origin are ambiguous even for a transport whose entry could be built.
+    expect(testLinkSourceOf(reality, at([host(1), host(2)]))).toBeNull();
+    const own = (n: number) => host(n, { address: '198.51.100.1', remark: 'node-one-relay-a' });
+    expect(testLinkSourceOf(ss, at([own(3)], ['node-one-relay-a']))).toBe('host');
+    expect(testLinkSourceOf(ss, at([own(3), own(4)], ['node-one-relay-a']))).toBeNull();
+    // None: built from a REALITY transport, nowhere for another.
+    expect(testLinkSourceOf(reality, at([]))).toBe('synthesized');
+    expect(testLinkSourceOf(ss, at([]))).toBeNull();
+    // A backend without Hosts is matched by address and port alone.
+    expect(testLinkSourceOf(ss, at(null))).toBe('host');
   });
 });
 

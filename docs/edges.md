@@ -1286,8 +1286,8 @@ reach it through a load balancer the operator built by hand, by an operator Host
   entry built from the transport's live REALITY parameters (§ "Publication", the test link). The
   plan reads those parameters from the panel as the test link will (`edgeTestLinks.synthesisReady`:
   the transport still there, with a public key and a server name). A transport with neither (no
-  Host at `originAddress:originPort`, and not REALITY or not readable) is marked `noTestLink` in
-  the plan; a load balancer pick that would carry it is a set problem
+  Host at `originAddress:originPort`, and not REALITY or not readable), or with two such Hosts
+  (the test link refuses an ambiguous entry), is marked `noTestLink` in the plan; a load balancer pick that would carry it is a set problem
   (`test_link_unavailable`) and the create is refused with `edge.test_link_unavailable`, before
   any address is bought. Add a Host at the node's own address for it, or pick a CDN location.
 - **Its check account's group.** A test entry built from a transport carries the check account,
@@ -1300,9 +1300,10 @@ reach it through a load balancer the operator built by hand, by an operator Host
   the stored account keeps its group, so a panel outage never re-mints it; with no stored
   account yet, nothing is minted until the groups can be read (`mode_groups_unknown`: a run's
   credential, test card or hide step waits and asks again, event `mode_groups_unknown`). A
-  panel that lists its groups with none holding them all is refused outright
-  (`no_group_holds_transports`, the run's `choose_mode` card): some transport could never be
-  tested, so put them in one group or choose the mode the account should use. This matters on a node with transports of different groups, such as an
+  panel that lists its groups with none holding them all (or answers with no group at all) is
+  refused outright (`no_group_holds_transports`, the run's `choose_mode` card): some transport
+  could never be tested, so put them in one group or choose the mode the account should use. A
+  backend with no group listing (mock mode, a panel that answers 404 for it) changes nothing. This matters on a node with transports of different groups, such as an
   enrolled node with a second, hand-built transport: every protected transport must sit in one
   group together, or the test link of the others is refused by the node.
 - **An inactive backend.** A backend out of the issuance pool (`isActive: false`; its members

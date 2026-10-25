@@ -194,12 +194,14 @@ export function synthesizable(proto: ListenerProto, backend: BackendId): boolean
 
 /**
  * Where the test link of a not yet published load balancer address of this
- * transport would take its entry from (`build`): a Host on the transport at
- * the origin address and port, or one of the listener's own (`host`); the
- * entry built from the transport itself (`synthesized`); or nowhere (null),
- * when the run would stop at its test card after the address was bought.
- * `hosts` null: a backend without Hosts, whose body is matched by the origin
- * address and port alone (`host`, as far as a plan can tell).
+ * transport would take its entry from (`build`, the same order as
+ * `selectTestEntry`): the ONE Host on the transport at the origin address and
+ * port, else the ONE Host of the listener's own (`host`); the entry built from
+ * the transport itself when neither is there (`synthesized`); or nowhere
+ * (null): two such Hosts are ambiguous, which the test link refuses, and the
+ * run would stop at its test card after the address was bought. `hosts` null:
+ * a backend without Hosts, whose body is matched by the origin address and
+ * port alone (`host`, as far as a plan can tell).
  */
 export function testLinkSourceOf(
   spec: ListenerProto & {
@@ -221,14 +223,12 @@ export function testLinkSourceOf(
       inbound !== null &&
       (h.inbound?.configProfileInboundUuid ?? '').toLowerCase() === inbound,
   );
-  if (
-    onInbound.some(
-      (h) =>
-        (sameAddress(h.address, a.originAddress) && h.port === spec.originPort) ||
-        a.ownRemarks.includes(h.remark),
-    )
-  )
-    return 'host';
+  const direct = onInbound.filter(
+    (h) => sameAddress(h.address, a.originAddress) && h.port === spec.originPort,
+  );
+  if (direct.length > 0) return direct.length === 1 ? 'host' : null;
+  const own = onInbound.filter((h) => a.ownRemarks.includes(h.remark));
+  if (own.length > 0) return own.length === 1 ? 'host' : null;
   return spec.panelBinding && synthesizable(spec, a.backend) ? 'synthesized' : null;
 }
 

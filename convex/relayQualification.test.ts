@@ -580,6 +580,18 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
       await t3.action(internal.relayQualification.ensure, { relayId: third, purpose: 'rehearsal' }),
     ).toMatchObject({ ok: true });
     expect([...split.users.values()].map((u) => u.squads)).toEqual([['sq-other']]);
+    // A panel that answers with no group at all holds none of them either.
+    const bare = fakePanel({ squads: [] });
+    const t4 = convexTest(schema, modules);
+    await insertPanelServer(t4);
+    const { relayId: fourth } = await registerRelay(t4);
+    expect(
+      await t4.action(internal.relayQualification.ensure, {
+        relayId: fourth,
+        purpose: 'rehearsal',
+      }),
+    ).toMatchObject({ ok: false, code: 'no_group_holds_transports' });
+    expect(bare.created).toEqual([]);
     // An operator's chosen mode stands, whatever the groups hold.
     await t.run((ctx) => ctx.db.patch(relayId, { qualificationModeSlug: 'freedom-ws' }));
     await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' });
