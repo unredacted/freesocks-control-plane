@@ -495,9 +495,11 @@ export const validatePlacements = internalQuery({
  * from its page first: its addresses, origin and members' delivery are the
  * retirement's to undo), an origin Edges still protects on it (a whole-server
  * one has no node: its edges are provider resources only its removal tears
- * down), a setup run or a rename running now, or a backend write still open.
- * Null when nothing does: what is left is FCP's record of the backend,
- * removed with it (`purgeRemovedBackend`).
+ * down), a temporary key FCP minted there and has not removed yet (a test
+ * link's, a qualification's: only the backend can remove it), a setup run or
+ * a rename running now, or a backend write still open. Null when nothing
+ * does: what is left is FCP's record of the backend, removed with it
+ * (`purgeRemovedBackend`).
  */
 export async function removalBlocker(
   db: DatabaseReader,
@@ -528,6 +530,21 @@ export async function removalBlocker(
         .map((r) => r.slug)
         .join(', ')}). Remove ${origins.length === 1 ? 'its' : 'their'} protection in Edges first`,
     };
+  for (const removal of ['pending', 'failed'] as const) {
+    const key = await db
+      .query('edgeTestCredentials')
+      .withIndex('by_removal_expires', (q) => q.eq('removal', removal))
+      .filter((q) => q.eq(q.field('backendServerId'), sid))
+      .first();
+    if (key)
+      return {
+        code: 'server.keys_pending',
+        message:
+          removal === 'pending'
+            ? 'A temporary test key FCP made on this backend is not removed yet. Try again once it has expired and been removed'
+            : 'FCP could not remove a temporary test key it made on this backend. Remove it on the backend, then try again',
+      };
+  }
   const setup = await db
     .query('panelSetups')
     .withIndex('by_server', (q) => q.eq('backendServerId', sid))
@@ -599,15 +616,27 @@ async function rowsOfBackend(
         ),
       );
   }
-  const rollouts: Id<TableNames>[] = [];
+  const rollouts: Id<'sniRollouts'>[] = [];
   for (const b of bindings)
     if (rollouts.length < cap)
       rollouts.push(
-        ...ids(
+        ...(
           await db
             .query('sniRollouts')
             .withIndex('by_binding', (q) => q.eq('bindingId', b._id))
-            .take(cap - rollouts.length),
+            .take(cap - rollouts.length)
+        ).map((r) => r._id),
+      );
+  // A rollout's acceptance receipts go before it (nothing else removes them once it is gone).
+  const receipts: Id<TableNames>[] = [];
+  for (const rolloutId of rollouts)
+    if (receipts.length < cap)
+      receipts.push(
+        ...ids(
+          await db
+            .query('sniAcceptanceReceipts')
+            .withIndex('by_rollout', (q) => q.eq('rolloutId', rolloutId))
+            .take(cap - receipts.length),
         ),
       );
   return [
@@ -632,6 +661,7 @@ async function rowsOfBackend(
     ],
     ['panelActivationRuns', runs],
     ['panelRetirements', retirements],
+    ['sniAcceptanceReceipts', receipts],
     ['sniRollouts', rollouts],
     [
       'panelPortRequirements',

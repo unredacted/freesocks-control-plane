@@ -160,10 +160,16 @@ async function adoptedTargetsOf(
     .query('panelHosts')
     .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
     .collect();
-  return (intent.addressUuids ?? []).flatMap((u) => {
+  const out: { address: string; port: number; sni: string }[] = [];
+  for (const u of intent.addressUuids ?? []) {
     const h = hosts.find((x) => x.hostUuid === u);
-    return h ? [{ address: h.address, port: h.port, sni: h.sni || names[0] || '' }] : [];
-  });
+    if (!h) continue;
+    const t = { address: h.address, port: h.port, sni: h.sni || names[0] || '' };
+    // Two Hosts dialing the same tuple are one thing to test.
+    if (!out.some((x) => x.address === t.address && x.port === t.port && x.sni === t.sni))
+      out.push(t);
+  }
+  return out;
 }
 
 /** `address:port` as a URI authority: an IPv6 literal is bracketed. */
@@ -695,7 +701,7 @@ export const buildDirectTestLink = internalAction({
     { intentId },
   ): Promise<{
     link: string;
-    links: { sni: string; link: string }[];
+    links: { sni: string; link: string; endpoint?: string }[];
     binding: DirectTestBinding;
   }> => {
     const c = (await ctx.runQuery(internal.nodeActivation.credentialContext, {
@@ -765,6 +771,8 @@ export const buildDirectTestLink = internalAction({
       return {
         sni,
         link: `vless://${protocolUuid}@${hostPort(address, port)}?${q.toString()}#${encodeURIComponent(`FCP test ${c.intent.name}`)}`,
+        // An adopted node's links may share a name and differ in where they dial.
+        ...(c.adoptedTargets ? { endpoint: hostPort(address, port) } : {}),
       };
     });
     const binding: DirectTestBinding = {

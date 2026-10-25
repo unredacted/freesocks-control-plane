@@ -686,8 +686,9 @@ is not live, and a re-approval would turn it back on as a candidate), never one 
 recorded. A direct node with none is refused (`servers.adopt_addresses_missing`: nothing would
 tell its members' Hosts from anybody else's), and so is a named address that is off, not on
 the transport or another node's (`servers.adopt_address_unknown`). Where its members reach it is read from those Hosts (the
-test link, the review's address tuples, its public address), never from the row, which may
-hold a private management address. A fronted node whose edge FCP does not run yet (an earlier
+test link, one per address with the endpoint it dials; the review's address tuples; its public
+address, or, for a Host that dials a name, its origin address, which edges dial once Edges
+protects it), never from the row, which may hold a private management address. A fronted node whose edge FCP does not run yet (an earlier
 tool made it) is `externallyFronted`: it needs no standbys and no origin name until Edges
 protects it, one node at a time, through the normal flow; after maintenance its approval
 commits in its own transaction (nothing of FCP's publishes for it, so nothing would wake a run
@@ -730,13 +731,15 @@ takes FCP's server-management record of it along (`adminApi.ts`
 retire each from its page first, since its addresses, origin and members' delivery are the
 retirement's to undo), while Edges still protect an origin on it (`server.has_origins`: a
 whole-server origin has no node, and its edges are provider resources only removing its
-protection tears down), while its setup or a rename runs now (`server.setup_running`,
+protection tears down), while a temporary key FCP made there (a test link's, a
+qualification's) is not removed yet (`server.keys_pending`: only the backend can remove it),
+while its setup or a rename runs now (`server.setup_running`,
 `server.rename_running`), or while a backend write is still open (`server.op_running`)
 (`serverAdmin.removalBlocker`). Once it goes, everything else FCP kept about it goes in batches
 (`serverAdmin.purgeRemovedBackend`): the setup, the retired nodes with their activation runs,
 retirements, renames and aliases, port changes and their requirements, holds, ownership, the
 ledger and obligations, the caches of what it had, the guided setup runs and delivery bindings
-its removed origins left, and the server-name binding of its transports with its rollouts and
+its removed origins left, and the server-name binding of its transports with its rollouts, their acceptance receipts and
 name history (a family rollout reads every binding it has).
 Audited as `admin.backend_server.purge` (counts only).
 

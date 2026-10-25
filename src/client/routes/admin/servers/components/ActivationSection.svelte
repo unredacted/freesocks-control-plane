@@ -219,14 +219,16 @@
           {/if}
         </div>
         {#if !ticked}
-          {#each link.links as l (l.sni)}
+          {#each link.links as l (l.link)}
             {#if link.links.length > 1}
-              <p class="text-sm font-medium break-all">{l.sni}</p>
+              <p class="text-sm font-medium break-all">
+                {l.endpoint ? `${l.sni} at ${l.endpoint}` : l.sni}
+              </p>
             {/if}
             <TestLink
               link={l.link}
               label={link.links.length > 1
-                ? `Copy the test link for ${intent.name} with ${l.sni}`
+                ? `Copy the test link for ${intent.name} with ${l.endpoint ? `${l.sni} at ${l.endpoint}` : l.sni}`
                 : `Copy the test link for ${intent.name}`}
             />
           {/each}

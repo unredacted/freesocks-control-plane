@@ -617,8 +617,11 @@ export const adoptNode = internalMutation({
     // The port it talks to the backend on stays: its row is reconciled as it is.
     if (node.port) settings.nodePort = node.port;
     // Where members reach it is what its Hosts dial; the row's address is
-    // only how the backend reaches it (often a private one).
+    // only how the backend reaches it (often a private one). A Host that dials
+    // a name (or an IPv6 address) is the origin edges dial once Edges protects
+    // the node, never the management address.
     const v4 = addresses.map((h) => h.address).find((x) => IPV4.test(x));
+    if (!v4 && addresses[0]) settings.originAddressOverride = addresses[0].address;
     const observed: Intent['observed'] = {
       management: { address: node.address ?? '', port: node.port ?? 2222 },
       publicIps: v4 ? { v4 } : {},

@@ -14,7 +14,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { insertPanelServer, registerRelay } from './lib/edges/testing/fixtures';
+import { adoptL4Edge, insertPanelServer, registerRelay } from './lib/edges/testing/fixtures';
+import { enrolledOriginOf } from './nodeIntents';
 import { installFakeBackend, type FakeBackend } from './lib/edges/testing/fakeBackend';
 import { jsonRes, routeFetch, type Captured } from './lib/edges/testing/mockFetch';
 import { gateOfNode } from './lib/edges/testing/reads';
@@ -191,9 +192,12 @@ describe('adopting a direct node the node role set up', () => {
       approved: { committed: { hostUuids: [hostUuid] } },
       delivery: { disposition: 'live', exposure: { hosts: [hostUuid] } },
     });
-    // The private management address is never taken for where members go.
+    // The private management address is never taken for where members go:
+    // the name its Host dials is what edges dial once Edges protects it.
     expect(adopted.observed.management.address).toBe('192.0.2.50');
     expect(adopted.observed.publicIps.v4).toBeUndefined();
+    const origin = await s.t.run((ctx) => enrolledOriginOf(ctx, s.serverId, 'legacy-a'));
+    expect(origin!.originAddress).toBe('legacy-a.example.net');
   });
 
   test('a node with no address FCP can tell is its own is refused, unless the admin names its addresses', async () => {
@@ -275,6 +279,35 @@ describe('adopting a direct node the node role set up', () => {
     expect(built.binding.endpoint).toBe('[2001:db8::50]:443');
     const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
     await s.t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+  });
+
+  test('two Hosts with one name and two endpoints get a test link each, told apart by endpoint', async () => {
+    const s = await seed();
+    const { nodeUuid } = await legacyDirect(s);
+    s.panel.hosts.push({
+      uuid: UUID(202),
+      remark: 'legacy-a-reality-0a0b0c',
+      address: 'fwd-a.example.net',
+      port: 8443,
+      sni: 'decoy-a.example',
+      inbound: {
+        configProfileUuid: s.panel.profiles[0].uuid,
+        configProfileInboundUuid: s.reality.uuid,
+      },
+      isDisabled: false,
+    });
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const { intentId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    const built = await s.t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    expect(built.links.map((l) => [l.sni, l.endpoint])).toEqual([
+      ['decoy-a.example', 'legacy-a.example.net:443'],
+      ['decoy-a.example', 'fwd-a.example.net:8443'],
+    ]);
+    expect(new Set(built.links.map((l) => l.link)).size).toBe(2);
   });
 
   test('a list of named addresses too long is refused whole, never cut short', async () => {
@@ -745,6 +778,8 @@ describe('removing a backend server', () => {
     'panelOps',
     'sniInboundBindings',
     'sniInboundNameHistory',
+    'sniRollouts',
+    'sniAcceptanceReceipts',
     'edgeDeliveryBindings',
   ] as const;
   const counts = (t: T) =>
@@ -831,6 +866,32 @@ describe('removing a backend server', () => {
     expect(await s.t.run((ctx) => ctx.db.get(s.serverId))).not.toBeNull();
   });
 
+  test('refused while a temporary test key FCP made there is not removed yet', async () => {
+    const s = await seed();
+    const keyId = await s.t.run((ctx) =>
+      ctx.db.insert('edgeTestCredentials', {
+        backendServerId: s.serverId,
+        backend: 'remnawave',
+        username: 'fcp_test_a',
+        purpose: 'test_link',
+        expiresAt: Date.now() + 3_600_000,
+        removal: 'pending',
+        attempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    await expect(
+      s.t.mutation(internal.adminApi.deleteBackendServer, { id: s.serverId }),
+    ).rejects.toThrow(/server\.keys_pending/);
+    await s.t.run((ctx) => ctx.db.patch(keyId, { removal: 'failed' }));
+    await expect(
+      s.t.mutation(internal.adminApi.deleteBackendServer, { id: s.serverId }),
+    ).rejects.toThrow(/server\.keys_pending/);
+    await s.t.run((ctx) => ctx.db.patch(keyId, { removal: 'done' }));
+    await s.t.mutation(internal.adminApi.deleteBackendServer, { id: s.serverId });
+    expect(await s.t.run((ctx) => ctx.db.get(s.serverId))).toBeNull();
+  });
+
   test('once its nodes are retired, it goes with every server-management row', async () => {
     const s = await seed();
     const intentId = await adoptedAndRetired(s);
@@ -850,6 +911,41 @@ describe('removing a backend server', () => {
     const s = await seed();
     const intentId = await adoptedAndRetired(s);
     await retire(s, intentId);
+    // A rollout of its binding with an acceptance receipt.
+    const { relayId, listenerId } = await registerRelay(s.t, { nodeName: 'legacy-a' });
+    const { edgeId } = await adoptL4Edge(s.t, relayId, listenerId);
+    await s.t.run(async (ctx) => {
+      const binding = (await ctx.db.query('sniInboundBindings').first())!;
+      const rolloutId = await ctx.db.insert('sniRollouts', {
+        bindingId: binding._id,
+        backendServerId: s.serverId,
+        generation: 2,
+        names: ['decoy-a.example'],
+        added: [],
+        removed: [],
+        expectedToken: 'tok',
+        phase: 'panel_confirmed',
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('sniAcceptanceReceipts', {
+        rolloutId,
+        generation: 2,
+        relayId,
+        listenerId,
+        edgeId,
+        sni: 'decoy-a.example',
+        isWitness: false,
+        expectedToken: 'tok',
+        endpoint: '198.51.100.7:443',
+        listenerRevision: 1,
+        configHash: 'h',
+        evidenceKind: 'adopted',
+        state: 'confirmed',
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      });
+    });
     // As an earlier release removed a backend: the row alone.
     await s.t.run((ctx) => ctx.db.delete(s.serverId));
     const orphans = await s.t.query(internal.serverAdmin.removedBackends, {});
@@ -859,7 +955,13 @@ describe('removing a backend server', () => {
       backendServerId: s.serverId,
     });
     expect(dry.dryRun).toBe(true);
-    expect(dry.rows).toMatchObject({ panelSetups: 1, panelNodeIntents: 1, sniInboundBindings: 1 });
+    expect(dry.rows).toMatchObject({
+      panelSetups: 1,
+      panelNodeIntents: 1,
+      sniInboundBindings: 1,
+      sniRollouts: 1,
+      sniAcceptanceReceipts: 1,
+    });
     expect(await counts(s.t)).toEqual(before);
     await s.t.mutation(internal.serverAdmin.purgeRemovedBackend, {
       backendServerId: s.serverId,

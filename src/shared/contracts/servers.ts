@@ -727,8 +727,11 @@ export type ActivationReview = z.infer<typeof ActivationReview>;
 export const DirectTestLink = z.object({
   /** The first name's link (`links[0]`). */
   link: z.string(),
-  /** One link per server name the node serves: the tick covers all of them. */
-  links: z.array(z.object({ sni: z.string(), link: z.string() })),
+  /**
+   * One link per server name the node serves (an adopted node: per address it
+   * was adopted with, each with the `endpoint` it dials): the tick covers all of them.
+   */
+  links: z.array(z.object({ sni: z.string(), link: z.string(), endpoint: z.string().optional() })),
   binding: z.object({
     intentId: z.string(),
     transportUuid: z.string(),
