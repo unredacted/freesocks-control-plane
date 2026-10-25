@@ -10,7 +10,9 @@
    *
    * Under each address in use or spare: what it counts as from each checked
    * country and its "Countries" menu (EdgeCountryActions), when the caller
-   * passes the checks.
+   * passes the checks; and, where the deployment has FCP's own client check,
+   * what its newest check found and "Check with FCP's client" (real sing-box and
+   * Xray sessions through the address, docs/edges.md "FCP's own client check").
    *
    * Props: listener; edges (every non-destroyed edge of the origin); onTest(edgeId);
    *        publishable? (the spare the server says can be put in use now, or null)
@@ -23,7 +25,10 @@
     EdgeCountriesResponse,
     RelayListenerAdmin,
   } from '@shared/contracts/edges';
+  import { useQueryClient } from '@tanstack/svelte-query';
+  import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
+  import { clientCheckEdge, clientCheckStatusQuery, edgeKeys } from '@client/lib/edgesApi';
   import {
     OUTSIDE_REACH_LABELS,
     PLAIN_ATTENTION_ACTION_LABELS,
@@ -34,6 +39,8 @@
   import PoolStrip from '../components/PoolStrip.svelte';
   import type { PoolEntry } from '../lib/types';
   import { endNowWords, retiringWords } from './drainWords';
+  import { edgeErrorMessage } from '../lib/edgeErrors';
+  import { clientCheckLine, clientCheckToast } from './clientCheckWords';
 
   interface Props {
     listener: RelayListenerAdmin;
@@ -53,6 +60,23 @@
     onRetiring,
     countries = null,
   }: Props = $props();
+
+  const qc = useQueryClient();
+  const clientCheckStatus = clientCheckStatusQuery();
+  const canClientCheck = $derived(clientCheckStatus.data?.configured === true);
+  let checking = $state<string | null>(null);
+  async function clientCheck(e: EdgeAdmin) {
+    checking = e.id;
+    try {
+      const t = clientCheckToast(await clientCheckEdge(e.id));
+      toast[t.tone](t.title, { description: t.body });
+      await qc.invalidateQueries({ queryKey: edgeKeys.all });
+    } catch (err) {
+      toast.error(edgeErrorMessage(err));
+    } finally {
+      checking = null;
+    }
+  }
 
   const mine = $derived(edges.filter((e) => e.listenerId === listener.id));
   const inUse = $derived(mine.filter((e) => e.publication === 'published'));
@@ -154,6 +178,17 @@
                 Test it
               </Button>
             {/if}
+            {#if canClientCheck && !r && e.layer !== 'l7'}
+              <Button
+                variant="link"
+                size="sm"
+                class="h-auto min-h-11 p-0 sm:min-h-0"
+                disabled={checking !== null}
+                onclick={() => void clientCheck(e)}
+              >
+                {checking === e.id ? 'Checking...' : "Check with FCP's client"}
+              </Button>
+            {/if}
             {#if onPublish && e.id === publishable}
               <Button
                 variant="link"
@@ -165,6 +200,9 @@
               </Button>
             {/if}
           </div>
+          {#if !r && clientCheckLine(e.clientCheck)}
+            <p class="text-muted-foreground text-xs">{clientCheckLine(e.clientCheck)}</p>
+          {/if}
           {#if countries && !r}
             <EdgeCountryActions edgeId={e.id} name={address(e)} data={countries} />
           {/if}

@@ -43,6 +43,7 @@ const envBetaExample = read('../.env.beta.example');
 const backupDockerfile = read('../docker/backup.Dockerfile');
 const webDockerfile = read('../docker/web.Dockerfile');
 const deployDockerfile = read('../docker/deploy.Dockerfile');
+const clientCheckDockerfile = read('../docker/edge-client-check/Dockerfile');
 const convexNodeDockerfile = read('../docker/convex-node/Dockerfile');
 const packageJson = read('../package.json');
 const ciWorkflow = read('../.github/workflows/ci.yml');
@@ -183,6 +184,7 @@ const BUN_LITERAL_EXEMPT = new Set([
   'package.json',
   'docker/web.Dockerfile',
   'docker/deploy.Dockerfile',
+  'docker/edge-client-check/Dockerfile',
 ]);
 
 /**
@@ -241,6 +243,7 @@ describe('cross-file image pins', () => {
     for (const [name, dockerfile] of [
       ['docker/web.Dockerfile', webDockerfile],
       ['docker/deploy.Dockerfile', deployDockerfile],
+      ['docker/edge-client-check/Dockerfile', clientCheckDockerfile],
     ] as const) {
       const bunBase = fromRefs(dockerfile).find((ref) => ref.startsWith('oven/bun:'));
       expect(bunBase, `no \`FROM oven/bun:…\` found in ${name}`).toBeTruthy();

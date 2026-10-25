@@ -29,7 +29,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import { walkRelayCohorts } from './edgeCohorts';
 import { selectionContext } from './edgeRotations';
-import { resolveEdgeConfig } from './lib/edgeConfig';
+import { MAX_DESIRED_PUBLISHED, resolveEdgeConfig } from './lib/edgeConfig';
 import type { Id } from './_generated/dataModel';
 import {
   FIXTURE_PANEL_SLUG,
@@ -1562,18 +1562,21 @@ describe('re-protect a live node (its own run kind)', () => {
     const { t } = w;
     const live = await liveL4(w);
     // A pool past the cap is not a supported shape: refused.
-    const over = Array.from({ length: 17 }, () => live.e1);
-    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: over, desiredPublished: 17 }));
+    const cap = MAX_DESIRED_PUBLISHED;
+    const over = Array.from({ length: cap + 1 }, () => live.e1);
+    await t.run((c) =>
+      c.db.patch(live.relayId, { publishedEdgeIds: over, desiredPublished: cap + 1 }),
+    );
     const noRoom = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
     expect(noRoom.status).toBe(409);
     expect(await errorCode(noRoom)).toBe('edge.reprotect_no_room');
     expect((await relayRow(t, live.relayId)).setupOwned).toBeFalsy();
     // At the cap, the run's own addresses are room above it, given back later.
-    const full = Array.from({ length: 16 }, () => live.e1);
-    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: full, desiredPublished: 16 }));
+    const full = Array.from({ length: cap }, () => live.e1);
+    await t.run((c) => c.db.patch(live.relayId, { publishedEdgeIds: full, desiredPublished: cap }));
     const atCap = await edgesPost(t, live.cookie, `relays/${live.relayId}/reprotect`);
     expect(atCap.status).toBe(200);
-    expect((await relayRow(t, live.relayId)).desiredPublished).toBe(17);
+    expect((await relayRow(t, live.relayId)).desiredPublished).toBe(cap + 1);
     const { runId: first } = (await atCap.json()) as { runId: string };
     await edgesPost(t, live.cookie, `setup-runs/${first}/cancel`);
     await t.run((c) =>

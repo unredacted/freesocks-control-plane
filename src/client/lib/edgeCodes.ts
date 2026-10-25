@@ -40,6 +40,10 @@ import type {
   SetupStepId,
   SetupStepStatus,
   SettingsWarningCode,
+  ClientCheckEngine,
+  ClientCheckSessionCode,
+  ClientCheckUncheckedCode,
+  ClientCheckVerdict,
 } from '../../shared/contracts/edgeCodes';
 import { SETUP_RUN_STAGE_STEP } from '../../shared/contracts/edgeCodes';
 
@@ -266,6 +270,39 @@ const COPY = {
     explain:
       'A REALITY transport here refuses members on sing-box-based clients (Hiddify, Karing), Mihomo-based ones (Clash Verge, FlClash) or both, while a test made with an Xray client passes. Each reason is named with the change that lifts it.',
     fix: "Make the change its reason names, in the transport's realitySettings or on the node. The warning clears at the next look, within a few minutes.",
+  },
+  client_refused: {
+    label: 'A client cannot get through',
+    explain:
+      "FCP's own check, made with real sing-box and Xray clients, could not get one of them through an address in use. The row names each client and what it ran into.",
+    fix: 'When the same client is refused through every address of the transport, fix the transport (for REALITY, its minClientVer); otherwise replace the address. Then check it again.',
+  },
+  // The verdicts an attention row names as its reason (`client_refused`): the
+  // same words as CLIENT_CHECK_COPY, which the check's own line and toast use.
+  passed_with_refusals: {
+    label: 'Works, as well as the others',
+    explain:
+      'At least one client connected. The ones that did not are refused through the other addresses of this transport too.',
+  },
+  address_failed: {
+    label: 'Does not work',
+    explain:
+      'A client did not get through this address, while it gets through the other addresses of this transport when there are any to compare with.',
+  },
+  egress_mismatch: {
+    label: 'Reaches another node',
+    explain:
+      'A client connected, but its traffic left from an address that is not this node: the load balancer forwards somewhere else.',
+  },
+  node_unreachable: {
+    label: 'Node not reached',
+    explain: 'No client got through this address or through the other addresses of the transport.',
+  },
+  client_check_unavailable: {
+    label: "FCP's check client is not answering",
+    explain:
+      'The client-check service is set up but did not answer its last health check, so no address can be checked with a real client until it does.',
+    fix: 'Make sure the edge-client-check container is running and holds the same EDGE_CLIENT_CHECK_SECRET as the deployment.',
   },
   // Each reason (a setup-status warning's detail; the attention row words the verdict itself).
   reality_min_above: {
@@ -1467,6 +1504,103 @@ export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> 
   },
 };
 
+// --- FCP's own client check ------------------------------------------------------------------
+// What one check of an address found (docs/edges.md "FCP's own client check"): the
+// verdict, each engine's session, or why no verdict was reached. Kept apart from the
+// flat table: `timeout`, `refused` and `busy` are generic words elsewhere.
+export const CLIENT_CHECK_ENGINE_LABELS: Record<ClientCheckEngine, string> = {
+  'sing-box': 'sing-box',
+  xray: 'Xray',
+};
+
+export const CLIENT_CHECK_COPY: Record<
+  ClientCheckVerdict | ClientCheckSessionCode | ClientCheckUncheckedCode,
+  CodeCopy
+> = {
+  passed: {
+    label: 'Works',
+    explain: 'Every client connected through this address and came out of the node.',
+  },
+  passed_with_refusals: {
+    label: 'Works, as well as the others',
+    explain:
+      'At least one client connected through this address. The ones that did not are refused through the other addresses of this transport too, so the node refuses them, not this address.',
+  },
+  address_failed: {
+    label: 'Does not work',
+    explain:
+      'A client did not get through this address, while it gets through the other addresses of this transport when there are any to compare with.',
+    fix: 'Replace the address, or check it again in a few minutes if it was just created.',
+  },
+  egress_mismatch: {
+    label: 'Reaches another node',
+    explain:
+      'A client connected, but its traffic left from an address that is not this node: the load balancer forwards somewhere else.',
+    fix: "Check the address's forwarding target at the provider, then check it again.",
+  },
+  node_unreachable: {
+    label: 'Node not reached',
+    explain:
+      'No client got through this address or through the other addresses of the transport, so the check cannot tell the address from the node.',
+    fix: 'Check that the node is up and its transport answers, then check again.',
+  },
+  ok: { label: 'Connected', explain: 'The client connected and fetched the egress page.' },
+  reality_refused: {
+    label: 'Refused by REALITY',
+    explain:
+      'The REALITY server handed this client to its target instead of letting it in: it refuses this client version, or the key or server name does not match.',
+    fix: 'For sing-box, set minClientVer to 1.8.1 in the transport and keep the node on Xray 26.7.28 or older.',
+  },
+  tls_failed: {
+    label: 'TLS failed',
+    explain: 'The TLS handshake through the address failed.',
+  },
+  timeout: { label: 'Timed out', explain: 'Nothing answered through the address in time.' },
+  refused: { label: 'Connection refused', explain: 'The address refused the connection.' },
+  reset: { label: 'Connection dropped', explain: 'The connection was closed during the session.' },
+  unreachable: { label: 'No route', explain: 'There is no route to the address.' },
+  egress_unreadable: {
+    label: 'Egress page unreadable',
+    explain: 'The client connected, but the egress page did not answer with an address.',
+  },
+  config_refused: {
+    label: 'Client refused the settings',
+    explain: 'The client would not start with the settings built from the test link.',
+  },
+  session_failed: { label: 'Session failed', explain: 'The session failed for another reason.' },
+  not_configured: {
+    label: 'Not set up',
+    explain: 'This deployment has no client-check service (EDGE_CLIENT_CHECK_SECRET is not set).',
+  },
+  unavailable: {
+    label: 'Check client not answering',
+    explain: 'The client-check service did not answer.',
+  },
+  unauthorized: {
+    label: 'Secrets differ',
+    explain: "The client-check service refused the request: its secret is not the deployment's.",
+  },
+  busy: { label: 'Check client busy', explain: 'Another check was running; try again.' },
+  link_unavailable: {
+    label: 'No test link',
+    explain: 'The test link of this address could not be built, so there was nothing to check.',
+  },
+  no_engine: {
+    label: 'No client for this transport',
+    explain: 'Neither sing-box nor Xray speaks this transport as the test link describes it.',
+  },
+  not_l4: {
+    label: 'Checked by its proof',
+    explain: 'A CDN front is checked by its own end-to-end proof, not by this check.',
+  },
+  out_of_time: {
+    label: 'Ran out of time',
+    explain:
+      'The check took too long to run every client (slow sessions, or another check ahead of it).',
+    fix: 'Check again in a minute.',
+  },
+};
+
 export function inboundUnsupportedCopy(code: string): CodeCopy {
   const known = (INBOUND_UNSUPPORTED_COPY as Record<string, CodeCopy>)[code];
   return (
@@ -2479,6 +2613,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'admin.edge.probe.change': 'Probe settings changed',
   'admin.edge.maintenance': 'Maintenance switch changed',
   'admin.edge.reset': 'Edge tables reset',
+  'admin.edge.limits_raised': 'Account limits raised to the new defaults',
   'edge.pool_expanded': 'Pool expanded for an uncovered listener',
   'edge.relay.rebalanced': 'Duplicate edge sent back to standby',
   'edge.automation.set': 'Automatic protection switched',
@@ -2695,6 +2830,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.quarantine_resolved': 'Safety pause lifted',
   'edge.destroyed': 'Address destroyed',
   'edge.verified': 'Address tested with a real session',
+  'edge.client_check': "Address checked with FCP's client",
   'edge.block_suspected': 'Address looks blocked',
   'edge.block_cleared': 'Address no longer looks blocked',
   'edge.block_simulation.started': 'Test block started',

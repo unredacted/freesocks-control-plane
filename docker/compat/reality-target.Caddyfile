@@ -24,3 +24,9 @@ http://127.0.0.1:9123 {
 :8080 {
 	respond "reality-page {path}"
 }
+
+# FCP's client check (clientCheck.integration.test.ts): the egress page, which
+# answers the address the request came from (the core whose tunnel it ended).
+:8081 {
+	respond "{remote_host}"
+}

@@ -4,6 +4,7 @@ import { backendIdValidator } from './lib/backendIds';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import { realityClientRefusalFields, realityClientRefusalV } from './lib/realityClients';
+import { edgeClientCheckV } from './lib/edges/clientCheck/validators';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target. Ported from
@@ -1797,7 +1798,7 @@ export default defineSchema({
     backendUserId: v.optional(v.string()),
     backendShortId: v.optional(v.string()),
     subscriptionUrl: v.optional(v.string()),
-    purpose: v.union(v.literal('rehearsal'), v.literal('test_link')),
+    purpose: v.union(v.literal('rehearsal'), v.literal('test_link'), v.literal('client_check')),
     expiresAt: v.number(),
     removal: v.union(v.literal('pending'), v.literal('done'), v.literal('failed')),
     attempts: v.number(),
@@ -2013,6 +2014,10 @@ export default defineSchema({
     // revision + configuration hash it was taken against. The publication gate
     // (origins.checkPublishable) refuses an L4 edge without a CURRENT one.
     verification: v.optional(relayEdgeVerification),
+    // FCP's own client check (edgeClientCheck.ts, docs/edges.md § "FCP's own
+    // client check"): the latest verdict a real engine reached through this
+    // address, judged against a control address. Codes only, never an address.
+    clientCheck: v.optional(edgeClientCheckV),
     // Fastly shared-service teardown (an adopted domain on a service FCP does
     // not own): the persisted version workflow, serialized per service.
     sharedTeardown: v.optional(
@@ -3196,8 +3201,15 @@ export default defineSchema({
     targetKind: v.union(v.literal('edge'), v.literal('relay')),
     targetRef: v.string(),
     // What was dialled, so a run whose target moved under it is not misread.
+    // On a `real_host` row these stay FCP's address (what the batch is about).
     address: v.string(),
     port: v.number(),
+    // `real_host` = the CONTROL of the measurement of the same name, batch and
+    // source: the name presented to its real site (its public DNS answer,
+    // `realAddress`, port 443) from the same vantages (lib/edges/sni/realHost.ts).
+    // Absent = FCP's own address. Never part of the name's own evidence.
+    role: v.optional(v.literal('real_host')),
+    realAddress: v.optional(v.string()),
     trigger: v.union(v.literal('cron'), v.literal('manual')),
     status: v.union(
       v.literal('requested'),
@@ -3227,7 +3239,17 @@ export default defineSchema({
           v.literal('refused'),
           v.literal('error'),
         ),
+        // Where a failure stopped (lib/edges/probes/nameCheck.ts `classifyStage`).
+        stage: v.optional(
+          v.union(v.literal('connect'), v.literal('handshake'), v.literal('response')),
+        ),
+        // An opaque key of the vantage, equal across one batch's measurements.
+        vantage: v.optional(v.string()),
         rttMs: v.optional(v.number()),
+        // Phase timings when the source reports them: the TCP connect and the TLS
+        // handshake after it (nameCheck.ts; no DNS phase: the literal is dialled).
+        tcpMs: v.optional(v.number()),
+        tlsMs: v.optional(v.number()),
         error: v.optional(v.string()),
       }),
     ),
@@ -3268,6 +3290,48 @@ export default defineSchema({
         batches: v.number(),
         startedAt: v.number(),
         transition: v.boolean(),
+      }),
+    ),
+    // The real-host controls of the newest batch that had them
+    // (lib/edges/sni/realHost.ts `readRealHost`): evidence only, never a mark.
+    realHost: v.optional(
+      v.object({
+        at: v.number(),
+        // FCP's address the batch measured (`targetKeyOf`) and the real site's.
+        target: v.string(),
+        realAddress: v.optional(v.string()),
+        reading: v.union(
+          v.literal('works'),
+          v.literal('name_blocked'),
+          v.literal('address_blocked'),
+          v.literal('ip_name_match'),
+          v.literal('ours_only'),
+          v.literal('mixed'),
+          v.literal('thin'),
+        ),
+        counts: v.object({
+          works: v.number(),
+          nameBlocked: v.number(),
+          addressBlocked: v.number(),
+          ipNameMatch: v.number(),
+          oursOnly: v.number(),
+          inconclusive: v.number(),
+        }),
+        vantages: v.number(),
+        networks: v.number(),
+        // Over the pairs where both handshakes completed with phase timings, the
+        // medians of what each handshake took beyond its TCP connect: FCP's
+        // address (`oursMs`, its transport's target leg included) and the real
+        // site (`realMs`), and of their per-vantage difference (`addsMs`: what
+        // the target adds). Absent: no such pair.
+        timing: v.optional(
+          v.object({
+            pairs: v.number(),
+            oursMs: v.number(),
+            realMs: v.number(),
+            addsMs: v.number(),
+          }),
+        ),
       }),
     ),
     updatedAt: v.number(),

@@ -49,13 +49,8 @@ import {
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 import type { BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
-import {
-  defaultLocationOf,
-  liveCountForLocation,
-  locationsOfAccount,
-  sizeProblemOfLocation,
-} from './edgeLocations';
+import { todayKey, managedLiveOfAccount, relayForBackendNode } from './relays';
+import { defaultLocationOf, locationsOfAccount, sizeProblemOfLocation } from './edgeLocations';
 import { regionOffersOf } from './edgeProviderCatalog';
 import { placeProblemOf } from './lib/edges/l7Place';
 import { SIZE_NOT_MULTICLOUD, SIZE_NOT_MULTICLOUD_WORDS } from './lib/edges/sizeCheck';
@@ -229,11 +224,11 @@ async function planContextOf(
     > = {};
     const accountSpendCap: Record<string, boolean> = {};
     for (const a of accounts) {
-      accountLive[a._id as string] = (await liveEdgesOfAccount(ctx.db, a._id)).filter(
-        (e) => e.managed,
-      ).length;
+      // One read of the account serves its total, each location's count and the spend.
+      const managed = await managedLiveOfAccount(ctx.db, a._id);
+      accountLive[a._id as string] = managed.live;
       if (typeof a.cost?.monthlyCap === 'number')
-        accountSpendCap[a._id as string] = atCap(await spendOf(ctx, a));
+        accountSpendCap[a._id as string] = atCap(await spendOf(ctx, a, managed.edges));
       const dflt = await defaultLocationOf(ctx.db, a);
       const rows = [];
       for (const loc of await locationsOfAccount(ctx.db, a._id))
@@ -244,7 +239,7 @@ async function planContextOf(
           enabled: loc.enabled,
           qualified: loc.qualified,
           isDefault: !!dflt && dflt._id === loc._id,
-          live: await liveCountForLocation(ctx.db, loc),
+          live: managed.atLocation(loc._id),
           maxLiveEdges: loc.maxLiveEdges ?? null,
           // Why no new edge can be planned in this place (the zone itself, a
           // Scaleway location with no project to create in, or a size there

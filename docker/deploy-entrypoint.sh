@@ -85,6 +85,22 @@ else
   echo "[deploy] WARNING: ${CONVEX_ENV_FILE} not found; skipping env (create .env.convex)"
 fi
 
+# FCP's own client check: the secret lives in the compose env (.env.beta), which
+# the edge-client-check service reads too, so the two can never differ. Unset
+# here leaves the deployment's value alone (and the service refuses every call).
+if [ -n "${EDGE_CLIENT_CHECK_SECRET:-}" ]; then
+  case "${EDGE_CLIENT_CHECK_SECRET}" in *CHANGE_ME*)
+    echo "[deploy] ERROR: EDGE_CLIENT_CHECK_SECRET still has a CHANGE_ME placeholder; fill .env.beta" >&2
+    exit 1
+    ;;
+  esac
+  if ! bunx convex env set EDGE_CLIENT_CHECK_SECRET "${EDGE_CLIENT_CHECK_SECRET}" >/dev/null; then
+    echo "[deploy] ERROR: failed to set deployment env EDGE_CLIENT_CHECK_SECRET" >&2
+    exit 1
+  fi
+  echo "[deploy]   env set EDGE_CLIENT_CHECK_SECRET (from the compose env)"
+fi
+
 # Auto-generate the pure-random secrets that are still unset. GENERATE-ONCE: only
 # set a secret the deployment doesn't already have — NEVER regenerate (rotating
 # ACCOUNT_ID_PEPPER would invalidate every account number; SESSION_SIGNING_KEY,

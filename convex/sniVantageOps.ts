@@ -19,6 +19,11 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { GLOBALPING_USER_AGENT, type GlobalpingLike } from './lib/edges/probes/globalping';
 import { RIPE_ATLAS_BASE } from './lib/edges/probes/ripeatlas';
+import { resolvePublic } from './lib/edges/probes/internal';
+import { addressFamily } from './lib/edges/ip';
+import { normalizeAddress } from './lib/edges/hosts';
+import { tlsInspect } from './sniQualifyOps';
+import type { RealHostSkip } from '../src/shared/contracts/edgeCodes';
 import {
   atlasNameBody,
   atlasProbeQuery,
@@ -71,12 +76,77 @@ export function __setVantageCertCovers(f: CertCovers | null): void {
 interface Row {
   id: Id<'sniVantageProbes'>;
   name: string;
+  /** What is dialled: FCP's address, or for a real-host control the real site's. */
   address: string;
   port: number;
+  /** A real-host control: the real site's address (also `address`). */
+  realAddress?: string;
 }
 interface Settled {
-  done: Array<{ id: Id<'sniVantageProbes'>; externalId?: string; results: NameVantageResult[] }>;
-  failed: Array<{ id: Id<'sniVantageProbes'>; error: string }>;
+  done: Array<{
+    id: Id<'sniVantageProbes'>;
+    externalId?: string;
+    results: NameVantageResult[];
+    realAddress?: string;
+  }>;
+  failed: Array<{ id: Id<'sniVantageProbes'>; error: string; realAddress?: string }>;
+}
+
+// --- real-host controls -------------------------------------------------------------------------
+
+/** The real site is dialled on HTTPS: a name's public site answers there. */
+const REAL_HOST_PORT = 443;
+
+export interface RealHostDeps {
+  /** Every answer for `name` in one address family (the system resolver). */
+  lookup: (name: string, family: 4 | 6) => Promise<string[]>;
+  /** One TLS handshake from FCP's host presenting `servername`: completed with a chain valid for it. */
+  serves: (host: string, servername: string) => Promise<boolean>;
+}
+
+const defaultRealHostDeps: RealHostDeps = {
+  lookup: async (name, family) => {
+    const dns = await import('node:dns/promises');
+    return (await dns.lookup(name, { all: true, family, verbatim: true })).map((a) => a.address);
+  },
+  serves: async (host, servername) => {
+    const r = await tlsInspect({ host, port: REAL_HOST_PORT, servername });
+    return r.ok && r.authorized === true;
+  },
+};
+let realHostDeps: RealHostDeps = defaultRealHostDeps;
+/** Test seam: the resolver and FCP's own handshake. */
+export function __setRealHostDeps(d: Partial<RealHostDeps> | null): void {
+  realHostDeps = d ? { ...defaultRealHostDeps, ...d } : defaultRealHostDeps;
+}
+
+/**
+ * The real site of `name` as a vantage should dial it: its public DNS answer
+ * in the family of FCP's address (every answer public, the first that is not
+ * one of FCP's own), and only once a handshake from FCP's own host shows it
+ * serves the name. Otherwise a skip code and nothing is dialled from the country.
+ */
+export async function realSiteOf(
+  name: string,
+  family: 4 | 6,
+  own: ReadonlySet<string>,
+): Promise<{ ok: true; address: string } | { ok: false; error: RealHostSkip }> {
+  const r = await resolvePublic(name, (n) => realHostDeps.lookup(n, family));
+  if (!r.ok)
+    return { ok: false, error: r.error === 'private_address' ? 'real_private' : 'real_resolve' };
+  // Canonical spellings on both sides (`own` is canonical already), and the
+  // lowest answer, not the first: a resolver that rotates its answers still
+  // gives every source of a batch the same real site.
+  const answers = [...new Set(r.addresses.map(normalizeAddress))].sort();
+  const address = answers.find((a) => !own.has(a));
+  if (!address) return { ok: false, error: 'real_is_ours' };
+  let serves = false;
+  try {
+    serves = await realHostDeps.serves(address, name);
+  } catch {
+    serves = false;
+  }
+  return serves ? { ok: true, address } : { ok: false, error: 'real_not_serving' };
 }
 
 async function runGlobalping(
@@ -224,20 +294,46 @@ export const executeBatch = internalAction({
       return null;
     }
     await ctx.runMutation(internal.sniVantage.markRunning, { ids: valid.map((r) => r.id) });
+    // A real-host control dials the name's real site instead of FCP's address,
+    // once FCP's own host has found it (public, not ours) and seen it serve the
+    // name; otherwise it is settled with the reason and nothing is dialled.
+    const own = new Set(c.own);
+    const dial: Row[] = [];
+    const skipped: Settled['failed'] = [];
+    for (const r of valid) {
+      if (r.role !== 'real_host') {
+        dial.push(r);
+        continue;
+      }
+      // Real-host controls turned off since the plan: the real site is not visited.
+      if (!c.realHostOn) {
+        skipped.push({ id: r.id, error: 'gate_real_host' });
+        continue;
+      }
+      const site = await realSiteOf(r.name, addressFamily(r.address) === 'v6' ? 6 : 4, own);
+      if (site.ok)
+        dial.push({ ...r, address: site.address, port: REAL_HOST_PORT, realAddress: site.address });
+      else skipped.push({ id: r.id, error: site.error });
+    }
     let settled: Settled;
     try {
       settled =
-        source === 'globalping'
-          ? await runGlobalping(valid, c, c.secrets.globalpingToken)
-          : await runAtlas(valid, c, c.secrets.ripeAtlasKey);
+        dial.length === 0
+          ? { done: [], failed: [] }
+          : source === 'globalping'
+            ? await runGlobalping(dial, c, c.secrets.globalpingToken)
+            : await runAtlas(dial, c, c.secrets.ripeAtlasKey);
     } catch {
       // Service text is never stored: the run failed, that is all.
-      settled = { done: [], failed: valid.map((r) => ({ id: r.id, error: 'source_error' })) };
+      settled = { done: [], failed: dial.map((r) => ({ id: r.id, error: 'source_error' })) };
     }
+    const realOf = new Map(dial.filter((r) => r.realAddress).map((r) => [r.id, r.realAddress!]));
+    const withReal = <T extends { id: Id<'sniVantageProbes'> }>(x: T) =>
+      realOf.has(x.id) ? { ...x, realAddress: realOf.get(x.id)! } : x;
     await ctx.runMutation(internal.sniVantage.finishBatch, {
       batch,
-      done: settled.done,
-      failed: [...settled.failed, ...moved],
+      done: settled.done.map(withReal),
+      failed: [...settled.failed.map(withReal), ...skipped, ...moved],
     });
     return null;
   },

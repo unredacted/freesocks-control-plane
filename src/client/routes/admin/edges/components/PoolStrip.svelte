@@ -91,8 +91,12 @@
   const CELL = 'inline-block h-3 w-4 rounded-[3px] border';
 </script>
 
-<div class={cn('inline-flex items-center gap-2', className)}>
-  <div class="inline-flex items-center gap-0.5" role="group" aria-label={`Pool: ${summary}`}>
+<div class={cn('inline-flex max-w-full flex-wrap items-center gap-2', className)}>
+  <div
+    class="inline-flex max-w-full flex-wrap items-center gap-0.5"
+    role="group"
+    aria-label={`Pool: ${summary}`}
+  >
     {#each slots as slot, i (i)}
       {#if slot.kind !== 'published' && i > 0 && slots[i - 1]?.poolIndex !== null && slot.poolIndex === null}
         <span class="bg-border mx-0.5 h-3 w-px" aria-hidden="true"></span>

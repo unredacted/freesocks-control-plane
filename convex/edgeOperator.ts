@@ -51,11 +51,12 @@ import { parseIntent } from './lib/edges/intent';
 import { sameAddress } from './lib/edges/hosts';
 import {
   needsEndpointVerification,
+  verificationBinding,
   verificationCurrent,
   verificationStale,
   verificationStaleReason,
 } from './lib/edges/verification';
-import { verificationListenersOf } from './lib/edges/verificationContext';
+import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { publishedCount } from './lib/edges/pool';
 import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
 import { fakeShadowedIds } from './lib/edges/providers/fake';
@@ -69,8 +70,8 @@ import type { SetupStepId } from '../src/shared/contracts/edgeCodes';
 import {
   checkPublishable,
   deliveryBindingFor,
-  liveEdgesOfAccount,
   liveEdgesOfRelay,
+  managedLiveOfAccount,
   mapRelayAdmin,
 } from './relays';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
@@ -90,13 +91,15 @@ import { accountOptionDefaultsOf } from './lib/edges/choices';
 import {
   defaultLocationOf,
   effectiveTemplateOfLocation,
-  liveCountForLocation,
   locationsOfAccount,
   sharedCertificateUsers as zoneSharedCertificateUsers,
 } from './edgeLocations';
 import { l7PlaceOf } from './lib/edges/l7Place';
 import { readRefusals, REFUSAL_WINDOW_MS, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
 import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
+import { readStateJson } from './lib/appStateJson';
+import { clientCheckService } from './lib/edges/clientCheck/client';
+import { CLIENT_CHECK_HEALTH_KEY, type ClientCheckHealthRecord } from './edgeClientCheck';
 import { modeRefOf } from './nodeIntents';
 import { freedomAttention } from './freedomDelivery';
 import { resolveModeCatalog } from './lib/connectionModes';
@@ -1104,6 +1107,53 @@ export function realityRefusalFacts(relay: Pick<Doc<'relays'>, 'realityClients'>
 }
 
 /**
+ * FCP's own client check (edgeClientCheck.ts) on the addresses members use: the
+ * engines whose newest session through one of them was refused or did not
+ * connect (a client family members on it cannot use), the addresses concerned
+ * and the newest such check. Null when every checked address in use admits
+ * every engine.
+ */
+export function clientRefusalFacts(
+  edges: readonly Doc<'edges'>[],
+  listeners: readonly VerifiableListener[],
+): {
+  count: number;
+  engines: Array<{ engine: string; code: string }>;
+  verdicts: string[];
+  since: number;
+} | null {
+  // Only a check taken against the configuration the address holds now: one
+  // from before a listener or address change says nothing about it any more.
+  const current = (e: Doc<'edges'>) => {
+    const l = listeners.find((x) => x._id === e.listenerId);
+    const b = l ? verificationBinding(e, l) : null;
+    return (
+      !!b &&
+      b.configHash === e.clientCheck!.configHash &&
+      b.listenerRevision === e.clientCheck!.listenerRevision
+    );
+  };
+  const hit = edges.filter(
+    (e) =>
+      e.publication === 'published' &&
+      e.status === 'active' &&
+      !!e.clientCheck &&
+      e.clientCheck.engines.some((x) => x.code !== 'ok') &&
+      current(e),
+  );
+  if (hit.length === 0) return null;
+  const engines = new Map<string, string>();
+  for (const e of hit)
+    for (const x of e.clientCheck!.engines) if (x.code !== 'ok') engines.set(x.engine, x.code);
+  return {
+    count: hit.length,
+    engines: [...engines].map(([engine, code]) => ({ engine, code })),
+    verdicts: [...new Set(hit.map((e) => e.clientCheck!.verdict))],
+    since: Math.max(...hit.map((e) => e.clientCheck!.at)),
+  };
+}
+
+/**
  * Server-ranked list of what needs the operator, one action per item, plus the
  * one status of every origin (`origins`, deleting ones included, slug order)
  * and the fleet headline (`fleet`), judged in lib/edges/originStatus.ts.
@@ -1313,6 +1363,25 @@ export const attention = internalQuery({
           },
           action: 'open_relay',
           since: iso(refusing.since),
+        });
+      }
+      // FCP's own client check found a client family that cannot get through an
+      // address in use (refused, or not connecting): members on it are cut off.
+      const checkRefused = clientRefusalFacts(edges, listeners);
+      if (checkRefused) {
+        items.push({
+          ...base(relay),
+          id: `client_refused:${relay._id}`,
+          kind: 'client_refused',
+          severity: 'warning',
+          code: checkRefused.verdicts[0] ?? null,
+          facts: {
+            count: checkRefused.count,
+            engines: checkRefused.engines,
+            verdicts: checkRefused.verdicts,
+          },
+          action: 'open_relay',
+          since: iso(checkRefused.since),
         });
       }
       // The restore workflow: informational, one phase per reconcile tick.
@@ -1932,6 +2001,24 @@ export const attention = internalQuery({
         facts: { purpose: row.purpose, attempts: row.attempts, credentialId: row._id as string },
         action: 'open_relay',
         since: iso(row.updatedAt),
+      });
+    }
+    // FCP's own client-check service is set up but did not answer its last
+    // health check: no address can be checked by it until it does.
+    const clientCheck = await readStateJson<ClientCheckHealthRecord>(
+      ctx.db,
+      CLIENT_CHECK_HEALTH_KEY,
+    );
+    if (clientCheckService(process.env) && clientCheck && !clientCheck.ok) {
+      items.push({
+        ...fleetBase,
+        id: 'client_check_unavailable',
+        kind: 'client_check_unavailable',
+        severity: 'warning',
+        code: clientCheck.code,
+        facts: {},
+        action: 'open_settings',
+        since: iso(clientCheck.at),
       });
     }
     // The fleet guards on automatic rotation (lib/edges/fleet.ts).
@@ -2635,7 +2722,9 @@ export const providersUsage = internalQuery({
     }
     const accountRows = [];
     for (const a of accounts) {
-      const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
+      // One read of the account serves its total and each location's count.
+      const managed = await managedLiveOfAccount(ctx.db, a._id);
+      const live = managed.live;
       totals.liveEdges += live;
       const counts = perAccount.get(a._id as string) ?? { published: 0, standby: 0, draining: 0 };
       // Per location: its live edges against its own cap, and its trust.
@@ -2647,7 +2736,7 @@ export const providersUsage = internalQuery({
           placeKey: loc.placeKey,
           enabled: loc.enabled,
           qualified: loc.qualified,
-          liveEdges: await liveCountForLocation(ctx.db, loc),
+          liveEdges: managed.atLocation(loc._id),
           maxLiveEdges: loc.maxLiveEdges ?? null,
         });
       accountRows.push({

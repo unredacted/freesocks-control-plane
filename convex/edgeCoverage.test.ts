@@ -12,6 +12,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { claimDeliveryBinding } from './relays';
+import { MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
 import { scopeFor } from './httpEdges';
 import {
   adoptL4Edge,
@@ -98,7 +99,7 @@ describe('coverage: capacity follows the deployed listeners', () => {
     expect(again.changed).toBe(false);
   });
 
-  test('adding a listener in the CMS raises the pool too; the bound is 16', async () => {
+  test('adding a listener in the CMS raises the pool too; the bound is MAX_DESIRED_PUBLISHED', async () => {
     const { t, relayId } = await world({ listeners: 'a' });
     await t.mutation(internal.relays.update, { id: relayId, desiredPublished: 1 });
     const added = await t.mutation(internal.relayListeners.upsert, {
@@ -108,10 +109,16 @@ describe('coverage: capacity follows the deployed listeners', () => {
     expect(added.warnings).toEqual(['edge.pool_raised']);
     expect((await relayOf(t, relayId)).desiredPublished).toBe(2);
     await expect(
-      t.mutation(internal.relays.update, { id: relayId, desiredPublished: 17 }),
-    ).rejects.toThrow(/1\.\.16/);
-    await t.mutation(internal.relays.update, { id: relayId, desiredPublished: 16 });
-    expect((await relayOf(t, relayId)).desiredPublished).toBe(16);
+      t.mutation(internal.relays.update, {
+        id: relayId,
+        desiredPublished: MAX_DESIRED_PUBLISHED + 1,
+      }),
+    ).rejects.toThrow(`1..${MAX_DESIRED_PUBLISHED}`);
+    await t.mutation(internal.relays.update, {
+      id: relayId,
+      desiredPublished: MAX_DESIRED_PUBLISHED,
+    });
+    expect((await relayOf(t, relayId)).desiredPublished).toBe(MAX_DESIRED_PUBLISHED);
     // Lowering the pool under the two coverage listeners is refused (the next
     // tick would only raise it back); the coverage count itself is allowed.
     await expect(
@@ -237,12 +244,13 @@ describe('coverage: repairing a pre-existing full pool', () => {
   });
 
   test('at the cap: attention pool_rebalance; rebalance unpublishes only the non-template duplicate', async () => {
+    const CAP = MAX_DESIRED_PUBLISHED;
     const { t, relayId, listenerIds } = await world({ hostMode: 'operator' });
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
-    await t.mutation(internal.relays.update, { id: relayId, desiredPublished: 16 });
+    await t.mutation(internal.relays.update, { id: relayId, desiredPublished: CAP });
     await setEnabledRaw(t, listenerIds.s, false);
     const aEdges: Id<'edges'>[] = [];
-    for (let i = 1; i <= 16; i++) {
+    for (let i = 1; i <= CAP; i++) {
       const e = await adoptL4Edge(t, relayId, listenerIds.a, {
         ipv4: `198.51.100.${i}`,
         publish: true,
@@ -253,37 +261,42 @@ describe('coverage: repairing a pre-existing full pool', () => {
     // No expansion is possible: the reconcile leaves the pool as it is.
     const r = await run(t);
     expect(r.published + r.started).toBe(0);
-    expect((await relayOf(t, relayId)).desiredPublished).toBe(16);
+    expect((await relayOf(t, relayId)).desiredPublished).toBe(CAP);
     expect(await audits(t, 'edge.pool_expanded')).toEqual([]);
     const attention = await t.query(internal.edgeOperator.attention, {});
     const item = attention.items.find((i) => i.kind === 'pool_rebalance');
     expect(item).toMatchObject({
       action: 'rebalance',
       listenerKey: 's',
-      facts: { published: 16, desired: 16, uncovered: 1 },
+      facts: { published: CAP, desired: CAP, uncovered: 1 },
     });
     // The operator makes room: the HIGHEST-index duplicate goes back to standby.
     const e0 = (await relayOf(t, relayId)).publicationEpoch;
     const res = await t.mutation(internal.relays.rebalance, { relayId });
-    expect(res).toMatchObject({ ok: true, edgeId: aEdges[15], poolIndex: 15, epoch: e0 + 1 });
+    expect(res).toMatchObject({
+      ok: true,
+      edgeId: aEdges[CAP - 1],
+      poolIndex: CAP - 1,
+      epoch: e0 + 1,
+    });
     const relay = await relayOf(t, relayId);
-    expect(relay.publishedEdgeIds).toEqual(aEdges.slice(0, 15));
-    expect(relay.standbyEdgeIds).toEqual([aEdges[15]]);
-    expect(await t.query(internal.edges.get, { id: aEdges[15] })).toMatchObject({
+    expect(relay.publishedEdgeIds).toEqual(aEdges.slice(0, CAP - 1));
+    expect(relay.standbyEdgeIds).toEqual([aEdges[CAP - 1]]);
+    expect(await t.query(internal.edges.get, { id: aEdges[CAP - 1] })).toMatchObject({
       status: 'active',
       publication: 'unpublished',
     });
     // The template edge of A is untouched.
     expect((await listenerOf(t, listenerIds.a)).templateEdgeId).toBe(aEdges[0]);
     expect((await audits(t, 'edge.relay.rebalanced'))[0]?.payload).toMatchObject({
-      edgeId: aEdges[15],
-      poolIndex: 15,
+      edgeId: aEdges[CAP - 1],
+      poolIndex: CAP - 1,
     });
     // Upkeep now publishes B into the freed slot (reserved for it: an A standby may not take it).
     const standbyS = await adoptL4Edge(t, relayId, listenerIds.s, { ipv4: '198.51.100.99' });
     const r2 = await run(t);
     expect(r2.published).toBe(1);
-    expect((await relayOf(t, relayId)).publishedEdgeIds[15]).toBe(standbyS.edgeId);
+    expect((await relayOf(t, relayId)).publishedEdgeIds[CAP - 1]).toBe(standbyS.edgeId);
     // Nothing left to rebalance once every published edge is a template edge.
     const { t: t2, relayId: relay2, listenerIds: l2 } = await world({ listeners: 'a' });
     await adoptL4Edge(t2, relay2, l2.a, { ipv4: '198.51.100.1', publish: true });
