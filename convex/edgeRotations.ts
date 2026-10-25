@@ -120,7 +120,7 @@ import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayList
 // evidence on: one rule, imported, never a second copy of "two intervals".
 import { probeStaleAfterMs } from './lib/edges/scoring';
 import { edgeHostnameFor } from './lib/edges/hostname';
-import { publishAddressOf, hasPublishableAddress } from './lib/edges/ip';
+import { publishAddressOf, hasPublishableAddress, l4OriginProblem } from './lib/edges/ip';
 import { verificationCurrent } from './lib/edges/verification';
 import {
   buildProvisionIntent,
@@ -849,6 +849,29 @@ export async function collectStartBlockers(
           (spare && (spare.layer ?? edgeLayerOf(spare.provider)) === 'l4')
         )
           push('edge.l4_not_for_websocket', L4_NOT_FOR_WEBSOCKET);
+      }
+      // A load balancer (or a spare one) named for an origin it cannot forward
+      // to: a private address (the management address of a node FCP does not
+      // manage), or a name where every provider takes an IP.
+      const l4Problem = l4OriginProblem(origin.originAddress);
+      if (l4Problem) {
+        const named = a.requestedLocationId ? await ctx.db.get(a.requestedLocationId) : null;
+        const accountId = a.requestedAccountId ?? named?.accountId;
+        const acct = accountId ? await ctx.db.get(accountId) : null;
+        // A spare named for a replace, or the address a publish names.
+        const namedEdgeId =
+          a.requestedSpareEdgeId ?? (a.kind === 'publish' ? a.toEdgeId : undefined);
+        const spare = namedEdgeId ? await ctx.db.get(namedEdgeId) : null;
+        if (
+          (acct && edgeLayerOf(acct.provider) === 'l4') ||
+          (spare && (spare.layer ?? edgeLayerOf(spare.provider)) === 'l4')
+        )
+          push(
+            `edge.${l4Problem}`,
+            l4Problem === 'origin_not_ip'
+              ? "The node's address is a name, and a load balancer forwards to an IP address"
+              : "The node's address is private, so a load balancer cannot reach it",
+          );
       }
       // An L7-ONLY listener cannot be answered automatically while the L7 gate
       // is off: the run would have nothing compatible to pick, and silently
@@ -2948,6 +2971,10 @@ export async function selectionContext(
   // named or reused as a spare (lib/edges/websocketNode.ts).
   const websocketNode = await websocketNodeOf(ctx.db, origin.origin);
   const barred = l4BarredFor(listener, websocketNode);
+  // A load balancer forwards to the origin address, an IP: a private one (the
+  // management address of a node FCP does not manage) is out of its reach and
+  // a name is none, so none is created, named or reused for it, whoever asks.
+  const l4Problem = l4OriginProblem(origin.originAddress);
   const fitsApproval = async (
     accountId: string | null,
     locationId: string | null,
@@ -3012,7 +3039,7 @@ export async function selectionContext(
         hasPublishableAddress(e) &&
         standbyEligible(e, slotOfEdge) &&
         // A load balancer the node already had is left as it is, never reused.
-        !(barred && (e.layer ?? edgeLayerOf(e.provider)) === 'l4') &&
+        !((barred || l4Problem) && (e.layer ?? edgeLayerOf(e.provider)) === 'l4') &&
         (edgeRoleOf(e.provider) !== 'dns' ||
           frontsAllowed(e.accountId ? await ctx.db.get(e.accountId) : null)) &&
         // Built with what its pick asks for now (the operator's named spare excepted).
@@ -3082,7 +3109,9 @@ export async function selectionContext(
   // cannot front the slot is not a candidate: picking it would provision an edge
   // that `checkPublishable` would then refuse (`layer_mismatch` /
   // `protocol_not_carried`) after the provider had already been paid.
-  const layers = listenerLayers(listener, { websocketNode }).layers;
+  const layers = listenerLayers(listener, { websocketNode }).layers.filter(
+    (l) => l !== 'l4' || !l4Problem,
+  );
   // Every trigger except an operator's own request is "automatic" for the L7
   // gate: an unproven front must not reach members because a cron or the
   // detector chose it. A guided setup run's account IS the operator's own
@@ -3125,6 +3154,7 @@ export async function selectionContext(
     const a = await ctx.db.get((rotation.requestedAccountId ?? named!.accountId)!);
     if (!a) return failure('account_not_found');
     if (barred && edgeLayerOf(a.provider) === 'l4') return failure('l4_not_for_websocket');
+    if (l4Problem && edgeLayerOf(a.provider) === 'l4') return failure(l4Problem);
     if (!a.enabled) return failure('account_disabled');
     // A certificate that cannot be had (CAA forbids the CA, the shared
     // wildcard failed) is named as such, before the generic untested.

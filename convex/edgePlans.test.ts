@@ -399,7 +399,12 @@ describe('the protect sheet says what the picks cost before anything is created'
         port: 443,
       }),
     );
-    __setPlanOpsForTests({ listNodeInbounds: async () => [inbound], listHosts: async () => [] });
+    // No Host at the node: its REALITY test entry is built (the panel describes it).
+    __setPlanOpsForTests({
+      listNodeInbounds: async () => [inbound],
+      listHosts: async () => [],
+      synthesisReady: async () => true,
+    });
     const plan = (pickOptions?: Record<string, unknown>) =>
       t.action(internal.edgeSetupPlan.plan, {
         backendServerId: serverId,

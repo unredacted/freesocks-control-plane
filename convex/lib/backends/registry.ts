@@ -27,6 +27,7 @@ import type {
   NodeInventoryRow,
   BackendTransport,
   PanelObservation,
+  ObservedModeGroup,
   PanelWrites,
 } from './types';
 import {
@@ -54,6 +55,7 @@ import {
   remnawaveGetNodeInventory,
   remnawaveListNodeInbounds,
   remnawaveObservePanel,
+  remnawaveListModeGroups,
   remnawaveManageCreateHost,
   remnawaveManageUpdateHost,
   remnawaveReorderHosts,
@@ -173,6 +175,8 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
    * projection plus digests keyed with `digestKey` before they are returned.
    */
   observePanel?(config: C, digestKey: string): Promise<PanelObservation>;
+  /** Read-only: the mode groups and the transports each holds (where FCP's own check account goes). */
+  listModeGroups?(config: C): Promise<ObservedModeGroup[]>;
   /** Server-management WRITES (Hosts, mode groups). One call each, never retried here. */
   backendWrites?: PanelWrites<C>;
   // Optional: re-find a user FCP created by its username (the version-neutral
@@ -217,6 +221,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   getNodeInventory: (c) => remnawaveGetNodeInventory(c),
   listNodeInbounds: (c, nodeUuid) => remnawaveListNodeInbounds(c, nodeUuid),
   observePanel: (c, digestKey) => remnawaveObservePanel(c, digestKey),
+  listModeGroups: (c) => remnawaveListModeGroups(c),
   backendWrites: {
     createAddress: remnawaveManageCreateHost,
     updateAddress: remnawaveManageUpdateHost,

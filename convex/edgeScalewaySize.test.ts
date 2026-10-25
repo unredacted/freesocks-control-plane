@@ -167,7 +167,12 @@ describe('a Scaleway place whose size takes only Scaleway servers', () => {
         port: 443,
       }),
     );
-    __setPlanOpsForTests({ listNodeInbounds: async () => [inboundA], listHosts: async () => [] });
+    // No Host at the node: its REALITY test entry is built (the panel describes it).
+    __setPlanOpsForTests({
+      listNodeInbounds: async () => [inboundA],
+      listHosts: async () => [],
+      synthesisReady: async () => true,
+    });
     const offered = async () => {
       const plan = await t.action(internal.edgeSetupPlan.plan, {
         backendServerId: serverId,

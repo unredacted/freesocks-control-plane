@@ -24,13 +24,21 @@ import {
   seedEdgeFixture,
   shadowsocksListener,
 } from './lib/edges/testing/fixtures';
-import { realityEntryLine, selectTestEntry, TEST_LINK_USER_AGENT } from './edgeTestLinks';
+import {
+  realityEntryLine,
+  selectTestEntry,
+  testLinkSourceOf,
+  TEST_LINK_USER_AGENT,
+} from './edgeTestLinks';
 import { parseProxyUri } from './lib/edges/render/uri';
 import { expireTestCredential } from './lib/edges/testing/reads';
 
 const modules = import.meta.glob('./**/*.*s');
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 const ORIGIN = FIXTURE_ORIGIN;
 const SPARE = '198.51.100.7';
@@ -63,13 +71,60 @@ function realisticBody(uuid: string, lines: string[] = []): string {
 const LIMITED_BODY =
   'vless://00000000-0000-4000-8000-000000000000@0.0.0.0:1?encryption=none&type=tcp#Subscription%20limited';
 
-async function seed(opts: { hosts?: FakePanelHost[]; extraLines?: string[] } = {}) {
+/** A 32-byte REALITY private key (base64url), as the panel stores it. */
+const REALITY_PRIVATE_KEY = Buffer.alloc(32, 7).toString('base64url');
+
+/**
+ * The node's config profile as the panel serves it: its REALITY transport with
+ * the live parameters a test entry is built from (`tag`: the transport it holds).
+ */
+function realityProfile(tag = 'VLESS_RELAY_A') {
+  return {
+    [FIXTURE_CONFIG_PROFILE]: {
+      uuid: FIXTURE_CONFIG_PROFILE,
+      name: 'node-one',
+      config: {
+        inbounds: [
+          {
+            tag,
+            port: 443,
+            protocol: 'vless',
+            settings: { clients: [] },
+            streamSettings: {
+              network: 'tcp',
+              security: 'reality',
+              realitySettings: {
+                dest: 'target.example:443',
+                serverNames: ['target.example'],
+                privateKey: REALITY_PRIVATE_KEY,
+                shortIds: ['abcd'],
+              },
+            },
+          },
+        ],
+      },
+      inbounds: [{ uuid: FIXTURE_INBOUND, tag }],
+    },
+  };
+}
+
+async function seed(
+  opts: {
+    hosts?: FakePanelHost[];
+    extraLines?: string[];
+    profiles?: Record<string, unknown>;
+    lines?: (uuid: string) => string[];
+  } = {},
+) {
   const panel = fakePanel({
+    profiles: opts.profiles,
     hosts: opts.hosts ?? [directHost()],
     body: (u) =>
       u
         ? u.status === 'ACTIVE'
-          ? realisticBody(u.vlessUuid, opts.extraLines)
+          ? opts.lines
+            ? opts.lines(u.vlessUuid).join('\n')
+            : realisticBody(u.vlessUuid, opts.extraLines)
           : LIMITED_BODY
         : null,
   });
@@ -230,8 +285,58 @@ describe('the isolated test link', () => {
     );
   });
 
+  test("a node FCP does not manage, fronted by the operator's own load balancer: no Host dials the node, so the entry is built from the transport's live REALITY parameters", async () => {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    // Members dial the operator's load balancer (its Host `<node>-relay` at its
+    // own address); nothing in the body is at the node's address.
+    const LB = '198.51.100.20';
+    const { t, edgeId } = await seed({
+      hosts: [directHost({ remark: 'node-one-relay', address: LB })],
+      lines: (uuid) => [`vless://${uuid}@${LB}:443?${REALITY_QS}#node-one-relay`],
+      profiles: realityProfile(),
+    });
+    const r = await t.action(internal.edgeTestLinks.build, { edgeId });
+    const lines = r.link.split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+    const u = parseProxyUri(lines[0])!;
+    expect(u.host).toBe(SPARE);
+    expect(u.params.get('security')).toBe('reality');
+    expect(u.params.get('pbk')).toBeTruthy();
+    expect(u.params.get('sid')).toBe('abcd');
+    expect(r.link).not.toContain(LB);
+    expect(r.link).not.toContain(ORIGIN);
+  });
+
+  test('the plan asks the panel first: a transport it describes with a key can be built, one it no longer holds cannot', async () => {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    const ready = await seed({ profiles: realityProfile() });
+    const ask = (t: typeof ready.t, tag: string) =>
+      t.action(internal.edgeTestLinks.synthesisReady, {
+        backendServerId: ready.fx.serverId,
+        profileUuid: FIXTURE_CONFIG_PROFILE,
+        tag,
+      });
+    expect(await ask(ready.t, 'VLESS_RELAY_A')).toBe(true);
+    expect(await ask(ready.t, 'VLESS_GONE')).toBe(false);
+    // A profile whose REALITY key is missing gives no entry either.
+    const profile = realityProfile();
+    const inbound = (
+      profile[FIXTURE_CONFIG_PROFILE].config.inbounds[0] as {
+        streamSettings: { realitySettings: Record<string, unknown> };
+      }
+    ).streamSettings.realitySettings;
+    delete inbound.privateKey;
+    const keyless = await seed({ profiles: profile });
+    expect(await ask(keyless.t, 'VLESS_RELAY_A')).toBe(false);
+  });
+
   test('no entry for the transport: the Host is on ANOTHER transport, or the body has none at the origin', async () => {
+    // Nor can the panel describe the transport (its profile holds another one),
+    // so no entry can be built from it either.
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    const profiles = realityProfile('VLESS_OTHER');
     const other = await seed({
+      profiles,
       hosts: [
         directHost({
           inbound: {
@@ -245,7 +350,7 @@ describe('the isolated test link', () => {
       other.t.action(internal.edgeTestLinks.build, { edgeId: other.edgeId }),
     ).rejects.toThrow(/test_link_no_match/);
     // A disabled direct Host (hidden) with no FCP Host yet: nothing names the transport's entry.
-    const hidden = await seed({ hosts: [directHost({ isDisabled: true })] });
+    const hidden = await seed({ hosts: [directHost({ isDisabled: true })], profiles });
     await expect(
       hidden.t.action(internal.edgeTestLinks.build, { edgeId: hidden.edgeId }),
     ).rejects.toThrow(/test_link_no_match/);
@@ -384,6 +489,44 @@ describe('the isolated test link', () => {
     await expect(t.action(internal.edgeTestLinks.build, { edgeId })).rejects.toThrow(
       /l7_proof_required/,
     );
+  });
+});
+
+describe('testLinkSourceOf (what a protect plan promises before it buys)', () => {
+  const host = (n: number, over: Partial<FakePanelHost> = {}) => ({
+    ...directHost({ uuid: H(n), remark: `h-${n}`, ...over }),
+    isDisabled: false,
+    sni: null,
+    host: null,
+  });
+  const reality = {
+    protocol: 'vless' as const,
+    streamTransport: 'raw' as const,
+    security: 'reality' as const,
+    originPort: 443,
+    panelBinding: { configProfileInboundUuid: FIXTURE_INBOUND },
+  };
+  const ss = { ...reality, protocol: 'shadowsocks' as const, security: 'none' as const };
+  const at = (hosts: ReturnType<typeof host>[] | null, ownRemarks: string[] = []) => ({
+    backend: 'remnawave' as const,
+    hosts,
+    originAddress: ORIGIN,
+    ownRemarks,
+  });
+
+  test('exactly one Host at the origin, else exactly one of its own; two are ambiguous as the test link finds them', () => {
+    expect(testLinkSourceOf(ss, at([host(1)]))).toBe('host');
+    expect(testLinkSourceOf(ss, at([host(1), host(2)]))).toBeNull();
+    // Two at the origin are ambiguous even for a transport whose entry could be built.
+    expect(testLinkSourceOf(reality, at([host(1), host(2)]))).toBeNull();
+    const own = (n: number) => host(n, { address: '198.51.100.1', remark: 'node-one-relay-a' });
+    expect(testLinkSourceOf(ss, at([own(3)], ['node-one-relay-a']))).toBe('host');
+    expect(testLinkSourceOf(ss, at([own(3), own(4)], ['node-one-relay-a']))).toBeNull();
+    // None: built from a REALITY transport, nowhere for another.
+    expect(testLinkSourceOf(reality, at([]))).toBe('synthesized');
+    expect(testLinkSourceOf(ss, at([]))).toBeNull();
+    // A backend without Hosts is matched by address and port alone.
+    expect(testLinkSourceOf(ss, at(null))).toBe('host');
   });
 });
 

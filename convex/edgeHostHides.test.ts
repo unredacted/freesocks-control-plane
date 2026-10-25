@@ -1070,3 +1070,94 @@ describe('the direct-Host attention from a render note lapses on its own', () =>
     expect((await t.run((ctx) => ctx.db.get(relayId)))!.withheldEntries).toBeUndefined();
   });
 });
+
+describe("a front the operator built by hand (a Host at its own load balancer's address)", () => {
+  const FRONT = 'f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2';
+  const LB = '198.51.100.20';
+  const front = (): AddressRow => ({
+    uuid: FRONT,
+    remark: `${FIXTURE_NODE}-relay`,
+    address: LB,
+    port: 443,
+    sni: 'a.example',
+    isDisabled: false,
+    inbound: inbound(FIXTURE_INBOUND),
+  });
+
+  test('members no longer get it, and once a look knows it as a front it is advice, never the critical direct-Host alarm', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const { t, relayId, download, relay } = await world({
+      hosts: [...panelHosts().filter((h) => h.uuid === FCP_UUID), front()],
+    });
+    // The rehearsal's look (before go-live) records it, by name only.
+    await t.action(internal.edgeHostHides.observe, { relayId });
+    expect((await relay()).operatorFronts?.remarks).toEqual([`${FIXTURE_NODE}-relay`]);
+    // A member render leaves it out: it is neither the node nor an edge.
+    const res = await download();
+    expect(res.status).toBe(200);
+    expect(res.body).not.toContain(LB);
+    expect(res.body).toContain(EDGE_A);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await relay()).withheldEntries?.remarks).toEqual([`${FIXTURE_NODE}-relay`]);
+    const items = (await t.query(internal.edgeOperator.attention, {})).items;
+    expect(items.find((i) => i.kind === 'direct_host_reappeared')).toBeUndefined();
+    expect(items.find((i) => i.kind === 'front_host_unused')).toMatchObject({
+      severity: 'info',
+      relaySlug: FIXTURE_NODE,
+      action: 'open_relay',
+      facts: { count: 1, remarks: [`${FIXTURE_NODE}-relay`] },
+    });
+    // The reconcile's look keeps it known (and writes nothing to it).
+    await t.action(internal.edgeHostHides.reobserveDirect, {});
+    expect((await relay()).operatorFronts?.remarks).toEqual([`${FIXTURE_NODE}-relay`]);
+    expect((await relay()).directHostAlert).toBeUndefined();
+    // Another entry left out that no look knows stays the critical alarm.
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        withheldEntries: {
+          at: NOW,
+          since: NOW,
+          count: 2,
+          remarks: [`${FIXTURE_NODE}-relay`, 'someone-else'],
+        },
+      }),
+    );
+    const both = (await t.query(internal.edgeOperator.attention, {})).items;
+    expect(both.find((i) => i.kind === 'direct_host_reappeared')).toMatchObject({
+      severity: 'critical',
+      facts: { count: 1, remarks: ['someone-else'] },
+    });
+    expect(both.find((i) => i.kind === 'front_host_unused')?.facts).toEqual({
+      count: 1,
+      remarks: [`${FIXTURE_NODE}-relay`],
+    });
+    // Rollback: the older schema has no such field.
+    expect(await t.mutation(internal.edgeHostHides.clearFrontsForRollback, {})).toEqual({
+      cleared: 1,
+    });
+    expect((await relay()).operatorFronts).toBeUndefined();
+  });
+
+  test('a Host at the node itself, or at an edge, is never a front; nor is one by a name (a failed lookup could hide the node)', async () => {
+    const { t, relayId, relay } = await world({
+      hosts: [
+        ...panelHosts(),
+        {
+          ...front(),
+          uuid: 'f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f3f3',
+          remark: 'by-edge',
+          address: EDGE_A,
+        },
+        {
+          ...front(),
+          uuid: 'f4f4f4f4-f4f4-4f4f-8f4f-f4f4f4f4f4f4',
+          remark: `${FIXTURE_NODE}-relay`,
+          address: 'lb.example.net',
+        },
+      ],
+    });
+    await t.action(internal.edgeHostHides.observe, { relayId });
+    expect((await relay()).operatorFronts).toBeUndefined();
+  });
+});

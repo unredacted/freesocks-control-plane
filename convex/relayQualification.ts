@@ -31,12 +31,17 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { QueryCtx } from './_generated/server';
+import type { ActionCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import { farFutureExpiryIso, type IssuedUser, type UserState } from './lib/backends/types';
+import {
+  farFutureExpiryIso,
+  type IssuedUser,
+  type ObservedModeGroup,
+  type UserState,
+} from './lib/backends/types';
 import { boundedUsername } from './lib/backends/username';
 import { writeAuditLog } from './lib/audit';
 import { randomHex } from './lib/crypto';
@@ -136,8 +141,13 @@ export const ensureContext = internalQuery({
     let resolved: string | null = null;
     if (placement !== undefined) resolved = placement;
     else if (caps.placement) {
+      // FCP's own check credential: an inactive instance (out of the issuance
+      // pool, its members still served) is tested where its nodes are.
       resolved = (
-        await resolvePlacementTarget(ctx.db, slug, { onlyServerId: server._id as string })
+        await resolvePlacementTarget(ctx.db, slug, {
+          onlyServerId: server._id as string,
+          includeInactive: true,
+        })
       ).placement;
     }
     // A Trojan transport's L7 proof authenticates with the account's Trojan
@@ -153,6 +163,14 @@ export const ensureContext = internalQuery({
       backendServerId: server._id,
       placement: resolved,
       modeSlug: slug,
+      // A placement or mode someone chose (the request, the operator's
+      // qualification mode): it stands as it is.
+      chosen: placement !== undefined || !!modeSlug || !!relay.qualificationModeSlug,
+      // The transports the origin protects (its live listeners'): the account
+      // must sit in a mode group holding them all, or the node refuses it there.
+      protectedInbounds: listeners
+        .filter((l) => !l.retired && l.deployed && l.enabled && l.panelBinding)
+        .map((l) => l.panelBinding!.configProfileInboundUuid.toLowerCase()),
       placementRequired: caps.placement,
       lookupSupported: caps.userLookupByUsername,
       op: relay.qualificationMint ?? null,
@@ -177,6 +195,7 @@ export const mintContext = internalQuery({
       relay.qualificationModeSlug ?? (await enrolledModeOf(ctx.db, relay)) ?? null;
     const { placement } = await resolvePlacementTarget(ctx.db, modeId, {
       onlyServerId: server._id as string,
+      includeInactive: true,
     });
     return {
       slug: relay.slug,
@@ -442,6 +461,36 @@ function definitiveCreateFailure(err: unknown): boolean {
   return typeof status === 'number' && status < 500;
 }
 
+/**
+ * Which mode groups of the backend hold every one of `inbounds`, by uuid
+ * (sorted, so the same panel gives the same answer; empty when the panel lists
+ * none that does, or no group at all): `unknown` when the panel could not be
+ * read (never "none"), `unlisted` when the backend has no group listing (mock
+ * mode, no such endpoint): there is nothing to choose from.
+ */
+async function groupsHolding(
+  ctx: { runAction: ActionCtx['runAction'] },
+  backendServerId: Id<'backendServers'>,
+  inbounds: readonly string[],
+): Promise<{ holding: string[] } | 'unknown' | 'unlisted'> {
+  let groups: ObservedModeGroup[] | null;
+  try {
+    groups = await ctx.runAction(internal.backends.listModeGroups, { backendServerId });
+  } catch {
+    return 'unknown';
+  }
+  if (!groups) return 'unlisted';
+  return {
+    holding: groups
+      .filter((g) => {
+        const held = new Set(g.inboundUuids.map((u) => u.toLowerCase()));
+        return inbounds.every((u) => held.has(u));
+      })
+      .map((g) => g.squadUuid)
+      .sort(),
+  };
+}
+
 export interface EnsureResult {
   ok: boolean;
   code?: string;
@@ -470,7 +519,10 @@ export interface EnsureResult {
  * `choose_mode` (a placement backend with no usable placement),
  * `use_manual_setup` (a rehearsal on a backend with no name lookup: Outline),
  * `qualification_credential_unsupported` (the backend mints no protocol
- * credential), `credential_unresolved` (the settle rule is still running).
+ * credential), `credential_unresolved` (the settle rule is still running),
+ * `mode_groups_unknown` (the panel's groups could not be read for a first
+ * mint: retried), `no_group_holds_transports` (the panel lists its groups and
+ * none holds every transport the origin protects).
  */
 export const ensure = internalAction({
   args: {
@@ -490,6 +542,43 @@ export const ensure = internalAction({
       });
     let c = await read();
     if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    // A test entry built from a transport carries this account, and the node
+    // accepts it there only from a mode group holding that transport. Unless a
+    // placement or mode was chosen, a group the panel says holds every
+    // transport the origin protects wins over the default (or the enrolled
+    // mode's group, when it lacks one); the group a stored account already sits
+    // in is kept while it still holds them. A panel that cannot be read keeps
+    // the stored account's group (unknown is not "none": no re-mint over an
+    // outage). With no stored account either, nothing is minted until the
+    // groups can be read (`mode_groups_unknown`, retried): an account in a group
+    // without the transport would make every test link fail at the node.
+    if (!c.chosen && c.placementRequired && c.protectedInbounds.length > 0) {
+      const groups = await groupsHolding(ctx, c.backendServerId, c.protectedInbounds);
+      const stored = c.op?.state === 'stored' && c.stored ? c.op.placement : null;
+      if (groups === 'unknown' && !stored)
+        return { ok: false, code: 'mode_groups_unknown', reused: false };
+      // The panel lists its groups and none holds them all: some transport
+      // could never be tested with this account, wherever it is made.
+      if (groups !== 'unknown' && groups !== 'unlisted' && groups.holding.length === 0)
+        return { ok: false, code: 'no_group_holds_transports', reused: false };
+      const holding = groups === 'unknown' || groups === 'unlisted' ? null : groups.holding;
+      const placement =
+        groups === 'unknown'
+          ? stored
+          : !holding || holding.includes(c.placement ?? '')
+            ? null
+            : stored && holding.includes(stored)
+              ? stored
+              : holding[0]!;
+      if (placement && placement !== c.placement) {
+        c = await ctx.runQuery(internal.relayQualification.ensureContext, {
+          relayId: a.relayId,
+          placement,
+          ...(c.modeSlug ? { modeSlug: c.modeSlug } : {}),
+        });
+        if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+      }
+    }
     // The empty-node rehearsal body must come from a REAL placement (the node's
     // mode group), or it proves nothing about the node; the operator's explicit
     // qualification mint keeps minting on the backend default as before.

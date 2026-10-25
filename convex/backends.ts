@@ -42,6 +42,7 @@ import type {
   UsageSeries,
   UserState,
   BackendHost,
+  ObservedModeGroup,
   BackendTransport,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
@@ -433,6 +434,29 @@ export const listHosts = internalAction({
       return await provider.listHosts(server.config as BackendConfig);
     } catch (err) {
       throw panelReadFailure('the Host listing', err);
+    }
+  },
+});
+
+/**
+ * The backend's mode groups and the transports each holds, read live (FCP's
+ * own check account goes in one that holds every transport an origin
+ * protects). Read-only. Null: the backend has no such listing (mock mode, a
+ * backend without one, a panel that answers 404 for it); a failed read throws.
+ */
+export const listModeGroups = internalAction({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }): Promise<ObservedModeGroup[] | null> => {
+    if (mockBackendEnabled()) return null;
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.listModeGroups) return null;
+    try {
+      return await provider.listModeGroups(server.config as BackendConfig);
+    } catch (err) {
+      if (isRemnawaveNotFound(err)) return null;
+      throw panelReadFailure('the mode group listing', err);
     }
   },
 });

@@ -740,6 +740,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           .filter((x) => x.length > 0)
       : null;
     const setOptions = pickOptionsOf(body);
+    // The public address of a node FCP does not manage (the plan checks it).
+    const givenOrigin =
+      typeof body.originAddress === 'string' && body.originAddress.trim()
+        ? { originAddress: body.originAddress.trim().slice(0, 253) }
+        : {};
     if (b === 'plan' && !c) {
       return json(
         await ctx.runAction(internal.edgeSetupPlan.plan, {
@@ -748,6 +753,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...listenerKeys,
           ...(picks && picks.length > 0 ? { picks } : {}),
           ...setOptions,
+          ...givenOrigin,
         }),
       );
     }
@@ -771,6 +777,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           planHash: String(body.planHash ?? ''),
           approvedHideUuids: uuids,
           ...(body.keepDirect === true ? { keepDirect: true } : {}),
+          ...givenOrigin,
           ...act,
         }),
       );

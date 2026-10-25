@@ -162,6 +162,34 @@ export function classifyDirectHosts(
 }
 
 /**
+ * A node's OPERATOR FRONTS: enabled Hosts on a protected transport that dial
+ * an IP that is neither the node (by any address it is known by) nor an
+ * address of the origin's own edges, and are not FCP's (a listener remark, an
+ * adopted Host). They are a front the operator built by hand, such as a load
+ * balancer at its own public address. Members get them until the node is bound
+ * to its edges; from then on a member render leaves them out (`withheld`), so
+ * they can be deleted at their provider. A Host by a NAME is never one: a
+ * lookup that failed would leave the node itself looking like a front, so it
+ * keeps the fail-closed alert. `fcpRemarks` here are the listeners' own: the
+ * origin convention (`relayRemarkRegex`) also matches the bare `<node>-relay`
+ * an operator gives such a Host.
+ */
+export function operatorFrontHosts(
+  hosts: readonly BackendHost[],
+  ctx: DirectHostContext & { edgeAddresses?: readonly string[] },
+): BackendHost[] {
+  const covered = lower(ctx.coveredInboundUuids);
+  const known = [ctx.originAddress, ...(ctx.alsoAddresses ?? []), ...(ctx.edgeAddresses ?? [])];
+  return hosts.filter((h) => {
+    const inbound = h.inbound?.configProfileInboundUuid?.toLowerCase();
+    if (h.isDisabled || !inbound || !covered.has(inbound)) return false;
+    if (canonicalIp(h.address) === null) return false;
+    if (known.some((a) => sameAddress(h.address, a))) return false;
+    return !ctx.fcpRemarks.includes(h.remark) && !ctx.legacyHostUuids.includes(h.uuid);
+  });
+}
+
+/**
  * The Hosts of this node that matter to delivery: its direct Hosts (enabled or
  * disabled) and FCP's own, with their `isDisabled` bit. Hashed so two listings
  * taken around a slow operation can be compared for identity.

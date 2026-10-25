@@ -33,7 +33,8 @@ import type { Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { panelDigestKey } from './lib/backend/key';
-import type { BackendHost } from './lib/backends/types';
+import type { BackendHost, PanelInboundTestParams } from './lib/backends/types';
+import type { BackendId } from './lib/backendIds';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import { sameAddress } from './lib/edges/hosts';
 import { hostPort } from './lib/edges/ip';
@@ -121,27 +122,17 @@ export const context = internalQuery({
       streamTransport: listener.streamTransport,
       security: listener.security,
     };
-    // An ENROLLED node's transport has no Host before its first publication
-    // (FCP creates a fronted node's Host only when it publishes), so the
-    // credential's body carries no entry to template from. For a REALITY
-    // listener (raw, or XHTTP under REALITY) the entry is built from the
-    // transport's live parameters, as the direct test link is
-    // (nodeActivation.buildDirectTestLink).
-    const origin = relay.origin;
-    const enrolled =
-      origin.kind === 'panel-node' &&
-      !!(await ctx.db
-        .query('panelNodeIntents')
-        .withIndex('by_server_name', (q) =>
-          q.eq('backendServerId', relay.backendServerId!).eq('name', origin.nodeName),
-        )
-        .unique());
+    // A panel node's transport may have no Host at the origin before its
+    // first publication: an ENROLLED node's Host is FCP's own and comes with
+    // it, and members of a node the operator fronts by hand dial the front's
+    // Host, never the node's. The credential's body then carries no entry to
+    // template from. For a REALITY listener (raw, or XHTTP under REALITY) the
+    // entry is built from the transport's live parameters, as the direct test
+    // link is (nodeActivation.buildDirectTestLink).
     const synth =
-      enrolled &&
+      relay.origin.kind === 'panel-node' &&
       listener.panelBinding &&
-      listener.protocol === 'vless' &&
-      listener.security === 'reality' &&
-      (listener.streamTransport === 'raw' || listener.streamTransport === 'xhttp')
+      synthesizable(listener, server.backend)
         ? {
             backend: server.backend,
             config: server.config,
@@ -186,6 +177,60 @@ export const context = internalQuery({
 });
 
 type Ctx = FunctionReturnType<typeof internal.edgeTestLinks.context>;
+
+/**
+ * Whether the test link can build this transport's entry itself, from its
+ * live REALITY parameters (raw TCP, or XHTTP under REALITY) read from a
+ * backend that can read them, so no Host is needed for it.
+ */
+export function synthesizable(proto: ListenerProto, backend: BackendId): boolean {
+  return (
+    proto.protocol === 'vless' &&
+    proto.security === 'reality' &&
+    (proto.streamTransport === 'raw' || proto.streamTransport === 'xhttp') &&
+    !!PROVIDERS[backend].backendWrites
+  );
+}
+
+/**
+ * Where the test link of a not yet published load balancer address of this
+ * transport would take its entry from (`build`, the same order as
+ * `selectTestEntry`): the ONE Host on the transport at the origin address and
+ * port, else the ONE Host of the listener's own (`host`); the entry built from
+ * the transport itself when neither is there (`synthesized`); or nowhere
+ * (null): two such Hosts are ambiguous, which the test link refuses, and the
+ * run would stop at its test card after the address was bought. `hosts` null:
+ * a backend without Hosts, whose body is matched by the origin address and
+ * port alone (`host`, as far as a plan can tell).
+ */
+export function testLinkSourceOf(
+  spec: ListenerProto & {
+    originPort: number;
+    panelBinding?: { configProfileInboundUuid: string } | null;
+  },
+  a: {
+    backend: BackendId;
+    hosts: readonly BackendHost[] | null;
+    originAddress: string;
+    ownRemarks: readonly string[];
+  },
+): 'host' | 'synthesized' | null {
+  if (a.hosts === null) return 'host';
+  const inbound = spec.panelBinding?.configProfileInboundUuid.toLowerCase() ?? null;
+  const onInbound = a.hosts.filter(
+    (h) =>
+      !h.isDisabled &&
+      inbound !== null &&
+      (h.inbound?.configProfileInboundUuid ?? '').toLowerCase() === inbound,
+  );
+  const direct = onInbound.filter(
+    (h) => sameAddress(h.address, a.originAddress) && h.port === spec.originPort,
+  );
+  if (direct.length > 0) return direct.length === 1 ? 'host' : null;
+  const own = onInbound.filter((h) => a.ownRemarks.includes(h.remark));
+  if (own.length > 0) return own.length === 1 ? 'host' : null;
+  return spec.panelBinding && synthesizable(spec, a.backend) ? 'synthesized' : null;
+}
 
 /**
  * The test-only matcher: the ONE line of a link-list body that is the
@@ -265,9 +310,38 @@ async function synthesizedEntry(
     synth.tag,
     (await panelDigestKey()).key,
   );
-  if (!params) return null;
+  if (!usableTestParams(params)) return null;
   return realityEntryLine(uuid, c.originAddress, c.originPort, params, synth.remark, synth.stream);
 }
+
+/** Live REALITY parameters a test entry can be built from: a public key and a server name. */
+export function usableTestParams(
+  params: PanelInboundTestParams | null,
+): params is PanelInboundTestParams {
+  return !!params && !!params.publicKey && params.serverNames.length > 0;
+}
+
+/**
+ * Whether the test link could build this transport's entry from the panel now
+ * (`synthesizedEntry`): the protect plan asks before a load balancer for it is
+ * bought, so a transport the panel no longer describes, or describes with no
+ * key, is refused there rather than at the test card.
+ */
+export const synthesisReady = internalAction({
+  args: { backendServerId: v.id('backendServers'), profileUuid: v.string(), tag: v.string() },
+  handler: async (ctx, a): Promise<boolean> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: a.backendServerId });
+    const writes = server ? PROVIDERS[server.backend].backendWrites : undefined;
+    if (!server || !writes) return false;
+    const params = await writes.readInboundForTest(
+      server.config as BackendConfig,
+      a.profileUuid,
+      a.tag,
+      (await panelDigestKey()).key,
+    );
+    return usableTestParams(params);
+  },
+});
 
 /** The stream of a REALITY transport: raw TCP, or XHTTP with its path and mode. */
 export type RealityStream = { kind: 'raw' } | { kind: 'xhttp'; path: string; mode: string };
@@ -333,7 +407,11 @@ export const build = internalAction({
         message:
           cred.code === 'test_account_used_up'
             ? 'The test account is used up and could not be reset'
-            : 'No test credential is available for this origin',
+            : cred.code === 'mode_groups_unknown'
+              ? "The panel's mode groups could not be read yet, so no test account was made"
+              : cred.code === 'no_group_holds_transports'
+                ? 'No mode group on the panel holds every transport this protection covers'
+                : 'No test credential is available for this origin',
       });
     const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
       backend: cred.fetchRef.backend,

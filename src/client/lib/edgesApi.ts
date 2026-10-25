@@ -352,6 +352,8 @@ export const planSetupRun = (
   listenerKeys?: string[],
   picks?: string[],
   pickOptions?: Record<string, Record<string, unknown>>,
+  /** The public address of a node FCP does not manage. */
+  originAddress?: string | null,
 ) =>
   apiClient.post(
     `${BASE}/setup-runs/plan`,
@@ -361,6 +363,7 @@ export const planSetupRun = (
       ...(listenerKeys ? { listenerKeys } : {}),
       ...(picks && picks.length > 0 ? { picks } : {}),
       ...(pickOptions && Object.keys(pickOptions).length > 0 ? { pickOptions } : {}),
+      ...(originAddress ? { originAddress } : {}),
     },
     SetupPlanResponse,
   );
