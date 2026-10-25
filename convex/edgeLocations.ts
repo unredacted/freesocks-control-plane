@@ -23,6 +23,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader, MutationCtx, QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
+import { MAX_LIVE_EDGES_CEILING } from '../src/shared/contracts/edgeLimits';
 import { EDGE_LIVE_STATUSES, LIVE_EDGE_SCAN_LIMIT } from './lib/edges/pool';
 import {
   placementKeysOf,
@@ -218,8 +219,11 @@ function cleanCostNote(raw: string | undefined): string | undefined {
 }
 
 function checkLocationCap(n: number | undefined): void {
-  if (n !== undefined && (!Number.isInteger(n) || n < 1 || n > 200))
-    throw new ConvexError({ code: 'validation', message: 'maxLiveEdges must be 1..200' });
+  if (n !== undefined && (!Number.isInteger(n) || n < 1 || n > MAX_LIVE_EDGES_CEILING))
+    throw new ConvexError({
+      code: 'validation',
+      message: `maxLiveEdges must be 1..${MAX_LIVE_EDGES_CEILING}`,
+    });
 }
 
 /**

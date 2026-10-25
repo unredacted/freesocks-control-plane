@@ -605,6 +605,16 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.host.released': ['relaySlug', 'listenerKey'],
   'relay.delivery.released': ['relaySlug'],
   'admin.edge.reset': ['phase', 'deleted'],
+  // Operator-run raise of accounts still on an old default limit pair
+  // (`edgeProviderAccounts.raiseOldDefaultLimits`): the limits before and after.
+  'admin.edge.limits_raised': [
+    'name',
+    'provider',
+    'fromMaxLiveEdges',
+    'maxLiveEdges',
+    'fromDailyAllocationBudget',
+    'dailyAllocationBudget',
+  ],
   'admin.edge.render.change': ['changedKeys'],
   'admin.edge.probe.change': ['changedKeys'],
   // `forceGeoEvidence` records that an operator waived the affected-country

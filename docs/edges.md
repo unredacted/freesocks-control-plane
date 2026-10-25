@@ -542,16 +542,16 @@ listener") a published edge, and, on a node with a provider set, what that set r
 coverage-listener count (the admin create and the listener upsert answer `warnings:
 ['edge.pool_raised']` when it did) on every origin create, admin listener add and listener
 re-enable, and the reconcile cron applies it each tick. A pool whose free slots cannot hold the
-deficit is **expanded** within the cap (`desiredPublished = min(16, desired + deficit - free)`,
-audited `edge.pool_expanded`); it is never shrunk. The pool cap is 16 (`MAX_DESIRED_PUBLISHED`)
+deficit is **expanded** within the cap (`desiredPublished = min(64, desired + deficit - free)`,
+audited `edge.pool_expanded`); it is never shrunk. The pool cap is 64 (`MAX_DESIRED_PUBLISHED`)
 and the listener cap 8 (`MAX_COVERAGE_LISTENERS`); both are enforced where the operator can act
 on them rather than clamped silently: a listener body (the create or the CMS upsert) that would
 leave more than eight deployed, enabled listeners is refused (`edge.listener_cap`; a
 pre-existing excess is not made worse), and `relays.update` refuses lowering
 `desiredPublished` below the coverage-listener count, or (with a set) below what is published
 plus the deficit (`edge.pool_below_coverage`). The fleet default `desiredPublishedDefault`
-stays within 1..8. **Reserved allocation** (`allocatePoolIndex`, `convex/lib/edges/pool.ts`,
-used by the rotation's `applyPublish`, the cron's `publishStandby` and both direct publish
+stays within 1..64 (default 2: every address costs money). **Reserved allocation**
+(`allocatePoolIndex`, `convex/lib/edges/pool.ts`, used by the rotation's `applyPublish`, the cron's `publishStandby` and both direct publish
 paths): an edge that lowers the deficit takes the lowest free index; any other edge only while
 the free slots exceed the deficit (`edge.pool_reserved`, a `pool_reserved_standby` rotation
 event), so a second copy for A never takes the slot B is waiting for. A shortfall only a cooling
@@ -1878,6 +1878,15 @@ health was not refreshed for an hour (or 30 polls) shows as `health_stale` on it
 `billable_idle` lists edges that cost money while serving nobody: a quarantined origin's managed
 edges, or an edge parked at `needs_operator` whose resources are still present.
 
+**Account limits.** An account caps its live (not yet destroyed) edges at `maxLiveEdges`
+(1..1000, default 100; `account_capacity_reached`) and its new billable edges per UTC day at
+`dailyAllocationBudget` (1..1000, default 50; the runaway-loop guard). A location may set its
+own `maxLiveEdges` (1..1000, absent = only the account's applies; `location_capacity_reached`).
+The bounds and defaults live in `src/shared/contracts/edgeLimits.ts`, read by the server checks,
+the request contracts and the admin forms alike. Accounts created before these defaults kept
+what they were given; `edgeProviderAccounts:raiseOldDefaultLimits` raises the ones still on an
+old default pair (§ Runbooks).
+
 **Dark members.** Every refusal the subscription route answers under edge-required delivery
 (the 503 with `x-fcp-delivery: <reason>`) is counted per reason in a sharded `appState` counter
 (`edge:refusals:<0..7>`, ten-minute buckets, `convex/deliveryRefusals.ts`): codes and counts
@@ -2814,8 +2823,8 @@ and `edge.burnedDrainMinutes` (default 120) the drain of a burned edge; neither 
 override, and a drain shorter than the hint allows is saved with a warning (§ "How fast members
 move").
 `desiredPublishedDefault` seeds an origin's `desiredPublished`, which is pool state (setup and
-re-protect runs widen it), bounded 1..16 (`MAX_DESIRED_PUBLISHED`); the fleet default stays
-within 1..8.
+re-protect runs widen it), bounded 1..64 (`MAX_DESIRED_PUBLISHED`); the fleet default stays
+within 1..64 and defaults to 2.
 
 The fleet guards: `detect.fleetBreakerPct` (1..100, default 30) and
 `detect.fleetRotationsPerDay` (0..500, default 12); `detect.allowProbeOnlyAutoRotate` defaults
@@ -2986,6 +2995,16 @@ Node pinning understands the origin remark (`convex/lib/nodePinning.ts`), the v1
 and members see the neutral entry name, never the remark.
 
 ## Runbooks
+
+**Raise accounts still on the old default limits.** Accounts were once created with 6 live
+edges and 10 a day (an API create that left the limits out) or 4 and 6 (the admin form's
+pre-filled values). `edgeProviderAccounts:raiseOldDefaultLimits` raises every account that
+still holds exactly one of those pairs to today's defaults (100 live, 50 a day); an account
+where either limit was changed keeps both, and location caps are counted, never changed. It is
+idempotent. Run it with `{"dryRun": true}` (the default) to see `raised` (each account's limits
+before) and `kept`, then with `{"dryRun": false}`; each raised account is audited
+`admin.edge.limits_raised` with its limits before and after. On a stack, run it through the
+deployer container (docs/beta-deploy.md § "One-off functions").
 
 **Qualify a provider account.** Add the account and test its credentials, then:
 

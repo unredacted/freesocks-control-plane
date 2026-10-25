@@ -18,6 +18,12 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
 import { edgeProviderIdValidator, type EdgeProviderId } from './lib/edgeProviderIds';
+import {
+  DAILY_ALLOCATION_CEILING,
+  DEFAULT_DAILY_ALLOCATION_BUDGET,
+  DEFAULT_MAX_LIVE_EDGES,
+  MAX_LIVE_EDGES_CEILING,
+} from '../src/shared/contracts/edgeLimits';
 export { accountOptionDefaultsOf } from './lib/edges/choices';
 import {
   EDGE_NEW_ACCOUNT_SETTINGS,
@@ -330,9 +336,14 @@ function checkLimits(a: {
 }) {
   if (
     a.dailyAllocationBudget !== undefined &&
-    (a.dailyAllocationBudget < 0 || a.dailyAllocationBudget > 1000)
+    (!Number.isInteger(a.dailyAllocationBudget) ||
+      a.dailyAllocationBudget < 0 ||
+      a.dailyAllocationBudget > DAILY_ALLOCATION_CEILING)
   ) {
-    throw new ConvexError({ code: 'validation', message: 'dailyAllocationBudget must be 0..1000' });
+    throw new ConvexError({
+      code: 'validation',
+      message: `dailyAllocationBudget must be 0..${DAILY_ALLOCATION_CEILING}`,
+    });
   }
   // 0 = no daily limit on billable allocations: a runaway loop could then spend
   // without bound. Only a development deployment may say so.
@@ -342,8 +353,16 @@ function checkLimits(a: {
       message: 'dailyAllocationBudget 0 (no daily limit) is allowed only in development',
     });
   }
-  if (a.maxLiveEdges !== undefined && (a.maxLiveEdges < 1 || a.maxLiveEdges > 200)) {
-    throw new ConvexError({ code: 'validation', message: 'maxLiveEdges must be 1..200' });
+  if (
+    a.maxLiveEdges !== undefined &&
+    (!Number.isInteger(a.maxLiveEdges) ||
+      a.maxLiveEdges < 1 ||
+      a.maxLiveEdges > MAX_LIVE_EDGES_CEILING)
+  ) {
+    throw new ConvexError({
+      code: 'validation',
+      message: `maxLiveEdges must be 1..${MAX_LIVE_EDGES_CEILING}`,
+    });
   }
   if (a.priority !== undefined && !Number.isFinite(a.priority)) {
     throw new ConvexError({ code: 'validation', message: 'priority must be a number' });
@@ -734,9 +753,9 @@ export const create = internalMutation({
       // choice is always stored, so the deploy step never reads it as unset.
       ...(edgeRoleOf(a.provider) === 'dns' ? { frontsTraffic: a.frontsTraffic === true } : {}),
       priority: a.priority ?? 0,
-      dailyAllocationBudget: a.dailyAllocationBudget ?? 10,
+      dailyAllocationBudget: a.dailyAllocationBudget ?? DEFAULT_DAILY_ALLOCATION_BUDGET,
       allocationsToday: 0,
-      maxLiveEdges: a.maxLiveEdges ?? 6,
+      maxLiveEdges: a.maxLiveEdges ?? DEFAULT_MAX_LIVE_EDGES,
       updatedAt: now,
     });
     await writeAuditLog(ctx, {
@@ -1718,5 +1737,82 @@ export const restoreDnsFrontingForRollback = internalMutation({
     }
     await upsertSettingRow(ctx, LEGACY_DNS_PROVIDERS_FRONT_KEY, anyFronts ? 'true' : 'false');
     return { cleared, switchOn: anyFronts };
+  },
+});
+
+/**
+ * The limit pairs an account was created with before the defaults were raised,
+ * left as they were: the server's own (an API create without limits) and the
+ * admin form's pre-filled values. Matched as a PAIR, so an account where
+ * either limit was changed afterwards keeps both.
+ */
+export const OLD_DEFAULT_LIMITS: ReadonlyArray<{
+  maxLiveEdges: number;
+  dailyAllocationBudget: number;
+}> = [
+  { maxLiveEdges: 6, dailyAllocationBudget: 10 },
+  { maxLiveEdges: 4, dailyAllocationBudget: 6 },
+];
+
+/**
+ * Operator-run, idempotent: an account still holding one of the old default
+ * limit pairs (`OLD_DEFAULT_LIMITS`) is raised to today's defaults
+ * (`DEFAULT_MAX_LIVE_EDGES` live, `DEFAULT_DAILY_ALLOCATION_BUDGET` a day).
+ * Any other pair is an admin's choice and is left alone. A location never had
+ * a default cap (it is the account's unless an operator set one), so locations
+ * are only counted. `dryRun` (the default) reports and writes nothing; a real
+ * run audits `admin.edge.limits_raised` per account.
+ */
+export const raiseOldDefaultLimits = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  handler: async (ctx, { dryRun }) => {
+    const dry = dryRun !== false;
+    const to = {
+      maxLiveEdges: DEFAULT_MAX_LIVE_EDGES,
+      dailyAllocationBudget: DEFAULT_DAILY_ALLOCATION_BUDGET,
+    };
+    const raised: Array<{
+      id: Id<'edgeProviderAccounts'>;
+      name: string;
+      provider: EdgeProviderId;
+      from: { maxLiveEdges: number; dailyAllocationBudget: number };
+    }> = [];
+    let kept = 0;
+    for (const row of await ctx.db.query('edgeProviderAccounts').collect()) {
+      const old = OLD_DEFAULT_LIMITS.some(
+        (d) =>
+          d.maxLiveEdges === row.maxLiveEdges &&
+          d.dailyAllocationBudget === row.dailyAllocationBudget,
+      );
+      if (!old) {
+        kept++;
+        continue;
+      }
+      const from = {
+        maxLiveEdges: row.maxLiveEdges,
+        dailyAllocationBudget: row.dailyAllocationBudget,
+      };
+      raised.push({ id: row._id, name: row.name, provider: row.provider, from });
+      if (dry) continue;
+      await ctx.db.patch(row._id, { ...to, updatedAt: Date.now() });
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'admin.edge.limits_raised',
+        targetType: 'edge_provider_account',
+        targetId: row._id,
+        payload: {
+          name: row.name,
+          provider: row.provider,
+          fromMaxLiveEdges: from.maxLiveEdges,
+          maxLiveEdges: to.maxLiveEdges,
+          fromDailyAllocationBudget: from.dailyAllocationBudget,
+          dailyAllocationBudget: to.dailyAllocationBudget,
+        },
+      });
+    }
+    let locationCaps = 0;
+    for (const loc of await ctx.db.query('edgeLocations').collect())
+      if (loc.maxLiveEdges !== undefined) locationCaps++;
+    return { dryRun: dry, to, raised, kept, locationCaps };
   },
 });

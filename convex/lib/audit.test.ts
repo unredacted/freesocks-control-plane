@@ -154,6 +154,15 @@ describe('AUDIT_PAYLOAD_ALLOWLIST coverage', () => {
     expect(used.size).toBeGreaterThan(40);
     const missing = [...used].filter((a) => !(a in AUDIT_PAYLOAD_ALLOWLIST)).sort();
     expect(missing).toEqual([]);
+    // The operator-run raise of old default limits records them before and after.
+    expect(AUDIT_PAYLOAD_ALLOWLIST['admin.edge.limits_raised']).toEqual([
+      'name',
+      'provider',
+      'fromMaxLiveEdges',
+      'maxLiveEdges',
+      'fromDailyAllocationBudget',
+      'dailyAllocationBudget',
+    ]);
     // The rotation audit from the provider-adapter work survived the merge.
     expect(AUDIT_PAYLOAD_ALLOWLIST['edge.provider_account.credentials_rotated']).toEqual(
       expect.arrayContaining(['credentialsChanged', 'identifiersChanged', 'qualifiedKept']),

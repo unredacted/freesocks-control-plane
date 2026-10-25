@@ -18,6 +18,10 @@
 import type { DatabaseReader } from '../_generated/server';
 import { resolveCensoredCountries } from './censoredCountries';
 import { drainWarningCodes } from '../../src/shared/contracts/edgeCodes';
+import {
+  MAX_DESIRED_PUBLISHED,
+  MAX_DESIRED_PUBLISHED_DEFAULT,
+} from '../../src/shared/contracts/edgeLimits';
 
 const MIN = 60_000;
 
@@ -81,18 +85,16 @@ export function defaultClientRule(family: RenderClientFamily): ClientRenderRule 
 // --- main config -------------------------------------------------------------
 
 /**
- * The published-pool cap per origin. Coverage needs a slot per deployed
- * listener and, with a provider set, an address per diversity group and per
- * pick (lib/edges/providerSet.ts), so the cap is twice the listener cap: a set
- * whose steady-state cover would exceed it is refused (`edge.set_too_large`).
+ * The published-pool cap per origin and the ceiling of the fleet default pool
+ * size (src/shared/contracts/edgeLimits.ts, shared with the admin forms).
+ * Coverage needs a slot per deployed listener and, with a provider set, an
+ * address per diversity group and per pick (lib/edges/providerSet.ts): a set
+ * whose steady-state cover would exceed the cap is refused (`edge.set_too_large`).
  */
-export const MAX_DESIRED_PUBLISHED = 16;
+export { MAX_DESIRED_PUBLISHED, MAX_DESIRED_PUBLISHED_DEFAULT };
 
 /** Deployed, enabled listeners per origin (`edge.listener_cap`; a guided setup's `too_many_inbounds`). */
 export const MAX_COVERAGE_LISTENERS = 8;
-
-/** The fleet default pool size stays within the listener cap. */
-export const MAX_DESIRED_PUBLISHED_DEFAULT = 8;
 
 export interface EdgeConfig {
   /** Master switch for the detector + automatic actions. Ships OFF. */

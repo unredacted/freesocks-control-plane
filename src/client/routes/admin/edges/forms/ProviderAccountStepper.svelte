@@ -49,6 +49,12 @@
     type EdgeProviderId,
   } from '@shared/contracts/edges';
   import {
+    DAILY_ALLOCATION_CEILING,
+    DEFAULT_DAILY_ALLOCATION_BUDGET,
+    DEFAULT_MAX_LIVE_EDGES,
+    MAX_LIVE_EDGES_CEILING,
+  } from '@shared/contracts/edgeLimits';
+  import {
     createProvider,
     discoverProviderOptions,
     invalidateProviders,
@@ -140,8 +146,8 @@
   /** A DNS provider's account: DNS only (the default) or DNS and fronting. */
   let dnsUse = $state<'dns' | 'front'>('dns');
   let showAdvanced = $state(false);
-  let maxLiveEdges = $state(4);
-  let dailyAllocationBudget = $state(6);
+  let maxLiveEdges = $state(DEFAULT_MAX_LIVE_EDGES);
+  let dailyAllocationBudget = $state(DEFAULT_DAILY_ALLOCATION_BUDGET);
   let priority = $state(10);
   let limitsInvalid = $state({ max: false, budget: false, priority: false });
   let triedNext = $state(false);
@@ -744,7 +750,7 @@
             label="Live edges at most"
             unit="edges"
             min={1}
-            max={100}
+            max={MAX_LIVE_EDGES_CEILING}
             helper="Provisioning stops at this many resources on the account."
             disabled={locked}
           />
@@ -754,7 +760,7 @@
             label="New edges per day"
             unit="edges"
             min={1}
-            max={100}
+            max={DAILY_ALLOCATION_CEILING}
             helper="A daily cap on allocations, so a block storm cannot run up a bill."
             disabled={locked}
           />
