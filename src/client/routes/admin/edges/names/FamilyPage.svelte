@@ -147,8 +147,12 @@
   let bindOpen = $state(false);
   let backends = $state<{ slug: string; name: string }[]>([]);
   let backendSlug = $state('');
-  let transports = $state<{ tag: string; target: string | null }[]>([]);
-  let transportTag = $state('');
+  let transports = $state<
+    { tag: string; uuid: string; target: string | null; names: string[] }[]
+  >([]);
+  let transportUuid = $state('');
+  let takeNames = $state(true);
+  let chosen = $derived(transports.find((t) => t.uuid === transportUuid) ?? null);
 
   async function startBind() {
     bindOpen = true;
@@ -161,17 +165,29 @@
   }
   async function loadInbounds() {
     transports = [];
-    transportTag = '';
+    transportUuid = '';
     if (!backendSlug) return;
     const tree = await run(() => fetchServerTree(backendSlug));
     transports = (tree?.profiles ?? [])
       .flatMap((p) => p.transports)
       .filter((i) => i.security === 'reality')
-      .map((i) => ({ tag: i.tag, target: i.realityTarget }));
-    transportTag = transports[0]?.tag ?? '';
+      .map((i) => ({
+        tag: i.tag,
+        uuid: i.transportUuid,
+        target: i.realityTarget,
+        names: i.serverNames ?? [],
+      }));
+    transportUuid = transports[0]?.uuid ?? '';
   }
   async function bind() {
-    if ((await run(() => bindFamily(slug, backendSlug, transportTag))) !== null) bindOpen = false;
+    const t = chosen;
+    if (!t) return;
+    const done = await run(() =>
+      bindFamily(slug, backendSlug, t.tag, { transportUuid: t.uuid, takeNames }),
+    );
+    if (done === null) return;
+    bindOpen = false;
+    if (done.imported) toast.message(importWords(done.imported).join(' '));
   }
 </script>
 
@@ -240,13 +256,13 @@
           </label>
           <label>
             <span class="text-muted-foreground mb-1 block">REALITY transport</span>
-            <select bind:value={transportTag} class={SELECT}>
-              {#each transports as i (i.tag)}
-                <option value={i.tag}>{i.tag}{i.target ? ` (${i.target})` : ''}</option>
+            <select bind:value={transportUuid} class={SELECT}>
+              {#each transports as i (i.uuid)}
+                <option value={i.uuid}>{i.tag}{i.target ? ` (${i.target})` : ''}</option>
               {/each}
             </select>
           </label>
-          <Button type="submit" size="sm" disabled={busy || !transportTag}>Bind</Button>
+          <Button type="submit" size="sm" disabled={busy || !chosen}>Bind</Button>
           <Button type="button" variant="ghost" size="sm" onclick={() => (bindOpen = false)}>
             Cancel
           </Button>
@@ -255,6 +271,16 @@
               No REALITY transport has been read from this server yet. Refresh it under Servers,
               then come back here.
             </p>
+          {/if}
+          {#if chosen && chosen.names.length > 0}
+            <div class="flex basis-full items-start gap-2">
+              <Checkbox id={`${uid}-take`} bind:checked={takeNames} />
+              <Label for={`${uid}-take`} class="leading-snug font-normal">
+                Take the {chosen.names.length === 1 ? 'name' : `${chosen.names.length} names`} it
+                lists now into this family. Names set by hand are then checked against the target,
+                can be judged per country, and stay on the transport with every write.
+              </Label>
+            </div>
           {/if}
           <p class="text-muted-foreground basis-full">
             The transport's target site has to be this family's. Binding writes nothing yet.

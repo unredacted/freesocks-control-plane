@@ -449,7 +449,8 @@ function assignableFor(
  * assignable edge has (blocked only when nothing else is left), so a member
  * moves only when a tier changes and the modulus spread holds inside a tier;
  * the backup prefers, in order: not blocked, another provider, the better
- * tier, another location, the walk order.
+ * tier, another location, the walk order, and is left out when every
+ * candidate is blocked there while the primary is not.
  */
 export function assignEndpoints(
   subscriberKey: string,
@@ -459,11 +460,17 @@ export function assignEndpoints(
   const pool = [...published].sort((a, b) => a.poolIndex - b.poolIndex);
   if (pool.length === 0) return { primary: null, backup: null };
   if (opts.edgeCountry)
-    return assignByTier(subscriberKey, pool, opts, (e) => edgeTier(e, opts.edgeCountry!));
+    return assignByTier(subscriberKey, pool, opts, (e) => edgeTier(e, opts.edgeCountry!), {
+      dropBlockedBackup: true,
+    });
   if (opts.avoidBlockedIn && opts.avoidBlockedIn.length > 0) {
     const avoid = opts.avoidBlockedIn;
-    return assignByTier(subscriberKey, pool, opts, (e) =>
-      (e.blockedIn ?? []).some((c) => avoid.includes(c)) ? 2 : 1,
+    return assignByTier(
+      subscriberKey,
+      pool,
+      opts,
+      (e) => ((e.blockedIn ?? []).some((c) => avoid.includes(c)) ? 2 : 1),
+      { dropBlockedBackup: false },
     );
   }
   // An edge every one of whose names is excluded for this member's country is
@@ -505,12 +512,19 @@ function differentLocation(a: PublishedEdge, b: PublishedEdge): boolean {
   return !!a.locationKey && !!b.locationKey && a.locationKey !== b.locationKey;
 }
 
-/** The tiered walk of `assignEndpoints` (see there); `ownTier` is an edge's tier where the member is. */
+/**
+ * The tiered walk of `assignEndpoints` (see there); `ownTier` is an edge's tier
+ * where the member is. `dropBlockedBackup`: the member's own country is known,
+ * so a backup blocked THERE behind a primary that is not adds nothing but an
+ * address that fails; it is left out. A mirror without the member's choice
+ * keeps it (its reader may be anywhere).
+ */
 function assignByTier(
   subscriberKey: string,
   pool: readonly PublishedEdge[],
   opts: AssignOptions,
   ownTier: (e: PublishedEdge) => EdgeTier,
+  rule: { dropBlockedBackup: boolean },
 ): Assignment {
   const assignable = pool.map((e) => assignableFor(subscriberKey, e, opts));
   const proven = pool.filter((e, i) => assignable[i] && ownTier(e) === 0).length;
@@ -561,6 +575,9 @@ function assignByTier(
       return 0;
     });
     backupEdge = candidates[0]?.e ?? null;
+    // Blocked ones sort last, so a blocked first candidate means every one is.
+    if (backupEdge && rule.dropBlockedBackup && primaryTier < 2 && ownTier(backupEdge) === 2)
+      backupEdge = null;
   }
   const out = endpointsFor(subscriberKey, primaryEdge, backupEdge, opts);
   return {

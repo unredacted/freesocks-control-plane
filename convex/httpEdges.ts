@@ -643,6 +643,8 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           slug: c,
           backendSlug: parsed.data.backendSlug,
           inboundTag: parsed.data.transportTag,
+          ...(parsed.data.transportUuid ? { inboundUuid: parsed.data.transportUuid } : {}),
+          ...(parsed.data.takeNames ? { importNames: true } : {}),
           ...act,
         }),
       );

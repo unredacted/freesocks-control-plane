@@ -180,6 +180,27 @@ describe('assignEndpoints by tier', () => {
     expect(counts.size).toBe(4);
   });
 
+  test('a backup blocked in the member’s country is left out behind a primary that is not', () => {
+    const pool = four({ 1: { blockedIn: ['IR'] }, 2: { eligible: false }, 3: { eligible: false } });
+    for (let i = 0; i < 200; i++) {
+      const a = assignEndpoints(keyOf(i), pool, { ...OPTS, edgeCountry: 'IR' });
+      expect(a.primary!.edge.edgeId).toBe('e0');
+      expect(a.backup).toBeNull();
+      expect(a.backupTier).toBeUndefined();
+      // Another country still gets both.
+      expect(assignEndpoints(keyOf(i), pool, { ...OPTS, edgeCountry: 'RU' }).backup).not.toBeNull();
+      // A mirror without the member's choice keeps it: its reader may be anywhere.
+      expect(
+        assignEndpoints(keyOf(i), pool, { ...OPTS, avoidBlockedIn: ['IR'] }).backup!.edge.edgeId,
+      ).toBe('e1');
+    }
+    // Every edge blocked there: the primary is blocked too, and so may the backup be.
+    const all = four({ 0: { blockedIn: ['IR'] }, 1: { blockedIn: ['IR'] }, 2: { eligible: false } });
+    const b = assignEndpoints(keyOf(5), all.slice(0, 3), { ...OPTS, edgeCountry: 'IR' });
+    expect(b.primaryTier).toBe(2);
+    expect(b.backupTier).toBe(2);
+  });
+
   test('the backup key: not blocked, another provider, the better tier, another location, the walk', () => {
     const pool = [
       edge({ edgeId: 'e0', poolIndex: 0, provider: 'p1', provenIn: ['IR'], locationKey: 'p1:a' }),

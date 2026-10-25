@@ -47,6 +47,7 @@ import {
 } from './lib/edges/relayGuards';
 import { protocolLabel, protocolUsesSni } from './lib/edges/protocols';
 import { nameRetireKeepsVerification } from './lib/edges/verification';
+import { auditPickForMarks, pickForJudgedNames, withCountryMarks } from './lib/edges/sni/marks';
 
 export type Listener = Doc<'relayListeners'>;
 
@@ -418,14 +419,24 @@ export async function applyRegistration(
   const live = material ? await liveEdgesOfRelay(ctx.db, relay._id) : [];
 
   for (const spec of diff.create) {
-    const names: ListenerName[] = spec.tlsNames.map((n) => ({
-      name: n,
-      status: 'active' as const,
-    }));
-    await ctx.db.insert('relayListeners', specToRow(relay, spec, names, source, now));
+    // Names judged per country before this listener existed carry their marks
+    // from the start (a new listener has no members to move: `hrw1` at once).
+    const names = await withCountryMarks(
+      ctx.db,
+      spec.tlsNames.map((n) => ({ name: n, status: 'active' as const })),
+    );
+    const pick = pickForJudgedNames(undefined, names);
+    await ctx.db.insert('relayListeners', {
+      ...specToRow(relay, spec, names, source, now),
+      ...(pick ? { sniPick: pick } : {}),
+    });
     result.created.push(spec.listenerKey);
   }
-  for (const { existing: ex, spec, merged, namesOnly } of updates) {
+  for (const { existing: ex, spec, merged: raw, namesOnly } of updates) {
+    // An added or reactivated name carries the marks it has now.
+    const merged = { ...raw, next: await withCountryMarks(ctx.db, raw.next) };
+    const pick = pickForJudgedNames(ex.sniPick, merged.next);
+    if (pick !== ex.sniPick) await auditPickForMarks(ctx, ex, pick);
     result.blockedNames.push(...merged.blocked);
     if (namesOnly) {
       // Only REALITY names left the list: exactly what `retireOn` does for an
@@ -434,6 +445,7 @@ export async function applyRegistration(
       // and the stored hash do not (nameRetireKeepsVerification).
       await ctx.db.patch(ex._id, {
         tlsNames: merged.next,
+        ...(pick !== ex.sniPick ? { sniPick: pick } : {}),
         namesRevision: (ex.namesRevision ?? 0) + 1,
         updatedAt: now,
       });
@@ -478,6 +490,7 @@ export async function applyRegistration(
     if (rebound && ex.host) row.host = { state: 'absent' };
     await ctx.db.patch(ex._id, {
       ...row,
+      ...(pick !== ex.sniPick ? { sniPick: pick } : {}),
       deployedAt: rebound || !ex.deployed ? now : ex.deployedAt,
     });
     result.updated.push(spec.listenerKey);
@@ -869,15 +882,25 @@ export const reactivateName = internalMutation({
     await assertNoRotationOrQuarantine(ctx.db, relay);
     const targets = new Set(names.map(normalizeName).filter((n): n is string => !!n));
     let count = 0;
-    const next = (l.tlsNames ?? []).map((n) => {
-      if (targets.has(n.name) && n.status === 'retired') {
-        count++;
-        return { name: n.name, status: 'active' as const };
-      }
-      return n;
-    });
+    const next = await withCountryMarks(
+      ctx.db,
+      (l.tlsNames ?? []).map((n) => {
+        if (targets.has(n.name) && n.status === 'retired') {
+          count++;
+          return { name: n.name, status: 'active' as const };
+        }
+        return n;
+      }),
+    );
     if (count > 0) {
-      await ctx.db.patch(id, { tlsNames: next, revision: l.revision + 1, updatedAt: Date.now() });
+      const pick = pickForJudgedNames(l.sniPick, next);
+      await ctx.db.patch(id, {
+        tlsNames: next,
+        ...(pick !== l.sniPick ? { sniPick: pick } : {}),
+        revision: l.revision + 1,
+        updatedAt: Date.now(),
+      });
+      if (pick !== l.sniPick) await auditPickForMarks(ctx, l, pick);
       await bumpEpochAndRefresh(ctx, relay);
     }
     await writeAuditLog(ctx, {

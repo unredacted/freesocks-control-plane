@@ -134,7 +134,17 @@ export const SniBinding = z.object({
 export type SniBinding = z.infer<typeof SniBinding>;
 
 /** `POST …/families/{slug}/bind`: bind a family to one REALITY transport of a backend. */
-export const SniBindRequest = z.object({ backendSlug: z.string(), transportTag: z.string() });
+export const SniBindRequest = z.object({
+  backendSlug: z.string(),
+  transportTag: z.string(),
+  /** The exact transport (a tag is unique per profile only). */
+  transportUuid: z.string().optional(),
+  /**
+   * Take the names the transport lists now into the family: a transport whose
+   * names were set by hand (a node FCP does not manage, an adopted node).
+   */
+  takeNames: z.boolean().optional(),
+});
 export type SniBindRequest = z.infer<typeof SniBindRequest>;
 
 export const SniFamilyDetail = z.object({
@@ -163,6 +173,10 @@ export const SniImportResult = z.object({
   ),
 });
 export type SniImportResult = z.infer<typeof SniImportResult>;
+
+/** `POST families/{slug}/bind`: the binding, and with `takeNames` what became of each name. */
+export const SniBindResult = z.object({ id: z.string(), imported: SniImportResult.optional() });
+export type SniBindResult = z.infer<typeof SniBindResult>;
 
 /** What the next rollout of a binding would write. Names only. */
 export const SniRolloutPlan = z
