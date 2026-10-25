@@ -91,7 +91,13 @@ export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<{ checked: number; ok: number }> =>
     runWithCronOutcome(ctx, 'sni-qualify', async () => {
-      const { names, networks } = await ctx.runQuery(internal.sniFamilies.dueForQualification, {});
+      const { names, networks, defer } = await ctx.runQuery(
+        internal.sniFamilies.dueForQualification,
+        {},
+      );
+      // What the pass walked past steps out of the head of the queue.
+      if (defer.length > 0)
+        await ctx.runMutation(internal.sniFamilies.deferQualification, { names: defer });
       let ok = 0;
       const dialled = new Map<string, Awaited<ReturnType<typeof dialAddress>>>();
       for (const n of names) {

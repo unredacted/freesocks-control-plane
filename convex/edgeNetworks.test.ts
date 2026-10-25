@@ -22,6 +22,8 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { __setNetworkFetchForTests } from './edgeNetworks';
+import { selectionContext } from './edgeRotations';
+import { resolveEdgeConfig } from './lib/edgeConfig';
 import { carries } from './lib/edges/setState';
 import {
   adoptL4Edge,
@@ -277,6 +279,87 @@ describe('a transport scoped to a network', () => {
     ).toBe('edge.sni.network_bound');
     await call('DELETE', `sni/bindings/${id}`);
     expect(await scoped()).toEqual([null, null]);
+  });
+
+  test('a spare off the network is never the standby a rotation takes', async () => {
+    const { t, call, relay } = await bound();
+    expect((await bind(call)).status).toBe(200);
+    const select = () =>
+      t.run(async (ctx) =>
+        selectionContext(
+          ctx,
+          {
+            kind: 'provision',
+            trigger: 'manual',
+            listenerId: relay.listenerId,
+            publishOnDone: true,
+          },
+          (await ctx.db.get(relay.relayId))!,
+          null,
+          await resolveEdgeConfig(ctx.db),
+        ),
+      );
+    // A tested spare from before the transport was scoped, off its network.
+    const healthy = (id: string) =>
+      t.run((ctx) => ctx.db.patch(id as Id<'edges'>, { health: 'online' }));
+    const off = await adoptL4Edge(t, relay.relayId, relay.listenerId, { ipv4: '198.51.100.9' });
+    await healthy(off.edgeId);
+    expect((await select()).standbyId).toBeNull();
+    const on = await adoptL4Edge(t, relay.relayId, relay.listenerId, { ipv4: '192.0.2.9' });
+    await healthy(on.edgeId);
+    expect((await select()).standbyId).toBe(on.edgeId);
+  });
+
+  test('when its ranges move, every name of a family on it is checked again; with none, addresses in use are named', async () => {
+    const { t, call, relay } = await bound();
+    await call('POST', 'sni/families/fam-a/names', { lines: ['a.example'] });
+    const name = async () =>
+      t.run(
+        async (ctx) =>
+          (await ctx.db
+            .query('sniNames')
+            .withIndex('by_name', (q) => q.eq('name', 'a.example'))
+            .unique())!,
+      );
+    await t.mutation(internal.sniFamilies.recordQualification, {
+      id: (await name())._id,
+      ok: true,
+      tlsVersion: 'TLSv1.3',
+    });
+    expect((await name()).checkedAt).toBeGreaterThan(0);
+    await call('PATCH', 'networks/net-a', { manualPrefixes: ['192.0.2.0/24', '203.0.113.0/24'] });
+    const scheduled = await t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).map((f) => f.name),
+    );
+    expect(scheduled.some((n) => n.includes('requeueFamilyNames'))).toBe(true);
+    const fam = await t.run(
+      async (ctx) =>
+        (await ctx.db
+          .query('sniFamilies')
+          .withIndex('by_slug', (q) => q.eq('slug', 'fam-a'))
+          .unique())!,
+    );
+    await t.mutation(internal.edgeNetworks.requeueFamilyNames, { familyId: fam._id });
+    expect((await name()).checkedAt).toBe(0);
+    // A network left with no ranges: the address in use is named, whatever it is.
+    expect((await bind(call)).status).toBe(200);
+    const inUse = await adoptL4Edge(t, relay.relayId, relay.listenerId, {
+      ipv4: '192.0.2.7',
+      publish: true,
+    });
+    await t.run(async (ctx) => {
+      const n = (await ctx.db
+        .query('edgeNetworks')
+        .withIndex('by_slug', (q) => q.eq('slug', 'net-a'))
+        .unique())!;
+      await ctx.db.patch(n._id, { manualPrefixes: [], prefixes: { v4: [], v6: [] } });
+    });
+    const items = (await t.query(internal.edgeOperator.attention, {})).items.filter(
+      (i: { kind: string }) => i.kind === 'edge_off_network',
+    );
+    expect(
+      items.map((i: { edgeId: string | null; code: string | null }) => [i.edgeId, i.code]),
+    ).toEqual([[inUse.edgeId, 'network_no_ranges']]);
   });
 
   test('an address off the network is never published there; one that falls off is named', async () => {

@@ -33,6 +33,7 @@ import { runWithCronOutcome } from './cronHeartbeat';
 import { assertAdmission } from './lib/edges/maintenance';
 import {
   announcedPrefixesUrl,
+  combinePrefixes,
   edgeNetworkVerdict,
   hasPrefixes,
   MAX_MANUAL_PREFIXES,
@@ -42,6 +43,7 @@ import {
   normalizeAsn,
   normalizePrefix,
   parseAnnouncedPrefixes,
+  samePrefixes,
   type NetworkPrefixes,
   type NetworkRefreshError,
 } from './lib/edges/networks';
@@ -54,6 +56,10 @@ const REFRESH_TIMEOUT_MS = 15_000;
 const MAX_ANSWER_BYTES = 16 * 1024 * 1024;
 /** Networks refreshed per cron pass (each is one request per ASN). */
 const REFRESH_PER_PASS = 4;
+/** Networks a deployment may hold: every list, refresh and learning pass reads them all. */
+export const MAX_NETWORKS = 200;
+/** Names marked due per page when a network's ranges move. */
+const REQUEUE_PAGE = 500;
 
 function refuse(code: string, message: string): never {
   throw new ConvexError({ code, message });
@@ -115,15 +121,61 @@ function cleanManual(raw: unknown): string[] {
 }
 
 function combined(n: Pick<Network, 'announced' | 'manualPrefixes'>) {
-  return mergePrefixes([[...n.announced.v4, ...n.announced.v6], n.manualPrefixes]);
+  return combinePrefixes([...n.announced.v4, ...n.announced.v6], n.manualPrefixes);
 }
+
+/**
+ * A network's effective ranges moved: every name of a family on it is due for
+ * qualification again (a name qualified against the old ranges may now resolve
+ * off the network), and every location may belong elsewhere now.
+ */
+async function rangesMoved(
+  ctx: MutationCtx,
+  networkId: Id<'edgeNetworks'>,
+  before: NetworkPrefixes,
+  after: NetworkPrefixes,
+): Promise<void> {
+  if (samePrefixes(before, after)) return;
+  for (const f of await ctx.db
+    .query('sniFamilies')
+    .withIndex('by_network', (q) => q.eq('networkId', networkId))
+    .collect())
+    await ctx.scheduler.runAfter(0, internal.edgeNetworks.requeueFamilyNames, {
+      familyId: f._id,
+    });
+  await ctx.scheduler.runAfter(0, internal.edgeNetworks.learnLocations, {});
+}
+
+/** Names of one family due for qualification again, a page at a time (it may hold thousands). */
+export const requeueFamilyNames = internalMutation({
+  args: { familyId: v.id('sniFamilies'), afterSeq: v.optional(v.number()) },
+  handler: async (ctx, { familyId, afterSeq }) => {
+    const page = await ctx.db
+      .query('sniNames')
+      .withIndex('by_family_seq', (q) =>
+        afterSeq === undefined
+          ? q.eq('familyId', familyId)
+          : q.eq('familyId', familyId).gt('seq', afterSeq),
+      )
+      .take(REQUEUE_PAGE);
+    for (const n of page)
+      if ((n.status === 'active' || n.status === 'suspended') && n.checkedAt !== 0)
+        await ctx.db.patch(n._id, { checkedAt: 0, updatedAt: Date.now() });
+    if (page.length === REQUEUE_PAGE)
+      await ctx.scheduler.runAfter(0, internal.edgeNetworks.requeueFamilyNames, {
+        familyId,
+        afterSeq: page[page.length - 1]!.seq,
+      });
+    return { requeued: page.length };
+  },
+});
 
 // --- admin view ---------------------------------------------------------------------------------
 
 export const list = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const networks = await ctx.db.query('edgeNetworks').take(200);
+    const networks = await ctx.db.query('edgeNetworks').take(MAX_NETWORKS);
     const out = [];
     for (const n of networks) {
       const families = await ctx.db
@@ -180,6 +232,8 @@ export const create = internalMutation({
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
     if (exists) refuse('conflict', 'A network with that short id exists');
+    if ((await ctx.db.query('edgeNetworks').take(MAX_NETWORKS)).length >= MAX_NETWORKS)
+      refuse('edge.network.cap', `A deployment holds at most ${MAX_NETWORKS} networks`);
     const asns = cleanAsns(a.asns);
     const manualPrefixes = cleanManual(a.manualPrefixes);
     assertDefined(asns, manualPrefixes);
@@ -194,7 +248,10 @@ export const create = internalMutation({
       prefixes: { v4: merged.v4, v6: merged.v6 },
       updatedAt: Date.now(),
     });
-    await ctx.scheduler.runAfter(0, internal.edgeNetworks.refresh, { slug });
+    if (asns.length > 0) await ctx.scheduler.runAfter(0, internal.edgeNetworks.refresh, { slug });
+    // Ranges by hand are effective at once: locations can learn them now.
+    if (manualPrefixes.length > 0)
+      await ctx.scheduler.runAfter(0, internal.edgeNetworks.learnLocations, {});
     await audit(ctx, 'edge.network.create', a.actorAdminId, { slug, asns: asns.length });
     return { id: id as string, slug };
   },
@@ -238,7 +295,9 @@ export const update = internalMutation({
     patch.prefixes = { v4: merged.v4, v6: merged.v6 };
     patch.truncated = merged.truncated || undefined;
     await ctx.db.patch(n._id, patch);
-    if (asnsMoved) await ctx.scheduler.runAfter(0, internal.edgeNetworks.refresh, { slug: n.slug });
+    await rangesMoved(ctx, n._id, n.prefixes, patch.prefixes);
+    if (asnsMoved && (patch.asns ?? n.asns).length > 0)
+      await ctx.scheduler.runAfter(0, internal.edgeNetworks.refresh, { slug: n.slug });
     await audit(ctx, 'edge.network.update', a.actorAdminId, {
       slug: n.slug,
       asns: (patch.asns ?? n.asns).length,
@@ -307,7 +366,8 @@ export const setLocationNetwork = internalMutation({
       targetId: loc._id,
       payload: { placeKey: loc.placeKey, network: a.network ?? 'none' },
     });
-    if (networkId) await ctx.scheduler.runAfter(0, internal.edgeNetworks.learnLocations, {});
+    // Cleared, its addresses may teach it a network again; set, nothing else moves.
+    if (!networkId) await ctx.scheduler.runAfter(0, internal.edgeNetworks.learnLocations, {});
     return { ok: true as const };
   },
 });
@@ -335,7 +395,7 @@ export const dueForRefresh = internalQuery({
   handler: async (ctx, { slug, now }) => {
     const rows = slug
       ? [await bySlug(ctx.db, slug)]
-      : (await ctx.db.query('edgeNetworks').take(200))
+      : (await ctx.db.query('edgeNetworks').take(MAX_NETWORKS))
           .filter((n) => !n.refreshTriedAt || now - n.refreshTriedAt >= NETWORK_REFRESH_MS)
           .sort((a, b) => (a.refreshTriedAt ?? 0) - (b.refreshTriedAt ?? 0))
           .slice(0, REFRESH_PER_PASS);
@@ -381,6 +441,7 @@ export const recordRefresh = internalMutation({
       refreshError: undefined,
       updatedAt: now,
     });
+    await rangesMoved(ctx, n._id, n.prefixes, { v4: merged.v4, v6: merged.v6 });
     return null;
   },
 });
@@ -466,7 +527,7 @@ export const refresh = internalAction({
 export const learnLocations = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const networks = (await ctx.db.query('edgeNetworks').take(200)).filter((n) =>
+    const networks = (await ctx.db.query('edgeNetworks').take(MAX_NETWORKS)).filter((n) =>
       hasPrefixes(n.prefixes),
     );
     let changed = 0;
@@ -474,7 +535,9 @@ export const learnLocations = internalMutation({
       if (loc.networkSource === 'operator') continue;
       const edges = await ctx.db
         .query('edges')
-        .withIndex('by_location_status', (q) => q.eq('locationId', loc._id))
+        // Live edges only (a destroyed one keeps its address for a while), the
+        // newest first: equal index keys order by creation.
+        .withIndex('by_location_status', (q) => q.eq('locationId', loc._id).eq('status', 'active'))
         .order('desc')
         .take(10);
       const addressed = edges.filter(

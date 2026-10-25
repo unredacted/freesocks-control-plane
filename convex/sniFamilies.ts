@@ -409,6 +409,7 @@ export const update = internalMutation({
     if (a.label !== undefined) patch.label = a.label.trim().slice(0, 80) || f.slug;
     if (a.enabled !== undefined) patch.enabled = a.enabled;
     let recheck = false;
+    let networkMoved = false;
     if (a.requireH2 !== undefined && a.requireH2 !== f.requireH2) {
       patch.requireH2 = a.requireH2;
       recheck = true;
@@ -427,13 +428,33 @@ export const update = internalMutation({
           );
         patch.networkId = networkId ?? undefined;
         recheck = true;
+        networkMoved = true;
       }
     }
-    // The bar moved: every name is judged again.
+    // The bar moved: every name is judged again. A new network is a new claim
+    // about every name (where it lives), so none counts as qualified until it
+    // was checked against it: a rebind must not hand out names judged under
+    // the old one.
     if (recheck)
       for (const n of await namesOf(ctx, f._id))
         if (n.status === 'active' || n.status === 'suspended')
-          await ctx.db.patch(n._id, { checkedAt: 0, updatedAt: Date.now() });
+          await ctx.db.patch(n._id, {
+            checkedAt: 0,
+            ...(networkMoved
+              ? {
+                  qualification: {
+                    state: 'pending' as const,
+                    consecutiveFails: n.qualification.consecutiveFails,
+                  },
+                }
+              : {}),
+            updatedAt: Date.now(),
+          });
+    // Switched back on: names the qualification walked past meanwhile are due.
+    if (a.enabled === true && !f.enabled && !recheck)
+      await ctx.scheduler.runAfter(0, internal.edgeNetworks.requeueFamilyNames, {
+        familyId: f._id,
+      });
     await ctx.db.patch(f._id, patch);
     await audit(ctx, 'edge.sni.family.update', a.actorAdminId, {
       slug: f.slug,
@@ -705,12 +726,16 @@ export const dueForQualification = internalQuery({
   args: {},
   handler: async (ctx) => {
     const cfg = await resolveSniConfig(ctx.db);
-    if (!cfg.enabled) return { names: [], networks: {} };
+    if (!cfg.enabled) return { names: [], networks: {}, defer: [] };
     const cutoff = Date.now() - cfg.requalifyHours * 3_600_000;
-    // Oldest-checked first, walked past what is not checked now (a retired or
-    // burned name, a switched-off family, a network without ranges yet) so
-    // those can never crowd out the names that are due. Bounded.
+    // Oldest-checked first. What is not checked now (a retired or burned name,
+    // a switched-off family, a network without ranges yet) is walked past and
+    // handed back to be deferred (`deferQualification`), so it leaves the head
+    // of the queue and can never crowd out the names that are due. Whatever
+    // makes such a name checkable again marks it due itself (a reactivation, a
+    // family switched back on, a network's ranges moving).
     const due = ctx.db.query('sniNames').withIndex('by_checked', (q) => q.lt('checkedAt', cutoff));
+    const defer: { id: Id<'sniNames'>; checkedAt: number }[] = [];
     let scanned = 0;
     const out: {
       id: Id<'sniNames'>;
@@ -726,16 +751,26 @@ export const dueForQualification = internalQuery({
     const networks = new Map<string, NetworkPrefixes | null>();
     for await (const n of due) {
       if (++scanned > QUALIFY_SCAN_CAP) break;
-      if (n.status !== 'active' && n.status !== 'suspended') continue;
+      const skip = () => defer.push({ id: n._id, checkedAt: n.checkedAt });
+      if (n.status !== 'active' && n.status !== 'suspended') {
+        skip();
+        continue;
+      }
       const key = n.familyId as string;
       if (!families.has(key)) families.set(key, await ctx.db.get(n.familyId));
       const f = families.get(key);
-      if (!f || !f.enabled) continue;
+      if (!f || !f.enabled) {
+        skip();
+        continue;
+      }
       if (f.networkId) {
         const nk = f.networkId as string;
         if (!networks.has(nk)) networks.set(nk, await networkPrefixes(ctx.db, f.networkId));
         // Nothing to compare with yet: the name waits (it is never failed for it).
-        if (!networks.get(nk)) continue;
+        if (!networks.get(nk)) {
+          skip();
+          continue;
+        }
       }
       out.push({
         id: n._id,
@@ -753,7 +788,28 @@ export const dueForQualification = internalQuery({
       networks: Object.fromEntries(
         [...networks].filter(([k, p]) => used.has(k) && p) as [string, NetworkPrefixes][],
       ),
+      defer,
     };
+  },
+});
+
+/**
+ * Names the qualification pass walked past (not checkable now) step out of the
+ * head of the queue: their `checkedAt` becomes now, their state stays. A name
+ * whose `checkedAt` moved since it was read (marked due, checked) is left alone.
+ */
+export const deferQualification = internalMutation({
+  args: { names: v.array(v.object({ id: v.id('sniNames'), checkedAt: v.number() })) },
+  handler: async (ctx, { names }) => {
+    const now = Date.now();
+    let deferred = 0;
+    for (const { id, checkedAt } of names) {
+      const n = await ctx.db.get(id);
+      if (!n || n.checkedAt !== checkedAt) continue;
+      await ctx.db.patch(id, { checkedAt: now, updatedAt: now });
+      deferred++;
+    }
+    return { deferred };
   },
 });
 

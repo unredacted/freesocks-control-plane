@@ -157,6 +157,8 @@ import { defaultLocationOf, liveCountForLocation, locationsOfAccount } from './e
 import { SPEND_CAP_REACHED, capRefusal, edgeCostAt, spendOf } from './edgePlans';
 import { atCap, passesCap, sizeKeyOf, sizeOf } from './lib/edges/pricing';
 import { l7PlaceOf, placeProblemOf } from './lib/edges/l7Place';
+import { networkPrefixes } from './edgeNetworks';
+import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -3017,6 +3019,14 @@ export async function selectionContext(
     : null;
   const skipLocations = new Set<string>();
   const standbyCandidates = [];
+  // A transport scoped to a network takes a spare only from it (docs/edges.md "Networks").
+  const rangesOf = new Map<string, NetworkPrefixes | null>();
+  const onItsNetwork = async (e: Doc<'edges'>, l: Doc<'relayListeners'> | undefined) => {
+    if (!l?.networkId) return true;
+    const key = l.networkId as string;
+    if (!rangesOf.has(key)) rangesOf.set(key, await networkPrefixes(ctx.db, l.networkId));
+    return edgeNetworkVerdict(e.addresses, rangesOf.get(key)) === 'on';
+  };
   for (const e of edges) {
     const slotOfEdge = slotRows.find((s) => s._id === e.listenerId);
     const loc = (e.locationId as string | undefined) ?? null;
@@ -3038,6 +3048,7 @@ export async function selectionContext(
       hasAddress:
         hasPublishableAddress(e) &&
         standbyEligible(e, slotOfEdge) &&
+        (await onItsNetwork(e, slotOfEdge)) &&
         // A load balancer the node already had is left as it is, never reused.
         !((barred || l4Problem) && (e.layer ?? edgeLayerOf(e.provider)) === 'l4') &&
         (edgeRoleOf(e.provider) !== 'dns' ||

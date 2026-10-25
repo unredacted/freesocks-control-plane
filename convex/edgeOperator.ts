@@ -1285,13 +1285,14 @@ export const attention = internalQuery({
       // An address in use on a transport scoped to a network that is not on it
       // (docs/edges.md "Networks"): published before the transport's family was
       // on the network, or re-addressed since. Its names point elsewhere.
+      // A network left with no ranges at all (its ASNs changed, a read found
+      // none) proves nothing about any address: every one in use is named too.
       for (const l of listeners) {
         if (!l.networkId) continue;
         const prefixes = await networkPrefixes(ctx.db, l.networkId);
-        if (!prefixes) continue;
         for (const e of edges) {
           if (e.listenerId !== l._id || e.publication !== 'published') continue;
-          if (edgeNetworkVerdict(e.addresses, prefixes) !== 'off') continue;
+          if (prefixes && edgeNetworkVerdict(e.addresses, prefixes) !== 'off') continue;
           items.push({
             ...base(relay),
             id: `edge_off_network:${e._id}`,
@@ -1299,6 +1300,7 @@ export const attention = internalQuery({
             severity: 'warning',
             edgeId: e._id as string,
             listenerKey: l.listenerKey,
+            code: prefixes ? null : 'network_no_ranges',
             action: 'open_edge',
             since: null,
           });

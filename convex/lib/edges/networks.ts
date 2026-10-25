@@ -80,6 +80,34 @@ export function mergePrefixes(
   };
 }
 
+/**
+ * What membership checks read: every range an operator entered by hand (they
+ * are few and chosen on purpose, so a cap never drops one), then the announced
+ * ranges up to the cap of each address family.
+ */
+export function combinePrefixes(
+  announced: readonly unknown[],
+  manual: readonly unknown[],
+  cap = MAX_NETWORK_PREFIXES,
+): { v4: string[]; v6: string[]; truncated: boolean } {
+  const own = mergePrefixes([manual], Number.MAX_SAFE_INTEGER);
+  const ann = mergePrefixes([announced], Number.MAX_SAFE_INTEGER);
+  const fill = (mine: string[], theirs: string[]) => {
+    const seen = new Set(mine);
+    const room = Math.max(0, cap - mine.length);
+    const extra = theirs.filter((p) => !seen.has(p));
+    return { list: [...mine, ...extra.slice(0, room)].sort(), cut: extra.length > room };
+  };
+  const v4 = fill(own.v4, ann.v4);
+  const v6 = fill(own.v6, ann.v6);
+  return { v4: v4.list, v6: v6.list, truncated: v4.cut || v6.cut };
+}
+
+/** Whether two range sets are the same (both sorted, as stored). */
+export function samePrefixes(a: NetworkPrefixes, b: NetworkPrefixes): boolean {
+  return a.v4.join(' ') === b.v4.join(' ') && a.v6.join(' ') === b.v6.join(' ');
+}
+
 /** Whether one address lies on the network. A name or anything else is not. */
 export function onNetwork(ip: string, p: NetworkPrefixes): boolean {
   const t = ip.trim().replace(/^\[|\]$/g, '');

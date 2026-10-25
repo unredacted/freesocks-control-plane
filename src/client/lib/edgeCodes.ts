@@ -1391,6 +1391,12 @@ const COPY = {
       'An address in use on a transport scoped to a network is not on that network: whoever compares its server name with the address sees two networks.',
     fix: 'Replace the address with one from a location on the network.',
   },
+  network_no_ranges: {
+    label: 'Network has no ranges',
+    explain:
+      'The network this transport is scoped to has no address ranges now (its ASNs changed, or the last read found none), so no address in use can be shown to be on it.',
+    fix: 'Read the network’s ranges again, check its ASNs, or add ranges by hand.',
+  },
   // a price read (`plansError` on a location)
   plan_list_unreadable: {
     label: 'Plan list unreadable',
