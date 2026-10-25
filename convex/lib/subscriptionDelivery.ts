@@ -28,6 +28,7 @@ import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import type { CountryContext } from './edges/assignment';
 import { classifyClient } from './edges/clientFamilies';
+import { normalizeAddress, sameAddress } from './edges/hosts';
 import { decodeBase64Loose } from './edges/render/base64';
 import { applyEdgeRender } from './edges/renderPipeline';
 import { withheldNoteDue } from './edges/withheld';
@@ -241,26 +242,52 @@ export async function noteWithheldEntries(
 }
 
 /**
+ * Address-like tokens of a body: bracketed IPv6, unbracketed IPv6 (possibly
+ * with a `:port`), and dotted names (IPv4 literals included).
+ */
+const ADDRESS_TOKEN_RE =
+  /\[[0-9a-fA-F:.]+\]|[0-9a-fA-F]*:[0-9a-fA-F:.]+|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\.?/g;
+
+/**
  * Whether a body mentions any of the addresses anywhere in its text (or its
- * base64 decoding): the leak check of a body handed out unrendered. A substring
- * match, so an address inside a URL, or in a line or field no codec reads,
- * counts; a false match only refuses. IPv6 literals are compared without
- * brackets.
+ * base64 or percent decoding): the leak check of a body handed out unrendered.
+ * Every address-like token is compared as the renderer compares addresses
+ * (`sameAddress`: case, brackets, a trailing dot, any IPv6 spelling), so an
+ * address inside a URL, or in a line or field no codec reads, counts; the
+ * canonical text is also matched wherever no letter or digit adjoins it (a
+ * name embedding the address counts). A false match only refuses.
  */
 export function bodyMentionsAny(body: string, addresses: readonly string[]): boolean {
-  const wanted = addresses
-    .map((a) =>
-      a
-        .trim()
-        .replace(/^\[|\]$/g, '')
-        .toLowerCase(),
-    )
-    .filter((a) => a.length > 0);
+  const wanted = addresses.filter((a) => a.trim().length > 0);
   if (wanted.length === 0) return false;
-  const texts = [body.toLowerCase()];
+  const canonical = wanted.map((a) => normalizeAddress(a));
+  const texts = [body];
   const decoded = decodeBase64Loose(body.trim());
-  if (decoded) texts.push(decoded.toLowerCase());
-  return texts.some((t) => wanted.some((a) => t.includes(a)));
+  if (decoded) texts.push(decoded);
+  for (const t of [...texts]) {
+    try {
+      const unescaped = decodeURIComponent(t);
+      if (unescaped !== t) texts.push(unescaped);
+    } catch {
+      /* not percent-encoded */
+    }
+  }
+  // The canonical text with no letter or digit either side (so 203.0.113.7 is
+  // not found in 203.0.113.70, but is in a name such as 203.0.113.7.nip.io).
+  const bounded = canonical.map(
+    (a) => new RegExp(`(^|[^0-9a-z])${a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^0-9a-z])`),
+  );
+  for (const t of texts) {
+    const lower = t.toLowerCase();
+    if (bounded.some((re) => re.test(lower))) return true;
+    for (const m of t.matchAll(ADDRESS_TOKEN_RE)) {
+      const token = m[0];
+      const portless = token.replace(/:\d{1,5}$/, '');
+      const forms = portless !== token ? [token, portless] : [token];
+      if (forms.some((f) => wanted.some((a) => sameAddress(f, a)))) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -423,24 +450,38 @@ export async function deliverBody(
     relay = renderedUnder;
   } else if (sub.backendServerId) {
     // A placeholder handed out as it is skips the renderer, so it gets the
-    // decision and the leak check here: a place no origin can serve is still
-    // refused, and a body that names the node by any address FCP knows for it
-    // (in any line or field, the parts no codec reads included) is never handed
-    // out, as the renderer's own leak check would refuse it.
-    const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
-      subscriptionId: sub.subscriptionId,
-      family: classifyClient(input.ua).family,
-      nodeName: node ?? undefined,
-    });
-    if (decision.kind === 'unavailable') return refuse(decision.reason);
-    if (
-      decision.kind === 'render' &&
-      bodyMentionsAny(fetched.content, [
-        decision.context.originAddress,
-        ...(decision.context.nodeAddresses ?? []),
-      ])
-    )
-      return refuse('leak_detected');
+    // decision and the leak check here, under the same policy token as a
+    // render (read before the decision and again after, one retry when it
+    // moved, then `policy_moved`): a place no origin can serve is refused, a
+    // bound place with no edge left to serve it is refused `empty_pool`, and a
+    // body that names the node by any address FCP knows for it (in any line or
+    // field, the parts no codec reads included) is refused `leak_detected`, as
+    // the renderer's own checks would.
+    let settled = false;
+    for (let pass = 0; pass < 2 && !settled; pass++) {
+      const before = await ctx.runQuery(internal.edgeRender.epochFor, {
+        backendServerId: sub.backendServerId,
+        nodeName: node ?? undefined,
+      });
+      const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
+        subscriptionId: sub.subscriptionId,
+        family: classifyClient(input.ua).family,
+        nodeName: node ?? undefined,
+      });
+      if (decision.kind === 'unavailable') return refuse(decision.reason);
+      if (decision.kind === 'render') {
+        const rctx = decision.context;
+        if (!rctx.published.some((e) => e.eligible !== false)) return refuse('empty_pool');
+        if (bodyMentionsAny(fetched.content, [rctx.originAddress, ...(rctx.nodeAddresses ?? [])]))
+          return refuse('leak_detected');
+      }
+      const after = await ctx.runQuery(internal.edgeRender.epochFor, {
+        backendServerId: sub.backendServerId,
+        nodeName: node ?? undefined,
+      });
+      settled = after === before;
+    }
+    if (!settled) return refuse('policy_moved');
   }
   // Member-facing names (docs/privacy.md): an entry the backend named after its
   // node and server name gets a neutral label. Last, because pinning and the

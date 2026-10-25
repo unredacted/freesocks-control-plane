@@ -585,6 +585,15 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(refused.status).toBe(503);
   });
 
+  test('a placeholder on a bound node with no edge left to serve it is refused empty_pool', async () => {
+    stubPanel(`vless://${UUID}@0.0.0.0:1?${REALITY_QS}#Expired`);
+    const { t, relayId, edgeA } = await seed();
+    await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
+    const res = await get(t);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('x-fcp-delivery')).toBe('empty_pool');
+  });
+
   test('a placeholder that names the node anywhere is refused, never handed out', async () => {
     // A link list with another line (no codec reads it) is not a placeholder at all.
     stubPanel(

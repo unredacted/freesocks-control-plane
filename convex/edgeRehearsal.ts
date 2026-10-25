@@ -348,21 +348,29 @@ async function fetchBody(
 function candidateVerdict(
   c: RehearsalContext,
   f: FetchedBody,
-): 'use' | 'placeholder' | 'moved' | 'failed' {
+): 'use' | 'placeholder' | 'leak' | 'moved' | 'failed' {
   if (f.kind === 'failed') return 'failed';
-  if (f.nodeless && placeholderBody(f.content)) return 'placeholder';
+  if (f.nodeless && placeholderBody(f.content))
+    // As delivery: a placeholder is handed out as it is unless it names the node.
+    return bodyMentionsAny(f.content, [c.originAddress, ...(c.nodeAddresses ?? [])])
+      ? 'leak'
+      : 'placeholder';
   if (c.nodeName && f.pinnedNode && f.pinnedNode !== c.nodeName) return 'moved';
   return 'use';
 }
 
-type Representative =
+type Representative = (
   | {
       kind: 'use';
       ref: BodyRef & { renderKey: string | null };
       fetched: Map<RenderFormat, FetchedBody>;
     }
   | { kind: 'unrepresented'; reason: RehearsalUnrepresented['reason']; tried: number }
-  | { kind: 'failed' };
+  | { kind: 'failed' }
+) & {
+  /** Formats in which some tried candidate's placeholder names the node (delivery refuses it). */
+  leaks: RenderFormat[];
+};
 
 /**
  * The cohort's representative: its own first key, else the next candidates
@@ -387,6 +395,7 @@ async function pickRepresentative(
   let moved = 0;
   let unfetched = 0;
   let tried = 0;
+  const leaks = new Set<RenderFormat>();
   while (next && tried < REHEARSAL_CANDIDATES) {
     tried++;
     const fetched = new Map<RenderFormat, FetchedBody>();
@@ -394,11 +403,15 @@ async function pickRepresentative(
     for (const format of c.formats) {
       const body = await fetchBody(ctx, c, format, next);
       fetched.set(format, body);
-      verdicts.add(candidateVerdict(c, body));
+      const verdict = candidateVerdict(c, body);
+      // A placeholder is judged while candidates are classified: one that names
+      // the node fails the cohort whichever candidate ends up standing for it.
+      if (verdict === 'leak') leaks.add(format);
+      verdicts.add(verdict);
     }
-    if (verdicts.has('use')) return { kind: 'use', ref: next, fetched };
+    if (verdicts.has('use')) return { kind: 'use', ref: next, fetched, leaks: [...leaks] };
     if (verdicts.has('failed')) unfetched++;
-    if (verdicts.has('placeholder')) placeholders++;
+    if (verdicts.has('placeholder') || verdicts.has('leak')) placeholders++;
     if (verdicts.has('moved')) moved++;
     rest ??= await ctx.runQuery(internal.edgeCohorts.candidates, {
       backendServerId: cohort.backendServerId,
@@ -410,11 +423,13 @@ async function pickRepresentative(
     if (candidate) seen.add(candidate.subscriptionId as string);
     next = candidate;
   }
-  if (unfetched > 0 || (placeholders === 0 && moved === 0)) return { kind: 'failed' };
+  if (unfetched > 0 || (placeholders === 0 && moved === 0))
+    return { kind: 'failed', leaks: [...leaks] };
   return {
     kind: 'unrepresented',
     reason: placeholders > 0 && moved > 0 ? 'mixed' : placeholders > 0 ? 'placeholder' : 'moved',
     tried,
+    leaks: [...leaks],
   };
 }
 
@@ -437,11 +452,12 @@ async function rehearseBody(
   const ua = REHEARSAL_USER_AGENTS[format];
   const fetched = prefetched ?? (await fetchBody(ctx, c, format, ref));
   if (fetched.kind === 'failed') return { cohortKey, format, reason: 'fetch_failed' };
-  if (placeholderPasses && candidateVerdict(c, fetched) === 'placeholder')
-    // As delivery: handed out as it is unless it names the node anywhere.
-    return bodyMentionsAny(fetched.content, [c.originAddress, ...(c.nodeAddresses ?? [])])
-      ? { cohortKey, format, reason: 'leak_detected' }
-      : null;
+  if (placeholderPasses) {
+    // As delivery: a placeholder is handed out as it is unless it names the node.
+    const verdict = candidateVerdict(c, fetched);
+    if (verdict === 'placeholder') return null;
+    if (verdict === 'leak') return { cohortKey, format, reason: 'leak_detected' };
+  }
   const { content, pinnedNode } = fetched;
   if (!content.trim()) return { cohortKey, format, reason: 'empty_body' };
   // The representative must resolve to THIS node, or it says nothing about it.
@@ -519,16 +535,24 @@ export const run = internalAction({
             continue;
           }
           const rep = await pickRepresentative(ctx, c, cohort, sub);
+          // A placeholder that names the node fails its format, once, whichever
+          // candidate it came from (delivery refuses it `leak_detected`).
+          const leaked = new Set(rep.leaks);
+          for (const f of leaked)
+            failures.push({ cohortKey: cohort.key, format: f, reason: 'leak_detected' });
           if (rep.kind === 'failed') {
             for (const f of c.formats)
-              failures.push({ cohortKey: cohort.key, format: f, reason: 'fetch_failed' });
+              if (!leaked.has(f))
+                failures.push({ cohortKey: cohort.key, format: f, reason: 'fetch_failed' });
             continue;
           }
           if (rep.kind === 'unrepresented') {
-            unrepresented.push({ cohortKey: cohort.key, reason: rep.reason, tried: rep.tried });
+            if (leaked.size === 0)
+              unrepresented.push({ cohortKey: cohort.key, reason: rep.reason, tried: rep.tried });
             continue;
           }
           for (const format of c.formats) {
+            if (leaked.has(format)) continue;
             const fail = await rehearseBody(
               ctx,
               c,

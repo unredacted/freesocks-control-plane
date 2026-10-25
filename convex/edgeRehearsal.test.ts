@@ -516,6 +516,23 @@ describe('choosing a cohort representative', () => {
     expect(r.failures).toEqual([{ cohortKey: 'sq-a', format: 'singbox', reason: 'leak_detected' }]);
   });
 
+  test('a skipped candidate whose placeholder names the node fails the cohort, though another member stands for it', async () => {
+    const { addMember, run } = await seed({
+      body: (u, short, ua) =>
+        short === 'member1'
+          ? formatOfUa(ua) === 'links'
+            ? `vless://${UUID}@0.0.0.0:1?${REALITY_QS}#${encodeURIComponent(`Expired, write to ${ORIGIN}`)}`
+            : placeholderFor(formatOfUa(ua))
+          : bodyFor(formatOfUa(ua), REMARK_A, EDGE_A, 443),
+    });
+    await addMember('sq-a');
+    await addMember('sq-a');
+    const r = await run();
+    expect(r.ok).toBe(false);
+    expect(r.failures).toEqual([{ cohortKey: 'sq-a', format: 'links', reason: 'leak_detected' }]);
+    expect(r.unrepresented).toEqual([]);
+  });
+
   test('no candidate standing for the cohort while one could not be fetched fails it, never unrepresented', async () => {
     const { addMember, run } = await seed({
       // An expired first member, then an active one the backend could not serve just now.
