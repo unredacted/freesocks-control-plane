@@ -258,6 +258,12 @@ describe('the country view', () => {
       names: [{ name: 'b.example', reading: 'ip_name_match' }],
     });
     expect(l.addresses[1]!.evidence.realHost).toBeNull();
+    // The reading is judged now from the stored counts: a raised floor makes it thin.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.sni.vantage.minVantages', '5'));
+    const later = await t.query(internal.edgeCountryView.country, { country: 'IR' });
+    expect(
+      later.origins[0]!.listeners[0]!.names.find((n) => n.name === 'b.example')!.realHost?.reading,
+    ).toBe('thin');
     // Steering is off: members there are spread over both published addresses.
     expect(l.members.computed).toBe(true);
     expect(l.members.primary.map((p) => p.id).sort()).toEqual([blocked, works].sort());

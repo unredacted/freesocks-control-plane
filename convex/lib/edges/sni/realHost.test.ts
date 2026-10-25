@@ -27,7 +27,6 @@ describe('pairClass', () => {
     expect(pairClass(r('refused'), r('ok'), ELSE)).toBe('address_blocked');
     expect(pairClass(r('reset', { stage: 'handshake' }), r('ok'), ELSE)).toBe('ip_name_match');
     expect(pairClass(r('cert_mismatch'), r('ok'), ELSE)).toBe('ip_name_match');
-    expect(pairClass(r('timeout', { stage: 'response' }), r('ok'), ELSE)).toBe('ip_name_match');
     expect(pairClass(r('ok'), r('timeout'), ELSE)).toBe('ours_only');
   });
 
@@ -45,6 +44,14 @@ describe('pairClass', () => {
       'address_blocked',
     );
     expect(pairClass(r('timeout'), r('ok'), ELSE)).toBe('inconclusive');
+  });
+
+  test('a failure after the handshake is no handshake failure', () => {
+    // TLS completed, then no answer: the name got through, whatever the TCP reading says.
+    expect(pairClass(r('timeout', { stage: 'response' }), r('ok'), ELSE)).toBe('inconclusive');
+    expect(
+      pairClass(r('timeout', { stage: 'response' }), r('ok'), { reachedElse: true, tcp: 'works' }),
+    ).toBe('inconclusive');
   });
 
   test('errors on either side are inconclusive', () => {
@@ -106,6 +113,7 @@ describe('readRealHost', () => {
       counts: { ...EMPTY_COUNTS, ipNameMatch: 3 },
       vantages: 3,
       networks: 3,
+      realAddress: null,
     });
   });
 
@@ -157,5 +165,41 @@ describe('readRealHost', () => {
       },
     ];
     expect(readRealHost('a.example', m, o)?.reading).toBe('address_blocked');
+  });
+
+  test('sources that dialled different real addresses are never pooled', () => {
+    const src = (source: string, site: string, ours: PairReading['outcome']) => [
+      {
+        name: 'a.example',
+        source,
+        role: 'ours' as const,
+        results: [0, 1, 2].map((i) =>
+          r(ours, { asn: `AS${i}`, vantage: `${source}${i}`, stage: 'connect' }),
+        ),
+      },
+      {
+        name: 'a.example',
+        source,
+        role: 'real' as const,
+        realAddress: site,
+        results: [0, 1, 2].map((i) => r('ok', { asn: `AS${i}`, vantage: `${source}${i}` })),
+      },
+    ];
+    // Globalping reached its real site 192.0.2.50 (our address fails to connect);
+    // Atlas dialled 192.0.2.60 with only two answers: not pooled into one reading.
+    const m: PairMeasurement[] = [
+      ...src('globalping', '192.0.2.50', 'timeout'),
+      ...src('ripeatlas', '192.0.2.60', 'ok').map((x) => ({
+        ...x,
+        results: x.results.slice(0, 2),
+      })),
+    ];
+    const s = readRealHost('a.example', m, o);
+    expect(s).toMatchObject({
+      reading: 'address_blocked',
+      realAddress: '192.0.2.50',
+      vantages: 3,
+      counts: { ...EMPTY_COUNTS, addressBlocked: 3 },
+    });
   });
 });

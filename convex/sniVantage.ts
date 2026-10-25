@@ -45,6 +45,7 @@ import {
 } from './lib/edges/sni/vantage';
 import type { VantageSource } from './lib/edges/probes/nameCheck';
 import { readRealHost } from './lib/edges/sni/realHost';
+import { normalizeAddress } from './lib/edges/hosts';
 import {
   measurementsPerName,
   resolveSniConfig,
@@ -246,13 +247,15 @@ function carriersOf(targets: readonly Target[]): Map<string, string[]> {
 
 /** address key -> when this name was last put into a batch there, for this country. */
 async function lastByTarget(db: Db, name: string, country: string) {
+  // Twice the rows, the real-host twins left out: as many measurements of FCP's
+  // addresses as before the twins existed, so no carrier drops out of the turn.
   const rows = await db
     .query('sniVantageProbes')
     .withIndex('by_name_country_requested', (q) => q.eq('name', name).eq('country', country))
     .order('desc')
-    .take(MAX_TARGET_HISTORY);
+    .take(MAX_TARGET_HISTORY * 2);
   const out = new Map<string, number>();
-  for (const r of rows) {
+  for (const r of rows.filter((x) => x.role !== 'real_host').slice(0, MAX_TARGET_HISTORY)) {
     const k = targetKeyOf(r);
     out.set(k, Math.max(out.get(k) ?? 0, r.requestedAt));
   }
@@ -653,6 +656,9 @@ export const batchContext = internalQuery({
       secrets,
       // FCP's own addresses: a real-site answer among them is never dialled as one.
       own: rows.some((r) => r.role === 'real_host') ? await ownAddresses(ctx.db, all) : [],
+      // The real-host switch NOW: turned off after the plan, a queued twin is
+      // settled `gate_real_host` without visiting the real site.
+      realHostOn: cfg.realHost,
       rows: rows.map((r) => ({
         id: r._id,
         name: r.name,
@@ -672,18 +678,26 @@ export const batchContext = internalQuery({
   },
 });
 
-/** Every address FCP members are handed or nodes listen on (bounded: operator scale). */
+/**
+ * Every address FCP members are handed or nodes listen on (bounded: operator
+ * scale), canonical (`normalizeAddress`: brackets, case and IPv6 spellings
+ * folded) so a resolver's spelling of the same address still matches.
+ */
 async function ownAddresses(db: Db, dialled: readonly Target[]): Promise<string[]> {
-  const out = new Set<string>(dialled.map((t) => t.address));
+  const out = new Set<string>();
+  const add = (a: string | undefined) => {
+    if (a) out.add(normalizeAddress(a));
+  };
+  for (const t of dialled) add(t.address);
   for (const relay of await db.query('relays').take(500)) {
-    out.add(relay.originAddress);
-    for (const a of relay.nodeAddresses ?? []) out.add(a);
+    add(relay.originAddress);
+    for (const a of relay.nodeAddresses ?? []) add(a);
     for (const status of ['active', 'draining'] as const)
       for (const e of await db
         .query('edges')
         .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id).eq('status', status))
         .take(200))
-        for (const a of [e.addresses.v4, e.addresses.v6]) if (a) out.add(a);
+        for (const a of [e.addresses.v4, e.addresses.v6]) add(a);
   }
   return [...out];
 }
@@ -864,6 +878,7 @@ async function realHostOf(
       name: r.name,
       source: r.source,
       role: r.role === 'real_host' ? ('real' as const) : ('ours' as const),
+      ...(r.realAddress ? { realAddress: r.realAddress } : {}),
       results: r.results,
     })),
     {
@@ -873,11 +888,12 @@ async function realHostOf(
     },
   );
   if (!s) return null;
+  const { realAddress, ...rest } = s;
   return {
     at,
     target: targetKeyOf(newest),
-    ...(newest.realAddress ? { realAddress: newest.realAddress } : {}),
-    ...s,
+    ...(realAddress ? { realAddress } : {}),
+    ...rest,
   };
 }
 
@@ -941,7 +957,9 @@ async function refreshEvidence(ctx: MutationCtx, name: string, country: string, 
     lastFailAt: agg.lastFailAt ?? undefined,
     lastAt: agg.lastAt ?? undefined,
     // When the aggregate must be redone: its oldest measurement leaves the window.
-    oldestAt: own.length > 0 ? Math.min(...own.map((r) => r.requestedAt)) : undefined,
+    // Over every measurement the row rests on, the real-host twins included: a
+    // real-host reading whose own measurement failed must age out too.
+    oldestAt: mine.length > 0 ? Math.min(...mine.map((r) => r.requestedAt)) : undefined,
     latest: agg.latest,
     streak: agg.streak ?? undefined,
     realHost: realHost ?? undefined,
@@ -1038,33 +1056,45 @@ async function autoApply(
  * `done: false` means call it again. Turn `edge.sni.vantage.realHost` off first.
  */
 export const clearRealHostForRollback = internalMutation({
-  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  args: {
+    // `probes` first (the measurements), then `evidence`; pass back what the last call returned.
+    phase: v.optional(v.union(v.literal('probes'), v.literal('evidence'))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
   handler: async (ctx, a) => {
-    const page = await ctx.db
-      .query('sniVantageProbes')
-      .paginate({ cursor: a.cursor ?? null, numItems: 200 });
+    const phase = a.phase ?? 'probes';
     let deleted = 0;
     let stripped = 0;
-    for (const r of page.page) {
-      if (r.role === 'real_host') {
-        await ctx.db.delete(r._id);
-        deleted++;
-        continue;
-      }
-      if (!r.results.some((x) => x.stage !== undefined || x.vantage !== undefined)) continue;
-      await ctx.db.patch(r._id, {
-        results: r.results.map(({ stage: _s, vantage: _v, ...x }) => x),
-      });
-      stripped++;
-    }
-    let evidence = 0;
-    if (page.isDone)
-      for (const ev of await ctx.db.query('sniVantageEvidence').take(4000))
-        if (ev.realHost !== undefined) {
-          await ctx.db.patch(ev._id, { realHost: undefined });
-          evidence++;
+    if (phase === 'probes') {
+      const page = await ctx.db
+        .query('sniVantageProbes')
+        .paginate({ cursor: a.cursor ?? null, numItems: 200 });
+      for (const r of page.page) {
+        if (r.role === 'real_host') {
+          await ctx.db.delete(r._id);
+          deleted++;
+          continue;
         }
-    return { deleted, stripped, evidence, done: page.isDone, cursor: page.continueCursor };
+        if (!r.results.some((x) => x.stage !== undefined || x.vantage !== undefined)) continue;
+        await ctx.db.patch(r._id, {
+          results: r.results.map(({ stage: _s, vantage: _v, ...x }) => x),
+        });
+        stripped++;
+      }
+      return page.isDone
+        ? { deleted, stripped, phase: 'evidence' as const, cursor: null, done: false }
+        : { deleted, stripped, phase, cursor: page.continueCursor, done: false };
+    }
+    const page = await ctx.db
+      .query('sniVantageEvidence')
+      .paginate({ cursor: a.cursor ?? null, numItems: 200 });
+    for (const ev of page.page)
+      if (ev.realHost !== undefined) {
+        await ctx.db.patch(ev._id, { realHost: undefined });
+        stripped++;
+      }
+    // Done only once BOTH tables are exhausted.
+    return { deleted, stripped, phase, cursor: page.continueCursor, done: page.isDone };
   },
 });
 

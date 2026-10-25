@@ -279,9 +279,9 @@
                 <span class="font-mono break-all">{o.direct.address}</span>
               </div>
               <p class="text-muted-foreground">{addressWhy(o.direct)}</p>
-              {#if probesLine(o.direct, now)}
-                <p class="text-muted-foreground">{probesLine(o.direct, now)}</p>
-              {/if}
+              {#each evidenceLines(o.direct) as line (line)}
+                <p class="text-muted-foreground">{line}</p>
+              {/each}
             </section>
           {/if}
         </CardContent>

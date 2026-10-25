@@ -2366,10 +2366,13 @@ same name, from the same vantages, to the name's REAL site.
 
 - **The real site** is the name's public DNS answer, resolved on FCP's own host at execution
   (`sniVantageOps.realSiteOf`), in the address family of FCP's address. Every answer must be
-  public (`real_private`), FCP's own addresses are skipped (`real_is_ours` when nothing else is
-  left), and a TLS handshake from FCP's host must complete with a chain valid for the name before
-  any vantage dials it (`real_not_serving`); a name that does not resolve is `real_resolve`. A
-  skipped twin is settled with its code and nothing is dialled from the country. Port 443.
+  public (`real_private`), FCP's own addresses are skipped, compared in canonical form
+  (`real_is_ours` when nothing else is left), the LOWEST remaining answer is taken (a resolver
+  that rotates its answers still gives every source the same site), and a TLS handshake from
+  FCP's host must complete with a chain valid for the name before any vantage dials it
+  (`real_not_serving`); a name that does not resolve is `real_resolve`. The switch is read again
+  at execution: off since the plan, a twin is settled `gate_real_host`. A skipped twin is settled
+  with its code and nothing is dialled from the country. Port 443.
 - **The same vantages.** The twin is inserted right after its name's measurement in the same
   batch and source, so Globalping reuses the first measurement's probes and Atlas the same probe
   ids. Each vantage carries an opaque key (`results[].vantage`, a short hash of what identifies
@@ -2394,14 +2397,18 @@ same name, from the same vantages, to the name's REAL site.
 | anything else (errors, unknown stage)     |               | `inconclusive`    | nothing                                                      |
 
 (\*) only from a vantage that got through for something else in the batch (another name, or a
-real site): a vantage that reaches nothing says nothing. Where the source did not report the
-stage of FCP's failure, the newest TCP path reading of that address from that country (the
-per-country checks', within the handshake pairing window) decides it; without one the pair is
-`inconclusive`. A batch's pairs give one reading per name: `thin` below `minVantages` decisive
-pairs on `minNetworks` networks (a vantage without an ASN or network adds none), else the class
-holding two thirds of them, else `mixed`. It is stored on `sniVantageEvidence.realHost` (the
-newest batch that had twins: when, FCP's address measured, the real site's address, the reading,
-counts per class, vantages, networks) and re-read whenever that row is.
+real site): a vantage that reaches nothing says nothing. A failure of FCP's check AFTER the
+handshake (`response`: TLS completed, then no answer) is `inconclusive`: the name got through.
+Where the source did not report the stage of FCP's failure, the newest TCP path reading of that
+address from that country (the per-country checks', within the handshake pairing window) decides
+it; without one the pair is `inconclusive`. A batch's pairs give one reading per name: `thin`
+below `minVantages` decisive pairs on `minNetworks` networks (a vantage without an ASN or network
+adds none), else the class holding two thirds of them, else `mixed`; sources that dialled
+different real addresses are never pooled (the reading is that of the address with the most
+decisive pairs). It is stored on `sniVantageEvidence.realHost` (the newest batch that had twins:
+when, FCP's address measured, the real site's address, the reading, counts per class, vantages,
+networks), re-read whenever that row is, ages out with the window like the rest of the row, and
+the country view judges the reading again from the stored counts with the floors of the moment.
 
 **Shown, not applied.** The country view shows each name's reading ("Against its real site:
 ...") and, under each address's evidence, what the names measured on it said. Nothing here
@@ -4905,8 +4912,8 @@ from inside a country, "Residual risk").
 new measurement carries `results[].vantage` (and a failure its `stage`), switch on or off, so
 before deploying a build without them: set the switch off, then run
 `sniVantage:clearRealHostForRollback` (one page of 200 rows per call; call again with the
-returned `cursor` until `done: true`). It deletes the twins and strips the new fields, so the
-older schema accepts what is left.
+returned `phase` and `cursor` until `done: true`: the measurements first, then the evidence). It
+deletes the twins and strips the new fields, so the older schema accepts what is left.
 
 The `"use node"` actions (provider SDKs, probes, the front qualification) run on the Node
 version baked into the self-hosted Convex backend image. The L7 adapters add `cloudflare` (the

@@ -30,6 +30,7 @@ import { effectiveRule, ruleCanEmitV6, ruleForDelivery } from './lib/edges/rende
 import { countryGroupKey } from './lib/edges/country/group';
 import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
 import { suggest } from './lib/edges/sni/vantage';
+import { readingOf } from './lib/edges/sni/realHost';
 import {
   actedState,
   buildCountryView,
@@ -385,7 +386,11 @@ function nameFactsFor(
             at: ev.realHost.at,
             target: ev.realHost.target,
             realAddress: ev.realHost.realAddress ?? null,
-            reading: ev.realHost.reading,
+            // Judged now from the stored counts: the floors move independently.
+            reading: readingOf(ev.realHost.counts, ev.realHost.networks, {
+              minVantages: st.vantage.minVantages,
+              minNetworks: st.vantage.minNetworks,
+            }),
             counts: ev.realHost.counts,
             vantages: ev.realHost.vantages,
             networks: ev.realHost.networks,

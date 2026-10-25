@@ -237,6 +237,64 @@ describe('real-host controls', () => {
     }
   });
 
+  test('turned off after the plan: the twins are settled without visiting the real site', async () => {
+    const { t } = await seed();
+    const gp = fakeGlobalping(() => 'ok');
+    __setVantageGlobalpingFactory(() => gp.client);
+    const lookups: string[] = [];
+    __setRealHostDeps({
+      lookup: async (name) => {
+        lookups.push(name);
+        return [REAL];
+      },
+      serves: async () => true,
+    });
+    await t.mutation(internal.sniVantage.tick, {});
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.sni.vantage.realHost', 'false'));
+    await drain(t);
+    const all = await rows(t);
+    expect(all.filter((x) => x.role === 'real_host').map((x) => [x.status, x.error])).toEqual(
+      NAMES.map(() => ['failed', 'gate_real_host']),
+    );
+    expect(all.filter((x) => x.role === undefined).every((x) => x.status === 'finished')).toBe(
+      true,
+    );
+    expect(lookups).toEqual([]);
+    expect(gp.requests.every((q) => q.target === EDGE)).toBe(true);
+  });
+
+  test('the real site is the lowest public answer, compared with FCP’s own in canonical form', async () => {
+    const { t } = await seed();
+    const gp = fakeGlobalping(() => 'ok');
+    __setVantageGlobalpingFactory(() => gp.client);
+    __setRealHostDeps({
+      lookup: async () => ['192.0.2.60', EDGE, '192.0.2.50'],
+      serves: async () => true,
+    });
+    await t.mutation(internal.sniVantage.tick, {});
+    await drain(t);
+    for (const x of (await rows(t)).filter((y) => y.role === 'real_host'))
+      expect(x.realAddress).toBe('192.0.2.50');
+  });
+
+  test('a real-host reading whose own measurement failed still ages out', async () => {
+    const { t } = await seed();
+    const gp = fakeGlobalping(() => 'ok');
+    // FCP's address cannot be measured at all; the real sites can.
+    const create = gp.client.createMeasurement.bind(gp.client);
+    gp.client.createMeasurement = async (req) =>
+      (req as { target: string }).target === EDGE
+        ? { ok: false, response: new Response(null, { status: 500 }) }
+        : create(req);
+    __setVantageGlobalpingFactory(() => gp.client);
+    __setRealHostDeps({ lookup: async () => [REAL], serves: async () => true });
+    await t.mutation(internal.sniVantage.tick, {});
+    await drain(t);
+    const x = await evidence(t, 'x.example');
+    expect(x?.realHost?.reading).toBe('thin');
+    expect(x?.oldestAt).toBe(T0);
+  });
+
   test('the rollback clear leaves only what an older schema accepts', async () => {
     const { t } = await seed();
     __setVantageGlobalpingFactory(
@@ -245,15 +303,17 @@ describe('real-host controls', () => {
     __setRealHostDeps({ lookup: async () => [REAL], serves: async () => true });
     await t.mutation(internal.sniVantage.tick, {});
     await drain(t);
-    let cursor: string | null = null;
-    for (let i = 0; i < 10; i++) {
-      const r: { done: boolean; cursor: string } = await t.mutation(
-        internal.sniVantage.clearRealHostForRollback,
-        { cursor },
-      );
-      cursor = r.cursor;
+    let next: { phase?: 'probes' | 'evidence'; cursor?: string | null } = {};
+    let calls = 0;
+    for (;;) {
+      const r = await t.mutation(internal.sniVantage.clearRealHostForRollback, next);
+      calls++;
       if (r.done) break;
+      expect(calls).toBeLessThan(10);
+      next = { phase: r.phase, cursor: r.cursor };
     }
+    // Both phases ran: the measurements, then the evidence.
+    expect(calls).toBeGreaterThanOrEqual(2);
     const left = await rows(t);
     expect(left).toHaveLength(3);
     expect(left.some((x) => x.role !== undefined || x.realAddress !== undefined)).toBe(false);

@@ -21,6 +21,7 @@ import { GLOBALPING_USER_AGENT, type GlobalpingLike } from './lib/edges/probes/g
 import { RIPE_ATLAS_BASE } from './lib/edges/probes/ripeatlas';
 import { resolvePublic } from './lib/edges/probes/internal';
 import { addressFamily } from './lib/edges/ip';
+import { normalizeAddress } from './lib/edges/hosts';
 import { tlsInspect } from './sniQualifyOps';
 import type { RealHostSkip } from '../src/shared/contracts/edgeCodes';
 import {
@@ -133,7 +134,11 @@ export async function realSiteOf(
   const r = await resolvePublic(name, (n) => realHostDeps.lookup(n, family));
   if (!r.ok)
     return { ok: false, error: r.error === 'private_address' ? 'real_private' : 'real_resolve' };
-  const address = r.addresses.find((a) => !own.has(a));
+  // Canonical spellings on both sides (`own` is canonical already), and the
+  // lowest answer, not the first: a resolver that rotates its answers still
+  // gives every source of a batch the same real site.
+  const answers = [...new Set(r.addresses.map(normalizeAddress))].sort();
+  const address = answers.find((a) => !own.has(a));
   if (!address) return { ok: false, error: 'real_is_ours' };
   let serves = false;
   try {
@@ -298,6 +303,11 @@ export const executeBatch = internalAction({
     for (const r of valid) {
       if (r.role !== 'real_host') {
         dial.push(r);
+        continue;
+      }
+      // Real-host controls turned off since the plan: the real site is not visited.
+      if (!c.realHostOn) {
+        skipped.push({ id: r.id, error: 'gate_real_host' });
         continue;
       }
       const site = await realSiteOf(r.name, addressFamily(r.address) === 'v6' ? 6 : 4, own);

@@ -43,6 +43,8 @@ export interface PairMeasurement {
   name: string;
   source: string;
   role: 'ours' | 'real';
+  /** A real-site measurement: the address its vantages dialled. */
+  realAddress?: string;
   results: readonly PairReading[];
 }
 
@@ -52,12 +54,17 @@ const reached = (o: NameOutcome) => o === 'ok' || o === 'answered';
 const failed = (o: NameOutcome) =>
   o === 'reset' || o === 'timeout' || o === 'cert_mismatch' || o === 'refused';
 
-/** Where OUR check failed: as reported, else from the TCP reading of the address there. */
+/**
+ * Where OUR check failed: as reported, else from the TCP reading of the
+ * address there. A failure after the handshake (`response`: TLS completed,
+ * then no answer) is neither: the name got through, so it says nothing here.
+ */
 function oursStage(r: PairReading, tcp: 'works' | 'fails' | null): 'connect' | 'handshake' | null {
   if (r.outcome === 'refused') return 'connect';
   if (r.outcome === 'cert_mismatch') return 'handshake';
   if (r.stage === 'connect') return 'connect';
-  if (r.stage === 'handshake' || r.stage === 'response') return 'handshake';
+  if (r.stage === 'handshake') return 'handshake';
+  if (r.stage === 'response') return null;
   if (tcp === 'works') return 'handshake';
   if (tcp === 'fails') return 'connect';
   return null;
@@ -114,6 +121,8 @@ export interface RealHostSummary {
   /** Decisive pairs (every class but `inconclusive`) and the distinct networks among them. */
   vantages: number;
   networks: number;
+  /** The real site's address every pair of this reading dialled (null: not recorded). */
+  realAddress: string | null;
 }
 
 /** A majority needs this share of the decisive pairs. */
@@ -156,18 +165,43 @@ function pairsOf(
 }
 
 /**
- * What one batch (every source) says about `name` from its real-host pairs.
- * Null when the batch holds no real-site check of the name (nothing to read).
+ * What one batch says about `name` from its real-host pairs. Each source
+ * resolves the real site on its own, so sources that dialled DIFFERENT real
+ * addresses are never pooled: the reading is that of the address whose pairs
+ * are the most decisive (ties: the address first in order). Null when the
+ * batch holds no real-site check of the name (nothing to read).
  */
 export function readRealHost(
   name: string,
   batch: readonly PairMeasurement[],
   o: { minVantages: number; minNetworks: number; tcp: 'works' | 'fails' | null },
 ): RealHostSummary | null {
-  if (!batch.some((m) => m.role === 'real' && m.name === name)) return null;
+  const reals = batch.filter((m) => m.role === 'real' && m.name === name);
+  if (reals.length === 0) return null;
+  const bySite = new Map<string, Set<string>>();
+  for (const m of reals) {
+    const site = m.realAddress ?? '';
+    bySite.set(site, (bySite.get(site) ?? new Set()).add(m.source));
+  }
+  let best: RealHostSummary | null = null;
+  for (const [site, sources] of [...bySite.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const s = readSources(name, batch, sources, site || null, o);
+    if (!best || s.vantages > best.vantages) best = s;
+  }
+  return best;
+}
+
+/** The pairs of `name` from these sources only (one real address), read. */
+function readSources(
+  name: string,
+  batch: readonly PairMeasurement[],
+  sources: ReadonlySet<string>,
+  realAddress: string | null,
+  o: { minVantages: number; minNetworks: number; tcp: 'works' | 'fails' | null },
+): RealHostSummary {
   const counts: PairCounts = { ...EMPTY_COUNTS };
   const networks = new Set<string>();
-  for (const source of new Set(batch.map((m) => m.source))) {
+  for (const source of sources) {
     const of = batch.filter((m) => m.source === source);
     const ours = of.filter((m) => m.role === 'ours' && m.name === name).flatMap((m) => m.results);
     const real = of.filter((m) => m.role === 'real' && m.name === name).flatMap((m) => m.results);
@@ -198,5 +232,6 @@ export function readRealHost(
     counts,
     vantages,
     networks: networks.size,
+    realAddress,
   };
 }
