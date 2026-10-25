@@ -2366,6 +2366,115 @@ and the checks line ("From IR: failed from 3 vantages on 2 networks while other 
 through"). Reports pick which names are checked first, corroborate a single failing check, and
 veto "proven"; checks never create a report suspect.
 
+### Real-host controls
+
+Ships off: `edge.sni.vantage.realHost` (on the Server names page, "Also check each name against
+its real site"). Off, batches are exactly as above.
+
+**The question.** A name that fails on FCP's address from a country can mean three different
+things: the name is blocked there wherever it goes, FCP's address is blocked there, or the censor
+lets a name through only to the addresses it really lives on (it matches the name against its
+real IP or network). A control that gets through for ANOTHER name (above) separates the first
+from the second, but not the third. So each name of a batch also gets a twin measurement: the
+same name, from the same vantages, to the name's REAL site.
+
+- **The real site** is the name's public DNS answer, resolved on FCP's own host at execution
+  (`sniVantageOps.realSiteOf`), in the address family of FCP's address. Every answer must be
+  public (`real_private`), FCP's own addresses are skipped, compared in canonical form
+  (`real_is_ours` when nothing else is left), the LOWEST remaining answer is taken (a resolver
+  that rotates its answers still gives every source the same site), and a TLS handshake from
+  FCP's host must complete with a chain valid for the name before any vantage dials it
+  (`real_not_serving`); a name that does not resolve is `real_resolve`. The switch is read again
+  at execution: off since the plan, a twin is settled `gate_real_host`. A skipped twin is settled
+  with its code and nothing is dialled from the country. Port 443.
+- **The same vantages.** The twin is inserted right after its name's measurement in the same
+  batch and source, so Globalping reuses the first measurement's probes and Atlas the same probe
+  ids. Each vantage carries an opaque key (`results[].vantage`, a short hash of what identifies
+  it: Globalping's probe description, two look-alikes told apart by order; Atlas's probe id),
+  never stored in the clear, and failures carry a `stage` (`connect`, `handshake`, `response`)
+  read from the source's own words (`classifyStage`).
+- **Rows.** `sniVantageProbes.role: 'real_host'` with `realAddress`; `address` / `port` stay
+  FCP's (what the batch is about; a target that moved settles the twin `target_moved` like its
+  name). Twins are never part of the name's own evidence (`aggregateEvidence`), never of the
+  handshake track, and never of auto-apply. They count against `hourlyBudget` (a batch of N names
+  spends 2N per source).
+
+**Reading a pair** (`lib/edges/sni/realHost.ts`, pure), per vantage:
+
+| FCP's address                             | The real site | Reading           | What it says                                                 |
+| ----------------------------------------- | ------------- | ----------------- | ------------------------------------------------------------ |
+| works                                     | works         | `works`           | nothing is blocked                                           |
+| fails                                     | fails         | `name_blocked`    | the name is blocked wherever it goes (\*)                    |
+| fails to connect (refused, connect stage) | works         | `address_blocked` | FCP's address is blocked, not the name                       |
+| connects, the handshake fails or resets   | works         | `ip_name_match`   | the censor likely checks the name against its real address   |
+| works                                     | fails         | `ours_only`       | the real site's address is blocked; the name passes on FCP's |
+| anything else (errors, unknown stage)     |               | `inconclusive`    | nothing                                                      |
+
+(\*) only from a vantage that got through for something else in the batch (another name, or a
+real site): a vantage that reaches nothing says nothing. A failure of FCP's check AFTER the
+handshake (`response`: TLS completed, then no answer) is `inconclusive`: the name got through.
+Where the source did not report the stage of FCP's failure, the newest TCP path reading of that
+address from that country (the per-country checks', within the handshake pairing window) decides
+it; without one the pair is `inconclusive`. A batch's pairs give one reading per name: `thin`
+below `minVantages` decisive pairs on `minNetworks` networks (a vantage without an ASN or network
+adds none), else the class holding two thirds of them, else `mixed`; sources that dialled
+different real addresses are never pooled (the reading is that of the address with the most
+decisive pairs). It is stored on `sniVantageEvidence.realHost` (the newest batch that had twins:
+when, FCP's address measured, the real site's address, the reading, counts per class, vantages,
+networks), re-read whenever that row is, ages out with the window like the rest of the row, and
+the country view judges the reading again from the stored counts with the floors of the moment.
+
+**Handshake timing (what the target adds).** A REALITY address hands every unauthenticated
+handshake through the node to the transport's target, so from one vantage its TLS handshake also
+carries the node-to-target round trip, while the name's real site answers in about one round
+trip. A censor can time that as well as FCP can. The same measurements already report their
+phases, and nothing extra is dialled: Globalping's HTTP result carries `timings.tcp` (the
+connect) and `timings.tls` (the handshake after it); RIPE Atlas `sslcert` carries `ttc` (the
+connect) and `rt` (from starting to connect to the server's answer), so its handshake phase is
+`rt - ttc`. Both are stored per vantage (`results[].tcpMs`, `.tlsMs`; no DNS phase: vantages
+dial the address literal, which also keeps DNS poisoning out of the reading). For each pair in
+which BOTH handshakes completed with both phases, each side's handshake beyond one round trip is
+`tlsMs - tcpMs` (the connect stands in for the round trip), and the target's share is ours minus
+the real site's. `realHost.timing` keeps the medians (`oursMs`, `realMs`, `addsMs`) and the
+pairs they rest on. The country view shows each name's figures and, per transport, "the
+transport's target adds about X ms" (the median of its names' medians, only names measured on
+that transport's own addresses).
+
+Flag (a proposal; the owner decides): `addsMs` of **50 ms or more over at least 3 timed pairs**
+(`TARGET_ADDS_FLAG_MS`, `TARGET_ADDS_MIN_PAIRS`). A real site's own handshake adds a few
+milliseconds of work; a target in the node's metro adds under 10 ms, in its region 10 to 40 ms,
+across an ocean 80 ms or more. 50 ms sits above residential jitter between the paired checks and
+below any cross-continent leg, so a flagged transport is one whose target should move closer to
+its node (or the node to its target). The flag colours the line on the page and changes nothing
+else.
+
+**Shown, not applied.** The country view shows each name's reading ("Real-site check: ...") and,
+under each address's evidence, what the names measured on it said. Nothing here changes a mark,
+a track, a grade, a suggestion or what anyone is handed.
+
+**How it could feed the grades (a proposal; the owner decides):**
+
+1. `name_blocked` from enough vantages and networks is a name-specific failure that needs no
+   second look: the checks could suggest `blocked` for the name there on it alone (today a name
+   that never worked waits for a repeat, a transition or member reports).
+2. `address_blocked` across the names of one address is a blocked round for that address's
+   track with a better control than the control countries (the same vantages reached the real
+   sites): it could count as one, reason `real_host`.
+3. `ip_name_match` on some names of an address while others pass means the country matches
+   names to networks: the failing names are blocked FOR THAT ADDRESS, not the country. That needs
+   a scope marks do not have today (name x country x network), and it is the signal for
+   delivering names whose real sites sit on the same network as the edge. On every name of an
+   address it cannot be told apart from TLS to that address being blocked, so it should stay a
+   reading.
+4. `ours_only` is evidence that the name works on FCP's address there: it could count towards
+   `proven` like an `ok`.
+
+**Safety.** Everything in "Vantage-host safety" holds; the twin adds the most ordinary traffic
+there is (a visit to a public site with its own name, `HEAD /` on Globalping) from the same
+vantages, at the same frequency. The real site sees that visit. Whoever runs a vantage sees the
+name next to the real site's address as well as FCP's, which says nothing more about FCP's
+address than the name check itself. check-host.net and FCP's own host are still not sources.
+
 ### The page
 
 Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/names/{slug}`).
@@ -2808,9 +2917,10 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   probes) with ages.
 - **A name's state** is the copy on the listener (what selection reads; `mark` or
   `checks_mark` by who wrote it). With no mark, a suggestion of the checks from inside shows as
-  basis `checks` ("not applied"). The checks' latest reading and member reports are shown beside
-  it, and `offered` says whether a member there may be handed it (an `hrw1` listener never hands
-  a name blocked there).
+  basis `checks` ("not applied"). The checks' latest reading, the real-host controls' reading
+  (§ Real-host controls) and member reports are shown beside it, and `offered` says whether a
+  member there may be handed it (an `hrw1` listener never hands a name blocked there). Each
+  address also lists what the real-host controls of the names measured on it said.
 - **What a member there is handed** is `assignEndpoints` itself, run over 240 fixed synthetic
   render keys, one listener at a time (every other listener's edges ineligible, as in a body
   carrying only that transport), with the deployment's render rule for the `other` family as a
@@ -2909,6 +3019,7 @@ block in that body, read by their own resolver so the render path never reads th
 | `windowDays`                              | 14              | 1..60        | the scoring window, and the measurement rows' retention                                   |
 | `minVantages`, `minNetworks`              | 3, 2            | 1..20, 1..10 | what a suggestion needs                                                                   |
 | `autoApply`                               | `false`         |              | apply suggestions by themselves (never over an operator's mark)                           |
+| `realHost`                                | `false`         |              | real-host controls: each name also checked against its real site (§ Real-host controls)   |
 
 The countries are not a key here: they are the listed countries with "Check names from inside"
 on (next section). At the defaults one source spends at most 12 measurements an hour (36 vantage
@@ -4842,6 +4953,16 @@ sweeps (nothing to sweep). No migration, no env change (the probe credentials ar
 `EDGE_PROBE_GLOBALPING_TOKEN` / `EDGE_PROBE_RIPEATLAS_KEY`), and `sniNameCountry.source:
 'probe'` was already in the schema. Turning it on is an operator decision per country (§ Checks
 from inside a country, "Residual risk").
+
+**Real-host controls** add optional fields only (`sniVantageProbes.role`, `realAddress`,
+`results[].stage`, `.vantage`, `.tcpMs`, `.tlsMs`, `sniVantageEvidence.realHost` with its
+`timing`) and the `edge.sni.vantage.realHost` setting (off). One plain deploy, no migration, no
+env change. Every new measurement carries `results[].vantage` and its phase timings (and a
+failure its `stage`), switch on or off, so
+before deploying a build without them: set the switch off, then run
+`sniVantage:clearRealHostForRollback` (one page of 200 rows per call; call again with the
+returned `phase` and `cursor` until `done: true`: the measurements first, then the evidence). It
+deletes the twins and strips the new fields, so the older schema accepts what is left.
 
 The `"use node"` actions (provider SDKs, probes, the front qualification) run on the Node
 version baked into the self-hosted Convex backend image. The L7 adapters add `cloudflare` (the

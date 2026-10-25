@@ -35,6 +35,10 @@
     percent,
     probesLine,
     reportsLine,
+    realHostLine,
+    addressRealHostLine,
+    targetAddsLine,
+    TARGET_ADDS_FLAG_WORDS,
     roundLine,
     switchNotes,
     totalsLine,
@@ -65,6 +69,7 @@
       roundLine(a, now),
       handshakeLine(a, now),
       probesLine(a, now),
+      addressRealHostLine(a, now),
     ].filter((x): x is string => !!x);
   }
   function handedLine(a: CountryViewAddress): string | null {
@@ -150,6 +155,17 @@
                 <span class="text-muted-foreground">Transport {l.key}</span>
                 {#if !l.usable}<Badge variant="outline">Not in use</Badge>{/if}
               </div>
+
+              {#if targetAddsLine(l, now)}
+                <div
+                  class={l.targetAdds?.flagged
+                    ? 'space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2'
+                    : 'text-muted-foreground'}
+                >
+                  <p>{targetAddsLine(l, now)}</p>
+                  {#if l.targetAdds?.flagged}<p>{TARGET_ADDS_FLAG_WORDS}</p>{/if}
+                </div>
+              {/if}
 
               <div class="bg-muted/40 space-y-1 rounded-md px-3 py-2">
                 <p class="font-medium">What a member here is handed</p>
@@ -252,6 +268,9 @@
                         {#if checksLine(n, now)}
                           <p class="text-muted-foreground">{checksLine(n, now)}</p>
                         {/if}
+                        {#if realHostLine(n, now)}
+                          <p class="text-muted-foreground">{realHostLine(n, now)}</p>
+                        {/if}
                         {#if reportsLine(n)}
                           <p class="text-muted-foreground">{reportsLine(n)}</p>
                         {/if}
@@ -273,9 +292,9 @@
                 <span class="font-mono break-all">{o.direct.address}</span>
               </div>
               <p class="text-muted-foreground">{addressWhy(o.direct)}</p>
-              {#if probesLine(o.direct, now)}
-                <p class="text-muted-foreground">{probesLine(o.direct, now)}</p>
-              {/if}
+              {#each evidenceLines(o.direct) as line (line)}
+                <p class="text-muted-foreground">{line}</p>
+              {/each}
             </section>
           {/if}
         </CardContent>

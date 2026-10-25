@@ -709,6 +709,41 @@ export type CountryViewAddressBasis = (typeof COUNTRY_VIEW_ADDRESS_BASES)[number
 export const COUNTRY_VIEW_NAME_BASES = ['mark', 'checks_mark', 'checks', 'none'] as const;
 export type CountryViewNameBasis = (typeof COUNTRY_VIEW_NAME_BASES)[number];
 
+/**
+ * Real-host controls (docs/edges.md "Real-host controls", convex/lib/edges/sni/realHost.ts):
+ * one vantage's check of FCP's address and of the name's real site, read together.
+ */
+export const REAL_HOST_PAIRS = [
+  'works',
+  'name_blocked',
+  'address_blocked',
+  'ip_name_match',
+  'ours_only',
+  'inconclusive',
+] as const;
+export type RealHostPair = (typeof REAL_HOST_PAIRS)[number];
+
+/** What one batch's pairs say about a name in a country (`thin`: too few to say, `mixed`: no majority). */
+export const REAL_HOST_READINGS = [
+  'works',
+  'name_blocked',
+  'address_blocked',
+  'ip_name_match',
+  'ours_only',
+  'mixed',
+  'thin',
+] as const;
+export type RealHostReading = (typeof REAL_HOST_READINGS)[number];
+
+/** Why a real-site check was not dialled (`sniVantageProbes.error` on a `real_host` row). */
+export const REAL_HOST_SKIPS = [
+  'real_resolve',
+  'real_private',
+  'real_is_ours',
+  'real_not_serving',
+] as const;
+export type RealHostSkip = (typeof REAL_HOST_SKIPS)[number];
+
 /** Why the view could not work out what a member there is handed on a transport. */
 export const COUNTRY_VIEW_HANDED_REASONS = [
   'render_off',

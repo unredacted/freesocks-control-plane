@@ -236,6 +236,29 @@
           </p>
         </div>
       </div>
+      <div class="flex items-start gap-3">
+        <Switch
+          id={`${uid}-real`}
+          class="mt-0.5"
+          checked={vantage.realHost}
+          disabled={saving}
+          onCheckedChange={(v) =>
+            void patchVantage(
+              { realHost: v },
+              v ? 'Real-site checks are on.' : 'Real-site checks are off.',
+            )}
+        />
+        <div>
+          <Label for={`${uid}-real`}>Also check each name against its real site</Label>
+          <p class="text-muted-foreground">
+            The same vantages also try each name on the site that really serves it (its public
+            address, found and checked from FCP first). That tells a blocked name from a blocked
+            address, and shows when the censor checks a name against its real address. It is an
+            ordinary visit to that site, and it doubles the checks each batch spends. Shown on
+            Countries; nothing is applied from it.
+          </p>
+        </div>
+      </div>
       <p class="text-muted-foreground">
         At most {vantage.hourlyBudget} checks an hour, each name again after
         {vantage.intervalHours} hours, from up to {vantage.perCountryLimit} vantages.

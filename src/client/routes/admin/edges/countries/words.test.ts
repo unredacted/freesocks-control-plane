@@ -7,10 +7,12 @@ import {
   COUNTRY_VIEW_ADDRESS_BASES,
   COUNTRY_VIEW_HANDED_REASONS,
   COUNTRY_VIEW_NAME_BASES,
+  REAL_HOST_READINGS,
 } from '@shared/contracts/edgeCodes';
 import type {
   CountryViewAddress,
   CountryViewHanded,
+  CountryViewListener,
   CountryViewName,
 } from '@shared/contracts/edges';
 import * as W from './words';
@@ -39,6 +41,7 @@ function address(over: Partial<CountryViewAddress> = {}): CountryViewAddress {
       handshake: null,
       round: null,
       probes: null,
+      realHost: null,
     },
     handed: { primary: 0, backup: 0 },
     ...over,
@@ -76,6 +79,7 @@ const name = (over: Partial<CountryViewName> = {}): CountryViewName => ({
   offered: true,
   checks: null,
   reports: null,
+  realHost: null,
   handed: 0,
   ...over,
 });
@@ -95,19 +99,17 @@ function everyString(): string[] {
     ),
   );
   out.push(W.HANDED_SCOPE, W.untilLine(NOW + H, NOW)!, W.untilLine(NOW - 1, NOW)!);
-  out.push(
-    ...W.switchNotes(
-      {
-        probes: false,
-        countryChecks: false,
-        steering: false,
-        render: true,
-        names: true,
-        nameChecks: false,
-      },
-      false,
-    ),
-  );
+  const off = {
+    probes: false,
+    countryChecks: false,
+    steering: false,
+    render: true,
+    names: true,
+    nameChecks: false,
+    realHost: false,
+  };
+  out.push(...W.switchNotes(off, false), ...W.switchNotes(off, true));
+  for (const w of Object.values(W.REAL_HOST_WORDS)) out.push(w.short, w.sentence);
   return out;
 }
 
@@ -205,6 +207,85 @@ describe('country view words', () => {
     expect(W.handedWords(handed({ steered: true, onBlockedAddress: 0 }))[0]).toContain(
       'chosen for this country',
     );
+  });
+
+  it('has words for every real-host reading, and reads a name and an address', () => {
+    for (const r of REAL_HOST_READINGS) expect(W.REAL_HOST_WORDS[r].sentence).toMatch(/\.$/);
+    const n = name({
+      realHost: {
+        at: NOW - H,
+        target: 'edge:e1:198.51.100.1:443',
+        realAddress: '192.0.2.50',
+        reading: 'ip_name_match',
+        counts: {
+          works: 0,
+          nameBlocked: 0,
+          addressBlocked: 0,
+          ipNameMatch: 3,
+          oursOnly: 0,
+          inconclusive: 0,
+        },
+        vantages: 3,
+        networks: 2,
+        timing: null,
+      },
+    });
+    expect(W.realHostLine(n, NOW)).toBe(
+      'Real-site check against 192.0.2.50: Its real site works from the same vantages, and this address connects, but the handshake with the name fails: the censor likely checks the name against its real address or network. 3 vantages on 2 networks, 1 h ago.',
+    );
+    expect(W.realHostLine(name(), NOW)).toBeNull();
+    const timed = name({
+      realHost: {
+        ...n.realHost!,
+        reading: 'works',
+        timing: { pairs: 3, oursMs: 140, realMs: 6, addsMs: 133 },
+      },
+    });
+    expect(W.realHostLine(timed, NOW)).toContain(
+      'Beyond one round trip, its handshake took 140 ms on this address and 6 ms on the real site (3 vantages).',
+    );
+    const a = address({
+      evidence: {
+        ...address().evidence,
+        realHost: {
+          at: NOW - H,
+          names: [
+            { name: 'a', reading: 'address_blocked' },
+            { name: 'b', reading: 'address_blocked' },
+            { name: 'c', reading: 'works' },
+          ],
+        },
+      },
+    });
+    expect(W.addressRealHostLine(a, NOW)).toBe(
+      'Real-site checks of 3 names on it: 2 the address is blocked, 1 works, 1 h ago.',
+    );
+  });
+
+  it('says what a transport’s target adds, and flags a large gap', () => {
+    const listener = (targetAdds: CountryViewListener['targetAdds']): CountryViewListener => ({
+      listenerId: 'L',
+      key: 'a',
+      protocol: 'vless',
+      streamTransport: 'raw',
+      security: 'reality',
+      usable: true,
+      addresses: [],
+      names: [],
+      members: handed(),
+      targetAdds,
+    });
+    expect(W.targetAddsLine(listener(null), NOW)).toBeNull();
+    const far = { ms: 133, oursMs: 140, realMs: 6, pairs: 6, names: 2, at: NOW - H, flagged: true };
+    expect(W.targetAddsLine(listener(far), NOW)).toBe(
+      'The transport’s target adds about 133 ms to a handshake from here (this address 140 ms beyond one round trip, the names’ real sites 6 ms; 6 vantages, 2 names, 1 h ago). Flagged: the target sits far from the node.',
+    );
+    expect(
+      W.targetAddsLine(listener({ ...far, ms: -2, flagged: false }), NOW)?.startsWith(
+        'The transport’s target adds nothing measurable',
+      ),
+    ).toBe(true);
+    expect(W.TARGET_ADDS_FLAG_WORDS).not.toMatch(/—/);
   });
 
   it('counts in words that agree', () => {

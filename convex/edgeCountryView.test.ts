@@ -181,6 +181,24 @@ async function setup() {
         startedAt: now - 30 * H,
         transition: true,
       },
+      // Its real site works from the same vantages while the blocked address connects
+      // but fails the handshake (real-host controls).
+      realHost: {
+        at: now - H,
+        target: `edge:${blocked}:198.51.100.1:443`,
+        realAddress: '192.0.2.50',
+        reading: 'ip_name_match',
+        counts: {
+          works: 0,
+          nameBlocked: 0,
+          addressBlocked: 0,
+          ipNameMatch: 3,
+          oursOnly: 0,
+          inconclusive: 0,
+        },
+        vantages: 3,
+        networks: 2,
+      },
       updatedAt: now,
     });
     await ctx.db.insert('sniReportCounts', {
@@ -230,6 +248,22 @@ describe('the country view', () => {
     expect(byName['b.example']).toMatchObject({ state: 'blocked', basis: 'checks' });
     expect(byName['b.example']!.checks).toMatchObject({ suggestion: 'blocked', failNetworks: 2 });
     expect(byName['c.example']!.reports).toEqual({ weight: 2.5, suspect: false });
+    // The real-host reading rides on the name and on the address it was measured on.
+    expect(byName['b.example']!.realHost).toMatchObject({
+      reading: 'ip_name_match',
+      realAddress: '192.0.2.50',
+    });
+    expect(l.addresses[0]!.evidence.realHost).toEqual({
+      at: expect.any(Number),
+      names: [{ name: 'b.example', reading: 'ip_name_match' }],
+    });
+    expect(l.addresses[1]!.evidence.realHost).toBeNull();
+    // The reading is judged now from the stored counts: a raised floor makes it thin.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.sni.vantage.minVantages', '5'));
+    const later = await t.query(internal.edgeCountryView.country, { country: 'IR' });
+    expect(
+      later.origins[0]!.listeners[0]!.names.find((n) => n.name === 'b.example')!.realHost?.reading,
+    ).toBe('thin');
     // Steering is off: members there are spread over both published addresses.
     expect(l.members.computed).toBe(true);
     expect(l.members.primary.map((p) => p.id).sort()).toEqual([blocked, works].sort());

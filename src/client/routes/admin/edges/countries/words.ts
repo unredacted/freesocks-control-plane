@@ -8,6 +8,7 @@
  *   ADDRESS_BASIS_WORDS / addressWhy  why an address counts as it does, in one sentence
  *   NAME_BASIS_WORDS / nameWhy        why a name counts as it does
  *   probesLine / roundLine / checksLine / reportsLine   one piece of evidence each
+ *   REAL_HOST_WORDS / realHostLine / addressRealHostLine   the real-host controls
  *   handedWords                      what a member there is handed on one transport
  *   switchNotes                      what is off, and what that leaves the view without
  *   countryLabel / percent           display helpers
@@ -15,6 +16,7 @@
 import type {
   CountryViewAddress,
   CountryViewHanded,
+  CountryViewListener,
   CountryViewName,
   CountryViewSwitches,
   CountryViewTotals,
@@ -24,6 +26,7 @@ import type {
   CountryViewAddressBasis,
   CountryViewHandedReason,
   CountryViewNameBasis,
+  RealHostReading,
 } from '@shared/contracts/edgeCodes';
 import { countryName } from '@client/lib/countries';
 import { durationLabel, relativeTime } from '../lib/time';
@@ -184,6 +187,80 @@ export function checksLine(n: CountryViewName, now = Date.now()): string | null 
   return `Checks from inside: ${seen} (${when}).${reason}`.trimEnd();
 }
 
+/**
+ * The real-host controls: the same name presented to FCP's address and to the
+ * name's real site, from the same vantages, read together.
+ */
+export const REAL_HOST_WORDS: Record<RealHostReading, { short: string; sentence: string }> = {
+  works: {
+    short: 'works',
+    sentence: 'The name gets through to its real site and to this address alike.',
+  },
+  name_blocked: {
+    short: 'the name is blocked',
+    sentence:
+      'The name fails on its real site too, from vantages that reach other names: the name itself is blocked here.',
+  },
+  address_blocked: {
+    short: 'the address is blocked',
+    sentence:
+      'Its real site works from the same vantages, but this address does not even connect: the address is blocked here, not the name.',
+  },
+  ip_name_match: {
+    short: 'the name is checked against its real address',
+    sentence:
+      'Its real site works from the same vantages, and this address connects, but the handshake with the name fails: the censor likely checks the name against its real address or network.',
+  },
+  ours_only: {
+    short: 'works only here',
+    sentence:
+      'Its real site cannot be reached from here, but the name gets through on this address.',
+  },
+  mixed: { short: 'mixed', sentence: 'The vantages disagree.' },
+  thin: { short: 'too few answers', sentence: 'Too few vantages answered to say anything.' },
+};
+
+/** A name's real-host reading in one line (null: never checked against its real site). */
+export function realHostLine(n: CountryViewName, now = Date.now()): string | null {
+  const r = n.realHost;
+  if (!r) return null;
+  const site = r.realAddress ? ` against ${r.realAddress}` : '';
+  const timed = r.timing
+    ? ` Beyond one round trip, its handshake took ${r.timing.oursMs} ms on this address and ${r.timing.realMs} ms on the real site (${plural(r.timing.pairs, 'vantage')}).`
+    : '';
+  return `Real-site check${site}: ${REAL_HOST_WORDS[r.reading].sentence} ${plural(r.vantages, 'vantage')} on ${plural(r.networks, 'network')}, ${relativeTime(r.at, now)}.${timed}`;
+}
+
+/** The proposed threshold the page states with the figure (the owner decides). */
+export const TARGET_ADDS_FLAG_WORDS =
+  'Over 50 ms on at least 3 vantages is flagged: a gap that size is something a censor can measure (a proposed threshold).';
+
+/**
+ * What the transport's target adds to a handshake from here, in one line
+ * (null: no timed real-host pair yet).
+ */
+export function targetAddsLine(l: CountryViewListener, now = Date.now()): string | null {
+  const t = l.targetAdds;
+  if (!t) return null;
+  const head =
+    t.ms <= 0
+      ? 'The transport’s target adds nothing measurable to a handshake from here'
+      : `The transport’s target adds about ${t.ms} ms to a handshake from here`;
+  return `${head} (this address ${t.oursMs} ms beyond one round trip, the names’ real sites ${t.realMs} ms; ${plural(t.pairs, 'vantage')}, ${plural(t.names, 'name')}, ${relativeTime(t.at, now)}).${t.flagged ? ' Flagged: the target sits far from the node.' : ''}`;
+}
+
+/** What the real-host controls of the names checked on an address say about it. */
+export function addressRealHostLine(a: CountryViewAddress, now = Date.now()): string | null {
+  const r = a.evidence.realHost;
+  if (!r || r.names.length === 0) return null;
+  const by = new Map<RealHostReading, number>();
+  for (const n of r.names) by.set(n.reading, (by.get(n.reading) ?? 0) + 1);
+  const parts = [...by.entries()]
+    .sort((x, y) => y[1] - x[1])
+    .map(([reading, count]) => `${count} ${REAL_HOST_WORDS[reading].short}`);
+  return `Real-site checks of ${plural(r.names.length, 'name')} on it: ${parts.join(', ')}, ${relativeTime(r.at, now)}.`;
+}
+
 /** Member reports about a name from there (null: none in the window). */
 export function reportsLine(n: CountryViewName): string | null {
   const r = n.reports;
@@ -250,6 +327,10 @@ export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | nu
   else if (nameChecksHere === false)
     out.push(
       'Names are not checked from inside this country (opt in under Settings, Censored countries).',
+    );
+  else if (nameChecksHere && !s.realHost)
+    out.push(
+      'Real-site checks are off: a failing name is not compared with its real site (Server names, Checks from inside countries).',
     );
   return out;
 }

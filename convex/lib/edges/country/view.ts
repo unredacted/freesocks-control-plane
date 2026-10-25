@@ -27,7 +27,9 @@ import type {
   CountryViewAddressBasis,
   CountryViewHandedReason,
   CountryViewNameBasis,
+  RealHostReading,
 } from '../../../../src/shared/contracts/edgeCodes';
+import { TARGET_ADDS_FLAG_MS, type HandshakeTiming, type PairCounts } from '../sni/realHost';
 
 export type ViewState = 'proven' | 'blocked' | 'unknown';
 
@@ -153,6 +155,95 @@ export interface NameFacts {
     lastOkAt: number | null;
   } | null;
   reports: { weight: number; suspect: boolean } | null;
+  /** The real-host controls of the newest batch that had them (lib/edges/sni/realHost.ts). */
+  realHost?: NameRealHost | null;
+}
+
+export interface NameRealHost {
+  at: number;
+  /** FCP's address the batch measured (`<kind>:<ref>:<address>:<port>`). */
+  target: string;
+  realAddress: string | null;
+  reading: RealHostReading;
+  counts: PairCounts;
+  vantages: number;
+  networks: number;
+  timing: HandshakeTiming | null;
+}
+
+/**
+ * What the transport's target adds to a handshake from this country, over the
+ * timed real-host pairs of the transport's names (medians of the names'
+ * medians). `flagged` = at least `TARGET_ADDS_MIN_PAIRS` timed pairs and
+ * `TARGET_ADDS_FLAG_MS` or more: a proposal, the owner decides.
+ */
+export interface TargetAdds {
+  ms: number;
+  oursMs: number;
+  realMs: number;
+  pairs: number;
+  names: number;
+  at: number;
+  flagged: boolean;
+}
+
+/** Timed pairs the flag needs (the name checks' default `minVantages`). A proposal. */
+export const TARGET_ADDS_MIN_PAIRS = 3;
+
+const medianOf = (xs: readonly number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return Math.round(s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2);
+};
+
+/** The target leg of one transport, from its names' timed real-host pairs on its own addresses. */
+function targetAddsOn(
+  prefixes: readonly string[],
+  names: ReadonlyArray<{ n: NameInput; f: NameFacts | null }>,
+): TargetAdds | null {
+  const timed = names
+    .map(({ f }) => f?.realHost)
+    .filter(
+      (r): r is NameRealHost & { timing: HandshakeTiming } =>
+        !!r?.timing && prefixes.some((p) => r.target.startsWith(p)),
+    );
+  if (timed.length === 0) return null;
+  const ms = medianOf(timed.map((r) => r.timing.addsMs));
+  const pairs = timed.reduce((s, r) => s + r.timing.pairs, 0);
+  return {
+    ms,
+    oursMs: medianOf(timed.map((r) => r.timing.oursMs)),
+    realMs: medianOf(timed.map((r) => r.timing.realMs)),
+    pairs,
+    names: timed.length,
+    at: Math.max(...timed.map((r) => r.at)),
+    flagged: pairs >= TARGET_ADDS_MIN_PAIRS && ms >= TARGET_ADDS_FLAG_MS,
+  };
+}
+
+/** What the real-host controls of the names checked on one address say about it. */
+export interface AddressRealHost {
+  /** The newest of them. */
+  at: number;
+  /** Each name's reading, as checked on this address. */
+  names: Array<{ name: string; reading: RealHostReading }>;
+}
+
+/** The names whose newest real-host batch measured the address with key prefix `prefix`. */
+function realHostOn(
+  prefix: string,
+  names: ReadonlyArray<{ n: NameInput; f: NameFacts | null }>,
+): AddressRealHost | null {
+  const byName = new Map<string, { name: string; reading: RealHostReading; at: number }>();
+  for (const { n, f } of names)
+    if (f?.realHost?.target.startsWith(prefix))
+      byName.set(n.name, { name: n.name, reading: f.realHost.reading, at: f.realHost.at });
+  const hits = [...byName.values()];
+  if (hits.length === 0) return null;
+  return {
+    at: Math.max(...hits.map((h) => h.at)),
+    names: hits.map(({ name, reading }) => ({ name, reading })),
+  };
 }
 
 export interface ListenerInput {
@@ -464,6 +555,8 @@ export interface AddressView {
     handshake: (Omit<EvidenceRow['handshake'], 'pathBatches'> & { batches: number }) | null;
     round: EvidenceRow['lastRound'] | null;
     probes: ReachRow | null;
+    /** The real-host controls of the names checked on it (null: none). */
+    realHost: AddressRealHost | null;
   };
   /** Shares of the sampled members holding it as primary / backup. */
   handed: { primary: number; backup: number };
@@ -482,6 +575,7 @@ export interface NameView {
   offered: boolean;
   checks: NameFacts['checks'];
   reports: NameFacts['reports'];
+  realHost: NameRealHost | null;
   handed: number;
 }
 
@@ -495,6 +589,8 @@ export interface ListenerView {
   addresses: AddressView[];
   names: NameView[];
   members: Handed;
+  /** What the transport's target adds to a handshake from there (null: no timed pair). */
+  targetAdds: TargetAdds | null;
 }
 
 export interface OriginView {
@@ -530,6 +626,7 @@ function edgeView(
   country: string,
   now: number,
   handed: { primary: Map<string, number>; backup: Map<string, number> },
+  realHost: AddressRealHost | null,
 ): AddressView {
   const st = addressState(e, country, now);
   const v6 = e.addresses.v4 && e.addresses.v6 ? e.addresses.v6 : null;
@@ -567,6 +664,7 @@ function edgeView(
           : null,
       round: ev?.lastRound ?? null,
       probes: reachIn(e.reachability, country),
+      realHost,
     },
     handed: {
       primary: handed.primary.get(e.edgeId) ?? 0,
@@ -575,7 +673,11 @@ function edgeView(
   };
 }
 
-function originAddressView(d: NonNullable<OriginInput['direct']>, country: string): AddressView {
+function originAddressView(
+  d: NonNullable<OriginInput['direct']>,
+  country: string,
+  realHost: AddressRealHost | null,
+): AddressView {
   const probes = reachIn(d.reachability, country);
   const state = probesState(d.reachability, country);
   return {
@@ -591,7 +693,15 @@ function originAddressView(d: NonNullable<OriginInput['direct']>, country: strin
     state,
     basis: probes ? 'probes' : 'none',
     until: null,
-    evidence: { mark: null, grade: null, address: null, handshake: null, round: null, probes },
+    evidence: {
+      mark: null,
+      grade: null,
+      address: null,
+      handshake: null,
+      round: null,
+      probes,
+      realHost,
+    },
     handed: { primary: 0, backup: 0 },
   };
 }
@@ -604,6 +714,7 @@ function newestOf(a: AddressView): number | null {
     a.evidence.handshake?.lastBatchAt,
     a.evidence.round?.at,
     a.evidence.probes?.lastAt,
+    a.evidence.realHost?.at,
   ].filter((t): t is number => typeof t === 'number');
   return ts.length > 0 ? Math.max(...ts) : null;
 }
@@ -671,7 +782,13 @@ export function buildCountryView(
       const backupShare = new Map(members.backup.map((x) => [x.id, x.share]));
       const nameShare = new Map(members.names.map((x) => [x.id, x.share]));
       const addresses = edges.map((e) =>
-        edgeView(e, s.country, s.now, { primary: primaryShare, backup: backupShare }),
+        edgeView(
+          e,
+          s.country,
+          s.now,
+          { primary: primaryShare, backup: backupShare },
+          realHostOn(`edge:${e.edgeId}:`, nameViews0),
+        ),
       );
       for (const a of addresses) {
         if (a.publication === 'published') {
@@ -688,6 +805,7 @@ export function buildCountryView(
         if (n.status === 'active' && !seenNames.has(n.name)) seenNames.set(n.name, actedState(st));
         noteAt(f?.mark?.at);
         noteAt(f?.checks?.lastAt);
+        noteAt(f?.realHost?.at);
         return {
           name: n.name,
           family: f?.family ?? null,
@@ -699,6 +817,7 @@ export function buildCountryView(
           offered,
           checks: f?.checks ?? null,
           reports: f?.reports ?? null,
+          realHost: f?.realHost ?? null,
           handed: nameShare.get(n.name) ?? 0,
         };
       });
@@ -712,9 +831,23 @@ export function buildCountryView(
         addresses,
         names,
         members,
+        // Its names measured on its own addresses (an edge of it, or the origin itself).
+        targetAdds: targetAddsOn(
+          [...edges.map((e) => `edge:${e.edgeId}:`), `relay:${o.relayId}:`],
+          nameViews0,
+        ),
       });
     }
-    const direct = o.direct ? originAddressView(o.direct, s.country) : null;
+    const direct = o.direct
+      ? originAddressView(
+          o.direct,
+          s.country,
+          realHostOn(
+            `relay:${o.relayId}:`,
+            o.listeners.flatMap((l) => l.names.map((n) => ({ n, f: facts(n.name) }))),
+          ),
+        )
+      : null;
     if (direct) noteAt(newestOf(direct));
     const atRisk = o.enabled && published > 0 && publishedBlocked === published;
     if (atRisk) totals.originsAtRisk++;

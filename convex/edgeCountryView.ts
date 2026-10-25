@@ -30,6 +30,7 @@ import { effectiveRule, ruleCanEmitV6, ruleForDelivery } from './lib/edges/rende
 import { countryGroupKey } from './lib/edges/country/group';
 import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
 import { suggest } from './lib/edges/sni/vantage';
+import { readingOf } from './lib/edges/sni/realHost';
 import {
   actedState,
   buildCountryView,
@@ -272,6 +273,7 @@ async function settingsOf(db: Db) {
       render: rule.enabled,
       names: sni.enabled,
       nameChecks: vantageOn,
+      realHost: vantageOn && vantage.realHost,
     },
     nameCheckCountries: vantageOn ? vantageCountries(vantage, sni.curatedCountries) : [],
     controls: controlCountriesOf(cfg, censored.codes),
@@ -379,6 +381,22 @@ function nameFactsFor(
           }
         : null,
       reports: weight !== undefined ? { weight: Math.round(weight * 100) / 100, suspect } : null,
+      realHost: ev?.realHost
+        ? {
+            at: ev.realHost.at,
+            target: ev.realHost.target,
+            realAddress: ev.realHost.realAddress ?? null,
+            // Judged now from the stored counts: the floors move independently.
+            reading: readingOf(ev.realHost.counts, ev.realHost.networks, {
+              minVantages: st.vantage.minVantages,
+              minNetworks: st.vantage.minNetworks,
+            }),
+            counts: ev.realHost.counts,
+            vantages: ev.realHost.vantages,
+            networks: ev.realHost.networks,
+            timing: ev.realHost.timing ?? null,
+          }
+        : null,
     });
   }
   return out;
