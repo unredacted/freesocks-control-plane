@@ -7,6 +7,10 @@ import { createQuery, type QueryClient } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
 import {
+  EdgeNetworkList,
+  EdgeNetworkRefreshed,
+  type EdgeNetworkWrite,
+  SniBindResult,
   SniConfigView,
   SniFamilyDetail,
   SniFamilyList,
@@ -39,11 +43,30 @@ export const createFamily = (family: {
   targetAddress: string;
   targetPort: number;
   requireH2: boolean;
+  /** A network's slug: the target and every name must resolve inside it. */
+  network?: string;
 }) => apiClient.post(`${BASE}/families`, family, Loose);
 export const updateFamily = (
   slug: string,
-  fields: { label?: string; enabled?: boolean; requireH2?: boolean },
+  fields: { label?: string; enabled?: boolean; requireH2?: boolean; network?: string | null },
 ) => apiClient.patch(`${BASE}/families/${enc(slug)}`, fields, Loose);
+
+// --- networks (docs/edges.md "Networks") ----------------------------------------------------
+const NETWORKS = '/api/v1/admin/edges/networks';
+export const fetchNetworks = () => apiClient.get(NETWORKS, EdgeNetworkList);
+export const createNetwork = (n: EdgeNetworkWrite) => apiClient.post(NETWORKS, n, Loose);
+export const updateNetwork = (slug: string, n: EdgeNetworkWrite) =>
+  apiClient.patch(`${NETWORKS}/${enc(slug)}`, n, Loose);
+export const removeNetwork = (slug: string) => apiClient.delete(`${NETWORKS}/${enc(slug)}`, Loose);
+export const refreshNetwork = (slug: string) =>
+  apiClient.post(`${NETWORKS}/${enc(slug)}/refresh`, {}, EdgeNetworkRefreshed);
+/** A location's network (null: none, its addresses may teach it again). */
+export const setLocationNetwork = (accountId: string, locationId: string, network: string | null) =>
+  apiClient.post(
+    `/api/v1/admin/edges/providers/${enc(accountId)}/locations/${enc(locationId)}/network`,
+    { network },
+    Loose,
+  );
 export const removeFamily = (slug: string) =>
   apiClient.delete(`${BASE}/families/${enc(slug)}`, Loose);
 
@@ -70,11 +93,16 @@ export const applyVantage = (slug: string, snis: string[], country: string) =>
     SniVantageApplied,
   );
 
-export const bindFamily = (slug: string, backendSlug: string, transportTag: string) =>
+export const bindFamily = (
+  slug: string,
+  backendSlug: string,
+  transportTag: string,
+  opts: { transportUuid?: string; takeNames?: boolean } = {},
+) =>
   apiClient.post(
     `${BASE}/families/${enc(slug)}/bind`,
-    { backendSlug, transportTag } satisfies SniBindRequest,
-    Loose,
+    { backendSlug, transportTag, ...opts } satisfies SniBindRequest,
+    SniBindResult,
   );
 export const unbindFamily = (bindingId: string) =>
   apiClient.delete(`${BASE}/bindings/${enc(bindingId)}`, Loose);
@@ -98,7 +126,11 @@ export const sniKeys = {
   families: [...ROOT, 'families'] as const,
   family: (slug: string) => [...ROOT, 'family', slug] as const,
   rollout: (id: string) => [...ROOT, 'rollout', id] as const,
+  networks: [...ROOT, 'networks'] as const,
 };
+
+export const networksQuery = () =>
+  createQuery(() => ({ queryKey: sniKeys.networks, queryFn: fetchNetworks, staleTime: 30_000 }));
 
 export const sniConfigQuery = () =>
   createQuery(() => ({ queryKey: sniKeys.config, queryFn: fetchSniConfig, staleTime: 30_000 }));

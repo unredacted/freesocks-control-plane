@@ -24,6 +24,8 @@ import {
 } from './lib/edgeConfig';
 import { probeSourceHealth } from './probes';
 import { countryWideHolds, newEdgeBlockedIn } from './edgeCountry';
+import { networkPrefixes } from './edgeNetworks';
+import { edgeNetworkVerdict } from './lib/edges/networks';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { readMaintenance } from './lib/edges/maintenance';
 import {
@@ -70,8 +72,8 @@ import type { SetupStepId } from '../src/shared/contracts/edgeCodes';
 import {
   checkPublishable,
   deliveryBindingFor,
-  liveEdgesOfAccount,
   liveEdgesOfRelay,
+  managedLiveOfAccount,
   mapRelayAdmin,
 } from './relays';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
@@ -91,7 +93,6 @@ import { accountOptionDefaultsOf } from './lib/edges/choices';
 import {
   defaultLocationOf,
   effectiveTemplateOfLocation,
-  liveCountForLocation,
   locationsOfAccount,
   sharedCertificateUsers as zoneSharedCertificateUsers,
 } from './edgeLocations';
@@ -1330,6 +1331,30 @@ export const attention = internalQuery({
           action: 'open_relay',
           since: iso(direct.since),
         });
+      }
+      // An address in use on a transport scoped to a network that is not on it
+      // (docs/edges.md "Networks"): published before the transport's family was
+      // on the network, or re-addressed since. Its names point elsewhere.
+      // A network left with no ranges at all (its ASNs changed, a read found
+      // none) proves nothing about any address: every one in use is named too.
+      for (const l of listeners) {
+        if (!l.networkId) continue;
+        const prefixes = await networkPrefixes(ctx.db, l.networkId);
+        for (const e of edges) {
+          if (e.listenerId !== l._id || e.publication !== 'published') continue;
+          if (prefixes && edgeNetworkVerdict(e.addresses, prefixes) !== 'off') continue;
+          items.push({
+            ...base(relay),
+            id: `edge_off_network:${e._id}`,
+            kind: 'edge_off_network',
+            severity: 'warning',
+            edgeId: e._id as string,
+            listenerKey: l.listenerKey,
+            code: prefixes ? null : 'network_no_ranges',
+            action: 'open_edge',
+            since: null,
+          });
+        }
       }
       // A front the operator built by hand: members no longer get it (render
       // leaves it out), and it is known not to be the node. Advice, not an alarm.
@@ -2786,7 +2811,9 @@ export const providersUsage = internalQuery({
     }
     const accountRows = [];
     for (const a of accounts) {
-      const live = (await liveEdgesOfAccount(ctx.db, a._id)).filter((e) => e.managed).length;
+      // One read of the account serves its total and each location's count.
+      const managed = await managedLiveOfAccount(ctx.db, a._id);
+      const live = managed.live;
       totals.liveEdges += live;
       const counts = perAccount.get(a._id as string) ?? { published: 0, standby: 0, draining: 0 };
       // Per location: its live edges against its own cap, and its trust.
@@ -2798,7 +2825,7 @@ export const providersUsage = internalQuery({
           placeKey: loc.placeKey,
           enabled: loc.enabled,
           qualified: loc.qualified,
-          liveEdges: await liveCountForLocation(ctx.db, loc),
+          liveEdges: managed.atLocation(loc._id),
           maxLiveEdges: loc.maxLiveEdges ?? null,
         });
       accountRows.push({

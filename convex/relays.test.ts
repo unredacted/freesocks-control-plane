@@ -27,7 +27,7 @@ import {
   wsListener,
   type ListenerSpecFixture,
 } from './lib/edges/testing/fixtures';
-import { EDGE_DEFAULTS } from './lib/edgeConfig';
+import { EDGE_DEFAULTS, MAX_DESIRED_PUBLISHED } from './lib/edgeConfig';
 import {
   deliveryBindingOf,
   edgeAdminView,
@@ -576,7 +576,10 @@ describe('origins: operator knobs and epochs', () => {
     expect(await mirrorRefreshes(t)).toBe(scheduled0 + 1);
     // Knob validation.
     await expect(
-      t.mutation(internal.relays.update, { id: relayId, desiredPublished: 17 }),
+      t.mutation(internal.relays.update, {
+        id: relayId,
+        desiredPublished: MAX_DESIRED_PUBLISHED + 1,
+      }),
     ).rejects.toThrow(/desiredPublished/);
     await expect(t.mutation(internal.relays.update, { id: relayId, label: '' })).rejects.toThrow(
       /label/,

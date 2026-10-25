@@ -30,6 +30,7 @@
     importNames,
     invalidateSni,
     judgeNames,
+    networksQuery,
     removeFamily,
     updateFamily,
     type NameAction,
@@ -138,6 +139,8 @@
   // --- the family itself -----------------------------------------------------------------------
   let removeOpen = $state(false);
   const setEnabled = (enabled: boolean) => run(() => updateFamily(slug, { enabled }));
+  const networks = networksQuery();
+  const setNetwork = (network: string | null) => run(() => updateFamily(slug, { network }));
   async function remove() {
     removeOpen = false;
     if ((await run(() => removeFamily(slug))) !== null) router.navigate(edgesPaths.names());
@@ -147,8 +150,12 @@
   let bindOpen = $state(false);
   let backends = $state<{ slug: string; name: string }[]>([]);
   let backendSlug = $state('');
-  let transports = $state<{ tag: string; target: string | null }[]>([]);
-  let transportTag = $state('');
+  let transports = $state<{ tag: string; uuid: string; target: string | null; names: string[] }[]>(
+    [],
+  );
+  let transportUuid = $state('');
+  let takeNames = $state(true);
+  let chosen = $derived(transports.find((t) => t.uuid === transportUuid) ?? null);
 
   async function startBind() {
     bindOpen = true;
@@ -161,17 +168,29 @@
   }
   async function loadInbounds() {
     transports = [];
-    transportTag = '';
+    transportUuid = '';
     if (!backendSlug) return;
     const tree = await run(() => fetchServerTree(backendSlug));
     transports = (tree?.profiles ?? [])
       .flatMap((p) => p.transports)
       .filter((i) => i.security === 'reality')
-      .map((i) => ({ tag: i.tag, target: i.realityTarget }));
-    transportTag = transports[0]?.tag ?? '';
+      .map((i) => ({
+        tag: i.tag,
+        uuid: i.transportUuid,
+        target: i.realityTarget,
+        names: i.serverNames ?? [],
+      }));
+    transportUuid = transports[0]?.uuid ?? '';
   }
   async function bind() {
-    if ((await run(() => bindFamily(slug, backendSlug, transportTag))) !== null) bindOpen = false;
+    const t = chosen;
+    if (!t) return;
+    const done = await run(() =>
+      bindFamily(slug, backendSlug, t.tag, { transportUuid: t.uuid, takeNames }),
+    );
+    if (done === null) return;
+    bindOpen = false;
+    if (done.imported) toast.message(importWords(done.imported).join(' '));
   }
 </script>
 
@@ -189,7 +208,7 @@
   {@const f = family.data.family}
   <SectionHeader
     title={f.label}
-    description={`Names served by ${f.target.address}:${f.target.port}${f.requireH2 ? ', over HTTP/2 only' : ''}.`}
+    description={`Names served by ${f.target.address}:${f.target.port}${f.requireH2 ? ', over HTTP/2 only' : ''}${f.network ? `, on ${f.network.label}` : ''}.`}
   >
     {#snippet actions()}
       <Button variant="ghost" size="sm" disabled={busy} onclick={() => (removeOpen = true)}>
@@ -212,6 +231,29 @@
         Off, nothing new is written. Names members already have keep working.
       </p>
     </div>
+  </div>
+
+  <div class="mb-6 space-y-1 text-sm">
+    <label class="flex flex-wrap items-center gap-2">
+      <span class="font-medium">Network</span>
+      <select
+        class={SELECT}
+        value={f.network?.slug ?? ''}
+        disabled={busy || f.bindings > 0}
+        aria-describedby={`${uid}-network-help`}
+        onchange={(e) => void setNetwork(e.currentTarget.value || null)}
+      >
+        <option value="">Anywhere</option>
+        {#each networks.data?.networks ?? [] as n (n.slug)}
+          <option value={n.slug}>{n.label}</option>
+        {/each}
+      </select>
+    </label>
+    <p id={`${uid}-network-help`} class="text-muted-foreground">
+      {f.bindings > 0
+        ? 'A transport is bound to this family. Unbind it to change the network.'
+        : 'On a network, the target and every name must resolve inside it (every name is checked again when it changes), and a bound transport is fronted only by addresses from it.'}
+    </p>
   </div>
 
   <Card>
@@ -240,13 +282,13 @@
           </label>
           <label>
             <span class="text-muted-foreground mb-1 block">REALITY transport</span>
-            <select bind:value={transportTag} class={SELECT}>
-              {#each transports as i (i.tag)}
-                <option value={i.tag}>{i.tag}{i.target ? ` (${i.target})` : ''}</option>
+            <select bind:value={transportUuid} class={SELECT}>
+              {#each transports as i (i.uuid)}
+                <option value={i.uuid}>{i.tag}{i.target ? ` (${i.target})` : ''}</option>
               {/each}
             </select>
           </label>
-          <Button type="submit" size="sm" disabled={busy || !transportTag}>Bind</Button>
+          <Button type="submit" size="sm" disabled={busy || !chosen}>Bind</Button>
           <Button type="button" variant="ghost" size="sm" onclick={() => (bindOpen = false)}>
             Cancel
           </Button>
@@ -255,6 +297,16 @@
               No REALITY transport has been read from this server yet. Refresh it under Servers,
               then come back here.
             </p>
+          {/if}
+          {#if chosen && chosen.names.length > 0}
+            <div class="flex basis-full items-start gap-2">
+              <Checkbox id={`${uid}-take`} bind:checked={takeNames} />
+              <Label for={`${uid}-take`} class="leading-snug font-normal">
+                Take the {chosen.names.length === 1 ? 'name' : `${chosen.names.length} names`} it lists
+                now into this family. Names set by hand are then checked against the target, can be judged
+                per country, and stay on the transport with every write.
+              </Label>
+            </div>
           {/if}
           <p class="text-muted-foreground basis-full">
             The transport's target site has to be this family's. Binding writes nothing yet.

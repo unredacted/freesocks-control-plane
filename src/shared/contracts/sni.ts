@@ -30,6 +30,8 @@ export const SniVantageConfig = z.object({
   minVantages: z.number(),
   minNetworks: z.number(),
   autoApply: z.boolean(),
+  /** Real-host controls: each name also checked against its real site from the same vantages. */
+  realHost: z.boolean().default(false),
 });
 export type SniVantageConfig = z.infer<typeof SniVantageConfig>;
 
@@ -88,6 +90,11 @@ export const SniFamilySummary = z.object({
   target: z.object({ kind: z.string(), address: z.string(), port: z.number() }).passthrough(),
   enabled: z.boolean(),
   requireH2: z.boolean(),
+  /** The network the target and every name live on (docs/edges.md "Networks"); null = anywhere. */
+  network: z
+    .object({ slug: z.string(), label: z.string(), ranges: z.number() })
+    .nullable()
+    .default(null),
   bindings: z.number(),
   counts: z.object({
     total: z.number(),
@@ -134,7 +141,17 @@ export const SniBinding = z.object({
 export type SniBinding = z.infer<typeof SniBinding>;
 
 /** `POST …/families/{slug}/bind`: bind a family to one REALITY transport of a backend. */
-export const SniBindRequest = z.object({ backendSlug: z.string(), transportTag: z.string() });
+export const SniBindRequest = z.object({
+  backendSlug: z.string(),
+  transportTag: z.string(),
+  /** The exact transport (a tag is unique per profile only). */
+  transportUuid: z.string().optional(),
+  /**
+   * Take the names the transport lists now into the family: a transport whose
+   * names were set by hand (a node FCP does not manage, an adopted node).
+   */
+  takeNames: z.boolean().optional(),
+});
 export type SniBindRequest = z.infer<typeof SniBindRequest>;
 
 export const SniFamilyDetail = z.object({
@@ -163,6 +180,10 @@ export const SniImportResult = z.object({
   ),
 });
 export type SniImportResult = z.infer<typeof SniImportResult>;
+
+/** `POST families/{slug}/bind`: the binding, and with `takeNames` what became of each name. */
+export const SniBindResult = z.object({ id: z.string(), imported: SniImportResult.optional() });
+export type SniBindResult = z.infer<typeof SniBindResult>;
 
 /** What the next rollout of a binding would write. Names only. */
 export const SniRolloutPlan = z
@@ -236,3 +257,46 @@ export const SniVantageApplied = z.object({
   skipped: z.number(),
 });
 export type SniVantageApplied = z.infer<typeof SniVantageApplied>;
+
+/**
+ * `GET /api/v1/admin/edges/networks` (docs/edges.md "Networks"): one or more
+ * ASNs and the ranges they announce, plus ranges entered by hand. Counts only:
+ * the ranges themselves never leave the server.
+ */
+export const EdgeNetworkView = z.object({
+  id: z.string(),
+  slug: z.string(),
+  label: z.string(),
+  asns: z.array(z.number()),
+  manualPrefixes: z.array(z.string()),
+  ranges: z.object({ v4: z.number(), v6: z.number() }),
+  truncated: z.boolean(),
+  refreshedAt: z.string().nullable(),
+  /** The last refresh's failure (a short code); the stored ranges stay. */
+  refreshError: z.string().nullable(),
+  families: z.array(z.object({ slug: z.string(), label: z.string() })),
+  locations: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string(),
+      provider: z.string(),
+      /** Set by an operator, or learned from its addresses. */
+      source: z.enum(['operator', 'address']),
+    }),
+  ),
+});
+export type EdgeNetworkView = z.infer<typeof EdgeNetworkView>;
+export const EdgeNetworkList = z.object({ networks: z.array(EdgeNetworkView) });
+export type EdgeNetworkList = z.infer<typeof EdgeNetworkList>;
+
+/** `POST networks` / `PATCH networks/{slug}`. */
+export const EdgeNetworkWrite = z.object({
+  slug: z.string().optional(),
+  label: z.string().optional(),
+  asns: z.array(z.union([z.number(), z.string()])).optional(),
+  manualPrefixes: z.array(z.string()).optional(),
+});
+export type EdgeNetworkWrite = z.infer<typeof EdgeNetworkWrite>;
+
+/** `POST networks/{slug}/refresh`. */
+export const EdgeNetworkRefreshed = z.object({ refreshed: z.number(), failed: z.number() });

@@ -30,6 +30,10 @@
     updateProvider,
     type ProviderPatch,
   } from '../../../../lib/edgesApi';
+  import {
+    DAILY_ALLOCATION_CEILING,
+    MAX_LIVE_EDGES_CEILING,
+  } from '../../../../../shared/contracts/edgeLimits';
   import NumberField from '../components/NumberField.svelte';
   import { edgeErrorMessage } from '../lib/edgeErrors';
   import { effectiveTemplate } from '../templates/params';
@@ -103,7 +107,7 @@
         label="Live edges, at most"
         unit="edges"
         min={1}
-        max={200}
+        max={MAX_LIVE_EDGES_CEILING}
         helper="Provisioning skips the account once this many edges exist in it."
       />
       <NumberField
@@ -112,8 +116,8 @@
         label="Allocations per day"
         unit="per day"
         min={0}
-        max={1000}
-        helper={`New edges FCP may create here per day. ${account.allocationsToday} used today. Zero stops new edges.`}
+        max={DAILY_ALLOCATION_CEILING}
+        helper={`New edges FCP may create here per day. ${account.allocationsToday} used today. Zero means no daily limit and is only allowed in development.`}
       />
       <NumberField
         bind:value={priority}

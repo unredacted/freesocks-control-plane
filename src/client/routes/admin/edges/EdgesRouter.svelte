@@ -26,6 +26,8 @@
   import EdgesSettings from './EdgesSettings.svelte';
   import NamesHome from './names/NamesHome.svelte';
   import FamilyPage from './names/FamilyPage.svelte';
+  import CountriesPage from './countries/CountriesPage.svelte';
+  import CountryPage from './countries/CountryPage.svelte';
 
   const route = $derived(resolveEdgesRoute(router.pathname));
   const movedTo = $derived(legacyEdgesRedirect(router.pathname, router.search));
@@ -63,6 +65,10 @@
   <NamesHome />
 {:else if route.page === 'family'}
   <FamilyPage slug={route.slug} />
+{:else if route.page === 'countries'}
+  <CountriesPage />
+{:else if route.page === 'country'}
+  {#key route.code}<CountryPage code={route.code} />{/key}
 {:else}
   <Card.Root class="mx-auto mt-10 max-w-md">
     <Card.Header>

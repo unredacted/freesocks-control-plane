@@ -47,6 +47,14 @@ import {
 } from './lib/edges/relayGuards';
 import { protocolLabel, protocolUsesSni } from './lib/edges/protocols';
 import { nameRetireKeepsVerification } from './lib/edges/verification';
+import {
+  auditPickForMarks,
+  namesJudged,
+  pickForJudgedNames,
+  sameCountryMarks,
+  withCountryMarks,
+} from './lib/edges/sni/marks';
+import { listenerNetworkOf } from './lib/edges/networkScope';
 
 export type Listener = Doc<'relayListeners'>;
 
@@ -418,14 +426,27 @@ export async function applyRegistration(
   const live = material ? await liveEdgesOfRelay(ctx.db, relay._id) : [];
 
   for (const spec of diff.create) {
-    const names: ListenerName[] = spec.tlsNames.map((n) => ({
-      name: n,
-      status: 'active' as const,
-    }));
-    await ctx.db.insert('relayListeners', specToRow(relay, spec, names, source, now));
+    // Names judged per country before this listener existed carry their marks
+    // from the start (a new listener has no members to move: `hrw1` at once).
+    const names = await withCountryMarks(
+      ctx.db,
+      spec.tlsNames.map((n) => ({ name: n, status: 'active' as const })),
+    );
+    const pick = pickForJudgedNames(undefined, names);
+    // Its transport's family may be on a network (docs/edges.md "Networks").
+    const networkId = await listenerNetworkOf(ctx.db, relay, spec.panelBinding);
+    await ctx.db.insert('relayListeners', {
+      ...specToRow(relay, spec, names, source, now),
+      ...(pick ? { sniPick: pick } : {}),
+      ...(networkId ? { networkId } : {}),
+    });
     result.created.push(spec.listenerKey);
   }
-  for (const { existing: ex, spec, merged, namesOnly } of updates) {
+  for (const { existing: ex, spec, merged: raw, namesOnly } of updates) {
+    // An added or reactivated name carries the marks it has now.
+    const merged = { ...raw, next: await withCountryMarks(ctx.db, raw.next) };
+    const pick = pickForJudgedNames(ex.sniPick, merged.next);
+    if (pick !== ex.sniPick) await auditPickForMarks(ctx, ex, pick);
     result.blockedNames.push(...merged.blocked);
     if (namesOnly) {
       // Only REALITY names left the list: exactly what `retireOn` does for an
@@ -434,6 +455,7 @@ export async function applyRegistration(
       // and the stored hash do not (nameRetireKeepsVerification).
       await ctx.db.patch(ex._id, {
         tlsNames: merged.next,
+        ...(pick !== ex.sniPick ? { sniPick: pick } : {}),
         namesRevision: (ex.namesRevision ?? 0) + 1,
         updatedAt: now,
       });
@@ -478,6 +500,8 @@ export async function applyRegistration(
     if (rebound && ex.host) row.host = { state: 'absent' };
     await ctx.db.patch(ex._id, {
       ...row,
+      ...(pick !== ex.sniPick ? { sniPick: pick } : {}),
+      networkId: await listenerNetworkOf(ctx.db, relay, spec.panelBinding),
       deployedAt: rebound || !ex.deployed ? now : ex.deployedAt,
     });
     result.updated.push(spec.listenerKey);
@@ -869,15 +893,25 @@ export const reactivateName = internalMutation({
     await assertNoRotationOrQuarantine(ctx.db, relay);
     const targets = new Set(names.map(normalizeName).filter((n): n is string => !!n));
     let count = 0;
-    const next = (l.tlsNames ?? []).map((n) => {
-      if (targets.has(n.name) && n.status === 'retired') {
-        count++;
-        return { name: n.name, status: 'active' as const };
-      }
-      return n;
-    });
+    const next = await withCountryMarks(
+      ctx.db,
+      (l.tlsNames ?? []).map((n) => {
+        if (targets.has(n.name) && n.status === 'retired') {
+          count++;
+          return { name: n.name, status: 'active' as const };
+        }
+        return n;
+      }),
+    );
     if (count > 0) {
-      await ctx.db.patch(id, { tlsNames: next, revision: l.revision + 1, updatedAt: Date.now() });
+      const pick = pickForJudgedNames(l.sniPick, next);
+      await ctx.db.patch(id, {
+        tlsNames: next,
+        ...(pick !== l.sniPick ? { sniPick: pick } : {}),
+        revision: l.revision + 1,
+        updatedAt: Date.now(),
+      });
+      if (pick !== l.sniPick) await auditPickForMarks(ctx, l, pick);
       await bumpEpochAndRefresh(ctx, relay);
     }
     await writeAuditLog(ctx, {
@@ -920,6 +954,13 @@ export const setSniPick = internalMutation({
         code: 'conflict',
         message: `listener ${l.listenerKey} presents no server name`,
       });
+    // The legacy pick ignores the member's country: a listener whose names are
+    // judged per country stays on `hrw1` (lib/edges/sni/marks.ts).
+    if (version === null && namesJudged(l.tlsNames))
+      throw new ConvexError({
+        code: 'conflict',
+        message: `listener ${l.listenerKey} has names judged per country; the legacy pick would ignore them`,
+      });
     const changed = (l.sniPick ?? null) !== version;
     if (changed) {
       await ctx.db.patch(id, {
@@ -938,6 +979,48 @@ export const setSniPick = internalMutation({
       payload: { relaySlug: relay.slug, listenerKey: l.listenerKey, version: version ?? 'legacy' },
     });
     return { ok: true as const, changed, sniPick: version };
+  },
+});
+
+/**
+ * Every live listener's names carry the per-country marks they have now, and a
+ * listener with a judged name is on `hrw1` (lib/edges/sni/marks.ts). The
+ * writers keep this true; this settles rows written before they did (a
+ * listener created after its names were judged, or one still on the legacy
+ * pick). Run by `seed:seedCutover` on every deploy: a no-op once settled. A
+ * listener that changes moves its origin's publication epoch.
+ */
+export const reconcileCountryMarks = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const origins = new Set<Id<'relays'>>();
+    let changed = 0;
+    let switched = 0;
+    // Small operator table (as `writeCountryMarks` reads it).
+    for (const l of await ctx.db.query('relayListeners').collect()) {
+      if (l.retired || !l.tlsNames?.length) continue;
+      const next = await withCountryMarks(ctx.db, l.tlsNames);
+      const pick = protocolUsesSni(l) ? pickForJudgedNames(l.sniPick, next) : l.sniPick;
+      const namesMoved = !sameCountryMarks(l.tlsNames, next);
+      if (!namesMoved && pick === l.sniPick) continue;
+      await ctx.db.patch(l._id, {
+        ...(namesMoved ? { tlsNames: next, namesRevision: (l.namesRevision ?? 0) + 1 } : {}),
+        ...(pick !== l.sniPick ? { sniPick: pick } : {}),
+        updatedAt: now,
+      });
+      if (pick !== l.sniPick) {
+        switched++;
+        await auditPickForMarks(ctx, l, pick);
+      }
+      changed++;
+      origins.add(l.relayId);
+    }
+    for (const id of origins) {
+      const relay = await ctx.db.get(id);
+      if (relay) await bumpEpochAndRefresh(ctx, relay);
+    }
+    return { changed, switched };
   },
 });
 

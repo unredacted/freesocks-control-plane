@@ -11,6 +11,8 @@
  */
 import { clientConfirmationStands } from './lib/edges/tickedLocation';
 import { verificationListenerOf } from './lib/edges/verificationContext';
+import { edgeNetworkVerdict } from './lib/edges/networks';
+import { networkPrefixes } from './edgeNetworks';
 import { ConvexError, v } from 'convex/values';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -58,8 +60,8 @@ import {
   qualificationVerdict,
 } from './lib/edges/frontCheck/binding';
 import {
+  ACCOUNT_EDGE_SCAN_LIMIT,
   EDGE_LIVE_STATUSES,
-  LIVE_EDGE_SCAN_LIMIT,
   allocatePoolIndex,
   coverageListeners,
   withEdgeAt,
@@ -118,7 +120,7 @@ export {
 
 type Db = DatabaseReader;
 
-/** The same bounded read per provider account (the capacity / lock questions). */
+/** Every non-destroyed edge of a provider account (the capacity / lock questions), exact up to the live-edge ceiling. */
 export async function liveEdgesOfAccount(
   db: Db,
   accountId: Id<'edgeProviderAccounts'>,
@@ -129,10 +131,37 @@ export async function liveEdgesOfAccount(
       ...(await db
         .query('edges')
         .withIndex('by_account_status', (q) => q.eq('accountId', accountId).eq('status', status))
-        .take(LIVE_EDGE_SCAN_LIMIT)),
+        .take(ACCOUNT_EDGE_SCAN_LIMIT)),
     );
   }
   return out;
+}
+
+/**
+ * The account's managed live edges from ONE scan, with its total and the
+ * count in each of its locations (a location's edges are its account's), for
+ * callers that would otherwise read the same rows again per location and for
+ * the spend estimate. Observe-only edges are left out, as every capacity
+ * count does.
+ */
+export async function managedLiveOfAccount(
+  db: Db,
+  accountId: Id<'edgeProviderAccounts'>,
+): Promise<{
+  edges: Doc<'edges'>[];
+  live: number;
+  atLocation: (locationId: Id<'edgeLocations'>) => number;
+}> {
+  const edges = (await liveEdgesOfAccount(db, accountId)).filter((e) => e.managed);
+  const perLocation = new Map<string, number>();
+  for (const e of edges)
+    if (e.locationId)
+      perLocation.set(e.locationId as string, (perLocation.get(e.locationId as string) ?? 0) + 1);
+  return {
+    edges,
+    live: edges.length,
+    atLocation: (locationId) => perLocation.get(locationId as string) ?? 0,
+  };
 }
 
 // --- origin uniqueness / locks -------------------------------------------------------------
@@ -1804,6 +1833,13 @@ export async function checkPublishable(
     listener.providerScope.accountId !== edge.accountId
   )
     return { ok: false, code: 'account_mismatch' };
+  // A transport scoped to a network (docs/edges.md "Networks"): every address
+  // the edge serves lies on it, else its server names would point elsewhere.
+  if (
+    listener.networkId &&
+    edgeNetworkVerdict(edge.addresses, await networkPrefixes(ctx.db, listener.networkId)) !== 'on'
+  )
+    return { ok: false, code: 'off_network' };
   // An L4 endpoint goes live only with a confirmation against the configuration
   // it holds now (lib/edges/verification.ts): the operator's own, or FCP's own
   // client check where it may stand in for one (a ticked location, the switch

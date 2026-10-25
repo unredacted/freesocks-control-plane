@@ -87,3 +87,29 @@ describe('setOfPicks', () => {
     ).toThrow(/set_too_large/);
   });
 });
+
+describe('setOfPicks with a transport on a network (docs/edges.md "Networks")', () => {
+  test('only a pick on the transport’s network carries it', () => {
+    const scoped = { ...inbound('reality'), networkId: 'net-1' };
+    const a = account('acct-a', 'acme', [loc('x1', { networkId: 'net-1' })], ['reality']);
+    const b = account(
+      'acct-b',
+      'globex',
+      [loc('y1', { networkId: 'net-2' }), loc('y2')],
+      ['reality'],
+    );
+    const set = setOfPicks(
+      ['x1', 'y1', 'y2'],
+      [a, b],
+      [scoped],
+      [usage('acct-a'), usage('acct-b')],
+    );
+    expect(set.targets).toEqual([{ listenerKey: 'reality', locationId: 'x1' }]);
+    // Off its network, no pick carries it at all.
+    const none = setOfPicks(['y1', 'y2'], [a, b], [scoped], [usage('acct-b')]);
+    expect(none.uncovered).toEqual(['reality']);
+    // A transport on no network: carried as before.
+    const plain = setOfPicks(['y1'], [a, b], [inbound('reality')], [usage('acct-b')]);
+    expect(plain.targets).toEqual([{ listenerKey: 'reality', locationId: 'y1' }]);
+  });
+});

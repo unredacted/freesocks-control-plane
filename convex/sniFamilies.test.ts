@@ -19,6 +19,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
 import {
@@ -285,6 +286,44 @@ describe('binding a family to a transport', () => {
     expect((await call('DELETE', 'families/fam-a')).status).toBe(200);
   });
 
+  test('takeNames: a transport whose names were set by hand brings them into the family', async () => {
+    const { t, call } = await seed();
+    await call('POST', 'families', family);
+    await call('POST', 'families', { ...family, slug: 'fam-b' });
+    await call('PATCH', 'config', { enabled: true });
+    // One of the hand-set names already belongs to another family.
+    await call('POST', 'families/fam-b/names', { lines: ['old-b.example'] });
+    const res = await call('POST', 'families/fam-a/bind', {
+      backendSlug: 'panel-a',
+      transportTag: 'REALITY_IN',
+      transportUuid: INBOUND,
+      takeNames: true,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.imported.added).toBe(1);
+    expect(body.imported.lines.map((l: { verdict: string }) => l.verdict)).toEqual([
+      'added',
+      'in_other_family',
+    ]);
+    const detail = await (await call('GET', 'families/fam-a')).json();
+    expect(
+      detail.names.map((n: { name: string; status: string; qualification: string }) => [
+        n.name,
+        n.status,
+        n.qualification,
+      ]),
+    ).toEqual([['old-a.example', 'active', 'pending']]);
+    // They are what the transport listed, so they are SEEN, never a witness.
+    expect(
+      (await t.run((ctx) => ctx.db.query('sniInboundNameHistory').collect()))
+        .map((h) => h.name)
+        .sort(),
+    ).toEqual(['old-a.example', 'old-b.example']);
+    const row = (await auditRows(t)).find((r) => r.action === 'edge.sni.inbound.bind')!;
+    expect(row.payload).toMatchObject({ imported: 1, notImported: 1 });
+  });
+
   test('a bound transport is no longer edited by hand', async () => {
     const { t, serverId, call } = await seed();
     await call('POST', 'families', family);
@@ -320,11 +359,26 @@ describe('judging names per country', () => {
     const epoch0 = (await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch;
     const mark = (snis: string[], country: string, state: string) =>
       call('POST', 'families/fam-a/names/country', { snis, country, state });
+    // The listener was on the legacy pick, which ignores the member's country:
+    // its first judged name moves it onto `hrw1`, once.
+    expect((await t.run((ctx) => ctx.db.get(listenerIds.a)))!.sniPick).toBeUndefined();
     expect(await (await mark(['big-site.example'], 'cn', 'blocked')).json()).toEqual({
       count: 1,
       relays: 1,
+      switched: 1,
     });
-    await mark(['works.example', 'big-site.example'], 'RU', 'proven');
+    expect((await t.run((ctx) => ctx.db.get(listenerIds.a)))!.sniPick).toBe('hrw1');
+    const picks = await t.run(async (ctx) =>
+      (await ctx.db.query('auditLog').collect()).filter(
+        (r) => r.action === 'relay.listener.sni_pick',
+      ),
+    );
+    expect(picks.map((r) => r.payload)).toEqual([
+      { relaySlug: expect.any(String), listenerKey: 'a', version: 'hrw1', reason: 'country_marks' },
+    ]);
+    expect(
+      (await (await mark(['works.example', 'big-site.example'], 'RU', 'proven')).json()).switched,
+    ).toBe(0);
     const names = (await t.run((ctx) => ctx.db.get(listenerIds.a)))!.tlsNames!;
     expect(names).toEqual([
       { name: 'works.example', status: 'active', provenIn: ['RU'] },
@@ -349,6 +403,106 @@ describe('judging names per country', () => {
       status: 'active',
       provenIn: ['RU'],
     });
+  });
+
+  test('a name judged before it reaches a listener carries its marks there, and the listener moves onto hrw1', async () => {
+    const { t, call } = await seed();
+    const { registerRelay, realityListener } = await import('./lib/edges/testing/fixtures');
+    await call('POST', 'families', family);
+    await call('POST', 'families/fam-a/names', { lines: ['plain.example', 'big-site.example'] });
+    await call('POST', 'families/fam-a/names/country', {
+      snis: ['big-site.example'],
+      country: 'CN',
+      state: 'blocked',
+    });
+    const get = (id: Id<'relayListeners'>) => t.run(async (ctx) => (await ctx.db.get(id))!);
+    // A listener created with it carries the mark from the start.
+    const first = await registerRelay(t, {
+      listeners: [realityListener({ tlsNames: ['big-site.example'] })],
+    });
+    expect(await get(first.listenerIds.a)).toMatchObject({
+      tlsNames: [{ name: 'big-site.example', status: 'active', blockedIn: ['CN'] }],
+      sniPick: 'hrw1',
+    });
+    // A legacy listener that gains it later: the mark, the switch, and its audit row.
+    const second = await registerRelay(t, {
+      slug: 'relay-b',
+      nodeName: 'node-b',
+      listeners: [realityListener({ tlsNames: ['plain.example'] })],
+    });
+    expect((await get(second.listenerIds.a)).sniPick).toBeUndefined();
+    await registerRelay(t, {
+      slug: 'relay-b',
+      nodeName: 'node-b',
+      listeners: [realityListener({ tlsNames: ['plain.example', 'big-site.example'] })],
+    });
+    expect(await get(second.listenerIds.a)).toMatchObject({
+      tlsNames: [
+        { name: 'plain.example', status: 'active' },
+        { name: 'big-site.example', status: 'active', blockedIn: ['CN'] },
+      ],
+      sniPick: 'hrw1',
+    });
+    const picks = await t.run(async (ctx) =>
+      (await ctx.db.query('auditLog').collect()).filter(
+        (r) => r.action === 'relay.listener.sni_pick',
+      ),
+    );
+    expect(picks.map((r) => r.payload)).toEqual([
+      { relaySlug: 'relay-b', listenerKey: 'a', version: 'hrw1', reason: 'country_marks' },
+    ]);
+  });
+
+  test('rows from before: the deploy settles them once; a judged listener never goes back to legacy', async () => {
+    const { t, call } = await seed();
+    const { registerRelay, realityListener } = await import('./lib/edges/testing/fixtures');
+    await call('POST', 'families', family);
+    await call('POST', 'families/fam-a/names', { lines: ['plain.example', 'big-site.example'] });
+    const { relayId, listenerIds } = await registerRelay(t, {
+      listeners: [realityListener({ tlsNames: ['plain.example', 'big-site.example'] })],
+    });
+    // A mark recorded the way an older build left it: in the table only, the
+    // listener's entries unmarked and its pick legacy.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('sniNameCountry', {
+        name: 'big-site.example',
+        country: 'CN',
+        state: 'blocked',
+        source: 'operator',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(listenerIds.a, {
+        tlsNames: [
+          { name: 'plain.example', status: 'active' },
+          { name: 'big-site.example', status: 'active' },
+        ],
+        sniPick: undefined,
+      });
+    });
+    const epoch = async () => (await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch;
+    const before = await epoch();
+    expect(await t.mutation(internal.relayListeners.reconcileCountryMarks, {})).toEqual({
+      changed: 1,
+      switched: 1,
+    });
+    expect(await t.run((ctx) => ctx.db.get(listenerIds.a))).toMatchObject({
+      tlsNames: [
+        { name: 'plain.example', status: 'active' },
+        { name: 'big-site.example', status: 'active', blockedIn: ['CN'] },
+      ],
+      sniPick: 'hrw1',
+    });
+    expect(await epoch()).toBe(before + 1);
+    // Settled: the next deploy changes nothing and moves nobody.
+    expect(await t.mutation(internal.relayListeners.reconcileCountryMarks, {})).toEqual({
+      changed: 0,
+      switched: 0,
+    });
+    expect(await epoch()).toBe(before + 1);
+    // Back to the legacy pick is refused while a name is judged.
+    await expect(
+      t.mutation(internal.relayListeners.setSniPick, { id: listenerIds.a, version: null }),
+    ).rejects.toThrow(/judged per country/);
   });
 
   test('only curated countries are judged, and the audit row has no hostname', async () => {

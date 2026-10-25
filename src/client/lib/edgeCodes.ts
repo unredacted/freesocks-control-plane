@@ -1474,6 +1474,25 @@ const COPY = {
     explain: 'A new edge here would take the account past the monthly spend cap set on it.',
     fix: 'Raise the cap on the account, pick another account, or remove an edge.',
   },
+  // a transport scoped to a network (docs/edges.md "Networks")
+  off_network: {
+    label: 'Not on the transport’s network',
+    explain:
+      'This transport’s server names are sites on one network, so only addresses from that network may front it. This place, or this address, is not on it, or its network is not known yet.',
+    fix: 'Pick a location on that network, or set the location’s network on its provider account.',
+  },
+  edge_off_network: {
+    label: 'Address off its network',
+    explain:
+      'An address in use on a transport scoped to a network is not on that network: whoever compares its server name with the address sees two networks.',
+    fix: 'Replace the address with one from a location on the network.',
+  },
+  network_no_ranges: {
+    label: 'Network has no ranges',
+    explain:
+      'The network this transport is scoped to has no address ranges now (its ASNs changed, or the last read found none), so no address in use can be shown to be on it.',
+    fix: 'Read the network’s ranges again, check its ASNs, or add ranges by hand.',
+  },
   // a price read (`plansError` on a location)
   plan_list_unreadable: {
     label: 'Plan list unreadable',
@@ -2516,6 +2535,12 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     explain: 'These addresses would take the account past the monthly spend cap set on it.',
     fix: 'Raise the cap on the account, or pick another location.',
   },
+  off_network: {
+    label: 'Not on the transport’s network',
+    explain:
+      'The transports this account would carry here have server names on one network, and this place is not on it, or its network is not known yet.',
+    fix: 'Pick a location on that network, or set this location’s network on its provider account.',
+  },
   provider_mismatch: {
     label: 'Other provider pinned',
     explain: 'A listener on this node is pinned to another provider.',
@@ -2672,6 +2697,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'admin.edge.probe.change': 'Probe settings changed',
   'admin.edge.maintenance': 'Maintenance switch changed',
   'admin.edge.reset': 'Edge tables reset',
+  'admin.edge.limits_raised': 'Account limits raised to the new defaults',
   'edge.pool_expanded': 'Pool expanded for an uncovered listener',
   'edge.relay.rebalanced': 'Duplicate edge sent back to standby',
   'edge.automation.set': 'Automatic protection switched',

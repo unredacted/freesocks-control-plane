@@ -41,6 +41,7 @@ import {
 } from './lib/edgeConfig';
 import { isDiscoverable } from './edges';
 import {
+  EDGE_LIVE_STATUSES,
   coverageListeners,
   freeSlotCount,
   publishedCount,
@@ -60,6 +61,30 @@ import type {
 } from './lib/edges/providers/types';
 
 type Edge = Doc<'edges'>;
+
+/**
+ * Every non-destroyed edge of the fleet, a page at a time per status (each
+ * page a query of its own, so no single read nears Convex's limit however
+ * large the fleet). The pages are not one snapshot: an edge that changed
+ * status between two pages is kept once, as last read; one missed that way
+ * is picked up next tick.
+ */
+async function allLiveEdges(ctx: ActionCtx): Promise<Edge[]> {
+  const byId = new Map<string, Edge>();
+  for (const status of EDGE_LIVE_STATUSES) {
+    let cursor: string | null = null;
+    for (;;) {
+      const res: { page: Edge[]; isDone: boolean; continueCursor: string } = await ctx.runQuery(
+        internal.edges.listLive,
+        { status, cursor },
+      );
+      for (const e of res.page) byId.set(e._id as string, e);
+      if (res.isDone) break;
+      cursor = res.continueCursor;
+    }
+  }
+  return [...byId.values()];
+}
 
 const MAX_DISCOVER_ATTEMPTS = 3;
 /**
@@ -213,13 +238,21 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   // 1c. A system `partial` rung that no longer describes the live configuration
   // (re-addressed edge, changed listener, no probe settled since) is cleared.
   try {
-    await ctx.runMutation(internal.edgeVerification.reconcilePartialRungs, {});
+    let cursor: string | null = null;
+    for (;;) {
+      const res: { isDone: boolean; continueCursor: string } = await ctx.runMutation(
+        internal.edgeVerification.reconcilePartialRungs,
+        { cursor },
+      );
+      if (res.isDone) break;
+      cursor = res.continueCursor;
+    }
   } catch (err) {
     report.errors++;
     console.warn(`[edge-reconcile] partial-rung sweep: ${errText(err)}`);
   }
 
-  const edges = await ctx.runQuery(internal.edges.listLive, {});
+  const edges = await allLiveEdges(ctx);
   const origins = await ctx.runQuery(internal.relays.listAll, {});
   const rotatingOrigins = new Set(
     origins.filter((o) => o.activeRotationId).map((o) => o._id as string),

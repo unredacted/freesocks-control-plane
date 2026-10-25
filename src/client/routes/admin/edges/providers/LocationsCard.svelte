@@ -54,7 +54,8 @@
   import LocationPicker from '../forms/LocationPicker.svelte';
   import { hasLocations } from '../forms/providerFields';
   import QualifyDialog from './QualifyDialog.svelte';
-  import { locationTrustWords, sharedCertificateWords } from './accountWords';
+  import { locationTrustWords, networkSourceWords, sharedCertificateWords } from './accountWords';
+  import { invalidateSni, networksQuery, setLocationNetwork } from '../../../../lib/sniApi';
 
   interface Props {
     account: EdgeProviderAccountAdmin;
@@ -149,6 +150,19 @@
     mutationFn: (a: { id: string; patch: Parameters<typeof updateProviderLocation>[2] }) =>
       updateProviderLocation(account.id, a.id, a.patch),
     onSuccess: () => invalidateProviders(qc),
+    onError: (err: unknown) => toast.error(edgeErrorMessage(err)),
+  }));
+
+  // The network its addresses come from (docs/edges.md "Networks"): only a
+  // location on a transport's network fronts a transport scoped to it.
+  const networks = networksQuery();
+  const netWrite = createMutation(() => ({
+    mutationFn: (a: { id: string; network: string | null }) =>
+      setLocationNetwork(account.id, a.id, a.network),
+    onSuccess: () => {
+      invalidateProviders(qc);
+      invalidateSni(qc);
+    },
     onError: (err: unknown) => toast.error(edgeErrorMessage(err)),
   }));
 
@@ -268,6 +282,24 @@
               <p class="text-xs">{costWords(l.pricing.cost)}.</p>
             {/if}
             {#if l.costNote}<p class="text-xs">{l.costNote}</p>{/if}
+            {#if !zones}
+              <label class="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
+                <span>Network</span>
+                <select
+                  class="border-input bg-background h-11 rounded-md border px-2 text-xs sm:h-8"
+                  value={l.network?.slug ?? ''}
+                  disabled={netWrite.isPending || !networks.data}
+                  onchange={(e) =>
+                    netWrite.mutate({ id: l.id, network: e.currentTarget.value || null })}
+                >
+                  <option value="">Not set</option>
+                  {#each networks.data?.networks ?? [] as n (n.slug)}
+                    <option value={n.slug}>{n.label}</option>
+                  {/each}
+                </select>
+                <span>{networkSourceWords(l.network)}</span>
+              </label>
+            {/if}
             {#if Object.keys(l.regionalParams).length > 0}
               <p class="text-muted-foreground font-mono text-xs">
                 {Object.entries(l.regionalParams)

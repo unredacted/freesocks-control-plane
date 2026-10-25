@@ -42,6 +42,10 @@ import {
 } from './lib/sniConfig';
 import { resolveEdgeSecrets } from './lib/edgeConfig';
 import { decide, suggest, type Mark } from './lib/edges/sni/vantage';
+import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/sni/marks';
+import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
+import { listenersOfTransport, syncTransportNetwork } from './lib/edges/networkScope';
+import { networkIdOfSlug, networkPrefixes } from './edgeNetworks';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -129,7 +133,24 @@ export const patchConfig = internalMutation({
 
 // --- families ----------------------------------------------------------------------------------------
 
-function summarize(f: Doc<'sniFamilies'>, names: Doc<'sniNames'>[], bindings: number) {
+/** A family's network as the pages show it (null: anywhere). */
+async function networkView(ctx: { db: QueryCtx['db'] }, f: Doc<'sniFamilies'>) {
+  const n = f.networkId ? await ctx.db.get(f.networkId) : null;
+  return n
+    ? {
+        slug: n.slug,
+        label: n.label,
+        ranges: n.prefixes.v4.length + n.prefixes.v6.length,
+      }
+    : null;
+}
+
+function summarize(
+  f: Doc<'sniFamilies'>,
+  names: Doc<'sniNames'>[],
+  bindings: number,
+  network: Awaited<ReturnType<typeof networkView>>,
+) {
   const count = (p: (n: Doc<'sniNames'>) => boolean) => names.filter(p).length;
   return {
     id: f._id as string,
@@ -138,6 +159,7 @@ function summarize(f: Doc<'sniFamilies'>, names: Doc<'sniNames'>[], bindings: nu
     target: f.target,
     enabled: f.enabled,
     requireH2: f.requireH2,
+    network,
     bindings,
     counts: {
       total: names.length,
@@ -161,7 +183,7 @@ export const list = internalQuery({
         .query('sniInboundBindings')
         .withIndex('by_family', (q) => q.eq('familyId', f._id))
         .collect();
-      out.push(summarize(f, await namesOf(ctx, f._id), bindings.length));
+      out.push(summarize(f, await namesOf(ctx, f._id), bindings.length, await networkView(ctx, f)));
     }
     return { families: out };
   },
@@ -285,7 +307,7 @@ export const detail = internalQuery({
       vantage.set(ev.name, [...(vantage.get(ev.name) ?? []), view]);
     }
     return {
-      family: summarize(f, names, bindings.length),
+      family: summarize(f, names, bindings.length, await networkView(ctx, f)),
       curatedCountries: sniCfg.curatedCountries,
       vantage: {
         enabled: sniCfg.enabled && vCfg.enabled,
@@ -331,6 +353,9 @@ export const create = internalMutation({
     targetAddress: v.string(),
     targetPort: v.number(),
     requireH2: v.optional(v.boolean()),
+    // The network's slug (docs/edges.md "Networks"): the target and every name
+    // must resolve inside it.
+    network: v.optional(v.string()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -341,27 +366,33 @@ export const create = internalMutation({
       .unique();
     if (exists) refuse('conflict', 'A family with that slug exists');
     const target = checkTarget(a.targetAddress, a.targetPort);
+    const networkId = a.network ? await networkIdOfSlug(ctx.db, a.network) : null;
     const id = await ctx.db.insert('sniFamilies', {
       slug: a.slug,
       label: a.label.trim().slice(0, 80) || a.slug,
       target,
       enabled: true,
       requireH2: a.requireH2 ?? false,
+      ...(networkId ? { networkId } : {}),
       nextSeq: 1,
       updatedAt: Date.now(),
     });
     await audit(ctx, 'edge.sni.family.create', a.actorAdminId, {
       slug: a.slug,
       targetKind: 'static',
+      ...(a.network ? { network: a.network } : {}),
     });
     return { id: id as string, slug: a.slug };
   },
 });
 
 /**
- * Label, the enabled switch and the HTTP/2 requirement. The TARGET is
- * immutable: every name was qualified against it, and a transport's allowlist is
- * only safe for the target it was built for. A different target is a new family.
+ * Label, the enabled switch, the HTTP/2 requirement and the network. The
+ * TARGET is immutable: every name was qualified against it, and a transport's
+ * allowlist is only safe for the target it was built for. A different target
+ * is a new family. The network changes only while no transport is bound (a
+ * bound transport's edges were chosen for the network it had), and every name
+ * is checked again.
  */
 export const update = internalMutation({
   args: {
@@ -369,6 +400,7 @@ export const update = internalMutation({
     label: v.optional(v.string()),
     enabled: v.optional(v.boolean()),
     requireH2: v.optional(v.boolean()),
+    network: v.optional(v.union(v.string(), v.null())),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -376,15 +408,58 @@ export const update = internalMutation({
     const patch: Partial<Doc<'sniFamilies'>> = { updatedAt: Date.now() };
     if (a.label !== undefined) patch.label = a.label.trim().slice(0, 80) || f.slug;
     if (a.enabled !== undefined) patch.enabled = a.enabled;
+    let recheck = false;
+    let networkMoved = false;
     if (a.requireH2 !== undefined && a.requireH2 !== f.requireH2) {
       patch.requireH2 = a.requireH2;
-      // The bar moved: every name is judged again.
+      recheck = true;
+    }
+    if (a.network !== undefined) {
+      const networkId = await networkIdOfSlug(ctx.db, a.network);
+      if ((networkId ?? undefined) !== f.networkId) {
+        const bound = await ctx.db
+          .query('sniInboundBindings')
+          .withIndex('by_family', (q) => q.eq('familyId', f._id))
+          .first();
+        if (bound)
+          refuse(
+            'edge.sni.network_bound',
+            'A transport is bound to this family. Unbind it before changing its network',
+          );
+        patch.networkId = networkId ?? undefined;
+        recheck = true;
+        networkMoved = true;
+      }
+    }
+    // The bar moved: every name is judged again. A new network is a new claim
+    // about every name (where it lives), so none counts as qualified until it
+    // was checked against it: a rebind must not hand out names judged under
+    // the old one.
+    if (recheck)
       for (const n of await namesOf(ctx, f._id))
         if (n.status === 'active' || n.status === 'suspended')
-          await ctx.db.patch(n._id, { checkedAt: 0, updatedAt: Date.now() });
-    }
+          await ctx.db.patch(n._id, {
+            checkedAt: 0,
+            ...(networkMoved
+              ? {
+                  qualification: {
+                    state: 'pending' as const,
+                    consecutiveFails: n.qualification.consecutiveFails,
+                  },
+                }
+              : {}),
+            updatedAt: Date.now(),
+          });
+    // Switched back on: names the qualification walked past meanwhile are due.
+    if (a.enabled === true && !f.enabled && !recheck)
+      await ctx.scheduler.runAfter(0, internal.edgeNetworks.requeueFamilyNames, {
+        familyId: f._id,
+      });
     await ctx.db.patch(f._id, patch);
-    await audit(ctx, 'edge.sni.family.update', a.actorAdminId, { slug: f.slug });
+    await audit(ctx, 'edge.sni.family.update', a.actorAdminId, {
+      slug: f.slug,
+      ...(a.network !== undefined ? { network: a.network ?? 'none' } : {}),
+    });
     return { ok: true as const };
   },
 });
@@ -426,43 +501,53 @@ export const importNames = internalMutation({
   args: { slug: v.string(), lines: v.array(v.string()), ...actor },
   handler: async (ctx, a) => {
     const f = await familyBySlug(ctx, a.slug);
-    const existing = new Map<string, { familyId: string; status: string }>();
-    const wanted = new Set(a.lines.map((l) => normalizeName(l)).filter((n): n is string => !!n));
-    for (const name of wanted) {
-      const row = await ctx.db
-        .query('sniNames')
-        .withIndex('by_name', (q) => q.eq('name', name))
-        .unique();
-      if (row) existing.set(name, { familyId: row.familyId as string, status: row.status });
-    }
-    const verdicts = judgeImport(a.lines, f._id as string, existing);
-    const current = (await namesOf(ctx, f._id)).length;
-    let seq = f.nextSeq;
-    let added = 0;
-    for (const l of verdicts) {
-      if (l.verdict !== 'added' || !l.name) continue;
-      if (current + added >= MAX_NAMES_PER_FAMILY)
-        return refuse('edge.sni.cap', `A family holds at most ${MAX_NAMES_PER_FAMILY} names`);
-      await ctx.db.insert('sniNames', {
-        familyId: f._id,
-        name: l.name,
-        seq: seq++,
-        status: 'active',
-        qualification: { state: 'pending', consecutiveFails: 0 },
-        checkedAt: 0,
-        updatedAt: Date.now(),
-      });
-      added++;
-    }
-    await ctx.db.patch(f._id, { nextSeq: seq, updatedAt: Date.now() });
+    const { added, lines } = await addFamilyNames(ctx, f, a.lines);
     await audit(ctx, 'edge.sni.names.import', a.actorAdminId, {
       slug: f.slug,
       added,
-      rejected: verdicts.length - added,
+      rejected: lines.length - added,
     });
-    return { added, lines: verdicts };
+    return { added, lines };
   },
 });
+
+/**
+ * Add names to a family, each judged like a pasted line (`judgeImport`):
+ * added (active, waiting for its first qualification), or the reason it is
+ * not. Refused past the family cap.
+ */
+async function addFamilyNames(ctx: MutationCtx, f: Doc<'sniFamilies'>, input: readonly string[]) {
+  const existing = new Map<string, { familyId: string; status: string }>();
+  const wanted = new Set(input.map((l) => normalizeName(l)).filter((n): n is string => !!n));
+  for (const name of wanted) {
+    const row = await ctx.db
+      .query('sniNames')
+      .withIndex('by_name', (q) => q.eq('name', name))
+      .unique();
+    if (row) existing.set(name, { familyId: row.familyId as string, status: row.status });
+  }
+  const verdicts = judgeImport([...input], f._id as string, existing);
+  const current = (await namesOf(ctx, f._id)).length;
+  let seq = f.nextSeq;
+  let added = 0;
+  for (const l of verdicts) {
+    if (l.verdict !== 'added' || !l.name) continue;
+    if (current + added >= MAX_NAMES_PER_FAMILY)
+      return refuse('edge.sni.cap', `A family holds at most ${MAX_NAMES_PER_FAMILY} names`);
+    await ctx.db.insert('sniNames', {
+      familyId: f._id,
+      name: l.name,
+      seq: seq++,
+      status: 'active',
+      qualification: { state: 'pending', consecutiveFails: 0 },
+      checkedAt: 0,
+      updatedAt: Date.now(),
+    });
+    added++;
+  }
+  await ctx.db.patch(f._id, { nextSeq: seq, updatedAt: Date.now() });
+  return { added, lines: verdicts };
+}
 
 /** retire / reactivate / burn / recheck, by name. A burned name never comes back. */
 export const setNames = internalMutation({
@@ -517,22 +602,7 @@ export const setNames = internalMutation({
 
 /** The marks of one name, as they are copied onto a listener's entry for it. */
 export async function countryMarks(ctx: { db: QueryCtx['db'] }, name: string) {
-  const rows = await ctx.db
-    .query('sniNameCountry')
-    .withIndex('by_name', (q) => q.eq('name', name))
-    .collect();
-  const blockedIn = rows
-    .filter((r) => r.state === 'blocked')
-    .map((r) => r.country)
-    .sort();
-  const provenIn = rows
-    .filter((r) => r.state === 'proven')
-    .map((r) => r.country)
-    .sort();
-  return {
-    ...(blockedIn.length ? { blockedIn } : {}),
-    ...(provenIn.length ? { provenIn } : {}),
-  };
+  return marksOfName(ctx.db, name);
 }
 
 /**
@@ -550,7 +620,7 @@ export async function writeCountryMarks(
   country: string,
   state: 'proven' | 'blocked' | 'unknown',
   source: 'operator' | 'probe',
-): Promise<{ count: number; relays: number }> {
+): Promise<{ count: number; relays: number; switched: number }> {
   const wanted = [...new Set(names)];
   const now = Date.now();
   for (const name of wanted) {
@@ -567,6 +637,7 @@ export async function writeCountryMarks(
   const touched = new Set(wanted);
   const listeners = await ctx.db.query('relayListeners').collect();
   const relays = new Set<Id<'relays'>>();
+  let switched = 0;
   // Listeners whose backend Host name (`hostSniOf`) moves with the marks.
   const hostMoved = new Map<Id<'relayListeners'>, Id<'relays'>>();
   for (const l of listeners) {
@@ -580,11 +651,18 @@ export async function writeCountryMarks(
       const { blockedIn: _b, provenIn: _p, ...rest } = n;
       next.push({ ...rest, ...(await countryMarks(ctx, n.name)) });
     }
+    // A judged name only counts on the growth-stable pick (lib/edges/sni/marks.ts).
+    const pick = pickForJudgedNames(l.sniPick, next);
     await ctx.db.patch(l._id, {
       tlsNames: next,
+      ...(pick !== l.sniPick ? { sniPick: pick } : {}),
       namesRevision: (l.namesRevision ?? 0) + 1,
       updatedAt: now,
     });
+    if (pick !== l.sniPick) {
+      switched++;
+      await auditPickForMarks(ctx, l, pick);
+    }
     relays.add(l.relayId);
     if (l.host?.uuid && hostSniOf(l) !== hostSniOf({ tlsNames: next }))
       hostMoved.set(l._id, l.relayId);
@@ -601,7 +679,7 @@ export async function writeCountryMarks(
       if (rid === relayId)
         await ctx.scheduler.runAfter(0, internal.hostOps.resyncSni, { listenerId });
   }
-  return { count: wanted.length, relays: relays.size };
+  return { count: wanted.length, relays: relays.size, switched };
 }
 
 /**
@@ -627,54 +705,111 @@ export const setCountry = internalMutation({
     const wanted = [
       ...new Set(a.names.map((n) => normalizeName(n)).filter((n): n is string => !!n)),
     ].filter((n) => mine.has(n));
-    const { relays } = await writeCountryMarks(ctx, wanted, country, a.state, 'operator');
+    const { relays, switched } = await writeCountryMarks(ctx, wanted, country, a.state, 'operator');
     await audit(ctx, 'edge.sni.names.country', a.actorAdminId, {
       slug: f.slug,
       country,
       state: a.state,
       count: wanted.length,
     });
-    return { count: wanted.length, relays };
+    return { count: wanted.length, relays, switched };
   },
 });
 
 // --- qualification ---------------------------------------------------------------------------------------
+
+/** Names looked at per qualification pass to find the due ones. */
+const QUALIFY_SCAN_CAP = 1000;
 
 /** The oldest-checked names that are due, with their family's target. */
 export const dueForQualification = internalQuery({
   args: {},
   handler: async (ctx) => {
     const cfg = await resolveSniConfig(ctx.db);
-    if (!cfg.enabled) return { names: [] };
+    if (!cfg.enabled) return { names: [], networks: {}, defer: [] };
     const cutoff = Date.now() - cfg.requalifyHours * 3_600_000;
-    const due = await ctx.db
-      .query('sniNames')
-      .withIndex('by_checked', (q) => q.lt('checkedAt', cutoff))
-      .take(cfg.qualifyPerTick * 4);
+    // Oldest-checked first. What is not checked now (a retired or burned name,
+    // a switched-off family, a network without ranges yet) is walked past and
+    // handed back to be deferred (`deferQualification`), so it leaves the head
+    // of the queue and can never crowd out the names that are due. Whatever
+    // makes such a name checkable again marks it due itself (a reactivation, a
+    // family switched back on, a network's ranges moving).
+    const due = ctx.db.query('sniNames').withIndex('by_checked', (q) => q.lt('checkedAt', cutoff));
+    const defer: { id: Id<'sniNames'>; checkedAt: number }[] = [];
+    let scanned = 0;
     const out: {
       id: Id<'sniNames'>;
       name: string;
       address: string;
       port: number;
       requireH2: boolean;
+      /** The family's network (its key in `networks`), when it has one. */
+      network?: string;
     }[] = [];
     const families = new Map<string, Doc<'sniFamilies'> | null>();
-    for (const n of due) {
-      if (n.status !== 'active' && n.status !== 'suspended') continue;
+    // A family's network once per family; `null` = it has no ranges yet.
+    const networks = new Map<string, NetworkPrefixes | null>();
+    for await (const n of due) {
+      if (++scanned > QUALIFY_SCAN_CAP) break;
+      const skip = () => defer.push({ id: n._id, checkedAt: n.checkedAt });
+      if (n.status !== 'active' && n.status !== 'suspended') {
+        skip();
+        continue;
+      }
       const key = n.familyId as string;
       if (!families.has(key)) families.set(key, await ctx.db.get(n.familyId));
       const f = families.get(key);
-      if (!f || !f.enabled) continue;
+      if (!f || !f.enabled) {
+        skip();
+        continue;
+      }
+      if (f.networkId) {
+        const nk = f.networkId as string;
+        if (!networks.has(nk)) networks.set(nk, await networkPrefixes(ctx.db, f.networkId));
+        // Nothing to compare with yet: the name waits (it is never failed for it).
+        if (!networks.get(nk)) {
+          skip();
+          continue;
+        }
+      }
       out.push({
         id: n._id,
         name: n.name,
         address: f.target.address,
         port: f.target.port,
         requireH2: f.requireH2,
+        ...(f.networkId ? { network: f.networkId as string } : {}),
       });
       if (out.length >= cfg.qualifyPerTick) break;
     }
-    return { names: out };
+    const used = new Set(out.map((o) => o.network).filter((k): k is string => !!k));
+    return {
+      names: out,
+      networks: Object.fromEntries(
+        [...networks].filter(([k, p]) => used.has(k) && p) as [string, NetworkPrefixes][],
+      ),
+      defer,
+    };
+  },
+});
+
+/**
+ * Names the qualification pass walked past (not checkable now) step out of the
+ * head of the queue: their `checkedAt` becomes now, their state stays. A name
+ * whose `checkedAt` moved since it was read (marked due, checked) is left alone.
+ */
+export const deferQualification = internalMutation({
+  args: { names: v.array(v.object({ id: v.id('sniNames'), checkedAt: v.number() })) },
+  handler: async (ctx, { names }) => {
+    const now = Date.now();
+    let deferred = 0;
+    for (const { id, checkedAt } of names) {
+      const n = await ctx.db.get(id);
+      if (!n || n.checkedAt !== checkedAt) continue;
+      await ctx.db.patch(id, { checkedAt: now, updatedAt: now });
+      deferred++;
+    }
+    return { deferred };
   },
 });
 
@@ -734,6 +869,11 @@ export const bind = internalMutation({
     // unique per profile, so a second profile reusing a conventional tag such
     // as VLESS_REALITY must not make an unambiguous binding fail.
     inboundUuid: v.optional(v.string()),
+    // Take the names the transport lists now into the family (a transport whose
+    // names were set by hand: an unmanaged or adopted node). They then qualify,
+    // can be judged per country and stay on the transport through every
+    // rollout, like any family name.
+    importNames: v.optional(v.boolean()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -776,6 +916,31 @@ export const bind = internalMutation({
       )
       .unique();
     if (taken) refuse('conflict', 'This transport already has a family');
+    // A family on a network scopes the transport to it: every address already
+    // in use on the transport must lie on it (docs/edges.md "Networks").
+    if (f.networkId) {
+      const prefixes = await networkPrefixes(ctx.db, f.networkId);
+      if (!prefixes)
+        refuse(
+          'edge.sni.network_unknown',
+          'The family’s network has no address ranges yet. Refresh it, or add ranges by hand',
+        );
+      let off = 0;
+      for (const l of await listenersOfTransport(ctx.db, server._id, i.inboundUuid))
+        for (const e of await ctx.db
+          .query('edges')
+          .withIndex('by_relay_publication', (q) =>
+            q.eq('relayId', l.relayId).eq('publication', 'published'),
+          )
+          .collect())
+          if (e.listenerId === l._id && edgeNetworkVerdict(e.addresses, prefixes) !== 'on') off++;
+      if (off > 0)
+        refuse(
+          'edge.sni.network_edges_off',
+          `${off} address${off === 1 ? '' : 'es'} in use on this transport ${off === 1 ? 'is' : 'are'} not on the family’s network`,
+        );
+    }
+    const imported = a.importNames ? await addFamilyNames(ctx, f, i.reality.serverNames) : null;
     // Everything the transport lists today has been accepted before: none of it
     // can ever serve as a witness that a NEW generation was applied.
     for (const name of i.reality.serverNames) {
@@ -805,12 +970,16 @@ export const bind = internalMutation({
       panelConfirmedGeneration: 0,
       updatedAt: Date.now(),
     });
+    if (f.networkId) await syncTransportNetwork(ctx, server._id, i.inboundUuid, f.networkId);
     await audit(ctx, 'edge.sni.inbound.bind', a.actorAdminId, {
       slug: f.slug,
       backendSlug: server.slug,
       inboundTag: i.tag,
+      ...(imported
+        ? { imported: imported.added, notImported: imported.lines.length - imported.added }
+        : {}),
     });
-    return { id: id as string };
+    return { id: id as string, ...(imported ? { imported } : {}) };
   },
 });
 
@@ -823,6 +992,8 @@ export const unbind = internalMutation({
     const f = await ctx.db.get(b.familyId);
     const server = await ctx.db.get(b.backendServerId);
     await ctx.db.delete(b._id);
+    // The transport is no longer scoped to the family's network.
+    await syncTransportNetwork(ctx, b.backendServerId, b.inboundUuid, undefined);
     await audit(ctx, 'edge.sni.inbound.unbind', a.actorAdminId, {
       slug: f?.slug ?? '',
       backendSlug: server?.slug ?? '',

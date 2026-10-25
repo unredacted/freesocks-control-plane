@@ -23,7 +23,7 @@ import { reserveAllocation } from './edgeProviderAccounts';
 import { defaultLocationOf, liveCountForLocation } from './edgeLocations';
 import { EDGE_OBSERVED_PLACEMENT, edgeResourceName } from './lib/edges/accountSettings';
 import { dropEdgeFromPool, liveEdgesOfAccount } from './relays';
-import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
+import { EDGE_LIVE_STATUSES, FLEET_EDGE_PAGE_SIZE } from './lib/edges/pool';
 import { parseIntent, parseObservedSettings, type ProvisionIntent } from './lib/edges/intent';
 import {
   holdLearnedAddresses,
@@ -311,19 +311,21 @@ export const listByRelayForAdmin = internalQuery({
   },
 });
 
-/** All non-destroyed edges (small, admin-managed table) for the reconcile cron. */
+/**
+ * One page of the non-destroyed edges in one status, for the reconcile cron:
+ * it pages through every live status (`allLiveEdges` in edgeReconcile.ts), so
+ * a fleet of any size is read whole, each page within its own read budget.
+ */
 export const listLive = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const out: Edge[] = [];
-    for (const status of LIVE_STATUSES) {
-      const rows = await ctx.db
-        .query('edges')
-        .withIndex('by_status', (q) => q.eq('status', status))
-        .take(500);
-      out.push(...rows);
-    }
-    return out;
+  args: { status: v.string(), cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { status, cursor }) => {
+    if (!(LIVE_STATUSES as readonly string[]).includes(status))
+      throw new ConvexError({ code: 'validation', message: 'Not a live edge status' });
+    const page = await ctx.db
+      .query('edges')
+      .withIndex('by_status', (q) => q.eq('status', status as Edge['status']))
+      .paginate({ numItems: FLEET_EDGE_PAGE_SIZE, cursor });
+    return { page: page.page, isDone: page.isDone, continueCursor: page.continueCursor };
   },
 });
 

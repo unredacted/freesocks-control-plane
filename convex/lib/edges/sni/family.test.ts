@@ -64,6 +64,9 @@ describe('judgeHandshake', () => {
     expect(judgeHandshake({ ok: false, error: 'refused' }, { requireH2: false }).code).toBe(
       'q_unreachable',
     );
+    // A family on a network: the network check's own words pass through.
+    for (const code of ['q_off_network', 'q_target_off_network'])
+      expect(judgeHandshake({ ok: false, error: code }, { requireH2: false }).code).toBe(code);
   });
 });
 

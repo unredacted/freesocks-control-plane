@@ -197,6 +197,9 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'size_not_multicloud',
   // the account would pass its monthly spend cap (convex/edgePlans.ts, the budget guard)
   'account_spend_cap_reached',
+  // the transport is scoped to a network (docs/edges.md "Networks"): the place, or the
+  // edge's address, is not on it
+  'off_network',
 ] as const;
 export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
 
@@ -311,6 +314,9 @@ export const ATTENTION_KINDS = [
   // A protected REALITY transport refuses sing-box or Mihomo clients (no `minClientVer` on an
   // Xray that then refuses them, or bounds that leave them out; src/shared/contracts/realityClients.ts).
   'reality_refuses_clients',
+  // An address in use on a transport scoped to a network is not on that network
+  // (docs/edges.md "Networks").
+  'edge_off_network',
   // FCP's own client check (docs/edges.md § "FCP's own client check"): a client family
   // that cannot get through an address in use; the check service not answering.
   'client_refused',
@@ -629,6 +635,9 @@ export const SETUP_ACCOUNT_REASONS = [
   'account_spend_cap_reached',
   // A load balancer address of a transport no test link can be made for (a set problem).
   'test_link_unavailable',
+  // Every transport it would carry is scoped to a network this place is not on
+  // (docs/edges.md "Networks").
+  'off_network',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 
@@ -708,6 +717,70 @@ export type CountryGroupGrade = (typeof COUNTRY_GROUP_GRADES)[number];
 /** Where an edge's effective state in a country comes from. */
 export const COUNTRY_STATE_FROM = ['edge', 'group', 'mark'] as const;
 export type CountryStateFrom = (typeof COUNTRY_STATE_FROM)[number];
+
+/**
+ * The country view (docs/edges.md "The country view", convex/lib/edges/country/view.ts):
+ * why an address counts as it does from one country. Every basis but `probes`
+ * and `none` is what delivery acts on (`edges.countryState`).
+ */
+export const COUNTRY_VIEW_ADDRESS_BASES = [
+  'mark',
+  'location_mark',
+  'checks',
+  'handshake',
+  'never_reached',
+  'location',
+  'probes',
+  'none',
+] as const;
+export type CountryViewAddressBasis = (typeof COUNTRY_VIEW_ADDRESS_BASES)[number];
+
+/** Why a server name counts as it does from one country (`checks` = suggested, not applied). */
+export const COUNTRY_VIEW_NAME_BASES = ['mark', 'checks_mark', 'checks', 'none'] as const;
+export type CountryViewNameBasis = (typeof COUNTRY_VIEW_NAME_BASES)[number];
+
+/**
+ * Real-host controls (docs/edges.md "Real-host controls", convex/lib/edges/sni/realHost.ts):
+ * one vantage's check of FCP's address and of the name's real site, read together.
+ */
+export const REAL_HOST_PAIRS = [
+  'works',
+  'name_blocked',
+  'address_blocked',
+  'ip_name_match',
+  'ours_only',
+  'inconclusive',
+] as const;
+export type RealHostPair = (typeof REAL_HOST_PAIRS)[number];
+
+/** What one batch's pairs say about a name in a country (`thin`: too few to say, `mixed`: no majority). */
+export const REAL_HOST_READINGS = [
+  'works',
+  'name_blocked',
+  'address_blocked',
+  'ip_name_match',
+  'ours_only',
+  'mixed',
+  'thin',
+] as const;
+export type RealHostReading = (typeof REAL_HOST_READINGS)[number];
+
+/** Why a real-site check was not dialled (`sniVantageProbes.error` on a `real_host` row). */
+export const REAL_HOST_SKIPS = [
+  'real_resolve',
+  'real_private',
+  'real_is_ours',
+  'real_not_serving',
+] as const;
+export type RealHostSkip = (typeof REAL_HOST_SKIPS)[number];
+
+/** Why the view could not work out what a member there is handed on a transport. */
+export const COUNTRY_VIEW_HANDED_REASONS = [
+  'render_off',
+  'origin_disabled',
+  'no_published',
+] as const;
+export type CountryViewHandedReason = (typeof COUNTRY_VIEW_HANDED_REASONS)[number];
 
 /**
  * Every reason the server records on a round or a track (verdict.ts). The

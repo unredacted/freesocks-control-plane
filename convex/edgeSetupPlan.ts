@@ -49,13 +49,8 @@ import {
 import type { EdgeProviderId } from './lib/edgeProviderIds';
 import type { BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import { todayKey, liveEdgesOfAccount, relayForBackendNode } from './relays';
-import {
-  defaultLocationOf,
-  liveCountForLocation,
-  locationsOfAccount,
-  sizeProblemOfLocation,
-} from './edgeLocations';
+import { todayKey, managedLiveOfAccount, relayForBackendNode } from './relays';
+import { defaultLocationOf, locationsOfAccount, sizeProblemOfLocation } from './edgeLocations';
 import { regionOffersOf } from './edgeProviderCatalog';
 import { placeProblemOf } from './lib/edges/l7Place';
 import { SIZE_NOT_MULTICLOUD, SIZE_NOT_MULTICLOUD_WORDS } from './lib/edges/sizeCheck';
@@ -219,6 +214,8 @@ async function planContextOf(
         placeProblem: string | null;
         /** Why a front on the account's default certificate gets none there (CAA, its wildcard). */
         certificateRefusal: string | null;
+        /** The network its addresses come from (docs/edges.md "Networks"). */
+        networkId: string | null;
       }>
     > = {};
     // The regions each load balancer account's key reaches that are no location
@@ -229,11 +226,11 @@ async function planContextOf(
     > = {};
     const accountSpendCap: Record<string, boolean> = {};
     for (const a of accounts) {
-      accountLive[a._id as string] = (await liveEdgesOfAccount(ctx.db, a._id)).filter(
-        (e) => e.managed,
-      ).length;
+      // One read of the account serves its total, each location's count and the spend.
+      const managed = await managedLiveOfAccount(ctx.db, a._id);
+      accountLive[a._id as string] = managed.live;
       if (typeof a.cost?.monthlyCap === 'number')
-        accountSpendCap[a._id as string] = atCap(await spendOf(ctx, a));
+        accountSpendCap[a._id as string] = atCap(await spendOf(ctx, a, managed.edges));
       const dflt = await defaultLocationOf(ctx.db, a);
       const rows = [];
       for (const loc of await locationsOfAccount(ctx.db, a._id))
@@ -244,7 +241,7 @@ async function planContextOf(
           enabled: loc.enabled,
           qualified: loc.qualified,
           isDefault: !!dflt && dflt._id === loc._id,
-          live: await liveCountForLocation(ctx.db, loc),
+          live: managed.atLocation(loc._id),
           maxLiveEdges: loc.maxLiveEdges ?? null,
           // Why no new edge can be planned in this place (the zone itself, a
           // Scaleway location with no project to create in, or a size there
@@ -255,6 +252,7 @@ async function planContextOf(
           // failed or foreign wildcard): a pick with its own certificate may
           // still go, so it is shown, and its pick check judges it.
           certificateRefusal: certificateRefusalOf(a, loc),
+          networkId: (loc.networkId as string | undefined) ?? null,
         });
       accountLocations[a._id as string] = rows;
       accountRegions[a._id as string] = await regionOffersOf(
@@ -357,8 +355,28 @@ async function planContextOf(
       familiesDisabled: RENDER_CLIENT_FAMILIES.filter((f) => !cfg.render.clients[f].enabled),
       otherEnabledRelays,
       activeRunId: activeRun ? (activeRun._id as string) : null,
+      transportNetworks: await transportNetworksOf(ctx.db, backendServerId),
     };
   }
+}
+
+/**
+ * The network of each bound transport of a backend, by transport uuid
+ * (docs/edges.md "Networks"): only a location on it may front the transport.
+ */
+async function transportNetworksOf(
+  db: QueryCtx['db'],
+  backendServerId: Id<'backendServers'>,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const b of await db
+    .query('sniInboundBindings')
+    .withIndex('by_server_inbound', (q) => q.eq('backendServerId', backendServerId))
+    .collect()) {
+    const networkId = (await db.get(b.familyId))?.networkId;
+    if (networkId) out[b.inboundUuid] = networkId as string;
+  }
+  return out;
 }
 
 type PlanContext = Awaited<ReturnType<typeof planContextOf>>;
@@ -493,6 +511,13 @@ function accountCompatibility(
       if (loc.placeProblem) why.push(loc.placeProblem);
       if (loc.maxLiveEdges !== null && loc.maxLiveEdges - loc.live < need)
         why.push('location_capacity_reached');
+      // Every transport the account carries is scoped to a network this place is
+      // not on (docs/edges.md "Networks").
+      if (
+        carries.length > 0 &&
+        carries.every((k) => !locationOnNetworkOf(required, k, loc.networkId))
+      )
+        why.push('off_network');
     }
     return {
       id: loc.id,
@@ -503,6 +528,7 @@ function accountCompatibility(
       compatible: why.length === 0,
       reasons: why,
       certificateRefusal: loc.certificateRefusal,
+      networkId: loc.networkId,
     };
   });
   // Nothing done to a load balancer account helps a WebSocket node: no region either.
@@ -734,6 +760,19 @@ export const checkPicks = internalQuery({
   },
 });
 
+/**
+ * Whether a place on `networkId` may front the transport `listenerKey`: always
+ * for a transport on no network, only from its own network otherwise.
+ */
+function locationOnNetworkOf(
+  required: readonly Pick<SetupPlanInbound, 'listenerKey' | 'networkId'>[],
+  listenerKey: string,
+  networkId: string | null,
+): boolean {
+  const scoped = required.find((r) => r.listenerKey === listenerKey)?.networkId;
+  return !scoped || scoped === networkId;
+}
+
 export function setOfPicks(
   pickIds: readonly string[],
   accounts: readonly SetupPlanAccount[],
@@ -781,7 +820,14 @@ export function setOfPicks(
     required.map((i) => ({
       listenerKey: i.listenerKey,
       carriers: picks
-        .filter((p) => accounts.find((a) => a.id === p.accountId)?.carries?.includes(i.listenerKey))
+        .filter((p) => {
+          const acct = accounts.find((a) => a.id === p.accountId);
+          const loc = acct?.locations?.find((l) => l.id === p.locationId);
+          return (
+            !!acct?.carries?.includes(i.listenerKey) &&
+            locationOnNetworkOf(required, i.listenerKey, loc?.networkId ?? null)
+          );
+        })
         .map((p) => p.locationId),
     })),
     picks.map((p) => ({
@@ -945,6 +991,9 @@ export async function buildPlan(
     const awaitingProbe =
       cand.layers.excluded.l4 === 'l4_not_for_websocket' && !!cand.probe && !cand.probe.ok;
     const frontable = (cand.layers.layers.length > 0 || awaitingProbe) && !cand.needsName;
+    const networkId = cand.listenerSpec.panelBinding
+      ? c.transportNetworks[cand.listenerSpec.panelBinding.configProfileInboundUuid]
+      : undefined;
     planInbounds.push({
       listenerKey: cand.listenerSpec.listenerKey,
       sourceTag: cand.sourceTag,
@@ -953,6 +1002,7 @@ export async function buildPlan(
       frontable,
       formats: cand.formats,
       needsName: cand.needsName,
+      ...(networkId ? { networkId } : {}),
       // The origin never answered for this HTTP transport, so it stayed L4-only.
       ...(cand.probe && !cand.probe.ok ? { probeFailed: cand.probe.reason ?? 'no_answer' } : {}),
       ...(frontable
