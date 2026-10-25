@@ -251,6 +251,51 @@ describe("FCP's client check", () => {
       severity: 'warning',
       facts: { count: 1, engines: [{ engine: 'sing-box', code: 'reality_refused' }] },
     });
+    // A check from before the transport changed says nothing about it any more.
+    await t.run(async (ctx) => {
+      const l = (await ctx.db.get(fx.listenerId))!;
+      await ctx.db.patch(l._id, { revision: l.revision + 1 });
+    });
+    const after = await t.query(internal.edgeOperator.attention, {});
+    expect(after.items.some((i) => i.kind === 'client_refused')).toBe(false);
+  });
+
+  test('egress through another address the node is known by passes', async () => {
+    vi.stubEnv('EDGE_CLIENT_CHECK_SECRET', SECRET);
+    const { t, fx, spare } = await seed();
+    await t.run((ctx) => ctx.db.patch(fx.relayId, { nodeAddresses: ['2001:db8::7'] }));
+    fakeService(() => ({ code: 'ok', egressIp: '2001:db8:0::7' }));
+    expect(await t.action(internal.edgeClientCheck.check, { edgeId: spare })).toMatchObject({
+      verdict: 'passed',
+    });
+  });
+
+  test('rollback: every verdict and every check key, a page at a time', async () => {
+    vi.stubEnv('EDGE_CLIENT_CHECK_SECRET', SECRET);
+    const { t, fx, spare } = await seed();
+    fakeService(() => ({ code: 'ok' }));
+    await t.action(internal.edgeClientCheck.check, { edgeId: spare });
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 205; i++)
+        await ctx.db.insert('edgeTestCredentials', {
+          relayId: fx.relayId,
+          backendServerId: fx.serverId,
+          backend: 'remnawave',
+          purpose: 'client_check',
+          username: `fcp-test-check-${i}`,
+          removal: 'done',
+          attempts: 0,
+          expiresAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+    });
+    vi.useFakeTimers();
+    await t.mutation(internal.edgeClientCheck.clearForRollback, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+    expect((await t.run((ctx) => ctx.db.get(spare)))!.clientCheck).toBeUndefined();
+    const left = await t.run((ctx) => ctx.db.query('edgeTestCredentials').collect());
+    expect(left.filter((r) => r.purpose === 'client_check')).toEqual([]);
   });
 
   test('the service refusing or busy is "could not check", never a verdict', async () => {

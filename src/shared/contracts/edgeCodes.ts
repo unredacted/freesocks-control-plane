@@ -789,5 +789,7 @@ export const CLIENT_CHECK_UNCHECKED_CODES = [
   'link_unavailable',
   'no_engine',
   'not_l4',
+  // The check's whole budget ran out before every session could run.
+  'out_of_time',
 ] as const;
 export type ClientCheckUncheckedCode = (typeof CLIENT_CHECK_UNCHECKED_CODES)[number];

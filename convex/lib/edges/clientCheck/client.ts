@@ -51,6 +51,7 @@ async function signedCall(
   path: string,
   body: string,
   fetchImpl: FetchLike,
+  timeoutMs: number = CLIENT_CHECK_CALL_MS,
 ): Promise<ServiceAnswer<unknown>> {
   const time = String(Date.now());
   const signature = await signRequest(svc.secret, method, path, time, body);
@@ -65,7 +66,7 @@ async function signedCall(
         [CLIENT_CHECK_SIGNATURE_HEADER]: signature,
       },
       redirect: 'error',
-      signal: AbortSignal.timeout(CLIENT_CHECK_CALL_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     return { ok: false, code: 'unavailable' };
@@ -86,8 +87,16 @@ export async function runEngineCheck(
   svc: ClientCheckService,
   req: { engine: ClientCheckEngine; outbound: Record<string, unknown>; reality: boolean },
   fetchImpl: FetchLike = fetch,
+  timeoutMs: number = CLIENT_CHECK_CALL_MS,
 ): Promise<ServiceAnswer<ClientCheckResponse>> {
-  const a = await signedCall(svc, 'POST', CLIENT_CHECK_PATHS.check, JSON.stringify(req), fetchImpl);
+  const a = await signedCall(
+    svc,
+    'POST',
+    CLIENT_CHECK_PATHS.check,
+    JSON.stringify(req),
+    fetchImpl,
+    timeoutMs,
+  );
   if (!a.ok) return a;
   const v = a.value as Partial<ClientCheckResponse> | null;
   if (!v || typeof v.ok !== 'boolean' || typeof v.code !== 'string')

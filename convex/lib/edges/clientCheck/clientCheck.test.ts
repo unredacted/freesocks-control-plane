@@ -100,6 +100,25 @@ describe('sanitizeOutbound', () => {
     ).toBe(false);
   });
 
+  test('a REALITY ML-DSA-65 verification key (about 2,600 characters) is kept; a longer one is refused', () => {
+    const xr = (key: string) => ({
+      protocol: 'vless',
+      settings: {
+        vnext: [{ address: '203.0.113.10', port: 443, users: [{ id: UUID, encryption: 'none' }] }],
+      },
+      streamSettings: {
+        network: 'raw',
+        security: 'reality',
+        realitySettings: { serverName: 'a.example', publicKey: PBK, mldsa65Verify: key },
+      },
+    });
+    expect(sanitizeOutbound('xray', xr('A'.repeat(2604))).ok).toBe(true);
+    expect(sanitizeOutbound('xray', xr('A'.repeat(5000)))).toEqual({
+      ok: false,
+      code: 'invalid_outbound',
+    });
+  });
+
   test('refuses unknown types, transports and wrongly typed fields', () => {
     expect(sanitizeOutbound('sing-box', { ...reality, type: 'direct' })).toEqual({
       ok: false,
@@ -374,6 +393,11 @@ describe('outboundsForLink', () => {
       obfs: { type: 'salamander', password: 'o' },
     });
     expect(r?.skipped.xray).toBe('no_codec');
+  });
+
+  test('TUIC: an encoded colon belongs to the password', () => {
+    const r = outboundsForLink(`tuic://${UUID}:a%3Ab@203.0.113.10:443?sni=node.example#t`);
+    expect(r?.outbounds['sing-box']).toMatchObject({ type: 'tuic', uuid: UUID, password: 'a:b' });
   });
 
   test('not a link FCP renders', () => {

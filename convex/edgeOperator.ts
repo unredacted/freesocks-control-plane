@@ -51,11 +51,12 @@ import { parseIntent } from './lib/edges/intent';
 import { sameAddress } from './lib/edges/hosts';
 import {
   needsEndpointVerification,
+  verificationBinding,
   verificationCurrent,
   verificationStale,
   verificationStaleReason,
 } from './lib/edges/verification';
-import { verificationListenersOf } from './lib/edges/verificationContext';
+import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { publishedCount } from './lib/edges/pool';
 import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
 import { fakeShadowedIds } from './lib/edges/providers/fake';
@@ -1113,18 +1114,33 @@ export function realityRefusalFacts(relay: Pick<Doc<'relays'>, 'realityClients'>
  * and the newest such check. Null when every checked address in use admits
  * every engine.
  */
-export function clientRefusalFacts(edges: readonly Doc<'edges'>[]): {
+export function clientRefusalFacts(
+  edges: readonly Doc<'edges'>[],
+  listeners: readonly VerifiableListener[],
+): {
   count: number;
   engines: Array<{ engine: string; code: string }>;
   verdicts: string[];
   since: number;
 } | null {
+  // Only a check taken against the configuration the address holds now: one
+  // from before a listener or address change says nothing about it any more.
+  const current = (e: Doc<'edges'>) => {
+    const l = listeners.find((x) => x._id === e.listenerId);
+    const b = l ? verificationBinding(e, l) : null;
+    return (
+      !!b &&
+      b.configHash === e.clientCheck!.configHash &&
+      b.listenerRevision === e.clientCheck!.listenerRevision
+    );
+  };
   const hit = edges.filter(
     (e) =>
       e.publication === 'published' &&
       e.status === 'active' &&
       !!e.clientCheck &&
-      e.clientCheck.engines.some((x) => x.code !== 'ok'),
+      e.clientCheck.engines.some((x) => x.code !== 'ok') &&
+      current(e),
   );
   if (hit.length === 0) return null;
   const engines = new Map<string, string>();
@@ -1352,7 +1368,7 @@ export const attention = internalQuery({
       }
       // FCP's own client check found a client family that cannot get through an
       // address in use (refused, or not connecting): members on it are cut off.
-      const checkRefused = clientRefusalFacts(edges);
+      const checkRefused = clientRefusalFacts(edges, listeners);
       if (checkRefused) {
         items.push({
           ...base(relay),

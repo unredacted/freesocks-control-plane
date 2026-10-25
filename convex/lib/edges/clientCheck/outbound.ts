@@ -303,7 +303,11 @@ export function outboundsForLink(link: string): LinkOutbounds | null {
               : undefined,
           })
         : (() => {
-            const [uuid = '', password = ''] = decode(u.userinfo).split(':');
+            // Split the RAW userinfo at its first separator: an encoded colon
+            // belongs to the password.
+            const at = u.userinfo.indexOf(':');
+            const uuid = decode(at < 0 ? u.userinfo : u.userinfo.slice(0, at));
+            const password = at < 0 ? '' : decode(u.userinfo.slice(at + 1));
             return compact({
               type: 'tuic',
               server: u.host,

@@ -212,6 +212,19 @@ describe.skipIf(!ENABLED)('FCP client check against real Xray-cores', () => {
     };
     expect((await fetch(`${SERVICE}${CLIENT_CHECK_PATHS.health}`, { headers })).status).toBe(200);
     expect((await fetch(`${SERVICE}${CLIENT_CHECK_PATHS.health}`, { headers })).status).toBe(401);
+    // A body with no length (chunked) is refused at the limit, never buffered whole.
+    const big = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (let i = 0; i < 64; i++) c.enqueue(new Uint8Array(1024).fill(65));
+        c.close();
+      },
+    });
+    const res = await fetch(`${SERVICE}${CLIENT_CHECK_PATHS.check}`, {
+      method: 'POST',
+      body: big,
+      duplex: 'half',
+    } as RequestInit);
+    expect(res.status).toBe(413);
   });
 
   test('minClientVer 1.8.1: both engines connect and come out of the core', async () => {

@@ -1593,6 +1593,12 @@ export const CLIENT_CHECK_COPY: Record<
     label: 'Checked by its proof',
     explain: 'A CDN front is checked by its own end-to-end proof, not by this check.',
   },
+  out_of_time: {
+    label: 'Ran out of time',
+    explain:
+      'The check took too long to run every client (slow sessions, or another check ahead of it).',
+    fix: 'Check again in a minute.',
+  },
 };
 
 export function inboundUnsupportedCopy(code: string): CodeCopy {

@@ -28,7 +28,7 @@ export const CLIENT_CHECK_MAX_BODY_BYTES = 16_384;
 export const CLIENT_CHECK_START_MS = 5_000;
 export const CLIENT_CHECK_FETCH_MS = 15_000;
 /** What FCP waits for one answer: both bounds above plus the engine's teardown. */
-export const CLIENT_CHECK_CALL_MS = 30_000;
+export const CLIENT_CHECK_CALL_MS = 25_000;
 
 export interface ClientCheckRequest {
   engine: ClientCheckEngine;

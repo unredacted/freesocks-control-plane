@@ -182,6 +182,23 @@ async function runCheck(
   }
 }
 
+/**
+ * The request body, read as a stream and refused (null) once it passes the
+ * limit: a body without a length (chunked) is never buffered whole first.
+ */
+async function boundedBody(req: Request): Promise<string | null> {
+  if (!req.body) return '';
+  const dec = new TextDecoder();
+  let bytes = 0;
+  let text = '';
+  for await (const chunk of req.body) {
+    bytes += chunk.byteLength;
+    if (bytes > CLIENT_CHECK_MAX_BODY_BYTES) return null;
+    text += dec.decode(chunk, { stream: true });
+  }
+  return text + dec.decode();
+}
+
 async function authorized(req: Request, path: string, body: string): Promise<boolean> {
   return (
     (await verifyRequest(
@@ -216,9 +233,8 @@ async function handle(req: Request): Promise<Response> {
     return refuse('invalid_request', 404, 'Not found');
   if (Number(req.headers.get('content-length') ?? 0) > CLIENT_CHECK_MAX_BODY_BYTES)
     return refuse('too_large', 413, 'Request too large');
-  const body = await req.text();
-  if (body.length > CLIENT_CHECK_MAX_BODY_BYTES)
-    return refuse('too_large', 413, 'Request too large');
+  const body = await boundedBody(req);
+  if (body === null) return refuse('too_large', 413, 'Request too large');
   if (!(await authorized(req, path, body))) return refuse('unauthorized', 401, 'Unauthorized');
   let parsed: { engine?: unknown; outbound?: unknown; reality?: unknown };
   try {

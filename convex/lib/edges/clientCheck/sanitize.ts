@@ -16,13 +16,24 @@ import type { ClientCheckEngine } from '../../../../src/shared/contracts/edgeCod
 import { addressFamily, isPublicIpLiteral } from '../ip';
 
 type Obj = Record<string, unknown>;
-type Field = 'string' | 'number' | 'boolean' | 'scalar' | 'strings' | 'headers' | Spec | [Spec];
+type Field =
+  | 'string'
+  | 'longString'
+  | 'number'
+  | 'boolean'
+  | 'scalar'
+  | 'strings'
+  | 'headers'
+  | Spec
+  | [Spec];
 interface Spec {
   [key: string]: Field;
 }
 
 /** Longest string value kept (keys, ids, paths, names). */
 const MAX_STRING = 512;
+/** A REALITY ML-DSA-65 verification key: 1,952 bytes, base64 encoded (with room). */
+const MAX_LONG_STRING = 4096;
 const MAX_LIST = 8;
 
 function isObj(v: unknown): v is Obj {
@@ -33,6 +44,7 @@ const INVALID = Symbol('invalid');
 
 function value(x: unknown, f: Field): unknown {
   if (f === 'string') return typeof x === 'string' && x.length <= MAX_STRING ? x : INVALID;
+  if (f === 'longString') return typeof x === 'string' && x.length <= MAX_LONG_STRING ? x : INVALID;
   if (f === 'number') return typeof x === 'number' && Number.isFinite(x) ? x : INVALID;
   if (f === 'boolean') return typeof x === 'boolean' ? x : INVALID;
   if (f === 'scalar')
@@ -138,7 +150,7 @@ const XR_STREAM: Spec = {
     password: 'string',
     shortId: 'string',
     spiderX: 'string',
-    mldsa65Verify: 'string',
+    mldsa65Verify: 'longString',
   },
   wsSettings: { path: 'string', host: 'string', headers: 'headers' },
   grpcSettings: { serviceName: 'string', authority: 'string', multiMode: 'boolean' },

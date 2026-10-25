@@ -42,6 +42,7 @@ import {
   type ServiceAnswer,
 } from './lib/edges/clientCheck/client';
 import { outboundsForLink, type LinkOutbounds } from './lib/edges/clientCheck/outbound';
+import { CLIENT_CHECK_CALL_MS } from './lib/edges/clientCheck/protocol';
 import {
   judge,
   needsControl,
@@ -54,11 +55,20 @@ import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { liveEdgesOfRelay } from './lib/edges/relayGuards';
 import { verificationCurrent } from './lib/edges/verification';
 import { verificationListenerOf } from './lib/edges/verificationContext';
+import { nodeAddressesOf } from './nodeIntents';
 
 export const CLIENT_CHECK_HEALTH_KEY = 'edge:clientCheck';
 /** How often a busy service is asked again within one check, and how long apart. */
 const BUSY_RETRIES = 5;
 const BUSY_WAIT_MS = 3_000;
+/**
+ * The whole check (links, every engine through the address and the control,
+ * busy waits) ends within this, well inside a self-hosted action's 120 s. A
+ * call that would not fit is not made: the check answers `out_of_time`.
+ */
+export const CLIENT_CHECK_BUDGET_MS = 90_000;
+/** Below this much time left a session is not started (one session's own bounds). */
+const MIN_CALL_MS = 22_000;
 
 export interface ClientCheckHealthRecord {
   at: number;
@@ -106,7 +116,9 @@ export const context = internalQuery({
     const listener = await ctx.db.get(edge.listenerId);
     if (!relay || !listener) return null;
     const vl = await verificationListenerOf(ctx.db, listener);
-    const expectedEgress = [relay.originAddress, ...(relay.nodeAddresses ?? [])]
+    // Every address the node is known by: the origin address, an enrolled
+    // node's direct addresses and the names it was found under (another family).
+    const expectedEgress = [relay.originAddress, ...(await nodeAddressesOf(ctx, relay))]
       .map((a) => canonicalIp(a))
       .filter((a): a is string => !!a);
     const expectedRefusals = [
@@ -244,16 +256,35 @@ async function runEngines(
   svc: ClientCheckService,
   conv: LinkOutbounds,
   engines: readonly ClientCheckEngine[],
+  deadline: number,
 ): Promise<ServiceAnswer<EngineRun[]>> {
   const runs: EngineRun[] = [];
+  const call = async (engine: ClientCheckEngine, outbound: Record<string, unknown>) => {
+    const left = deadline - Date.now();
+    if (left < MIN_CALL_MS) return { ok: false as const, code: 'out_of_time' as const };
+    return runEngineCheck(
+      svc,
+      { engine, outbound, reality: conv.reality },
+      fetch,
+      Math.min(CLIENT_CHECK_CALL_MS, left),
+    );
+  };
   for (const engine of engines) {
     const outbound = conv.outbounds[engine];
     if (!outbound) continue;
-    let answer = await runEngineCheck(svc, { engine, outbound, reality: conv.reality });
-    // One session runs at a time on the service: wait for a concurrent check.
-    for (let i = 0; i < BUSY_RETRIES && !answer.ok && answer.code === 'busy'; i++) {
+    let answer = await call(engine, outbound);
+    // One session runs at a time on the service: wait for a concurrent check,
+    // while the budget still holds a session after the wait.
+    for (
+      let i = 0;
+      i < BUSY_RETRIES &&
+      !answer.ok &&
+      answer.code === 'busy' &&
+      deadline - Date.now() >= MIN_CALL_MS + BUSY_WAIT_MS;
+      i++
+    ) {
       await new Promise((r) => setTimeout(r, BUSY_WAIT_MS));
-      answer = await runEngineCheck(svc, { engine, outbound, reality: conv.reality });
+      answer = await call(engine, outbound);
     }
     if (!answer.ok) return answer;
     runs.push({
@@ -283,6 +314,7 @@ export async function runClientCheck(
 ): Promise<ClientCheckOutcome> {
   const svc = clientCheckService(process.env);
   if (!svc) return { checked: false, code: 'not_configured' };
+  const deadline = Date.now() + CLIENT_CHECK_BUDGET_MS;
   const c = await ctx.runQuery(internal.edgeClientCheck.context, {
     edgeId: a.edgeId,
     ...(a.controlEdgeId ? { controlEdgeId: a.controlEdgeId } : {}),
@@ -297,7 +329,7 @@ export async function runClientCheck(
     const conv = outboundsForLink(link.link);
     const engines = CLIENT_CHECK_ENGINES.filter((e) => !!conv?.outbounds[e]);
     if (!conv || engines.length === 0) return { checked: false, code: 'no_engine' };
-    const runs = await runEngines(svc, conv, engines);
+    const runs = await runEngines(svc, conv, engines, deadline);
     if (!runs.ok) return { checked: false, code: runs.code };
     let control: EngineRun[] | null = null;
     if (needsControl(runs.value, c.expectedEgress) && c.controlEdgeId) {
@@ -307,7 +339,7 @@ export async function runClientCheck(
           issued.push({ edgeId: c.controlEdgeId, credentialId: cl.credentialId });
         const cc = outboundsForLink(cl.link);
         if (cc) {
-          const r = await runEngines(svc, cc, engines);
+          const r = await runEngines(svc, cc, engines, deadline);
           if (!r.ok) return { checked: false, code: r.code };
           control = r.value;
         }
@@ -372,28 +404,39 @@ export async function runClientCheck(
  * arguments; run it again if the push is still refused.
  */
 export const clearForRollback = internalMutation({
-  args: { cursor: v.optional(v.union(v.string(), v.null())) },
-  handler: async (ctx, { cursor }) => {
-    const page = await ctx.db.query('edges').paginate({ cursor: cursor ?? null, numItems: 200 });
+  args: {
+    cursor: v.optional(v.union(v.string(), v.null())),
+    phase: v.optional(v.union(v.literal('edges'), v.literal('credentials'))),
+  },
+  handler: async (ctx, { cursor, phase }) => {
     let cleared = 0;
-    for (const e of page.page)
-      if (e.clientCheck !== undefined) {
-        await ctx.db.patch(e._id, { clientCheck: undefined });
+    const next = (args: { phase: 'edges' | 'credentials'; cursor?: string }) =>
+      ctx.scheduler.runAfter(0, internal.edgeClientCheck.clearForRollback, args);
+    if ((phase ?? 'edges') === 'edges') {
+      const page = await ctx.db.query('edges').paginate({ cursor: cursor ?? null, numItems: 200 });
+      for (const e of page.page)
+        if (e.clientCheck !== undefined) {
+          await ctx.db.patch(e._id, { clientCheck: undefined });
+          cleared++;
+        }
+      await next(
+        page.isDone ? { phase: 'credentials' } : { phase: 'edges', cursor: page.continueCursor },
+      );
+      return { cleared, done: false };
+    }
+    const page = await ctx.db
+      .query('edgeTestCredentials')
+      .paginate({ cursor: cursor ?? null, numItems: 200 });
+    for (const row of page.page)
+      if (row.purpose === 'client_check') {
+        await ctx.db.patch(row._id, { purpose: 'test_link' });
         cleared++;
       }
     if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.edgeClientCheck.clearForRollback, {
-        cursor: page.continueCursor,
-      });
+      await next({ phase: 'credentials', cursor: page.continueCursor });
       return { cleared, done: false };
     }
-    let keys = 0;
-    for (const row of await ctx.db.query('edgeTestCredentials').take(1000))
-      if (row.purpose === 'client_check') {
-        await ctx.db.patch(row._id, { purpose: 'test_link' });
-        keys++;
-      }
-    return { cleared, keys, done: true };
+    return { cleared, done: true };
   },
 });
 

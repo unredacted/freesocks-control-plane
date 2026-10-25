@@ -747,7 +747,10 @@ starts the engine with a loopback HTTP proxy inbound and that outbound as its on
 direct outbound, no DNS server: nothing can leave any other way, and the egress page's name is
 resolved at the node), fetches the egress-IP page through it, kills the engine and answers
 `{ok, engine, engineVersion, egressIp, ms, code}`. One session runs at a time (a second request
-gets `busy`); the engine has 5 s to listen and the fetch 15 s.
+gets `busy`); the engine has 5 s to listen and the fetch 15 s. A body is read as a stream and
+refused past 16 KB, never buffered whole first. On FCP's side the whole check (both test links,
+every engine through the address and the control, busy waits) ends within 90 s, inside a
+self-hosted action's limit: a session that would not fit is not started (`out_of_time`).
 
 **Who may ask, and for what.** Every request is signed (HMAC-SHA256 over method, path, time
 and the body's SHA-256, `convex/lib/edges/clientCheck/signing.ts`) with `EDGE_CLIENT_CHECK_SECRET`;
@@ -779,18 +782,20 @@ node. `passed_with_refusals`: at least one did, and each one refused here is ref
 control too (with no usable control: one the REALITY verdict, `relays.realityClients`, already
 predicts). `address_failed`: an engine that connects through the control does not here.
 `egress_mismatch`: a session came out somewhere that is neither the control's egress nor the
-node's known addresses (`originAddress`, `nodeAddresses`): the address reaches another node that
+node's known addresses (`originAddress`, an enrolled node's direct addresses, `nodeAddresses`;
+`nodeAddressesOf`): the address reaches another node that
 also knows the credential. `node_unreachable`: nothing connects here or through the control. The
 control runs only when it is needed (an engine failed, or an egress is not a known address).
 "Could not check" is never a verdict: `not_configured`, `unavailable`, `unauthorized`, `busy`,
 `link_unavailable` (the test link could not be built; `detail` carries its code), `no_engine`,
-`not_l4`.
+`not_l4`, `out_of_time`.
 
 **What is kept.** `edges.clientCheck` holds the newest verdict (codes, engine versions, whether a
 control was used, who asked, and the listener revision and configuration hash it was taken
 against: the admin shows it out of date when they move); never an address or an egress IP.
 Audit `edge.client_check` (`relaySlug`, `edgeId`, `verdict`, `by`, `control`, `engines` as
-`sing-box:ok xray:reality_refused`). The service's health is read by every `edge-reconcile` pass
+`sing-box:ok xray:reality_refused`). Attention reads a verdict only while it was taken against
+the configuration the address holds now. The service's health is read by every `edge-reconcile` pass
 (`GET /v1/health`) and kept in `appState` `edge:clientCheck`.
 
 **Where it shows.** "Check with FCP's client" on every L4 address and spare of a node page
@@ -4626,7 +4631,8 @@ nothing until the secret is set: run `bun run bootstrap` (it adds
 `up -d --build edge-client-check` and recreate `deployer` with the usual release command (it sets
 the secret on the deployment). No migration. To roll back, run
 `edgeClientCheck:clearForRollback` with no arguments right before deploying the older build
-(it schedules itself over the edges; run it again if the push is refused), then stop the service.
+(it schedules itself over the edges, then the test keys; run it again if the push is refused),
+then stop the service.
 
 **The X25519MLKEM768 key share** changes what members receive, nothing stored: every Clash /
 Mihomo / Stash body FCP serves asks its REALITY entries for the key share (a cached body from its
