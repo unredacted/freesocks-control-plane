@@ -732,6 +732,92 @@ must postdate it (a proof taken through the old dependency never re-trusts the a
 evaluated after every passing proof and by the reconcile sweep. L4 accounts are never
 auto-trusted.
 
+### FCP's own client check
+
+A human test proves an L4 address with whatever client the operator has at hand, and on
+2026-10-25 that was not enough: a REALITY transport with no `minClientVer` on Xray 26 refused
+every sing-box client while the test, made with an Xray client, passed. **FCP's own client
+check** proves an address with real clients itself: FCP's check account, through the address,
+with sing-box and with Xray, out of the node.
+
+**What it runs.** The `edge-client-check` service (`docker/edge-client-check/`, a service of
+`docker-compose.stack.yml`) holds the official sing-box and Xray binaries (digest-pinned images,
+Dependabot daily) and a small Bun server (`server.ts`). For one check it takes ONE outbound,
+starts the engine with a loopback HTTP proxy inbound and that outbound as its only outbound (no
+direct outbound, no DNS server: nothing can leave any other way, and the egress page's name is
+resolved at the node), fetches the egress-IP page through it, kills the engine and answers
+`{ok, engine, engineVersion, egressIp, ms, code}`. One session runs at a time (a second request
+gets `busy`); the engine has 5 s to listen and the fetch 15 s. A body is read as a stream and
+refused past 16 KB, never buffered whole first. On FCP's side the whole check (both test links,
+every engine through the address and the control, busy waits) ends within 90 s, inside a
+self-hosted action's limit: a session that would not fit is not started (`out_of_time`).
+
+**Who may ask, and for what.** Every request is signed (HMAC-SHA256 over method, path, time
+and the body's SHA-256, `convex/lib/edges/clientCheck/signing.ts`) with `EDGE_CLIENT_CHECK_SECRET`;
+a time more than 60 s off or a signature already seen is refused, and with no secret every call
+is refused. The outbound is rebuilt from a per-engine allowlist (`sanitize.ts`): an allowlisted
+type (VLESS, Trojan, Shadowsocks, Hysteria2, TUIC), one server, and nothing that chains another
+outbound, binds an interface, sets a mark, reads a file or opens a second destination; the one
+destination must be a public IP literal. The egress page is the service's own setting
+(`EDGE_CLIENT_CHECK_EGRESS_URL`, a public plain-text IPv4 echo by default), never the caller's,
+so the service cannot be made to fetch anything else. FCP's one caller builds the outbound from
+the address's own **test link** (`edgeTestLinks.build`, the artifact a human test uses: the
+origin's qualification account, or a temporary Outline key of its own purpose, released right
+after), so no member credential has a path in. The service logs nothing per request: the
+configuration, the credential, the address and the engine's output stay in memory and are
+dropped; its answer carries a code (`reality_refused`, `tls_failed`, `timeout`, `refused`,
+`reset`, `unreachable`, `egress_unreadable`, `config_refused`, `session_failed`).
+
+**Engines.** `convex/lib/edges/clientCheck/outbound.ts` turns the test link into each engine's
+outbound. sing-box runs for every combination it speaks; it reports 1.8.1 to a REALITY server
+and offers no ML-KEM key share, so it is the client that catches the refusals in
+`docs/client-compatibility.md` § "REALITY client versions". Xray runs too, and alone for XHTTP and for VLESS with its own encryption (sing-box
+speaks neither); Hysteria2 and TUIC are sing-box only.
+
+**The verdict** (`verdict.ts`) judges each engine against a **control**: the same engine through
+another published, confirmed address of the same transport (an operator's tick first), from the
+same place. From outside the country a censor's block does not apply there, so the node's own
+refusals are never blamed on the address. `passed`: every engine connected and came out of the
+node. `passed_with_refusals`: at least one did, and each one refused here is refused through the
+control too (with no usable control: one the REALITY verdict, `relays.realityClients`, already
+predicts). `address_failed`: an engine that connects through the control does not here.
+`egress_mismatch`: a session came out somewhere that is neither the control's egress nor the
+node's known addresses (`originAddress`, an enrolled node's direct addresses, `nodeAddresses`;
+`nodeAddressesOf`): the address reaches another node that
+also knows the credential. `node_unreachable`: nothing connects here or through the control. The
+control runs only when it is needed (an engine failed, or an egress is not a known address).
+"Could not check" is never a verdict: `not_configured`, `unavailable`, `unauthorized`, `busy`,
+`link_unavailable` (the test link could not be built; `detail` carries its code), `no_engine`,
+`not_l4`, `out_of_time`.
+
+**What is kept.** `edges.clientCheck` holds the newest verdict (codes, engine versions, whether a
+control was used, who asked, and the listener revision and configuration hash it was taken
+against: the admin shows it out of date when they move); never an address or an egress IP.
+Audit `edge.client_check` (`relaySlug`, `edgeId`, `verdict`, `by`, `control`, `engines` as
+`sing-box:ok xray:reality_refused`). Attention reads a verdict only while it was taken against
+the configuration the address holds now. The service's health is read by every `edge-reconcile` pass
+(`GET /v1/health`) and kept in `appState` `edge:clientCheck`.
+
+**Where it shows.** "Check with FCP's client" on every L4 address and spare of a node page
+(`POST edges/{id}/client-check`, servers write scope, throttled like the test link), with the
+newest verdict on the line under the address. Edges settings, "FCP's own client check": set up or
+not, answering or not, the engines and their versions, the egress page's host, "Check now"
+(`GET client-check`, `POST client-check/refresh`). Attention `client_refused` (warning): an
+address in use whose newest check found a client that does not get through, named per client;
+`client_check_unavailable` (warning): the service is set up and did not answer its last health
+check. A check is advice: it does not confirm an address for publication (a human tick still
+does).
+
+**Setting it up.** One secret, in the compose env (`.env.beta`, or `.env.prod`): the service reads
+it, and the deployer sets the same value on the deployment (`docker/deploy-entrypoint.sh`), so
+the two cannot differ. `bun run bootstrap` fills it (docs/beta-deploy.md § "FCP's own client
+check"). FCP reaches the service at
+`http://edge-client-check:8080` (`EDGE_CLIENT_CHECK_URL` in `.env.convex` to change it). Proved
+in CI by the `client-check` job of `.github/workflows/client-compatibility.yml`
+(`bun run test:integration:client-check`): the service as the stack builds it, against two Xray
+cores of the fleet release, passes with `minClientVer` 1.8.1 and names sing-box refused (Xray
+connected) where it is unset.
+
 ### Rendering (what members receive)
 
 Subscriptions are **rendered** by FCP. When the fronted `/api/v1/sub/<token>` route (or the
@@ -4727,6 +4813,17 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**FCP's own client check** adds a service (`edge-client-check`, built from
+`docker/edge-client-check/`), one optional field (`edges.clientCheck`), a test-credential purpose
+(`client_check`) and two attention kinds (`client_refused`, `client_check_unavailable`). It does
+nothing until the secret is set: run `bun run bootstrap` (it adds
+`EDGE_CLIENT_CHECK_SECRET` to the compose env file), then
+`up -d --build edge-client-check` and recreate `deployer` with the usual release command (it sets
+the secret on the deployment). No migration. To roll back, run
+`edgeClientCheck:clearForRollback` with no arguments right before deploying the older build
+(it schedules itself over the edges, then the test keys; run it again if the push is refused),
+then stop the service.
 
 **The X25519MLKEM768 key share** changes what members receive, nothing stored: every Clash /
 Mihomo / Stash body FCP serves asks its REALITY entries for the key share (a cached body from its

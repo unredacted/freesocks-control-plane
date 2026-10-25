@@ -2,6 +2,10 @@ import { describe, expect, test } from 'vitest';
 import {
   ATTENTION_ACTIONS,
   ATTENTION_KINDS,
+  CLIENT_CHECK_ENGINES,
+  CLIENT_CHECK_SESSION_CODES,
+  CLIENT_CHECK_UNCHECKED_CODES,
+  CLIENT_CHECK_VERDICTS,
   DELIVERY_UNAVAILABLE_CODES,
   INBOUND_UNSUPPORTED_CODES,
   L7_CERTIFICATE_CODES,
@@ -21,6 +25,8 @@ import {
 } from '../../shared/contracts/edgeCodes';
 import {
   ATTENTION_ACTION_LABELS,
+  CLIENT_CHECK_COPY,
+  CLIENT_CHECK_ENGINE_LABELS,
   EDGE_CODE_COPY,
   EDGE_HEALTH_LABELS,
   OUTSIDE_REACH_LABELS,
@@ -224,6 +230,28 @@ describe('INBOUND_UNSUPPORTED_COPY', () => {
     expect(inboundUnsupportedCopy('protocol').label).toBe('Protocol not supported');
     expect(inboundUnsupportedCopy('brand_new_reason').label).toBe('Brand new reason');
     expect(inboundUnsupportedCopy('brand_new_reason').explain.endsWith('.')).toBe(true);
+  });
+});
+
+describe('CLIENT_CHECK_COPY', () => {
+  test('every verdict, session code and reason is worded, without an em-dash or an API path', () => {
+    const offenders: string[] = [];
+    for (const code of [
+      ...CLIENT_CHECK_VERDICTS,
+      ...CLIENT_CHECK_SESSION_CODES,
+      ...CLIENT_CHECK_UNCHECKED_CODES,
+    ]) {
+      const e = CLIENT_CHECK_COPY[code];
+      expect(e.label.trim()).toBeTruthy();
+      expect(e.explain.trim().endsWith('.')).toBe(true);
+      if (e.fix) expect(e.fix.trim().endsWith('.')).toBe(true);
+      for (const text of [e.label, e.explain, e.fix ?? '']) {
+        if (text.includes(EM_DASH) || text.includes('/api/')) offenders.push(`${code}: ${text}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+    for (const engine of CLIENT_CHECK_ENGINES)
+      expect(CLIENT_CHECK_ENGINE_LABELS[engine]).toBeTruthy();
   });
 });
 

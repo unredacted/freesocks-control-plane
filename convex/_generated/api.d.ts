@@ -32,6 +32,7 @@ import type * as deliveryRefusals from "../deliveryRefusals.js";
 import type * as donations from "../donations.js";
 import type * as edgeAdmin from "../edgeAdmin.js";
 import type * as edgeAttribution from "../edgeAttribution.js";
+import type * as edgeClientCheck from "../edgeClientCheck.js";
 import type * as edgeCohorts from "../edgeCohorts.js";
 import type * as edgeCountry from "../edgeCountry.js";
 import type * as edgeCountryView from "../edgeCountryView.js";
@@ -216,6 +217,7 @@ declare const fullApi: ApiFromModules<{
   donations: typeof donations;
   edgeAdmin: typeof edgeAdmin;
   edgeAttribution: typeof edgeAttribution;
+  edgeClientCheck: typeof edgeClientCheck;
   edgeCohorts: typeof edgeCohorts;
   edgeCountry: typeof edgeCountry;
   edgeCountryView: typeof edgeCountryView;

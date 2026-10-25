@@ -1,0 +1,7 @@
+{
+  "//": "The client-check service runs on Bun and shares its wire contract with convex/lib/edges/clientCheck/: checked under the Convex compiler options plus Bun's types (`bun run typecheck`).",
+  "extends": "../../convex/tsconfig.json",
+  "compilerOptions": { "types": ["node", "bun-types"] },
+  "include": ["./server.ts"],
+  "exclude": []
+}

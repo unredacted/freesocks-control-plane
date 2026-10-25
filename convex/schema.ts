@@ -4,6 +4,7 @@ import { backendIdValidator } from './lib/backendIds';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import { realityClientRefusalFields, realityClientRefusalV } from './lib/realityClients';
+import { edgeClientCheckV } from './lib/edges/clientCheck/validators';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target. Ported from
@@ -1797,7 +1798,7 @@ export default defineSchema({
     backendUserId: v.optional(v.string()),
     backendShortId: v.optional(v.string()),
     subscriptionUrl: v.optional(v.string()),
-    purpose: v.union(v.literal('rehearsal'), v.literal('test_link')),
+    purpose: v.union(v.literal('rehearsal'), v.literal('test_link'), v.literal('client_check')),
     expiresAt: v.number(),
     removal: v.union(v.literal('pending'), v.literal('done'), v.literal('failed')),
     attempts: v.number(),
@@ -2013,6 +2014,10 @@ export default defineSchema({
     // revision + configuration hash it was taken against. The publication gate
     // (origins.checkPublishable) refuses an L4 edge without a CURRENT one.
     verification: v.optional(relayEdgeVerification),
+    // FCP's own client check (edgeClientCheck.ts, docs/edges.md § "FCP's own
+    // client check"): the latest verdict a real engine reached through this
+    // address, judged against a control address. Codes only, never an address.
+    clientCheck: v.optional(edgeClientCheckV),
     // Fastly shared-service teardown (an adopted domain on a service FCP does
     // not own): the persisted version workflow, serialized per service.
     sharedTeardown: v.optional(

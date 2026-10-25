@@ -281,6 +281,13 @@ and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
   slugs, listener keys and codes, never addresses, hostnames or provider account names. The one
   member fact the delivery uses is where they connect from, which lives on their subscription
   row under the rules in §1 and nowhere in the edges tables.
+- **FCP's own client check uses FCP's own account and logs nothing.** The `edge-client-check`
+  service connects through an edge address with the origin's qualification account (or a
+  temporary key made for the check and removed after it), never a member's. It logs nothing
+  per request: the client configuration, the account, the address and the engine's output stay
+  in memory. What FCP keeps is a verdict of codes and engine versions per address
+  (`edges.clientCheck`), never an address or the egress IP it read. `docs/edges.md` § "FCP's
+  own client check".
 
 ## 5c. What a member's subscription shows
 

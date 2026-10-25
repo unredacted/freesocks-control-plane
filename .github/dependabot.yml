@@ -121,8 +121,12 @@ updates:
   # which Dependabot does NOT touch, since the bun ecosystem is not enrolled.
   # Both are enforced by convex/deployPins.test.ts. The Convex images' Node
   # (docker/convex-node/) has its own entry below, and the test images theirs.
+  #
+  # docker/edge-client-check/ (FCP's own client check) rides in the same group:
+  # its `oven/bun` must move with the two above in ONE PR, and its sing-box and
+  # Xray pins are the clients it checks with (production runtime, so daily too).
   - package-ecosystem: docker
-    directory: /docker
+    directories: [/docker, /docker/edge-client-check]
     schedule:
       interval: cron
       cronjob: '0 9 * * *'

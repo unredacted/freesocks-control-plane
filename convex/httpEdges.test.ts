@@ -364,6 +364,10 @@ describe('origin admin routes', () => {
     expect(scopeFor(['listeners', 'retire-name'], 'POST')).toBe('admin:servers:manage');
     // Qualifying writes a verdict onto the edge: the write scope, not a read one.
     expect(scopeFor(['edges', 'e1', 'qualify'], 'POST')).toBe('admin:servers:manage');
+    // FCP's own client check: a check writes its verdict; the status and its refresh are reads.
+    expect(scopeFor(['edges', 'e1', 'client-check'], 'POST')).toBe('admin:servers:manage');
+    expect(scopeFor(['client-check'], 'GET')).toBe('admin:servers:read');
+    expect(scopeFor(['client-check', 'refresh'], 'POST')).toBe('admin:servers:read');
     // Guided setup runs: reads under the read scope, the plan (a backend call) and every verb under manage.
     expect(scopeFor(['setup-runs'], 'GET')).toBe('admin:servers:read');
     expect(scopeFor(['setup-runs', 'run1'], 'GET')).toBe('admin:servers:read');
@@ -397,6 +401,8 @@ describe('origin admin routes', () => {
     expect(throttlePolicyFor(['relays', 'r1', 'adopt'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'live', 'refresh'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'qualify'])).toBe(P);
+    expect(throttlePolicyFor(['edges', 'e1', 'client-check'])).toBe(P);
+    expect(throttlePolicyFor(['client-check', 'refresh'])).toBe(P);
     expect(throttlePolicyFor(['relays', 'r1', 'qualification-credential'])).toBe(P);
     expect(throttlePolicyFor(['render', 'preview'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'probe'])).toBe('admin.edges.probe');

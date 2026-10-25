@@ -47,7 +47,8 @@ value already set, so it is safe to re-run on testing/beta/prod):
 
 - `bun run bootstrap` (which runs `bun install --frozen-lockfile` first — so it works on a
   fresh/stale host — then `scripts/bootstrap-secrets.mjs`) fills `.env.beta`'s `INSTANCE_SECRET`,
-  `POSTGRES_PASSWORD`, `CAP_ADMIN_KEY` (it prints `CAP_ADMIN_KEY` — you need it to
+  `POSTGRES_PASSWORD`, `EDGE_CLIENT_CHECK_SECRET` (FCP's own client check, see Operations),
+  `CAP_ADMIN_KEY` (it prints `CAP_ADMIN_KEY` — you need it to
   log into the Cap dashboard), and generates the **CDN-blinding keypair**: the
   `VITE_FS_*` public pins in `.env.beta` (baked into the SPA build) + the matching
   `FS_*` secrets in `.env.convex`. Running it enables body-sealing; not running it
@@ -539,6 +540,23 @@ ssh -L 3000:127.0.0.1:3000 <beta-host>   # then open http://127.0.0.1:3000
   `docker compose -f docker-compose.stack.yml logs -f backend | <log shipper>`,
   or a sidecar that tails and POSTs to a webhook. The audit log
   (admin CMS → Audit log) is the pull-based record of lifecycle events.
+
+### FCP's own client check (the `edge-client-check` service)
+
+A real sing-box / Xray client FCP drives through an edge address (docs/edges.md § "FCP's own
+client check"). It does nothing until `EDGE_CLIENT_CHECK_SECRET` is set in `.env.beta`:
+
+```sh
+bun run bootstrap   # adds EDGE_CLIENT_CHECK_SECRET to .env.beta (idempotent)
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build edge-client-check
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --force-recreate deployer
+```
+
+The deployer sets the same secret on the deployment (its log says
+`env set EDGE_CLIENT_CHECK_SECRET (from the compose env)`). Then Admin, Edges, Settings, "FCP's
+own client check" should read "Answering" with both engines' versions. The service has no
+published port and logs only one line at start. To rotate the secret, change it in `.env.beta`
+and recreate both `edge-client-check` and `deployer`.
 
 ### Backups & restore
 

@@ -24,8 +24,11 @@ import { RealityClientRefusal } from '../../../../../shared/contracts/realityCli
 import { realityRefusalWords } from '../../../../lib/realityClientWords';
 import {
   ATTENTION_ACTION_LABELS,
+  CLIENT_CHECK_COPY,
+  CLIENT_CHECK_ENGINE_LABELS,
   PLAIN_ATTENTION_ACTION_LABELS,
   codeExplain,
+  codeFix,
   codeLabel,
   failedRunLabel,
 } from '../../../../lib/edgeCodes';
@@ -319,6 +322,8 @@ export function attentionHeading(
   if (run) return { ...run, final: true };
   const reality = item.kind === 'reality_refuses_clients' ? realityRowWords(item.facts) : null;
   if (reality) return { label: codeLabel(item.kind), explain: reality, final: true };
+  const refused = item.kind === 'client_refused' ? clientRefusedWords(item.facts) : null;
+  if (refused) return { label: codeLabel(item.kind), explain: refused, final: true };
   return { label: codeLabel(item.kind), explain: codeExplain(item.kind), final: false };
 }
 
@@ -337,6 +342,24 @@ function realityRowWords(facts: AttentionItem['facts']): string | null {
     return [`${r.tag}: ${w.title}. ${w.why} ${w.fix}`];
   });
   return words.length > 0 ? words.join(' ') : null;
+}
+
+/**
+ * FCP's client check row in words: each client that did not get through an
+ * address in use and what it ran into, then the kind's own advice. Null when
+ * the facts name none.
+ */
+function clientRefusedWords(facts: AttentionItem['facts']): string | null {
+  const rows = Array.isArray(facts.engines) ? facts.engines : [];
+  const words = rows.flatMap((row: unknown) => {
+    const r = row as { engine?: unknown; code?: unknown };
+    if (typeof r.engine !== 'string' || typeof r.code !== 'string') return [];
+    const engine = (CLIENT_CHECK_ENGINE_LABELS as Record<string, string>)[r.engine] ?? r.engine;
+    const copy = (CLIENT_CHECK_COPY as Record<string, { label: string }>)[r.code];
+    return [`${engine}: ${copy?.label ?? r.code}.`];
+  });
+  if (words.length === 0) return null;
+  return `${words.join(' ')} ${codeFix('client_refused') ?? ''}`.trim();
 }
 
 /** The row's button: a failed run opens that run (its drawer), whatever its action says. */
