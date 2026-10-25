@@ -9,7 +9,7 @@
  * those transports and the mode groups that grant them.
  */
 import { ConvexError, v } from 'convex/values';
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id, TableNames } from './_generated/dataModel';
@@ -541,8 +541,7 @@ export async function removalBlocker(
   for (const removal of ['pending', 'failed'] as const) {
     const key = await db
       .query('edgeTestCredentials')
-      .withIndex('by_removal_expires', (q) => q.eq('removal', removal))
-      .filter((q) => q.eq(q.field('backendServerId'), sid))
+      .withIndex('by_server_removal', (q) => q.eq('backendServerId', sid).eq('removal', removal))
       .first();
     if (key)
       return {
@@ -934,27 +933,70 @@ export const purgeRemovedBackend = internalMutation({
   },
 });
 
+/** The tables a removed backend's rows are found in (each row names its backend server). */
+const ORPHAN_TABLES = [
+  'panelSetups',
+  'panelObserveState',
+  'panelNodeIntents',
+  'sniInboundBindings',
+  'edgeDeliveryBindings',
+  'edgeHostHides',
+  'panelOwnership',
+] as const;
+const orphanTable = v.union(
+  v.literal('panelSetups'),
+  v.literal('panelObserveState'),
+  v.literal('panelNodeIntents'),
+  v.literal('sniInboundBindings'),
+  v.literal('edgeDeliveryBindings'),
+  v.literal('edgeHostHides'),
+  v.literal('panelOwnership'),
+);
+
+/** One page of a table's rows, as the backend servers they name. */
+export const backendIdsPage = internalQuery({
+  args: { table: orphanTable, cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { table, cursor }) => {
+    // Every listed table carries `backendServerId`; one of them stands for all.
+    const page = await ctx.db.query(table as 'panelOwnership').paginate({ cursor, numItems: 500 });
+    return {
+      ids: [...new Set(page.page.map((r) => r.backendServerId))],
+      next: page.isDone ? null : page.continueCursor,
+    };
+  },
+});
+
+/** The ones among these backend servers that are gone. */
+export const goneBackends = internalQuery({
+  args: { ids: v.array(v.id('backendServers')) },
+  handler: async (ctx, { ids }) => {
+    const gone: Id<'backendServers'>[] = [];
+    for (const id of ids) if (!(await ctx.db.get(id))) gone.push(id);
+    return gone;
+  },
+});
+
 /**
  * Backend servers that are gone while FCP still keeps server-management rows
  * for them (an earlier release removed the backend row alone). Each is one
- * `purgeRemovedBackend` away from clean.
+ * `purgeRemovedBackend` away from clean. Every table is read to its end, a
+ * page at a time.
  */
-export const removedBackends = internalQuery({
+export const removedBackends = internalAction({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<Id<'backendServers'>[]> => {
     const sids = new Set<Id<'backendServers'>>();
-    for (const r of await ctx.db.query('panelSetups').collect()) sids.add(r.backendServerId);
-    for (const r of await ctx.db.query('panelObserveState').collect()) sids.add(r.backendServerId);
-    for (const r of await ctx.db.query('panelNodeIntents').collect()) sids.add(r.backendServerId);
-    for (const r of await ctx.db.query('sniInboundBindings').collect()) sids.add(r.backendServerId);
-    for (const r of await ctx.db.query('edgeDeliveryBindings').collect())
-      sids.add(r.backendServerId);
-    for (const r of await ctx.db.query('edgeHostHides').take(PURGE_READ_CAP))
-      sids.add(r.backendServerId);
-    for (const r of await ctx.db.query('panelOwnership').take(PURGE_READ_CAP))
-      sids.add(r.backendServerId);
-    const gone: Id<'backendServers'>[] = [];
-    for (const sid of sids) if (!(await ctx.db.get(sid))) gone.push(sid);
-    return gone;
+    for (const table of ORPHAN_TABLES) {
+      let cursor: string | null = null;
+      do {
+        const page: { ids: Id<'backendServers'>[]; next: string | null } = await ctx.runQuery(
+          internal.serverAdmin.backendIdsPage,
+          { table, cursor },
+        );
+        for (const id of page.ids) sids.add(id);
+        cursor = page.next;
+      } while (cursor);
+    }
+    return ctx.runQuery(internal.serverAdmin.goneBackends, { ids: [...sids] });
   },
 });

@@ -1786,7 +1786,9 @@ export default defineSchema({
   })
     .index('by_relay', ['relayId'])
     .index('by_intent', ['nodeIntentId'])
-    .index('by_removal_expires', ['removal', 'expiresAt']),
+    .index('by_removal_expires', ['removal', 'expiresAt'])
+    // A backend server's keys not removed yet (serverAdmin.removalBlocker).
+    .index('by_server_removal', ['backendServerId', 'removal']),
 
   // One LISTENER on an origin: a port the origin answers on, what it speaks,
   // the names / REALITY target the renderer needs, how the renderer finds its

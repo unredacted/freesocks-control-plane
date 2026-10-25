@@ -859,6 +859,15 @@ describe('an enrolled node', () => {
       (c) => c === 'DE',
     );
     expect((await idle(s.t, intentId)).settings.countryCode).toBe('DE');
+    // Cleared, the row carries the backend's own "no country" again.
+    await s.t.mutation(internal.nodeIntents.patchSettings, {
+      intentId,
+      patch: { countryCode: null },
+    });
+    await until(
+      async () => row().countryCode,
+      (c) => c === 'XX',
+    );
   });
 
   test('one reached at an IPv6 address is confirmed at the bracketed endpoint it was tested at', async () => {
@@ -1132,7 +1141,7 @@ describe('removing a backend server', () => {
     });
     // As an earlier release removed a backend: the row alone.
     await s.t.run((ctx) => ctx.db.delete(s.serverId));
-    const orphans = await s.t.query(internal.serverAdmin.removedBackends, {});
+    const orphans = await s.t.action(internal.serverAdmin.removedBackends, {});
     expect(orphans).toEqual([s.serverId]);
     const before = await counts(s.t);
     const dry = await s.t.mutation(internal.serverAdmin.purgeRemovedBackend, {
@@ -1156,7 +1165,38 @@ describe('removing a backend server', () => {
       () => counts(s.t),
       (c) => Object.values(c).every((n) => n === 0),
     );
-    expect(await s.t.query(internal.serverAdmin.removedBackends, {})).toEqual([]);
+    expect(await s.t.action(internal.serverAdmin.removedBackends, {})).toEqual([]);
+  });
+
+  test('a removed backend is found however many rows come before its own', async () => {
+    const s = await seed();
+    // A live backend's rows fill the first pages.
+    await s.t.run(async (ctx) => {
+      for (let i = 0; i < 1_100; i++)
+        await ctx.db.insert('panelOwnership', {
+          backendServerId: s.serverId,
+          kind: 'host',
+          identity: `h-${i}`,
+          lookup: [],
+          state: 'owned',
+          since: 0,
+          updatedAt: 0,
+        });
+    });
+    const removed = await insertPanelServer(s.t, { slug: 'panel-c' });
+    await s.t.run(async (ctx) => {
+      await ctx.db.insert('panelOwnership', {
+        backendServerId: removed,
+        kind: 'node',
+        identity: 'legacy-z',
+        lookup: ['legacy-z'],
+        state: 'tombstoned',
+        since: 0,
+        updatedAt: 0,
+      });
+      await ctx.db.delete(removed);
+    });
+    expect(await s.t.action(internal.serverAdmin.removedBackends, {})).toEqual([removed]);
   });
 
   test('a backend that is still there is never cleared', async () => {

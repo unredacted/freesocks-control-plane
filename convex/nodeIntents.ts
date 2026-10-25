@@ -507,6 +507,9 @@ export const enroll = internalMutation({
   },
 });
 
+/** The country a backend row carries when it has none (Remnawave's own default). */
+const NO_COUNTRY = 'XX';
+
 /** The most addresses an admin may name for one adopted node. */
 const MAX_ADOPT_ADDRESSES = 64;
 
@@ -945,7 +948,8 @@ export const patchSettings = internalMutation({
     if (p.countryCode !== undefined) {
       if (p.countryCode !== null && !/^[A-Za-z]{2}$/.test(p.countryCode))
         refuse('validation', 'A country is two letters');
-      next.countryCode = p.countryCode?.toUpperCase() ?? undefined;
+      // Cleared is the backend's own "no country", written to its row like any other.
+      next.countryCode = p.countryCode?.toUpperCase() ?? NO_COUNTRY;
     }
     const kind = classifyChange({ addsPath, rewritesPath });
     if (kind === 'none' && p.countryCode === undefined) refuse('validation', 'Nothing to change');

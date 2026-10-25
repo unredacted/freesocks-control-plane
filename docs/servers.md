@@ -744,7 +744,8 @@ its removed origins left, and the server-name binding of its transports with its
 name history (a family rollout reads every binding it has).
 Audited as `admin.backend_server.purge` (counts only).
 
-A release before this one removed the backend row alone. `serverAdmin:removedBackends` names the
+A release before this one removed the backend row alone. `serverAdmin:removedBackends` (read to
+the end of every table, a page at a time) names the
 backends whose rows are left; `serverAdmin:purgeRemovedBackend '{"backendServerId":"<id>"}'`
 reports what it would remove and changes nothing; with `"dryRun":false` it removes it, a batch
 at a time until nothing is left. It refuses a backend that is still there
@@ -781,7 +782,7 @@ re-address, a profile edit) is applied in place and needs an explicit **maintena
 which closes the node (`unavailable`) until it is verified and approved again. The previous
 configuration is not claimed to remain served in that case. A country alone moves no revision
 and needs no maintenance: it is stored and the node is reconciled at once, which writes it to
-the backend row.
+the backend row (a cleared country is written as the backend's own "no country", `XX`).
 
 **Observed drift** is the same transition without anyone asking for it. When a reconcile finds
 the REALITY material moved, or the profile token moved by somebody else's edit
