@@ -730,6 +730,8 @@ const vantageResult = v.object({
   stage: v.optional(v.union(v.literal('connect'), v.literal('handshake'), v.literal('response'))),
   vantage: v.optional(v.string()),
   rttMs: v.optional(v.number()),
+  tcpMs: v.optional(v.number()),
+  tlsMs: v.optional(v.number()),
   error: v.optional(v.string()),
 });
 
@@ -888,12 +890,13 @@ async function realHostOf(
     },
   );
   if (!s) return null;
-  const { realAddress, ...rest } = s;
+  const { realAddress, timing, ...rest } = s;
   return {
     at,
     target: targetKeyOf(newest),
     ...(realAddress ? { realAddress } : {}),
     ...rest,
+    ...(timing ? { timing } : {}),
   };
 }
 
@@ -1075,9 +1078,18 @@ export const clearRealHostForRollback = internalMutation({
           deleted++;
           continue;
         }
-        if (!r.results.some((x) => x.stage !== undefined || x.vantage !== undefined)) continue;
+        if (
+          !r.results.some(
+            (x) =>
+              x.stage !== undefined ||
+              x.vantage !== undefined ||
+              x.tcpMs !== undefined ||
+              x.tlsMs !== undefined,
+          )
+        )
+          continue;
         await ctx.db.patch(r._id, {
-          results: r.results.map(({ stage: _s, vantage: _v, ...x }) => x),
+          results: r.results.map(({ stage: _s, vantage: _v, tcpMs: _c, tlsMs: _t, ...x }) => x),
         });
         stripped++;
       }

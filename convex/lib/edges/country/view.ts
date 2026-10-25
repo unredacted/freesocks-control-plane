@@ -29,7 +29,7 @@ import type {
   CountryViewNameBasis,
   RealHostReading,
 } from '../../../../src/shared/contracts/edgeCodes';
-import type { PairCounts } from '../sni/realHost';
+import { TARGET_ADDS_FLAG_MS, type HandshakeTiming, type PairCounts } from '../sni/realHost';
 
 export type ViewState = 'proven' | 'blocked' | 'unknown';
 
@@ -168,6 +168,57 @@ export interface NameRealHost {
   counts: PairCounts;
   vantages: number;
   networks: number;
+  timing: HandshakeTiming | null;
+}
+
+/**
+ * What the transport's target adds to a handshake from this country, over the
+ * timed real-host pairs of the transport's names (medians of the names'
+ * medians). `flagged` = at least `TARGET_ADDS_MIN_PAIRS` timed pairs and
+ * `TARGET_ADDS_FLAG_MS` or more: a proposal, the owner decides.
+ */
+export interface TargetAdds {
+  ms: number;
+  oursMs: number;
+  realMs: number;
+  pairs: number;
+  names: number;
+  at: number;
+  flagged: boolean;
+}
+
+/** Timed pairs the flag needs (the name checks' default `minVantages`). A proposal. */
+export const TARGET_ADDS_MIN_PAIRS = 3;
+
+const medianOf = (xs: readonly number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return Math.round(s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2);
+};
+
+/** The target leg of one transport, from its names' timed real-host pairs on its own addresses. */
+function targetAddsOn(
+  prefixes: readonly string[],
+  names: ReadonlyArray<{ n: NameInput; f: NameFacts | null }>,
+): TargetAdds | null {
+  const timed = names
+    .map(({ f }) => f?.realHost)
+    .filter(
+      (r): r is NameRealHost & { timing: HandshakeTiming } =>
+        !!r?.timing && prefixes.some((p) => r.target.startsWith(p)),
+    );
+  if (timed.length === 0) return null;
+  const ms = medianOf(timed.map((r) => r.timing.addsMs));
+  const pairs = timed.reduce((s, r) => s + r.timing.pairs, 0);
+  return {
+    ms,
+    oursMs: medianOf(timed.map((r) => r.timing.oursMs)),
+    realMs: medianOf(timed.map((r) => r.timing.realMs)),
+    pairs,
+    names: timed.length,
+    at: Math.max(...timed.map((r) => r.at)),
+    flagged: pairs >= TARGET_ADDS_MIN_PAIRS && ms >= TARGET_ADDS_FLAG_MS,
+  };
 }
 
 /** What the real-host controls of the names checked on one address say about it. */
@@ -538,6 +589,8 @@ export interface ListenerView {
   addresses: AddressView[];
   names: NameView[];
   members: Handed;
+  /** What the transport's target adds to a handshake from there (null: no timed pair). */
+  targetAdds: TargetAdds | null;
 }
 
 export interface OriginView {
@@ -778,6 +831,11 @@ export function buildCountryView(
         addresses,
         names,
         members,
+        // Its names measured on its own addresses (an edge of it, or the origin itself).
+        targetAdds: targetAddsOn(
+          [...edges.map((e) => `edge:${e.edgeId}:`), `relay:${o.relayId}:`],
+          nameViews0,
+        ),
       });
     }
     const direct = o.direct

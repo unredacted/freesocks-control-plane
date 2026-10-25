@@ -54,8 +54,31 @@ export interface NameVantageResult {
    */
   vantage?: string;
   rttMs?: number;
+  /**
+   * Phase timings, when the source reports them: the TCP connect, and the TLS
+   * handshake after it (Globalping `timings.tcp` / `.tls`; Atlas `ttc` and
+   * `rt - ttc`). No DNS phase: a vantage dials the address literal.
+   */
+  tcpMs?: number;
+  tlsMs?: number;
   /** A short storable class of what went wrong (never a name or an address). */
   error?: string;
+}
+
+/** A non-negative whole number of milliseconds, else undefined. */
+function msOf(x: unknown): number | undefined {
+  const n = typeof x === 'number' ? x : Number.NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : undefined;
+}
+
+/** `{tcpMs, tlsMs}` with only the phases that were measured. */
+function phases(tcp: unknown, tls: unknown): { tcpMs?: number; tlsMs?: number } {
+  const tcpMs = msOf(tcp);
+  const tlsMs = msOf(tls);
+  return {
+    ...(tcpMs !== undefined ? { tcpMs } : {}),
+    ...(tlsMs !== undefined ? { tlsMs } : {}),
+  };
 }
 
 export interface NameCheckTarget {
@@ -161,7 +184,7 @@ interface GlobalpingItem {
     status?: unknown;
     statusCode?: unknown;
     rawOutput?: unknown;
-    timings?: { total?: unknown };
+    timings?: { total?: unknown; tcp?: unknown; tls?: unknown };
     tls?: { authorized?: unknown; error?: unknown } | null;
   };
 }
@@ -217,15 +240,22 @@ export function parseGlobalpingNameResults(
       const tls = raw.result?.tls;
       const total = Number(raw.result?.timings?.total);
       const rttMs = Number.isFinite(total) ? Math.round(total) : undefined;
+      const timed = phases(raw.result?.timings?.tcp, raw.result?.timings?.tls);
       if (tls && typeof tls.authorized === 'boolean') {
         out.push({
           ...base,
           outcome: tls.authorized ? 'ok' : 'cert_mismatch',
           ...(rttMs !== undefined ? { rttMs } : {}),
+          ...timed,
           ...(tls.authorized ? {} : { error: shortError(tls.error ?? 'cert', 60, redact) }),
         });
       } else {
-        out.push({ ...base, outcome: 'answered', ...(rttMs !== undefined ? { rttMs } : {}) });
+        out.push({
+          ...base,
+          outcome: 'answered',
+          ...(rttMs !== undefined ? { rttMs } : {}),
+          ...timed,
+        });
       }
     } else if (status === 'failed') {
       const text = raw.result?.rawOutput;
@@ -351,6 +381,13 @@ export function parseAtlasNameResults(
     };
     const rt = Number(raw.rt);
     const rttMs = Number.isFinite(rt) ? { rttMs: Math.round(rt) } : {};
+    // `ttc` = the TCP connect; `rt` = from starting to connect to the server's
+    // answer, so the handshake after the connect is `rt - ttc`.
+    const ttc = Number(raw.ttc);
+    const timed = phases(
+      raw.ttc,
+      Number.isFinite(ttc) && Number.isFinite(rt) && rt >= ttc ? rt - ttc : undefined,
+    );
     if (raw.err !== undefined || raw.dnserr !== undefined) {
       const text = raw.err ?? raw.dnserr;
       const stage = raw.err !== undefined ? classifyStage(text) : undefined;
@@ -366,12 +403,14 @@ export function parseAtlasNameResults(
         ...base,
         outcome: covers === true ? 'ok' : covers === false ? 'cert_mismatch' : 'answered',
         ...rttMs,
+        ...timed,
       });
     } else if (raw.alert !== undefined || raw.rt !== undefined) {
       out.push({
         ...base,
         outcome: 'answered',
         ...rttMs,
+        ...timed,
         ...(raw.alert ? { error: 'tls_alert' } : {}),
       });
     }

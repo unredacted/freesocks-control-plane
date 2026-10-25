@@ -37,6 +37,8 @@
     reportsLine,
     realHostLine,
     addressRealHostLine,
+    targetAddsLine,
+    TARGET_ADDS_FLAG_WORDS,
     roundLine,
     switchNotes,
     totalsLine,
@@ -153,6 +155,17 @@
                 <span class="text-muted-foreground">Transport {l.key}</span>
                 {#if !l.usable}<Badge variant="outline">Not in use</Badge>{/if}
               </div>
+
+              {#if targetAddsLine(l, now)}
+                <div
+                  class={l.targetAdds?.flagged
+                    ? 'space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2'
+                    : 'text-muted-foreground'}
+                >
+                  <p>{targetAddsLine(l, now)}</p>
+                  {#if l.targetAdds?.flagged}<p>{TARGET_ADDS_FLAG_WORDS}</p>{/if}
+                </div>
+              {/if}
 
               <div class="bg-muted/40 space-y-1 rounded-md px-3 py-2">
                 <p class="font-medium">What a member here is handed</p>

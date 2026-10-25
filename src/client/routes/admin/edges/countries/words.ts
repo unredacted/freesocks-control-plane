@@ -16,6 +16,7 @@
 import type {
   CountryViewAddress,
   CountryViewHanded,
+  CountryViewListener,
   CountryViewName,
   CountryViewSwitches,
   CountryViewTotals,
@@ -224,7 +225,28 @@ export function realHostLine(n: CountryViewName, now = Date.now()): string | nul
   const r = n.realHost;
   if (!r) return null;
   const site = r.realAddress ? ` against ${r.realAddress}` : '';
-  return `Real-site check${site}: ${REAL_HOST_WORDS[r.reading].sentence} ${plural(r.vantages, 'vantage')} on ${plural(r.networks, 'network')}, ${relativeTime(r.at, now)}.`;
+  const timed = r.timing
+    ? ` Beyond one round trip, its handshake took ${r.timing.oursMs} ms on this address and ${r.timing.realMs} ms on the real site (${plural(r.timing.pairs, 'vantage')}).`
+    : '';
+  return `Real-site check${site}: ${REAL_HOST_WORDS[r.reading].sentence} ${plural(r.vantages, 'vantage')} on ${plural(r.networks, 'network')}, ${relativeTime(r.at, now)}.${timed}`;
+}
+
+/** The proposed threshold the page states with the figure (the owner decides). */
+export const TARGET_ADDS_FLAG_WORDS =
+  'Over 50 ms on at least 3 vantages is flagged: a gap that size is something a censor can measure (a proposed threshold).';
+
+/**
+ * What the transport's target adds to a handshake from here, in one line
+ * (null: no timed real-host pair yet).
+ */
+export function targetAddsLine(l: CountryViewListener, now = Date.now()): string | null {
+  const t = l.targetAdds;
+  if (!t) return null;
+  const head =
+    t.ms <= 0
+      ? 'The transport’s target adds nothing measurable to a handshake from here'
+      : `The transport’s target adds about ${t.ms} ms to a handshake from here`;
+  return `${head} (this address ${t.oursMs} ms beyond one round trip, the names’ real sites ${t.realMs} ms; ${plural(t.pairs, 'vantage')}, ${plural(t.names, 'name')}, ${relativeTime(t.at, now)}).${t.flagged ? ' Flagged: the target sits far from the node.' : ''}`;
 }
 
 /** What the real-host controls of the names checked on an address say about it. */

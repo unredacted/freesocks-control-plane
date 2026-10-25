@@ -36,6 +36,9 @@ export interface PairReading {
   outcome: NameOutcome;
   stage?: NameStage;
   vantage?: string;
+  /** Phase timings: the TCP connect, and the TLS handshake after it. */
+  tcpMs?: number;
+  tlsMs?: number;
 }
 
 /** One stored measurement of a batch, ours or the real site's. */
@@ -123,6 +126,60 @@ export interface RealHostSummary {
   networks: number;
   /** The real site's address every pair of this reading dialled (null: not recorded). */
   realAddress: string | null;
+  /** What the handshakes took beyond their TCP connect (null: no timed pair). See `timingOf`. */
+  timing: HandshakeTiming | null;
+}
+
+/**
+ * Handshake timing from one vantage, both handshakes completed. The TLS phase
+ * (after the TCP connect) of the real site is about one round trip
+ * (ClientHello to ServerHello) plus the site's own work, and the TCP connect
+ * stands in for that round trip. FCP's REALITY address hands an
+ * unauthenticated handshake through the node to the transport's target, so
+ * its TLS phase also carries the node-to-target round trip. "Beyond one round
+ * trip" = TLS phase minus TCP connect, per side; the per-vantage difference is
+ * what the target adds, which a censor can measure as well as FCP can.
+ */
+export interface HandshakeTiming {
+  /** Timed pairs the medians rest on. */
+  pairs: number;
+  /** Median handshake time beyond one round trip: FCP's address, the real site. */
+  oursMs: number;
+  realMs: number;
+  /** Median per-vantage difference (ours minus real): what the target adds. */
+  addsMs: number;
+}
+
+/** A proposal (the owner decides): what the target adds before it reads as a tell. */
+export const TARGET_ADDS_FLAG_MS = 50;
+
+function median(xs: readonly number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return Math.round(s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2);
+}
+
+/** The TLS phase beyond one round trip (the TCP connect), when both phases were measured. */
+function beyondRoundTrip(r: PairReading): number | null {
+  return r.tcpMs !== undefined && r.tlsMs !== undefined ? r.tlsMs - r.tcpMs : null;
+}
+
+/** Timing over the pairs of one reading that both completed with phase timings. */
+export function timingOf(pairs: ReadonlyArray<[PairReading, PairReading]>): HandshakeTiming | null {
+  const ours: number[] = [];
+  const real: number[] = [];
+  const adds: number[] = [];
+  for (const [a, b] of pairs) {
+    if (!reached(a.outcome) || !reached(b.outcome)) continue;
+    const x = beyondRoundTrip(a);
+    const y = beyondRoundTrip(b);
+    if (x === null || y === null) continue;
+    ours.push(x);
+    real.push(y);
+    adds.push(x - y);
+  }
+  if (adds.length === 0) return null;
+  return { pairs: adds.length, oursMs: median(ours), realMs: median(real), addsMs: median(adds) };
 }
 
 /** A majority needs this share of the decisive pairs. */
@@ -201,6 +258,7 @@ function readSources(
 ): RealHostSummary {
   const counts: PairCounts = { ...EMPTY_COUNTS };
   const networks = new Set<string>();
+  const all: Array<[PairReading, PairReading]> = [];
   for (const source of sources) {
     const of = batch.filter((m) => m.source === source);
     const ours = of.filter((m) => m.role === 'ours' && m.name === name).flatMap((m) => m.results);
@@ -210,7 +268,9 @@ function readSources(
       .filter((m) => m.name !== name)
       .flatMap((m) => m.results)
       .filter((r) => reached(r.outcome));
-    for (const [a, b] of pairsOf(ours, real)) {
+    const pairs = pairsOf(ours, real);
+    all.push(...pairs);
+    for (const [a, b] of pairs) {
       const reachedElse = elsewhere.some((x) =>
         a.vantage && x.vantage ? x.vantage === a.vantage : networkOf(x) === networkOf(a),
       );
@@ -233,5 +293,6 @@ function readSources(
     vantages,
     networks: networks.size,
     realAddress,
+    timing: timingOf(all),
   };
 }

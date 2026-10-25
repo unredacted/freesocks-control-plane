@@ -3241,6 +3241,10 @@ export default defineSchema({
         // An opaque key of the vantage, equal across one batch's measurements.
         vantage: v.optional(v.string()),
         rttMs: v.optional(v.number()),
+        // Phase timings when the source reports them: the TCP connect and the TLS
+        // handshake after it (nameCheck.ts; no DNS phase: the literal is dialled).
+        tcpMs: v.optional(v.number()),
+        tlsMs: v.optional(v.number()),
         error: v.optional(v.string()),
       }),
     ),
@@ -3310,6 +3314,19 @@ export default defineSchema({
         }),
         vantages: v.number(),
         networks: v.number(),
+        // Over the pairs where both handshakes completed with phase timings, the
+        // medians of what each handshake took beyond its TCP connect: FCP's
+        // address (`oursMs`, its transport's target leg included) and the real
+        // site (`realMs`), and of their per-vantage difference (`addsMs`: what
+        // the target adds). Absent: no such pair.
+        timing: v.optional(
+          v.object({
+            pairs: v.number(),
+            oursMs: v.number(),
+            realMs: v.number(),
+            addsMs: v.number(),
+          }),
+        ),
       }),
     ),
     updatedAt: v.number(),

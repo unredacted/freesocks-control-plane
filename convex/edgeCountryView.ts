@@ -394,6 +394,7 @@ function nameFactsFor(
             counts: ev.realHost.counts,
             vantages: ev.realHost.vantages,
             networks: ev.realHost.networks,
+            timing: ev.realHost.timing ?? null,
           }
         : null,
     });

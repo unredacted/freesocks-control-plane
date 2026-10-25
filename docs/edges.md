@@ -2410,9 +2410,33 @@ when, FCP's address measured, the real site's address, the reading, counts per c
 networks), re-read whenever that row is, ages out with the window like the rest of the row, and
 the country view judges the reading again from the stored counts with the floors of the moment.
 
-**Shown, not applied.** The country view shows each name's reading ("Against its real site:
-...") and, under each address's evidence, what the names measured on it said. Nothing here
-changes a mark, a track, a grade, a suggestion or what anyone is handed.
+**Handshake timing (what the target adds).** A REALITY address hands every unauthenticated
+handshake through the node to the transport's target, so from one vantage its TLS handshake also
+carries the node-to-target round trip, while the name's real site answers in about one round
+trip. A censor can time that as well as FCP can. The same measurements already report their
+phases, and nothing extra is dialled: Globalping's HTTP result carries `timings.tcp` (the
+connect) and `timings.tls` (the handshake after it); RIPE Atlas `sslcert` carries `ttc` (the
+connect) and `rt` (from starting to connect to the server's answer), so its handshake phase is
+`rt - ttc`. Both are stored per vantage (`results[].tcpMs`, `.tlsMs`; no DNS phase: vantages
+dial the address literal, which also keeps DNS poisoning out of the reading). For each pair in
+which BOTH handshakes completed with both phases, each side's handshake beyond one round trip is
+`tlsMs - tcpMs` (the connect stands in for the round trip), and the target's share is ours minus
+the real site's. `realHost.timing` keeps the medians (`oursMs`, `realMs`, `addsMs`) and the
+pairs they rest on. The country view shows each name's figures and, per transport, "the
+transport's target adds about X ms" (the median of its names' medians, only names measured on
+that transport's own addresses).
+
+Flag (a proposal; the owner decides): `addsMs` of **50 ms or more over at least 3 timed pairs**
+(`TARGET_ADDS_FLAG_MS`, `TARGET_ADDS_MIN_PAIRS`). A real site's own handshake adds a few
+milliseconds of work; a target in the node's metro adds under 10 ms, in its region 10 to 40 ms,
+across an ocean 80 ms or more. 50 ms sits above residential jitter between the paired checks and
+below any cross-continent leg, so a flagged transport is one whose target should move closer to
+its node (or the node to its target). The flag colours the line on the page and changes nothing
+else.
+
+**Shown, not applied.** The country view shows each name's reading ("Real-site check: ...") and,
+under each address's evidence, what the names measured on it said. Nothing here changes a mark,
+a track, a grade, a suggestion or what anyone is handed.
 
 **How it could feed the grades (a proposal; the owner decides):**
 
@@ -4907,9 +4931,10 @@ sweeps (nothing to sweep). No migration, no env change (the probe credentials ar
 from inside a country, "Residual risk").
 
 **Real-host controls** add optional fields only (`sniVantageProbes.role`, `realAddress`,
-`results[].stage`, `results[].vantage`, `sniVantageEvidence.realHost`) and the
-`edge.sni.vantage.realHost` setting (off). One plain deploy, no migration, no env change. Every
-new measurement carries `results[].vantage` (and a failure its `stage`), switch on or off, so
+`results[].stage`, `.vantage`, `.tcpMs`, `.tlsMs`, `sniVantageEvidence.realHost` with its
+`timing`) and the `edge.sni.vantage.realHost` setting (off). One plain deploy, no migration, no
+env change. Every new measurement carries `results[].vantage` and its phase timings (and a
+failure its `stage`), switch on or off, so
 before deploying a build without them: set the switch off, then run
 `sniVantage:clearRealHostForRollback` (one page of 200 rows per call; call again with the
 returned `phase` and `cursor` until `done: true`: the measurements first, then the evidence). It

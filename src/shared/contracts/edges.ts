@@ -1439,8 +1439,29 @@ export const CountryViewNameRealHost = z.object({
   }),
   vantages: z.number(),
   networks: z.number(),
+  /**
+   * Medians over the pairs where both handshakes completed with phase timings:
+   * the TLS phase beyond one round trip (the TCP connect) on FCP's address and
+   * on the real site, and their per-vantage difference (what the target adds).
+   */
+  timing: z
+    .object({ pairs: z.number(), oursMs: z.number(), realMs: z.number(), addsMs: z.number() })
+    .nullable()
+    .default(null),
 });
 export type CountryViewNameRealHost = z.infer<typeof CountryViewNameRealHost>;
+
+/** What a transport's target adds to a handshake from one country (`flagged`: a proposed threshold). */
+export const CountryViewTargetAdds = z.object({
+  ms: z.number(),
+  oursMs: z.number(),
+  realMs: z.number(),
+  pairs: z.number(),
+  names: z.number(),
+  at: z.number(),
+  flagged: z.boolean(),
+});
+export type CountryViewTargetAdds = z.infer<typeof CountryViewTargetAdds>;
 
 /** The real-host readings of the names checked on one address. */
 export const CountryViewAddressRealHost = z.object({
@@ -1604,6 +1625,7 @@ export const CountryViewListener = z.object({
   addresses: z.array(CountryViewAddress),
   names: z.array(CountryViewName),
   members: CountryViewHanded,
+  targetAdds: CountryViewTargetAdds.nullable().default(null),
 });
 export type CountryViewListener = z.infer<typeof CountryViewListener>;
 

@@ -70,7 +70,14 @@ function fakeGlobalping(outcome: (target: string, name: string) => Outcome) {
         probe: { country: 'IR', asn, network: `net-${asn}`, city: `c${asn}`, tags: [] },
         result:
           o === 'ok'
-            ? { status: 'finished', statusCode: 200, tls: { authorized: true } }
+            ? {
+                status: 'finished',
+                statusCode: 200,
+                tls: { authorized: true },
+                // FCP's address carries the node-to-target leg in its handshake.
+                timings:
+                  req.target === EDGE ? { tcp: 50, tls: 200 + (asn % 10) } : { tcp: 35, tls: 40 },
+              }
             : {
                 status: 'failed',
                 rawOutput:
@@ -182,7 +189,13 @@ describe('real-host controls', () => {
       counts: { ipNameMatch: 3, works: 0, inconclusive: 0 },
     });
     expect(x?.realHost?.target).toContain(EDGE);
-    expect((await evidence(t, 'y.example'))?.realHost?.reading).toBe('works');
+    const y = await evidence(t, 'y.example');
+    expect(y?.realHost?.reading).toBe('works');
+    // What the target adds, from the same measurements: 151..153 beyond one
+    // round trip on FCP's address, 5 on the real site.
+    expect(y?.realHost?.timing).toEqual({ pairs: 3, oursMs: 152, realMs: 5, addsMs: 147 });
+    // A failed handshake on our side gives no timing.
+    expect(x?.realHost?.timing).toBeUndefined();
     // The name's own evidence is about FCP's address only: the twins never count in it.
     expect(x).toMatchObject({ latest: 'failing', measurements: 1 });
     expect(x?.streak).toMatchObject({ nameFailures: 3, singled: 3, pathFailures: 0 });

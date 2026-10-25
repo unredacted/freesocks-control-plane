@@ -227,6 +227,40 @@ describe('where a failure stopped, and which vantage it was', () => {
     expect(a[0]!.stage).toBeUndefined();
   });
 
+  test('phase timings: Globalping tcp / tls, Atlas ttc and rt minus ttc', () => {
+    const gp = parseGlobalpingNameResults(
+      [
+        {
+          probe: { country: 'IR', asn: 64501, network: 'n' },
+          result: {
+            status: 'finished',
+            tls: { authorized: true },
+            timings: { total: 260, dns: null, tcp: 40.4, tls: 180, firstByte: 30 },
+          },
+        },
+        {
+          probe: { country: 'IR', asn: 64502, network: 'm' },
+          result: { status: 'finished', tls: { authorized: true }, timings: { tcp: null, tls: 9 } },
+        },
+      ],
+      'IR',
+    );
+    expect(gp[0]).toMatchObject({ rttMs: 260, tcpMs: 40, tlsMs: 180 });
+    expect(gp[1]!.tcpMs).toBeUndefined();
+    expect(gp[1]!.tlsMs).toBe(9);
+    const atlas = parseAtlasNameResults(
+      [
+        { prb_id: 1, cert: ['PEM'], rt: 250.6, ttc: 60.2 },
+        { prb_id: 2, alert: { level: 2 }, rt: 40 },
+      ],
+      'site.example',
+      { asnByProbe: {}, certCovers: () => true },
+    );
+    expect(atlas[0]).toMatchObject({ outcome: 'ok', tcpMs: 60, tlsMs: 190 });
+    // No `ttc`: no handshake phase either (it would be the whole response time).
+    expect(atlas[1]!.tlsMs).toBeUndefined();
+  });
+
   test('an Atlas vantage is keyed by its probe, never by the id in the clear', () => {
     const cover = () => true;
     const r = parseAtlasNameResults(

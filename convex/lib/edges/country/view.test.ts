@@ -496,6 +496,55 @@ describe('buildCountryView', () => {
     expect(v.totals.originsAtRisk).toBe(1);
   });
 
+  test('what the transport’s target adds: its names measured on its own addresses only', () => {
+    const timed = (addsMs: number, target: string): NameFacts => ({
+      family: 'f',
+      qualified: true,
+      mark: null,
+      checks: null,
+      reports: null,
+      realHost: {
+        at: NOW - H,
+        target,
+        realAddress: '192.0.2.50',
+        reading: 'works',
+        counts: {
+          works: 3,
+          nameBlocked: 0,
+          addressBlocked: 0,
+          ipNameMatch: 0,
+          oursOnly: 0,
+          inconclusive: 0,
+        },
+        vantages: 3,
+        networks: 2,
+        timing: { pairs: 2, oursMs: addsMs + 5, realMs: 5, addsMs },
+      },
+    });
+    const facts: Record<string, NameFacts> = {
+      'n1.example': timed(120, 'edge:a:198.51.100.1:443'),
+      'n2.example': timed(80, 'edge:b:198.51.100.1:443'),
+      // Measured on another transport's address: not this transport's target.
+      'n3.example': timed(900, 'edge:elsewhere:198.51.100.9:443'),
+    };
+    const v = buildCountryView([origin()], (n) => facts[n] ?? null, SETTINGS);
+    expect(v.origins[0]!.listeners[0]!.targetAdds).toEqual({
+      ms: 100,
+      oursMs: 105,
+      realMs: 5,
+      pairs: 4,
+      names: 2,
+      at: NOW - H,
+      flagged: true,
+    });
+    const quiet = buildCountryView(
+      [origin()],
+      (n) => (n === 'n1.example' ? timed(20, 'edge:a:198.51.100.1:443') : null),
+      SETTINGS,
+    );
+    expect(quiet.origins[0]!.listeners[0]!.targetAdds).toMatchObject({ ms: 20, flagged: false });
+  });
+
   test('a retired name still draining is listed; one past its drain is not', () => {
     const o = origin();
     const l = o.listeners[0]!;

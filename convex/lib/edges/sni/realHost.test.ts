@@ -7,7 +7,9 @@ import {
   pairClass,
   readRealHost,
   readingOf,
+  timingOf,
   EMPTY_COUNTS,
+  TARGET_ADDS_FLAG_MS,
   type PairMeasurement,
   type PairReading,
 } from './realHost';
@@ -57,6 +59,23 @@ describe('pairClass', () => {
   test('errors on either side are inconclusive', () => {
     expect(pairClass(r('error'), r('ok'), ELSE)).toBe('inconclusive');
     expect(pairClass(r('ok'), r('error'), ELSE)).toBe('inconclusive');
+  });
+});
+
+describe('timingOf', () => {
+  test('what the target adds: each side beyond one round trip, per vantage, medians', () => {
+    const t = timingOf([
+      // FCP's address: connect 40, TLS 180 (140 beyond); the real site: 30 / 36 (6 beyond).
+      [r('ok', { tcpMs: 40, tlsMs: 180 }), r('ok', { tcpMs: 30, tlsMs: 36 })],
+      [r('ok', { tcpMs: 60, tlsMs: 210 }), r('ok', { tcpMs: 50, tlsMs: 54 })],
+      [r('answered', { tcpMs: 20, tlsMs: 150 }), r('ok', { tcpMs: 20, tlsMs: 30 })],
+      // Not counted: a failed handshake, or a side without phase timings.
+      [r('reset', { tcpMs: 40 }), r('ok', { tcpMs: 30, tlsMs: 36 })],
+      [r('ok'), r('ok', { tcpMs: 30, tlsMs: 36 })],
+    ]);
+    expect(t).toEqual({ pairs: 3, oursMs: 140, realMs: 6, addsMs: 134 });
+    expect(timingOf([[r('ok'), r('ok')]])).toBeNull();
+    expect(TARGET_ADDS_FLAG_MS).toBe(50);
   });
 });
 
@@ -114,6 +133,7 @@ describe('readRealHost', () => {
       vantages: 3,
       networks: 3,
       realAddress: null,
+      timing: null,
     });
   });
 
