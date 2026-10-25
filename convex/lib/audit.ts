@@ -400,6 +400,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // An account's locations (docs/edges.md § "Provider accounts and locations").
   'edge.location.created': ['name', 'provider', 'placeKey'],
   'edge.location.updated': ['name', 'provider', 'placeKey', 'enabled'],
+  // Networks (docs/edges.md "Networks"): slugs and counts, never a range or an address.
+  'edge.location.network': ['placeKey', 'network'],
+  'edge.network.create': ['slug', 'asns'],
+  'edge.network.update': ['slug', 'asns', 'manualPrefixes'],
+  'edge.network.delete': ['slug'],
   'edge.location.removed': ['name', 'provider', 'placeKey'],
   // The one-time move of accounts' fixed locations into locations: counts only.
   'edge.locations.migrated': ['accounts', 'edges', 'runs', 'reviews', 'relays'],
@@ -580,8 +585,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.listener.sni_pick': ['relaySlug', 'listenerKey', 'version', 'reason'],
   // Server-name families: slugs and COUNTS only, never a hostname.
   'edge.sni.config.update': ['changedKeys'],
-  'edge.sni.family.create': ['slug', 'targetKind'],
-  'edge.sni.family.update': ['slug'],
+  'edge.sni.family.create': ['slug', 'targetKind', 'network'],
+  'edge.sni.family.update': ['slug', 'network'],
   'edge.sni.family.delete': ['slug', 'nameCount'],
   'edge.sni.names.import': ['slug', 'added', 'rejected'],
   'edge.sni.names.retire': ['slug', 'count', 'listeners', 'skipped'],

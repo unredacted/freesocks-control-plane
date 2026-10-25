@@ -86,7 +86,8 @@ export function normalizeCidr(raw: unknown): string | null {
   return `${h.map((g) => g.toString(16)).join(':')}/${bits}`;
 }
 
-function inCidr(ip: string, cidr: string): boolean {
+/** Whether an address lies in a normalised CIDR of its own family. */
+export function inCidr(ip: string, cidr: string): boolean {
   const [addr, bitsRaw] = cidr.split('/');
   const bits = Number(bitsRaw);
   if (!addr || !Number.isInteger(bits)) return false;

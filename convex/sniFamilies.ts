@@ -43,6 +43,9 @@ import {
 import { resolveEdgeSecrets } from './lib/edgeConfig';
 import { decide, suggest, type Mark } from './lib/edges/sni/vantage';
 import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/sni/marks';
+import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
+import { listenersOfTransport, syncTransportNetwork } from './lib/edges/networkScope';
+import { networkIdOfSlug, networkPrefixes } from './edgeNetworks';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -130,7 +133,24 @@ export const patchConfig = internalMutation({
 
 // --- families ----------------------------------------------------------------------------------------
 
-function summarize(f: Doc<'sniFamilies'>, names: Doc<'sniNames'>[], bindings: number) {
+/** A family's network as the pages show it (null: anywhere). */
+async function networkView(ctx: { db: QueryCtx['db'] }, f: Doc<'sniFamilies'>) {
+  const n = f.networkId ? await ctx.db.get(f.networkId) : null;
+  return n
+    ? {
+        slug: n.slug,
+        label: n.label,
+        ranges: n.prefixes.v4.length + n.prefixes.v6.length,
+      }
+    : null;
+}
+
+function summarize(
+  f: Doc<'sniFamilies'>,
+  names: Doc<'sniNames'>[],
+  bindings: number,
+  network: Awaited<ReturnType<typeof networkView>>,
+) {
   const count = (p: (n: Doc<'sniNames'>) => boolean) => names.filter(p).length;
   return {
     id: f._id as string,
@@ -139,6 +159,7 @@ function summarize(f: Doc<'sniFamilies'>, names: Doc<'sniNames'>[], bindings: nu
     target: f.target,
     enabled: f.enabled,
     requireH2: f.requireH2,
+    network,
     bindings,
     counts: {
       total: names.length,
@@ -162,7 +183,7 @@ export const list = internalQuery({
         .query('sniInboundBindings')
         .withIndex('by_family', (q) => q.eq('familyId', f._id))
         .collect();
-      out.push(summarize(f, await namesOf(ctx, f._id), bindings.length));
+      out.push(summarize(f, await namesOf(ctx, f._id), bindings.length, await networkView(ctx, f)));
     }
     return { families: out };
   },
@@ -286,7 +307,7 @@ export const detail = internalQuery({
       vantage.set(ev.name, [...(vantage.get(ev.name) ?? []), view]);
     }
     return {
-      family: summarize(f, names, bindings.length),
+      family: summarize(f, names, bindings.length, await networkView(ctx, f)),
       curatedCountries: sniCfg.curatedCountries,
       vantage: {
         enabled: sniCfg.enabled && vCfg.enabled,
@@ -332,6 +353,9 @@ export const create = internalMutation({
     targetAddress: v.string(),
     targetPort: v.number(),
     requireH2: v.optional(v.boolean()),
+    // The network's slug (docs/edges.md "Networks"): the target and every name
+    // must resolve inside it.
+    network: v.optional(v.string()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -342,27 +366,33 @@ export const create = internalMutation({
       .unique();
     if (exists) refuse('conflict', 'A family with that slug exists');
     const target = checkTarget(a.targetAddress, a.targetPort);
+    const networkId = a.network ? await networkIdOfSlug(ctx.db, a.network) : null;
     const id = await ctx.db.insert('sniFamilies', {
       slug: a.slug,
       label: a.label.trim().slice(0, 80) || a.slug,
       target,
       enabled: true,
       requireH2: a.requireH2 ?? false,
+      ...(networkId ? { networkId } : {}),
       nextSeq: 1,
       updatedAt: Date.now(),
     });
     await audit(ctx, 'edge.sni.family.create', a.actorAdminId, {
       slug: a.slug,
       targetKind: 'static',
+      ...(a.network ? { network: a.network } : {}),
     });
     return { id: id as string, slug: a.slug };
   },
 });
 
 /**
- * Label, the enabled switch and the HTTP/2 requirement. The TARGET is
- * immutable: every name was qualified against it, and a transport's allowlist is
- * only safe for the target it was built for. A different target is a new family.
+ * Label, the enabled switch, the HTTP/2 requirement and the network. The
+ * TARGET is immutable: every name was qualified against it, and a transport's
+ * allowlist is only safe for the target it was built for. A different target
+ * is a new family. The network changes only while no transport is bound (a
+ * bound transport's edges were chosen for the network it had), and every name
+ * is checked again.
  */
 export const update = internalMutation({
   args: {
@@ -370,6 +400,7 @@ export const update = internalMutation({
     label: v.optional(v.string()),
     enabled: v.optional(v.boolean()),
     requireH2: v.optional(v.boolean()),
+    network: v.optional(v.union(v.string(), v.null())),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -377,15 +408,37 @@ export const update = internalMutation({
     const patch: Partial<Doc<'sniFamilies'>> = { updatedAt: Date.now() };
     if (a.label !== undefined) patch.label = a.label.trim().slice(0, 80) || f.slug;
     if (a.enabled !== undefined) patch.enabled = a.enabled;
+    let recheck = false;
     if (a.requireH2 !== undefined && a.requireH2 !== f.requireH2) {
       patch.requireH2 = a.requireH2;
-      // The bar moved: every name is judged again.
+      recheck = true;
+    }
+    if (a.network !== undefined) {
+      const networkId = await networkIdOfSlug(ctx.db, a.network);
+      if ((networkId ?? undefined) !== f.networkId) {
+        const bound = await ctx.db
+          .query('sniInboundBindings')
+          .withIndex('by_family', (q) => q.eq('familyId', f._id))
+          .first();
+        if (bound)
+          refuse(
+            'edge.sni.network_bound',
+            'A transport is bound to this family. Unbind it before changing its network',
+          );
+        patch.networkId = networkId ?? undefined;
+        recheck = true;
+      }
+    }
+    // The bar moved: every name is judged again.
+    if (recheck)
       for (const n of await namesOf(ctx, f._id))
         if (n.status === 'active' || n.status === 'suspended')
           await ctx.db.patch(n._id, { checkedAt: 0, updatedAt: Date.now() });
-    }
     await ctx.db.patch(f._id, patch);
-    await audit(ctx, 'edge.sni.family.update', a.actorAdminId, { slug: f.slug });
+    await audit(ctx, 'edge.sni.family.update', a.actorAdminId, {
+      slug: f.slug,
+      ...(a.network !== undefined ? { network: a.network ?? 'none' } : {}),
+    });
     return { ok: true as const };
   },
 });
@@ -649,7 +702,7 @@ export const dueForQualification = internalQuery({
   args: {},
   handler: async (ctx) => {
     const cfg = await resolveSniConfig(ctx.db);
-    if (!cfg.enabled) return { names: [] };
+    if (!cfg.enabled) return { names: [], networks: {} };
     const cutoff = Date.now() - cfg.requalifyHours * 3_600_000;
     const due = await ctx.db
       .query('sniNames')
@@ -661,24 +714,41 @@ export const dueForQualification = internalQuery({
       address: string;
       port: number;
       requireH2: boolean;
+      /** The family's network (its key in `networks`), when it has one. */
+      network?: string;
     }[] = [];
     const families = new Map<string, Doc<'sniFamilies'> | null>();
+    // A family's network once per family; `null` = it has no ranges yet.
+    const networks = new Map<string, NetworkPrefixes | null>();
     for (const n of due) {
       if (n.status !== 'active' && n.status !== 'suspended') continue;
       const key = n.familyId as string;
       if (!families.has(key)) families.set(key, await ctx.db.get(n.familyId));
       const f = families.get(key);
       if (!f || !f.enabled) continue;
+      if (f.networkId) {
+        const nk = f.networkId as string;
+        if (!networks.has(nk)) networks.set(nk, await networkPrefixes(ctx.db, f.networkId));
+        // Nothing to compare with yet: the name waits (it is never failed for it).
+        if (!networks.get(nk)) continue;
+      }
       out.push({
         id: n._id,
         name: n.name,
         address: f.target.address,
         port: f.target.port,
         requireH2: f.requireH2,
+        ...(f.networkId ? { network: f.networkId as string } : {}),
       });
       if (out.length >= cfg.qualifyPerTick) break;
     }
-    return { names: out };
+    const used = new Set(out.map((o) => o.network).filter((k): k is string => !!k));
+    return {
+      names: out,
+      networks: Object.fromEntries(
+        [...networks].filter(([k, p]) => used.has(k) && p) as [string, NetworkPrefixes][],
+      ),
+    };
   },
 });
 
@@ -785,6 +855,30 @@ export const bind = internalMutation({
       )
       .unique();
     if (taken) refuse('conflict', 'This transport already has a family');
+    // A family on a network scopes the transport to it: every address already
+    // in use on the transport must lie on it (docs/edges.md "Networks").
+    if (f.networkId) {
+      const prefixes = await networkPrefixes(ctx.db, f.networkId);
+      if (!prefixes)
+        refuse(
+          'edge.sni.network_unknown',
+          'The family’s network has no address ranges yet. Refresh it, or add ranges by hand',
+        );
+      let off = 0;
+      for (const l of await listenersOfTransport(ctx.db, server._id, i.inboundUuid))
+        for (const e of await ctx.db
+          .query('edges')
+          .withIndex('by_relay_publication', (q) =>
+            q.eq('relayId', l.relayId).eq('publication', 'published'),
+          )
+          .collect())
+          if (e.listenerId === l._id && edgeNetworkVerdict(e.addresses, prefixes) !== 'on') off++;
+      if (off > 0)
+        refuse(
+          'edge.sni.network_edges_off',
+          `${off} address${off === 1 ? '' : 'es'} in use on this transport ${off === 1 ? 'is' : 'are'} not on the family’s network`,
+        );
+    }
     const imported = a.importNames ? await addFamilyNames(ctx, f, i.reality.serverNames) : null;
     // Everything the transport lists today has been accepted before: none of it
     // can ever serve as a witness that a NEW generation was applied.
@@ -815,6 +909,7 @@ export const bind = internalMutation({
       panelConfirmedGeneration: 0,
       updatedAt: Date.now(),
     });
+    if (f.networkId) await syncTransportNetwork(ctx, server._id, i.inboundUuid, f.networkId);
     await audit(ctx, 'edge.sni.inbound.bind', a.actorAdminId, {
       slug: f.slug,
       backendSlug: server.slug,
@@ -836,6 +931,8 @@ export const unbind = internalMutation({
     const f = await ctx.db.get(b.familyId);
     const server = await ctx.db.get(b.backendServerId);
     await ctx.db.delete(b._id);
+    // The transport is no longer scoped to the family's network.
+    await syncTransportNetwork(ctx, b.backendServerId, b.inboundUuid, undefined);
     await audit(ctx, 'edge.sni.inbound.unbind', a.actorAdminId, {
       slug: f?.slug ?? '',
       backendSlug: server?.slug ?? '',

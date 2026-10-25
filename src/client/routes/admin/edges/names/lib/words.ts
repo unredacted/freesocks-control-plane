@@ -5,6 +5,7 @@
  * by a test link), and it works from a country (the operator's judgement).
  */
 import type {
+  EdgeNetworkView,
   SniFamilySummary,
   SniImportResult,
   SniNameRow,
@@ -33,6 +34,65 @@ export function familyLine(f: SniFamilySummary): string {
   return parts.join(' · ');
 }
 
+// --- networks (docs/edges.md "Networks") ---------------------------------------------------
+
+/** One line under a network: its ASNs, how many ranges, when they were read, what uses it. */
+export function networkLine(n: EdgeNetworkView, now = Date.now()): string {
+  const parts: string[] = [];
+  if (n.asns.length > 0) parts.push(n.asns.map((a) => `AS${a}`).join(', '));
+  const count = n.ranges.v4 + n.ranges.v6;
+  parts.push(
+    count === 0
+      ? 'no ranges yet'
+      : `${plural(count, 'range')}${n.truncated ? ' (more were announced than are kept)' : ''}`,
+  );
+  if (n.manualPrefixes.length > 0) parts.push(`${n.manualPrefixes.length} by hand`);
+  if (n.refreshError)
+    parts.push(`the last read failed (${NETWORK_REFRESH_WORDS[n.refreshError] ?? n.refreshError})`);
+  else if (n.refreshedAt) parts.push(`read ${ago(n.refreshedAt, now)}`);
+  else if (n.asns.length > 0) parts.push('not read yet');
+  parts.push(
+    n.families.length === 0
+      ? 'no family on it'
+      : `${plural(n.families.length, 'family', 'families')} on it`,
+  );
+  if (n.locations.length > 0) parts.push(`${plural(n.locations.length, 'location')} on it`);
+  return parts.join(' · ');
+}
+
+/** Why a read of a network's ranges failed (convex/edgeNetworks.ts `announcedOf`). */
+export const NETWORK_REFRESH_WORDS: Record<string, string> = {
+  timeout: 'no answer in time',
+  rate_limited: 'asked too often',
+  service_error: 'the service refused',
+  too_large: 'the answer was too large',
+  bad_answer: 'the answer was not a list of ranges',
+  unreachable: 'the service could not be reached',
+};
+
+/** ASNs typed as `AS64500 64501, as64502`: numbers, or null when one is not an ASN. */
+export function parseAsns(text: string): number[] | null {
+  const out: number[] = [];
+  for (const t of text.split(/[\s,]+/).filter(Boolean)) {
+    const m = /^(?:as)?(\d{1,10})$/i.exec(t);
+    const n = m ? Number(m[1]) : NaN;
+    if (!Number.isInteger(n) || n <= 0 || n > 4_294_967_295) return null;
+    if (!out.includes(n)) out.push(n);
+  }
+  return out.length > 8 ? null : out;
+}
+
+/** Ranges typed one per line (or separated by spaces): kept as typed, or null when one is not a range. */
+export function parseRanges(text: string): string[] | null {
+  const out: string[] = [];
+  for (const t of text.split(/[\s,]+/).filter(Boolean)) {
+    const m = /^([0-9a-fA-F.:]+)\/(\d{1,3})$/.exec(t);
+    if (!m || (!m[1]!.includes('.') && !m[1]!.includes(':'))) return null;
+    if (!out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
 export function familyDot(f: SniFamilySummary): Dot {
   if (!f.enabled) return 'grey';
   if (f.counts.ready === 0) return f.counts.total === 0 ? 'grey' : 'red';
@@ -48,6 +108,9 @@ export const CHECK_WORDS: Record<string, string> = {
   q_unreachable: 'The target site could not be reached.',
   q_tls12: 'The target site does not offer TLS 1.3 for this name.',
   q_no_h2: 'The target site does not offer HTTP/2 for this name.',
+  q_off_network:
+    'This name resolves outside the family’s network, or not at all: someone looking it up would see another network than the address it is shown to.',
+  q_target_off_network: 'The target site resolves outside the family’s network.',
 };
 
 /** One name's state in words. */
@@ -279,6 +342,17 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.sni.vantage_too_soon': 'Those names were checked from there within the last hour.',
   'edge.sni.vantage_no_target': 'None of those names is on a published address yet.',
   'edge.sni.vantage_budget': 'The hourly budget for checks is spent. Try again later.',
+  // Networks (docs/edges.md "Networks").
+  'edge.sni.network_bound':
+    'A transport is bound to this family. Unbind it before changing its network.',
+  'edge.sni.network_unknown':
+    "The family's network has no address ranges yet. Refresh it, or add ranges by hand.",
+  'edge.sni.network_edges_off':
+    "Some addresses in use on this transport are not on the family's network. Replace them first.",
+  'edge.network.bad_asn': 'Each ASN is a number, at most eight of them.',
+  'edge.network.bad_prefix': 'Each range is an address and a length, like 192.0.2.0/24.',
+  'edge.network.empty': 'A network needs an ASN or a range.',
+  'edge.network.in_use': 'A family or a transport is on this network. Change them first.',
   'edge.maintenance': 'Edges are in maintenance. Nothing new starts until it ends.',
   'servers.manage_disabled': 'Changing backends is turned off under Servers.',
   'servers.handoff_missing': 'The node role has not handed this backend over yet.',

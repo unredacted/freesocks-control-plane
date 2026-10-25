@@ -1434,12 +1434,42 @@ export default defineSchema({
         checkedAt: v.number(),
       }),
     ),
+    // The network this place's addresses come from (docs/edges.md "Networks"):
+    // set by an operator, or learned from the addresses of its edges. Only a
+    // location on a transport's network may front it (`carries`).
+    networkId: v.optional(v.id('edgeNetworks')),
+    networkSource: v.optional(v.union(v.literal('operator'), v.literal('address'))),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_account', ['accountId', 'enabled'])
     .index('by_place', ['provider', 'placeKey'])
-    .index('by_account_placement', ['accountId', 'placementHash']),
+    .index('by_account_placement', ['accountId', 'placementHash'])
+    .index('by_network', ['networkId']),
+
+  // A NETWORK (docs/edges.md "Networks", lib/edges/networks.ts): one or more
+  // autonomous systems and the ranges they announce, plus ranges entered by
+  // hand. A server-name family on a network has its target and every name
+  // resolving inside it; a transport bound to such a family is fronted only
+  // by edges whose addresses lie on it. Membership is checked locally against
+  // `prefixes`; the refresh asks for an ASN's announced ranges and nothing else.
+  edgeNetworks: defineTable({
+    slug: v.string(),
+    label: v.string(),
+    asns: v.array(v.number()),
+    // Announced ranges as last read (normalised, sorted, capped per family).
+    announced: v.object({ v4: v.array(v.string()), v6: v.array(v.string()) }),
+    // Ranges an operator entered by hand (normalised).
+    manualPrefixes: v.array(v.string()),
+    // `announced` plus `manualPrefixes`: what every membership check reads.
+    prefixes: v.object({ v4: v.array(v.string()), v6: v.array(v.string()) }),
+    truncated: v.optional(v.boolean()),
+    refreshedAt: v.optional(v.number()),
+    // The last refresh failed (a short code); the stored ranges stay.
+    refreshError: v.optional(v.string()),
+    refreshTriedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index('by_slug', ['slug']),
 
   // What one account's credentials reach at its provider, as last listed
   // (`edgeProviderCatalog.ts`): the zones, regions, projects or TLS
@@ -1854,6 +1884,10 @@ export default defineSchema({
     providerScope: v.optional(
       v.object({ provider: relayProviderId, accountId: v.optional(v.id('edgeProviderAccounts')) }),
     ),
+    // Only edges on this network may front the listener: the network of the
+    // server-name family its transport is bound to (docs/edges.md "Networks"),
+    // copied here by the bind, the unbind and registration.
+    networkId: v.optional(v.id('edgeNetworks')),
     matchRule: listenerMatchRule,
     // Backend origins: the transport this listener is (the node role deploys it).
     panelBinding: v.optional(
@@ -2746,10 +2780,16 @@ export default defineSchema({
     enabled: v.boolean(),
     // Require HTTP/2 from the target for a name to qualify (preferred, not default).
     requireH2: v.boolean(),
+    // The network the target and every name live on (docs/edges.md "Networks"):
+    // a name qualifies only when every address it resolves to lies on it, and a
+    // transport bound to the family is fronted only from it. Absent = anywhere.
+    networkId: v.optional(v.id('edgeNetworks')),
     // Monotonic per family and never reused: the order names are taken in.
     nextSeq: v.number(),
     updatedAt: v.number(),
-  }).index('by_slug', ['slug']),
+  })
+    .index('by_slug', ['slug'])
+    .index('by_network', ['networkId']),
 
   sniNames: defineTable({
     familyId: v.id('sniFamilies'),

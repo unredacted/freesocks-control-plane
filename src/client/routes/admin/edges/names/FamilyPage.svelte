@@ -30,6 +30,7 @@
     importNames,
     invalidateSni,
     judgeNames,
+    networksQuery,
     removeFamily,
     updateFamily,
     type NameAction,
@@ -138,6 +139,8 @@
   // --- the family itself -----------------------------------------------------------------------
   let removeOpen = $state(false);
   const setEnabled = (enabled: boolean) => run(() => updateFamily(slug, { enabled }));
+  const networks = networksQuery();
+  const setNetwork = (network: string | null) => run(() => updateFamily(slug, { network }));
   async function remove() {
     removeOpen = false;
     if ((await run(() => removeFamily(slug))) !== null) router.navigate(edgesPaths.names());
@@ -205,7 +208,7 @@
   {@const f = family.data.family}
   <SectionHeader
     title={f.label}
-    description={`Names served by ${f.target.address}:${f.target.port}${f.requireH2 ? ', over HTTP/2 only' : ''}.`}
+    description={`Names served by ${f.target.address}:${f.target.port}${f.requireH2 ? ', over HTTP/2 only' : ''}${f.network ? `, on ${f.network.label}` : ''}.`}
   >
     {#snippet actions()}
       <Button variant="ghost" size="sm" disabled={busy} onclick={() => (removeOpen = true)}>
@@ -228,6 +231,29 @@
         Off, nothing new is written. Names members already have keep working.
       </p>
     </div>
+  </div>
+
+  <div class="mb-6 space-y-1 text-sm">
+    <label class="flex flex-wrap items-center gap-2">
+      <span class="font-medium">Network</span>
+      <select
+        class={SELECT}
+        value={f.network?.slug ?? ''}
+        disabled={busy || f.bindings > 0}
+        aria-describedby={`${uid}-network-help`}
+        onchange={(e) => void setNetwork(e.currentTarget.value || null)}
+      >
+        <option value="">Anywhere</option>
+        {#each networks.data?.networks ?? [] as n (n.slug)}
+          <option value={n.slug}>{n.label}</option>
+        {/each}
+      </select>
+    </label>
+    <p id={`${uid}-network-help`} class="text-muted-foreground">
+      {f.bindings > 0
+        ? 'A transport is bound to this family. Unbind it to change the network.'
+        : 'On a network, the target and every name must resolve inside it (every name is checked again when it changes), and a bound transport is fronted only by addresses from it.'}
+    </p>
   </div>
 
   <Card>

@@ -189,6 +189,9 @@ export const PREFLIGHT_BLOCKER_CODES = [
   'size_not_multicloud',
   // the account would pass its monthly spend cap (convex/edgePlans.ts, the budget guard)
   'account_spend_cap_reached',
+  // the transport is scoped to a network (docs/edges.md "Networks"): the place, or the
+  // edge's address, is not on it
+  'off_network',
 ] as const;
 export type PreflightBlockerCode = (typeof PREFLIGHT_BLOCKER_CODES)[number];
 
@@ -303,6 +306,9 @@ export const ATTENTION_KINDS = [
   // A protected REALITY transport refuses sing-box or Mihomo clients (no `minClientVer` on an
   // Xray that then refuses them, or bounds that leave them out; src/shared/contracts/realityClients.ts).
   'reality_refuses_clients',
+  // An address in use on a transport scoped to a network is not on that network
+  // (docs/edges.md "Networks").
+  'edge_off_network',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -608,6 +614,9 @@ export const SETUP_ACCOUNT_REASONS = [
   'account_spend_cap_reached',
   // A load balancer address of a transport no test link can be made for (a set problem).
   'test_link_unavailable',
+  // Every transport it would carry is scoped to a network this place is not on
+  // (docs/edges.md "Networks").
+  'off_network',
 ] as const;
 export type SetupAccountReason = (typeof SETUP_ACCOUNT_REASONS)[number];
 

@@ -44,6 +44,13 @@ function statusFromCode(code: string): number {
   if (code === 'backend.panel_read_failed' || code === 'edge.plan_step_failed') return 502;
   // The hourly budget of checks from inside a country is a quota, like the probes'.
   if (code === 'edge.sni.vantage_budget') return 429;
+  // A network's ASNs or ranges that are not ones: the body, not a conflict.
+  if (
+    code === 'edge.network.bad_asn' ||
+    code === 'edge.network.bad_prefix' ||
+    code === 'edge.network.empty'
+  )
+    return 400;
   if (code === 'conflict' || code.startsWith('edge.')) return 409;
   // The hourly probe budget is a quota: answer like a rate limit.
   if (code === 'probe.budget_exhausted') return 429;
@@ -79,6 +86,7 @@ const RESERVED = new Set([
   'setup-runs',
   'sni',
   'countries',
+  'networks',
 ]);
 
 /**
@@ -145,6 +153,8 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c, d] = parts;
   // Qualifying server names opens sockets from the control plane.
   if (a === 'sni' && b === 'qualify' && !c) return 'admin.edges.provider-call';
+  // Reading a network's announced ranges calls a third-party service.
+  if (a === 'networks' && b && c === 'refresh' && !d) return 'admin.edges.provider-call';
   // Checking names from inside a country spends third-party measurements.
   if (a === 'sni' && b === 'families' && c && d === 'vantage' && !parts[4])
     return 'admin.edges.probe';
@@ -292,6 +302,7 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     return notFound();
   }
   if (a === 'config') return json(await ctx.runQuery(internal.edgeAdmin.configView, {}));
+  if (a === 'networks' && !b) return json(await ctx.runQuery(internal.edgeNetworks.list, {}));
   if (a === 'attention' && !b) return json(await ctx.runQuery(internal.edgeOperator.attention, {}));
   if (a === 'setup-status' && !b) {
     const relaySlug = query.get('relay') ?? undefined;
@@ -568,6 +579,29 @@ async function refreshInventory(
 const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   const [a, b, c, d, e] = parts;
   const act = actor(admin);
+  // Networks (docs/edges.md "Networks").
+  if (a === 'networks' && !b)
+    return json(
+      await ctx.runMutation(internal.edgeNetworks.create, {
+        slug: String(body.slug ?? ''),
+        label: String(body.label ?? ''),
+        asns: Array.isArray(body.asns) ? body.asns.map((x: unknown) => String(x)) : [],
+        ...(Array.isArray(body.manualPrefixes)
+          ? { manualPrefixes: body.manualPrefixes.map((x: unknown) => String(x)) }
+          : {}),
+        ...act,
+      }),
+    );
+  if (a === 'networks' && b && c === 'refresh' && !d)
+    return json(await ctx.runAction(internal.edgeNetworks.refresh, { slug: b }));
+  if (a === 'providers' && b && c === 'locations' && d && e === 'network' && !parts[5])
+    return json(
+      await ctx.runMutation(internal.edgeNetworks.setLocationNetwork, {
+        locationId: id<'edgeLocations'>(d),
+        network: typeof body.network === 'string' && body.network ? body.network : null,
+        ...act,
+      }),
+    );
   if (a === 'sni') {
     if (b === 'families' && !c)
       return json(
@@ -577,6 +611,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           targetAddress: String(body.targetAddress ?? ''),
           targetPort: Number(body.targetPort ?? 443),
           requireH2: body.requireH2 === true,
+          ...(typeof body.network === 'string' && body.network ? { network: body.network } : {}),
           ...act,
         }),
       );
@@ -1650,6 +1685,22 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
         label: typeof body.label === 'string' ? body.label : undefined,
         enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
         requireH2: typeof body.requireH2 === 'boolean' ? body.requireH2 : undefined,
+        ...(body.network === null || typeof body.network === 'string'
+          ? { network: (body.network as string | null) || null }
+          : {}),
+        ...act,
+      }),
+    );
+  // Networks (docs/edges.md "Networks").
+  if (a === 'networks' && b && !c)
+    return json(
+      await ctx.runMutation(internal.edgeNetworks.update, {
+        slug: b,
+        ...(typeof body.label === 'string' ? { label: body.label } : {}),
+        ...(Array.isArray(body.asns) ? { asns: body.asns.map((x: unknown) => String(x)) } : {}),
+        ...(Array.isArray(body.manualPrefixes)
+          ? { manualPrefixes: body.manualPrefixes.map((x: unknown) => String(x)) }
+          : {}),
         ...act,
       }),
     );
@@ -1724,6 +1775,8 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
 const deleteHandler: Handler = async (ctx, _req, parts, admin, _body, query) => {
   const [a, b, c, d, e] = parts;
   const act = actor(admin);
+  if (a === 'networks' && b && !c)
+    return json(await ctx.runMutation(internal.edgeNetworks.remove, { slug: b, ...act }));
   if (a === 'sni' && b === 'families' && c && !d)
     return json(await ctx.runMutation(internal.sniFamilies.remove, { slug: c, ...act }));
   if (a === 'sni' && b === 'bindings' && c && !d)

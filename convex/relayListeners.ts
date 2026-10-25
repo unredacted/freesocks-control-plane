@@ -48,6 +48,7 @@ import {
 import { protocolLabel, protocolUsesSni } from './lib/edges/protocols';
 import { nameRetireKeepsVerification } from './lib/edges/verification';
 import { auditPickForMarks, pickForJudgedNames, withCountryMarks } from './lib/edges/sni/marks';
+import { listenerNetworkOf } from './lib/edges/networkScope';
 
 export type Listener = Doc<'relayListeners'>;
 
@@ -426,9 +427,12 @@ export async function applyRegistration(
       spec.tlsNames.map((n) => ({ name: n, status: 'active' as const })),
     );
     const pick = pickForJudgedNames(undefined, names);
+    // Its transport's family may be on a network (docs/edges.md "Networks").
+    const networkId = await listenerNetworkOf(ctx.db, relay, spec.panelBinding);
     await ctx.db.insert('relayListeners', {
       ...specToRow(relay, spec, names, source, now),
       ...(pick ? { sniPick: pick } : {}),
+      ...(networkId ? { networkId } : {}),
     });
     result.created.push(spec.listenerKey);
   }
@@ -491,6 +495,7 @@ export async function applyRegistration(
     await ctx.db.patch(ex._id, {
       ...row,
       ...(pick !== ex.sniPick ? { sniPick: pick } : {}),
+      networkId: await listenerNetworkOf(ctx.db, relay, spec.panelBinding),
       deployedAt: rebound || !ex.deployed ? now : ex.deployedAt,
     });
     result.updated.push(spec.listenerKey);

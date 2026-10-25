@@ -500,6 +500,12 @@ member reports. Neither adds member data anywhere.
   network and an outcome word, deleted after `edge.sni.vantage.windowDays` (default 14). The
   vantages are third parties' machines: whoever runs one sees the address and the name
   (docs/edges.md, "Residual risk").
+- **Networks** (only once an operator adds one with an ASN): once a day the backend asks
+  RIPEstat which address ranges each such ASN announces. The request carries the ASN and nothing
+  else: no address, name, member or subscription. Every check of whether an address or a name's
+  DNS answer lies on a network is made locally against the stored ranges (docs/edges.md,
+  "Networks"); qualifying a family's names on a network resolves those names from the backend,
+  as qualification already resolves the target.
 - **Report attribution** labels a member's issue report with the origin
   behind their key (the node they were pinned to) and, only when they said which
   connection failed and that maps to exactly one edge, the edge. These are

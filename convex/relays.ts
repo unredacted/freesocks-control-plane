@@ -10,6 +10,8 @@
  * state lives in edgeRotations.ts; edge rows in edges.ts.
  */
 import { verificationListenerOf } from './lib/edges/verificationContext';
+import { edgeNetworkVerdict } from './lib/edges/networks';
+import { networkPrefixes } from './edgeNetworks';
 import { ConvexError, v } from 'convex/values';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -1798,6 +1800,13 @@ export async function checkPublishable(
     listener.providerScope.accountId !== edge.accountId
   )
     return { ok: false, code: 'account_mismatch' };
+  // A transport scoped to a network (docs/edges.md "Networks"): every address
+  // the edge serves lies on it, else its server names would point elsewhere.
+  if (
+    listener.networkId &&
+    edgeNetworkVerdict(edge.addresses, await networkPrefixes(ctx.db, listener.networkId)) !== 'on'
+  )
+    return { ok: false, code: 'off_network' };
   // An L4 endpoint goes live only with the operator's OWN confirmation against
   // the configuration it holds now (lib/edges/verification.ts): nothing
   // server-side can prove an L4 address, and a stale tick (listener revision

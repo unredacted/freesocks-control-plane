@@ -191,6 +191,9 @@ crons.interval('sni-report-sweep', { hours: 24 }, internal.sniReports.sweep, {})
 // Checks of names from inside opted-in countries: sweep, then at most one batch
 // per tick within the hourly budget (dormant until switched on per country).
 crons.interval('sni-vantage', { minutes: 10 }, internal.sniVantage.tick, {});
+// Networks: read each network's announced ranges once a day (the request
+// carries the ASN only), then learn every location's network from its edges.
+crons.interval('edge-networks', { hours: 1 }, internal.edgeNetworks.tick, {});
 
 crons.interval('backend-reconcile', { minutes: 5 }, internal.backendWrites.reconcile, {});
 // Resume bootstrap workflows an interrupted attempt left pending (docs/servers.md "Node lifecycle").
