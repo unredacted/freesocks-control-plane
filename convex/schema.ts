@@ -1786,7 +1786,9 @@ export default defineSchema({
   })
     .index('by_relay', ['relayId'])
     .index('by_intent', ['nodeIntentId'])
-    .index('by_removal_expires', ['removal', 'expiresAt']),
+    .index('by_removal_expires', ['removal', 'expiresAt'])
+    // A backend server's keys not removed yet (serverAdmin.removalBlocker).
+    .index('by_server_removal', ['backendServerId', 'removal']),
 
   // One LISTENER on an origin: a port the origin answers on, what it speaks,
   // the names / REALITY target the renderer needs, how the renderer finds its
@@ -2433,7 +2435,9 @@ export default defineSchema({
     .index('by_relay', ['relayId'])
     .index('by_run', ['runId'])
     .index('by_host', ['hostUuid'])
-    .index('by_state_updated', ['state', 'updatedAt']),
+    .index('by_state_updated', ['state', 'updatedAt'])
+    // What a removed backend server's purge clears (serverAdmin.purgeRemovedBackend).
+    .index('by_server', ['backendServerId']),
 
   // External / internal reachability probe requests against one edge.
   // Operator-entered probe targets (any host:port), alongside the derived ones
@@ -3496,11 +3500,17 @@ export default defineSchema({
     // edge FCP does not run yet (an earlier tool made it); Edges takes over later.
     // `activeInboundUuids`: every transport its row served when adopted, which
     // a reconcile keeps (members of other groups reach the node on them).
+    // `portMoves`: transports a settled port change moved, in order; the next
+    // reconcile moves the recorded addresses that named `from` to `to`, then
+    // drops the entries it applied.
     adopted: v.optional(
       v.object({
         at: v.number(),
         externallyFronted: v.boolean(),
         activeInboundUuids: v.optional(v.array(v.string())),
+        portMoves: v.optional(
+          v.array(v.object({ inboundUuid: v.string(), from: v.number(), to: v.number() })),
+        ),
       }),
     ),
     retirementId: v.optional(v.id('panelRetirements')),
@@ -3680,6 +3690,11 @@ export default defineSchema({
       approval: v.optional(v.object({ byAdminId: v.optional(v.id('adminUsers')), at: v.number() })),
     }),
     resources: v.object({ hostUuids: v.array(v.string()), edgeIds: v.array(v.string()) }),
+    // The addresses this run turned on (recorded before each write), with any
+    // a run it superseded turned on and never committed: all a failed or
+    // superseded run turns off again. An address that was already on is never
+    // this run's to turn off.
+    enabledHostUuids: v.optional(v.array(v.string())),
     // The reviewed delivery snapshot: the committed edges this activation keeps
     // plus its candidates. The rehearsal renders it and the commit promotes
     // exactly it; `resources` stays what the run OWNS (the gate's candidates,

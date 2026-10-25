@@ -471,6 +471,7 @@
         {slug}
         node={adoptTarget}
         modes={setup.data?.modes ?? []}
+        tree={t}
       />
       <SetupSheet
         bind:open={setupOpen}

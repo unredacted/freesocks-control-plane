@@ -727,8 +727,11 @@ export type ActivationReview = z.infer<typeof ActivationReview>;
 export const DirectTestLink = z.object({
   /** The first name's link (`links[0]`). */
   link: z.string(),
-  /** One link per server name the node serves: the tick covers all of them. */
-  links: z.array(z.object({ sni: z.string(), link: z.string() })),
+  /**
+   * One link per server name the node serves (an adopted node: per address it
+   * was adopted with, each with the `endpoint` it dials): the tick covers all of them.
+   */
+  links: z.array(z.object({ sni: z.string(), link: z.string(), endpoint: z.string().optional() })),
   binding: z.object({
     intentId: z.string(),
     transportUuid: z.string(),
@@ -829,6 +832,16 @@ export const ProfilePatchPreview = z.object({
    */
   otherAddresses: z
     .array(z.object({ remark: z.string(), address: z.string(), port: z.number() }))
+    .default([]),
+  /**
+   * Addresses on a moved transport that move to the new port with their node:
+   * an enrolled node's own, and an adopted node's recorded ones that name the
+   * old port (one naming another port is a forwarder's mapping and keeps it).
+   */
+  movedAddresses: z
+    .array(
+      z.object({ node: z.string(), remark: z.string(), address: z.string(), port: z.number() }),
+    )
     .default([]),
 });
 export type ProfilePatchPreview = z.infer<typeof ProfilePatchPreview>;

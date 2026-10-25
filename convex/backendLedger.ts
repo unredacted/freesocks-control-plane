@@ -507,13 +507,20 @@ async function bridgeProfilePatch(ctx: MutationCtx, op: Op) {
   const expected = JSON.parse(op.postcondition) as {
     targets?: Record<string, { address: string; port: number }>;
     ports?: Record<string, number>;
+    fromPorts?: Record<string, number>;
     relayIds?: string[];
     inboundUuids?: Record<string, string>;
   };
   // A transport whose uuid moved anyway is fenced for an operator
   // (`servers.inbound_uuid_changed`): nothing is re-pointed at the old uuid.
   if (op.errorCode !== 'servers.inbound_uuid_changed')
-    await bridgePortChange(ctx, op, expected.ports ?? {}, expected.inboundUuids ?? {});
+    await bridgePortChange(
+      ctx,
+      op,
+      expected.ports ?? {},
+      expected.inboundUuids ?? {},
+      expected.fromPorts ?? {},
+    );
   const relayIds = (expected.relayIds ?? []) as Id<'relays'>[];
   if (relayIds.length === 0) return;
   await assertNoPanelClaim(
@@ -552,22 +559,33 @@ async function bridgeProfilePatch(ctx: MutationCtx, op: Op) {
  * from it), and every enrolled node serving it is reconciled now, so its own
  * addresses are brought to the new port while it is still closed for
  * maintenance (the transition closed it before the write was admitted). An
- * origin never forwards to a moved transport: the claim refused that.
+ * adopted node's addresses are the ones it was adopted with: the move is
+ * recorded on it (`adopted.portMoves`), and its reconcile moves those that
+ * named the old port; one naming another port is a forwarder's mapping and
+ * keeps it. An origin never forwards to a moved transport: the claim refused that.
  */
 async function bridgePortChange(
   ctx: MutationCtx,
   op: Op,
   ports: Record<string, number>,
   inboundUuids: Record<string, string>,
+  fromPorts: Record<string, number>,
 ) {
-  const moved = Object.entries(ports)
-    .map(([tag, port]) => ({ uuid: inboundUuids[tag], port }))
-    .filter((m): m is { uuid: string; port: number } => !!m.uuid);
-  if (moved.length === 0) return;
   const setup = await ctx.db
     .query('panelSetups')
     .withIndex('by_server', (q) => q.eq('backendServerId', op.backendServerId))
     .unique();
+  const moved = Object.entries(ports).flatMap(([tag, port]) => {
+    const uuid = inboundUuids[tag];
+    if (!uuid) return [];
+    // An op from before `fromPorts` was recorded: the setup's record, not yet moved.
+    const from: number | undefined =
+      tag in fromPorts
+        ? fromPorts[tag]
+        : setup?.modes?.find((m) => m.transport?.uuid === uuid)?.transport?.port;
+    return [{ uuid, port, from }];
+  });
+  if (moved.length === 0) return;
   if (setup?.modes) {
     let touched = false;
     const modes = setup.modes.map((m) => {
@@ -589,9 +607,24 @@ async function bridgePortChange(
   for (const intent of await ctx.db
     .query('panelNodeIntents')
     .withIndex('by_server', (q) => q.eq('backendServerId', op.backendServerId))
-    .collect())
-    if (serving.has(intent.name) && intent.state !== 'retiring' && intent.state !== 'retired')
-      await ctx.scheduler.runAfter(0, internal.nodeIntents.reconcileNow, { intentId: intent._id });
+    .collect()) {
+    if (!serving.has(intent.name) || intent.state === 'retiring' || intent.state === 'retired')
+      continue;
+    if (intent.adopted && (intent.addressUuids?.length ?? 0) > 0) {
+      const moves = moved
+        .filter((m) => m.from !== undefined && m.from !== m.port)
+        .map((m) => ({ inboundUuid: m.uuid, from: m.from!, to: m.port }));
+      if (moves.length > 0)
+        await ctx.db.patch(intent._id, {
+          adopted: {
+            ...intent.adopted,
+            portMoves: [...(intent.adopted.portMoves ?? []), ...moves],
+          },
+          updatedAt: Date.now(),
+        });
+    }
+    await ctx.scheduler.runAfter(0, internal.nodeIntents.reconcileNow, { intentId: intent._id });
+  }
 }
 
 /**

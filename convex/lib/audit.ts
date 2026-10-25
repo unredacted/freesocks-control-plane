@@ -262,6 +262,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.backend_server.upsert': ['slug', 'backend', 'created'],
   // Slug-addressed backend-server delete (migrate / IaC).
   'admin.backend_server.delete': ['slug'],
+  // What was left of a removed backend server, cleared (counts only).
+  'admin.backend_server.purge': ['rows', 'more'],
   // Admin grant/extend of a membership from the Users page.
   'admin.user.grant_membership': ['tierId', 'durationDays'],
   // Idempotent tier upsert by slug (Ansible / IaC). Node placement is bound
