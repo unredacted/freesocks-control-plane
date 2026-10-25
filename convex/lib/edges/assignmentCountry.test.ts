@@ -91,6 +91,11 @@ describe('assignEndpoints without a country', () => {
     // in the member's country over an untaken one nobody judged there: every
     // assignment whose `where` names no country was checked identical to the
     // previous code over this corpus and three more seeds (36,665 of them).
+    // Re-pinned again when a name blocked somewhere became the last resort for a
+    // member with no country instead of never: over the same four seeds, both
+    // walks (96,000 assignments) were identical except 56 with no country and
+    // an edge carrying no universal name, 16 of them now served at all and 40
+    // with the same primary and a backup where there was none.
     let digest = 0x811c9dc5;
     let pool = 0;
     for (const { edges, rnd } of corpus(7, 300)) {
@@ -113,7 +118,90 @@ describe('assignEndpoints without a country', () => {
       }
       pool++;
     }
-    expect(digest).toBe(1819980137);
+    expect(digest).toBe(3013099625);
+  });
+});
+
+describe('a member with no country and names blocked somewhere', () => {
+  const NOWHERE = { country: null, curated: ['IR', 'RU', 'CN'] };
+  const named = (marks: Record<string, string[]>) =>
+    Object.entries(marks).map(([sni, blockedIn]) => ({
+      sni,
+      status: 'active' as const,
+      ...(blockedIn.length ? { blockedIn } : {}),
+    }));
+  const hrw = (over: Partial<PublishedEdge> & { edgeId: string; poolIndex: number }) =>
+    edge({ sniPick: 'hrw1', provider: `p${over.poolIndex}`, ...over });
+
+  test('every name blocked somewhere: still served, the least blocked name first', () => {
+    const pool = [
+      hrw({
+        edgeId: 'e0',
+        poolIndex: 0,
+        serverNames: named({ 'two.example': ['IR', 'RU'], 'one.example': ['CN'] }),
+      }),
+    ];
+    for (let i = 0; i < 200; i++) {
+      const a = assignEndpoints(keyOf(i), pool, { ...OPTS, where: NOWHERE, namesPerEndpoint: 2 });
+      expect(a.primary?.sni).toBe('one.example');
+      expect(a.primary?.alternates?.map((x) => x.sni)).toEqual(['two.example']);
+    }
+    // A member in IR still never gets a name blocked there.
+    const ir = assignEndpoints(keyOf(1), pool, {
+      ...OPTS,
+      where: { ...NOWHERE, country: 'IR' },
+      namesPerEndpoint: 2,
+    });
+    expect([ir.primary?.sni, ...(ir.primary?.alternates ?? []).map((x) => x.sni)]).toEqual([
+      'one.example',
+    ]);
+  });
+
+  test('a universal name on the edge: a name blocked somewhere is never offered beside it', () => {
+    const pool = [
+      hrw({
+        edgeId: 'e0',
+        poolIndex: 0,
+        serverNames: named({ 'ok.example': [], 'ir.example': ['IR'], 'ru.example': ['RU'] }),
+      }),
+    ];
+    for (let i = 0; i < 200; i++) {
+      const a = assignEndpoints(keyOf(i), pool, { ...OPTS, where: NOWHERE, namesPerEndpoint: 3 });
+      expect(a.primary?.sni).toBe('ok.example');
+      expect(a.primary?.alternates ?? []).toEqual([]);
+    }
+  });
+
+  test('edges with a universal name come first; the others only as the last resort', () => {
+    const pool = [
+      hrw({ edgeId: 'blocked-names', poolIndex: 0, serverNames: named({ 'ir.example': ['IR'] }) }),
+      hrw({ edgeId: 'universal', poolIndex: 1, serverNames: named({ 'ok.example': [] }) }),
+    ];
+    for (const extra of [{}, { avoidBlockedIn: ['IR', 'RU', 'CN'] }]) {
+      for (let i = 0; i < 200; i++) {
+        const a = assignEndpoints(keyOf(i), pool, { ...OPTS, ...extra, where: NOWHERE });
+        expect(a.primary?.edge.edgeId).toBe('universal');
+        // Better a backup that works outside IR than none.
+        expect(a.backup?.edge.edgeId).toBe('blocked-names');
+        expect(a.backup?.sni).toBe('ir.example');
+      }
+    }
+  });
+
+  test('the veto never counts an edge whose names are all blocked somewhere as a way around', () => {
+    const chosen = hrw({
+      edgeId: 'chosen',
+      poolIndex: 0,
+      blockedIn: ['IR'],
+      serverNames: named({ 'ok.example': [] }),
+    });
+    const other = hrw({ edgeId: 'o', poolIndex: 1, serverNames: named({ 'ru.example': ['RU'] }) });
+    // Members in IR are routed around it, mirror readers are not: their first
+    // choice is the one edge with a universal name, the chosen one.
+    expect(steeringAvoids(chosen, [chosen, other], 'IR', PATHS, ['IR', 'RU'])).toBe(true);
+    expect(
+      steeringAvoids(chosen, [chosen, other], 'IR', PATHS, ['IR', 'RU'], { universal: true }),
+    ).toBe(false);
   });
 });
 

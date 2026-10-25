@@ -345,23 +345,37 @@ export interface CountryContext {
 }
 
 /**
- * 0 = preferred, 1 = acceptable, null = never offer.
+ * A name's tier where the member is: lower is offered first, null = never.
  *
  *  - in a curated country: a name blocked THERE is never offered; names proven
- *    there come first, names nobody has judged there fill the rest;
- *  - anywhere else, or with no country at all: the UNIVERSAL pool, names that
- *    are not blocked in ANY curated country. A mirror has no request country
- *    and exists for exactly the people who are blocked, so it must never carry
- *    a name known blocked somewhere curated.
+ *    there are 0, names nobody has judged there 1;
+ *  - anywhere else, or with no country at all (a mirror too): the UNIVERSAL
+ *    pool, names not blocked in ANY curated country (0). A name blocked
+ *    somewhere is the last resort, by how many curated countries block it
+ *    (the tier is that count), offered only on an edge with no universal name
+ *    (`rankSniHrwTiered`): the member may be in none of those countries, so it
+ *    beats handing out nothing, and it is never offered beside a universal one.
  */
-export function countryTier(s: AssignableSni, where?: CountryContext): 0 | 1 | null {
+export function countryTier(s: AssignableSni, where?: CountryContext): number | null {
   if (!where) return 0;
   const blocked = s.blockedIn ?? [];
   if (where.country) {
     if (blocked.includes(where.country)) return null;
     return (s.provenIn ?? []).includes(where.country) ? 0 : 1;
   }
-  return blocked.some((c) => where.curated.includes(c)) ? null : 0;
+  return new Set(blocked.filter((c) => where.curated.includes(c))).size;
+}
+
+/**
+ * Whether the edge has a name for the universal pool: true unless the member
+ * has no country, the listener is on `hrw1` and presents names, and every
+ * active name is blocked in some curated country. An edge without one is
+ * handed to such a member only when no edge has one.
+ */
+function universalNameOn(e: PublishedEdge, where?: CountryContext): boolean {
+  if (!where || where.country) return true;
+  if (e.sniPick !== 'hrw1' || edgeHostname(e) || !protocolUsesSni(e.proto)) return true;
+  return e.serverNames.some((n) => n.status === 'active' && countryTier(n, where) === 0);
 }
 
 /**
@@ -381,7 +395,7 @@ export function rankSniHrw(
   return rankSniHrwTiered(subscriberKey, edgeId, serverNames, where).map((x) => x.sni);
 }
 
-/** `rankSniHrw` with each name's country tier (0 proven where the member is, 1 not judged). */
+/** `rankSniHrw` with each name's country tier (`countryTier`). */
 function rankSniHrwTiered(
   subscriberKey: string,
   edgeId: string,
@@ -397,13 +411,18 @@ function rankSniHrwTiered(
     seen.add(s.sni);
     scored.push({ sni: s.sni, score: fnv1a32(`${subscriberKey}:${edgeId}:${s.sni}`), tier });
   }
-  // Proven names first, each tier in its own rendezvous order: a member in a
-  // curated country holds proven names while enough exist, and the ranking
-  // inside a tier is as stable as ever.
+  // Lower tiers first, each in its own rendezvous order: a member in a curated
+  // country holds proven names while enough exist, and the ranking inside a
+  // tier is as stable as ever.
   scored.sort(
     (a, b) => a.tier - b.tier || b.score - a.score || (a.sni < b.sni ? -1 : a.sni > b.sni ? 1 : 0),
   );
-  return scored.map((x) => ({ sni: x.sni, tier: x.tier }));
+  // Without a country, a name blocked somewhere is the last resort: offered
+  // only when the edge has no universal name at all, never beside one.
+  const lastResort = !!where && !where.country && scored.some((x) => x.tier === 0);
+  return scored
+    .filter((x) => !lastResort || x.tier === 0)
+    .map((x) => ({ sni: x.sni, tier: x.tier }));
 }
 
 export interface AssignOptions {
@@ -500,36 +519,42 @@ export function assignEndpoints(
     );
   }
   // An edge every one of whose names is excluded for this member's country is
-  // not assignable FOR THEM: the walk moves on to the next edge.
+  // not assignable FOR THEM: the walk moves on to the next edge. Without a
+  // country, edges with a universal name are walked first and the others only
+  // when none has one (`universalNameOn`).
   const assignable = (e: PublishedEdge) => assignableFor(subscriberKey, e, opts);
+  const preferred = (e: PublishedEdge) => assignable(e) && universalNameOn(e, opts.where);
   const start = poolSeed(subscriberKey) % pool.length;
   // Walk forward (wrapping) from the seeded index to the first assignable edge.
-  let pIdx = -1;
-  for (let step = 0; step < pool.length; step++) {
-    const i = (start + step) % pool.length;
-    if (assignable(pool[i])) {
-      pIdx = i;
-      break;
+  const walk = (ok: (e: PublishedEdge) => boolean) => {
+    for (let step = 0; step < pool.length; step++) {
+      const i = (start + step) % pool.length;
+      if (ok(pool[i])) return i;
     }
-  }
+    return -1;
+  };
+  let pIdx = walk(preferred);
+  if (pIdx < 0) pIdx = walk(assignable);
   if (pIdx < 0) return { primary: null, backup: null };
   const primaryEdge = pool[pIdx];
   if (!opts.includeBackup) return endpointsFor(subscriberKey, primaryEdge, null, opts);
   // Backup: the next assignable edge after the primary in pool order, away
   // from the primary's failure domain: another provider first, then another
-  // location (a missing key counts as unknown, never as "different").
+  // location (a missing key counts as unknown, never as "different"); one
+  // with a universal name before one without.
   const ordered: PublishedEdge[] = [];
   for (let step = 1; step < pool.length; step++) {
     const e = pool[(pIdx + step) % pool.length];
     if (assignable(e)) ordered.push(e);
   }
-  const backupEdge =
-    ordered.length === 0
+  const pick = (list: PublishedEdge[]): PublishedEdge | null =>
+    list.length === 0
       ? null
       : ((opts.preferDistinctProviders
-          ? (ordered.find((e) => e.provider !== primaryEdge.provider) ??
-            ordered.find((e) => differentLocation(e, primaryEdge)))
-          : undefined) ?? ordered[0]);
+          ? (list.find((e) => e.provider !== primaryEdge.provider) ??
+            list.find((e) => differentLocation(e, primaryEdge)))
+          : undefined) ?? list[0]);
+  const backupEdge = pick(ordered.filter((e) => universalNameOn(e, opts.where))) ?? pick(ordered);
   return endpointsFor(subscriberKey, primaryEdge, backupEdge, opts);
 }
 
@@ -552,7 +577,12 @@ function assignByTier(
   ownTier: (e: PublishedEdge) => EdgeTier,
   rule: { dropBlockedBackup: boolean },
 ): Assignment {
-  const assignable = pool.map((e) => assignableFor(subscriberKey, e, opts));
+  const loose = pool.map((e) => assignableFor(subscriberKey, e, opts));
+  // Without a country, edges with a universal name first (`universalNameOn`):
+  // the others are walked only when none has one, and back up last.
+  const nameLast = pool.map((e) => !universalNameOn(e, opts.where));
+  const strict = loose.map((ok, i) => ok && !nameLast[i]);
+  const assignable = strict.some(Boolean) ? strict : loose;
   const proven = pool.filter((e, i) => assignable[i] && ownTier(e) === 0).length;
   // Fewer proven edges than the exclusivity floor: proven and not-known share tier 1.
   const exclusive = proven >= Math.max(1, opts.minProvenForExclusive ?? 1);
@@ -581,12 +611,13 @@ function assignByTier(
     const candidates: Array<{ e: PublishedEdge; key: number[] }> = [];
     for (let step = 1; step < pool.length; step++) {
       const i = (pIdx + step) % pool.length;
-      if (!assignable[i]) continue;
+      if (!loose[i]) continue;
       const e = pool[i]!;
       const distinct = opts.preferDistinctProviders;
       candidates.push({
         e,
         key: [
+          nameLast[i] ? 1 : 0,
           tiers[i] === 2 ? 1 : 0,
           distinct && e.provider === primaryEdge.provider ? 1 : 0,
           tiers[i]!,
@@ -601,7 +632,8 @@ function assignByTier(
       return 0;
     });
     backupEdge = candidates[0]?.e ?? null;
-    // Blocked ones sort last, so a blocked first candidate means every one is.
+    // Blocked ones sort last, so a blocked first candidate means every one is
+    // (`nameLast` only ever differs without a country, where nothing is dropped).
     if (backupEdge && rule.dropBlockedBackup && primaryTier < 2 && ownTier(backupEdge) === 2)
       backupEdge = null;
   }
@@ -686,8 +718,10 @@ export interface DeliveryPath {
  * backup is the best one besides the primary, a blocked one last), so the
  * chosen edge is not the backup either. With `universal` (mirrors without the
  * member's choice avoid edges blocked in ANY listed country), the same holds
- * for edges not blocked in any listed country. An edge that serves no path
- * proves nothing (false: no veto).
+ * for edges not blocked in any listed country that also carry a universal
+ * name: a mirror reader walks those first (`universalNameOn`), so an edge
+ * whose names are all blocked somewhere is no way around the chosen one. An
+ * edge that serves no path proves nothing (false: no veto).
  */
 export function steeringAvoids(
   chosen: PublishedEdge,
@@ -713,10 +747,14 @@ export function steeringAvoids(
   if (served.length === 0) return false;
   const blockedAnywhere = (e: PublishedEdge) =>
     (e.blockedIn ?? []).some((c) => curated.includes(c));
+  const nowhere: CountryContext = { country: null, curated };
   return served.every((p) => {
     const need = p.backupFirst ? 2 : 1;
     const others = published.filter((e) => e.edgeId !== chosen.edgeId && on(e, p));
     if (others.filter((e) => edgeTier(e, country) < 2).length < need) return false;
-    return !opts.universal || others.filter((e) => !blockedAnywhere(e)).length >= need;
+    return (
+      !opts.universal ||
+      others.filter((e) => !blockedAnywhere(e) && universalNameOn(e, nowhere)).length >= need
+    );
   });
 }

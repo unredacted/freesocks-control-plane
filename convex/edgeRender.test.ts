@@ -913,6 +913,35 @@ describe("edgeRender: server names for the member's country", () => {
     ).toEqual(['cn-ok-1.example', 'cn-ok-2.example']);
   });
 
+  test('no country and every name blocked somewhere: the least blocked names, never a 503', async () => {
+    stubPanel();
+    vi.stubEnv('CF_FRONTED', 'true');
+    const s = await seedCountry();
+    const blocked: Record<string, string[]> = {
+      'cn-ok-1.example': ['IR'],
+      'cn-ok-2.example': ['IR', 'RU'],
+      'cn-blocked.example': ['CN'],
+      'plain.example': ['CN', 'IR', 'RU'],
+    };
+    await s.t.run(async (ctx) => {
+      const l = (await ctx.db.get(s.listenerId))!;
+      await ctx.db.patch(s.listenerId, {
+        tlsNames: l.tlsNames!.map((n) => ({ ...n, blockedIn: blocked[n.name] })),
+      });
+    });
+    const res = await from(s.t);
+    expect(res.status).toBe(200);
+    const names = sniOf(await res.text());
+    // A name blocked in one country leads; the one blocked in three is never first.
+    expect(['cn-ok-1.example', 'cn-blocked.example']).toContain(names[0]);
+    expect(names[0]).not.toBe('plain.example');
+    // A member in CN still never gets a name blocked there.
+    const cn = sniOf(await (await from(s.t, 'CN')).text());
+    expect(cn.length).toBeGreaterThan(0);
+    expect(cn).not.toContain('cn-blocked.example');
+    expect(cn).not.toContain('plain.example');
+  });
+
   test('the country header counts only behind the CDN; otherwise a client could forge it', async () => {
     stubPanel();
     const { t } = await seedCountry();
