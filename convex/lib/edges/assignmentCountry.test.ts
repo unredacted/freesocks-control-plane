@@ -117,6 +117,110 @@ describe('assignEndpoints without a country', () => {
   });
 });
 
+describe('a member with no country and names blocked somewhere', () => {
+  const NOWHERE = { country: null, curated: ['IR', 'RU', 'CN'] };
+  const named = (marks: Record<string, string[]>) =>
+    Object.entries(marks).map(([sni, blockedIn]) => ({
+      sni,
+      status: 'active' as const,
+      ...(blockedIn.length ? { blockedIn } : {}),
+    }));
+  const hrw = (over: Partial<PublishedEdge> & { edgeId: string; poolIndex: number }) =>
+    edge({ sniPick: 'hrw1', provider: `p${over.poolIndex}`, ...over });
+
+  test('every name blocked somewhere: still served, the least blocked name first', () => {
+    const pool = [
+      hrw({
+        edgeId: 'e0',
+        poolIndex: 0,
+        serverNames: named({ 'two.example': ['IR', 'RU'], 'one.example': ['CN'] }),
+      }),
+    ];
+    for (let i = 0; i < 200; i++) {
+      const a = assignEndpoints(keyOf(i), pool, { ...OPTS, where: NOWHERE, namesPerEndpoint: 2 });
+      expect(a.primary?.sni).toBe('one.example');
+      expect(a.primary?.alternates?.map((x) => x.sni)).toEqual(['two.example']);
+    }
+    // A member in IR still never gets a name blocked there.
+    const ir = assignEndpoints(keyOf(1), pool, {
+      ...OPTS,
+      where: { ...NOWHERE, country: 'IR' },
+      namesPerEndpoint: 2,
+    });
+    expect([ir.primary?.sni, ...(ir.primary?.alternates ?? []).map((x) => x.sni)]).toEqual([
+      'one.example',
+    ]);
+  });
+
+  test('a universal name on the edge: a name blocked somewhere is never offered beside it', () => {
+    const pool = [
+      hrw({
+        edgeId: 'e0',
+        poolIndex: 0,
+        serverNames: named({ 'ok.example': [], 'ir.example': ['IR'], 'ru.example': ['RU'] }),
+      }),
+    ];
+    for (let i = 0; i < 200; i++) {
+      const a = assignEndpoints(keyOf(i), pool, { ...OPTS, where: NOWHERE, namesPerEndpoint: 3 });
+      expect(a.primary?.sni).toBe('ok.example');
+      expect(a.primary?.alternates ?? []).toEqual([]);
+    }
+  });
+
+  test('while any edge has a universal name, an edge without one stays out, the backup included', () => {
+    const pool = [
+      hrw({ edgeId: 'blocked-names', poolIndex: 0, serverNames: named({ 'ir.example': ['IR'] }) }),
+      hrw({ edgeId: 'universal', poolIndex: 1, serverNames: named({ 'ok.example': [] }) }),
+    ];
+    for (const extra of [{}, { avoidBlockedIn: ['IR', 'RU', 'CN'] }]) {
+      for (let i = 0; i < 200; i++) {
+        const a = assignEndpoints(keyOf(i), pool, { ...OPTS, ...extra, where: NOWHERE });
+        expect(a.primary?.edge.edgeId).toBe('universal');
+        expect(a.backup).toBeNull();
+      }
+    }
+  });
+
+  test('no edge with a universal name: every edge is the last resort, primary and backup', () => {
+    const pool = [
+      hrw({ edgeId: 'e0', poolIndex: 0, serverNames: named({ 'ir.example': ['IR'] }) }),
+      hrw({ edgeId: 'e1', poolIndex: 1, serverNames: named({ 'ru.example': ['RU'] }) }),
+    ];
+    for (const extra of [{}, { avoidBlockedIn: ['IR', 'RU', 'CN'] }]) {
+      const seen = new Set<string>();
+      for (let i = 0; i < 200; i++) {
+        const a = assignEndpoints(keyOf(i), pool, { ...OPTS, ...extra, where: NOWHERE });
+        expect(a.primary).not.toBeNull();
+        expect(a.backup).not.toBeNull();
+        expect(a.backup!.edge.edgeId).not.toBe(a.primary!.edge.edgeId);
+        seen.add(a.primary!.edge.edgeId);
+      }
+      // The seeded walk still spreads members over both.
+      if (!('avoidBlockedIn' in extra)) expect([...seen].sort()).toEqual(['e0', 'e1']);
+    }
+    // A member in IR gets only the edge whose name is not blocked there.
+    const ir = assignEndpoints(keyOf(3), pool, { ...OPTS, where: { ...NOWHERE, country: 'IR' } });
+    expect(ir.primary?.edge.edgeId).toBe('e1');
+    expect(ir.backup).toBeNull();
+  });
+
+  test('the veto never counts an edge whose names are all blocked somewhere as a way around', () => {
+    const chosen = hrw({
+      edgeId: 'chosen',
+      poolIndex: 0,
+      blockedIn: ['IR'],
+      serverNames: named({ 'ok.example': [] }),
+    });
+    const other = hrw({ edgeId: 'o', poolIndex: 1, serverNames: named({ 'ru.example': ['RU'] }) });
+    // Members in IR are routed around it, mirror readers are not: their first
+    // choice is the one edge with a universal name, the chosen one.
+    expect(steeringAvoids(chosen, [chosen, other], 'IR', PATHS, ['IR', 'RU'])).toBe(true);
+    expect(
+      steeringAvoids(chosen, [chosen, other], 'IR', PATHS, ['IR', 'RU'], { universal: true }),
+    ).toBe(false);
+  });
+});
+
 describe('assignEndpoints by tier', () => {
   const four = (over: Record<number, Partial<PublishedEdge>> = {}) =>
     [0, 1, 2, 3].map((i) =>
