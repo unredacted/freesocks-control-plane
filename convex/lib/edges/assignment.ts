@@ -188,10 +188,28 @@ function backupSniFor(
   const plain = sniFor(subscriberKey, edge, where);
   if (!plain.ok || plain.sni === null) return plain;
   if (edge.sniPick !== 'hrw1' || edgeHostname(edge) || taken.size === 0) return plain;
-  const fresh = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames, where).find(
-    (n) => !taken.has(n),
-  );
+  const fresh = preferUntaken(
+    rankSniHrwTiered(subscriberKey, edge.edgeId, edge.serverNames, where),
+    taken,
+  )[0];
   return { ok: true, sni: fresh ?? plain.sni };
+}
+
+/**
+ * Ranked names with the ones in `taken` after the others OF THE SAME TIER:
+ * an endpoint spreads over names its sibling does not carry, but a name
+ * proven where the member is still beats one nobody judged there (a member in
+ * a country with three proven names on the primary keeps proven names on the
+ * backup too). Without a country every name is in one tier, so this is plain
+ * "untaken first". Stable: the rendezvous order holds inside each group.
+ */
+function preferUntaken(
+  ranked: readonly { sni: string; tier: number }[],
+  taken: ReadonlySet<string>,
+): string[] {
+  return [...ranked]
+    .sort((a, b) => a.tier - b.tier || Number(taken.has(a.sni)) - Number(taken.has(b.sni)))
+    .map((x) => x.sni);
 }
 
 /**
@@ -249,12 +267,10 @@ function namesFor(
 ): string[] {
   if (first === null || want <= 1) return [];
   if (edge.sniPick !== 'hrw1' || edgeHostname(edge) || !protocolUsesSni(edge.proto)) return [];
-  const ranked = rankSniHrw(subscriberKey, edge.edgeId, edge.serverNames, where).filter(
-    (n) => n !== first,
+  const ranked = rankSniHrwTiered(subscriberKey, edge.edgeId, edge.serverNames, where).filter(
+    (n) => n.sni !== first,
   );
-  const fresh = ranked.filter((n) => !avoid.has(n));
-  const pool = fresh.length >= want - 1 ? fresh : [...fresh, ...ranked.filter((n) => avoid.has(n))];
-  return pool.slice(0, want - 1);
+  return preferUntaken(ranked, avoid).slice(0, want - 1);
 }
 
 export interface Assignment {
@@ -362,6 +378,16 @@ export function rankSniHrw(
   serverNames: readonly AssignableSni[],
   where?: CountryContext,
 ): string[] {
+  return rankSniHrwTiered(subscriberKey, edgeId, serverNames, where).map((x) => x.sni);
+}
+
+/** `rankSniHrw` with each name's country tier (0 proven where the member is, 1 not judged). */
+function rankSniHrwTiered(
+  subscriberKey: string,
+  edgeId: string,
+  serverNames: readonly AssignableSni[],
+  where?: CountryContext,
+): { sni: string; tier: number }[] {
   const scored: { sni: string; score: number; tier: number }[] = [];
   const seen = new Set<string>();
   for (const s of serverNames) {
@@ -377,7 +403,7 @@ export function rankSniHrw(
   scored.sort(
     (a, b) => a.tier - b.tier || b.score - a.score || (a.sni < b.sni ? -1 : a.sni > b.sni ? 1 : 0),
   );
-  return scored.map((x) => x.sni);
+  return scored.map((x) => ({ sni: x.sni, tier: x.tier }));
 }
 
 export interface AssignOptions {

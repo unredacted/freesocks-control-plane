@@ -2168,9 +2168,14 @@ every listener with a judged name is):
 | anywhere else, or unknown | The **universal pool**: names not blocked in **any** curated country.                                                                                                         |
 | reading an S3 mirror      | The same universal pool (a mirror has no request to infer anything from, and exists for exactly the people who are blocked), unless they said where they are.                 |
 
-Each tier keeps the rendezvous order, so the stability properties hold inside it. If every name
-of an edge is excluded for a member's country, that edge is not assignable **for them** and the
-walk moves to the next edge; with none left the existing edge-required behaviour applies.
+Each tier keeps the rendezvous order, so the stability properties hold inside it. An endpoint's
+further names, and the backup's, spread over names the other endpoint does not carry only
+**within a tier**: a name proven there, even one the primary already carries, comes before one
+nobody judged there (with the default three names on the primary and three proven names, the
+backup keeps a proven one). Without a country every name is in one tier and nothing changes. If
+every name of an edge is excluded for a member's country, that edge is not assignable **for
+them** and the walk moves to the next edge; with none left the existing edge-required behaviour
+applies.
 
 **Where the member is** (`convex/lib/memberCountry.ts` `memberWhere`; the privacy rules are
 docs/privacy.md §1 "Where a member connects from"). Only a key of a freedom-family mode has a

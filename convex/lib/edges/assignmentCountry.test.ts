@@ -87,6 +87,10 @@ describe('assignEndpoints without a country', () => {
   test('is exactly the assignment it always was (pinned over a fixed corpus)', () => {
     // The digest was taken from main's assignEndpoints before delivery by
     // country existed, over this same corpus: 12,000 assignments, byte for byte.
+    // Re-pinned once when an endpoint's names started to prefer a name proven
+    // in the member's country over an untaken one nobody judged there: every
+    // assignment whose `where` names no country was checked identical to the
+    // previous code over this corpus and three more seeds (36,665 of them).
     let digest = 0x811c9dc5;
     let pool = 0;
     for (const { edges, rnd } of corpus(7, 300)) {
@@ -109,7 +113,7 @@ describe('assignEndpoints without a country', () => {
       }
       pool++;
     }
-    expect(digest).toBe(2698451639);
+    expect(digest).toBe(1819980137);
   });
 });
 
@@ -178,6 +182,47 @@ describe('assignEndpoints by tier', () => {
       expect(a.primaryTier).toBe(a.primary!.edge.edgeId === 'e1' ? 0 : 1);
     }
     expect(counts.size).toBe(4);
+  });
+
+  test('names proven where the member is beat untaken ones nobody judged there, on the backup too', () => {
+    const names = ['p1.example', 'p2.example', 'p3.example', 'u1.example', 'u2.example'].map(
+      (sni) => ({
+        sni,
+        status: 'active' as const,
+        ...(sni.startsWith('p') ? { provenIn: ['IR'] } : {}),
+      }),
+    );
+    const pool = [0, 1].map((i) =>
+      edge({
+        edgeId: `e${i}`,
+        poolIndex: i,
+        provider: `p${i}`,
+        sniPick: 'hrw1',
+        serverNames: names,
+      }),
+    );
+    const where = { country: 'IR', curated: ['IR'] };
+    for (let i = 0; i < 300; i++) {
+      const a = assignEndpoints(keyOf(i), pool, {
+        ...OPTS,
+        where,
+        namesPerEndpoint: 3,
+        backupNames: 2,
+      });
+      const primary = [a.primary!.sni, ...(a.primary!.alternates ?? []).map((x) => x.sni)];
+      const backup = [a.backup!.sni, ...(a.backup!.alternates ?? []).map((x) => x.sni)];
+      // Three proven names: the primary holds exactly them, and the backup still
+      // gets proven ones (shared) rather than a name nobody judged in IR.
+      expect(primary.sort()).toEqual(['p1.example', 'p2.example', 'p3.example']);
+      for (const n of backup) expect(n).toMatch(/^p/);
+    }
+    // Without a country every name is alike: the backup spreads to untaken names.
+    const plain = assignEndpoints(keyOf(1), pool, { ...OPTS, namesPerEndpoint: 3, backupNames: 2 });
+    const taken = new Set([
+      plain.primary!.sni,
+      ...(plain.primary!.alternates ?? []).map((x) => x.sni),
+    ]);
+    expect(taken.has(plain.backup!.sni!)).toBe(false);
   });
 
   test('a backup blocked in the member’s country is left out behind a primary that is not', () => {
