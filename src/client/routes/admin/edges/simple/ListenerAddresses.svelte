@@ -109,6 +109,7 @@
   const address = (e: EdgeAdmin) =>
     e.addresses.hostname ?? e.addresses.v4 ?? e.addresses.v6 ?? e.name;
   const WORD = { published: 'In use', unpublished: 'Spare', draining: 'Retiring' } as const;
+  const CHECKED_BY_FCP = "checked by FCP's client";
   // The provider's check is not the members' view: whether it answers from outside, apart.
   const reachWord = (e: EdgeAdmin) =>
     OUTSIDE_REACH_LABELS[outsideReachOf(e.reachability)].toLowerCase();
@@ -117,7 +118,9 @@
     // A second address the provider reported later: served only once tested.
     if (e.verification.current && e.verification.learnedAddress)
       return `tested; new address ${e.verification.learnedAddress} not served until tested`;
-    if (e.verification.current) return 'tested';
+    // Confirmed by FCP's own client check (a location you tested an address in).
+    if (e.verification.current)
+      return e.verification.record?.method === 'client_check' ? CHECKED_BY_FCP : 'tested';
     if (e.verification.stale) return 'retest needed';
     return 'not tested yet';
   };
@@ -168,7 +171,7 @@
                 {WORD[e.publication]}, {healthLabel(e.health).toLowerCase()}, {reachWord(e)}{#if t}, {t}{/if}
               </span>
             {/if}
-            {#if t && t !== 'tested'}
+            {#if t && t !== 'tested' && t !== CHECKED_BY_FCP}
               <Button
                 variant="link"
                 size="sm"

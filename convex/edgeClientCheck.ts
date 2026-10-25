@@ -19,12 +19,14 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import {
   internalAction,
   internalMutation,
   internalQuery,
   type ActionCtx,
+  type DatabaseReader,
+  type MutationCtx,
 } from './_generated/server';
 import {
   CLIENT_CHECK_ENGINES,
@@ -53,7 +55,15 @@ import { edgeClientCheckV } from './lib/edges/clientCheck/validators';
 import { canonicalIp } from './lib/edges/ip';
 import { edgeLayerOf } from './lib/edges/providers/capabilities';
 import { liveEdgesOfRelay } from './lib/edges/relayGuards';
-import { verificationCurrent } from './lib/edges/verification';
+import {
+  bindingMatches,
+  verificationBinding,
+  verificationCurrent,
+  type VerificationEdgeLike,
+  type VerificationListenerLike,
+} from './lib/edges/verification';
+import { resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
+import { locationTicked } from './lib/edges/tickedLocation';
 import { verificationListenerOf } from './lib/edges/verificationContext';
 import { nodeAddressesOf } from './nodeIntents';
 
@@ -95,6 +105,8 @@ export type ClientCheckOutcome =
         listenerRevision: number;
         configHash: string;
       };
+      /** The check confirmed the address for publication (a ticked location, the switch on). */
+      confirmed: boolean;
     };
 
 const REALITY_FAMILY_ENGINE: Record<string, ClientCheckEngine> = { singbox: 'sing-box' };
@@ -161,11 +173,20 @@ export const record = internalMutation({
   args: {
     edgeId: v.id('edges'),
     result: edgeClientCheckV,
+    /** The test link's binding: what the sessions proved (the confirmation binds to it). */
+    binding: v.optional(
+      v.object({
+        endpoint: v.string(),
+        listenerKey: v.string(),
+        listenerRevision: v.number(),
+        configHash: v.string(),
+      }),
+    ),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { edgeId, result, actorAdminId }) => {
+  handler: async (ctx, { edgeId, result, binding, actorAdminId }) => {
     const edge = await ctx.db.get(edgeId);
-    if (!edge) return null;
+    if (!edge) return { confirmed: false };
     await ctx.db.patch(edgeId, { clientCheck: result, updatedAt: Date.now() });
     const relay = await ctx.db.get(edge.relayId);
     await writeAuditLog(ctx, {
@@ -184,9 +205,66 @@ export const record = internalMutation({
         engines: result.engines.map((e) => `${e.engine}:${e.code}`).join(' '),
       },
     });
-    return null;
+    return { confirmed: binding ? await confirmByCheck(ctx, edge, result, binding) : false };
   },
 });
+
+/**
+ * A passing check confirms the address for publication (docs/edges.md §
+ * "Replacing a blocked address without a spare") only where FCP's own check may
+ * stand in for the owner's tick: the switch is on (`edge.clientCheck.enabled`),
+ * the address is L4 and in a location the owner ticked an address in, and the
+ * sessions proved the configuration it holds now. An owner's own current tick
+ * is never replaced. The record binds like a tick (stale the same way).
+ */
+async function confirmByCheck(
+  ctx: MutationCtx,
+  edge: Doc<'edges'>,
+  result: Doc<'edges'>['clientCheck'] & object,
+  binding: { endpoint: string; listenerKey: string; listenerRevision: number; configHash: string },
+): Promise<boolean> {
+  if (!result.ok) return false;
+  if (!(await resolveEdgeConfig(ctx.db)).clientCheck.enabled) return false;
+  if ((edge.layer ?? edgeLayerOf(edge.provider)) === 'l7') return false;
+  if (edge.status !== 'active' && edge.status !== 'verifying') return false;
+  const location = edge.locationId ? await ctx.db.get(edge.locationId) : null;
+  if (!locationTicked(location)) return false;
+  const raw = await ctx.db.get(edge.listenerId);
+  if (!raw || raw.retired) return false;
+  const listener = await verificationListenerOf(ctx.db, raw);
+  const current = verificationBinding(edge, listener);
+  if (!bindingMatches(current, binding)) return false;
+  if (edge.verification?.by === 'admin' && verificationCurrent(edge, listener)) return false;
+  const now = Date.now();
+  await ctx.db.patch(edge._id, {
+    verification: {
+      rung: 'verified',
+      by: 'system',
+      at: now,
+      method: 'client_check',
+      ...current!,
+      ...(listener.authRevision ? { authRevision: listener.authRevision } : {}),
+      engines: result.engines
+        .filter((e) => e.code === 'ok')
+        .map((e) => ({ engine: e.engine, version: e.engineVersion })),
+    },
+    updatedAt: now,
+  });
+  const relay = await ctx.db.get(edge.relayId);
+  await writeAuditLog(ctx, {
+    actorType: 'system',
+    action: 'edge.verified',
+    targetType: 'edge',
+    targetId: edge._id,
+    payload: {
+      relaySlug: relay?.slug ?? '',
+      edgeId: edge._id,
+      listenerKey: listener.listenerKey,
+      method: 'client_check',
+    },
+  });
+  return true;
+}
 
 export const recordHealth = internalMutation({
   args: {
@@ -198,6 +276,69 @@ export const recordHealth = internalMutation({
   handler: async (ctx, a) => {
     await writeStateJson(ctx.db, CLIENT_CHECK_HEALTH_KEY, { at: Date.now(), ...a });
     return null;
+  },
+});
+
+/** A health answer older than this says nothing (the reconcile asks every 5 minutes). */
+export const CLIENT_CHECK_HEALTH_FRESH_MS = 30 * 60_000;
+
+export type ClientCheckReadiness = 'ready' | 'off' | 'not_configured' | 'unhealthy';
+
+/**
+ * Whether FCP may count on its own client check now (a replace with no tested
+ * spare relies on it): the switch is on, the deployment has the service, and
+ * the service answered its last health check, recently.
+ */
+export async function clientCheckReadiness(
+  db: DatabaseReader,
+  cfg: Pick<EdgeConfig, 'clientCheck'>,
+  now: number = Date.now(),
+): Promise<ClientCheckReadiness> {
+  if (!cfg.clientCheck.enabled) return 'off';
+  if (!clientCheckService(process.env)) return 'not_configured';
+  const h = await readStateJson<ClientCheckHealthRecord>(db, CLIENT_CHECK_HEALTH_KEY);
+  if (!h || !h.ok || now - h.at > CLIENT_CHECK_HEALTH_FRESH_MS) return 'unhealthy';
+  return 'ready';
+}
+
+/**
+ * Whether the service could be counted on if the switch were on: configured,
+ * and its last health answer recent and healthy (`clientCheckReadiness`
+ * without the switch). The automation switch asks it before letting spares go.
+ */
+export async function clientCheckServiceReady(
+  db: DatabaseReader,
+  now: number = Date.now(),
+): Promise<boolean> {
+  return (await clientCheckReadiness(db, { clientCheck: { enabled: true } }, now)) === 'ready';
+}
+
+/**
+ * The address's latest check, taken against the configuration it holds now,
+ * found the ADDRESS at fault (not the node, not the checker). A spare like that
+ * is not picked for a replace again until a later check passes, so a failed
+ * gate does not make every later replace retry the same known-bad address.
+ */
+export function clientCheckFailedNow(
+  edge: Pick<Doc<'edges'>, 'clientCheck'> & VerificationEdgeLike,
+  listener: VerificationListenerLike | undefined,
+): boolean {
+  const c = edge.clientCheck;
+  if (!c || c.ok || !listener) return false;
+  if (c.verdict !== 'address_failed' && c.verdict !== 'egress_mismatch') return false;
+  const b = verificationBinding(edge, listener);
+  return !!b && b.configHash === c.configHash && b.listenerRevision === c.listenerRevision;
+}
+
+/** Whether the address holds a confirmation that describes it now (the client gate's "passed already"). */
+export const confirmationCurrent = internalQuery({
+  args: { edgeId: v.id('edges') },
+  handler: async (ctx, { edgeId }): Promise<boolean> => {
+    const edge = await ctx.db.get(edgeId);
+    if (!edge) return false;
+    const raw = await ctx.db.get(edge.listenerId);
+    if (!raw || raw.retired) return false;
+    return verificationCurrent(edge, await verificationListenerOf(ctx.db, raw));
   },
 });
 
@@ -239,7 +380,23 @@ type Link =
     }
   | { ok: false; detail: string };
 
-async function linkFor(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<Link> {
+export type ClientCheckLink = Link;
+type LinkBuilder = (ctx: ActionCtx, edgeId: Id<'edges'>) => Promise<Link>;
+let linkBuilder: LinkBuilder = buildLink;
+
+/**
+ * Test seam: build the check's link without a backend (a rotation test has no
+ * panel serving credential bodies). The real builder is the test link's.
+ */
+export function __setClientCheckLinks(f: LinkBuilder | null): void {
+  linkBuilder = f ?? buildLink;
+}
+
+function linkFor(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<Link> {
+  return linkBuilder(ctx, edgeId);
+}
+
+async function buildLink(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<Link> {
   try {
     const r = await ctx.runAction(internal.edgeTestLinks.build, { edgeId, clientCheck: true });
     return { ok: true, link: r.link, binding: r.binding, credentialId: r.credentialId };
@@ -352,8 +509,15 @@ export async function runClientCheck(
       expectedRefusals: c.expectedRefusals,
     });
     const at = Date.now();
-    await ctx.runMutation(internal.edgeClientCheck.record, {
+    const binding = {
+      endpoint: link.binding.endpoint,
+      listenerKey: link.binding.listenerKey,
+      listenerRevision: link.binding.listenerRevision,
+      configHash: link.binding.configHash,
+    };
+    const recorded = await ctx.runMutation(internal.edgeClientCheck.record, {
       edgeId: a.edgeId,
+      binding,
       ...(a.actorAdminId ? { actorAdminId: a.actorAdminId } : {}),
       result: {
         at,
@@ -373,12 +537,8 @@ export async function runClientCheck(
       ok: j.ok,
       engines: j.engines,
       control: control !== null,
-      binding: {
-        endpoint: link.binding.endpoint,
-        listenerKey: link.binding.listenerKey,
-        listenerRevision: link.binding.listenerRevision,
-        configHash: link.binding.configHash,
-      },
+      binding,
+      confirmed: recorded.confirmed,
     };
   } finally {
     // A temporary Outline key lives only for the check.
@@ -397,31 +557,67 @@ export async function runClientCheck(
 
 /**
  * Before deploying a build from before the client check: its schema has no
- * `edges.clientCheck` and no `client_check` test-credential purpose, so a push
- * is refused while any row holds one. Clears the verdicts (a page per run, the
- * rest scheduled) and hands the temporary keys of checks to the `test_link`
- * purpose (equally temporary; the sweep still removes them). Run with no
+ * `edges.clientCheck`, no `client_check` test-credential purpose, and none of
+ * the fields of replacing without a spare (`edges.replacementOf`, a
+ * `client_check` verification and its `engines`, `relays.autoReplaceHolds`,
+ * `edgeRotations.clientCheckGate`), so a push is refused while any row holds
+ * one. An address FCP's check confirmed keeps serving: its confirmation is kept
+ * as a `named_connection`. Walks the edges, the rotations (then the origins'
+ * holds) and the temporary keys (handed to the `test_link` purpose; the sweep
+ * still removes them), a page per run, the rest scheduled. Run with no
  * arguments; run it again if the push is still refused.
  */
 export const clearForRollback = internalMutation({
   args: {
     cursor: v.optional(v.union(v.string(), v.null())),
-    phase: v.optional(v.union(v.literal('edges'), v.literal('credentials'))),
+    phase: v.optional(
+      v.union(v.literal('edges'), v.literal('rotations'), v.literal('credentials')),
+    ),
   },
   handler: async (ctx, { cursor, phase }) => {
     let cleared = 0;
-    const next = (args: { phase: 'edges' | 'credentials'; cursor?: string }) =>
+    type Phase = 'edges' | 'rotations' | 'credentials';
+    const next = (args: { phase: Phase; cursor?: string }) =>
       ctx.scheduler.runAfter(0, internal.edgeClientCheck.clearForRollback, args);
-    if ((phase ?? 'edges') === 'edges') {
+    const at = phase ?? 'edges';
+    if (at === 'edges') {
       const page = await ctx.db.query('edges').paginate({ cursor: cursor ?? null, numItems: 200 });
-      for (const e of page.page)
-        if (e.clientCheck !== undefined) {
-          await ctx.db.patch(e._id, { clientCheck: undefined });
+      for (const e of page.page) {
+        const rec = e.verification;
+        const fromCheck = rec?.method === 'client_check';
+        if (e.clientCheck === undefined && e.replacementOf === undefined && !fromCheck) continue;
+        await ctx.db.patch(e._id, {
+          clientCheck: undefined,
+          replacementOf: undefined,
+          ...(fromCheck
+            ? { verification: { ...rec!, method: 'named_connection' as const, engines: undefined } }
+            : {}),
+        });
+        cleared++;
+      }
+      await next(
+        page.isDone ? { phase: 'rotations' } : { phase: 'edges', cursor: page.continueCursor },
+      );
+      return { cleared, done: false };
+    }
+    if (at === 'rotations') {
+      const page = await ctx.db
+        .query('edgeRotations')
+        .paginate({ cursor: cursor ?? null, numItems: 200 });
+      for (const r of page.page)
+        if (r.clientCheckGate !== undefined) {
+          await ctx.db.patch(r._id, { clientCheckGate: undefined });
           cleared++;
         }
-      await next(
-        page.isDone ? { phase: 'credentials' } : { phase: 'edges', cursor: page.continueCursor },
-      );
+      if (!page.isDone) {
+        await next({ phase: 'rotations', cursor: page.continueCursor });
+        return { cleared, done: false };
+      }
+      // Origins are operator-scale: their holds go in one pass.
+      for (const relay of await ctx.db.query('relays').collect())
+        if (relay.autoReplaceHolds !== undefined)
+          await ctx.db.patch(relay._id, { autoReplaceHolds: undefined });
+      await next({ phase: 'credentials' });
       return { cleared, done: false };
     }
     const page = await ctx.db

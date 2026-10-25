@@ -410,6 +410,10 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // FCP's own client check of one address (edgeClientCheck.ts): codes only, never an
   // address or an egress IP. `engines` = `sing-box:ok xray:reality_refused`.
   'edge.client_check': ['relaySlug', 'edgeId', 'verdict', 'by', 'control', 'engines'],
+  // Automatic replacement of a transport held (a replacement blocked again soon
+  // after going into use) and lifted by the operator.
+  'edge.auto_replace_held': ['relaySlug', 'listenerKey', 'code', 'edgeId'],
+  'edge.auto_replace_resumed': ['relaySlug', 'lifted'],
   // The system's `partial` rung moved (lib/edges/verifyRung.ts): the word only, never the address.
   'edge.verification.rung': ['relaySlug', 'edgeId', 'listenerKey', 'rung'],
   // Rotation keeps the qualification: booleans only, never a key or identifier.

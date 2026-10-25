@@ -1,10 +1,12 @@
 /**
  * Configuration-bound endpoint verification (docs/edges.md § "Publication").
  *
- * An L4 edge cannot be proven server-side: nothing in this stack opens an
- * authenticated REALITY session, and backend online bits do not identify the
- * path a member used. So an L4 endpoint is `verified` ONLY by a human, per
- * endpoint, against the exact configuration they were shown:
+ * An L4 endpoint is `verified` by a human, per endpoint, against the exact
+ * configuration they were shown, or (`method: 'client_check'`, `by: 'system'`)
+ * by FCP's own client check, real sing-box and Xray sessions through it, only
+ * in a location the owner ticked an address in and only with the switch on
+ * (edgeClientCheck.ts; docs/edges.md § "Replacing a blocked address without a
+ * spare"). Both bind to the same:
  *
  *   {endpoint, listenerKey, listenerRevision, configHash}
  *
@@ -67,8 +69,13 @@ export interface VerificationRecord {
   listenerKey: string;
   listenerRevision: number;
   configHash: string;
-  /** `probe` = the system's `partial` rung from probe evidence (lib/edges/verifyRung.ts). */
-  method: 'test_link' | 'named_connection' | 'l7_proof' | 'probe';
+  /**
+   * `probe` = the system's `partial` rung from probe evidence (lib/edges/verifyRung.ts);
+   * `client_check` = FCP's own client check in a ticked location (edgeClientCheck.ts).
+   */
+  method: 'test_link' | 'named_connection' | 'l7_proof' | 'probe' | 'client_check';
+  /** `client_check` only: the engines whose sessions proved it. */
+  engines?: Array<{ engine: string; version: string | null }>;
   /** The enrolled node's auth revision it was taken under (database only; says why it went stale). */
   authRevision?: string;
 }

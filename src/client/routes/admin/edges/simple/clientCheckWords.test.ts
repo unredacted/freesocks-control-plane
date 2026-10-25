@@ -62,6 +62,7 @@ describe('client check words', () => {
         ok: false,
         engines: engines('reality_refused', 'timeout'),
         control: true,
+        confirmed: false,
       }),
     ).toMatchObject({ tone: 'error', title: 'Does not work' });
     expect(
@@ -72,7 +73,19 @@ describe('client check words', () => {
         ok: true,
         engines: engines('ok'),
         control: false,
+        confirmed: false,
       }).tone,
     ).toBe('success');
+    expect(
+      clientCheckToast({
+        checked: true,
+        at: 0,
+        verdict: 'passed',
+        ok: true,
+        engines: engines('ok'),
+        control: false,
+        confirmed: true,
+      }).body,
+    ).toContain('now counts as tested');
   });
 });

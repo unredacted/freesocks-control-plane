@@ -730,6 +730,18 @@ export const run = internalAction({
                 err instanceof ConvexError
                   ? String((err.data as { code?: string }).code ?? 'error')
                   : 'error';
+              // A replacement blocked again soon after it went into use: hold
+              // automatic replacement of its transport instead of retrying every
+              // pass until the daily cap (the operator resumes it). Asked on any
+              // refusal: another blocker (a fleet brake, the daily cap) may be
+              // the one the start named.
+              if (lastRotateError !== 'edge.auto_replace_held')
+                await ctx.runMutation(internal.edgeRotations.holdAutoReplace, {
+                  relayId: o._id,
+                  edgeId: decision.edgeId as Id<'edges'>,
+                  code: 'replacement_reblocked',
+                  ifReblocked: true,
+                });
             }
           }
           await ctx.runMutation(internal.edgeDetector.recordEvaluation, {

@@ -1365,6 +1365,38 @@ export const attention = internalQuery({
           since: iso(refusing.since),
         });
       }
+      // Automatic replacement held for a transport (a replacement blocked again
+      // soon after it went into use): critical, the node is not protected.
+      for (const h of relay.autoReplaceHolds ?? []) {
+        items.push({
+          ...base(relay),
+          id: `auto_replace_held:${relay._id}:${h.listenerId}`,
+          kind: 'auto_replace_held',
+          severity: 'critical',
+          edgeId: (h.edgeId as string | undefined) ?? null,
+          listenerKey: listeners.find((l) => l._id === h.listenerId)?.listenerKey ?? null,
+          code: h.code,
+          facts: {},
+          action: 'open_relay',
+          since: iso(h.at),
+        });
+      }
+      // With FCP's own client check replacing blocked addresses, a protected node
+      // with one address in use has no backup for members while one is made.
+      if (cfg.clientCheck.enabled && bindingState.bound) {
+        const inUse = edges.filter((e) => e.publication === 'published').length;
+        if (inUse === 1)
+          items.push({
+            ...base(relay),
+            id: `single_address:${relay._id}`,
+            kind: 'single_address',
+            severity: 'warning',
+            code: null,
+            facts: { inUse },
+            action: 'open_relay',
+            since: null,
+          });
+      }
       // FCP's own client check found a client family that cannot get through an
       // address in use (refused, or not connecting): members on it are cut off.
       const checkRefused = clientRefusalFacts(edges, listeners);
@@ -1577,7 +1609,11 @@ export const attention = internalQuery({
         const l = listenerOf(e);
         return e.publication === 'unpublished' && !!l && !verificationCurrent(e, l);
       });
-      const replaceRefused = relay.suspicion?.lastRotateError === 'edge.no_verified_spare';
+      // Refused for want of a tested spare, or (FCP's own client check on) of a
+      // location where an address was tested.
+      const refusal = relay.suspicion?.lastRotateError;
+      const replaceRefused =
+        refusal === 'edge.no_verified_spare' || refusal === 'edge.no_ticked_location';
       if (relay.suspicion?.state === 'suspected' && (replaceRefused || untestedSpares.length > 0)) {
         const first = untestedSpares[0] ?? null;
         items.push({
@@ -1587,7 +1623,7 @@ export const attention = internalQuery({
           severity: 'critical',
           edgeId: first ? (first._id as string) : null,
           listenerKey: first ? (listenerOf(first)?.listenerKey ?? null) : null,
-          code: replaceRefused ? 'no_verified_spare' : 'unverified_endpoint',
+          code: replaceRefused ? refusal!.slice('edge.'.length) : 'unverified_endpoint',
           facts: { untestedSpares: untestedSpares.length },
           action: first ? 'verify_endpoint' : 'provision',
           since: isoN(relay.suspicion.firstSeenAt),
@@ -2014,7 +2050,8 @@ export const attention = internalQuery({
         ...fleetBase,
         id: 'client_check_unavailable',
         kind: 'client_check_unavailable',
-        severity: 'warning',
+        // Critical while replacements count on it (spares are then optional).
+        severity: cfg.clientCheck.enabled ? 'critical' : 'warning',
         code: clientCheck.code,
         facts: {},
         action: 'open_settings',
