@@ -62,6 +62,13 @@ export async function withCountryMarks(
   return out;
 }
 
+/** Whether two lists carry the same names with the same marks (order of keys aside). */
+export function sameCountryMarks(a: readonly ListenerName[], b: readonly ListenerName[]): boolean {
+  const key = (n: ListenerName) =>
+    `${n.name}|${n.status}|${[...(n.blockedIn ?? [])].sort().join(',')}|${[...(n.provenIn ?? [])].sort().join(',')}`;
+  return a.length === b.length && a.every((n, i) => key(n) === key(b[i]!));
+}
+
 /** Whether any active entry is judged in some country. */
 export function namesJudged(names: readonly ListenerName[] | undefined): boolean {
   return (names ?? []).some(

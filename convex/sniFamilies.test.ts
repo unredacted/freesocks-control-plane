@@ -453,6 +453,58 @@ describe('judging names per country', () => {
     ]);
   });
 
+  test('rows from before: the deploy settles them once; a judged listener never goes back to legacy', async () => {
+    const { t, call } = await seed();
+    const { registerRelay, realityListener } = await import('./lib/edges/testing/fixtures');
+    await call('POST', 'families', family);
+    await call('POST', 'families/fam-a/names', { lines: ['plain.example', 'big-site.example'] });
+    const { relayId, listenerIds } = await registerRelay(t, {
+      listeners: [realityListener({ tlsNames: ['plain.example', 'big-site.example'] })],
+    });
+    // A mark recorded the way an older build left it: in the table only, the
+    // listener's entries unmarked and its pick legacy.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('sniNameCountry', {
+        name: 'big-site.example',
+        country: 'CN',
+        state: 'blocked',
+        source: 'operator',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(listenerIds.a, {
+        tlsNames: [
+          { name: 'plain.example', status: 'active' },
+          { name: 'big-site.example', status: 'active' },
+        ],
+        sniPick: undefined,
+      });
+    });
+    const epoch = async () => (await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch;
+    const before = await epoch();
+    expect(await t.mutation(internal.relayListeners.reconcileCountryMarks, {})).toEqual({
+      changed: 1,
+      switched: 1,
+    });
+    expect(await t.run((ctx) => ctx.db.get(listenerIds.a))).toMatchObject({
+      tlsNames: [
+        { name: 'plain.example', status: 'active' },
+        { name: 'big-site.example', status: 'active', blockedIn: ['CN'] },
+      ],
+      sniPick: 'hrw1',
+    });
+    expect(await epoch()).toBe(before + 1);
+    // Settled: the next deploy changes nothing and moves nobody.
+    expect(await t.mutation(internal.relayListeners.reconcileCountryMarks, {})).toEqual({
+      changed: 0,
+      switched: 0,
+    });
+    expect(await epoch()).toBe(before + 1);
+    // Back to the legacy pick is refused while a name is judged.
+    await expect(
+      t.mutation(internal.relayListeners.setSniPick, { id: listenerIds.a, version: null }),
+    ).rejects.toThrow(/judged per country/);
+  });
+
   test('only curated countries are judged, and the audit row has no hostname', async () => {
     const { t, call } = await seed();
     await call('POST', 'families', family);

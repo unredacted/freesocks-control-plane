@@ -2157,7 +2157,11 @@ reactivation), once and for good (it never moves back when marks are cleared, wh
 everyone twice). Members are re-ranked among names the node already accepts, so nothing loses
 its connection; the move is audited `relay.listener.sni_pick` with `reason: country_marks`
 (actor system) and the mark's answer counts it (`switched`). A new listener carrying a judged
-name starts on `hrw1`.
+name starts on `hrw1`, and the legacy pick is refused (`POST listeners/{id}/sni-pick {version:
+null}`, `conflict`) while any of its names is judged. Rows written before this was kept (a
+listener created after its names were judged, one still on the legacy pick) are settled by
+`relayListeners.reconcileCountryMarks`, which `seed:seedCutover` runs on every deploy (a no-op
+once settled; a listener it changes moves its origin's epoch).
 
 **Selecting** (`countryTier`, `convex/lib/edges/assignment.ts`; a listener on `hrw1`, which
 every listener with a judged name is):
@@ -4579,12 +4583,12 @@ lifecycle runs in that test and its rows appear here.
 ## Deploy notes
 
 **Country delivery, walk fixes** change what members receive, nothing in the schema: a listener
-whose names carry a per-country mark moves onto `hrw1` the next time a mark, a registration or a
-reactivation touches it (each move audited `relay.listener.sni_pick`, `reason: country_marks`),
-names that reach a listener carry their marks, and a steered member no longer gets a backup known
-blocked in their country. One deploy, no migration, no env change. A listener marked before the
-deploy moves at its next mark; to move it at once, set its pick (`POST listeners/{id}/sni-pick
-{version: 'hrw1'}`) or mark any of its names again.
+whose names carry a per-country mark is on `hrw1` (each move audited `relay.listener.sni_pick`,
+`reason: country_marks`), names that reach a listener carry their marks, a steered member no
+longer gets a backup known blocked in their country, and a backup keeps names proven there. One
+deploy, no migration, no env change. The deploy's `seedCutover` settles listeners written before
+it (`relayListeners.reconcileCountryMarks`): every listener with a judged name moves onto `hrw1`
+at once, its members re-ranked among names the node already accepts at their next refresh.
 
 **The X25519MLKEM768 key share** changes what members receive, nothing stored: every Clash /
 Mihomo / Stash body FCP serves asks its REALITY entries for the key share (a cached body from its
