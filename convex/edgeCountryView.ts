@@ -6,6 +6,11 @@
  * reports), handed to the pure builder (lib/edges/country/view.ts) once per
  * country. Read only: nothing here writes.
  *
+ * Every per-edge, per-location and per-name read covers EVERY country in one
+ * index range (`prefetch`), and each country is then built in memory: the
+ * summary of a 40-country list costs the reads of one country (a transaction
+ * may touch 4,096 index ranges).
+ *
  * Admin only. No member row is read: "handed" is computed over synthetic
  * render keys. The response carries addresses and names (the admin pages
  * already show them); audit rows are untouched.
@@ -26,6 +31,7 @@ import { countryGroupKey } from './lib/edges/country/group';
 import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
 import { suggest } from './lib/edges/sni/vantage';
 import {
+  actedState,
   buildCountryView,
   type EdgeInput,
   type NameFacts,
@@ -36,7 +42,7 @@ import {
 
 type Db = QueryCtx['db'];
 const DAY = 86_400_000;
-/** Report rows read per country, newest days first (the names page reads them the same way). */
+/** Report rows read for one country, newest days first (the checks from inside read them the same way). */
 const REPORT_ROWS = 8000;
 
 /** The same shape for every reachability summary (an edge, an origin). */
@@ -60,6 +66,7 @@ interface Loaded {
     input: Omit<OriginInput, 'edges'>;
     edges: Array<{
       doc: Doc<'edges'>;
+      groupKey: string;
       base: Omit<EdgeInput, 'evidence' | 'mark' | 'locationMark' | 'grade'>;
     }>;
     style: 'subscription' | 'single-key';
@@ -100,6 +107,7 @@ async function load(db: Db): Promise<Loaded> {
     for (const e of active) {
       edges.push({
         doc: e,
+        groupKey: countryGroupKey(e),
         base: {
           edgeId: e._id,
           listenerId: e.listenerId,
@@ -160,6 +168,83 @@ async function load(db: Db): Promise<Loaded> {
   return { origins, names };
 }
 
+const keyOf = (ref: string, country: string) => `${ref}|${country}`;
+
+/**
+ * Every country's evidence rows of every edge, location and name, read once:
+ * one index range per edge, location and name, whatever the number of
+ * countries (rows per key are bounded by the countries checked).
+ */
+interface Prefetched {
+  edgeEvidence: Map<string, Doc<'edgeCountryEvidence'>>;
+  edgeMarks: Map<string, Doc<'countryMarks'>>;
+  groupMarks: Map<string, Doc<'countryMarks'>>;
+  grades: Map<string, Doc<'countryGroupGrades'>>;
+  names: Map<string, Doc<'sniNames'> | null>;
+  families: Map<string, Doc<'sniFamilies'> | null>;
+  nameMarks: Map<string, Doc<'sniNameCountry'>>;
+  vantage: Map<string, Doc<'sniVantageEvidence'>>;
+}
+
+async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
+  const p: Prefetched = {
+    edgeEvidence: new Map(),
+    edgeMarks: new Map(),
+    groupMarks: new Map(),
+    grades: new Map(),
+    names: new Map(),
+    families: new Map(),
+    nameMarks: new Map(),
+    vantage: new Map(),
+  };
+  const groups = new Set<string>();
+  for (const o of loaded.origins)
+    for (const { doc, groupKey } of o.edges) {
+      groups.add(groupKey);
+      for (const r of await db
+        .query('edgeCountryEvidence')
+        .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id))
+        .collect())
+        p.edgeEvidence.set(keyOf(doc._id, r.country), r);
+      for (const m of await db
+        .query('countryMarks')
+        .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id))
+        .collect())
+        if (m.scope === 'edge') p.edgeMarks.set(keyOf(doc._id, m.country), m);
+    }
+  for (const g of groups) {
+    for (const m of await db
+      .query('countryMarks')
+      .withIndex('by_group_country', (q) => q.eq('groupKey', g))
+      .collect())
+      if (m.scope === 'group') p.groupMarks.set(keyOf(g, m.country), m);
+    for (const r of await db
+      .query('countryGroupGrades')
+      .withIndex('by_group_country', (q) => q.eq('groupKey', g))
+      .collect())
+      p.grades.set(keyOf(g, r.country), r);
+  }
+  for (const name of loaded.names) {
+    const n = await db
+      .query('sniNames')
+      .withIndex('by_name', (q) => q.eq('name', name))
+      .unique();
+    p.names.set(name, n);
+    if (n && !p.families.has(n.familyId)) p.families.set(n.familyId, await db.get(n.familyId));
+    for (const m of await db
+      .query('sniNameCountry')
+      .withIndex('by_name', (q) => q.eq('name', name))
+      .collect())
+      p.nameMarks.set(keyOf(name, m.country), m);
+    for (const e of await db
+      .query('sniVantageEvidence')
+      .withIndex('by_name_country', (q) => q.eq('name', name))
+      .collect())
+      p.vantage.set(keyOf(name, e.country), e);
+  }
+  return p;
+}
+
 /** The settings the builder needs, and the switches the page shows. */
 async function settingsOf(db: Db) {
   const [cfg, sni, vantage, censored, member, secrets] = await Promise.all([
@@ -170,6 +255,8 @@ async function settingsOf(db: Db) {
     resolveMemberCountryConfig(db),
     resolveEdgeSecrets(db),
   ]);
+  // The rule's own switch already folds in `edge.render.enabled`; the automation
+  // switch (`edge.enabled`) does not gate delivery, so it does not gate this either.
   const rule = effectiveRule(cfg.render, cfg.render.clients.other);
   const vantageOn = sni.enabled && vantage.enabled && usableSources(vantage, secrets).length > 0;
   return {
@@ -182,7 +269,7 @@ async function settingsOf(db: Db) {
       probes: cfg.probe.enabled,
       countryChecks: cfg.country.enabled,
       steering: member.steer,
-      render: cfg.enabled && cfg.render.enabled && rule.enabled,
+      render: rule.enabled,
       names: sni.enabled,
       nameChecks: vantageOn,
       realHost: vantageOn && vantage.realHost,
@@ -194,59 +281,64 @@ async function settingsOf(db: Db) {
 
 type Settings = Awaited<ReturnType<typeof settingsOf>>;
 
-/** One country's per-name facts: the family, the mark, the checks (judged now), the reports. */
-async function nameFactsFor(
+/**
+ * Member reports from one country: weight per name, and the names its family's
+ * reports single out (`suspectNames`, against EVERY name of the family, as the
+ * family page judges them). Read for one country at a time (the detail route).
+ */
+async function reportsFor(
   db: Db,
+  pre: Prefetched,
+  country: string,
+  st: Settings,
+  now: number,
+): Promise<{ weights: Map<string, number>; suspects: Set<string> }> {
+  const weights = new Map<string, number>();
+  const suspects = new Set<string>();
+  const since = dayOf(now - st.sni.reportWindowDays * DAY);
+  const rows = await db
+    .query('sniReportCounts')
+    .withIndex('by_country_day', (q) => q.eq('country', country).gte('day', since))
+    .order('desc')
+    .take(REPORT_ROWS);
+  if (rows.length === 0) return { weights, suspects };
+  // Each shown name's family, with all of its names (a suspect is judged against them all).
+  const familyOf = new Map<string, string>();
+  for (const familyId of pre.families.keys())
+    for (const n of await db
+      .query('sniNames')
+      .withIndex('by_family_seq', (q) => q.eq('familyId', familyId as Id<'sniFamilies'>))
+      .collect())
+      familyOf.set(n.name, familyId);
+  const byFamily = new Map<string, NameCount[]>();
+  for (const row of rows) {
+    weights.set(row.name, (weights.get(row.name) ?? 0) + row.weight);
+    const fam = familyOf.get(row.name);
+    if (!fam) continue;
+    let list = byFamily.get(fam);
+    if (!list) byFamily.set(fam, (list = []));
+    list.push({ name: row.name, country: row.country, weight: row.weight });
+  }
+  for (const counts of byFamily.values())
+    for (const [name, countries] of suspectNames(counts))
+      if (countries.includes(country)) suspects.add(name);
+  return { weights, suspects };
+}
+
+/** One country's per-name facts, from the prefetched rows: the family, the mark, the checks (judged now). */
+function nameFactsFor(
+  pre: Prefetched,
   names: ReadonlySet<string>,
   country: string,
   st: Settings,
-  withReports: boolean,
-  now: number,
-): Promise<Map<string, NameFacts>> {
-  const docs = new Map<string, Doc<'sniNames'> | null>();
-  const families = new Map<string, Doc<'sniFamilies'> | null>();
-  for (const name of names) {
-    const n = await db
-      .query('sniNames')
-      .withIndex('by_name', (q) => q.eq('name', name))
-      .unique();
-    docs.set(name, n);
-    if (n && !families.has(n.familyId)) families.set(n.familyId, await db.get(n.familyId));
-  }
-  // Member reports there, per family (a suspect is judged against its family's other names).
-  const suspects = new Set<string>();
-  const weights = new Map<string, number>();
-  if (withReports) {
-    const since = dayOf(now - st.sni.reportWindowDays * DAY);
-    const byFamily = new Map<string, NameCount[]>();
-    for (const row of await db
-      .query('sniReportCounts')
-      .withIndex('by_country_day', (q) => q.eq('country', country).gte('day', since))
-      .order('desc')
-      .take(REPORT_ROWS)) {
-      weights.set(row.name, (weights.get(row.name) ?? 0) + row.weight);
-      const fam = docs.get(row.name)?.familyId;
-      if (!fam) continue;
-      byFamily.set(fam, [
-        ...(byFamily.get(fam) ?? []),
-        { name: row.name, country: row.country, weight: row.weight },
-      ]);
-    }
-    for (const counts of byFamily.values())
-      for (const [name, countries] of suspectNames(counts))
-        if (countries.includes(country)) suspects.add(name);
-  }
+  reports: { weights: Map<string, number>; suspects: Set<string> } | null,
+): Map<string, NameFacts> {
   const out = new Map<string, NameFacts>();
   for (const name of names) {
-    const n = docs.get(name) ?? null;
-    const markRow = await db
-      .query('sniNameCountry')
-      .withIndex('by_name_country', (q) => q.eq('name', name).eq('country', country))
-      .unique();
-    const ev = await db
-      .query('sniVantageEvidence')
-      .withIndex('by_name_country', (q) => q.eq('name', name).eq('country', country))
-      .unique();
+    const n = pre.names.get(name) ?? null;
+    const markRow = pre.nameMarks.get(keyOf(name, country));
+    const ev = pre.vantage.get(keyOf(name, country));
+    const suspect = reports?.suspects.has(name) ?? false;
     const s = ev
       ? suggest(
           {
@@ -260,15 +352,15 @@ async function nameFactsFor(
             streak: ev.streak ?? null,
           },
           {
-            reportSuspect: suspects.has(name),
+            reportSuspect: suspect,
             minVantages: st.vantage.minVantages,
             minNetworks: st.vantage.minNetworks,
           },
         )
       : null;
-    const weight = weights.get(name);
+    const weight = reports?.weights.get(name);
     out.set(name, {
-      family: n ? (families.get(n.familyId)?.slug ?? null) : null,
+      family: n ? (pre.families.get(n.familyId)?.slug ?? null) : null,
       qualified: n ? n.qualification.state === 'ok' : null,
       mark: markRow
         ? { state: markRow.state, source: markRow.source, at: markRow.updatedAt }
@@ -287,10 +379,7 @@ async function nameFactsFor(
             lastOkAt: ev.lastOkAt ?? null,
           }
         : null,
-      reports:
-        weight !== undefined
-          ? { weight: Math.round(weight * 100) / 100, suspect: suspects.has(name) }
-          : null,
+      reports: weight !== undefined ? { weight: Math.round(weight * 100) / 100, suspect } : null,
       realHost: ev?.realHost
         ? {
             at: ev.realHost.at,
@@ -307,29 +396,16 @@ async function nameFactsFor(
   return out;
 }
 
-/** The per-country inputs of every edge: its evidence row, its mark, its location's mark and grade. */
-async function edgesFor(db: Db, loaded: Loaded, country: string) {
+/** The per-country inputs of every edge, from the prefetched rows. */
+function edgesFor(pre: Prefetched, loaded: Loaded, country: string): Map<string, EdgeInput[]> {
   const out = new Map<string, EdgeInput[]>();
   for (const o of loaded.origins) {
     const list: EdgeInput[] = [];
-    for (const { doc, base } of o.edges) {
-      const ev = await db
-        .query('edgeCountryEvidence')
-        .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id).eq('country', country))
-        .unique();
-      const mark = await db
-        .query('countryMarks')
-        .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id).eq('country', country))
-        .first();
-      const groupKey = countryGroupKey(doc);
-      const groupMark = await db
-        .query('countryMarks')
-        .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey).eq('country', country))
-        .first();
-      const grade = await db
-        .query('countryGroupGrades')
-        .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey).eq('country', country))
-        .unique();
+    for (const { doc, groupKey, base } of o.edges) {
+      const ev = pre.edgeEvidence.get(keyOf(doc._id, country));
+      const mark = pre.edgeMarks.get(keyOf(doc._id, country));
+      const groupMark = pre.groupMarks.get(keyOf(groupKey, country));
+      const grade = pre.grades.get(keyOf(groupKey, country));
       list.push({
         ...base,
         evidence: ev
@@ -368,9 +444,8 @@ async function edgesFor(db: Db, loaded: Loaded, country: string) {
               ...(ev.stateUntil !== undefined ? { stateUntil: ev.stateUntil } : {}),
             }
           : null,
-        mark: mark?.scope === 'edge' ? { state: mark.state, at: mark.at } : null,
-        locationMark:
-          groupMark?.scope === 'group' ? { state: groupMark.state, at: groupMark.at } : null,
+        mark: mark ? { state: mark.state, at: mark.at } : null,
+        locationMark: groupMark ? { state: groupMark.state, at: groupMark.at } : null,
         grade: grade
           ? {
               state: grade.state,
@@ -410,16 +485,17 @@ function viewSettings(
   };
 }
 
-async function viewOf(
-  db: Db,
+/** One country's view, in memory. */
+function viewOf(
   loaded: Loaded,
+  pre: Prefetched,
   st: Settings,
   country: string,
   now: number,
-  withReports: boolean,
+  reports: { weights: Map<string, number>; suspects: Set<string> } | null,
 ) {
-  const facts = await nameFactsFor(db, loaded.names, country, st, withReports, now);
-  const edges = await edgesFor(db, loaded, country);
+  const facts = nameFactsFor(pre, loaded.names, country, st, reports);
+  const edges = edgesFor(pre, loaded, country);
   // Each origin is built with its own delivery style (a single-key backend hands out no backup).
   const origins = [];
   const totals = {
@@ -441,13 +517,14 @@ async function viewOf(
     totals.originsAtRisk += r.totals.originsAtRisk;
     if (r.totals.lastEvidenceAt !== null)
       totals.lastEvidenceAt = Math.max(totals.lastEvidenceAt ?? 0, r.totals.lastEvidenceAt);
-    // Names count once across origins (the first listener that carries one decides).
+    // Names count once across origins, by the state delivery acts on (a mere
+    // suggestion of the checks counts as not judged): the list and the page agree.
     for (const ov of r.origins)
       for (const l of ov.listeners)
         for (const n of l.names)
           if (n.status === 'active' && !seen.has(n.name)) {
             seen.add(n.name);
-            totals.names[n.state]++;
+            totals.names[actedState(n)]++;
           }
   }
   return { origins, totals };
@@ -471,9 +548,10 @@ export const summary = internalQuery({
     const now = Date.now();
     const st = await settingsOf(ctx.db);
     const loaded = await load(ctx.db);
+    const pre = await prefetch(ctx.db, loaded);
     const countries = [];
     for (const c of st.censored.list) {
-      const { totals, origins } = await viewOf(ctx.db, loaded, st, c.code, now, false);
+      const { totals, origins } = viewOf(loaded, pre, st, c.code, now, null);
       const handedBlocked = origins.flatMap((o) =>
         o.listeners.filter((l) => l.members.computed).map((l) => l.members.onBlockedAddress),
       );
@@ -481,7 +559,7 @@ export const summary = internalQuery({
         country: c.code,
         listed: listedOf(st, c.code)!,
         totals,
-        /** The worst share of members on an address blocked there, over every transport. */
+        /** The worst share of members holding an address blocked there, over every transport. */
         worstOnBlocked: handedBlocked.length > 0 ? Math.max(...handedBlocked) : null,
       });
     }
@@ -503,7 +581,9 @@ export const country = internalQuery({
     const code = a.country.trim().toUpperCase();
     const st = await settingsOf(ctx.db);
     const loaded = await load(ctx.db);
-    const { origins, totals } = await viewOf(ctx.db, loaded, st, code, now, true);
+    const pre = await prefetch(ctx.db, loaded);
+    const reports = await reportsFor(ctx.db, pre, code, st, now);
+    const { origins, totals } = viewOf(loaded, pre, st, code, now, reports);
     return {
       country: code,
       generatedAt: now,

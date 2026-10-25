@@ -30,6 +30,7 @@
     handedWords,
     handshakeLine,
     markLine,
+    gradeLine,
     nameWhy,
     percent,
     probesLine,
@@ -62,6 +63,7 @@
   function evidenceLines(a: CountryViewAddress): string[] {
     return [
       markLine(a, now),
+      gradeLine(a, now),
       roundLine(a, now),
       handshakeLine(a, now),
       probesLine(a, now),

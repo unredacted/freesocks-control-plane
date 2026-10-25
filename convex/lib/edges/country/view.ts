@@ -298,14 +298,22 @@ export function addressState(
   return { state: 'unknown', basis: 'none', until: null };
 }
 
-/** The IPv6 path from there, when the edge has one: the round's v6 result, else the probes'. */
+/**
+ * The IPv6 path from there, when the edge has one: the round's v6 result, else
+ * the probes' by the same rule as `probesState` (failing there is a block only
+ * while another country reaches it over IPv6; failing everywhere is broken).
+ */
 function v6StateOf(e: EdgeInput, country: string): ViewState | null {
   if (!e.addresses.v6 || !e.addresses.v4) return null;
   const r = e.evidence?.lastRound?.v6Result;
   if (r === 'proven' || r === 'blocked') return r;
   const v6 = reachIn(e.reachability, country)?.v6Verdict;
   if (v6 === 'reachable') return 'proven';
-  if (v6 === 'unreachable') return 'blocked';
+  if (
+    v6 === 'unreachable' &&
+    e.reachability.some((x) => x.country !== country && x.v6Verdict === 'reachable')
+  )
+    return 'blocked';
   return null;
 }
 
@@ -328,6 +336,14 @@ export function nameState(
   const s = facts?.checks?.suggestion ?? null;
   if (s) return { state: s, basis: 'checks' };
   return { state: 'unknown', basis: 'none' };
+}
+
+/**
+ * The state a name counts as for what members are handed: a mark (an
+ * operator's or the checks'); a suggestion nobody applied is not judged.
+ */
+export function actedState(n: { state: ViewState; basis: NameBasis }): ViewState {
+  return n.basis === 'checks' ? 'unknown' : n.state;
 }
 
 // --- handed -------------------------------------------------------------------------------------
@@ -358,9 +374,13 @@ export interface Handed {
   backup: Share[];
   /** Every name handed on the primary endpoint (alternates included), by share of members. */
   names: Share[];
-  /** Shares of members with no address at all, on an address blocked there, on a name blocked there. */
+  /** Shares of members with no address at all. */
   none: number;
+  /** Members holding an address blocked there, as their first address or their backup. */
   onBlockedAddress: number;
+  /** Members whose FIRST address is blocked there (a subset of `onBlockedAddress`). */
+  onBlockedFirst: number;
+  /** Members holding a server name blocked there, on either address. */
   onBlockedName: number;
 }
 
@@ -387,17 +407,21 @@ export function handedOn(
   blockedNames: ReadonlySet<string>,
 ): Handed {
   const n = s.sample ?? HANDED_SAMPLE;
+  // Delivery judges per country only a country on the list (a curated one);
+  // anywhere else a member gets the universal pool and no steering.
+  const listed = s.curated.includes(s.country);
   const base: Handed = {
     computed: false,
     reason: null,
-    steered: s.steering,
-    namesByCountry: listener.sniPick === 'hrw1',
+    steered: s.steering && listed,
+    namesByCountry: listener.sniPick === 'hrw1' && listed,
     sample: 0,
     primary: [],
     backup: [],
     names: [],
     none: 0,
     onBlockedAddress: 0,
+    onBlockedFirst: 0,
     onBlockedName: 0,
   };
   if (!s.render) return { ...base, reason: 'render_off' };
@@ -407,13 +431,16 @@ export function handedOn(
   );
   if (!pool.some((e) => e.listenerId === listener.listenerId && e.eligible !== false))
     return { ...base, reason: 'no_published' };
-  const where: CountryContext = { country: s.country, curated: s.curated };
+  const where: CountryContext = { country: listed ? s.country : null, curated: s.curated };
   const primary = new Map<string, number>();
   const backup = new Map<string, number>();
   const names = new Map<string, number>();
   let none = 0;
   let onBlockedAddress = 0;
+  let onBlockedFirst = 0;
   let onBlockedName = 0;
+  const namesOf = (e: Assignment['primary']) =>
+    e ? [e.sni, ...(e.alternates ?? []).map((x) => x.sni)].filter((x): x is string => !!x) : [];
   for (let i = 0; i < n; i++) {
     const a: Assignment = assignEndpoints(sampleKey(i), pool, {
       now: s.now,
@@ -423,7 +450,7 @@ export function handedOn(
       namesPerEndpoint: s.rule.namesPerEndpoint,
       backupNames: s.rule.backupNames,
       where,
-      edgeCountry: s.steering ? s.country : null,
+      edgeCountry: s.steering && listed ? s.country : null,
       minProvenForExclusive: s.minProvenForExclusive,
     });
     if (!a.primary) {
@@ -432,12 +459,12 @@ export function handedOn(
     }
     bump(primary, a.primary.edge.edgeId);
     if (a.backup) bump(backup, a.backup.edge.edgeId);
-    if (blockedEdges.has(a.primary.edge.edgeId)) onBlockedAddress++;
-    const held = [a.primary.sni, ...(a.primary.alternates ?? []).map((x) => x.sni)].filter(
-      (x): x is string => !!x,
-    );
+    const firstBlocked = blockedEdges.has(a.primary.edge.edgeId);
+    if (firstBlocked) onBlockedFirst++;
+    if (firstBlocked || (a.backup && blockedEdges.has(a.backup.edge.edgeId))) onBlockedAddress++;
+    const held = namesOf(a.primary);
     for (const name of new Set(held)) bump(names, name);
-    if (held.some((x) => blockedNames.has(x))) onBlockedName++;
+    if ([...held, ...namesOf(a.backup)].some((x) => blockedNames.has(x))) onBlockedName++;
   }
   return {
     ...base,
@@ -448,6 +475,7 @@ export function handedOn(
     names: shares(names, n),
     none: round3(none / n),
     onBlockedAddress: round3(onBlockedAddress / n),
+    onBlockedFirst: round3(onBlockedFirst / n),
     onBlockedName: round3(onBlockedName / n),
   };
 }
@@ -721,7 +749,7 @@ export function buildCountryView(
         const st = nameState(n, f, s.country);
         const offered =
           n.status === 'active' && (l.sniPick !== 'hrw1' || !n.blockedIn.includes(s.country));
-        if (n.status === 'active' && !seenNames.has(n.name)) seenNames.set(n.name, st.state);
+        if (n.status === 'active' && !seenNames.has(n.name)) seenNames.set(n.name, actedState(st));
         noteAt(f?.mark?.at);
         noteAt(f?.checks?.lastAt);
         noteAt(f?.realHost?.at);

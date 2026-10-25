@@ -263,7 +263,8 @@ describe('the country view', () => {
     expect(l.members.primary.map((p) => p.id).sort()).toEqual([blocked, works].sort());
     expect(l.members.onBlockedAddress).toBeGreaterThan(0);
     expect(v.totals.addresses).toEqual({ proven: 1, blocked: 1, unknown: 0 });
-    expect(v.totals.names).toEqual({ proven: 0, blocked: 2, unknown: 1 });
+    // Totals count what delivery acts on: the checks' unapplied suggestion is not judged.
+    expect(v.totals.names).toEqual({ proven: 0, blocked: 1, unknown: 2 });
   });
 
   test('with steering on, members there leave the blocked address', async () => {
@@ -273,7 +274,7 @@ describe('the country view', () => {
     const m = v.origins[0]!.listeners[0]!.members;
     expect(m.steered).toBe(true);
     expect(m.primary).toEqual([{ id: works, share: 1 }]);
-    expect(m.onBlockedAddress).toBe(0);
+    expect(m.onBlockedFirst).toBe(0);
   });
 
   test('summary: every listed country with its totals; the routes answer with the contracts', async () => {
@@ -297,5 +298,66 @@ describe('the country view', () => {
     const off = CountryViewResponse.parse(await (await get('countries/de')).json());
     expect(off).toMatchObject({ country: 'DE', listed: null, curated: false });
     expect((await t.fetch('/api/v1/admin/edges/countries/summary')).status).toBe(401);
+  });
+
+  test('a report suspect is judged against every name of its family, shown or not', async () => {
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      const fam = (await ctx.db.query('sniFamilies').first())!;
+      // A name of the family no listener carries, reported as much as a shown one.
+      await ctx.db.insert('sniNames', {
+        familyId: fam._id,
+        name: 'd.example',
+        seq: 9,
+        status: 'active',
+        qualification: { state: 'ok', consecutiveFails: 0 },
+        checkedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      for (const r of await ctx.db.query('sniReportCounts').collect()) await ctx.db.delete(r._id);
+      for (const name of ['c.example', 'd.example'])
+        await ctx.db.insert('sniReportCounts', {
+          name,
+          country: 'IR',
+          day: dayOf(Date.now()),
+          weight: 4,
+          updatedAt: Date.now(),
+        });
+    });
+    const v = await t.query(internal.edgeCountryView.country, { country: 'IR' });
+    const c = v.origins[0]!.listeners[0]!.names.find((n) => n.name === 'c.example')!;
+    expect(c.reports).toEqual({ weight: 4, suspect: false });
+  });
+
+  test('the summary of a full country list fits one transaction', async () => {
+    const t = convexTest({ schema, modules, transactionLimits: true });
+    await insertPanelServer(t);
+    const codes =
+      'IR RU CN TR AE KZ BY MM VN PK EG SA QA OM BH KW IQ SY TM TJ UZ AZ ET ER SD VE CU NI BD LK TH LA KH ID MY UG RW ZW KP AF'.split(
+        ' ',
+      );
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.render.enabled', 'true');
+      await upsertSettingRow(
+        ctx,
+        CENSORED_COUNTRIES_KEY,
+        JSON.stringify(codes.map((code) => ({ code, checkEdges: true, checkNamesInside: false }))),
+      );
+    });
+    const names = Array.from({ length: 12 }, (_, i) => `n${i}.example`);
+    const { relayId, listenerId } = await registerRelay(t, {
+      listeners: [realityListener({ listenerKey: 'u', tlsNames: names })],
+    });
+    for (let i = 0; i < 20; i++)
+      await t.mutation(internal.relays.adoptEdge, {
+        relayId,
+        listenerId,
+        ipv4: `198.51.100.${i + 1}`,
+        publish: i === 0,
+        verified: true,
+      });
+    const s = await t.query(internal.edgeCountryView.summary, {});
+    expect(s.countries).toHaveLength(40);
+    expect(s.countries[0]!.totals.addresses.unknown).toBe(1);
   });
 });
