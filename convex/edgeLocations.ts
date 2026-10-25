@@ -23,7 +23,8 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader, MutationCtx, QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { EDGE_LIVE_STATUSES, LIVE_EDGE_SCAN_LIMIT } from './lib/edges/pool';
+import { MAX_LIVE_EDGES_CEILING } from '../src/shared/contracts/edgeLimits';
+import { ACCOUNT_EDGE_SCAN_LIMIT, EDGE_LIVE_STATUSES } from './lib/edges/pool';
 import {
   placementKeysOf,
   validatePlacement,
@@ -95,7 +96,7 @@ export async function locationOfEdge(
   return edge.locationId ? db.get(edge.locationId) : null;
 }
 
-/** Non-destroyed edges in this location. */
+/** Non-destroyed edges in this location, exact up to the live-edge ceiling. */
 export async function liveEdgesOfLocation(
   db: DatabaseReader,
   location: Pick<Location, '_id'>,
@@ -108,7 +109,7 @@ export async function liveEdgesOfLocation(
         .withIndex('by_location_status', (q) =>
           q.eq('locationId', location._id).eq('status', status),
         )
-        .take(LIVE_EDGE_SCAN_LIMIT)),
+        .take(ACCOUNT_EDGE_SCAN_LIMIT)),
     );
   }
   return out;
@@ -218,8 +219,11 @@ function cleanCostNote(raw: string | undefined): string | undefined {
 }
 
 function checkLocationCap(n: number | undefined): void {
-  if (n !== undefined && (!Number.isInteger(n) || n < 1 || n > 200))
-    throw new ConvexError({ code: 'validation', message: 'maxLiveEdges must be 1..200' });
+  if (n !== undefined && (!Number.isInteger(n) || n < 1 || n > MAX_LIVE_EDGES_CEILING))
+    throw new ConvexError({
+      code: 'validation',
+      message: `maxLiveEdges must be 1..${MAX_LIVE_EDGES_CEILING}`,
+    });
 }
 
 /**

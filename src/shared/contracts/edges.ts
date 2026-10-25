@@ -25,6 +25,7 @@ import {
   SETUP_STEP_STATUSES,
 } from './edgeCodes';
 import { EDGE_PROVIDER_IDS } from './edgeProviderIds';
+import { MAX_LIVE_EDGES_CEILING } from './edgeLimits';
 import { RealityClientRefusal } from './realityClients';
 import { ModeFronting } from './servers';
 import {
@@ -230,7 +231,7 @@ export const EdgeLocationCreateRequest = z.object({
   placement: z.record(z.string(), z.unknown()),
   fill: z.boolean().optional(),
   regionalParams: z.record(z.string(), z.string()).optional(),
-  maxLiveEdges: z.number().int().min(1).max(200).optional(),
+  maxLiveEdges: z.number().int().min(1).max(MAX_LIVE_EDGES_CEILING).optional(),
   costNote: z.string().max(120).optional(),
 });
 export type EdgeLocationCreateRequest = z.infer<typeof EdgeLocationCreateRequest>;
@@ -249,7 +250,7 @@ export type EdgeLocationCheckResponse = z.infer<typeof EdgeLocationCheckResponse
 export const EdgeLocationUpdateRequest = z.object({
   enabled: z.boolean().optional(),
   label: z.string().max(80).optional(),
-  maxLiveEdges: z.number().int().min(1).max(200).nullable().optional(),
+  maxLiveEdges: z.number().int().min(1).max(MAX_LIVE_EDGES_CEILING).nullable().optional(),
   costNote: z.string().max(120).nullable().optional(),
   regionalParams: z.record(z.string(), z.string()).optional(),
   defaultTemplateId: z.string().nullable().optional(),

@@ -13,6 +13,7 @@
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import type { OriginAdmin } from '@shared/contracts/edges';
+  import { MAX_DESIRED_PUBLISHED } from '@shared/contracts/edgeLimits';
   import * as Dialog from '@client/components/ui/dialog';
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
@@ -212,9 +213,9 @@
           bind:invalid={invalid.desired}
           label="Published edges wanted"
           unit="edges"
-          bounds={{ min: 1, max: 16 }}
+          bounds={{ min: 1, max: MAX_DESIRED_PUBLISHED }}
           min={1}
-          max={16}
+          max={MAX_DESIRED_PUBLISHED}
           defaultValue={num(defaults['desiredPublishedDefault'])}
           helper="How many edges members are spread over. More edges cost more and survive a block better."
         />

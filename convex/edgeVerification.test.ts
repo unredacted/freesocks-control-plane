@@ -960,12 +960,14 @@ describe('the partial rung (probe evidence)', () => {
     });
     expect(await record()).toMatchObject({ rung: 'partial' });
     // Nothing to do while the binding matches.
-    expect(await t.mutation(internal.edgeVerification.reconcilePartialRungs, {})).toEqual({
+    expect(await t.mutation(internal.edgeVerification.reconcilePartialRungs, {})).toMatchObject({
       cleared: 0,
+      isDone: true,
     });
     await t.run((ctx) => ctx.db.patch(spare, { addresses: { v4: '198.51.100.9' } }));
-    expect(await t.mutation(internal.edgeVerification.reconcilePartialRungs, {})).toEqual({
+    expect(await t.mutation(internal.edgeVerification.reconcilePartialRungs, {})).toMatchObject({
       cleared: 1,
+      isDone: true,
     });
     expect(await record()).toBeUndefined();
     expect(

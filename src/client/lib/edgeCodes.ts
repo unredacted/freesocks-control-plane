@@ -2479,6 +2479,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'admin.edge.probe.change': 'Probe settings changed',
   'admin.edge.maintenance': 'Maintenance switch changed',
   'admin.edge.reset': 'Edge tables reset',
+  'admin.edge.limits_raised': 'Account limits raised to the new defaults',
   'edge.pool_expanded': 'Pool expanded for an uncovered listener',
   'edge.relay.rebalanced': 'Duplicate edge sent back to standby',
   'edge.automation.set': 'Automatic protection switched',

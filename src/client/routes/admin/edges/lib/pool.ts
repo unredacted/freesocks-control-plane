@@ -9,6 +9,8 @@
  * Exports: poolSlots(input) -> PoolSlot[], poolSummary(input) -> string, PoolSlot, PoolInput,
  * showsPublication(edge) (whether an edge's publication badge means anything).
  */
+import { MAX_DESIRED_PUBLISHED } from '@shared/contracts/edgeLimits';
+
 export type PoolSlotKind = 'published' | 'missing' | 'vacant' | 'standby' | 'draining';
 
 export interface PoolSlot {
@@ -28,7 +30,8 @@ export interface PoolInput {
   draining?: number;
 }
 
-const MAX_SLOTS = 24;
+/** Every slot an origin's pool may hold (the published-pool cap), so none is ever cut off. */
+const MAX_SLOTS = MAX_DESIRED_PUBLISHED;
 
 function clampCount(n: number | undefined): number {
   if (n === undefined || !Number.isFinite(n) || n < 0) return 0;
