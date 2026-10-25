@@ -79,7 +79,8 @@ updates:
   # Dependabot would move it to whatever Xray released last. Its first update
   # after the pin was stuck did exactly that, and the front check broke: newer
   # Xray blocks private targets in `freedom` unless a `finalRules` entry
-  # allows them (docker/compat/frontcheck-xray.json).
+  # allows them (docker/compat/frontcheck-xray.json). The REALITY key share
+  # test's second pin (a release from v26.9.8 on) moves by hand too.
   - package-ecosystem: docker-compose
     directory: /
     schedule:

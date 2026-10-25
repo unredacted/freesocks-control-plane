@@ -33,9 +33,22 @@ import { withheldNoteDue } from './edges/withheld';
 import type { ResolvedWhere } from './edges/sni/country';
 import { resolveClientIp, resolveCountry } from './http';
 import { memberWhere, nextGuess, steeringCountry, type CountryFields } from './memberCountry';
-import { relabelMemberEntries } from './memberEntryNames';
+import { relabelMemberEntries, type EntryNaming } from './memberEntryNames';
 import { isOwnExit } from './ownExits';
+import { askMlkemKeyShare } from './realityKeyShares';
 import { subscriptionNow, withinValidity } from './subscriptionEtag';
+
+/**
+ * The last touches of every body a member is handed, on every route, and again
+ * when a cached one is served (a finished body comes back as it was):
+ * member-facing names (docs/privacy.md), and the X25519MLKEM768 key share a
+ * Mihomo client must offer a REALITY server from Xray v26.9.8 on
+ * (lib/realityKeyShares.ts). Last, because pinning and the edge render both
+ * read the original names.
+ */
+export function finishMemberBody(content: string, naming: EntryNaming | null): string {
+  return askMlkemKeyShare(relabelMemberEntries(content, naming).content).content;
+}
 
 /** The delivery projection of a subscription: what the decision reads from the row. */
 export interface DeliverySubscription extends CountryFields {
@@ -386,12 +399,13 @@ export async function deliverBody(
     relay = renderedUnder;
   }
   // Member-facing names (docs/privacy.md): an entry the backend named after its
-  // node and server name gets a neutral label. Last, because pinning and the
-  // edge render both read those names.
+  // node and server name gets a neutral label; a Mihomo REALITY entry asks for
+  // the key share. Last, because pinning and the edge render both read those
+  // names.
   const naming = await ctx.runQuery(internal.subscriptions.entryNamingFor, {
     backendServerId: sub.backendServerId ?? undefined,
   });
-  content = relabelMemberEntries(content, naming).content;
+  content = finishMemberBody(content, naming);
   // Judged once more before the body is kept or stamped: a proof that lapsed
   // after the render answers like a policy that moved.
   if (!withinValidity(validUntil, subscriptionNow())) return refuse('policy_moved');

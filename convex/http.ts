@@ -21,11 +21,11 @@ import { hmacSha256Hex } from './lib/crypto';
 import { sanitizeConnectionChoice } from './edgeAttribution';
 import {
   deliverBody,
+  finishMemberBody,
   locateMember,
   type DeliverySubscription,
   type RenderSnapshot,
 } from './lib/subscriptionDelivery';
-import { relabelMemberEntries } from './lib/memberEntryNames';
 import { SUBSCRIPTION_PASSTHROUGH_HEADERS } from './lib/backends/types';
 import {
   ifNoneMatchHits,
@@ -1199,17 +1199,18 @@ http.route({
     const hints = await ctx.runQuery(internal.subscriptions.responseHints, {});
     // The validator the app holds, if any: a matching answer is a 304.
     const ifNoneMatch = req.headers.get('if-none-match');
-    // Member-facing names (docs/privacy.md) under the current settings. A
-    // fetched body is relabelled before it is cached; a cached or stale one is
-    // relabelled again when served, since it may predate a rename (a relabelled
-    // body relabels to itself, so this is a no-op otherwise).
+    // Member-facing names (docs/privacy.md) under the current settings, and
+    // the REALITY key share Mihomo must ask for (lib/realityKeyShares.ts). A
+    // fetched body is finished before it is cached; a cached or stale one is
+    // finished again when served, since it may predate a rename or this release
+    // (a finished body comes back as it was, so this is a no-op otherwise).
     const naming = () =>
       ctx.runQuery(internal.subscriptions.entryNamingFor, {
         backendServerId: sub.backendServerId ?? undefined,
       });
     const memberNamed = async <T extends { content: string }>(entry: T): Promise<T> => ({
       ...entry,
-      content: relabelMemberEntries(entry.content, await naming()).content,
+      content: finishMemberBody(entry.content, await naming()),
     });
     // Truncate the UA: it's the cache key, so an unbounded UA is an unbounded
     // cache-bypass amplification vector (each distinct UA = a live backend

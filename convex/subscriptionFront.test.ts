@@ -763,6 +763,108 @@ describe('GET /api/v1/sub/<token>: the backend’s group', () => {
   });
 });
 
+/**
+ * From Xray v26.9.8 on a REALITY server refuses a Client Hello without
+ * X25519MLKEM768, and Mihomo removes it unless the proxy asks for it
+ * (lib/realityKeyShares.ts). The backend asks only for a Host whose Mihomo
+ * override is ticked, so the served body asks for every REALITY entry.
+ */
+describe('GET /api/v1/sub/<token>: the REALITY key share Mihomo asks for', () => {
+  const REALITY = {
+    name: 'reality-entry',
+    type: 'vless',
+    server: '192.0.2.10',
+    port: 443,
+    uuid: '11111111-2222-3333-4444-555555555555',
+    tls: true,
+    servername: 'www.decoy-a.example',
+    flow: 'xtls-rprx-vision',
+    'client-fingerprint': 'chrome',
+    'reality-opts': { 'public-key': 'PUBKEY', 'short-id': 'ab' },
+  };
+  const WS = {
+    name: 'ws-entry',
+    type: 'vless',
+    server: 'cdn.example',
+    port: 443,
+    uuid: '11111111-2222-3333-4444-555555555555',
+    tls: true,
+    servername: 'cdn.example',
+    network: 'ws',
+    'ws-opts': { path: '/ws' },
+  };
+  // What the backend makes of its Mihomo template for a Host without the override.
+  const BODY = YAML.stringify({
+    'mixed-port': 7890,
+    mode: 'rule',
+    proxies: [REALITY, WS],
+    'proxy-groups': [{ name: 'Pick', type: 'select', proxies: [REALITY.name, WS.name] }],
+    rules: ['MATCH,Pick'],
+  });
+  type Proxy = Record<string, unknown> & { 'reality-opts'?: Record<string, unknown> };
+
+  beforeEach(() => {
+    vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    mockBody = BODY;
+    mockStatus = 200;
+    mockHeaders = { 'content-type': 'text/yaml' };
+    stubFrontFetch();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function proxies(t: ReturnType<typeof convexTest>): Promise<Proxy[]> {
+    const res = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'mihomo/1.19' } });
+    expect(res.status).toBe(200);
+    return (YAML.parse(await res.text()) as { proxies: Proxy[] }).proxies;
+  }
+
+  test('the REALITY entry asks for X25519MLKEM768 and nothing else moves', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    const [reality, ws] = await proxies(t);
+    expect(reality).toEqual({
+      ...REALITY,
+      'reality-opts': { ...REALITY['reality-opts'], 'support-x25519mlkem768': true },
+    });
+    expect(ws).toEqual(WS);
+  });
+
+  test('a body cached before this release asks on a cache hit and when served stale', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t);
+    await proxies(t);
+    // What a body cached before this change holds: the backend's own entry.
+    const patchCache = (edit: (e: { at: number; content: string }) => void) =>
+      t.run(async (ctx) => {
+        const sub = (await ctx.db.get(subId))!;
+        const entries = JSON.parse(sub.subCache!) as Array<{ at: number; content: string }>;
+        for (const e of entries) edit(e);
+        await ctx.db.patch(subId, { subCache: JSON.stringify(entries) });
+      });
+    await patchCache((e) => {
+      e.content = e.content.replace(/^\s*support-x25519mlkem768: true\n/m, '');
+      expect(e.content).not.toContain('support-x25519mlkem768');
+    });
+    const hit = await proxies(t);
+    expect(fetchCalls).toBe(1); // a cache hit
+    expect(hit[0]!['reality-opts']).toMatchObject({ 'support-x25519mlkem768': true });
+    await patchCache((e) => {
+      e.at -= 24 * 3600_000;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+    const stale = await proxies(t);
+    expect(stale[0]!['reality-opts']).toMatchObject({ 'support-x25519mlkem768': true });
+  });
+});
+
 describe('getAccountView subscription URL', () => {
   beforeEach(() => {
     // Mock backend so getAccountView's live getUser doesn't hit the network.

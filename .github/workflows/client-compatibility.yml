@@ -77,6 +77,30 @@ jobs:
         # No container logs are kept: they echo the test client id.
         run: bash docker/compat/frontcheck-down.sh
 
+  reality-key-share:
+    # From Xray-core v26.9.8 on a REALITY server refuses a Client Hello that does
+    # not offer X25519MLKEM768 (docs/client-compatibility.md § "REALITY client
+    # versions"). The pinned Mihomo and sing-box connect through the core the
+    # node image runs and through a release past it, with the Mihomo body as the
+    # backend writes it and as FCP serves it.
+    name: REALITY key share vs Xray-core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v6
+        with:
+          # download.ts re-verifies every cached artifact's SHA-256 before use.
+          path: .cache/compat/bin
+          key: compat-bin-${{ hashFiles('tests/compat/manifest.ts') }}
+      # Tears the containers down itself. No logs or configs are kept: they
+      # carry the per-run client id.
+      - run: bun run test:integration:reality-keyshare
+
   edge-connection:
     # The release gate for edges and the proof behind the supported matrix
     # (docs/edges.md "Supported matrix"): a member connects THROUGH an edge with

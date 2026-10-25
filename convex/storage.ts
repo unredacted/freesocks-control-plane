@@ -27,8 +27,11 @@ import { randomHex, sha256Hex } from './lib/crypto';
 import type { MirrorContext } from './subscriptions';
 import type { ActiveMirrorPage } from './subscriptions';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
-import { relabelMemberEntries } from './lib/memberEntryNames';
-import { noteWithheldEntries, type WithheldNote } from './lib/subscriptionDelivery';
+import {
+  finishMemberBody,
+  noteWithheldEntries,
+  type WithheldNote,
+} from './lib/subscriptionDelivery';
 import type { Id } from './_generated/dataModel';
 
 /** The body a mirror holds when its place is edge-required and nothing can render. */
@@ -86,12 +89,12 @@ async function renderMirrorBody(
 ): Promise<MirrorRender> {
   const out = await renderMirrorEndpoints(ctx, sub, node, content);
   if (out.validated?.stub) return out;
-  // The same member-facing names as the fronted route (docs/privacy.md), after
-  // the render for the same reason.
+  // Finished like the fronted route's (member-facing names, docs/privacy.md),
+  // after the render for the same reason.
   const naming = await ctx.runQuery(internal.subscriptions.entryNamingFor, {
     backendServerId: sub.backendServerId ?? undefined,
   });
-  return { ...out, content: relabelMemberEntries(out.content, naming).content };
+  return { ...out, content: finishMemberBody(out.content, naming) };
 }
 
 /** A mirror body as rendered, and what it left out (noted once an upload of it is accepted). */
