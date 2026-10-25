@@ -196,6 +196,22 @@ describe('a family on a network', () => {
     expect(due.networks[due.names[0]!.network!]).toEqual({ v4: ['192.0.2.0/24'], v6: [] });
     const detail = await (await call('GET', 'sni/families/fam-a')).json();
     expect(detail.family.network).toEqual({ slug: 'net-a', label: 'Net A', ranges: 1 });
+    // Names waiting for their network never crowd out other families' due names.
+    await call('PATCH', 'networks/net-a', { manualPrefixes: [], asns: [64500] });
+    await call('PATCH', 'sni/config', { qualifyPerTick: 1 });
+    await call('POST', 'sni/families/fam-a/names', {
+      lines: ['w1.example', 'w2.example', 'w3.example', 'w4.example', 'w5.example'],
+    });
+    await call('POST', 'sni/families', {
+      slug: 'fam-b',
+      label: 'Fam B',
+      targetAddress: 'target.example',
+      targetPort: 443,
+    });
+    await call('POST', 'sni/families/fam-b/names', { lines: ['other.example'] });
+    expect(
+      (await t.query(internal.sniFamilies.dueForQualification, {})).names.map((n) => n.name),
+    ).toEqual(['other.example']);
     // A network in use is not removed.
     expect((await (await call('DELETE', 'networks/net-a')).json()).error.code).toBe(
       'edge.network.in_use',

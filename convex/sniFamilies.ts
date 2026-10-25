@@ -697,6 +697,9 @@ export const setCountry = internalMutation({
 
 // --- qualification ---------------------------------------------------------------------------------------
 
+/** Names looked at per qualification pass to find the due ones. */
+const QUALIFY_SCAN_CAP = 1000;
+
 /** The oldest-checked names that are due, with their family's target. */
 export const dueForQualification = internalQuery({
   args: {},
@@ -704,10 +707,11 @@ export const dueForQualification = internalQuery({
     const cfg = await resolveSniConfig(ctx.db);
     if (!cfg.enabled) return { names: [], networks: {} };
     const cutoff = Date.now() - cfg.requalifyHours * 3_600_000;
-    const due = await ctx.db
-      .query('sniNames')
-      .withIndex('by_checked', (q) => q.lt('checkedAt', cutoff))
-      .take(cfg.qualifyPerTick * 4);
+    // Oldest-checked first, walked past what is not checked now (a retired or
+    // burned name, a switched-off family, a network without ranges yet) so
+    // those can never crowd out the names that are due. Bounded.
+    const due = ctx.db.query('sniNames').withIndex('by_checked', (q) => q.lt('checkedAt', cutoff));
+    let scanned = 0;
     const out: {
       id: Id<'sniNames'>;
       name: string;
@@ -720,7 +724,8 @@ export const dueForQualification = internalQuery({
     const families = new Map<string, Doc<'sniFamilies'> | null>();
     // A family's network once per family; `null` = it has no ranges yet.
     const networks = new Map<string, NetworkPrefixes | null>();
-    for (const n of due) {
+    for await (const n of due) {
+      if (++scanned > QUALIFY_SCAN_CAP) break;
       if (n.status !== 'active' && n.status !== 'suspended') continue;
       const key = n.familyId as string;
       if (!families.has(key)) families.set(key, await ctx.db.get(n.familyId));
