@@ -1090,9 +1090,12 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     const { t, relayId, download, relay } = await world({
       hosts: [...panelHosts().filter((h) => h.uuid === FCP_UUID), front()],
     });
-    // The rehearsal's look (before go-live) records it, by name only.
+    // The rehearsal's look (before go-live) records it, by name and Host uuid
+    // (never its address).
     await t.action(internal.edgeHostHides.observe, { relayId });
     expect((await relay()).operatorFronts?.remarks).toEqual([`${FIXTURE_NODE}-relay`]);
+    expect((await relay()).operatorFronts?.hostUuids).toEqual([FRONT]);
+    expect(JSON.stringify((await relay()).operatorFronts)).not.toContain(LB);
     // A member render leaves it out: it is neither the node nor an edge.
     const res = await download();
     expect(res.status).toBe(200);

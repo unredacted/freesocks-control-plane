@@ -401,23 +401,26 @@ describe('/api/v1/admin/servers', () => {
     expect(cached.nodes[0].transports[0].serverNames).toEqual(['a.example', 'b.example']);
   });
 
-  test("an operator's own front is marked left out once the node is bound to its origin, never before", async () => {
+  test("an operator's own front is marked left out once the node is bound to its origin, never before, by its Host", async () => {
     const { t, serverId, panel, call } = await seed();
-    // A load balancer the operator built by hand, in front of the node.
-    panel.hosts.push({
-      uuid: 'h-front',
-      remark: 'old-lb',
-      address: '198.51.100.20',
-      port: 443,
-      sni: 'a.example',
-      inbound: { configProfileUuid: 'p-1', configProfileInboundUuid: 'i-reality' },
-    });
+    const reality = { configProfileUuid: 'p-1', configProfileInboundUuid: 'i-reality' };
+    // A load balancer the operator built by hand, in front of the node, and a
+    // Host that dials the node itself under the same remark (a backend does
+    // not keep remarks unique).
+    panel.hosts.push(
+      { uuid: 'h-front', remark: 'old-lb', address: '198.51.100.20', port: 443, inbound: reality },
+      { uuid: 'h-twin', remark: 'old-lb', address: '192.0.2.10', port: 443, inbound: reality },
+    );
     const { relayId } = await registerRelay(t, { listeners: [realityListener()] });
-    // What a look at the node's Hosts records of it (names only).
-    await t.mutation(internal.edgeHostHides.noteFronts, { relayId, remarks: ['old-lb'] });
+    // What a look at the node's Hosts records of it (names and Host uuids).
+    await t.mutation(internal.edgeHostHides.noteFronts, {
+      relayId,
+      remarks: ['old-lb'],
+      hostUuids: ['h-front'],
+    });
     const frontsOf = (tree: ServerTree) =>
       Object.fromEntries(
-        tree.nodes[0]!.transports[0]!.addresses.map((a) => [a.remark, a.operatorFront]),
+        tree.nodes[0]!.transports[0]!.addresses.map((a) => [a.addressUuid, a.operatorFront]),
       );
 
     // A guided setup binds the node only at go-live: until then members are
@@ -434,19 +437,64 @@ describe('/api/v1/admin/servers', () => {
     });
     expect(binding.relaySlug).toBe(FIXTURE_RELAY_SLUG);
     let tree = ServerTree.parse(await (await call('POST', 'panel-a/refresh')).json());
-    expect(frontsOf(tree)).toEqual({ 'node-one-reality': false, 'old-lb': false });
+    expect(frontsOf(tree)).toEqual({ 'h-1': false, 'h-front': false, 'h-twin': false });
 
-    // Bound: the member render leaves the front out.
+    // Bound: the member render leaves the front out, and only the front.
     await t.run((ctx) => ctx.db.patch(binding._id, { state: 'active' }));
     tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
-    expect(frontsOf(tree)).toEqual({ 'node-one-reality': false, 'old-lb': true });
+    expect(frontsOf(tree)).toEqual({ 'h-1': false, 'h-front': true, 'h-twin': false });
     // The backend-wide list has no node to judge by.
     expect(tree.addresses.every((a) => !a.operatorFront)).toBe(true);
 
-    // A front the next look no longer finds is listed as members get it.
-    await t.mutation(internal.edgeHostHides.noteFronts, { relayId, remarks: [] });
+    // A record from before Host uuids were kept matches by remark, until the
+    // next look rewrites it with them.
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, { operatorFronts: { at: Date.now(), remarks: ['old-lb'] } }),
+    );
     tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
-    expect(frontsOf(tree)['old-lb']).toBe(false);
+    expect(frontsOf(tree)).toEqual({ 'h-1': false, 'h-front': true, 'h-twin': true });
+    await t.mutation(internal.edgeHostHides.noteFronts, {
+      relayId,
+      remarks: ['old-lb'],
+      hostUuids: ['h-front'],
+    });
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.operatorFronts?.hostUuids).toEqual([
+      'h-front',
+    ]);
+    tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
+    expect(frontsOf(tree)['h-twin']).toBe(false);
+
+    // A front the next look no longer finds is listed as members get it.
+    await t.mutation(internal.edgeHostHides.noteFronts, { relayId, remarks: [], hostUuids: [] });
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.operatorFronts).toBeUndefined();
+    tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
+    expect(frontsOf(tree)['h-front']).toBe(false);
+  });
+
+  test('every front is kept, past the 20 names an attention row shows', async () => {
+    const { t, panel, call } = await seed();
+    const n = 25;
+    const ids = Array.from({ length: n }, (_, i) => String(i + 1).padStart(2, '0'));
+    for (const i of ids)
+      panel.hosts.push({
+        uuid: `h-lb-${i}`,
+        remark: `lb-${i}`,
+        address: `198.51.100.${Number(i) + 100}`,
+        port: 443,
+        inbound: { configProfileUuid: 'p-1', configProfileInboundUuid: 'i-reality' },
+      });
+    // Bound at once (a direct create), so the render leaves every front out.
+    const { relayId } = await registerRelay(t, { listeners: [realityListener()] });
+    await t.mutation(internal.edgeHostHides.noteFronts, {
+      relayId,
+      remarks: ids.map((i) => `lb-${i}`),
+      hostUuids: ids.map((i) => `h-lb-${i}`),
+    });
+    const fronts = (await t.run((ctx) => ctx.db.get(relayId)))!.operatorFronts!;
+    expect([fronts.remarks.length, fronts.hostUuids?.length]).toEqual([n, n]);
+    const tree = ServerTree.parse(await (await call('POST', 'panel-a/refresh')).json());
+    const marked = tree.nodes[0]!.transports[0]!.addresses.filter((a) => a.operatorFront);
+    expect(marked.map((a) => a.remark).sort()).toEqual(ids.map((i) => `lb-${i}`));
   });
 
   test('an address parses without the front mark (an older response)', () => {

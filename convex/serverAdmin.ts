@@ -244,8 +244,8 @@ function mapInbound(i: Doc<'panelProfiles'>['inbounds'][number]) {
   };
 }
 
-/** `fronts`: the node's operator fronts its members no longer get (`leftOutFronts`). */
-function mapHost(h: Doc<'panelHosts'>, fronts?: ReadonlySet<string>) {
+/** `isFront`: whether it is an operator front the node's members no longer get (`leftOutFronts`). */
+function mapHost(h: Doc<'panelHosts'>, isFront?: (h: Doc<'panelHosts'>) => boolean) {
   return {
     addressUuid: h.hostUuid,
     remark: h.remark,
@@ -264,23 +264,25 @@ function mapHost(h: Doc<'panelHosts'>, fronts?: ReadonlySet<string>) {
     configProfileUuid: h.configProfileUuid ?? null,
     transportUuid: h.configProfileInboundUuid ?? null,
     nodeUuids: h.nodeUuids,
-    operatorFront: fronts?.has(h.remark) ?? false,
+    operatorFront: isFront?.(h) ?? false,
   };
 }
 
 /**
- * Per node (by uuid), the remarks of the operator fronts its members no longer
- * get: the Hosts `relays.operatorFronts` records for the origin the node's
- * delivery binding names. A member render leaves them out (docs/edges.md
- * "Direct-Host hides and the restore workflow"). A node with no active binding
- * is served the raw body, fronts included, so it has none.
+ * Per node (by uuid), which of its Hosts are operator fronts its members no
+ * longer get: those `relays.operatorFronts` records for the origin the node's
+ * delivery binding names, by Host uuid (a backend does not keep remarks
+ * unique; a record from before uuids were kept matches by remark until the
+ * next look rewrites it). A member render leaves them out (docs/edges.md
+ * "Direct-Host hides and the restore workflow"). A node with no active
+ * binding is served the raw body, fronts included, so it has none.
  */
 async function leftOutFronts(
   db: DatabaseReader,
   sid: Id<'backendServers'>,
   nodes: readonly Doc<'panelNodes'>[],
-): Promise<Map<string, Set<string>>> {
-  const out = new Map<string, Set<string>>();
+): Promise<Map<string, (h: Doc<'panelHosts'>) => boolean>> {
+  const out = new Map<string, (h: Doc<'panelHosts'>) => boolean>();
   const relays = await db
     .query('relays')
     .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
@@ -289,8 +291,15 @@ async function leftOutFronts(
   if (bySlug.size === 0) return out;
   for (const n of nodes) {
     const binding = await deliveryBindingFor(db, sid, originNameOf(n.name));
-    const fronts = binding && bySlug.get(binding.relaySlug)?.operatorFronts?.remarks;
-    if (fronts) out.set(n.nodeUuid, new Set(fronts));
+    const fronts = binding && bySlug.get(binding.relaySlug)?.operatorFronts;
+    if (!fronts) continue;
+    if (fronts.hostUuids) {
+      const uuids = new Set(fronts.hostUuids.map((u) => u.toLowerCase()));
+      out.set(n.nodeUuid, (h) => uuids.has(h.hostUuid.toLowerCase()));
+    } else {
+      const remarks = new Set(fronts.remarks);
+      out.set(n.nodeUuid, (h) => remarks.has(h.remark));
+    }
   }
   return out;
 }

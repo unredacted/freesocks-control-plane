@@ -1978,7 +1978,7 @@ consent (it has hide rows). On an origin whose Hosts the operator writes and tha
 one, it is raised instead, never disabled. Any other raises attention `direct_host_reappeared` (critical, `relays.directHostAlert`, cleared when the next
 pass sees none). Both are suppressed while a restore workflow runs. The same look (and the
 setup run's rehearsal look, `observe`, before go-live) records the node's **operator fronts**
-(`relays.operatorFronts`, names only; `operatorFrontHosts`): enabled Hosts on a protected
+(`relays.operatorFronts`, their names and Host uuids, never an address, every one of them; `operatorFrontHosts`): enabled Hosts on a protected
 transport that dial an IP that is neither the node nor an edge of the origin and are not FCP's,
 such as a load balancer the operator built by hand. A Host by a name is never one (a lookup
 that failed would leave the node itself looking like a front), so it keeps the critical alarm. A member render leaves their entries out like any it
@@ -1988,9 +1988,11 @@ its Host in the backend) instead of `direct_host_reappeared`. An entry left out 
 knows stays the critical alarm. The node page (Admin -> Servers -> the node, each transport)
 lists such a Host apart from "Addresses members get", as one of the operator's own fronts left
 out of members' subscriptions, once the node is bound: `serverAdmin.tree` marks an address
-`operatorFront` when its remark is in the `operatorFronts` of the origin the node's delivery
-binding names. Before go-live, or with the binding released, members get the raw body, front
-included, so it stays an address members get. An origin whose Hosts cannot
+`operatorFront` when its Host is one the `operatorFronts` of the origin the node's delivery
+binding names records, by Host uuid (a backend does not keep remarks unique; a record from
+before uuids were kept matches by remark until the next look rewrites it). Before go-live, or
+with the binding released, members get the raw body, front included, so it stays an address
+members get. An origin whose Hosts cannot
 be read is skipped for that pass (unknown is not an observation), and one that fails does not
 stop the others.
 
@@ -5568,6 +5570,15 @@ machine likewise never creates, reuses or publishes a load balancer for such an 
 `edgeHostHides:clearFrontsForRollback` with no arguments right before deploying the older
 build: its schema has no such field (a pass may record one again in between; run it again if
 the push is refused).
+
+**The node page's operator fronts** add one optional field inside `relays.operatorFronts`
+(`hostUuids`, each front's backend Host uuid): one deploy, no migration, no env change. The first
+look at each node after it (a reconcile pass for a bound origin) rewrites the record with them;
+until then the node page matches its fronts by remark. Fronts are no longer cut at 20 names, so
+an entry left out by the 21st is `front_host_unused` too, not `direct_host_reappeared`. To roll
+back, run `edgeHostHides:clearFrontsForRollback` with no arguments right before deploying the
+older build: its schema has no `hostUuids` (the older build records the fronts again on its
+next pass).
 
 **Every bound origin re-observed, unplaced entries left out, refusals for good** add one
 optional field (`relays.withheldEntries`): one deploy, no migration, no env change. From the

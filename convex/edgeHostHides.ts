@@ -581,19 +581,36 @@ export const clearWithheldForRollback = internalMutation({
 
 /**
  * The node's operator fronts as one look at its Hosts saw them
- * (`operatorFrontHosts`): names only, written when they changed. A withheld
- * entry named by one is a known front, not the node (`front_host_unused`).
+ * (`operatorFrontHosts`): their names and Host uuids, never an address,
+ * written when they changed. Every one is kept (bounded by the node's Hosts in
+ * the listing): a withheld entry named by one is a known front, not the node
+ * (`front_host_unused`), and the node page lists each by its uuid, since a
+ * backend does not keep remarks unique.
  */
 export const noteFronts = internalMutation({
-  args: { relayId: v.id('relays'), remarks: v.array(v.string()) },
-  handler: async (ctx, { relayId, remarks }) => {
+  args: {
+    relayId: v.id('relays'),
+    remarks: v.array(v.string()),
+    hostUuids: v.array(v.string()),
+  },
+  handler: async (ctx, { relayId, remarks, hostUuids }) => {
     const relay = await ctx.db.get(relayId);
     if (!relay) return null;
-    const kept = [...new Set(remarks)].sort().slice(0, MAX_WITHHELD_REMARKS);
-    const prev = relay.operatorFronts?.remarks ?? [];
-    if (prev.length === kept.length && prev.every((r, i) => r === kept[i])) return null;
+    const kept = [...new Set(remarks)].sort();
+    const uuids = [...new Set(hostUuids)].sort();
+    const prev = relay.operatorFronts;
+    const same = (a: readonly string[], b: readonly string[]) =>
+      a.length === b.length && a.every((r, i) => r === b[i]);
+    // A record from before uuids were kept is rewritten by the first look.
+    const unchanged = prev
+      ? same(prev.remarks, kept) && !!prev.hostUuids && same(prev.hostUuids, uuids)
+      : kept.length === 0 && uuids.length === 0;
+    if (unchanged) return null;
     await ctx.db.patch(relayId, {
-      operatorFronts: kept.length > 0 ? { at: Date.now(), remarks: kept } : undefined,
+      operatorFronts:
+        kept.length > 0 || uuids.length > 0
+          ? { at: Date.now(), remarks: kept, hostUuids: uuids }
+          : undefined,
     });
     return null;
   },
@@ -614,7 +631,7 @@ export const clearFrontsForRollback = internalMutation({
   },
 });
 
-/** Records the node's operator fronts from one listing (names only). */
+/** Records the node's operator fronts from one listing (names and Host uuids). */
 async function recordFronts(
   ctx: ActionCtx,
   c: HideContext,
@@ -630,6 +647,7 @@ async function recordFronts(
   await ctx.runMutation(internal.edgeHostHides.noteFronts, {
     relayId: c.relay._id,
     remarks: fronts.map((h) => h.remark),
+    hostUuids: fronts.map((h) => h.uuid),
   });
 }
 
