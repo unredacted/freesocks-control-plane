@@ -168,7 +168,7 @@ import { networkPrefixes } from './edgeNetworks';
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { clientCheckFailedNow, clientCheckReadiness, runClientCheck } from './edgeClientCheck';
 import { locationTicked } from './lib/edges/tickedLocation';
-import { REPLACEMENT_POLICY, replacementPlacement } from './lib/edges/replacementHolders';
+import { replacementPlacement, replacementPolicyOf } from './lib/edges/replacementHolders';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -2283,7 +2283,7 @@ export const applyPublish = internalMutation({
         return { ok: false as const, code: 'target_gone' as const };
       // Who receives the replacement: ONE decision (lib/edges/replacementHolders.ts).
       poolIndex = replacementPlacement({
-        policy: REPLACEMENT_POLICY,
+        policy: replacementPolicyOf(origin),
         target: { poolIndex: target.poolIndex },
       }).poolIndex;
       previousBinding = {

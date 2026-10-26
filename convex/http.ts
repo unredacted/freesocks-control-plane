@@ -175,11 +175,13 @@ function issuanceErrorResponse(err: unknown, requestId: string): Response {
  * forgetting the `finally` release (a lock leak). The caller's `run` performs the
  * action call and shapes the success Response. (Review P3.)
  *
- * TWO rate limits apply: the per-route policy (caller's policyKey) AND a shared
- * cross-route bucket ('account.reissue'). The per-route buckets alone let a
- * member triple their issuance rate by rotating across the three routes; every
- * re-issue mints a fresh traffic counter, so issuance rate IS quota rate.
- * (Review D-M3.)
+ * THREE rate limits apply: the per-route policy (caller's policyKey), a shared
+ * cross-route bucket ('account.reissue') AND its daily twin
+ * ('account.reissue.day'). The per-route buckets alone let a member triple
+ * their issuance rate by rotating across the routes; every re-issue mints a
+ * fresh traffic counter, so issuance rate IS quota rate. (Review D-M3.) The
+ * daily one bounds how fast an account can walk across nodes and see each
+ * one's addresses (docs/edges.md "Address enumeration").
  */
 async function withIssuanceSaga(
   ctx: ActionCtx,
@@ -187,14 +189,16 @@ async function withIssuanceSaga(
   policyKey: string,
   run: (requestId: string) => Promise<Response>,
 ): Promise<Response> {
-  const sharedRl = await ctx.runMutation(internal.rateLimits.enforce, {
-    policyKey: 'account.reissue',
-    subject: userId,
-  });
-  if (!sharedRl.allowed) {
-    return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
-      retryAfterMs: sharedRl.retryAfterMs,
+  for (const shared of ['account.reissue', 'account.reissue.day'] as const) {
+    const sharedRl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: shared,
+      subject: userId,
     });
+    if (!sharedRl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
+        retryAfterMs: sharedRl.retryAfterMs,
+      });
+    }
   }
   const rl = await ctx.runMutation(internal.rateLimits.enforce, { policyKey, subject: userId });
   if (!rl.allowed) {

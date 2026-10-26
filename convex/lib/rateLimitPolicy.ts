@@ -54,6 +54,12 @@ export const RATE_LIMIT_DEFAULTS = {
   // minutes sustained — generous for real use (apps re-adding configs), tight
   // for scripted churn. (Review D-M3.)
   'account.reissue': { max: 12, windowMs: HOUR, enabled: true },
+  // Its daily twin: re-issuing keeps the account's seat (the same addresses on
+  // a node), but a switch or regenerate can land on another node and show that
+  // node's addresses. This bounds how fast one account walks the fleet
+  // (docs/edges.md "Address enumeration"); real members re-issue a few times
+  // a day at most.
+  'account.reissue.day': { max: 10, windowMs: DAY, enabled: true },
   'account.refresh-membership': { max: 1, windowMs: 30_000, enabled: true },
   // Account-number rotation mints a fresh credential; throttle hard vs. churn.
   'account.rotate': { max: 5, windowMs: HOUR, enabled: true },

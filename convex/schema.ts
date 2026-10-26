@@ -662,6 +662,10 @@ export default defineSchema({
     // signal the deactivate-idle-free sweep keys off (an ACTIVE free user whose
     // key has expired and wasn't refreshed is deactivated). Unset for paid users.
     freeKeyExpiresAt: v.optional(v.number()),
+    // The account's seat for edge assignment (subscriptions.ts `seatOf`): copied
+    // into every subscription's `renderKey`, so re-issuing never re-draws the
+    // addresses an account is handed. Random, server-side only.
+    renderSeat: v.optional(v.string()),
     // Durable donor marker: the ms timestamp of the member's FIRST settled
     // donation (set once, never cleared). Backs the persistent account donor
     // badge so the read path needs no billing-order scan. Unset ⇒ not a donor.
@@ -1624,6 +1628,11 @@ export default defineSchema({
     // The published-pool size (state: setup runs and re-protect widen it), seeded
     // from `edge.desiredPublishedDefault`.
     desiredPublished: v.number(),
+    // How members' addresses are picked from the pool (lib/edges/assignment.ts):
+    // `hrw1` = rendezvous over edges (a blocked address's holders scatter, a new
+    // one takes a random slice); absent = the legacy modulus walk. New origins
+    // start on `hrw1`; switching moves members once (`relays.setEdgePick`).
+    edgePick: v.optional(v.literal('hrw1')),
     // Per-origin OVERRIDES of the fleet knobs, one rule for all five
     // (`originPolicy` in lib/edgeConfig.ts): absent = follow `edge.*`.
     standbyPerRelay: v.optional(v.number()),

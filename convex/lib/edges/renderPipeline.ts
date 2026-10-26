@@ -15,6 +15,7 @@
 import {
   assignEndpoints,
   type CountryContext,
+  type EdgePickVersion,
   type EdgeTier,
   type PublishedEdge,
 } from './assignment';
@@ -41,6 +42,8 @@ export interface EdgeRenderContext {
   published: PublishedEdge[];
   rule: EffectiveRule;
   preferDistinctProviders: boolean;
+  /** How the origin walks its pool (`relays.edgePick`); absent = the legacy walk. */
+  edgePick?: EdgePickVersion;
   originAddress: string;
   /**
    * Other addresses the node is known by (an enrolled node's other public
@@ -129,6 +132,7 @@ export function applyEdgeRender(
   const assigned = assignEndpoints(renderKey, published, {
     now: opts.now,
     preferDistinctProviders: rctx.preferDistinctProviders,
+    ...(rctx.edgePick ? { edgePick: rctx.edgePick } : {}),
     includeBackup: rule.includeBackup,
     canEmitV6,
     namesPerEndpoint: rule.namesPerEndpoint,

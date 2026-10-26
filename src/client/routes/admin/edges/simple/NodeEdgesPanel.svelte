@@ -50,6 +50,10 @@
    * country" and "Check from every country now" in its Countries menu. The
    * checks read every 30 s, every 4 s while a check asked for here is out.
    *
+   * A node on the legacy address pick shows "Spread members over the
+   * addresses" (`relays.edgePick`): its dialog reads how many members would
+   * get a different pair before the operator switches (spreadWords.ts).
+   *
    * Props:
    *   slug: string                          the origin's slug
    *   enrolled?: { stage: string } | null   the enrolled node behind it (Servers knows)
@@ -79,6 +83,7 @@
     edgeConfigQuery,
     edgeCountriesQuery,
     edgeKeys,
+    fetchRelayEdgePick,
     invalidateRelay,
     relayEdgesQuery,
     relayListenersQuery,
@@ -90,10 +95,11 @@
     resolveEdgeOperator,
     resumeAutoReplace,
     retrySetupRun,
+    setRelayEdgePick,
     updateRelay,
   } from '@client/lib/edgesApi';
   import { originBusy } from '@client/lib/livePoll';
-  import type { EdgeAdmin } from '@shared/contracts/edges';
+  import type { EdgeAdmin, EdgePickView } from '@shared/contracts/edges';
   import AdminListState from '../../AdminListState.svelte';
   import UpdatedAgo from '../../UpdatedAgo.svelte';
   import Timeline from '../components/Timeline.svelte';
@@ -115,6 +121,7 @@
   import SpareDialog from './SpareDialog.svelte';
   import StatusDot from './StatusDot.svelte';
   import { endNowWords } from './drainWords';
+  import { SPREAD_CARD, SPREAD_CONFIRM, spreadMovesWords } from './spreadWords';
   import {
     heldSpareWords,
     nodeAutomationWords,
@@ -294,6 +301,18 @@
   let renewing = $state<{ edgeId: string; listenerId: string; listenerKey: string } | null>(null);
   let removeOpen = $state(false);
   let againOpen = $state(false);
+  // "Spread members": the estimate is read when the dialog opens.
+  let spreadOpen = $state(false);
+  let spreadView = $state<EdgePickView | null>(null);
+  let spreadError = $state<string | null>(null);
+  $effect(() => {
+    if (!spreadOpen || !relay) return;
+    spreadView = null;
+    spreadError = null;
+    fetchRelayEdgePick(relay.id)
+      .then((v) => (spreadView = v))
+      .catch((e) => (spreadError = edgeErrorMessage(e)));
+  });
   let testEdgeIds = $state<string[]>([]);
   // The activation run the server opened when go-live found untested addresses.
   let testRunId = $state<string | null>(null);
@@ -551,6 +570,22 @@
       {/if}
     </section>
 
+    {#if relay.edgePick !== 'hrw1'}
+      <section class="rounded-lg border p-3" aria-labelledby={`${uid}-spread`}>
+        <h3 id={`${uid}-spread`} class="text-sm font-semibold">{SPREAD_CARD.title}</h3>
+        <p class="text-muted-foreground mt-1 text-sm">{SPREAD_CARD.body}</p>
+        <Button
+          class="mt-2"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onclick={() => (spreadOpen = true)}
+        >
+          {SPREAD_CARD.action}
+        </Button>
+      </section>
+    {/if}
+
     {#if relay.origin.kind === 'panel-node'}
       <NodeProvidersCard
         relay={{ id: relay.id, slug: relay.slug }}
@@ -717,6 +752,22 @@
   {#if renewing}
     <SpareDialog open={true} {relay} renew={renewing} onClose={() => (renewing = null)} />
   {/if}
+  <ActionConfirm
+    bind:open={spreadOpen}
+    title={SPREAD_CONFIRM.title}
+    body={SPREAD_CONFIRM.body}
+    confirmLabel={SPREAD_CONFIRM.label}
+    disabled={!spreadView}
+    run={async () => {
+      await setRelayEdgePick(relay.id, 'hrw1');
+      toast.success('Members are spread over the addresses from their next refresh.');
+      invalidateRelay(qc, slug);
+    }}
+  >
+    <p class="text-sm">
+      {spreadError ?? spreadMovesWords(spreadView) ?? 'Working out how many members move.'}
+    </p>
+  </ActionConfirm>
   <ActionConfirm
     bind:open={againOpen}
     title={`Protect ${name} again?`}

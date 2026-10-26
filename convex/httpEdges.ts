@@ -458,6 +458,11 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       return json(
         await ctx.runQuery(internal.edgeOperator.quarantineView, { relayId: id<'relays'>(b) }),
       );
+    // The address pick and what switching it would move (the node page's dialog).
+    if (c === 'edge-pick' && !d) {
+      const r = await ctx.runQuery(internal.edgeAdmin.edgePickView, { relayId: id<'relays'>(b) });
+      return r ? json(r) : notFound();
+    }
     // Test block evidence on this origin (edgeSimulations.ts): accepted here at all, live, recent.
     if (c === 'simulations' && !d)
       return json(
@@ -1209,6 +1214,19 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           allowUnqualified: true,
           ...act,
         }),
+      );
+    }
+    // How members' addresses are picked from the pool. The field is REQUIRED:
+    // `null` means "back to the legacy walk", which moves members, so an empty
+    // body or a missing field must never be read as that.
+    if (c === 'edge-pick' && !d) {
+      if (!('version' in body))
+        return errorJson('validation', "version is required: 'hrw1' or null", 400);
+      const version = body.version;
+      if (version !== null && version !== 'hrw1')
+        return errorJson('validation', "version must be 'hrw1' or null", 400);
+      return json(
+        await ctx.runMutation(internal.edgeAdmin.setEdgePick, { relayId, version, ...act }),
       );
     }
     // Automatic replacement held for a transport (a replacement blocked again

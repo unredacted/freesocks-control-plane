@@ -700,6 +700,11 @@ export const OriginAdmin = z.object({
   autoReplaceHolds: z
     .array(z.object({ listenerId: z.string(), code: z.string(), at: iso }))
     .default([]),
+  /**
+   * How members' addresses are picked from the pool: `hrw1` (rendezvous: a
+   * blocked address's holders scatter) or null (the legacy modulus walk).
+   */
+  edgePick: z.literal('hrw1').nullable().default(null),
   cooldownMinutes: z.number(),
   maxRotationsPerDay: z.number(),
   drainMinutes: z.number(),
@@ -2439,6 +2444,28 @@ export const EdgeAutomationResponse = z.object({
   changedKeys: z.array(z.string()),
 });
 export type EdgeAutomationResponse = z.infer<typeof EdgeAutomationResponse>;
+
+/** `GET relays/{id}/edge-pick`: the origin's address pick and what switching would move. */
+export const EdgePickView = z.object({
+  relaySlug: z.string(),
+  edgePick: z.literal('hrw1').nullable(),
+  published: z.number(),
+  switchTo: z.literal('hrw1').nullable(),
+  /** Synthetic seats sampled, and how many of them are handed at least one different address. */
+  sampled: z.number(),
+  moved: z.number(),
+  /** Client families render with and without a backup: `moved` is the larger share. */
+  upTo: z.boolean().default(false),
+});
+export type EdgePickView = z.infer<typeof EdgePickView>;
+
+/** `POST relays/{id}/edge-pick`. */
+export const EdgePickResponse = z.object({
+  ok: z.literal(true),
+  changed: z.boolean(),
+  edgePick: z.literal('hrw1').nullable(),
+});
+export type EdgePickResponse = z.infer<typeof EdgePickResponse>;
 
 /** `POST relays/{id}/rebalance`: the duplicate that went back to standby. */
 export const RelayRebalanceResponse = z.object({

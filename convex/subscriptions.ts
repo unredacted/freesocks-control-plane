@@ -104,6 +104,40 @@ export const resolveCurrentOrActive = internalQuery({
 
 // --- write mutations (issuance saga, P5c) ---
 
+/**
+ * The account's SEAT: the key its subscriptions' edge assignment and name
+ * selection are computed from (`subscriptions.renderKey`). It lives on the
+ * account (`users.renderSeat`), so a regenerate, a mode, server or backend
+ * switch, or an issue long after every old row was swept keeps it: on a node
+ * the account is always handed the same addresses, and re-issuing is no way to
+ * draw new ones (docs/edges.md "Address enumeration"). An account without one
+ * takes the key its members' apps hold now once (nobody moves when this
+ * lands): its current or newest active key's, else its newest row's that was
+ * not deleted (a failed issuance's compensation row is never one), else a new
+ * one. Random, server-side only, never the subscription token.
+ */
+export async function seatOf(ctx: MutationCtx, userId: Id<'users'>): Promise<string> {
+  const user = await ctx.db.get(userId);
+  if (!user) return randomHex(32);
+  if (user.renderSeat) return user.renderSeat;
+  const active = await currentOrActiveSub(ctx.db, user);
+  const held =
+    active?.renderKey ??
+    (
+      await ctx.db
+        .query('subscriptions')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .order('desc')
+        .filter((q) =>
+          q.and(q.neq(q.field('renderKey'), undefined), q.neq(q.field('state'), 'deleted')),
+        )
+        .first()
+    )?.renderKey;
+  const seat = held ?? randomHex(32);
+  await ctx.db.patch(userId, { renderSeat: seat });
+  return seat;
+}
+
 /** Persist a freshly-issued subscription. Returns its id. */
 export const insertSubscription = internalMutation({
   args: {
@@ -205,9 +239,10 @@ export const insertSubscription = internalMutation({
       // Map the generic arg onto the schema field name.
       backendPlacement: placement,
       subToken,
-      // Origin-edge assignment key: opaque, per key, never the subToken (so a
-      // fronted-URL rotation does not reshuffle a member's endpoints).
-      renderKey: randomHex(32),
+      // Origin-edge assignment key: the account's seat (`seatOf`), never the
+      // subToken (so neither a fronted-URL rotation nor a re-issue reshuffles
+      // a member's endpoints).
+      renderKey: await seatOf(ctx, a.userId),
       state: 'active',
       updatedAt: Date.now(),
     });
@@ -219,8 +254,8 @@ export const insertSubscription = internalMutation({
 });
 
 /**
- * Lazily mint the origin-edge assignment key for rows that predate it (every new
- * row gets one at insert). Returns the key; idempotent.
+ * Lazily give a row that predates the key its account's seat (every new row
+ * gets it at insert). Returns the key; idempotent.
  */
 export const ensureRenderKey = internalMutation({
   args: { subscriptionId: v.id('subscriptions') },
@@ -228,7 +263,7 @@ export const ensureRenderKey = internalMutation({
     const sub = await ctx.db.get(subscriptionId);
     if (!sub) return null;
     if (sub.renderKey) return sub.renderKey;
-    const renderKey = randomHex(32);
+    const renderKey = await seatOf(ctx, sub.userId);
     await ctx.db.patch(subscriptionId, { renderKey });
     return renderKey;
   },

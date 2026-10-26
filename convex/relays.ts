@@ -498,6 +498,7 @@ export function mapRelayAdmin(
       code: h.code,
       at: new Date(h.at).toISOString(),
     })),
+    edgePick: r.edgePick ?? null,
     cooldownMinutes: Math.round(policy.cooldownMs / 60_000),
     maxRotationsPerDay: policy.maxRotationsPerDay,
     drainMinutes: Math.round(policy.drainMs / 60_000),
@@ -881,6 +882,9 @@ async function insertRelay(
     probeNode: p.probeNode ?? false,
     providerPreference: p.providerPreference,
     desiredPublished: p.desiredPublished ?? cfg.desiredPublishedDefault,
+    // A new origin has no member on its pool yet: it starts on rendezvous
+    // (docs/edges.md "Address enumeration"), so nobody moves for it later.
+    edgePick: 'hrw1',
     // OVERRIDES of the fleet knobs, persisted only when the caller set them, so
     // a later change of the fleet value applies to this origin (`originPolicy`).
     ...(p.standbyPerRelay !== undefined ? { standbyPerRelay: p.standbyPerRelay } : {}),
