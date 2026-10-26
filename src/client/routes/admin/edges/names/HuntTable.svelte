@@ -17,14 +17,15 @@
   import {
     actOnCandidates,
     addCandidates,
+    huntCandidatesQuery,
     invalidateSni,
     lookUpCt,
     type CandidateAction,
   } from '@client/lib/sniApi';
-  import type { SniHuntScopeView } from '../../../../../shared/contracts/sni';
   import {
     HUNT_FILTERS,
     HUNT_FILTER_LABEL,
+    HUNT_FILTER_STATE,
     candidateWords,
     countryWords,
     extraWords,
@@ -38,10 +39,12 @@
   import { importWords, sniErrorWords, type Dot } from './lib/words';
 
   let {
-    view,
+    kind,
+    slug,
     families,
   }: {
-    view: SniHuntScopeView;
+    kind: 'network' | 'family';
+    slug: string;
     /** Where picked names may be added: the family itself on its page, the network's families on a network. */
     families: { slug: string; label: string }[];
   } = $props();
@@ -55,7 +58,7 @@
     grey: 'bg-muted-foreground/50',
   };
   const SELECT = 'border-border bg-background min-h-9 rounded-md border px-2 py-1.5 text-sm';
-  const isFamily = $derived(view.scope.kind === 'family');
+  const isFamily = $derived(kind === 'family');
 
   let busy = $state(false);
   async function run<T>(work: () => Promise<T>): Promise<T | null> {
@@ -73,12 +76,19 @@
 
   let filter = $state<HuntFilter>('ready');
   let picked = $state<string[]>([]);
-  let shown = $derived(view.candidates.filter((c) => matchesHuntFilter(c, filter)));
+  // One state's pages at a time, best first; "Show more" reads the next page.
+  const list = huntCandidatesQuery(
+    () => kind,
+    () => slug,
+    () => HUNT_FILTER_STATE[filter],
+  );
+  let loaded = $derived((list.data?.pages ?? []).flatMap((p) => p.candidates));
+  let shown = $derived(loaded.filter((c) => matchesHuntFilter(c, filter)));
   let allPicked = $derived(shown.length > 0 && shown.every((c) => picked.includes(c.id)));
   const toggle = (id: string, on: boolean) =>
     (picked = on ? [...picked, id] : picked.filter((x) => x !== id));
   const toggleAll = (on: boolean) => (picked = on ? shown.map((c) => c.id) : []);
-  const pickedRows = $derived(view.candidates.filter((c) => picked.includes(c.id)));
+  const pickedRows = $derived(loaded.filter((c) => picked.includes(c.id)));
 
   let family = $state('');
   $effect(() => {
@@ -110,7 +120,7 @@
   }
   async function lookUp() {
     const sites = [...new Set(pickedRows.map((c) => c.site))].slice(0, 10);
-    const scope = isFamily ? { family: view.scope.slug } : { network: view.scope.slug };
+    const scope = isFamily ? { family: slug } : { network: slug };
     const r = await run(() => lookUpCt(sites, scope));
     if (r) {
       picked = [];
@@ -178,7 +188,11 @@
     </div>
   {/if}
 
-  {#if shown.length === 0}
+  {#if list.isError}
+    <p class="text-destructive">{sniErrorWords(codeOf(list.error))}</p>
+  {:else if list.isPending}
+    <p class="text-muted-foreground">Loading…</p>
+  {:else if shown.length === 0 && !list.hasNextPage}
     <p class="text-muted-foreground">Nothing here.</p>
   {:else}
     <div class="flex items-center gap-2 px-1">
@@ -224,5 +238,15 @@
         </li>
       {/each}
     </ul>
+    {#if list.hasNextPage}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={list.isFetchingNextPage}
+        onclick={() => void list.fetchNextPage()}
+      >
+        {list.isFetchingNextPage ? 'Loading…' : 'Show more'}
+      </Button>
+    {/if}
   {/if}
 </div>

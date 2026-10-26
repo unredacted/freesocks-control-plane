@@ -47,6 +47,21 @@ export const HUNT_FILTER_LABEL: Record<HuntFilter, string> = {
 
 const ready = (c: SniCandidateRow) => c.state === 'new' && c.check?.code === null;
 
+/** Which state's pages a filter reads (the rest is narrowed on the page). */
+export const HUNT_FILTER_STATE: Record<
+  HuntFilter,
+  'new' | 'failing' | 'gone' | 'ignored' | 'added' | 'all'
+> = {
+  ready: 'new',
+  failing: 'failing',
+  unchecked: 'new',
+  unmeasured: 'new',
+  gone: 'gone',
+  ignored: 'ignored',
+  added: 'added',
+  all: 'all',
+};
+
 export function matchesHuntFilter(c: SniCandidateRow, f: HuntFilter): boolean {
   switch (f) {
     case 'ready':

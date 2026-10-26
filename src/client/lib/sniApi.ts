@@ -3,7 +3,7 @@
  * The only place these API paths are built. Same three layers as edgesApi.ts:
  * typed route functions, the key tree, query wrappers.
  */
-import { createQuery, type QueryClient } from '@tanstack/svelte-query';
+import { createInfiniteQuery, createQuery, type QueryClient } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
 import {
@@ -129,10 +129,23 @@ export const confirmNameTest = (receiptId: string) =>
 // --- finding names (docs/edges.md "Finding names") ------------------------------------------
 const HUNT = `${BASE}/hunt`;
 export const fetchHunt = () => apiClient.get(HUNT, SniHuntOverview);
-export const fetchHuntNetwork = (slug: string) =>
-  apiClient.get(`${HUNT}/networks/${enc(slug)}`, SniHuntScopeView);
-export const fetchHuntFamily = (slug: string) =>
-  apiClient.get(`${HUNT}/families/${enc(slug)}`, SniHuntScopeView);
+export type HuntViewState = 'new' | 'failing' | 'gone' | 'ignored' | 'added' | 'all';
+/** One page of a network's or family's candidates of one state (first page: no cursor). */
+export const fetchHuntScope = (
+  kind: 'network' | 'family',
+  slug: string,
+  state: HuntViewState = 'new',
+  cursor?: string,
+) => {
+  const q = new URLSearchParams({ state });
+  if (cursor) q.set('cursor', cursor);
+  return apiClient.get(
+    `${HUNT}/${kind === 'network' ? 'networks' : 'families'}/${enc(slug)}?${q.toString()}`,
+    SniHuntScopeView,
+  );
+};
+export const fetchHuntNetwork = (slug: string) => fetchHuntScope('network', slug);
+export const fetchHuntFamily = (slug: string) => fetchHuntScope('family', slug);
 export const startSweep = () => apiClient.post(`${HUNT}/sweep`, {}, Loose);
 export const cancelSweep = () => apiClient.delete(`${HUNT}/sweep`, Loose);
 /** Whether the sweep matches against a network, and where its nodes are (a place name). */
@@ -207,6 +220,21 @@ export const huntFamilyQuery = (slug: () => string) =>
   createQuery(() => ({
     queryKey: sniKeys.huntFamily(slug()),
     queryFn: () => fetchHuntFamily(slug()),
+    refetchInterval: 60_000,
+  }));
+
+/** A scope's candidates of one state, page after page ("Show more"). */
+export const huntCandidatesQuery = (
+  kind: () => 'network' | 'family',
+  slug: () => string,
+  state: () => HuntViewState,
+) =>
+  createInfiniteQuery(() => ({
+    queryKey: [...sniKeys.hunt, 'candidates', kind(), slug(), state()] as const,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      fetchHuntScope(kind(), slug(), state(), pageParam),
+    getNextPageParam: (last: SniHuntScopeView) => last.page.cursor ?? undefined,
     refetchInterval: 60_000,
   }));
 

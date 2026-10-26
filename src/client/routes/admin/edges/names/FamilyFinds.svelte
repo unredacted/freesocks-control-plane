@@ -85,10 +85,10 @@
           {/each}
         </ul>
       {/if}
-      {#if view.data.candidates.length === 0}
+      {#if view.data.counts.new + view.data.counts.failing + view.data.counts.gone + view.data.counts.ignored + view.data.counts.added === 0}
         <p class="text-muted-foreground">Nothing found for it yet.</p>
       {:else}
-        <HuntTable view={view.data} families={[{ slug, label }]} />
+        <HuntTable kind="family" {slug} families={[{ slug, label }]} />
       {/if}
     {/if}
   </CardContent>

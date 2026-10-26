@@ -147,7 +147,7 @@
           No family is on this network yet: make one above to add names to it.
         </p>
       {/if}
-      <HuntTable view={v} families={onNetwork} />
+      <HuntTable kind="network" {slug} families={onNetwork} />
     </CardContent>
   </Card>
 {/if}
