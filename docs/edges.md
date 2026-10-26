@@ -3000,7 +3000,7 @@ address), a family (names its target may serve), or both (a family on a network)
 `sweepEveryDays` ago and some network is hunting (Networks, "Find names on this network"; a
 network with ranges), or by `POST sni/hunt/sweep`. The list's latest id is read, its first
 `depth` entries downloaded once (sized by FCP: the list service's own path, never a URL from an
-answer) and stored in file storage in chunks of 10,000 for the run's life, each site followed by
+answer) and stored in chunks of 10,000 (`sniHuntChunks`, plain `rank<TAB>name` lines) for the run's life, each site followed by
 its `www.` name while the rank is within `wwwDepth`. Then a **chain of short steps** resolves it:
 
 - A step **claims** the run (running, the generation it reads, an expired lease) and holds a
