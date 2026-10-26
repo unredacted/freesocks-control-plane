@@ -45,7 +45,8 @@ import {
 } from './lib/edges/sni/vantage';
 import type { VantageSource } from './lib/edges/probes/nameCheck';
 import { readRealHost } from './lib/edges/sni/realHost';
-import { normalizeAddress } from './lib/edges/hosts';
+import { ownAddresses } from './lib/edges/sni/ownAddresses';
+import { admitHuntBatch, huntProbesThisHour } from './sniHunt';
 import {
   measurementsPerName,
   resolveSniConfig,
@@ -335,12 +336,14 @@ async function checkableName(
 // --- budget -----------------------------------------------------------------------------------------
 
 async function spentThisHour(db: Db, now: number, budget: number): Promise<number> {
-  return (
+  const own = (
     await db
       .query('sniVantageProbes')
       .withIndex('by_requested', (q) => q.gte('requestedAt', now - HOUR))
       .take(budget + 1)
   ).length;
+  // Real-site checks of candidate names share the budget (docs/edges.md "Finding names").
+  return own + (await huntProbesThisHour(db, now, budget));
 }
 
 // --- starting a batch -------------------------------------------------------------------------------
@@ -563,6 +566,16 @@ export const tick = internalMutation({
       const r = await startBatch(ctx, { ...plan, names }, sources, 'cron', now, cfg.realHost);
       return { started: 1, measurements: r.measurements, reason: null };
     }
+    // Nothing deployed is due anywhere: candidate names may use what is left,
+    // keeping one full deployed batch's cost in reserve for the next tick.
+    const hunt = await admitHuntBatch(ctx, {
+      countries: countriesForTick(countries, now, TICK_MS),
+      sources,
+      remaining,
+      reserve: cfg.batchNames * sources.length * measurementsPerName(cfg),
+      now,
+    });
+    if (hunt) return { started: 1, measurements: hunt.measurements, reason: null, hunt: true };
     return idle('nothing_due');
   },
 });
@@ -677,30 +690,6 @@ export const batchContext = internalQuery({
     };
   },
 });
-
-/**
- * Every address FCP members are handed or nodes listen on (bounded: operator
- * scale), canonical (`normalizeAddress`: brackets, case and IPv6 spellings
- * folded) so a resolver's spelling of the same address still matches.
- */
-async function ownAddresses(db: Db, dialled: readonly Target[]): Promise<string[]> {
-  const out = new Set<string>();
-  const add = (a: string | undefined) => {
-    if (a) out.add(normalizeAddress(a));
-  };
-  for (const t of dialled) add(t.address);
-  for (const relay of await db.query('relays').take(500)) {
-    add(relay.originAddress);
-    for (const a of relay.nodeAddresses ?? []) add(a);
-    for (const status of ['active', 'draining'] as const)
-      for (const e of await db
-        .query('edges')
-        .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id).eq('status', status))
-        .take(200))
-        for (const a of [e.addresses.v4, e.addresses.v6]) add(a);
-  }
-  return [...out];
-}
 
 export const markRunning = internalMutation({
   args: { ids: v.array(v.id('sniVantageProbes')) },

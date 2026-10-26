@@ -580,6 +580,31 @@ const setupRunVerify = v.union(
   v.literal('unreachable'),
 );
 
+// Finding names: one timing measurement (sniCandidates.timing / .own).
+const huntTiming = v.object({
+  at: v.number(),
+  // The place measured from (a place name, `CC` or `CC/City`) and the address and port dialled.
+  place: v.string(),
+  endpoint: v.string(),
+  port: v.number(),
+  connectMs: v.number(),
+  tlsMs: v.optional(v.number()),
+  probes: v.number(),
+});
+// Finding names: OONI's web_connectivity counts for one country.
+const huntOoni = v.object({
+  cc: v.string(),
+  status: v.union(
+    v.literal('ok'),
+    v.literal('mixed'),
+    v.literal('likely_blocked'),
+    v.literal('blocked'),
+    v.literal('thin'),
+    v.literal('no_data'),
+  ),
+  measurements: v.number(),
+});
+
 export default defineSchema({
   tiers: defineTable({
     slug: v.string(),
@@ -3500,6 +3525,10 @@ export default defineSchema({
           ),
         }),
         shown: v.array(v.string()),
+        // The address the handshake dialled (the family target's, or the
+        // candidate's own): timing is measured on it, and stale once it moves.
+        dialled: v.optional(v.string()),
+        port: v.optional(v.number()),
       }),
     ),
     // Bumped by every claim: a check records only under the generation it claimed.
@@ -3519,6 +3548,45 @@ export default defineSchema({
     ),
     passes: v.number(),
     lastPassAt: v.optional(v.number()),
+    // Evidence (the shortlist only; docs/edges.md "Finding names"). `timing`:
+    // from probes at the network's place to the address REALITY would relay to
+    // (the family's target presenting the name, or the candidate's own);
+    // `own`: a family candidate's own site, shown, never scored.
+    timing: v.optional(huntTiming),
+    own: v.optional(huntTiming),
+    // OONI per curated country: the exact name (scored) and its site's apex
+    // and www (context only).
+    ooni: v.optional(
+      v.object({
+        at: v.number(),
+        exact: v.array(huntOoni),
+        site: v.array(huntOoni),
+      }),
+    ),
+    // The newest real-site check from inside each opted-in country.
+    countries: v.optional(
+      v.array(
+        v.object({
+          cc: v.string(),
+          at: v.number(),
+          reading: v.union(
+            v.literal('ok'),
+            v.literal('interference'),
+            v.literal('inconclusive'),
+            v.literal('path'),
+          ),
+          vantages: v.number(),
+          networks: v.number(),
+          singled: v.number(),
+        }),
+      ),
+    ),
+    // On the shortlist that gets evidence (the rescore keeps it).
+    listed: v.optional(v.boolean()),
+    // When evidence was last asked for it (the rotating slots take the oldest).
+    evidenceAskedAt: v.optional(v.number()),
+    // "Measure now": taken first by the next evidence run.
+    measureAt: v.optional(v.number()),
     baseScore: v.number(),
     score: v.number(),
     scoreParts: v.optional(
@@ -3540,7 +3608,47 @@ export default defineSchema({
     .index('by_family', ['familyId'])
     .index('by_name', ['name'])
     .index('by_check_due', ['checkDueAt'])
-    .index('by_gone', ['goneAt']),
+    .index('by_gone', ['goneAt'])
+    .index('by_listed', ['listed', 'evidenceAskedAt'])
+    .index('by_measure', ['measureAt']),
+
+  // A real-site check of shortlisted candidates from inside one opted-in
+  // country: Globalping `HEAD /` to the candidate's own on-network address,
+  // presenting its name, the batch's names from the same probes. Admitted only
+  // by the vantage planner after deployed names (sniVantage.tick), counted in
+  // its hourly budget. Kept for the vantage window.
+  sniHuntProbes: defineTable({
+    batch: v.string(),
+    candidateId: v.id('sniCandidates'),
+    name: v.string(),
+    address: v.string(),
+    country: v.string(),
+    role: v.union(v.literal('candidate'), v.literal('control')),
+    status: v.union(
+      v.literal('requested'),
+      v.literal('running'),
+      v.literal('finished'),
+      v.literal('failed'),
+      v.literal('timeout'),
+      v.literal('skipped'),
+    ),
+    requestedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    results: v.array(
+      v.object({
+        vantage: v.optional(v.string()),
+        asn: v.optional(v.string()),
+        network: v.optional(v.string()),
+        outcome: v.string(),
+        stage: v.optional(v.string()),
+      }),
+    ),
+    updatedAt: v.number(),
+  })
+    .index('by_requested', ['requestedAt'])
+    .index('by_batch', ['batch'])
+    .index('by_status_requested', ['status', 'requestedAt']),
 
   // Names and sites an operator ignored, so no later sweep or import brings
   // them back. A scope (network or family) limits it there; none = everywhere.

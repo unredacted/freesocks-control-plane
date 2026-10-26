@@ -696,3 +696,225 @@ describe('imports, ignores and adding', () => {
     await expect(t.mutation(internal.sniHunt.startSweep, {})).rejects.toThrow(/switched off/);
   });
 });
+
+describe('evidence', () => {
+  /** A passing candidate, as a check leaves it. */
+  async function passingCandidate(
+    t: T,
+    o: {
+      name: string;
+      networkId?: Id<'edgeNetworks'>;
+      familyId?: Id<'sniFamilies'>;
+      dialled: string;
+      shown: string[];
+      rank?: number;
+      listed?: boolean;
+      fresh?: boolean;
+    },
+  ) {
+    return t.run((ctx) =>
+      ctx.db.insert('sniCandidates', {
+        name: o.name,
+        site: o.name.split('.').slice(-2).join('.'),
+        ...(o.networkId ? { networkId: o.networkId } : {}),
+        ...(o.familyId ? { familyId: o.familyId } : {}),
+        sources: ['toplist'],
+        ...(o.rank ? { rank: o.rank } : {}),
+        state: 'new',
+        check: {
+          at: clock,
+          code: null,
+          alpn: 'h2',
+          answers: { v4: 1, v6: 0, onNetwork: 'all' },
+          shown: o.shown,
+          dialled: o.dialled,
+          port: 443,
+        },
+        checkGen: 1,
+        checkDueAt: clock + 1e9,
+        passes: 1,
+        ...(o.listed ? { listed: true } : {}),
+        ...(o.fresh
+          ? {
+              timing: {
+                at: clock,
+                place: 'US',
+                endpoint: o.dialled,
+                port: 443,
+                connectMs: 10,
+                probes: 2,
+              },
+              ooni: { at: clock, exact: [], site: [] },
+              evidenceAskedAt: clock,
+            }
+          : {}),
+        baseScore: 0,
+        score: 0,
+        firstSeenAt: clock,
+        updatedAt: clock,
+      }),
+    );
+  }
+
+  /** Globalping that answers by the address dialled: connect ms per address. */
+  function timingGlobalping(ms: Record<string, number>) {
+    const requests: Array<{ target: string; measurementOptions: { request: { host: string } } }> =
+      [];
+    const client = {
+      async createMeasurement(req: unknown) {
+        requests.push(req as (typeof requests)[number]);
+        return { ok: true, data: { id: `m${requests.length}` } };
+      },
+      async getMeasurement(id: string) {
+        const req = requests[Number(id.slice(1)) - 1]!;
+        const tcp = ms[req.target] ?? 999;
+        return {
+          ok: true,
+          data: {
+            status: 'finished',
+            results: [1, 2].map(() => ({
+              probe: { country: 'US' },
+              result: { status: 'finished', timings: { tcp, tls: tcp + 5 } },
+            })),
+          },
+        };
+      },
+    };
+    return { client, requests };
+  }
+
+  test('a family candidate is near only if the family target is: its own site is shown, not scored', async () => {
+    const { t, familyId, networkId } = await seed();
+    await t.run((ctx) =>
+      ctx.db.patch(networkId, {
+        hunt: { enabled: true, place: { country: 'US', city: 'Springfield' } },
+      }),
+    );
+    const id = await passingCandidate(t, {
+      name: 'www.example.com',
+      networkId,
+      familyId,
+      dialled: TARGET_IP,
+      shown: ['192.0.2.11'],
+      listed: true,
+    });
+    const gp = timingGlobalping({ [TARGET_IP]: 120, '192.0.2.11': 5 });
+    fakeDeps(
+      {},
+      {
+        globalping: () => gp.client,
+        fetch: (async () => new Response(JSON.stringify({ result: [] }))) as typeof fetch,
+      },
+    );
+    const r = await t.action(internal.sniHuntOps.evidence, {});
+    expect(r.timed).toBe(1);
+    // The target leg, presenting the candidate, from the network's place.
+    expect(gp.requests[0]).toMatchObject({
+      target: TARGET_IP,
+      locations: [{ country: 'US', city: 'Springfield', limit: 2 }],
+      measurementOptions: { request: { host: 'www.example.com' } },
+    });
+    const c = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(c.timing).toMatchObject({
+      endpoint: TARGET_IP,
+      connectMs: 120,
+      place: 'US/Springfield',
+    });
+    expect(c.own).toMatchObject({ endpoint: '192.0.2.11', connectMs: 5 });
+    expect(c.scoreParts?.near).toBe(4);
+    // Two measurements were reserved in the hour's budget.
+    expect(await t.run((ctx) => ctx.db.query('sniHuntCalls').collect())).toHaveLength(2);
+  });
+
+  test("OONI: the exact name scores; its site's apex and www are context only", async () => {
+    const { t, networkId } = await seed();
+    await setting(t, 'edge.sni.vantage.countries', ['IR']);
+    const id = await passingCandidate(t, {
+      name: 'blog.example.com',
+      networkId,
+      dialled: '192.0.2.30',
+      shown: ['192.0.2.30'],
+      listed: true,
+    });
+    const asked: string[] = [];
+    fakeDeps(
+      {},
+      {
+        fetch: (async (url: string) => {
+          const domain = new URL(url).searchParams.get('domain')!;
+          asked.push(domain);
+          const result =
+            domain === 'example.com'
+              ? [
+                  {
+                    probe_cc: 'IR',
+                    measurement_count: 40,
+                    ok_count: 0,
+                    anomaly_count: 40,
+                    confirmed_count: 30,
+                  },
+                ]
+              : [];
+          return new Response(JSON.stringify({ result }));
+        }) as typeof fetch,
+      },
+    );
+    await t.action(internal.sniHuntOps.evidence, {});
+    expect(asked.sort()).toEqual(['blog.example.com', 'example.com', 'www.example.com']);
+    const c = (await t.run((ctx) => ctx.db.get(id)))!;
+    const ir = (xs: Array<{ cc: string; status: string }>) => xs.find((x) => x.cc === 'IR')?.status;
+    expect(ir(c.ooni!.exact)).toBe('no_data');
+    expect(ir(c.ooni!.site)).toBe('blocked');
+    expect(c.scoreParts?.penalty).toBe(0);
+  });
+
+  test('candidate eleven gets evidence while the measured ten stay listed with theirs', async () => {
+    const { t, networkId } = await seed();
+    await t.run((ctx) =>
+      ctx.db.patch(networkId, { hunt: { enabled: true, place: { country: 'US' } } }),
+    );
+    const ids: Id<'sniCandidates'>[] = [];
+    for (let i = 1; i <= 11; i++)
+      ids.push(
+        await passingCandidate(t, {
+          name: `c${i}.example.com`,
+          networkId,
+          dialled: `192.0.2.${i}`,
+          shown: [`192.0.2.${i}`],
+          rank: i * 10,
+          fresh: i <= 10,
+        }),
+      );
+    // The rescore (one scope a tick) keeps the shortlist.
+    await t.mutation(internal.sniHunt.tick, { now: clock });
+    const listed = await t.run(async (ctx) =>
+      (await ctx.db.query('sniCandidates').collect()).filter((c) => c.listed).map((c) => c.name),
+    );
+    expect(listed).toContain('c11.example.com');
+    for (let i = 1; i <= 7; i++) expect(listed).toContain(`c${i}.example.com`);
+    const work = await t.mutation(internal.sniHunt.claimEvidence, { now: clock });
+    expect(work.timing.map((x) => x.host)).toEqual(['c11.example.com']);
+    expect(work.ooni.map((x) => x.name)).toEqual(['c11.example.com']);
+    // The measured ones keep their evidence and their place.
+    const first = (await t.run((ctx) => ctx.db.get(ids[0]!)))!;
+    expect(first.timing?.connectMs).toBe(10);
+    expect(first.listed).toBe(true);
+  });
+
+  test('Measure now: a passing candidate is taken first; a failing one is not', async () => {
+    const { t, networkId } = await seed();
+    const id = await passingCandidate(t, {
+      name: 'm.example.com',
+      networkId,
+      dialled: '192.0.2.40',
+      shown: ['192.0.2.40'],
+      fresh: true,
+    });
+    expect(
+      await t.mutation(internal.sniHunt.setCandidates, { ids: [id], action: 'measure' }),
+    ).toEqual({ changed: 1 });
+    const work = await t.mutation(internal.sniHunt.claimEvidence, { now: clock });
+    expect(work.ooni.map((x) => x.name)).toEqual(['m.example.com']);
+    expect((await t.run((ctx) => ctx.db.get(id)))!.measureAt).toBeUndefined();
+  });
+});

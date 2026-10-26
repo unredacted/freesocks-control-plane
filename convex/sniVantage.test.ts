@@ -32,6 +32,7 @@ import {
 } from './lib/edges/testing/fixtures';
 import type { GlobalpingLike } from './lib/edges/probes/globalping';
 import { __setVantageCertCovers, __setVantageGlobalpingFactory } from './sniVantageOps';
+import { __setHuntDepsForTests } from './sniHuntOps';
 
 const modules = import.meta.glob('./**/*.*s');
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -858,4 +859,104 @@ describe('the planning budget', () => {
       expect((await t.mutation(internal.sniVantage.tick, {})).reason).toBe('nothing_due');
     },
   );
+});
+
+describe('candidate names share the budget (docs/edges.md "Finding names")', () => {
+  const SIX = ['a.example', 'b.example', 'c.example', 'd.example', 'e.example', 'f.example'];
+
+  /** Shortlisted candidates that would qualify, as the hunt leaves them. */
+  async function candidates(t: T, names: string[]) {
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.sni.hunt.enabled', 'true');
+      for (const [i, name] of names.entries())
+        await ctx.db.insert('sniCandidates', {
+          name,
+          site: name,
+          sources: ['pasted'],
+          state: 'new',
+          check: {
+            at: Date.now(),
+            code: null,
+            answers: { v4: 1, v6: 0, onNetwork: 'unknown' },
+            shown: [`192.0.2.${60 + i}`],
+          },
+          checkGen: 1,
+          checkDueAt: Date.now() + 1e9,
+          passes: 1,
+          listed: true,
+          baseScore: 50 - i,
+          score: 50 - i,
+          firstSeenAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+    });
+  }
+  const huntRows = (t: T) => t.run((ctx) => ctx.db.query('sniHuntProbes').collect());
+
+  test('due deployed batches go first; the hunt waits until nothing is due, within the reserve', async () => {
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    const { t } = await seed({
+      names: SIX,
+      settings: { 'edge.sni.vantage.hourlyBudget': 11, 'edge.sni.vantage.batchNames': 3 },
+    });
+    await candidates(t, ['h1.example', 'h2.example', 'h3.example']);
+    const now = Date.now();
+    const first = await t.mutation(internal.sniVantage.tick, { now });
+    const second = await t.mutation(internal.sniVantage.tick, { now: now + 10 * 60_000 });
+    expect(first).toMatchObject({ started: 1, measurements: 3 });
+    expect(second).toMatchObject({ started: 1, measurements: 3 });
+    expect(first).not.toHaveProperty('hunt');
+    expect(second).not.toHaveProperty('hunt');
+    expect(await huntRows(t)).toHaveLength(0);
+    // Nothing deployed is due now: 11 - 6 spent leaves 5, minus a full batch (3) in reserve.
+    const third = await t.mutation(internal.sniVantage.tick, { now: now + 20 * 60_000 });
+    expect(third).toMatchObject({ started: 1, hunt: true, measurements: 2 });
+    const hunt = await huntRows(t);
+    expect(hunt).toHaveLength(2);
+    expect(new Set(hunt.map((r) => r.batch)).size).toBe(1);
+    // The hunt rows count in the same hour's budget.
+    expect((await t.mutation(internal.sniVantage.tick, { now: now + 30 * 60_000 })).reason).toBe(
+      'nothing_due',
+    );
+  });
+
+  test('without room past the reserve, no hunt batch is admitted', async () => {
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    const { t } = await seed({ names: SIX, settings: { 'edge.sni.vantage.hourlyBudget': 9 } });
+    await candidates(t, ['h1.example', 'h2.example']);
+    const now = Date.now();
+    await t.mutation(internal.sniVantage.tick, { now });
+    await t.mutation(internal.sniVantage.tick, { now: now + 10 * 60_000 });
+    expect((await t.mutation(internal.sniVantage.tick, { now: now + 20 * 60_000 })).reason).toBe(
+      'nothing_due',
+    );
+    expect(await huntRows(t)).toHaveLength(0);
+  });
+
+  test('a batch reads interference only where the same vantage got through for another name', async () => {
+    const { t } = await seed({ settings: { 'edge.sni.vantage.hourlyBudget': 30 } });
+    await candidates(t, ['works.example', 'blocked.example']);
+    // Deployed names were just checked: nothing of theirs is due.
+    const now = Date.now();
+    await t.mutation(internal.sniVantage.tick, { now });
+    const r = await t.mutation(internal.sniVantage.tick, { now: now + 10 * 60_000 });
+    expect(r).toMatchObject({ hunt: true, measurements: 2 });
+    const gp = fakeGlobalping((name) => (name === 'blocked.example' ? 'reset' : 'ok'));
+    __setHuntDepsForTests({ globalping: () => gp.client, sleep: async () => undefined });
+    const batch = (await t.run((ctx) => ctx.db.query('sniHuntProbes').first()))!.batch;
+    await t.action(internal.sniHuntOps.countryBatch, { batch });
+    // Each dialled its own address, presenting its name, from the first one's probes.
+    expect(gp.requests.map((q) => (q as { target: string }).target)).toEqual([
+      '192.0.2.60',
+      '192.0.2.61',
+    ]);
+    expect((gp.requests[1] as { locations: unknown }).locations).toBe('m-1');
+    const reading = async (name: string) =>
+      (await t.run(async (ctx) =>
+        (await ctx.db.query('sniCandidates').collect()).find((c) => c.name === name),
+      ))!.countries?.find((x) => x.cc === 'IR')?.reading;
+    expect(await reading('works.example')).toBe('ok');
+    expect(await reading('blocked.example')).toBe('interference');
+    __setHuntDepsForTests(null);
+  });
 });
