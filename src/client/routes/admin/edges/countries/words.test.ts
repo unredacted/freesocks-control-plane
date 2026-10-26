@@ -41,6 +41,7 @@ function address(over: Partial<CountryViewAddress> = {}): CountryViewAddress {
       handshake: null,
       round: null,
       probes: null,
+      answers: [],
       realHost: null,
     },
     handed: { primary: 0, backup: 0 },
@@ -149,6 +150,190 @@ describe('country view words', () => {
     expect(W.probesLine(blocked, NOW)).toBe(
       'Probes could not reach it (0 vantages reached it, 3 failed), 1 h ago.',
     );
+  });
+
+  it('says why the probes alone decided nothing: too few vantages, or mixed answers', () => {
+    const probes = (verdict: 'unknown' | 'mixed', ok: number, fail: number) =>
+      address({
+        basis: 'probes',
+        evidence: {
+          ...address().evidence,
+          probes: {
+            country: 'KZ',
+            verdict,
+            okVantages: ok,
+            failVantages: fail,
+            lastAt: NOW - H,
+          },
+        },
+      });
+    // One datacenter vantage reached it: not enough to call it working.
+    expect(W.addressWhy(probes('unknown', 1, 0))).toContain(
+      'Too few vantages there reached it to call it working: that takes one on a residential network, or two others.',
+    );
+    expect(W.addressWhy(probes('unknown', 0, 1))).toContain(
+      'from too few networks to call it blocked',
+    );
+    expect(W.addressWhy(probes('mixed', 1, 2))).toContain(
+      'Some vantages there reached it and some did not',
+    );
+  });
+
+  it('an address whose probe answers from there aged out says so, not "nothing checked it"', () => {
+    const aged = address({
+      evidence: {
+        ...address().evidence,
+        answers: [
+          { source: 'globalping', lastAt: NOW - 2 * H, fresh: false },
+          { source: 'checkhost', lastAt: null, fresh: false },
+        ],
+      },
+    });
+    expect(W.addressWhy(aged)).toBe(
+      'No probe answer about it from there is recent enough to count.',
+    );
+    expect(W.staleAnswersLine(aged, NOW)).toBe(
+      'Globalping last answered about it from here 2 h ago, too long ago to count.',
+    );
+    expect(W.addressWhy(address())).toBe('Nothing has checked it from there yet.');
+    expect(W.staleAnswersLine(address(), NOW)).toBeNull();
+    // While its summary still holds the country, the probes line says it with its age:
+    // no second line claiming the same answer no longer counts.
+    const held = address({
+      ...aged,
+      basis: 'probes',
+      state: 'proven',
+      evidence: {
+        ...aged.evidence,
+        probes: {
+          country: 'CN',
+          verdict: 'reachable',
+          okVantages: 3,
+          failVantages: 0,
+          lastAt: NOW - 2 * H,
+        },
+      },
+    });
+    expect(W.staleAnswersLine(held, NOW)).toBeNull();
+  });
+
+  describe('which outside probes answer from there', () => {
+    const MIN = 60_000;
+    const coverage = (
+      sources: Array<[string, number | null, boolean]>,
+      asked = true,
+    ): Parameters<typeof W.coverageNote>[0] => ({
+      asked,
+      windowMs: 60 * MIN,
+      sources: sources.map(([source, lastAt, fresh]) => ({ source, lastAt, fresh })),
+    });
+    const health = (source: string, over = {}) => ({
+      source,
+      runs: 10,
+      withEvidence: 10,
+      failed: 0,
+      empty: 0,
+      streak: 0,
+      lastOkAt: null,
+      lastFailAt: null,
+      lastError: null,
+      failing: false,
+      cap: null,
+      ...over,
+    });
+    const capped = health('globalping', {
+      cap: { used: 399, perHour: 400, perRun: 21, rounds: 4, skipped: 0 },
+    });
+    const leftOut = health('globalping', {
+      cap: { used: 300, perHour: 400, perRun: 21, rounds: 4, skipped: 2 },
+    });
+
+    it('a country whose only source went quiet: when, and why (its cap, or failing)', () => {
+      const cn = coverage([
+        ['globalping', NOW - 3 * H, false],
+        ['checkhost', null, false],
+      ]);
+      expect(W.coverageNote(cn, [capped], true, NOW)).toBe(
+        'No probe has answered from here in the last 1 h: Globalping last answered 3 h ago, and its hourly cap leaves no room for another run (399 of 400 tests used in the last hour, 21 a run).',
+      );
+      // Left out of rounds of several runs while one run would still fit.
+      expect(W.coverageNote(cn, [leftOut], true, NOW)).toBe(
+        'No probe has answered from here in the last 1 h: Globalping last answered 3 h ago, and its hourly cap left it out of 2 of the 4 rounds in the last hour.',
+      );
+      const failing = health('globalping', { failing: true, lastError: 'auth', streak: 4 });
+      expect(W.coverageNote(cn, [failing], true, NOW)).toBe(
+        'No probe has answered from here in the last 1 h: Globalping last answered 3 h ago, and it is failing (credential refused).',
+      );
+      expect(W.coverageLines(cn, [capped], true, NOW)).toEqual([
+        'No probe has answered from here in the last 1 h, so the probes judge nothing here.',
+        'Globalping last answered 3 h ago, and its hourly cap leaves no room for another run (399 of 400 tests used in the last hour, 21 a run); an answer counts for 1 h.',
+        'check-host.net has never answered from here: it may have no vantage here.',
+      ]);
+    });
+
+    it('a country another source still answers from: only it, and what went quiet', () => {
+      const kz = coverage([
+        ['globalping', NOW - 3 * H, false],
+        ['checkhost', NOW - 13 * MIN, true],
+      ]);
+      expect(W.coverageNote(kz, [], true, NOW)).toBe(
+        'Only check-host.net answers from here now: Globalping last answered 3 h ago.',
+      );
+      expect(W.coverageLines(kz, [], true, NOW)[0]).toBe(
+        'Answering from here: check-host.net (13 min ago).',
+      );
+    });
+
+    it('nothing to flag when every source that answered from there still does', () => {
+      const cn = coverage([
+        ['globalping', NOW - 5 * MIN, true],
+        ['checkhost', null, false],
+      ]);
+      expect(W.coverageNote(cn, [capped], true, NOW)).toBeNull();
+      const both = coverage([
+        ['globalping', NOW - 5 * MIN, true],
+        ['checkhost', NOW - 7 * MIN, true],
+      ]);
+      expect(W.coverageLines(both, [], true, NOW)).toEqual([
+        'Answering from here: Globalping (5 min ago) and check-host.net (7 min ago).',
+      ]);
+    });
+
+    it('a country not asked, one nobody answers from, and probes off', () => {
+      const mm = coverage([['globalping', null, false]], false);
+      expect(W.coverageNote(mm, [], true, NOW)).toBe('Edges are not checked from here.');
+      expect(W.coverageLines(mm, [], true, NOW)[0]).toContain(
+        '"Check edges from here" is off for this country',
+      );
+      const by = coverage([
+        ['globalping', null, false],
+        ['checkhost', null, false],
+      ]);
+      expect(W.coverageNote(by, [], true, NOW)).toBe(
+        'No probe has answered from here yet: the sources in use may have no vantage here.',
+      );
+      expect(W.coverageNote(coverage([]), [], true, NOW)).toBe(
+        'No outside probe source is in use.',
+      );
+      // Probes off: the page says so once (switchNotes), not per country.
+      expect(W.coverageNote(by, [], false, NOW)).toBeNull();
+      expect(W.coverageLines(by, [], false, NOW)).toEqual([]);
+    });
+
+    it('never an em-dash', () => {
+      const all = [
+        coverage([['globalping', NOW - 3 * H, false]]),
+        coverage([['globalping', null, false]], false),
+        coverage([
+          ['globalping', NOW - 3 * H, false],
+          ['checkhost', NOW, true],
+        ]),
+      ];
+      for (const c of all) {
+        expect(W.coverageNote(c, [capped], true, NOW) ?? '').not.toMatch(/—/);
+        for (const l of W.coverageLines(c, [capped], true, NOW)) expect(l).not.toMatch(/—/);
+      }
+    });
   });
 
   it('words the round, the mark, the location and the handshake track with their age', () => {
@@ -297,10 +482,14 @@ describe('country view words', () => {
       lastEvidenceAt: null,
     });
     expect(W.totalsLine(totals(1, 1, 1, 1))).toBe(
-      '1 of 3 published addresses works, 1 blocked. 1 server name works, 0 blocked, 2 not judged.',
+      '1 of 3 published addresses works, 1 blocked, 1 not known. 1 server name works, 0 blocked, 2 not judged.',
     );
+    // "0 of 1 works, 0 blocked" alone reads as a contradiction: the rest is not known.
     expect(W.totalsLine(totals(0, 0, 1, 2))).toBe(
-      '0 of 1 published address work, 0 blocked. 2 server names work, 0 blocked, 2 not judged.',
+      '0 of 1 published address work, 0 blocked, 1 not known. 2 server names work, 0 blocked, 2 not judged.',
+    );
+    expect(W.totalsLine(totals(1, 0, 0, 0))).toBe(
+      '1 of 1 published address works, 0 blocked. 0 server names work, 0 blocked, 2 not judged.',
     );
     expect(W.handedWords(handed({ primary: [{ id: 'a', share: 1 }] }))[0]).toContain(
       'spread over 1 address,',

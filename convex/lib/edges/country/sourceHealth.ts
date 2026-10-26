@@ -46,8 +46,28 @@ export interface SourceRun {
   error?: string;
 }
 
+/**
+ * Globalping's hourly cap (`probe.globalpingTestsPerHour`) against what the
+ * last hour asked. A round that would pass it runs without Globalping (never
+ * a failed run), so its countries go quiet with no failure to show: this is
+ * the only trace of it.
+ */
+export interface GlobalpingCap {
+  /** Probes asked of Globalping in the last hour (`probeRuns.tests`). */
+  used: number;
+  perHour: number;
+  /** What one run of an edge asks: every checked country's vantages, plus the controls. */
+  perRun: number;
+  /** Cron rounds requested in the last hour (each asks every enabled source). */
+  rounds: number;
+  /** Of them, the ones that ran without Globalping: the cap left it out. */
+  skipped: number;
+}
+
 export interface SourceHealth {
   source: string;
+  /** Globalping only (probes.ts `probeSourceHealth`). */
+  cap?: GlobalpingCap;
   /** Settled runs in the window. */
   runs: number;
   withEvidence: number;

@@ -1386,6 +1386,22 @@ export const ProbeSourceHealth = z.object({
   /** The newest failure's class (`PROBE_FAILURE_CLASSES`). */
   lastError: z.string().nullable(),
   failing: z.boolean(),
+  /**
+   * Globalping only: its hourly cap (`probe.globalpingTestsPerHour`) against
+   * the probes asked in the last hour, what one run of an edge asks, and the
+   * last hour's cron rounds with how many ran without Globalping. A round
+   * that would pass the cap runs without it (no failed run).
+   */
+  cap: z
+    .object({
+      used: z.number(),
+      perHour: z.number(),
+      perRun: z.number(),
+      rounds: z.number().default(0),
+      skipped: z.number().default(0),
+    })
+    .nullable()
+    .default(null),
 });
 export type ProbeSourceHealth = z.infer<typeof ProbeSourceHealth>;
 /** `GET probes/sources`. */
@@ -1585,6 +1601,17 @@ export const CountryViewProbes = z.object({
     .optional(),
 });
 
+/**
+ * One outside probe source's newest answer from a country (`probeReachability.updatedAt`),
+ * and whether it is recent enough to count (two probe intervals).
+ */
+export const CountryViewSourceAnswer = z.object({
+  source: z.string(),
+  lastAt: z.number().nullable(),
+  fresh: z.boolean(),
+});
+export type CountryViewSourceAnswer = z.infer<typeof CountryViewSourceAnswer>;
+
 /** One address (an edge, or the origin itself) of one transport, from one country. */
 export const CountryViewAddress = z.object({
   edgeId: z.string().nullable(),
@@ -1649,6 +1676,8 @@ export const CountryViewAddress = z.object({
       })
       .nullable(),
     probes: CountryViewProbes.nullable(),
+    /** Each outside source's newest answer about it from there, fresh or not. */
+    answers: z.array(CountryViewSourceAnswer).default([]),
     realHost: CountryViewAddressRealHost.nullable().default(null),
   }),
   /** Shares (0..1) of the sampled members there holding it as primary / backup. */
@@ -1779,6 +1808,20 @@ const CountryViewListed = z.object({
   nameChecksRun: z.boolean(),
 });
 
+/**
+ * Which outside probe sources answer from a country (lib/edges/country/coverage.ts):
+ * each source in use with its newest answer from there over the addresses shown.
+ */
+export const CountryViewCoverage = z.object({
+  /** The probes ask vantages there (probes on, "check edges" on for the country). */
+  asked: z.boolean(),
+  /** How long an answer counts (two probe intervals, like the reachability summaries). */
+  windowMs: z.number(),
+  sources: z.array(CountryViewSourceAnswer),
+});
+export type CountryViewCoverage = z.infer<typeof CountryViewCoverage>;
+const noCoverage = { asked: false, windowMs: 0, sources: [] };
+
 /** `GET countries/summary`: every listed country with its totals. */
 export const CountryViewSummaryResponse = z.object({
   generatedAt: z.number(),
@@ -1789,11 +1832,14 @@ export const CountryViewSummaryResponse = z.object({
     z.object({
       country: z.string(),
       listed: CountryViewListed,
+      probes: CountryViewCoverage.default(noCoverage),
       totals: CountryViewTotals,
       /** The worst share of members there on an address blocked there (null: nothing rendered). */
       worstOnBlocked: z.number().nullable(),
     }),
   ),
+  /** Each probe source in use: working, failing, Globalping's cap (`GET probes/sources`). */
+  sources: z.array(ProbeSourceHealth).default([]),
 });
 export type CountryViewSummaryResponse = z.infer<typeof CountryViewSummaryResponse>;
 
@@ -1803,11 +1849,13 @@ export const CountryViewResponse = z.object({
   generatedAt: z.number(),
   /** Null: not on the censored-country list (nothing is checked from there). */
   listed: CountryViewListed.nullable(),
+  probes: CountryViewCoverage.default(noCoverage),
   switches: CountryViewSwitches,
   controls: z.array(z.string()),
   curated: z.boolean(),
   totals: CountryViewTotals,
   origins: z.array(CountryViewOrigin),
+  sources: z.array(ProbeSourceHealth).default([]),
 });
 export type CountryViewResponse = z.infer<typeof CountryViewResponse>;
 

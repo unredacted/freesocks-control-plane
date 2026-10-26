@@ -4,7 +4,8 @@
  * the per-country evidence of each (edge tracks, marks, location grades,
  * address-level probes, the names' marks, the checks from inside, member
  * reports), handed to the pure builder (lib/edges/country/view.ts) once per
- * country. Read only: nothing here writes.
+ * country, and which outside probe sources still answer from each country
+ * (lib/edges/country/coverage.ts). Read only: nothing here writes.
  *
  * Every per-edge, per-location and per-name read covers EVERY country in one
  * index range (`prefetch`), and each country is then built in memory: the
@@ -32,6 +33,14 @@ import { countryGroupKey } from './lib/edges/country/group';
 import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
 import { suggest } from './lib/edges/sni/vantage';
 import { readingOf } from './lib/edges/sni/realHost';
+import {
+  answersFor,
+  answerTargets,
+  coverageOf,
+  newestAnswers,
+  type NewestAnswers,
+} from './lib/edges/country/coverage';
+import { enabledSources } from './probes';
 import {
   actedState,
   buildCountryView,
@@ -188,6 +197,34 @@ interface Prefetched {
   families: Map<string, Doc<'sniFamilies'> | null>;
   nameMarks: Map<string, Doc<'sniNameCountry'>>;
   vantage: Map<string, Doc<'sniVantageEvidence'>>;
+  /** Each outside source's newest answer per country, over every address shown (coverage.ts). */
+  answers: NewestAnswers;
+  /** The same per address, by `<kind>:<ref>` (`edge:<id>`, `relay:<id>` for an origin itself). */
+  answersByTarget: Map<string, NewestAnswers>;
+}
+
+/**
+ * Every country's rollup rows of the probed addresses, one index range each,
+ * for at most `MAX_ANSWER_TARGETS` of them (probed origins and published
+ * addresses first: `answerTargets`).
+ */
+async function answersOf(db: Db, p: Prefetched, loaded: Loaded) {
+  const targets = loaded.origins.flatMap((o) => [
+    ...(o.input.direct ? [{ key: `relay:${o.input.relayId}`, first: true }] : []),
+    ...o.edges.map(({ doc }) => ({
+      key: `edge:${doc._id}`,
+      first: doc.publication === 'published',
+    })),
+  ]);
+  for (const key of answerTargets(targets)) {
+    const [kind, ref] = key.split(':') as ['edge' | 'relay', string];
+    const rows = await db
+      .query('probeReachability')
+      .withIndex('by_target_country', (q) => q.eq('targetKind', kind).eq('targetRef', ref))
+      .collect();
+    p.answersByTarget.set(key, newestAnswers(rows));
+    newestAnswers(rows, p.answers);
+  }
 }
 
 async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
@@ -200,9 +237,12 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
     families: new Map(),
     nameMarks: new Map(),
     vantage: new Map(),
+    answers: new Map(),
+    answersByTarget: new Map(),
   };
+  await answersOf(db, p, loaded);
   const groups = new Set<string>();
-  for (const o of loaded.origins)
+  for (const o of loaded.origins) {
     for (const { doc, groupKey } of o.edges) {
       groups.add(groupKey);
       for (const r of await db
@@ -216,6 +256,7 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
         .collect())
         if (m.scope === 'edge') p.edgeMarks.set(keyOf(doc._id, m.country), m);
     }
+  }
   for (const g of groups) {
     for (const m of await db
       .query('countryMarks')
@@ -280,7 +321,33 @@ async function settingsOf(db: Db) {
     },
     nameCheckCountries: vantageOn ? vantageCountries(vantage, sni.curatedCountries) : [],
     controls: controlCountriesOf(cfg, censored.codes),
+    probeSources: enabledSources(cfg, secrets),
+    // How long an answer counts: the reachability summaries' own window (probes.ts).
+    answerWindowMs: 2 * cfg.probe.intervalMinutes * 60_000,
   };
+}
+
+/** Which outside sources answer from a country, and since when (coverage.ts). */
+function coverageFor(
+  st: Settings,
+  pre: Prefetched,
+  country: string,
+  listed: ReturnType<typeof listedOf>,
+  now: number,
+) {
+  return coverageOf(pre.answers, country, st.probeSources, {
+    asked: st.switches.probes && !!listed?.checkEdges,
+    windowMs: st.answerWindowMs,
+    now,
+  });
+}
+
+/** One address's own answers from a country (`edge:<id>`, or `relay:<id>` for an origin itself). */
+function answersAbout(st: Settings, pre: Prefetched, target: string, country: string, now: number) {
+  const mine = pre.answersByTarget.get(target);
+  return mine
+    ? answersFor(mine, country, st.probeSources, { windowMs: st.answerWindowMs, now })
+    : [];
 }
 
 type Settings = Awaited<ReturnType<typeof settingsOf>>;
@@ -406,7 +473,13 @@ function nameFactsFor(
 }
 
 /** The per-country inputs of every edge, from the prefetched rows. */
-function edgesFor(pre: Prefetched, loaded: Loaded, country: string): Map<string, EdgeInput[]> {
+function edgesFor(
+  pre: Prefetched,
+  loaded: Loaded,
+  country: string,
+  st: Settings,
+  now: number,
+): Map<string, EdgeInput[]> {
   const out = new Map<string, EdgeInput[]>();
   for (const o of loaded.origins) {
     const list: EdgeInput[] = [];
@@ -417,6 +490,7 @@ function edgesFor(pre: Prefetched, loaded: Loaded, country: string): Map<string,
       const grade = pre.grades.get(keyOf(groupKey, country));
       list.push({
         ...base,
+        answers: answersAbout(st, pre, `edge:${doc._id}`, country, now),
         evidence: ev
           ? {
               address: {
@@ -504,7 +578,7 @@ function viewOf(
   reports: { weights: Map<string, number>; suspects: Set<string> } | null,
 ) {
   const facts = nameFactsFor(pre, loaded.names, country, st, reports);
-  const edges = edgesFor(pre, loaded, country);
+  const edges = edgesFor(pre, loaded, country, st, now);
   // Each origin is built with its own delivery style (a single-key backend hands out no backup).
   const origins = [];
   const totals = {
@@ -515,8 +589,14 @@ function viewOf(
   };
   const seen = new Set<string>();
   for (const o of loaded.origins) {
+    const direct = o.input.direct
+      ? {
+          ...o.input.direct,
+          answers: answersAbout(st, pre, `relay:${o.input.relayId}`, country, now),
+        }
+      : null;
     const r = buildCountryView(
-      [{ ...o.input, edges: edges.get(o.input.relayId) ?? [] }],
+      [{ ...o.input, direct, edges: edges.get(o.input.relayId) ?? [] }],
       (name) => facts.get(name) ?? null,
       viewSettings(st, country, now, o.style),
     );
@@ -564,9 +644,11 @@ export const summary = internalQuery({
       const handedBlocked = origins.flatMap((o) =>
         o.listeners.filter((l) => l.members.computed).map((l) => l.members.onBlockedAddress),
       );
+      const listed = listedOf(st, c.code)!;
       countries.push({
         country: c.code,
-        listed: listedOf(st, c.code)!,
+        listed,
+        probes: coverageFor(st, pre, c.code, listed, now),
         totals,
         /** The worst share of members holding an address blocked there, over every transport. */
         worstOnBlocked: handedBlocked.length > 0 ? Math.max(...handedBlocked) : null,
@@ -593,10 +675,12 @@ export const country = internalQuery({
     const pre = await prefetch(ctx.db, loaded);
     const reports = await reportsFor(ctx.db, pre, code, st, now);
     const { origins, totals } = viewOf(loaded, pre, st, code, now, reports);
+    const listed = listedOf(st, code);
     return {
       country: code,
       generatedAt: now,
-      listed: listedOf(st, code),
+      listed,
+      probes: coverageFor(st, pre, code, listed, now),
       switches: st.switches,
       controls: st.controls,
       curated: st.sni.curatedCountries.includes(code),

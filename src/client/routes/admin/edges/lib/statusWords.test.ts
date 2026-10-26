@@ -10,6 +10,8 @@ import {
   PROBE_FAILURE_CLASSES,
 } from '../../../../../shared/contracts/edgeCodes';
 import {
+  capClause,
+  capHoldsBack,
   COUNTRY_REASON_WORDS,
   GROUP_GRADE_WORDS,
   PROBE_FAILURE_WORDS,
@@ -496,6 +498,13 @@ describe('sourceWords', () => {
     lastFailAt: at(2 * H),
     lastError: 'timeout',
     failing: false,
+    cap: null as {
+      used: number;
+      perHour: number;
+      perRun: number;
+      rounds: number;
+      skipped: number;
+    } | null,
     ...over,
   });
   test('working, working with failures, failing, idle', () => {
@@ -509,6 +518,38 @@ describe('sourceWords', () => {
     expect(failing.detail).toMatch(/5 runs in a row brought nothing/);
     expect(sourceWords(h({ runs: 0 }), NOW).label).toBe('No runs yet');
     for (const w of [sourceWords(h(), NOW), failing]) expect(w.detail).not.toMatch(/—/);
+  });
+
+  test("Globalping's hourly cap: its use shown, and when it held Globalping back", () => {
+    const cap = (used: number, over = {}) => ({
+      cap: { used, perHour: 400, perRun: 21, rounds: 8, skipped: 0, ...over },
+    });
+    const working = sourceWords(h(cap(120)), NOW);
+    expect(working).toMatchObject({ label: 'Working', tone: 'success' });
+    expect(working.detail).toContain('Its hourly cap: 120 of 400 tests used in the last hour');
+    expect(capHoldsBack(h(cap(379)))).toBe(false);
+    expect(capHoldsBack(h(cap(380)))).toBe(true);
+    expect(capHoldsBack(h())).toBe(false);
+    const full = sourceWords(h(cap(390)), NOW);
+    expect(full).toMatchObject({ label: 'Held back by its hourly cap', tone: 'warning' });
+    expect(full.detail).toContain('The next round runs without it: 390 of the 400 tests');
+    // A round of several runs (dual stack, several ports) can be left out with room for one run.
+    const skipped = sourceWords(h(cap(300, { skipped: 3 })), NOW);
+    expect(capHoldsBack(h(cap(300, { skipped: 3 })))).toBe(true);
+    expect(skipped.detail).toContain('3 of the 8 rounds in the last hour ran without it');
+    expect(capClause(cap(300, { skipped: 3 }).cap)).toBe(
+      'its hourly cap left it out of 3 of the 8 rounds in the last hour',
+    );
+    // A cap below one run on a deployment that never ran it: the cap, not "no runs yet".
+    const never = sourceWords(
+      h({ runs: 0, ...cap(0, { perHour: 0, rounds: 4, skipped: 4 }) }),
+      NOW,
+    );
+    expect(never.label).toBe('Hourly cap below one run');
+    expect(never.detail).toContain('Its hourly cap (0 tests) is smaller than one run (21 tests)');
+    for (const w of [full, skipped, never]) expect(w.detail).not.toMatch(/—/);
+    // Failing outranks the cap: no evidence at all is the bigger problem.
+    expect(sourceWords(h({ ...cap(390), failing: true, streak: 3 }), NOW).tone).toBe('danger');
   });
 });
 

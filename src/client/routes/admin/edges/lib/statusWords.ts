@@ -22,7 +22,8 @@
  *   countryLine(line, now)       one edge in one country: label, tone, reason, where from, age, conflict
  *   countryChip(line, now, waiting)  the same as a short chip ("checking" while its round is out)
  *   gradeWords(cell, now)        one location in one country: label, tone, age, mark, conflict
- *   sourceWords(health, now)     one probe source: working or failing, and why
+ *   sourceWords(health, now)     one probe source: working, failing or capped, and why
+ *   capHoldsBack(health), capClause(cap)   Globalping's hourly cap left it out of rounds, and how
  */
 import type {
   FleetStatus,
@@ -492,10 +493,41 @@ export interface SourceWords {
   detail: string;
 }
 
-/** One probe source: working, failing (with its last failure in words), or idle. */
+type GlobalpingCap = NonNullable<ProbeSourceHealth['cap']>;
+
+/**
+ * Globalping's hourly cap holds it back: it left Globalping out of a round in
+ * the last hour, or no further run fits (or not even one ever does).
+ */
+export function capHoldsBack(h: Pick<ProbeSourceHealth, 'cap'>): boolean {
+  const c = h.cap;
+  return !!c && (c.skipped > 0 || c.used + c.perRun > c.perHour);
+}
+
+/** How the cap holds Globalping back, in one sentence (the Probes page). */
+function capSentence(c: GlobalpingCap): string {
+  if (c.perHour < c.perRun)
+    return `Its hourly cap (${c.perHour} tests) is smaller than one run (${c.perRun} tests), so it never runs.`;
+  const use = `${c.used} of the ${c.perHour} tests allowed an hour were used in the last hour, and a run asks ${c.perRun}`;
+  return c.skipped > 0
+    ? `${c.skipped} of the ${c.rounds} rounds in the last hour ran without it: ${use}.`
+    : `The next round runs without it: ${use}.`;
+}
+
+/** The same, as a clause for "Globalping last answered ..., and ..." (the Countries pages). */
+export function capClause(c: GlobalpingCap): string {
+  if (c.perHour < c.perRun) return 'its hourly cap is smaller than one run, so it never runs';
+  return c.skipped > 0
+    ? `its hourly cap left it out of ${c.skipped} of the ${c.rounds} rounds in the last hour`
+    : `its hourly cap leaves no room for another run (${c.used} of ${c.perHour} tests used in the last hour, ${c.perRun} a run)`;
+}
+
+/** One probe source: working, failing (with its last failure in words), capped, or idle. */
 export function sourceWords(h: ProbeSourceHealth, now: number): SourceWords {
   const counted = `${h.withEvidence} of ${h.runs} recent ${h.runs === 1 ? 'run' : 'runs'} brought evidence.`;
-  if (h.runs === 0) return { label: 'No runs yet', tone: 'muted', detail: 'Nothing has run yet.' };
+  const capUse = h.cap
+    ? ` Its hourly cap: ${h.cap.used} of ${h.cap.perHour} tests used in the last hour, ${h.cap.perRun} a run.`
+    : '';
   const last = h.lastError ? probeFailureWords(h.lastError) : null;
   if (h.failing)
     return {
@@ -505,15 +537,25 @@ export function sourceWords(h: ProbeSourceHealth, now: number): SourceWords {
         h.lastOkAt ? `; the last good one was ${ago(h.lastOkAt, now)}` : ''
       }. The countries it alone covers read as not known.`.trim(),
     };
+  // Before "no runs yet": a cap below one run is why nothing ever ran.
+  if (h.cap && capHoldsBack(h))
+    return {
+      label:
+        h.cap.perHour < h.cap.perRun ? 'Hourly cap below one run' : 'Held back by its hourly cap',
+      tone: 'warning',
+      detail: `${capSentence(h.cap)} The countries only it reaches go quiet until it runs again. Raise "Globalping tests per hour" (within what your Globalping account allows) or lower "Vantage points per country".${h.runs > 0 ? ` ${counted}` : ''}`,
+    };
+  if (h.runs === 0)
+    return { label: 'No runs yet', tone: 'muted', detail: `Nothing has run yet.${capUse}` };
   if (h.streak > 0 && last)
     return {
       label: 'Working, with failures',
       tone: 'warning',
-      detail: `The newest ${h.streak === 1 ? 'run' : `${h.streak} runs`} failed: ${last.label.toLowerCase()}. ${counted}`,
+      detail: `The newest ${h.streak === 1 ? 'run' : `${h.streak} runs`} failed: ${last.label.toLowerCase()}. ${counted}${capUse}`,
     };
   return {
     label: 'Working',
     tone: 'success',
-    detail: `${counted}${h.lastOkAt ? ` The last good run was ${ago(h.lastOkAt, now)}.` : ''}`,
+    detail: `${counted}${h.lastOkAt ? ` The last good run was ${ago(h.lastOkAt, now)}.` : ''}${capUse}`,
   };
 }
