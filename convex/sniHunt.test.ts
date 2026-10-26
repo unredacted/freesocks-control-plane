@@ -1302,3 +1302,19 @@ describe('thin families', () => {
     expect(items).toHaveLength(210);
   });
 });
+
+describe('rollback', () => {
+  test('clearForRollback empties every finding-names table and the network field', async () => {
+    const { t, networkId } = await seed();
+    await t.mutation(internal.sniHunt.importCandidates, {
+      network: 'net-a',
+      lines: ['a.example.com'],
+    });
+    await storedRun(t, ['a.example.com']);
+    let r = await t.mutation(internal.sniHunt.clearForRollback, {});
+    while (r.left > 0) r = await t.mutation(internal.sniHunt.clearForRollback, {});
+    expect(await candidates(t)).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query('sniHuntRuns').collect())).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(networkId)))!.hunt).toBeUndefined();
+  });
+});
