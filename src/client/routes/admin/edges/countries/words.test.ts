@@ -197,6 +197,24 @@ describe('country view words', () => {
     );
     expect(W.addressWhy(address())).toBe('Nothing has checked it from there yet.');
     expect(W.staleAnswersLine(address(), NOW)).toBeNull();
+    // While its summary still holds the country, the probes line says it with its age:
+    // no second line claiming the same answer no longer counts.
+    const held = address({
+      ...aged,
+      basis: 'probes',
+      state: 'proven',
+      evidence: {
+        ...aged.evidence,
+        probes: {
+          country: 'CN',
+          verdict: 'reachable',
+          okVantages: 3,
+          failVantages: 0,
+          lastAt: NOW - 2 * H,
+        },
+      },
+    });
+    expect(W.staleAnswersLine(held, NOW)).toBeNull();
   });
 
   describe('which outside probes answer from there', () => {
@@ -231,7 +249,7 @@ describe('country view words', () => {
         ['checkhost', null, false],
       ]);
       expect(W.coverageNote(cn, [capped], true, NOW)).toBe(
-        'No probe has answered from here in the last 1 h: Globalping last answered 3 h ago, and its hourly cap is spent (399 of 400 tests in the last hour).',
+        'No probe has answered from here in the last 1 h: Globalping last answered 3 h ago, and its hourly cap leaves no room for another run (399 of 400 tests used in the last hour, 21 a run).',
       );
       const failing = health('globalping', { failing: true, lastError: 'auth', streak: 4 });
       expect(W.coverageNote(cn, [failing], true, NOW)).toBe(
@@ -239,7 +257,7 @@ describe('country view words', () => {
       );
       expect(W.coverageLines(cn, [capped], true, NOW)).toEqual([
         'No probe has answered from here in the last 1 h, so the probes judge nothing here.',
-        'Globalping last answered 3 h ago, and its hourly cap is spent (399 of 400 tests in the last hour); an answer counts for 1 h.',
+        'Globalping last answered 3 h ago, and its hourly cap leaves no room for another run (399 of 400 tests used in the last hour, 21 a run); an answer counts for 1 h.',
         'check-host.net has never answered from here: it may have no vantage here.',
       ]);
     });

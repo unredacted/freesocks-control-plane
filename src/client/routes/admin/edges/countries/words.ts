@@ -114,8 +114,15 @@ export function addressWhy(a: CountryViewAddress): string {
   return base;
 }
 
-/** Sources whose last answer about the address from there is too old to count (null: none). */
+/**
+ * When the country dropped out of the address's probe summary: the sources
+ * whose last answer about it from there is too old to count (null: the
+ * summary still holds the country, which `probesLine` shows with its age, or
+ * no source ever answered). The summary is judged when it was last refreshed,
+ * so an answer it still holds may already be past the window now.
+ */
 export function staleAnswersLine(a: CountryViewAddress, now = Date.now()): string | null {
+  if (a.evidence.probes) return null;
   const stale = a.evidence.answers.filter((x) => x.lastAt !== null && !x.fresh);
   if (stale.length === 0) return null;
   return stale
@@ -382,7 +389,7 @@ function quietWhy(source: string, health: readonly ProbeSourceHealth[]): string 
   if (!h) return null;
   if (h.failing) return `it is failing (${probeFailureWords(h.lastError).label.toLowerCase()})`;
   if (h.cap && capSpent(h))
-    return `its hourly cap is spent (${h.cap.used} of ${h.cap.perHour} tests in the last hour)`;
+    return `its hourly cap leaves no room for another run (${h.cap.used} of ${h.cap.perHour} tests used in the last hour, ${h.cap.perRun} a run)`;
   return null;
 }
 
