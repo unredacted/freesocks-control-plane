@@ -315,10 +315,10 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     if (b === 'hunt' && !c) return json(await ctx.runQuery(internal.sniHunt.overview, {}));
     if (b === 'hunt' && (c === 'networks' || c === 'families') && d && !parts[4])
       return json(
-        await ctx.runQuery(
-          internal.sniHunt.scopeView,
-          c === 'networks' ? { network: d } : { family: d },
-        ),
+        await ctx.runQuery(internal.sniHunt.scopeView, {
+          ...(c === 'networks' ? { network: d } : { family: d }),
+          ...huntViewQuery(query),
+        }),
       );
     return notFound();
   }
@@ -1719,6 +1719,14 @@ function pickOptionsOf(body: Record<string, unknown>): { pickOptions?: Record<st
 }
 
 const strings = (raw: unknown): string[] => (Array.isArray(raw) ? raw.map(String) : []);
+
+const HUNT_VIEW_STATES = ['new', 'added', 'ignored', 'gone', 'failing', 'all'] as const;
+/** `?state=` and `?cursor=` of a candidates page (absent: the first page of `new`). */
+function huntViewQuery(query: URLSearchParams) {
+  const state = HUNT_VIEW_STATES.find((x) => x === query.get('state'));
+  const cursor = query.get('cursor');
+  return { ...(state ? { state } : {}), ...(cursor ? { cursor } : {}) };
+}
 const optString = (raw: unknown): string | undefined =>
   typeof raw === 'string' && raw ? raw : undefined;
 
@@ -1757,7 +1765,7 @@ async function postHunt(
       }),
     );
   if (c === 'families' && d && e === 'cert' && !parts[5])
-    return json(await ctx.runAction(internal.sniHuntOps.readCert, { slug: d }));
+    return json(await ctx.runAction(internal.sniHuntOps.readCert, { slug: d, ...act }));
   if (c === 'networks' && d && !e)
     return json(
       await ctx.runMutation(internal.edgeNetworks.setHunt, {
