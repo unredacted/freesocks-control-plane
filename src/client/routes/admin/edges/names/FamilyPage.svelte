@@ -41,6 +41,7 @@
   import { edgesPaths } from '../lib/routes';
   import { drainLength } from '../simple/drainWords';
   import BindingCard from './BindingCard.svelte';
+  import FamilyFinds from './FamilyFinds.svelte';
   import {
     FILTER_LABEL,
     NAME_FILTERS,
@@ -523,6 +524,8 @@
       {/if}
     </CardContent>
   </Card>
+
+  <FamilyFinds slug={f.slug} label={f.label} target={f.target.address} />
 {/if}
 
 <ConfirmDialog

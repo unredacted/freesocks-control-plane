@@ -2994,6 +2994,23 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   connected" confirms the receipt. The page says plainly that a check from outside cannot
   stand in for that test.
 
+- Find names (`/admin/edges/find-names`, "Find names" on the list page; § Finding names): the
+  switch, the top-sites sweep (start, stop, how far it got), each network's "Search it" switch and
+  where its nodes are (a country code and a city), imports (a pasted list into a network or a
+  family, or a seed file, whose missing networks and families are offered to create), and where
+  candidates were found. A network's page (`/admin/edges/find-names/{slug}`) groups the sites by
+  the address they live on ("Make a family with this target" prefills a family on the network,
+  target fixed) and lists every candidate with qualification's verdict, the extra handshakes,
+  near the node (for a family candidate: the family's target, its own site beside it), what the
+  checks from inside countries and OONI say, and the score. Picked candidates can be added to a
+  family on the network (its normal path), ignored (the name or the whole site), checked again,
+  measured now, or looked up in certificate logs. A family's page has the same list under "Find
+  more names", with "Read the target's certificate" and "Look up certificate logs". Wording is in
+  `names/lib/huntWords.ts`.
+- Attention `sni_family_thin` (info, "Find names"): a family on a network, bound to a transport,
+  with fewer than three active names that qualify. A name blocked in one country is a last resort
+  elsewhere (§ Names for the member's country), so a family that small runs out fast.
+
 The three facts stay separate in the copy: the target serves a name (checked), a node accepts
 it (tested), it works from a country (judged; the checks from inside a country only ever
 suggest). Wording is in

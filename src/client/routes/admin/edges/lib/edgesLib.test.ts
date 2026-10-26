@@ -112,6 +112,13 @@ describe('resolveEdgesRoute / edgesPaths', () => {
       slug: 'fam a',
     });
     expect(sectionTabOf({ page: 'relay', slug: 'a' })).toBe('advanced');
+    // Find names (docs/edges.md "Finding names"): its own address, never a family slug.
+    expect(resolveEdgesRoute(edgesPaths.findNames())).toEqual({ page: 'findNames' });
+    expect(resolveEdgesRoute(edgesPaths.findNetwork('net a'))).toEqual({
+      page: 'findNetwork',
+      slug: 'net a',
+    });
+    expect(sectionTabOf({ page: 'findNames' })).toBe('advanced');
   });
   it('keeps every old address and builds the new ones', () => {
     expect(edgesPaths.overview()).toBe('/admin/edges/advanced/origins');

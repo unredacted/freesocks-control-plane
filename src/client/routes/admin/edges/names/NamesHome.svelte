@@ -120,6 +120,9 @@
   description="Names a REALITY node answers to, in families: one target site and the names it really serves."
 >
   {#snippet actions()}
+    <Button size="sm" variant="outline" onclick={() => router.navigate(edgesPaths.findNames())}>
+      Find names
+    </Button>
     <Button size="sm" onclick={() => (open = true)}>Add a family</Button>
   {/snippet}
 </SectionHeader>

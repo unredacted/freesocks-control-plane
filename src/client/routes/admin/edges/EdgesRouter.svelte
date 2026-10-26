@@ -26,6 +26,8 @@
   import EdgesSettings from './EdgesSettings.svelte';
   import NamesHome from './names/NamesHome.svelte';
   import FamilyPage from './names/FamilyPage.svelte';
+  import FindNames from './names/FindNames.svelte';
+  import FindNetwork from './names/FindNetwork.svelte';
   import CountriesPage from './countries/CountriesPage.svelte';
   import CountryPage from './countries/CountryPage.svelte';
 
@@ -65,6 +67,10 @@
   <NamesHome />
 {:else if route.page === 'family'}
   <FamilyPage slug={route.slug} />
+{:else if route.page === 'findNames'}
+  <FindNames />
+{:else if route.page === 'findNetwork'}
+  {#key route.slug}<FindNetwork slug={route.slug} />{/key}
 {:else if route.page === 'countries'}
   <CountriesPage />
 {:else if route.page === 'country'}

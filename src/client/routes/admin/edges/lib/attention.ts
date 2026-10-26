@@ -118,6 +118,8 @@ export const ATTENTION_ACTION_PLAN = {
   open_probes: { type: 'navigate' },
   // A guided setup run's sheet (Try again, when it failed).
   open_run: { type: 'navigate' },
+  // The family's page (its "Find more names" card).
+  find_names: { type: 'navigate' },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
 
 /**
@@ -212,6 +214,10 @@ export function attentionTarget(item: AttentionItem): string {
       const run = factString(item, 'runId');
       if (run) return edgesPaths.home({ run });
       return slug ? edgesPaths.node(slug) : edgesPaths.home();
+    }
+    case 'find_names': {
+      const family = factString(item, 'family');
+      return family ? edgesPaths.family(family) : edgesPaths.findNames();
     }
   }
 }

@@ -805,7 +805,8 @@ export interface AttentionItem {
     | 'open_node'
     | 'open_modes'
     | 'open_probes'
-    | 'open_run';
+    | 'open_run'
+    | 'find_names';
   since: string | null;
 }
 
@@ -2108,6 +2109,34 @@ export const attention = internalQuery({
         facts: {},
         action: 'open_settings',
         since: iso(clientCheck.at),
+      });
+    }
+    // A family on a network, bound to a transport, with fewer than three names
+    // that qualify (docs/edges.md "Finding names"): with names blocked in one
+    // country a last resort elsewhere, a family this small runs out fast.
+    for (const f of await ctx.db.query('sniFamilies').take(200)) {
+      if (!f.networkId || !f.enabled) continue;
+      const bound = await ctx.db
+        .query('sniInboundBindings')
+        .withIndex('by_family', (q) => q.eq('familyId', f._id))
+        .first();
+      if (!bound) continue;
+      const names = await ctx.db
+        .query('sniNames')
+        .withIndex('by_family_seq', (q) => q.eq('familyId', f._id))
+        .take(500);
+      const qualifying = names.filter(
+        (n) => n.status === 'active' && n.qualification.state === 'ok',
+      ).length;
+      if (qualifying >= 3) continue;
+      items.push({
+        ...fleetBase,
+        id: `sni_family_thin:${f._id}`,
+        kind: 'sni_family_thin',
+        severity: 'info',
+        facts: { family: f.slug, qualifying },
+        action: 'find_names',
+        since: null,
       });
     }
     // The fleet guards on automatic rotation (lib/edges/fleet.ts).
