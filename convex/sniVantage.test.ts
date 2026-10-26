@@ -960,3 +960,98 @@ describe('candidate names share the budget (docs/edges.md "Finding names")', () 
     __setHuntDepsForTests(null);
   });
 });
+
+describe('candidate names: review round 2', () => {
+  async function listed(
+    t: T,
+    rows: Array<{ name: string; address: string; checkedInIr?: boolean }>,
+  ) {
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.sni.hunt.enabled', 'true');
+      for (const r of rows)
+        await ctx.db.insert('sniCandidates', {
+          name: r.name,
+          site: r.name,
+          sources: ['pasted'],
+          state: 'new',
+          check: {
+            at: Date.now(),
+            code: null,
+            answers: { v4: 1, v6: 0, onNetwork: 'unknown' },
+            shown: [r.address],
+          },
+          checkGen: 1,
+          checkDueAt: Date.now() + 1e9,
+          passes: 1,
+          listed: true,
+          ...(r.checkedInIr
+            ? {
+                countries: [
+                  {
+                    cc: 'IR',
+                    at: Date.now(),
+                    reading: 'ok' as const,
+                    vantages: 3,
+                    networks: 2,
+                    singled: 0,
+                  },
+                ],
+              }
+            : {}),
+          baseScore: 10,
+          score: 10,
+          firstSeenAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+    });
+  }
+  const huntRows = (t: T) => t.run((ctx) => ctx.db.query('sniHuntProbes').collect());
+  /** A tick with nothing deployed due (the deployed names were just checked). */
+  async function quietTick(t: T) {
+    const now = Date.now();
+    await t.mutation(internal.sniVantage.tick, { now });
+    return t.mutation(internal.sniVantage.tick, { now: now + 10 * 60_000 });
+  }
+
+  test('a lone due name takes only a control that is due there too', async () => {
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    const { t } = await seed({ settings: { 'edge.sni.vantage.hourlyBudget': 30 } });
+    await listed(t, [
+      { name: 'due.example', address: '192.0.2.61' },
+      { name: 'done1.example', address: '192.0.2.62', checkedInIr: true },
+      { name: 'done2.example', address: '192.0.2.63', checkedInIr: true },
+    ]);
+    expect((await quietTick(t)).reason).toBe('nothing_due');
+    expect(await huntRows(t)).toHaveLength(0);
+  });
+
+  test('names checked lately never hide the rest of the shortlist', async () => {
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    const { t } = await seed({ settings: { 'edge.sni.vantage.hourlyBudget': 30 } });
+    await listed(t, [
+      ...Array.from({ length: 600 }, (_, i) => ({
+        name: `old${i}.example`,
+        address: '192.0.2.70',
+        checkedInIr: true,
+      })),
+      { name: 'late1.example', address: '192.0.2.71' },
+      { name: 'late2.example', address: '192.0.2.72' },
+    ]);
+    expect(await quietTick(t)).toMatchObject({ hunt: true, measurements: 2 });
+    expect((await huntRows(t)).map((r) => r.name).sort()).toEqual([
+      'late1.example',
+      'late2.example',
+    ]);
+  });
+
+  test('an address that is not public is never put in a batch', async () => {
+    __setVantageGlobalpingFactory(() => fakeGlobalping(() => 'ok').client);
+    const { t } = await seed({ settings: { 'edge.sni.vantage.hourlyBudget': 30 } });
+    await listed(t, [
+      { name: 'private1.example', address: '10.0.0.1' },
+      { name: 'private2.example', address: '10.0.0.2' },
+    ]);
+    expect((await quietTick(t)).reason).toBe('nothing_due');
+    expect(await huntRows(t)).toHaveLength(0);
+  });
+});

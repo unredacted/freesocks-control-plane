@@ -78,11 +78,12 @@ export function timingOf(
   }>) {
     if (normalizeCountry(it.probe?.country) !== country) continue;
     if (it.result?.status !== 'finished') continue;
-    const c = Number(it.result.timings?.tcp);
-    const t = Number(it.result.timings?.tls);
-    if (!Number.isFinite(c) || c < 0) continue;
+    // A phase the probe did not time is null in Globalping's answer, never a zero.
+    const c = it.result.timings?.tcp;
+    const t = it.result.timings?.tls;
+    if (typeof c !== 'number' || !Number.isFinite(c) || c < 0) continue;
     tcp.push(c);
-    if (Number.isFinite(t) && t >= 0) tls.push(t);
+    if (typeof t === 'number' && Number.isFinite(t) && t >= 0) tls.push(t);
   }
   if (tcp.length === 0) return null;
   return {
@@ -225,19 +226,20 @@ export function readCountryBatch(
 
 export interface EvidenceView {
   check?: { dialled?: string; port?: number } | null;
-  timing?: { at: number; endpoint: string; port: number; connectMs: number } | null;
+  timing?: { at: number; place: string; endpoint: string; port: number; connectMs: number } | null;
   ooni?: { at: number; exact: ReadonlyArray<{ cc: string; status: string }> } | null;
   countries?: ReadonlyArray<{ cc: string; at: number; reading: string }> | null;
 }
 
 /**
  * Near-the-node points from fresh timing of the endpoint the candidate is
- * checked on now (undefined: not measured, expired, or measured on an address
- * the check no longer dials).
+ * checked on now, from the network's place as it is set now (undefined: not
+ * measured, expired, measured on an address the check no longer dials, or
+ * from a place the network no longer names).
  */
-export function nearOf(c: EvidenceView, now: number): number | undefined {
+export function nearOf(c: EvidenceView, now: number, place: string | null): number | undefined {
   const t = c.timing;
-  if (!t || !isFresh(t.at, now)) return undefined;
+  if (!t || !isFresh(t.at, now) || !place || t.place !== place) return undefined;
   if (!c.check?.dialled || c.check.dialled !== t.endpoint || (c.check.port ?? 443) !== t.port)
     return undefined;
   return nearPoints(t.connectMs);

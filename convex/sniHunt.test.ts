@@ -23,6 +23,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
+import { insertPanelServer, registerRelay } from './lib/edges/testing/fixtures';
 import { __setHuntDepsForTests, type HuntDeps } from './sniHuntOps';
 import { SniHuntOverview, SniHuntScopeView } from '../src/shared/contracts/sni';
 
@@ -1143,5 +1144,125 @@ describe('review fixes', () => {
     });
     expect(r.changed).toBe(3);
     expect((await candidates(t)).every((c) => c.state === 'new' && c.checkDueAt === 0)).toBe(true);
+  });
+});
+
+describe('review round 2', () => {
+  async function listedCandidate(
+    t: T,
+    o: {
+      name: string;
+      networkId: Id<'edgeNetworks'>;
+      familyId?: Id<'sniFamilies'>;
+      dialled: string;
+      shown: string[];
+    },
+  ) {
+    return t.run((ctx) =>
+      ctx.db.insert('sniCandidates', {
+        name: o.name,
+        site: o.name.split('.').slice(-2).join('.'),
+        networkId: o.networkId,
+        ...(o.familyId ? { familyId: o.familyId } : {}),
+        sources: ['toplist'],
+        state: 'new',
+        check: {
+          at: clock,
+          code: null,
+          alpn: 'h2',
+          answers: { v4: 1, v6: 0, onNetwork: 'all' },
+          shown: o.shown,
+          dialled: o.dialled,
+          port: 443,
+        },
+        checkGen: 1,
+        checkDueAt: clock + 1e9,
+        passes: 1,
+        listed: true,
+        baseScore: 10,
+        score: 10,
+        firstSeenAt: clock,
+        updatedAt: clock,
+      }),
+    );
+  }
+
+  test('one deadline for a whole evidence run: what it cannot get to goes back', async () => {
+    const { t, networkId } = await seed();
+    await t.run((ctx) =>
+      ctx.db.patch(networkId, { hunt: { enabled: true, place: { country: 'US' } } }),
+    );
+    for (let i = 1; i <= 3; i++)
+      await listedCandidate(t, {
+        name: `s${i}.example.com`,
+        networkId,
+        dialled: `192.0.2.${i}`,
+        shown: [`192.0.2.${i}`],
+      });
+    const start = clock;
+    const never = {
+      async createMeasurement() {
+        return { ok: true, data: { id: 'm1' } };
+      },
+      async getMeasurement() {
+        return { ok: true, data: { status: 'in-progress' } };
+      },
+    };
+    fakeDeps(
+      {},
+      {
+        globalping: () => never,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        fetch: (async () => new Response(JSON.stringify({ result: [] }))) as typeof fetch,
+      },
+    );
+    const r = await t.action(internal.sniHuntOps.evidence, {});
+    expect(r).toMatchObject({ timed: 0, ooni: 3, released: 2 });
+    expect(clock - start).toBeLessThan(120_000);
+    // Only the measurement it made still counts in the hour.
+    expect(await t.run((ctx) => ctx.db.query('sniHuntCalls').collect())).toHaveLength(1);
+  });
+
+  test("timing never dials an address that is FCP's own", async () => {
+    const { t, familyId, networkId } = await seed();
+    await insertPanelServer(t);
+    await registerRelay(t, { originAddress: '192.0.2.77' });
+    await t.run((ctx) =>
+      ctx.db.patch(networkId, { hunt: { enabled: true, place: { country: 'US' } } }),
+    );
+    await listedCandidate(t, {
+      name: 'www.example.com',
+      networkId,
+      familyId,
+      dialled: TARGET_IP,
+      shown: ['192.0.2.77'],
+    });
+    await listedCandidate(t, {
+      name: 'ours.example.net',
+      networkId,
+      dialled: '192.0.2.77',
+      shown: ['192.0.2.77'],
+    });
+    const work = await t.mutation(internal.sniHunt.claimEvidence, { now: clock });
+    expect(work.timing.map((x) => [x.host, x.address, x.own ?? null])).toEqual([
+      ['www.example.com', TARGET_IP, null],
+    ]);
+  });
+
+  test('Measure now is audited with its count', async () => {
+    const { t, networkId } = await seed();
+    const id = await listedCandidate(t, {
+      name: 'm.example.com',
+      networkId,
+      dialled: '192.0.2.40',
+      shown: ['192.0.2.40'],
+    });
+    await t.mutation(internal.sniHunt.setCandidates, { ids: [id], action: 'measure' });
+    const row = await t.run(async (ctx) =>
+      (await ctx.db.query('auditLog').collect()).find((r) => r.action === 'edge.sni.hunt.measure'),
+    );
+    expect(row?.payload).toEqual({ count: 1 });
   });
 });

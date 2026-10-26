@@ -611,6 +611,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.sni.hunt.ignore': ['count', 'kind'],
   'edge.sni.hunt.unignore': ['count'],
   'edge.sni.hunt.recheck': ['count'],
+  'edge.sni.hunt.measure': ['count'],
   'edge.sni.hunt.sweep': ['action', 'hits', 'lookups'],
   'edge.sni.hunt.ct': ['slug', 'queued', 'cached'],
   'edge.network.hunt': ['slug', 'enabled', 'place'],

@@ -2897,7 +2897,12 @@ answers count for 14 days; older counts as missing (half).
   says. Its own site is timed apart (`own`), shown and never scored. A measurement is stored
   with the endpoint and port it measured, and stops counting when the check dials another
   address. Points by the median connect: 15 ms or less 30, 35 ms 22, 80 ms 12, 150 ms 4, more 0.
-  Within `timingPerHour` (reserved before the request) and Globalping's own limit.
+  Within `timingPerHour` (reserved before the request) and Globalping's own limit. A measurement
+  counts only from the place the network names now, and timing never dials an address that is
+  FCP's own or not public. A run has one deadline inside the action limit (no timing starts past
+  40 s, no OONI request past 75 s, everything ends by 100 s); what it cannot get to is handed back
+  (its reservations freed, "Measure now" asked again). A phase a probe did not time is left out,
+  never read as zero.
 - **OONI** (`ooni`): the aggregation API (`web_connectivity`, 90 days) per curated country, for
   the **exact** name, which is what scores, and for its site's apex and `www.`, kept as context
   only: OONI measures the URLs it was given, so a site's answer says nothing sure about another
@@ -2912,7 +2917,9 @@ answers count for 14 days; older counts as missing (half).
   (a lone one takes another passing candidate of its scope as its control), each a Globalping
   `HEAD /` to the candidate's own on-network address presenting its name, every one from the
   first one's probes. Globalping only (RIPE Atlas cannot speak TLS 1.3). At most once per name
-  and country a week; never an FCP address (an address of FCP's is skipped, `real_is_ours`).
+  and country a week (a lone name's control must be due there too); only public addresses, never
+  an FCP address (left out when the batch is planned, and skipped as `real_is_ours` if one became
+  FCP's since). The whole shortlist is read, so names checked lately never hide the rest.
   The batch is read like the vantage batches: a failure counts as **interference** only when the
   same vantage got through for another name of the batch, from `minVantages` vantages on
   `minNetworks` networks; a failure nothing paired is **inconclusive** (a broken probe, a route, a
