@@ -196,6 +196,7 @@ export const list = internalQuery({
         truncated: !!n.truncated,
         refreshedAt: n.refreshedAt ? new Date(n.refreshedAt).toISOString() : null,
         refreshError: n.refreshError ?? null,
+        hunt: { enabled: !!n.hunt?.enabled, place: n.hunt?.place ?? null },
         families: families.map((f) => ({ slug: f.slug, label: f.label })),
         locations: locations.map((l) => ({
           id: l._id as string,
@@ -332,7 +333,46 @@ export const remove = internalMutation({
         updatedAt: Date.now(),
       });
     await ctx.db.delete(n._id);
+    // Names found on it go with it (docs/edges.md "Finding names").
+    await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, { networkId: n._id });
     await audit(ctx, 'edge.network.delete', a.actorAdminId, { slug: n.slug });
+    return { ok: true as const };
+  },
+});
+
+/**
+ * Finding names on a network (docs/edges.md "Finding names"): whether the
+ * top-sites sweep matches against it, and where its nodes are, a place name
+ * (an ISO country and an optional city) for the timing checks. Never an address.
+ */
+export const setHunt = internalMutation({
+  args: {
+    slug: v.string(),
+    enabled: v.boolean(),
+    place: v.optional(v.object({ country: v.string(), city: v.optional(v.string()) })),
+    ...actor,
+  },
+  handler: async (ctx, a) => {
+    const n = await bySlug(ctx.db, a.slug);
+    let place: { country: string; city?: string } | undefined;
+    if (a.place) {
+      const country = a.place.country.trim().toUpperCase();
+      if (!/^[A-Z]{2}$/.test(country))
+        refuse('edge.network.bad_place', 'A place is a two-letter country code and a city');
+      const city = a.place.city?.trim().replace(/\s+/g, ' ').slice(0, 60);
+      if (city !== undefined && city !== '' && !/^[\p{L}\p{M} .'-]+$/u.test(city))
+        refuse('edge.network.bad_place', 'A place is a two-letter country code and a city');
+      place = { country, ...(city ? { city } : {}) };
+    }
+    await ctx.db.patch(n._id, {
+      hunt: { enabled: a.enabled, ...(place ? { place } : {}) },
+      updatedAt: Date.now(),
+    });
+    await audit(ctx, 'edge.network.hunt', a.actorAdminId, {
+      slug: n.slug,
+      enabled: a.enabled,
+      place: !!place,
+    });
     return { ok: true as const };
   },
 });

@@ -35,9 +35,26 @@ export const SniVantageConfig = z.object({
 });
 export type SniVantageConfig = z.infer<typeof SniVantageConfig>;
 
+/** Finding names (`edge.sni.hunt.*`; docs/edges.md "Finding names"). */
+export const SniHuntConfig = z.object({
+  enabled: z.boolean(),
+  depth: z.number(),
+  wwwDepth: z.number(),
+  lookupsPerSecond: z.number(),
+  sweepEveryDays: z.number(),
+  checksPerTick: z.number(),
+  recheckHours: z.number(),
+  shortlist: z.number(),
+  ctRequestsPerHour: z.number(),
+  ctPagesPerDomain: z.number(),
+  timingPerHour: z.number(),
+});
+export type SniHuntConfig = z.infer<typeof SniHuntConfig>;
+
 export const SniConfigView = z.object({
   config: SniConfig,
   vantage: SniVantageConfig,
+  hunt: SniHuntConfig.optional(),
   /** Which sources can run now (RIPE Atlas needs its key). */
   vantageSources: z.object({ globalping: z.boolean(), ripeatlas: z.boolean() }),
 });
@@ -49,6 +66,7 @@ export type SniConfigPatch = Partial<Omit<SniConfig, 'curatedCountries'>> & {
   vantage?: Partial<Omit<SniVantageConfig, 'sources' | 'countries'>> & {
     sources?: Partial<SniVantageConfig['sources']>;
   };
+  hunt?: Partial<SniHuntConfig>;
 };
 
 /** Why the checks suggest nothing (lib/edges/sni/vantage.ts `SuggestReason`). */
@@ -274,6 +292,13 @@ export const EdgeNetworkView = z.object({
   refreshedAt: z.string().nullable(),
   /** The last refresh's failure (a short code); the stored ranges stay. */
   refreshError: z.string().nullable(),
+  /** Finding names on it, and where its nodes are (a place name, never an address). */
+  hunt: z
+    .object({
+      enabled: z.boolean(),
+      place: z.object({ country: z.string(), city: z.string().optional() }).nullable(),
+    })
+    .optional(),
   families: z.array(z.object({ slug: z.string(), label: z.string() })),
   locations: z.array(
     z.object({
@@ -300,3 +325,170 @@ export type EdgeNetworkWrite = z.infer<typeof EdgeNetworkWrite>;
 
 /** `POST networks/{slug}/refresh`. */
 export const EdgeNetworkRefreshed = z.object({ refreshed: z.number(), failed: z.number() });
+
+// --- finding names (docs/edges.md "Finding names") --------------------------------------------------
+
+export const HuntPlace = z.object({ country: z.string(), city: z.string().optional() });
+export type HuntPlace = z.infer<typeof HuntPlace>;
+
+export const HUNT_SOURCES = ['cert', 'seed', 'pasted', 'toplist', 'ct'] as const;
+export const HUNT_STATES = ['new', 'added', 'ignored', 'gone', 'failing'] as const;
+
+export const HuntCounts = z.object({ total: z.number(), ready: z.number() });
+
+/** `GET sni/hunt`. */
+export const SniHuntOverview = z.object({
+  config: SniHuntConfig,
+  sweep: z
+    .object({
+      state: z.enum(['downloading', 'running', 'done', 'failed', 'cancelled']),
+      listDate: z.string().nullable(),
+      depth: z.number(),
+      wwwDepth: z.number(),
+      total: z.number(),
+      cursor: z.number(),
+      hits: z.number(),
+      lookups: z.number(),
+      error: z.string().nullable(),
+      startedAt: z.string(),
+      finishedAt: z.string().nullable(),
+    })
+    .nullable(),
+  networks: z.array(
+    z.object({
+      slug: z.string(),
+      label: z.string(),
+      hunt: z.object({ enabled: z.boolean(), place: HuntPlace.nullable() }),
+      ranges: z.object({ v4: z.number(), v6: z.number() }),
+      candidates: HuntCounts,
+    }),
+  ),
+  families: z.array(z.object({ slug: z.string(), label: z.string(), candidates: HuntCounts })),
+});
+export type SniHuntOverview = z.infer<typeof SniHuntOverview>;
+
+export const SniCandidateRow = z.object({
+  id: z.string(),
+  name: z.string(),
+  site: z.string(),
+  sources: z.array(z.enum(HUNT_SOURCES)),
+  rank: z.number().nullable(),
+  state: z.enum(HUNT_STATES),
+  /** The family that holds it now (an added candidate). */
+  inFamily: z.object({ slug: z.string(), label: z.string() }).nullable(),
+  /** Qualification's verdict (`code` null = it would qualify) and its answers. */
+  check: z
+    .object({
+      at: z.string(),
+      code: z.string().nullable(),
+      tlsVersion: z.string().nullable(),
+      alpn: z.string().nullable(),
+      answers: z.object({
+        v4: z.number(),
+        v6: z.number(),
+        onNetwork: z.enum(['all', 'some', 'none', 'unknown']),
+      }),
+      shown: z.array(z.string()),
+    })
+    .nullable(),
+  extra: z
+    .object({
+      x25519: z.boolean().nullable(),
+      mlkem: z.boolean().nullable(),
+      error: z.string().nullable(),
+    })
+    .nullable(),
+  passes: z.number(),
+  baseScore: z.number(),
+  score: z.number(),
+  parts: z
+    .object({
+      popularity: z.number(),
+      cluster: z.number(),
+      tls: z.number(),
+      stability: z.number(),
+      near: z.number().nullable(),
+      country: z.number().nullable(),
+      penalty: z.number(),
+    })
+    .nullable(),
+  firstSeenAt: z.string(),
+});
+export type SniCandidateRow = z.infer<typeof SniCandidateRow>;
+
+export const SniHuntCtRow = z.object({
+  domain: z.string(),
+  state: z.enum(['partial', 'complete', 'truncated', 'rate_limited', 'error']),
+  pages: z.number(),
+  names: z.number(),
+  error: z.string().nullable(),
+  backoffUntil: z.string().nullable(),
+  completedAt: z.string().nullable(),
+});
+export type SniHuntCtRow = z.infer<typeof SniHuntCtRow>;
+
+/** `GET sni/hunt/networks/{slug}` and `GET sni/hunt/families/{slug}`. */
+export const SniHuntScopeView = z.object({
+  scope: z.object({
+    kind: z.enum(['network', 'family']),
+    slug: z.string(),
+    label: z.string(),
+    network: z.object({ slug: z.string(), label: z.string() }).nullable(),
+    target: z.object({ address: z.string(), port: z.number() }).nullable(),
+    hunt: z.object({ enabled: z.boolean(), place: HuntPlace.nullable() }).nullable(),
+  }),
+  candidates: z.array(SniCandidateRow),
+  /** Candidates by the first address they live on: a possible target and its names. */
+  groups: z.array(
+    z.object({ address: z.string(), names: z.number(), passing: z.number(), best: z.string() }),
+  ),
+  counts: z.object({
+    new: z.number(),
+    failing: z.number(),
+    gone: z.number(),
+    ignored: z.number(),
+    added: z.number(),
+    unchecked: z.number(),
+  }),
+  ct: z.array(SniHuntCtRow),
+});
+export type SniHuntScopeView = z.infer<typeof SniHuntScopeView>;
+
+const Tally = {
+  added: z.number(),
+  known: z.number(),
+  ignored: z.number(),
+  inFamily: z.number(),
+  invalid: z.number(),
+  capped: z.number(),
+};
+
+/** `POST sni/hunt/import`: what happened to the lines, and what a seed describes that FCP lacks. */
+export const SniHuntImported = z.object({
+  ...Tally,
+  proposals: z.object({
+    networks: z.array(z.object({ slug: z.string(), label: z.string(), asns: z.array(z.number()) })),
+    families: z.array(
+      z.object({
+        slug: z.string(),
+        label: z.string(),
+        targetAddress: z.string(),
+        targetPort: z.number(),
+        requireH2: z.boolean(),
+        network: z.string(),
+        names: z.array(z.string()),
+      }),
+    ),
+  }),
+});
+export type SniHuntImported = z.infer<typeof SniHuntImported>;
+
+/** `POST sni/hunt/families/{slug}/cert`. */
+export const SniHuntCertRead = z.union([
+  z.object({ ok: z.literal(true), listed: z.number(), ...Tally }),
+  z.object({ ok: z.literal(false), code: z.string().nullable().optional() }),
+]);
+export type SniHuntCertRead = z.infer<typeof SniHuntCertRead>;
+
+export const SniHuntCtQueued = z.object({ queued: z.number(), cached: z.number() });
+export const SniHuntChanged = z.object({ changed: z.number() });

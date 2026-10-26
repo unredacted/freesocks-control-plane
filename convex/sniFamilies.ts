@@ -34,8 +34,10 @@ import {
 import { parseRealityTarget } from './lib/edges/inboundMapping';
 import {
   resolveSniConfig,
+  resolveSniHuntConfig,
   resolveSniVantageConfig,
   sniConfigWrites,
+  sniHuntConfigWrites,
   sniVantageConfigWrites,
   usableSources,
   vantageCountries,
@@ -103,6 +105,7 @@ export const configView = internalQuery({
     return {
       config: await resolveSniConfig(ctx.db),
       vantage,
+      hunt: await resolveSniHuntConfig(ctx.db),
       // Which sources can run now (RIPE Atlas needs its key, set under Edges, Settings).
       vantageSources: {
         globalping: usable.includes('globalping'),
@@ -122,8 +125,15 @@ export const patchConfig = internalMutation({
         ? (body.vantage as Record<string, unknown>)
         : {},
     );
-    const writes = [...base.writes, ...vantage.writes];
-    const changedKeys: string[] = [...base.changedKeys, ...vantage.changedKeys];
+    const hunt = sniHuntConfigWrites(
+      body.hunt && typeof body.hunt === 'object' ? (body.hunt as Record<string, unknown>) : {},
+    );
+    const writes = [...base.writes, ...vantage.writes, ...hunt.writes];
+    const changedKeys: string[] = [
+      ...base.changedKeys,
+      ...vantage.changedKeys,
+      ...hunt.changedKeys,
+    ];
     for (const w of writes) await upsertSettingRow(ctx, w.key, w.value, actorAdminId);
     if (changedKeys.length > 0)
       await audit(ctx, 'edge.sni.config.update', actorAdminId, { changedKeys });
@@ -487,6 +497,8 @@ export const remove = internalMutation({
     if (names.some((n) => n.status === 'burned'))
       await ctx.db.patch(f._id, { enabled: false, updatedAt: Date.now() });
     else await ctx.db.delete(f._id);
+    // Names found for it go with it (docs/edges.md "Finding names").
+    await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, { familyId: f._id });
     await audit(ctx, 'edge.sni.family.delete', a.actorAdminId, {
       slug: f.slug,
       nameCount: names.length,

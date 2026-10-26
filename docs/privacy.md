@@ -513,6 +513,16 @@ member reports. Neither adds member data anywhere.
   DNS answer lies on a network is made locally against the stored ranges (docs/edges.md,
   "Networks"); qualifying a family's names on a network resolves those names from the backend,
   as qualification already resolves the target.
+- **Finding names** (`edge.sni.hunt.enabled`, off by default; docs/edges.md "Finding names")
+  looks for public sites to use as REALITY server names, from passive sources only. The backend
+  downloads a public top-sites list (Tranco) and resolves its names with ordinary DNS lookups
+  through its own resolver, and asks a certificate-transparency service (Cert Spotter) which names
+  certificates of a registrable domain list. Those requests carry the list's id, a site name or a
+  domain, nothing else. It makes TLS handshakes to a family's target and to candidate sites, as
+  qualification already does. No member data, no FCP address and no address range is involved,
+  and no range is ever scanned. Stored: the candidate names with their checks and scores, until
+  an operator removes their network or family (a name that left its network is deleted after 30
+  days).
 - **Report attribution** labels a member's issue report with the origin
   behind their key (the node they were pinned to) and, only when they said which
   connection failed and that maps to exactly one edge, the edge. These are

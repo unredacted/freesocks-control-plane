@@ -1476,6 +1476,15 @@ export default defineSchema({
     // The last refresh failed (a short code); the stored ranges stay.
     refreshError: v.optional(v.string()),
     refreshTriedAt: v.optional(v.number()),
+    // Finding names on this network (docs/edges.md "Finding names"): whether the
+    // top-sites sweep matches against it, and where its nodes are (a place
+    // name for the timing checks, never an address).
+    hunt: v.optional(
+      v.object({
+        enabled: v.boolean(),
+        place: v.optional(v.object({ country: v.string(), city: v.optional(v.string()) })),
+      }),
+    ),
     updatedAt: v.number(),
   }).index('by_slug', ['slug']),
 
@@ -3432,6 +3441,188 @@ export default defineSchema({
     .index('by_name_country', ['name', 'country'])
     .index('by_family', ['familyId'])
     .index('by_oldest', ['oldestAt']),
+
+  // --- Finding names (docs/edges.md "Finding names", convex/sniHunt.ts) ---------------------
+  //
+  // Candidate REALITY server names found by passive sources (a family target's
+  // certificate, a pasted list or seed, a top-sites list resolved and matched to
+  // a network's ranges, certificate transparency). A candidate is only shown:
+  // adding one goes through the family's normal qualification. No IP range is
+  // ever scanned.
+
+  // One candidate per (name, scope). The scope is a network (a possible target
+  // and the names on its address), a family (names its target may serve), or
+  // both (a family on a network). Kept until ignored, added, deleted with its
+  // scope, or 30 days after it left its network.
+  sniCandidates: defineTable({
+    name: v.string(),
+    // The registrable domain (public-suffix aware): "ignore the site" ignores its names.
+    site: v.string(),
+    networkId: v.optional(v.id('edgeNetworks')),
+    familyId: v.optional(v.id('sniFamilies')),
+    sources: v.array(
+      v.union(
+        v.literal('cert'),
+        v.literal('seed'),
+        v.literal('pasted'),
+        v.literal('toplist'),
+        v.literal('ct'),
+      ),
+    ),
+    // Its rank in the top-sites list (or the seed's), when known.
+    rank: v.optional(v.number()),
+    state: v.union(
+      v.literal('new'),
+      v.literal('added'),
+      v.literal('ignored'),
+      v.literal('gone'),
+      v.literal('failing'),
+    ),
+    // When it was first seen off the network it had been on.
+    goneAt: v.optional(v.number()),
+    // The newest check: qualification's verdict (`code` null = it would qualify)
+    // against the family's target, or against its own address for a network
+    // candidate, with every A and AAAA answer judged before `shown` is cut to 4.
+    check: v.optional(
+      v.object({
+        at: v.number(),
+        code: v.union(v.string(), v.null()),
+        tlsVersion: v.optional(v.string()),
+        alpn: v.optional(v.string()),
+        answers: v.object({
+          v4: v.number(),
+          v6: v.number(),
+          onNetwork: v.union(
+            v.literal('all'),
+            v.literal('some'),
+            v.literal('none'),
+            v.literal('unknown'),
+          ),
+        }),
+        shown: v.array(v.string()),
+      }),
+    ),
+    // Bumped by every claim: a check records only under the generation it claimed.
+    checkGen: v.number(),
+    // 0 = never checked; the check run takes the oldest due first.
+    checkDueAt: v.number(),
+    checkLeaseUntil: v.optional(v.number()),
+    // Two more handshakes after a pass (X25519 only, X25519MLKEM768 only). Kept
+    // apart from `check`: an error here never changes the verdict.
+    extra: v.optional(
+      v.object({
+        at: v.number(),
+        x25519: v.optional(v.boolean()),
+        mlkem: v.optional(v.boolean()),
+        error: v.optional(v.string()),
+      }),
+    ),
+    passes: v.number(),
+    lastPassAt: v.optional(v.number()),
+    baseScore: v.number(),
+    score: v.number(),
+    scoreParts: v.optional(
+      v.object({
+        popularity: v.number(),
+        cluster: v.number(),
+        tls: v.number(),
+        stability: v.number(),
+        near: v.union(v.number(), v.null()),
+        country: v.union(v.number(), v.null()),
+        penalty: v.number(),
+      }),
+    ),
+    firstSeenAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_scope_base', ['networkId', 'familyId', 'baseScore'])
+    .index('by_scope_score', ['networkId', 'familyId', 'score'])
+    .index('by_family', ['familyId'])
+    .index('by_name', ['name'])
+    .index('by_check_due', ['checkDueAt'])
+    .index('by_gone', ['goneAt']),
+
+  // Names and sites an operator ignored, so no later sweep or import brings
+  // them back. A scope (network or family) limits it there; none = everywhere.
+  sniHuntIgnores: defineTable({
+    kind: v.union(v.literal('name'), v.literal('site')),
+    key: v.string(),
+    networkId: v.optional(v.id('edgeNetworks')),
+    familyId: v.optional(v.id('sniFamilies')),
+    at: v.number(),
+    by: v.optional(v.id('adminUsers')),
+  }).index('by_key', ['key']),
+
+  // One top-sites sweep: the list, downloaded once and kept in file storage in
+  // chunks while the run lasts, is resolved by a chain of short steps. A step
+  // holds the lease; every checkpoint is a compare-and-set on `gen` and
+  // `cursor`, so a cancelled run (gen bumped) or a duplicate step discards its
+  // results.
+  sniHuntRuns: defineTable({
+    state: v.union(
+      v.literal('downloading'),
+      v.literal('running'),
+      v.literal('done'),
+      v.literal('failed'),
+      v.literal('cancelled'),
+    ),
+    gen: v.number(),
+    listId: v.optional(v.string()),
+    listDate: v.optional(v.string()),
+    depth: v.number(),
+    wwwDepth: v.number(),
+    chunks: v.array(v.id('_storage')),
+    total: v.number(),
+    cursor: v.number(),
+    hits: v.number(),
+    lookups: v.number(),
+    leaseUntil: v.number(),
+    leaseId: v.optional(v.string()),
+    lastStepAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    by: v.optional(v.id('adminUsers')),
+    updatedAt: v.number(),
+  })
+    .index('by_started', ['startedAt'])
+    .index('by_state', ['state']),
+
+  // Certificate transparency, one registrable domain for one scope: read a page
+  // at a time after `after` (the log service pages from the least recently
+  // discovered). Only `complete` (an empty page reached) is a whole answer.
+  sniHuntCt: defineTable({
+    domain: v.string(),
+    networkId: v.optional(v.id('edgeNetworks')),
+    familyId: v.optional(v.id('sniFamilies')),
+    state: v.union(
+      v.literal('partial'),
+      v.literal('complete'),
+      v.literal('truncated'),
+      v.literal('rate_limited'),
+      v.literal('error'),
+    ),
+    after: v.optional(v.string()),
+    pages: v.number(),
+    names: v.number(),
+    error: v.optional(v.string()),
+    backoffUntil: v.optional(v.number()),
+    // When the next page may be read (0 = now).
+    nextAt: v.number(),
+    leaseUntil: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    requestedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_domain', ['domain'])
+    .index('by_next', ['nextAt']),
+
+  // One row per request to a rate-limited third-party service (the hourly
+  // budgets count requests, whatever their answer). Kept two hours.
+  sniHuntCalls: defineTable({
+    kind: v.union(v.literal('ct'), v.literal('timing')),
+    at: v.number(),
+  }).index('by_kind_at', ['kind', 'at']),
 
   // --- Bootstrap contract v2 (docs/servers.md "Setting up a backend", "Node lifecycle") ---
   //

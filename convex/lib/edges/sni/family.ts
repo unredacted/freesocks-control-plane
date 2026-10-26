@@ -68,6 +68,8 @@ export interface HandshakeResult {
   alpn?: string | null;
   /** A code word from the dialler: `timeout`, `refused`, `private_address`, `resolve_failed`... */
   error?: string;
+  /** The DNS names on the presented certificate, when the caller asked for them. */
+  names?: string[];
 }
 
 export type QualificationCode =

@@ -353,6 +353,19 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.network.bad_prefix': 'Each range is an address and a length, like 192.0.2.0/24.',
   'edge.network.empty': 'A network needs an ASN or a range.',
   'edge.network.in_use': 'A family or a transport is on this network. Change them first.',
+  'edge.network.bad_place': 'A place is a two-letter country code and, if you like, a city.',
+  // Finding names (docs/edges.md "Finding names").
+  'edge.sni.hunt.off': 'Finding names is turned off. Turn it on first.',
+  'edge.sni.hunt.no_scope': 'Pick a network or a family first.',
+  'edge.sni.hunt.bad_seed': 'That is not a seed file. Paste the whole file as it was written.',
+  'edge.sni.hunt.too_many': 'That is too many at once. Split it up.',
+  'edge.sni.hunt.sweep_running': 'A sweep is already running.',
+  'edge.sni.hunt.no_sweep': 'No sweep is running.',
+  'edge.sni.hunt.no_network':
+    'No network is being searched yet. Turn on finding names for a network that has address ranges.',
+  'edge.sni.hunt.no_servername':
+    'The target is an address and the family has no name yet. Add one name first.',
+  'edge.sni.hunt.ct_off': 'Certificate log reads are set to none an hour.',
   'edge.maintenance': 'Edges are in maintenance. Nothing new starts until it ends.',
   'servers.manage_disabled': 'Changing backends is turned off under Servers.',
   'servers.handoff_missing': 'The node role has not handed this backend over yet.',

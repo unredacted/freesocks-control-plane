@@ -172,6 +172,8 @@ import type * as seedEdgesReset from "../seedEdgesReset.js";
 import type * as serverAdmin from "../serverAdmin.js";
 import type * as sessions from "../sessions.js";
 import type * as sniFamilies from "../sniFamilies.js";
+import type * as sniHunt from "../sniHunt.js";
+import type * as sniHuntOps from "../sniHuntOps.js";
 import type * as sniQualifyOps from "../sniQualifyOps.js";
 import type * as sniReports from "../sniReports.js";
 import type * as sniRollouts from "../sniRollouts.js";
@@ -358,6 +360,8 @@ declare const fullApi: ApiFromModules<{
   serverAdmin: typeof serverAdmin;
   sessions: typeof sessions;
   sniFamilies: typeof sniFamilies;
+  sniHunt: typeof sniHunt;
+  sniHuntOps: typeof sniHuntOps;
   sniQualifyOps: typeof sniQualifyOps;
   sniReports: typeof sniReports;
   sniRollouts: typeof sniRollouts;
