@@ -247,6 +247,14 @@ export const ROTATION_FIELDS: Field[] = [
   },
   {
     kind: 'number',
+    path: 'trust.firstWaveHours',
+    label: 'Not counted in an address\u2019s first',
+    unit: 'hours',
+    helper:
+      'Accounts handed an address when it is new got it because it outranks theirs, so a block then strikes none of them.',
+  },
+  {
+    kind: 'number',
     path: 'trust.maxFreshHolders',
     label: 'No strike when more accounts got it recently than',
     unit: 'accounts',

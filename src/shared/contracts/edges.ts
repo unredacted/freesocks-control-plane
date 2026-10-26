@@ -2200,6 +2200,7 @@ export const EdgeConfigView = z.object({
         .object({
           promoteAfterDays: z.number(),
           windowDays: z.number().default(7),
+          firstWaveHours: z.number().default(24),
           maxFreshHolders: z.number().default(50),
           strikeSpacingHours: z.number().default(24),
           strikesToSuspect: z.number().default(3),
@@ -2208,6 +2209,7 @@ export const EdgeConfigView = z.object({
         .default({
           promoteAfterDays: 14,
           windowDays: 7,
+          firstWaveHours: 24,
           maxFreshHolders: 50,
           strikeSpacingHours: 24,
           strikesToSuspect: 3,

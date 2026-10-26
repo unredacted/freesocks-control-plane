@@ -1368,12 +1368,18 @@ blocking trusted addresses it was just handed loses its trust:
   An address published before recording began (`edge:trustSince`, set by the first deploy's
   `seedCutover`) strikes nobody: its first exposures are not all known.
 - **Strikes.** The fresh holders are the accounts first handed the address in the
-  `edge.trust.windowDays` (7) before the evidence began; one handed it after the block began cannot
-  have caused it, and a long-time holder is never fresh. With 1 to `edge.trust.maxFreshHolders`
-  (50) of them each gets a strike; more is not attributable (a new address handed to a slice of
-  the members at once, or a block found by other means) and nobody gets one. A strike within
-  `edge.trust.strikeSpacingHours` (24) of the account's newest one does not count, so one mass
-  block is one strike.
+  `edge.trust.windowDays` (7) before the evidence began, and not in the address's first
+  `edge.trust.firstWaveHours` (24) in use. One handed it after the block began cannot have caused
+  it, and a long-time holder is never fresh. Nor is the address's first wave: a new address
+  (a replacement, a lane being filled) goes to whoever it outranks, so those holders say nothing,
+  and on a small node they would be struck together with whoever blocked it. What does say
+  something is an account that moved onto an address already in use and blocked it soon after,
+  which is what a censor's account does once its own addresses are burned. With 1 to
+  `edge.trust.maxFreshHolders` (50) fresh holders each gets a strike; more is not attributable (a
+  block found by other means) and nobody gets one. A strike within `edge.trust.strikeSpacingHours`
+  (24) of the account's newest one does not count, so one mass block is one strike. Blocking new
+  addresses in their first wave earns a censor no strike; that is bounded by the replacement caps
+  and the re-block hold (§ "Replacing a blocked address without a spare"), not by suspicion.
 - **Suspected**: `edge.trust.strikesToSuspect` (3) strikes within `edge.trust.strikeDays` (30).
   The account then draws from the open lane, paid or not, until its strikes stop counting (its
   row is deleted then). A demotion renders every mirror again (one full pass), and the lane fence
@@ -1384,8 +1390,8 @@ blocking trusted addresses it was just handed loses its trust:
   or an address.
 
 Why innocent members are safe: a member who held an address long before it was blocked is never
-fresh, and after scattering an innocent is fresh only briefly and only sometimes on an address a
-censor watches. Modelled (a 64-address lane, 10 watching accounts) an innocent collects about 0.6
+fresh, nor is one handed a new address in its first wave, and after scattering an innocent is
+fresh only briefly and only sometimes on an address a censor watches. Modelled (a 64-address lane, 10 watching accounts) an innocent collects about 0.6
 strikes a month against a threshold of 3; a watching account that blocks what it learns is out
 after about 3 days and about 6 trusted addresses; a patient one has to leave each address working
 for 7 days to avoid strikes.
@@ -5266,8 +5272,8 @@ it (`relayListeners.reconcileCountryMarks`): every listener with a judged name m
 at once, its members re-ranked among names the node already accepts at their next refresh.
 
 **Suspicion** (§ "Address enumeration") adds two tables (`edgeExposures`, `edgeTrust`), one
-optional field (`edges.blockClaim`), five settings with defaults (`edge.trust.windowDays` 7,
-`maxFreshHolders` 50, `strikeSpacingHours` 24, `strikesToSuspect` 3, `strikeDays` 30), the daily
+optional field (`edges.blockClaim`), six settings with defaults (`edge.trust.windowDays` 7,
+`firstWaveHours` 24, `maxFreshHolders` 50, `strikeSpacingHours` 24, `strikesToSuspect` 3, `strikeDays` 30), the daily
 `edge-trust-sweep` cron and the direct dependency `@noble/hashes` (already in the tree under
 `@noble/curves`). It needs a pepper (`EDGE_MARK_PEPPER`, else `IP_HASH_SALT`; without one nothing
 is recorded and nobody is suspected). The deploy's `seedCutover` stores when recording began; only

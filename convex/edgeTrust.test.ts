@@ -31,11 +31,21 @@ type T = TestConvex<typeof schema>;
 const later = (ms: number) => vi.setSystemTime(Date.now() + ms);
 
 /** A node with lanes on, suspicion recording, and `n` trusted addresses in use. */
-async function seedNode(t: T, n: number) {
+async function seedNode(t: T, n: number, opts: { firstWave?: 'default' } = {}) {
   const f = await seedEdgeFixture(t);
   await t.run((ctx) => ctx.db.patch(f.relayId, { desiredPublished: 2 + n }));
   await adoptL4Edge(t, f.relayId, f.listenerId, { ipv4: '198.51.100.1', publish: true });
   await t.mutation(internal.edgeTrust.ensureSince, {});
+  // The tests below hand addresses out right after they go into use; the first
+  // wave has its own test, at the shipped default.
+  if (opts.firstWave !== 'default')
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'edge.trust.firstWaveHours',
+        value: '0',
+        updatedAt: Date.now(),
+      }),
+    );
   later(1000);
   await t.mutation(internal.edgeLanes.setLanes, {
     relayId: f.relayId,
@@ -164,6 +174,22 @@ describe('who gets a strike', () => {
     expect((await blocked(t, x)).claimed).toBe(false);
     expect((await blocked(t, x)).claimed).toBe(false);
     expect(await strikesOf(t, fresh.userId)).toBe(1);
+  });
+
+  test("an address's first wave is never fresh; an account that moved onto it later is", async () => {
+    const t = convexTest(schema, modules);
+    const { trusted } = await seedNode(t, 1, { firstWave: 'default' });
+    const x = trusted[0]!;
+    const firstWave = await seedUser(t);
+    const mover = await seedUser(t);
+    later(60_000);
+    await hand(t, firstWave.subscriptionId, x);
+    later(2 * DAY);
+    await hand(t, mover.subscriptionId, x);
+    later(DAY);
+    expect(await blocked(t, x)).toMatchObject({ claimed: true, fresh: 1, struck: 1 });
+    expect(await strikesOf(t, firstWave.userId)).toBe(0);
+    expect(await strikesOf(t, mover.userId)).toBe(1);
   });
 
   test('an account handed it after the block began is not fresh', async () => {

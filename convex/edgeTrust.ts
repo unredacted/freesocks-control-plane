@@ -136,8 +136,9 @@ async function strike(
 /**
  * A trusted address judged blocked, its evidence beginning at `evidenceAt`:
  * claimed once per address (repeated detector passes, a manual mark and a
- * country round all land here); its fresh holders each get a strike when they
- * are few enough to say something. An address published before suspicion
+ * country round all land here); its fresh holders (handed it in the window
+ * before the evidence, after its first wave) each get a strike when they are
+ * few enough to say something. An address published before suspicion
  * started recording strikes nobody (its first exposures are not all known).
  * A demotion renders every mirror again, so no object keeps a trusted body for
  * an account that is now in the open lane.
@@ -156,7 +157,7 @@ export async function noteBlockedIn(
   if (edge.publishedAt === undefined || edge.publishedAt <= since)
     return { ...none, claimed: true };
   const s = await resolveTrustSettings(ctx.db);
-  const { from, to } = freshWindow(evidenceAt, s);
+  const { from, to } = freshWindow(evidenceAt, edge.publishedAt, s);
   const fresh = await ctx.db
     .query('edgeExposures')
     .withIndex('by_edge_at', (q) => q.eq('edgeId', edgeId).gte('at', from).lt('at', to))

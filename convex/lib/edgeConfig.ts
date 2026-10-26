@@ -188,9 +188,12 @@ export interface EdgeConfig {
      * a trusted address in the `windowDays` before it was judged blocked is a
      * fresh holder; 1 to `maxFreshHolders` of them each get a strike (more is
      * not attributable); strikes at least `strikeSpacingHours` apart count, and
-     * `strikesToSuspect` of them within `strikeDays` suspect the account.
+     * `strikesToSuspect` of them within `strikeDays` suspect the account. An
+     * account handed the address in its first `firstWaveHours` in use is never
+     * fresh: a new address goes to whoever it outranks, which says nothing.
      */
     windowDays: number;
+    firstWaveHours: number;
     maxFreshHolders: number;
     strikeSpacingHours: number;
     strikesToSuspect: number;
@@ -338,6 +341,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   trust: {
     promoteAfterDays: 14,
     windowDays: 7,
+    firstWaveHours: 24,
     maxFreshHolders: 50,
     strikeSpacingHours: 24,
     strikesToSuspect: 3,
@@ -505,6 +509,7 @@ export const EDGE_KEYS = {
   'replacement.reblockHours': 'edge.replacement.reblockHours',
   'trust.promoteAfterDays': 'edge.trust.promoteAfterDays',
   'trust.windowDays': 'edge.trust.windowDays',
+  'trust.firstWaveHours': 'edge.trust.firstWaveHours',
   'trust.maxFreshHolders': 'edge.trust.maxFreshHolders',
   'trust.strikeSpacingHours': 'edge.trust.strikeSpacingHours',
   'trust.strikesToSuspect': 'edge.trust.strikesToSuspect',
@@ -685,6 +690,7 @@ export function sanitizeRelayConfig(
         D.trust.promoteAfterDays,
       ),
       windowDays: sanitizeInt(raw['trust.windowDays'], 1, 14, D.trust.windowDays),
+      firstWaveHours: sanitizeInt(raw['trust.firstWaveHours'], 0, 72, D.trust.firstWaveHours),
       maxFreshHolders: sanitizeInt(raw['trust.maxFreshHolders'], 1, 500, D.trust.maxFreshHolders),
       strikeSpacingHours: sanitizeInt(
         raw['trust.strikeSpacingHours'],
@@ -891,14 +897,16 @@ export async function resolveUpdateIntervalHours(db: DatabaseReader): Promise<nu
 /** The suspicion settings alone (lib/edges/trust.ts): read on every render of a lanes node. */
 export async function resolveTrustSettings(db: DatabaseReader): Promise<{
   windowDays: number;
+  firstWaveHours: number;
   maxFreshHolders: number;
   strikeSpacingHours: number;
   strikesToSuspect: number;
   strikeDays: number;
 }> {
   const D = EDGE_DEFAULTS.trust;
-  const [w, m, sp, ts, sd] = await Promise.all([
+  const [w, fw, m, sp, ts, sd] = await Promise.all([
     readSetting(db, EDGE_KEYS['trust.windowDays']),
+    readSetting(db, EDGE_KEYS['trust.firstWaveHours']),
     readSetting(db, EDGE_KEYS['trust.maxFreshHolders']),
     readSetting(db, EDGE_KEYS['trust.strikeSpacingHours']),
     readSetting(db, EDGE_KEYS['trust.strikesToSuspect']),
@@ -906,6 +914,7 @@ export async function resolveTrustSettings(db: DatabaseReader): Promise<{
   ]);
   return {
     windowDays: sanitizeInt(w, 1, 14, D.windowDays),
+    firstWaveHours: sanitizeInt(fw, 0, 72, D.firstWaveHours),
     maxFreshHolders: sanitizeInt(m, 1, 500, D.maxFreshHolders),
     strikeSpacingHours: sanitizeInt(sp, 0, 168, D.strikeSpacingHours),
     strikesToSuspect: sanitizeInt(ts, 1, 20, D.strikesToSuspect),
@@ -1213,6 +1222,7 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'replacement.reblockHours': { min: 0, max: 168 },
   'trust.promoteAfterDays': { min: 0, max: 365 },
   'trust.windowDays': { min: 1, max: 14 },
+  'trust.firstWaveHours': { min: 0, max: 72 },
   'trust.maxFreshHolders': { min: 1, max: 500 },
   'trust.strikeSpacingHours': { min: 0, max: 168 },
   'trust.strikesToSuspect': { min: 1, max: 20 },

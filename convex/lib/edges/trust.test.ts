@@ -14,6 +14,7 @@ const H = 3_600_000;
 const DAY = 24 * H;
 const S = {
   windowDays: 7,
+  firstWaveHours: 24,
   maxFreshHolders: 50,
   strikeSpacingHours: 24,
   strikesToSuspect: 3,
@@ -36,8 +37,12 @@ describe('the mark', () => {
 });
 
 describe('strikes', () => {
-  test('fresh means handed in the window before the evidence began', () => {
-    expect(freshWindow(10 * DAY, S)).toEqual({ from: 3 * DAY, to: 10 * DAY });
+  test('fresh means handed in the window before the evidence began, after the first wave', () => {
+    // An address long in use: the window alone.
+    expect(freshWindow(10 * DAY, 0, S)).toEqual({ from: 3 * DAY, to: 10 * DAY });
+    // A new one: nobody handed it in its first day counts.
+    expect(freshWindow(10 * DAY, 9 * DAY, S)).toEqual({ from: 10 * DAY, to: 10 * DAY });
+    expect(freshWindow(10 * DAY, 8 * DAY, S)).toEqual({ from: 9 * DAY, to: 10 * DAY });
   });
 
   test('a block is attributable with 1 to the cutoff fresh holders', () => {

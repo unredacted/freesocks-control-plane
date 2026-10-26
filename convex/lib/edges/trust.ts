@@ -5,11 +5,16 @@
  *
  * The signal: a censor's account must be handed an address before it can block
  * it, and it blocks what it learns. Holders who had the address long before the
- * block are not "fresh" and never get a strike; when many accounts were handed
- * it recently (a new address taking a slice of the members, or a block found by
- * other means) the block is not attributable and nobody does. Because a blocked
- * address's holders scatter (`hrw1`), the censor's account is the one common
- * factor across successive blocks, while the members around it change.
+ * block are not "fresh" and never get a strike. Neither is the address's FIRST
+ * WAVE, the accounts handed it in its first hours in use: a new address goes to
+ * whoever it outranks, so those holders say nothing, and on a small node they
+ * would be struck together with whoever blocked it. What does say something is
+ * an account that moved onto an address already in use and blocked it soon
+ * after: once its own addresses are burned, a censor's account scatters onto
+ * addresses others have held for a while (`hrw1`), so it is the one common
+ * factor across successive blocks while the members around it change. When
+ * many accounts are fresh at once (a block found by other means) the block is
+ * not attributable and nobody gets a strike.
  *
  * The account is named only by its MARK, an HMAC of its id under the
  * deployment's pepper: a database copy without the deployment's environment
@@ -24,6 +29,7 @@ const DAY = 24 * HOUR;
 
 export interface TrustSettings {
   windowDays: number;
+  firstWaveHours: number;
   maxFreshHolders: number;
   strikeSpacingHours: number;
   strikesToSuspect: number;
@@ -47,11 +53,20 @@ export function trustPepper(env: Record<string, string | undefined>): string | n
 
 /**
  * When handed counts as fresh for a block whose evidence began at
- * `evidenceAt`: in the `windowDays` before it (an account handed the address
- * after the block began cannot have caused it).
+ * `evidenceAt`, of an address that went into use at `publishedAt`: in the
+ * `windowDays` before the evidence (an account handed it after the block began
+ * cannot have caused it), and after the address's first wave (`from` is
+ * inclusive, `to` exclusive).
  */
-export function freshWindow(evidenceAt: number, s: Pick<TrustSettings, 'windowDays'>) {
-  return { from: evidenceAt - s.windowDays * DAY, to: evidenceAt };
+export function freshWindow(
+  evidenceAt: number,
+  publishedAt: number,
+  s: Pick<TrustSettings, 'windowDays' | 'firstWaveHours'>,
+) {
+  return {
+    from: Math.max(evidenceAt - s.windowDays * DAY, publishedAt + s.firstWaveHours * HOUR),
+    to: evidenceAt,
+  };
 }
 
 /** Whether a block with `fresh` fresh holders strikes them (1 up to the cutoff). */
