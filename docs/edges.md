@@ -1985,7 +1985,12 @@ that failed would leave the node itself looking like a front), so it keeps the c
 cannot place, but an entry a known front names is not the node: it raises attention
 `front_host_unused` (info: members no longer get it, so it can be deleted at its provider, and
 its Host in the backend) instead of `direct_host_reappeared`. An entry left out that no look
-knows stays the critical alarm. An origin whose Hosts cannot
+knows stays the critical alarm. The node page (Admin -> Servers -> the node, each transport)
+lists such a Host apart from "Addresses members get", as one of the operator's own fronts left
+out of members' subscriptions, once the node is bound: `serverAdmin.tree` marks an address
+`operatorFront` when its remark is in the `operatorFronts` of the origin the node's delivery
+binding names. Before go-live, or with the binding released, members get the raw body, front
+included, so it stays an address members get. An origin whose Hosts cannot
 be read is skipped for that pass (unknown is not an observation), and one that fails does not
 stop the others.
 

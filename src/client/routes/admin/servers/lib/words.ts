@@ -4,7 +4,12 @@
  * the things an operator should notice. No em-dashes, no API paths, no bare
  * code words: copy only.
  */
-import type { TransportView, NodeView, ServerTree } from '../../../../../shared/contracts/servers';
+import type {
+  AddressView,
+  TransportView,
+  NodeView,
+  ServerTree,
+} from '../../../../../shared/contracts/servers';
 
 export type Dot = 'green' | 'amber' | 'red' | 'grey';
 
@@ -198,7 +203,7 @@ export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): stri
   const unused = new Map<string, { nodes: string[]; noAddress: boolean; noGroup: boolean }>();
   for (const n of tree.nodes)
     for (const i of n.transports) {
-      const noAddress = i.addresses.length === 0;
+      const noAddress = splitAddresses(i.addresses).members.length === 0;
       const noGroup = i.modeGroups.length === 0;
       if (!noAddress && !noGroup) continue;
       const at = unused.get(i.tag) ?? { nodes: [], noAddress: false, noGroup: false };
@@ -231,13 +236,35 @@ export function quietNotes(tree: Pick<ServerTree, 'nodes' | 'unattached'>): stri
 export function nodeNotes(n: Pick<NodeView, 'transports'>): string[] {
   const out: string[] = [];
   for (const i of n.transports) {
-    if (i.addresses.length === 0 && i.modeGroups.length === 0)
+    const noAddress = splitAddresses(i.addresses).members.length === 0;
+    if (noAddress && i.modeGroups.length === 0)
       out.push(`${i.tag} has no address for members and is in no mode group.`);
-    else if (i.addresses.length === 0) out.push(`${i.tag} has no address for members.`);
+    else if (noAddress) out.push(`${i.tag} has no address for members.`);
     else if (i.modeGroups.length === 0)
       out.push(`${i.tag} is in no mode group, so no key can use it.`);
   }
   return out;
+}
+
+/**
+ * A transport's addresses on one node: the ones members get, and the
+ * operator's own fronts (a load balancer made by hand) that members no longer
+ * get because the node is bound to its edges. Order is kept.
+ */
+export function splitAddresses<A extends Pick<AddressView, 'operatorFront'>>(
+  addresses: readonly A[],
+): { members: A[]; fronts: A[] } {
+  return {
+    members: addresses.filter((a) => !a.operatorFront),
+    fronts: addresses.filter((a) => a.operatorFront),
+  };
+}
+
+/** The line under a node's own fronts on its page (`splitAddresses`). */
+export function frontsHint(count: number): string {
+  return count === 1
+    ? "Members get this node's edges instead. Once its traffic stops, delete this front at its provider, and its address here."
+    : "Members get this node's edges instead. Once their traffic stops, delete these fronts at their provider, and their addresses here.";
 }
 
 function list(names: readonly string[]): string {

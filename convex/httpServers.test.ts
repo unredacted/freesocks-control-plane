@@ -23,6 +23,7 @@ import { signValue } from './lib/cookies';
 import { sha256Hex } from './lib/crypto';
 import { routePolicy } from '../src/shared/crypto/envelope';
 import {
+  AddressView,
   PlacementValidation,
   ServerConfigView,
   ServerSummary,
@@ -31,7 +32,13 @@ import {
 import { scopeFor } from './httpServers';
 import { registrationBoundaryOf } from './lib/adminHttp';
 import type { Id } from './_generated/dataModel';
-import { insertPanelServer } from './lib/edges/testing/fixtures';
+import {
+  FIXTURE_NODE,
+  FIXTURE_RELAY_SLUG,
+  insertPanelServer,
+  realityListener,
+  registerRelay,
+} from './lib/edges/testing/fixtures';
 
 const modules = import.meta.glob('./**/*.*s');
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -392,6 +399,77 @@ describe('/api/v1/admin/servers', () => {
     // GET serves the same thing from the cache, with no backend call.
     const cached = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
     expect(cached.nodes[0].transports[0].serverNames).toEqual(['a.example', 'b.example']);
+  });
+
+  test("an operator's own front is marked left out once the node is bound to its origin, never before", async () => {
+    const { t, serverId, panel, call } = await seed();
+    // A load balancer the operator built by hand, in front of the node.
+    panel.hosts.push({
+      uuid: 'h-front',
+      remark: 'old-lb',
+      address: '198.51.100.20',
+      port: 443,
+      sni: 'a.example',
+      inbound: { configProfileUuid: 'p-1', configProfileInboundUuid: 'i-reality' },
+    });
+    const { relayId } = await registerRelay(t, { listeners: [realityListener()] });
+    // What a look at the node's Hosts records of it (names only).
+    await t.mutation(internal.edgeHostHides.noteFronts, { relayId, remarks: ['old-lb'] });
+    const frontsOf = (tree: ServerTree) =>
+      Object.fromEntries(
+        tree.nodes[0]!.transports[0]!.addresses.map((a) => [a.remark, a.operatorFront]),
+      );
+
+    // A guided setup binds the node only at go-live: until then members are
+    // served the raw body, the front included.
+    const binding = await t.run(async (ctx) => {
+      const b = await ctx.db
+        .query('edgeDeliveryBindings')
+        .withIndex('by_server_node', (q) =>
+          q.eq('backendServerId', serverId).eq('nodeName', FIXTURE_NODE),
+        )
+        .unique();
+      await ctx.db.patch(b!._id, { state: 'released' });
+      return b!;
+    });
+    expect(binding.relaySlug).toBe(FIXTURE_RELAY_SLUG);
+    let tree = ServerTree.parse(await (await call('POST', 'panel-a/refresh')).json());
+    expect(frontsOf(tree)).toEqual({ 'node-one-reality': false, 'old-lb': false });
+
+    // Bound: the member render leaves the front out.
+    await t.run((ctx) => ctx.db.patch(binding._id, { state: 'active' }));
+    tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
+    expect(frontsOf(tree)).toEqual({ 'node-one-reality': false, 'old-lb': true });
+    // The backend-wide list has no node to judge by.
+    expect(tree.addresses.every((a) => !a.operatorFront)).toBe(true);
+
+    // A front the next look no longer finds is listed as members get it.
+    await t.mutation(internal.edgeHostHides.noteFronts, { relayId, remarks: [] });
+    tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
+    expect(frontsOf(tree)['old-lb']).toBe(false);
+  });
+
+  test('an address parses without the front mark (an older response)', () => {
+    const { operatorFront: _gone, ...older } = AddressView.parse({
+      addressUuid: 'h-1',
+      remark: 'node-one-reality',
+      address: '192.0.2.10',
+      port: 443,
+      sni: null,
+      host: null,
+      path: null,
+      alpn: null,
+      fingerprint: null,
+      securityLayer: null,
+      isDisabled: false,
+      isHidden: false,
+      tag: null,
+      viewPosition: null,
+      configProfileUuid: null,
+      transportUuid: null,
+      nodeUuids: [],
+    });
+    expect(AddressView.parse(older).operatorFront).toBe(false);
   });
 
   test('a REALITY transport with no minClientVer on Xray 26.7.28 is marked as refusing sing-box and Mihomo on that node; 1.8.1 admits them', async () => {
