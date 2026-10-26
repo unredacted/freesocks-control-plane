@@ -129,15 +129,13 @@ const candidates = (t: T) => t.run((ctx) => ctx.db.query('sniCandidates').collec
 /** A run whose list is already stored (the download is tested on its own). */
 async function storedRun(t: T, names: string[]) {
   return t.run(async (ctx) => {
-    const { gzipSync } = await import('node:zlib');
     const text = names.map((n, i) => `${i + 1}\t${n}`).join('\n');
-    const chunk = await ctx.storage.store(new Blob([new Uint8Array(gzipSync(text))]));
-    return ctx.db.insert('sniHuntRuns', {
+    const runId = await ctx.db.insert('sniHuntRuns', {
       state: 'running',
       gen: 1,
       depth: names.length,
       wwwDepth: 0,
-      chunks: [chunk],
+      chunks: [],
       total: names.length,
       cursor: 0,
       hits: 0,
@@ -146,6 +144,9 @@ async function storedRun(t: T, names: string[]) {
       startedAt: clock,
       updatedAt: clock,
     });
+    const chunk = await ctx.db.insert('sniHuntChunks', { runId, index: 0, text });
+    await ctx.db.patch(runId, { chunks: [chunk] });
+    return runId;
   });
 }
 
@@ -276,6 +277,7 @@ describe('the top-sites sweep', () => {
     expect(await candidates(t)).toEqual([]);
     const run = (await t.run((ctx) => ctx.db.get(runId)))!;
     expect(run).toMatchObject({ state: 'cancelled', gen: 2, cursor: 0, chunks: [] });
+    expect(await t.run((ctx) => ctx.db.query('sniHuntChunks').collect())).toEqual([]);
   });
 
   test('a network not hunting keeps nothing from a sweep', async () => {
@@ -1279,6 +1281,7 @@ describe('rollback', () => {
     while (r.left > 0) r = await t.mutation(internal.sniHunt.clearForRollback, {});
     expect(await candidates(t)).toEqual([]);
     expect(await t.run((ctx) => ctx.db.query('sniHuntRuns').collect())).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query('sniHuntChunks').collect())).toEqual([]);
     expect((await t.run((ctx) => ctx.db.get(networkId)))!.hunt).toBeUndefined();
   });
 });

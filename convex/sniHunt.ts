@@ -546,14 +546,27 @@ export const sweepNetworks = internalQuery({
 });
 
 async function dropChunks(ctx: MutationCtx, run: Doc<'sniHuntRuns'>) {
-  for (const id of run.chunks) {
-    try {
-      await ctx.storage.delete(id);
-    } catch {
-      // Already gone.
-    }
-  }
+  for await (const c of ctx.db
+    .query('sniHuntChunks')
+    .withIndex('by_run_index', (q) => q.eq('runId', run._id)))
+    await ctx.db.delete(c._id);
 }
+
+/** One chunk of a downloading run's list, kept only while that download is current. */
+export const storeChunk = internalMutation({
+  args: { runId: v.id('sniHuntRuns'), gen: v.number(), index: v.number(), text: v.string() },
+  handler: async (ctx, a) => {
+    const run = await ctx.db.get(a.runId);
+    if (!run || run.gen !== a.gen || run.state !== 'downloading') return null;
+    return await ctx.db.insert('sniHuntChunks', { runId: a.runId, index: a.index, text: a.text });
+  },
+});
+
+/** A chunk's text for a step (null once the run dropped it). */
+export const chunkText = internalQuery({
+  args: { id: v.id('sniHuntChunks') },
+  handler: async (ctx, a) => (await ctx.db.get(a.id))?.text ?? null,
+});
 
 async function startSweepCore(
   ctx: MutationCtx,
@@ -630,7 +643,7 @@ export const listReady = internalMutation({
   args: {
     runId: v.id('sniHuntRuns'),
     gen: v.number(),
-    chunks: v.array(v.id('_storage')),
+    chunks: v.array(v.id('sniHuntChunks')),
     total: v.number(),
     listId: v.string(),
     listDate: v.string(),
@@ -638,7 +651,7 @@ export const listReady = internalMutation({
   handler: async (ctx, a) => {
     const run = await ctx.db.get(a.runId);
     if (!run || run.gen !== a.gen || run.state !== 'downloading') {
-      for (const id of a.chunks) await ctx.storage.delete(id);
+      for (const id of a.chunks) if (await ctx.db.get(id)) await ctx.db.delete(id);
       return { ok: false };
     }
     const now = Date.now();
@@ -651,8 +664,10 @@ export const listReady = internalMutation({
       ...(a.total > 0 ? {} : { finishedAt: now }),
       updatedAt: now,
     });
-    if (a.total === 0) for (const id of a.chunks) await ctx.storage.delete(id);
-    else await ctx.scheduler.runAfter(0, internal.sniHuntOps.sweepStep, { runId: run._id });
+    if (a.total === 0)
+      for (const id of a.chunks)
+        if (await ctx.db.get(id)) await ctx.db.delete(id);
+        else await ctx.scheduler.runAfter(0, internal.sniHuntOps.sweepStep, { runId: run._id });
     return { ok: true };
   },
 });
@@ -1951,13 +1966,13 @@ export const clearForRollback = internalMutation({
     for (const table of [
       'sniCandidates',
       'sniHuntIgnores',
+      'sniHuntChunks',
       'sniHuntRuns',
       'sniHuntCt',
       'sniHuntCalls',
     ] as const) {
       const rows = await ctx.db.query(table).take(PAGE);
       for (const r of rows) {
-        if (table === 'sniHuntRuns') await dropChunks(ctx, r as Doc<'sniHuntRuns'>);
         await ctx.db.delete(r._id);
       }
       deleted += rows.length;
