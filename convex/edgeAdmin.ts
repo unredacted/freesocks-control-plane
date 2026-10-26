@@ -185,6 +185,9 @@ export const configView = internalQuery({
  * receives, so it bumps every enabled origin's publication epoch (the /sub cache
  * token) and refreshes the stored mirrors once.
  */
+/** The settings that decide which accounts are trusted now (not only future strikes). */
+const LANE_KEYS = new Set(['trust.promoteAfterDays', 'trust.strikesToSuspect', 'trust.strikeDays']);
+
 export const patchConfig = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
@@ -205,6 +208,11 @@ export const patchConfig = internalMutation({
       for (const r of relays) {
         await ctx.db.patch(r._id, { publicationEpoch: r.publicationEpoch + 1, updatedAt: now });
       }
+      await scheduleMirrorRefresh(ctx);
+    } else if (changedKeys.some((k) => LANE_KEYS.has(k))) {
+      // Which accounts are trusted moved (convex/edgeLanes.ts): a cached body
+      // already answers only its own lane, but a stored mirror is rendered
+      // again so none keeps trusted addresses for an account now open.
       await scheduleMirrorRefresh(ctx);
     }
     if (changed.length > 0) {

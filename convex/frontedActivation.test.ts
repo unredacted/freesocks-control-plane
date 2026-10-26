@@ -2543,12 +2543,28 @@ describe('the mirror barrier', () => {
     const stale = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
     expect(stale.body).toContain(await edgeAddress(t, live.e1));
     expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toHaveLength(1);
+    // An upload a move overtook was never accepted: the account is not held to it.
+    expect(await t.run((c) => c.db.query('edgeExposures').collect())).toEqual([]);
     w.hooks.duringPut = null;
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
     const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
     expect(repaired.body).toBe(MIRROR_UNAVAILABLE_STUB);
     expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
+  });
+
+  test('an accepted mirror upload records what it hands out', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    await withMirrorProvider(t);
+    const userId = await trustedMember(w, live);
+    expect(
+      (await t.action(internal.storage.provisionMirror, { userId, countryCode: null })).status,
+    ).toBe('ok');
+    expect(
+      (await t.run((c) => c.db.query('edgeExposures').collect())).map((r) => r.edgeId),
+    ).toEqual([live.e1]);
   });
 
   test('a demotion while a first mirror uploads is repaired the same way', async () => {

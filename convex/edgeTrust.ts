@@ -9,7 +9,7 @@
  * line or an audit row about an account, a mark or an address.
  */
 import { v } from 'convex/values';
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader, DatabaseWriter, MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
@@ -195,19 +195,26 @@ export async function suspectedOf(db: DatabaseReader, userId: Id<'users'>): Prom
 
 // --- what the admin sees: counts only ---------------------------------------------------------
 
-export const summary = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const now = Date.now();
+/** One page of the counts (the summary below walks every page). */
+export const summaryPage = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()), now: v.number() },
+  handler: async (ctx, { cursor, now }) => {
     const s = await resolveTrustSettings(ctx.db);
+    const page = await ctx.db.query('edgeTrust').paginate({ cursor, numItems: 1000 });
     let suspected = 0;
     let withStrikes = 0;
-    // One row per account with a strike still counting: a small table.
-    for (const row of await ctx.db.query('edgeTrust').take(10_000)) {
+    for (const row of page.page) {
       if (liveStrikes(row.strikes, now, s) === 0) continue;
       withStrikes++;
       if (isSuspected(row.strikes, now, s)) suspected++;
     }
+    return { suspected, withStrikes, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});
+
+export const summaryState = internalQuery({
+  args: { now: v.number() },
+  handler: async (ctx, { now }) => {
     const daily = await readStateJson<{ day?: string; strikes?: number; demotions?: number }>(
       ctx.db,
       DAILY_KEY,
@@ -215,11 +222,45 @@ export const summary = internalQuery({
     const today = daily?.day === dayKey(now);
     const since = await readStateJson<{ at?: number }>(ctx.db, SINCE_KEY);
     return {
-      suspected,
-      withStrikes,
       strikesToday: today ? (daily?.strikes ?? 0) : 0,
       demotionsToday: today ? (daily?.demotions ?? 0) : 0,
       since: typeof since?.at === 'number' ? new Date(since.at).toISOString() : null,
+    };
+  },
+});
+
+/** Every account with a strike still counting, page by page: never a truncated total. */
+export const summary = internalAction({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<{
+    suspected: number;
+    withStrikes: number;
+    strikesToday: number;
+    demotionsToday: number;
+    since: string | null;
+  }> => {
+    const now = Date.now();
+    let suspected = 0;
+    let withStrikes = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page: {
+        suspected: number;
+        withStrikes: number;
+        isDone: boolean;
+        continueCursor: string;
+      } = await ctx.runQuery(internal.edgeTrust.summaryPage, { cursor, now });
+      suspected += page.suspected;
+      withStrikes += page.withStrikes;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return {
+      suspected,
+      withStrikes,
+      ...(await ctx.runQuery(internal.edgeTrust.summaryState, { now })),
     };
   },
 });
@@ -237,14 +278,22 @@ export const sweep = internalMutation({
     const now = Date.now();
     let removed = 0;
     if (!cursor) await recordHeartbeat(ctx, 'edge-trust-sweep');
-    if (!cursor)
+    if (!cursor) {
+      // Judged under the window that holds NOW: a row whose stored deadline was
+      // set under a shorter `strikeDays` keeps living while a strike counts.
+      const s = await resolveTrustSettings(ctx.db);
       for (const row of await ctx.db
         .query('edgeTrust')
         .withIndex('by_expires', (q) => q.lt('expiresAt', now))
         .take(500)) {
+        if (liveStrikes(row.strikes, now, s) > 0) {
+          await ctx.db.patch(row._id, { expiresAt: trustExpiresAt(row.strikes, s) });
+          continue;
+        }
         await ctx.db.delete(row._id);
         removed++;
       }
+    }
     const page = await ctx.db
       .query('edgeExposures')
       .paginate({ cursor: cursor ?? null, numItems: 500 });
@@ -274,13 +323,27 @@ export async function forgetAccount(ctx: MutationCtx, userId: Id<'users'>): Prom
     .withIndex('by_mark', (q) => q.eq('mark', mark))
     .collect())
     await ctx.db.delete(row._id);
-  // A seat holds a few addresses per node: a bounded read.
-  for (const row of await ctx.db
+  await forgetExposures(ctx, mark);
+}
+
+const FORGET_PAGE = 500;
+
+/** Delete an account's first exposures a page at a time, scheduling itself until none is left. */
+async function forgetExposures(ctx: MutationCtx, mark: string): Promise<void> {
+  const rows = await ctx.db
     .query('edgeExposures')
     .withIndex('by_mark_edge', (q) => q.eq('mark', mark))
-    .take(2000))
-    await ctx.db.delete(row._id);
+    .take(FORGET_PAGE);
+  for (const row of rows) await ctx.db.delete(row._id);
+  if (rows.length === FORGET_PAGE)
+    await ctx.scheduler.runAfter(0, internal.edgeTrust.forgetMark, { mark });
 }
+
+/** The rest of a deleted account's first exposures (`forgetAccount`). */
+export const forgetMark = internalMutation({
+  args: { mark: v.string() },
+  handler: async (ctx, { mark }) => forgetExposures(ctx, mark),
+});
 
 // --- rolling back -----------------------------------------------------------------------------
 

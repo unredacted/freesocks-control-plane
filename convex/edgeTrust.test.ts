@@ -13,6 +13,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { adoptL4Edge, seedEdgeFixture, verifyL4Edge } from './lib/edges/testing/fixtures';
 import { markOf } from './edgeTrust';
+import { signValue } from './lib/cookies';
 
 const modules = import.meta.glob('./**/*.*s');
 const DAY = 86_400_000;
@@ -269,7 +270,7 @@ describe('suspected accounts', () => {
       lane: 'trusted',
     });
     expect((await t.run((c) => c.db.get(u.subscriptionId)))!.lastRender?.epoch).not.toBe(2);
-    const summary = await t.query(internal.edgeTrust.summary, {});
+    const summary = await t.action(internal.edgeTrust.summary, {});
     expect(summary).toMatchObject({ suspected: 1, withStrikes: 1, demotionsToday: 1 });
     // Strikes stop counting after 30 days, and the sweep removes the row.
     later(31 * DAY);
@@ -344,5 +345,86 @@ describe('rolling back', () => {
     const keys = (await t.run((c) => c.db.query('appState').collect())).map((r) => r.key);
     expect(keys).not.toContain('edge:trustSince');
     expect(keys).not.toContain('edge:trustDaily');
+  });
+});
+
+describe('review round 1', () => {
+  test('the sweep judges expiry under the window that holds now', async () => {
+    const t = convexTest(schema, modules);
+    const u = await seedUser(t);
+    const mark = markOf(u.userId)!;
+    // Recorded under a 30-day window; the operator has since widened it to 60.
+    await t.run((ctx) =>
+      ctx.db.insert('edgeTrust', { mark, strikes: [Date.now()], expiresAt: Date.now() + 30 * DAY }),
+    );
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'edge.trust.strikeDays',
+        value: '60',
+        updatedAt: Date.now(),
+      }),
+    );
+    later(31 * DAY);
+    await t.mutation(internal.edgeTrust.sweep, {});
+    const row = (await t.run((c) => c.db.query('edgeTrust').collect()))[0];
+    expect(row?.expiresAt).toBe(T0 + 60 * DAY);
+    later(30 * DAY);
+    await t.mutation(internal.edgeTrust.sweep, {});
+    expect(await t.run((c) => c.db.query('edgeTrust').collect())).toEqual([]);
+  });
+
+  test('a deleted account takes every first exposure, however many', async () => {
+    const t = convexTest(schema, modules);
+    const { trusted } = await seedNode(t, 1);
+    const u = await seedUser(t);
+    const mark = markOf(u.userId)!;
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 1203; i++)
+        await ctx.db.insert('edgeExposures', { mark, edgeId: trusted[0]!, at: i });
+    });
+    await t.mutation(internal.freeTier.deleteFreeUser, { userId: u.userId });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.run((c) => c.db.query('edgeExposures').collect())).toEqual([]);
+  });
+
+  test('a change to who is trusted renders every mirror again; one to future strikes does not', async () => {
+    const t = convexTest(schema, modules);
+    const drains = () =>
+      t.run(
+        async (ctx) =>
+          (await ctx.db.system.query('_scheduled_functions').collect()).filter((s) =>
+            s.name.includes('drainMirrors'),
+          ).length,
+      );
+    await t.mutation(internal.edgeAdmin.patchConfig, { patch: { trust: { windowDays: 5 } } });
+    expect(await drains()).toBe(0);
+    await t.mutation(internal.edgeAdmin.patchConfig, { patch: { trust: { strikesToSuspect: 2 } } });
+    expect(await drains()).toBe(1);
+  });
+});
+
+describe('the counts route', () => {
+  test('GET /api/v1/admin/edges/trust answers the counts (a reserved name, not an edge id)', async () => {
+    vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
+    vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', 'test-admin-sign');
+    const t = convexTest(schema, modules);
+    const adminUserId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'op',
+        displayName: 'Op',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.sessions.create, {
+      sid: 'asid-trust',
+      kind: 'admin',
+      adminUserId,
+      ttlMs: 3_600_000,
+    });
+    const cookie = `fs_admin_session=${await signValue('asid-trust', 'test-admin-sign')}`;
+    const res = await t.fetch('/api/v1/admin/edges/trust', { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ suspected: 0, withStrikes: 0, strikesToday: 0 });
   });
 });
