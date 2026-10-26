@@ -8,8 +8,8 @@
  * evidence" without a word on why. This reads the per-source rollup rows
  * themselves (`probeReachability`, whose `updatedAt` moves only when that
  * source brought an answer from that country): each source's newest answer
- * from the country over the addresses the view shows, and whether it still
- * counts.
+ * from the country, per address and over every address the view shows, and
+ * whether it still counts.
  *
  * The internal source is left out: it answers from FCP's own host (`XX`),
  * never from a country.
@@ -55,10 +55,25 @@ export interface CountryCoverage {
 }
 
 /**
- * One country's coverage. `sources` are the outside sources in use (enabled,
- * with their key); a source switched off says nothing here, whatever its old
- * rows hold.
+ * Each outside source in use (enabled, with its key) and its newest answer
+ * from the country, in the order given; a source switched off says nothing
+ * here, whatever its old rows hold.
  */
+export function answersFor(
+  answers: NewestAnswers,
+  country: string,
+  sources: readonly string[],
+  o: { windowMs: number; now: number },
+): SourceCoverage[] {
+  return sources
+    .filter((s) => s !== 'internal')
+    .map((source) => {
+      const lastAt = answers.get(answerKey(country, source)) ?? null;
+      return { source, lastAt, fresh: lastAt !== null && lastAt >= o.now - o.windowMs };
+    });
+}
+
+/** One country's coverage over every address folded into `answers`. */
 export function coverageOf(
   answers: NewestAnswers,
   country: string,
@@ -68,11 +83,6 @@ export function coverageOf(
   return {
     asked: o.asked,
     windowMs: o.windowMs,
-    sources: sources
-      .filter((s) => s !== 'internal')
-      .map((source) => {
-        const lastAt = answers.get(answerKey(country, source)) ?? null;
-        return { source, lastAt, fresh: lastAt !== null && lastAt >= o.now - o.windowMs };
-      }),
+    sources: answersFor(answers, country, sources, o),
   };
 }

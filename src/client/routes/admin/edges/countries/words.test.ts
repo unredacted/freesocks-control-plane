@@ -41,6 +41,7 @@ function address(over: Partial<CountryViewAddress> = {}): CountryViewAddress {
       handshake: null,
       round: null,
       probes: null,
+      answers: [],
       realHost: null,
     },
     handed: { primary: 0, backup: 0 },
@@ -176,6 +177,26 @@ describe('country view words', () => {
     expect(W.addressWhy(probes('mixed', 1, 2))).toContain(
       'Some vantages there reached it and some did not',
     );
+  });
+
+  it('an address whose probe answers from there aged out says so, not "nothing checked it"', () => {
+    const aged = address({
+      evidence: {
+        ...address().evidence,
+        answers: [
+          { source: 'globalping', lastAt: NOW - 2 * H, fresh: false },
+          { source: 'checkhost', lastAt: null, fresh: false },
+        ],
+      },
+    });
+    expect(W.addressWhy(aged)).toBe(
+      'No probe answer about it from there is recent enough to count.',
+    );
+    expect(W.staleAnswersLine(aged, NOW)).toBe(
+      'Globalping last answered about it from here 2 h ago, too long ago to count.',
+    );
+    expect(W.addressWhy(address())).toBe('Nothing has checked it from there yet.');
+    expect(W.staleAnswersLine(address(), NOW)).toBeNull();
   });
 
   describe('which outside probes answer from there', () => {

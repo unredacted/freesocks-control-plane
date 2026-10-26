@@ -3621,10 +3621,13 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   went quiet would read "no evidence" with no word on why. The page says it: a country not
   asked, one no source in use has ever answered from (it may have no vantage there), one whose
   sources all went quiet (when each last answered, and why from the sources' health: failing,
-  or Globalping's hourly cap spent), and one that only some sources still answer from. An
-  address the probes alone left not known says why: too few vantages reached it (one on a
-  residential network, or two others, are needed), mixed answers, or failures from too few
-  networks to call it blocked.
+  or Globalping's hourly cap spent), and one that only some sources still answer from. Each
+  address carries its own answers too (`evidence.answers`): one whose answers from there all
+  aged out reads "no probe answer about it from there is recent enough to count", with when each
+  source last answered, never "nothing has checked it", and those answers count as the
+  country's newest evidence. An address the probes alone left not known says why: too few
+  vantages reached it (one on a residential network, or two others, are needed), mixed
+  answers, or failures from too few networks to call it blocked.
 - **What is read.** Every enabled origin, its non-retired listeners, its active edges (published
   ones first in pool order, then spares) and its published pool as the assignment sees it
   (`publishedEdgesOf`, ineligible kept); per edge every country's evidence row and mark, per

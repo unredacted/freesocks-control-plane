@@ -379,6 +379,14 @@ describe('the country view', () => {
     });
     const ru = CountryViewResponse.parse(await get('countries/RU'));
     expect(ru.probes).toEqual(by.RU);
+    // Per address too: the one probed carries its own answers, the others none on record.
+    const addrs = ru.origins[0]!.listeners[0]!.addresses;
+    expect(addrs.find((a) => a.edgeId === works)!.evidence.answers).toEqual(by.RU!.sources);
+    expect(
+      addrs
+        .filter((a) => a.edgeId !== works)
+        .flatMap((a) => a.evidence.answers.map((x) => x.lastAt)),
+    ).toEqual([null, null, null, null]);
     expect(ru.sources.map((s) => s.source)).toEqual(['globalping', 'checkhost', 'internal']);
     // Off the list: nothing is asked from there.
     expect(CountryViewResponse.parse(await get('countries/DE')).probes.asked).toBe(false);

@@ -42,6 +42,7 @@
     targetAddsLine,
     TARGET_ADDS_FLAG_WORDS,
     roundLine,
+    staleAnswersLine,
     switchNotes,
     totalsLine,
     untilLine,
@@ -71,6 +72,7 @@
       roundLine(a, now),
       handshakeLine(a, now),
       probesLine(a, now),
+      staleAnswersLine(a, now),
       addressRealHostLine(a, now),
     ].filter((x): x is string => !!x);
   }

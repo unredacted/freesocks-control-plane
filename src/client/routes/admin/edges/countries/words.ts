@@ -8,6 +8,7 @@
  *   ADDRESS_BASIS_WORDS / addressWhy  why an address counts as it does, in one sentence
  *   NAME_BASIS_WORDS / nameWhy        why a name counts as it does
  *   probesLine / roundLine / checksLine / reportsLine   one piece of evidence each
+ *   staleAnswersLine                 probe sources whose last answer about an address is too old
  *   REAL_HOST_WORDS / realHostLine / addressRealHostLine   the real-host controls
  *   handedWords                      what a member there is handed on one transport
  *   switchNotes                      what is off, and what that leaves the view without
@@ -107,7 +108,22 @@ export function addressWhy(a: CountryViewAddress): string {
     const reason = countryReasonSentence(a.evidence.address?.reason);
     if (reason && a.state === 'blocked') return `${base} ${reason}`;
   }
+  // Probes did answer about it from there, but too long ago to count.
+  if (a.basis === 'none' && a.evidence.answers.some((x) => x.lastAt !== null))
+    return 'No probe answer about it from there is recent enough to count.';
   return base;
+}
+
+/** Sources whose last answer about the address from there is too old to count (null: none). */
+export function staleAnswersLine(a: CountryViewAddress, now = Date.now()): string | null {
+  const stale = a.evidence.answers.filter((x) => x.lastAt !== null && !x.fresh);
+  if (stale.length === 0) return null;
+  return stale
+    .map(
+      (x) =>
+        `${sourceLabel(x.source)} last answered about it from here ${relativeTime(x.lastAt, now)}, too long ago to count.`,
+    )
+    .join(' ');
 }
 
 /** One sentence per basis: why a name counts as it does from there. */

@@ -33,7 +33,12 @@ import { countryGroupKey } from './lib/edges/country/group';
 import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
 import { suggest } from './lib/edges/sni/vantage';
 import { readingOf } from './lib/edges/sni/realHost';
-import { coverageOf, newestAnswers, type NewestAnswers } from './lib/edges/country/coverage';
+import {
+  answersFor,
+  coverageOf,
+  newestAnswers,
+  type NewestAnswers,
+} from './lib/edges/country/coverage';
 import { enabledSources } from './probes';
 import {
   actedState,
@@ -193,17 +198,18 @@ interface Prefetched {
   vantage: Map<string, Doc<'sniVantageEvidence'>>;
   /** Each outside source's newest answer per country, over every address shown (coverage.ts). */
   answers: NewestAnswers;
+  /** The same per address, by `<kind>:<ref>` (`edge:<id>`, `relay:<id>` for an origin itself). */
+  answersByTarget: Map<string, NewestAnswers>;
 }
 
-/** Every country's rollup rows of one probe target, folded into `into` (one index range). */
-async function answersOf(db: Db, kind: 'edge' | 'relay', ref: string, into: NewestAnswers) {
-  newestAnswers(
-    await db
-      .query('probeReachability')
-      .withIndex('by_target_country', (q) => q.eq('targetKind', kind).eq('targetRef', ref))
-      .collect(),
-    into,
-  );
+/** Every country's rollup rows of one probe target, read once (one index range). */
+async function answersOf(db: Db, p: Prefetched, kind: 'edge' | 'relay', ref: string) {
+  const rows = await db
+    .query('probeReachability')
+    .withIndex('by_target_country', (q) => q.eq('targetKind', kind).eq('targetRef', ref))
+    .collect();
+  p.answersByTarget.set(`${kind}:${ref}`, newestAnswers(rows));
+  newestAnswers(rows, p.answers);
 }
 
 async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
@@ -217,13 +223,14 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
     nameMarks: new Map(),
     vantage: new Map(),
     answers: new Map(),
+    answersByTarget: new Map(),
   };
   const groups = new Set<string>();
   for (const o of loaded.origins) {
-    if (o.input.direct) await answersOf(db, 'relay', o.input.relayId, p.answers);
+    if (o.input.direct) await answersOf(db, p, 'relay', o.input.relayId);
     for (const { doc, groupKey } of o.edges) {
       groups.add(groupKey);
-      await answersOf(db, 'edge', doc._id, p.answers);
+      await answersOf(db, p, 'edge', doc._id);
       for (const r of await db
         .query('edgeCountryEvidence')
         .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id))
@@ -319,6 +326,14 @@ function coverageFor(
     windowMs: st.answerWindowMs,
     now,
   });
+}
+
+/** One address's own answers from a country (`edge:<id>`, or `relay:<id>` for an origin itself). */
+function answersAbout(st: Settings, pre: Prefetched, target: string, country: string, now: number) {
+  const mine = pre.answersByTarget.get(target);
+  return mine
+    ? answersFor(mine, country, st.probeSources, { windowMs: st.answerWindowMs, now })
+    : [];
 }
 
 type Settings = Awaited<ReturnType<typeof settingsOf>>;
@@ -444,7 +459,13 @@ function nameFactsFor(
 }
 
 /** The per-country inputs of every edge, from the prefetched rows. */
-function edgesFor(pre: Prefetched, loaded: Loaded, country: string): Map<string, EdgeInput[]> {
+function edgesFor(
+  pre: Prefetched,
+  loaded: Loaded,
+  country: string,
+  st: Settings,
+  now: number,
+): Map<string, EdgeInput[]> {
   const out = new Map<string, EdgeInput[]>();
   for (const o of loaded.origins) {
     const list: EdgeInput[] = [];
@@ -455,6 +476,7 @@ function edgesFor(pre: Prefetched, loaded: Loaded, country: string): Map<string,
       const grade = pre.grades.get(keyOf(groupKey, country));
       list.push({
         ...base,
+        answers: answersAbout(st, pre, `edge:${doc._id}`, country, now),
         evidence: ev
           ? {
               address: {
@@ -542,7 +564,7 @@ function viewOf(
   reports: { weights: Map<string, number>; suspects: Set<string> } | null,
 ) {
   const facts = nameFactsFor(pre, loaded.names, country, st, reports);
-  const edges = edgesFor(pre, loaded, country);
+  const edges = edgesFor(pre, loaded, country, st, now);
   // Each origin is built with its own delivery style (a single-key backend hands out no backup).
   const origins = [];
   const totals = {
@@ -553,8 +575,14 @@ function viewOf(
   };
   const seen = new Set<string>();
   for (const o of loaded.origins) {
+    const direct = o.input.direct
+      ? {
+          ...o.input.direct,
+          answers: answersAbout(st, pre, `relay:${o.input.relayId}`, country, now),
+        }
+      : null;
     const r = buildCountryView(
-      [{ ...o.input, edges: edges.get(o.input.relayId) ?? [] }],
+      [{ ...o.input, direct, edges: edges.get(o.input.relayId) ?? [] }],
       (name) => facts.get(name) ?? null,
       viewSettings(st, country, now, o.style),
     );
