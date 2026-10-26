@@ -32,6 +32,7 @@ import { recordHeartbeat } from './cronHeartbeat';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
 import { hasPrefixes, type NetworkPrefixes } from './lib/edges/networks';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
+import { THIN_BELOW, THIN_FAMILIES_KEY, type ThinFamilies } from './lib/edges/sni/hunt/thin';
 import {
   resolveSniConfig,
   resolveSniHuntConfig,
@@ -1773,6 +1774,58 @@ async function allScopes(db: QueryCtx['db']): Promise<Scope[]> {
 }
 
 const RESCORE_KEY = 'sni:hunt:rescore';
+/** Names read per tick to count the qualifying names of families (one family always fits). */
+const THIN_READ_BUDGET = 5000;
+/** The most names a family holds (`MAX_NAMES_PER_FAMILY`): a family is counted whole or not at all. */
+const FAMILY_NAMES_MAX = 4096;
+
+/**
+ * Count, in turn and within a read budget, the names that qualify in each
+ * family on a network that a transport uses, and keep the thin ones
+ * (`lib/edges/sni/hunt/thin.ts`). Every family is reached, however many there are.
+ */
+async function refreshThinFamilies(ctx: MutationCtx) {
+  const st = (await readStateJson<ThinFamilies>(ctx.db, THIN_FAMILIES_KEY)) ?? {
+    after: null,
+    thin: {},
+  };
+  const families = (await ctx.db.query('sniFamilies').collect())
+    .filter((f) => f.networkId && f.enabled)
+    .sort((a, b) => (a._id < b._id ? -1 : a._id > b._id ? 1 : 0));
+  const live = new Set(families.map((f) => f._id as string));
+  const thin = Object.fromEntries(Object.entries(st.thin).filter(([id]) => live.has(id)));
+  let after = st.after;
+  let reads = 0;
+  const start = Math.max(
+    0,
+    families.findIndex((f) => after === null || f._id > after),
+  );
+  for (let k = 0; k < families.length; k++) {
+    // Start a family only when all of it still fits (the first one always does).
+    if (reads > 0 && reads + FAMILY_NAMES_MAX > THIN_READ_BUDGET) break;
+    const f = families[(start + k) % families.length]!;
+    after = f._id as string;
+    const bound = await ctx.db
+      .query('sniInboundBindings')
+      .withIndex('by_family', (q) => q.eq('familyId', f._id))
+      .first();
+    if (!bound) {
+      delete thin[f._id as string];
+      continue;
+    }
+    let qualifying = 0;
+    for await (const n of ctx.db
+      .query('sniNames')
+      .withIndex('by_family_seq', (q) => q.eq('familyId', f._id))) {
+      reads++;
+      if (n.status === 'active' && n.qualification.state === 'ok') qualifying++;
+      if (qualifying >= THIN_BELOW) break;
+    }
+    if (qualifying < THIN_BELOW) thin[f._id as string] = { slug: f.slug, qualifying };
+    else delete thin[f._id as string];
+  }
+  await writeStateJson(ctx.db, THIN_FAMILIES_KEY, { after, thin } satisfies ThinFamilies);
+}
 
 /**
  * Cron `sni-hunt` (10 min). It does no network work itself: it keeps the
@@ -1813,6 +1866,8 @@ export const tick = internalMutation({
         settled.add(r.batch);
       }
     for (const b of [...settled].slice(0, 5)) await readBatchIfSettled(ctx, b, now);
+    // Which families on a network are too thin to last (the attention list reads it).
+    await refreshThinFamilies(ctx);
     for (const r of await ctx.db
       .query('sniHuntProbes')
       .withIndex('by_requested', (q) => q.lt('requestedAt', now - vcfg.windowDays * DAY))

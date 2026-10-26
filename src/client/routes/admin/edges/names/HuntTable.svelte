@@ -95,9 +95,18 @@
     if (!family && families.length === 1) family = families[0]!.slug;
   });
 
+  /** Split in the sizes one request takes (the server reads at most that many). */
+  const chunks = <T,>(xs: T[], n: number) =>
+    Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+
   async function act(action: CandidateAction, kind?: 'name' | 'site') {
     const ids = [...picked];
-    const r = await run(() => actOnCandidates(action, ids, kind));
+    const r = await run(async () => {
+      let changed = 0;
+      for (const part of chunks(ids, 200))
+        changed += (await actOnCandidates(action, part, kind)).changed;
+      return { changed };
+    });
     if (r) {
       picked = [];
       toast.success(
@@ -112,16 +121,34 @@
   async function add() {
     if (!family) return;
     const names = pickedRows.map((c) => c.name);
-    const r = await run(() => addCandidates(family, names));
+    const r = await run(async () => {
+      const lines = [];
+      let added = 0;
+      for (const part of chunks(names, 500)) {
+        const one = await addCandidates(family, part);
+        added += one.added;
+        lines.push(...one.lines);
+      }
+      return { added, lines };
+    });
     if (r) {
       picked = [];
       toast.success(importWords(r).join(' '));
     }
   }
   async function lookUp() {
-    const sites = [...new Set(pickedRows.map((c) => c.site))].slice(0, 10);
+    const sites = [...new Set(pickedRows.map((c) => c.site))];
     const scope = isFamily ? { family: slug } : { network: slug };
-    const r = await run(() => lookUpCt(sites, scope));
+    const r = await run(async () => {
+      let queued = 0;
+      let cached = 0;
+      for (const part of chunks(sites, 10)) {
+        const one = await lookUpCt(part, scope);
+        queued += one.queued;
+        cached += one.cached;
+      }
+      return { queued, cached };
+    });
     if (r) {
       picked = [];
       toast.success(

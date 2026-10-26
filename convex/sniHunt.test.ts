@@ -1266,3 +1266,39 @@ describe('review round 2', () => {
     expect(row?.payload).toEqual({ count: 1 });
   });
 });
+
+describe('thin families', () => {
+  test('every bound family on a network is counted, however many there are', async () => {
+    const { t, networkId } = await seed();
+    const serverId = await insertPanelServer(t);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 210; i++) {
+        const familyId = await ctx.db.insert('sniFamilies', {
+          slug: `thin-${i}`,
+          label: `Thin ${i}`,
+          target: { kind: 'static', address: 'target.example.com', port: 443 },
+          enabled: true,
+          requireH2: true,
+          networkId,
+          nextSeq: 0,
+          updatedAt: clock,
+        });
+        await ctx.db.insert('sniInboundBindings', {
+          backendServerId: serverId,
+          profileUuid: 'p',
+          inboundTag: `T${i}`,
+          inboundUuid: `u-${i}`,
+          familyId,
+          generation: 0,
+          panelConfirmedGeneration: 0,
+          updatedAt: clock,
+        });
+      }
+    });
+    await t.mutation(internal.sniHunt.tick, { now: clock });
+    const items = (await t.query(internal.edgeOperator.attention, {})).items.filter(
+      (i: { kind: string }) => i.kind === 'sni_family_thin',
+    );
+    expect(items).toHaveLength(210);
+  });
+});

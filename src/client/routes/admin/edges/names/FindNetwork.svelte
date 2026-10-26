@@ -18,7 +18,7 @@
   import { Label } from '@client/components/ui/label';
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '@client/lib/api';
-  import { createFamily, huntNetworkQuery, invalidateSni, networksQuery } from '@client/lib/sniApi';
+  import { createFamily, familiesQuery, huntNetworkQuery, invalidateSni } from '@client/lib/sniApi';
   import SectionHeader from '../components/SectionHeader.svelte';
   import { edgesPaths } from '../lib/routes';
   import HuntTable from './HuntTable.svelte';
@@ -29,10 +29,13 @@
   const qc = useQueryClient();
   const uid = $props.id();
   const view = huntNetworkQuery(() => slug);
-  const networks = networksQuery();
+  // Every family (the network list names only the first ones), those on this network.
+  const families = familiesQuery();
   const codeOf = (e: unknown) => (e instanceof ApiCallError ? e.payload.error.code : null);
   let onNetwork = $derived(
-    (networks.data?.networks ?? []).find((n) => n.slug === slug)?.families ?? [],
+    (families.data?.families ?? [])
+      .filter((f) => f.network?.slug === slug)
+      .map((f) => ({ slug: f.slug, label: f.label })),
   );
 
   // --- a family from a group ---------------------------------------------------------------------

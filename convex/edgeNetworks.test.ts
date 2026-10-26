@@ -368,10 +368,13 @@ describe('a transport scoped to a network', () => {
     await call('POST', 'sni/families/fam-a/names', {
       lines: ['a.example', 'b.example', 'c.example'],
     });
-    const thin = async () =>
-      (await t.query(internal.edgeOperator.attention, {})).items.filter(
+    // The sni-hunt cron counts the families; the attention list reads its answer.
+    const thin = async () => {
+      await t.mutation(internal.sniHunt.tick, {});
+      return (await t.query(internal.edgeOperator.attention, {})).items.filter(
         (i: { kind: string }) => i.kind === 'sni_family_thin',
       );
+    };
     const [item] = await thin();
     expect(item).toMatchObject({
       severity: 'info',

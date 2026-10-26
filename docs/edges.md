@@ -3018,7 +3018,11 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   `names/lib/huntWords.ts`.
 - Attention `sni_family_thin` (info, "Find names"): a family on a network, bound to a transport,
   with fewer than three active names that qualify. A name blocked in one country is a last resort
-  elsewhere (§ Names for the member's country), so a family that small runs out fast.
+  elsewhere (§ Names for the member's country), so a family that small runs out fast. Counting
+  reads names, so the `sni-hunt` cron counts the families in turn (every family, a read budget
+  per tick, a family always whole) and keeps the answer in `appState` (`sni:hunt:thin`); the
+  attention list only reads it. With finding names off, the family card says so and offers no
+  lookup.
 
 The three facts stay separate in the copy: the target serves a name (checked), a node accepts
 it (tested), it works from a country (judged; the checks from inside a country only ever

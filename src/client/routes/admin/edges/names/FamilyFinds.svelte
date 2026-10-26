@@ -12,7 +12,15 @@
   import { Button } from '@client/components/ui/button';
   import { Card, CardContent, CardHeader, CardTitle } from '@client/components/ui/card';
   import { ApiCallError } from '@client/lib/api';
-  import { huntFamilyQuery, invalidateSni, lookUpCt, readTargetCert } from '@client/lib/sniApi';
+  import {
+    huntFamilyQuery,
+    invalidateSni,
+    lookUpCt,
+    readTargetCert,
+    sniConfigQuery,
+  } from '@client/lib/sniApi';
+  import Link from '@client/components/Link.svelte';
+  import { edgesPaths } from '../lib/routes';
   import HuntTable from './HuntTable.svelte';
   import { ctWords } from './lib/huntWords';
   import { CHECK_WORDS, sniErrorWords } from './lib/words';
@@ -20,6 +28,9 @@
   let { slug, label, target }: { slug: string; label: string; target: string } = $props();
   const qc = useQueryClient();
   const view = huntFamilyQuery(() => slug);
+  const config = sniConfigQuery();
+  // Off (the default), the server refuses these: say so instead of offering them.
+  const on = $derived(!!config.data?.hunt?.enabled);
   const codeOf = (e: unknown) => (e instanceof ApiCallError ? e.payload.error.code : null);
   const literal = $derived(/^[0-9.]+$/.test(target) || target.includes(':'));
 
@@ -60,17 +71,23 @@
   <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-2">
     <CardTitle class="text-base">Find more names</CardTitle>
     <div class="flex flex-wrap gap-2">
-      <Button variant="outline" size="sm" disabled={busy} onclick={readCert}>
+      <Button variant="outline" size="sm" disabled={busy || !on} onclick={readCert}>
         Read the target's certificate
       </Button>
       {#if !literal}
-        <Button variant="outline" size="sm" disabled={busy} onclick={readLogs}>
+        <Button variant="outline" size="sm" disabled={busy || !on} onclick={readLogs}>
           Look up certificate logs
         </Button>
       {/if}
     </div>
   </CardHeader>
   <CardContent class="space-y-3 text-sm">
+    {#if config.data && !on}
+      <p>
+        Finding names is off, so nothing is looked up. Turn it on under
+        <Link href={edgesPaths.findNames()} class="underline underline-offset-4">Find names</Link>.
+      </p>
+    {/if}
     <p class="text-muted-foreground">
       Names the target may serve. Each is checked against this family's target before it shows as
       ready, and adding it checks it again like any name you paste.

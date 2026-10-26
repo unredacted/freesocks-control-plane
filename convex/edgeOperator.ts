@@ -26,6 +26,7 @@ import { probeSourceHealth } from './probes';
 import { countryWideHolds, newEdgeBlockedIn } from './edgeCountry';
 import { networkPrefixes } from './edgeNetworks';
 import { edgeNetworkVerdict } from './lib/edges/networks';
+import { THIN_BELOW, THIN_FAMILIES_KEY, type ThinFamilies } from './lib/edges/sni/hunt/thin';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { readMaintenance } from './lib/edges/maintenance';
 import {
@@ -2113,28 +2114,19 @@ export const attention = internalQuery({
     }
     // A family on a network, bound to a transport, with fewer than three names
     // that qualify (docs/edges.md "Finding names"): with names blocked in one
-    // country a last resort elsewhere, a family this small runs out fast.
-    for (const f of await ctx.db.query('sniFamilies').take(200)) {
-      if (!f.networkId || !f.enabled) continue;
-      const bound = await ctx.db
-        .query('sniInboundBindings')
-        .withIndex('by_family', (q) => q.eq('familyId', f._id))
-        .first();
-      if (!bound) continue;
-      const names = await ctx.db
-        .query('sniNames')
-        .withIndex('by_family_seq', (q) => q.eq('familyId', f._id))
-        .take(500);
-      const qualifying = names.filter(
-        (n) => n.status === 'active' && n.qualification.state === 'ok',
-      ).length;
-      if (qualifying >= 3) continue;
+    // country a last resort elsewhere, a family this small runs out fast. The
+    // `sni-hunt` cron counts them in turn (counting reads names); this reads its answer.
+    const thin = await readStateJson<ThinFamilies>(ctx.db, THIN_FAMILIES_KEY);
+    for (const [id, t] of Object.entries(thin?.thin ?? {})) {
+      const familyId = ctx.db.normalizeId('sniFamilies', id);
+      const f = familyId ? await ctx.db.get(familyId) : null;
+      if (!f || !f.enabled || !f.networkId || t.qualifying >= THIN_BELOW) continue;
       items.push({
         ...fleetBase,
-        id: `sni_family_thin:${f._id}`,
+        id: `sni_family_thin:${id}`,
         kind: 'sni_family_thin',
         severity: 'info',
-        facts: { family: f.slug, qualifying },
+        facts: { family: f.slug, qualifying: t.qualifying },
         action: 'find_names',
         since: null,
       });
