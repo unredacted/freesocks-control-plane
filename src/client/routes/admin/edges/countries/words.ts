@@ -35,7 +35,8 @@ import type {
 import { countryName } from '@client/lib/countries';
 import { durationLabel, relativeTime } from '../lib/time';
 import {
-  capSpent,
+  capClause,
+  capHoldsBack,
   countryReasonSentence,
   GROUP_GRADE_WORDS,
   probeFailureWords,
@@ -388,8 +389,7 @@ function quietWhy(source: string, health: readonly ProbeSourceHealth[]): string 
   const h = health.find((x) => x.source === source);
   if (!h) return null;
   if (h.failing) return `it is failing (${probeFailureWords(h.lastError).label.toLowerCase()})`;
-  if (h.cap && capSpent(h))
-    return `its hourly cap leaves no room for another run (${h.cap.used} of ${h.cap.perHour} tests used in the last hour, ${h.cap.perRun} a run)`;
+  if (h.cap && capHoldsBack(h)) return capClause(h.cap);
   return null;
 }
 

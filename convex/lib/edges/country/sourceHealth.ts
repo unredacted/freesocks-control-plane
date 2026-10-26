@@ -58,6 +58,10 @@ export interface GlobalpingCap {
   perHour: number;
   /** What one run of an edge asks: every checked country's vantages, plus the controls. */
   perRun: number;
+  /** Cron rounds requested in the last hour (each asks every enabled source). */
+  rounds: number;
+  /** Of them, the ones that ran without Globalping: the cap left it out. */
+  skipped: number;
 }
 
 export interface SourceHealth {

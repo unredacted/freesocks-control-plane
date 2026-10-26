@@ -546,25 +546,65 @@ export function globalpingTestsPerRun(cfg: EdgeConfig, controls: number): number
 }
 
 /**
- * Globalping probes asked for in the last hour (`probeRuns.tests`), whatever
- * the runs' state: Globalping's own runs only, bounded like `spentThisHour`'s
- * five status reads (the run budget caps how many there can be).
+ * One source's runs requested since `since`, whatever their state, bounded
+ * like `spentThisHour`'s five status reads (the run budget caps how many
+ * there can be).
  */
+function sourceRunsSince(
+  db: QueryCtx['db'],
+  source: ProbeSource,
+  since: number,
+  hourlyBudget: number,
+) {
+  return db
+    .query('probeRuns')
+    .withIndex('by_source_requested', (q) => q.eq('source', source).gte('requestedAt', since))
+    .take(5 * (hourlyBudget + 1));
+}
+
+/** Globalping probes asked for in the last hour (`probeRuns.tests`). */
 async function globalpingTestsThisHour(
   db: QueryCtx['db'],
   now: number,
   hourlyBudget: number,
 ): Promise<number> {
-  const hourStart = now - 60 * MIN;
   let tests = 0;
-  for (const r of await db
-    .query('probeRuns')
-    .withIndex('by_source_requested', (q) =>
-      q.eq('source', 'globalping').gte('requestedAt', hourStart),
-    )
-    .take(5 * (hourlyBudget + 1)))
+  for (const r of await sourceRunsSince(db, 'globalping', now - 60 * MIN, hourlyBudget))
     tests += r.tests ?? 0;
   return tests;
+}
+
+/**
+ * The last hour's cron rounds, and how many of them ran without Globalping.
+ * The cron asks every enabled source, so a cron round with runs of the other
+ * sources and none of Globalping is one the hourly cap left it out of
+ * (`fitGlobalpingTests`), whatever the round's own size (families x ports).
+ */
+async function roundsWithoutGlobalping(
+  db: QueryCtx['db'],
+  sources: readonly ProbeSource[],
+  now: number,
+  hourlyBudget: number,
+): Promise<{ rounds: number; skipped: number }> {
+  const hourStart = now - 60 * MIN;
+  const rounds = new Set<string>();
+  // A round's runs are inserted in one mutation, Globalping's first: look a
+  // minute further back for them so a round on the hour's edge is not miscounted.
+  const withGlobalping = new Set<string>();
+  for (const r of await sourceRunsSince(db, 'globalping', hourStart - MIN, hourlyBudget)) {
+    if (!r.roundId) continue;
+    withGlobalping.add(r.roundId);
+    if (r.trigger === 'cron' && r.requestedAt >= hourStart) rounds.add(r.roundId);
+  }
+  for (const source of sources) {
+    if (source === 'globalping') continue;
+    for (const r of await sourceRunsSince(db, source, hourStart, hourlyBudget))
+      if (r.trigger === 'cron' && r.roundId) rounds.add(r.roundId);
+  }
+  return {
+    rounds: rounds.size,
+    skipped: [...rounds].filter((id) => !withGlobalping.has(id)).length,
+  };
 }
 
 /**
@@ -1310,7 +1350,7 @@ export async function probeSourceHealth(db: QueryCtx['db'], now: number): Promis
   const health = sourceHealth(sources, runs, now);
   if (!sources.includes('globalping')) return health;
   // A round that would pass Globalping's hourly cap runs without it: no failed
-  // run says so, only the cap's use does.
+  // run says so, only the cap's use and the rounds it left out do.
   const controls = cfg.country.enabled
     ? controlCountriesOf(cfg, (await resolveCensoredCountries(db)).codes).length
     : 0;
@@ -1318,6 +1358,7 @@ export async function probeSourceHealth(db: QueryCtx['db'], now: number): Promis
     used: await globalpingTestsThisHour(db, now, cfg.probe.hourlyBudget),
     perHour: cfg.probe.globalpingTestsPerHour,
     perRun: globalpingTestsPerRun(cfg, controls),
+    ...(await roundsWithoutGlobalping(db, sources, now, cfg.probe.hourlyBudget)),
   };
   return health.map((h) => (h.source === 'globalping' ? { ...h, cap } : h));
 }

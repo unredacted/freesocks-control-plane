@@ -3487,9 +3487,12 @@ with `delivery.country.steer` on (next section).
   works, FCP's host just lacks the family), with nothing working for six hours, raises attention
   `probe_source_failing` (warning) and shows on `GET probes/sources` and `GET probes/matrix`
   (`sources`). A round that runs without Globalping because of the cap leaves no failed run, so
-  Globalping's health also carries `cap {used, perHour, perRun}` (the tests asked in the last
-  hour, the setting, what one run of an edge asks); the Probes page reads "Hourly cap spent" when
-  no further run fits. Each summary keeps only rows newer than two probe intervals, so a country
+  Globalping's health also carries `cap {used, perHour, perRun, rounds, skipped}` (the tests
+  asked in the last hour, the setting, what one run of an edge asks, the last hour's cron rounds
+  and how many ran without Globalping: the cron asks every enabled source, so a cron round with
+  runs of the others and none of Globalping is one the cap left it out of, whatever the round's
+  size in families and ports); the Probes page reads "Held back by its hourly cap" when a round
+  went without it or no further run fits, and "Hourly cap below one run" when none ever can. Each summary keeps only rows newer than two probe intervals, so a country
   that only Globalping reaches (check-host has no node in several censored countries) drops out
   of every summary while the cap holds Globalping back for longer than that.
 - **Admin API.** `GET countries` (checked and control countries, grades, every edge's tracks
@@ -3614,7 +3617,9 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
 - **Which outside probes answer from there** (`probes`, pure `lib/edges/country/coverage.ts`):
   `asked` (probes on and "Check edges from here" on for the country), and for each outside source
   in use its newest answer from the country over the addresses shown (the `probeReachability`
-  rows of every active edge and probed origin, one index range each: a row's `updatedAt` moves
+  rows of every active edge and probed origin, one index range each, at most 256 of them with
+  probed origins and published addresses first, so a large fleet stays inside a transaction's
+  index-range limit: a row's `updatedAt` moves
   only when that source answered from that country) and whether it still counts (`fresh`: newer
   than two probe intervals, the summaries' own window). An address's probes come from its
   reachability summary, which keeps only fresh rows, so without this a country whose only source

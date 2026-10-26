@@ -241,7 +241,12 @@ describe('country view words', () => {
       cap: null,
       ...over,
     });
-    const capped = health('globalping', { cap: { used: 399, perHour: 400, perRun: 21 } });
+    const capped = health('globalping', {
+      cap: { used: 399, perHour: 400, perRun: 21, rounds: 4, skipped: 0 },
+    });
+    const leftOut = health('globalping', {
+      cap: { used: 300, perHour: 400, perRun: 21, rounds: 4, skipped: 2 },
+    });
 
     it('a country whose only source went quiet: when, and why (its cap, or failing)', () => {
       const cn = coverage([
@@ -250,6 +255,10 @@ describe('country view words', () => {
       ]);
       expect(W.coverageNote(cn, [capped], true, NOW)).toBe(
         'No probe has answered from here in the last 1 h: Globalping last answered 3 h ago, and its hourly cap leaves no room for another run (399 of 400 tests used in the last hour, 21 a run).',
+      );
+      // Left out of rounds of several runs while one run would still fit.
+      expect(W.coverageNote(cn, [leftOut], true, NOW)).toBe(
+        'No probe has answered from here in the last 1 h: Globalping last answered 3 h ago, and its hourly cap left it out of 2 of the 4 rounds in the last hour.',
       );
       const failing = health('globalping', { failing: true, lastError: 'auth', streak: 4 });
       expect(W.coverageNote(cn, [failing], true, NOW)).toBe(

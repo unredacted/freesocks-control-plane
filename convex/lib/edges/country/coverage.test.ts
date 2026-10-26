@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { coverageOf, newestAnswers } from './coverage';
+import { answerTargets, coverageOf, MAX_ANSWER_TARGETS, newestAnswers } from './coverage';
+
+describe('which addresses a view reads answers for', () => {
+  it('probed origins and published addresses first, then the rest, bounded', () => {
+    const targets = [
+      { key: 'edge:spare1', first: false },
+      { key: 'edge:pub1', first: true },
+      { key: 'relay:o1', first: true },
+      { key: 'edge:spare2', first: false },
+    ];
+    expect(answerTargets(targets)).toEqual(['edge:pub1', 'relay:o1', 'edge:spare1', 'edge:spare2']);
+    expect(answerTargets(targets, 3)).toEqual(['edge:pub1', 'relay:o1', 'edge:spare1']);
+    // A fleet far past the bound still costs at most MAX_ANSWER_TARGETS index ranges.
+    const many = Array.from({ length: 1000 }, (_, i) => ({ key: `edge:${i}`, first: i % 2 === 0 }));
+    const picked = answerTargets(many);
+    expect(picked).toHaveLength(MAX_ANSWER_TARGETS);
+    expect(picked.every((k) => Number(k.slice(5)) % 2 === 0)).toBe(true);
+  });
+});
 
 const MIN = 60_000;
 const NOW = 1_000 * MIN;
