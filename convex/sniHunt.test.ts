@@ -281,6 +281,7 @@ describe('the top-sites sweep', () => {
     const run = (await t.run((ctx) => ctx.db.get(runId)))!;
     expect(run).toMatchObject({ state: 'cancelled', gen: 2, cursor: 0, chunks: [] });
     expect(await t.run((ctx) => ctx.db.query('sniHuntChunks').collect())).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query('sniHuntProbes').collect())).toEqual([]);
   });
 
   test('a network not hunting keeps nothing from a sweep', async () => {
@@ -1316,6 +1317,22 @@ describe('rollback', () => {
       lines: ['a.example.com'],
     });
     await storedRun(t, ['a.example.com']);
+    // An in-country check row (docs/edges.md "Finding names"), as the vantage planner leaves one.
+    await t.run(async (ctx) => {
+      const candidateId = (await ctx.db.query('sniCandidates').first())!._id;
+      await ctx.db.insert('sniHuntProbes', {
+        batch: 'b',
+        candidateId,
+        name: 'a.example.com',
+        address: '192.0.2.1',
+        country: 'IR',
+        role: 'candidate',
+        status: 'finished',
+        requestedAt: clock,
+        results: [],
+        updatedAt: clock,
+      });
+    });
     let r = await t.mutation(internal.sniHunt.clearForRollback, {});
     while (r.left > 0) r = await t.mutation(internal.sniHunt.clearForRollback, {});
     expect(await candidates(t)).toEqual([]);

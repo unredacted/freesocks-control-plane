@@ -2027,6 +2027,7 @@ export const clearForRollback = internalMutation({
       'sniHuntRuns',
       'sniHuntCt',
       'sniHuntCalls',
+      'sniHuntProbes',
     ] as const) {
       const rows = await ctx.db.query(table).take(PAGE);
       for (const r of rows) {
