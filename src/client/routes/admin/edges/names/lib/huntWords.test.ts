@@ -153,6 +153,11 @@ describe('find names words', () => {
     expect(matchesHuntFilter(base, 'ready')).toBe(true);
     expect(matchesHuntFilter(base, 'unmeasured')).toBe(true);
     expect(matchesHuntFilter({ ...base, check: null }, 'unchecked')).toBe(true);
+    // Not checked yet is not "would not qualify".
+    expect(scoreWords({ ...base, check: null })).toBe('No score until it is checked.');
+    expect(scoreWords({ ...base, check: { ...base.check!, code: 'q_unreachable' } })).toBe(
+      'No score: it would not qualify.',
+    );
     expect(matchesHuntFilter({ ...base, state: 'gone' }, 'ready')).toBe(false);
   });
 

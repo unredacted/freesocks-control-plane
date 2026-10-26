@@ -2126,7 +2126,7 @@ export const attention = internalQuery({
         id: `sni_family_thin:${id}`,
         kind: 'sni_family_thin',
         severity: 'info',
-        facts: { family: f.slug, qualifying: t.qualifying },
+        facts: { family: f.slug, familyLabel: f.label, qualifying: t.qualifying },
         action: 'find_names',
         since: null,
       });

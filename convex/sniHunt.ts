@@ -2360,9 +2360,9 @@ export const scopeView = internalQuery({
       },
       candidates: out,
       page: { cursor: page.isDone ? null : page.continueCursor, done: page.isDone },
+      // Every address of the scope (bounded by its cap), most passing first.
       groups: [...groups.values()]
         .sort((x, y) => y.passing - x.passing || y.names - x.names)
-        .slice(0, 50)
         .map(({ bestScore: _s, ...g }) => g),
       counts,
       ct: ctRows.filter((r) => sameScope(r, scope)).map(ctView),

@@ -313,6 +313,13 @@ describe('attention', () => {
       'Account acct-a, Region B',
     );
     expect(attentionFactsLine(item({ facts: { name: 'acct-a' } }))).toBe('Account acct-a');
+    // A thin family is named, with how many of its names qualify.
+    expect(
+      attentionFactsLine(item({ facts: { family: 'fam-a', familyLabel: 'Fam A', qualifying: 1 } })),
+    ).toBe('Family Fam A · 1 name qualifies');
+    expect(attentionFactsLine(item({ facts: { family: 'fam-b', qualifying: 0 } }))).toBe(
+      'Family fam-b · 0 names qualify',
+    );
     // A REALITY transport that refuses clients: which (the row words the rest).
     expect(attentionFactsLine(item({ facts: { count: 1, refuses: ['singbox', 'mihomo'] } }))).toBe(
       '1 affected · Refuses sing-box and Mihomo',

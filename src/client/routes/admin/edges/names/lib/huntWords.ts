@@ -173,7 +173,8 @@ export function siteOoniWords(c: SniCandidateRow): string | null {
 }
 
 export function scoreWords(c: SniCandidateRow): string {
-  if (!c.check || c.check.code !== null) return 'No score: it would not qualify.';
+  if (!c.check) return 'No score until it is checked.';
+  if (c.check.code !== null) return 'No score: it would not qualify.';
   return `Score ${Math.round(c.score)} of 100 (${Math.round(c.baseScore)} before measurements).`;
 }
 

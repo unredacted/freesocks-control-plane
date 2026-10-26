@@ -38,6 +38,10 @@
       .map((f) => ({ slug: f.slug, label: f.label })),
   );
 
+  // The first addresses, then every one on asking (none is ever left out).
+  const GROUPS_FIRST = 20;
+  let allGroups = $state(false);
+
   // --- a family from a group ---------------------------------------------------------------------
   let open = $state(false);
   let target = $state('');
@@ -104,7 +108,7 @@
         <p class="text-muted-foreground">Nothing checked yet.</p>
       {:else}
         <ul class="divide-y rounded-md border" aria-label="Sites by address">
-          {#each v.groups.slice(0, 20) as g (g.address)}
+          {#each allGroups ? v.groups : v.groups.slice(0, GROUPS_FIRST) as g (g.address)}
             <li class="flex flex-wrap items-center justify-between gap-3 p-3">
               <div class="min-w-0 flex-1">
                 <p class="font-mono break-all">{g.address}</p>
@@ -126,6 +130,11 @@
             </li>
           {/each}
         </ul>
+        {#if v.groups.length > GROUPS_FIRST}
+          <Button variant="outline" size="sm" onclick={() => (allGroups = !allGroups)}>
+            {allGroups ? `Show the first ${GROUPS_FIRST}` : `Show all ${v.groups.length} addresses`}
+          </Button>
+        {/if}
       {/if}
       {#if v.ct.length > 0}
         <div class="space-y-1">

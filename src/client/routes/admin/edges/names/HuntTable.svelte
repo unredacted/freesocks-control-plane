@@ -100,10 +100,13 @@
     Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
   async function act(action: CandidateAction, kind?: 'name' | 'site') {
-    const ids = [...picked];
+    // A whole site is one action whichever of its names is picked: one id a
+    // site, ten sites a request (the server reads each site's names once).
+    const ids =
+      kind === 'site' ? [...new Map(pickedRows.map((c) => [c.site, c.id])).values()] : [...picked];
     const r = await run(async () => {
       let changed = 0;
-      for (const part of chunks(ids, 200))
+      for (const part of chunks(ids, kind === 'site' ? 10 : 200))
         changed += (await actOnCandidates(action, part, kind)).changed;
       return { changed };
     });
