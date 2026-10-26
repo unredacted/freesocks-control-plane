@@ -339,7 +339,7 @@ describe('refusals', () => {
     }) as Record<string, string>;
     const codes = new Set<string>();
     for (const text of Object.values(sources))
-      for (const m of text.matchAll(/refuse\(\s*'(edge\.sni\.[a-z_]+)'/g)) codes.add(m[1]!);
+      for (const m of text.matchAll(/refuse\(\s*'(edge\.sni\.[a-z_.]+)'/g)) codes.add(m[1]!);
     expect(codes.size).toBeGreaterThan(5);
     expect([...codes].filter((c) => !WORDED_CODES.includes(c))).toEqual([]);
   });

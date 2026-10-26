@@ -25,7 +25,7 @@ export interface OwnExits {
 export const EMPTY_OWN_EXITS: OwnExits = { v4: [], v6Prefixes: [], cidrs: [] };
 
 /** The eight hextets of an IPv6 literal as numbers, or null. */
-function v6Hextets(s: string): number[] | null {
+export function v6Hextets(s: string): number[] | null {
   let t = s
     .trim()
     .replace(/^\[|\]$/g, '')
@@ -62,7 +62,8 @@ function v6Prefix64(s: string): string | null {
     : null;
 }
 
-function v4Number(s: string): number | null {
+/** An IPv4 literal as a 32-bit number, or null. */
+export function v4Number(s: string): number | null {
   if (!isIpv4Literal(s)) return null;
   return s
     .trim()

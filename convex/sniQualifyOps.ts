@@ -27,10 +27,28 @@ async function lookup(name: string): Promise<string[]> {
   return (await dns.lookup(name, { all: true, verbatim: true })).map((a) => a.address);
 }
 
+/** The DNS names of a certificate's `subjectaltname` (`DNS:a, DNS:b, IP Address:…`). */
+function certNames(san: string | undefined): string[] {
+  if (!san) return [];
+  return san
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.startsWith('DNS:'))
+    .map((p) => p.slice(4).toLowerCase())
+    .slice(0, 500);
+}
+
 export async function tlsInspect(args: {
   host: string;
   port: number;
   servername: string;
+  /**
+   * Offer only these key-exchange groups (`X25519`, `X25519MLKEM768`): whether
+   * the target accepts that one. Absent = the runtime's defaults, as qualification uses.
+   */
+  ecdhCurve?: string;
+  /** Also return the DNS names on the certificate presented. */
+  wantNames?: boolean;
 }): Promise<HandshakeResult> {
   const tls = await import('node:tls');
   return new Promise((resolve) => {
@@ -50,6 +68,7 @@ export async function tlsInspect(args: {
         // so a bad certificate is reported as that, not as a transport error.
         rejectUnauthorized: false,
         ALPNProtocols: ['h2', 'http/1.1'],
+        ...(args.ecdhCurve ? { ecdhCurve: args.ecdhCurve, minVersion: 'TLSv1.3' as const } : {}),
       },
       () =>
         done({
@@ -57,6 +76,9 @@ export async function tlsInspect(args: {
           authorized: socket.authorized,
           protocol: socket.getProtocol(),
           alpn: socket.alpnProtocol || null,
+          ...(args.wantNames
+            ? { names: certNames(socket.getPeerCertificate()?.subjectaltname) }
+            : {}),
         }),
     );
     socket.setTimeout(TIMEOUT_MS, () => done({ ok: false, error: 'timeout' }));
@@ -64,15 +86,21 @@ export async function tlsInspect(args: {
   });
 }
 
-async function dialAddress(
+/**
+ * Where to dial a target: a public literal as is, a name resolved with EVERY
+ * answer public, then one of those verified literals (never the name again).
+ * Finding names dials a family's target through this too.
+ */
+export async function dialAddress(
   address: string,
+  resolve: (name: string) => Promise<string[]> = lookup,
 ): Promise<{ ok: true; host: string; all: string[] } | { ok: false; error: string }> {
   const literal = /^[0-9.]+$/.test(address) || address.includes(':');
   if (literal)
     return isPublicIpLiteral(address)
       ? { ok: true, host: address, all: [address] }
       : { ok: false, error: 'private_address' };
-  const r = await resolvePublic(address, lookup);
+  const r = await resolvePublic(address, resolve);
   return r.ok
     ? { ok: true, host: r.addresses[0]!, all: r.addresses }
     : { ok: false, error: r.error };

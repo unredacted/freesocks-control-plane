@@ -77,11 +77,13 @@
     "pako": "2.1.0",
     "qrcode": "^1.5.4",
     "tailwind-merge": "^3.6.0",
+    "tldts": "7.4.18",
     "yaml": "2.9.0",
     "zod": "^4.4.3"
   },
   "overrides": {
-    "superagent": "10.3.0"
+    "superagent": "10.3.0",
+    "tldts-core": "7.4.18"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

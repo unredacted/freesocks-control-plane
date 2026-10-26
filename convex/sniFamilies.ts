@@ -34,8 +34,10 @@ import {
 import { parseRealityTarget } from './lib/edges/inboundMapping';
 import {
   resolveSniConfig,
+  resolveSniHuntConfig,
   resolveSniVantageConfig,
   sniConfigWrites,
+  sniHuntConfigWrites,
   sniVantageConfigWrites,
   usableSources,
   vantageCountries,
@@ -46,6 +48,7 @@ import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { listenersOfTransport, syncTransportNetwork } from './lib/edges/networkScope';
 import { networkIdOfSlug, networkPrefixes } from './edgeNetworks';
+import { markCandidatesAdded } from './lib/edges/sni/hunt/store';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -103,6 +106,7 @@ export const configView = internalQuery({
     return {
       config: await resolveSniConfig(ctx.db),
       vantage,
+      hunt: await resolveSniHuntConfig(ctx.db),
       // Which sources can run now (RIPE Atlas needs its key, set under Edges, Settings).
       vantageSources: {
         globalping: usable.includes('globalping'),
@@ -122,8 +126,15 @@ export const patchConfig = internalMutation({
         ? (body.vantage as Record<string, unknown>)
         : {},
     );
-    const writes = [...base.writes, ...vantage.writes];
-    const changedKeys: string[] = [...base.changedKeys, ...vantage.changedKeys];
+    const hunt = sniHuntConfigWrites(
+      body.hunt && typeof body.hunt === 'object' ? (body.hunt as Record<string, unknown>) : {},
+    );
+    const writes = [...base.writes, ...vantage.writes, ...hunt.writes];
+    const changedKeys: string[] = [
+      ...base.changedKeys,
+      ...vantage.changedKeys,
+      ...hunt.changedKeys,
+    ];
     for (const w of writes) await upsertSettingRow(ctx, w.key, w.value, actorAdminId);
     if (changedKeys.length > 0)
       await audit(ctx, 'edge.sni.config.update', actorAdminId, { changedKeys });
@@ -487,6 +498,8 @@ export const remove = internalMutation({
     if (names.some((n) => n.status === 'burned'))
       await ctx.db.patch(f._id, { enabled: false, updatedAt: Date.now() });
     else await ctx.db.delete(f._id);
+    // Names found for it go with it (docs/edges.md "Finding names").
+    await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, { familyId: f._id });
     await audit(ctx, 'edge.sni.family.delete', a.actorAdminId, {
       slug: f.slug,
       nameCount: names.length,
@@ -530,10 +543,12 @@ async function addFamilyNames(ctx: MutationCtx, f: Doc<'sniFamilies'>, input: re
   const current = (await namesOf(ctx, f._id)).length;
   let seq = f.nextSeq;
   let added = 0;
+  const addedNames: string[] = [];
   for (const l of verdicts) {
     if (l.verdict !== 'added' || !l.name) continue;
     if (current + added >= MAX_NAMES_PER_FAMILY)
       return refuse('edge.sni.cap', `A family holds at most ${MAX_NAMES_PER_FAMILY} names`);
+    addedNames.push(l.name);
     await ctx.db.insert('sniNames', {
       familyId: f._id,
       name: l.name,
@@ -546,6 +561,9 @@ async function addFamilyNames(ctx: MutationCtx, f: Doc<'sniFamilies'>, input: re
     added++;
   }
   await ctx.db.patch(f._id, { nextSeq: seq, updatedAt: Date.now() });
+  // A found name a family now holds is no longer a candidate anywhere,
+  // whichever route added it (docs/edges.md "Finding names").
+  await markCandidatesAdded(ctx.db, addedNames, Date.now());
   return { added, lines: verdicts };
 }
 

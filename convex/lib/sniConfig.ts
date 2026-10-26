@@ -304,3 +304,126 @@ export function usableSources(
   if (v.sources.ripeatlas && secrets.ripeAtlasKey.length > 0) out.push('ripeatlas');
   return out;
 }
+
+// --- finding names (`edge.sni.hunt.*`) -----------------------------------------------------------
+
+/**
+ * Finding candidate names (docs/edges.md "Finding names"). Dormant by default:
+ * with `enabled` off no list is swept, nothing is checked and no evidence is
+ * fetched; candidates already found stay readable.
+ */
+export interface SniHuntConfig {
+  enabled: boolean;
+  /** Sites of the top-sites list resolved by a sweep. */
+  depth: number;
+  /** Of those, the top ones whose `www.` name is resolved too. */
+  wwwDepth: number;
+  /** Lookups a second, A and AAAA counted alike. */
+  lookupsPerSecond: number;
+  /** A new sweep starts this long after the last one ended. */
+  sweepEveryDays: number;
+  /** Candidates checked per run (each costs up to three handshakes). */
+  checksPerTick: number;
+  /** A checked candidate is checked again after this long. */
+  recheckHours: number;
+  /** Candidates per network or family that get evidence (the last 3 slots rotate). */
+  shortlist: number;
+  /** Certificate-transparency requests an hour, whatever their answer. */
+  ctRequestsPerHour: number;
+  /** Pages read per domain before its answer is `truncated`. */
+  ctPagesPerDomain: number;
+  /** Timing measurements an hour. */
+  timingPerHour: number;
+}
+
+export const SNI_HUNT_DEFAULTS: SniHuntConfig = {
+  enabled: false,
+  depth: 300_000,
+  wwwDepth: 100_000,
+  lookupsPerSecond: 20,
+  sweepEveryDays: 30,
+  checksPerTick: 12,
+  recheckHours: 72,
+  shortlist: 10,
+  ctRequestsPerHour: 6,
+  ctPagesPerDomain: 20,
+  timingPerHour: 6,
+};
+
+export const SNI_HUNT_BOUNDS = {
+  depth: { min: 1000, max: 1_000_000 },
+  wwwDepth: { min: 0, max: 1_000_000 },
+  lookupsPerSecond: { min: 1, max: 50 },
+  sweepEveryDays: { min: 1, max: 365 },
+  checksPerTick: { min: 1, max: 40 },
+  recheckHours: { min: 6, max: 24 * 30 },
+  shortlist: { min: 4, max: 30 },
+  ctRequestsPerHour: { min: 0, max: 60 },
+  ctPagesPerDomain: { min: 1, max: 200 },
+  timingPerHour: { min: 0, max: 60 },
+} as const;
+type HuntIntPath = keyof typeof SNI_HUNT_BOUNDS;
+
+export const SNI_HUNT_KEYS = {
+  enabled: 'edge.sni.hunt.enabled',
+  depth: 'edge.sni.hunt.depth',
+  wwwDepth: 'edge.sni.hunt.wwwDepth',
+  lookupsPerSecond: 'edge.sni.hunt.lookupsPerSecond',
+  sweepEveryDays: 'edge.sni.hunt.sweepEveryDays',
+  checksPerTick: 'edge.sni.hunt.checksPerTick',
+  recheckHours: 'edge.sni.hunt.recheckHours',
+  shortlist: 'edge.sni.hunt.shortlist',
+  ctRequestsPerHour: 'edge.sni.hunt.ctRequestsPerHour',
+  ctPagesPerDomain: 'edge.sni.hunt.ctPagesPerDomain',
+  timingPerHour: 'edge.sni.hunt.timingPerHour',
+} as const;
+type HuntPath = keyof typeof SNI_HUNT_KEYS;
+
+export async function resolveSniHuntConfig(db: DatabaseReader): Promise<SniHuntConfig> {
+  const paths = Object.keys(SNI_HUNT_KEYS) as HuntPath[];
+  const raw = Object.fromEntries(
+    await Promise.all(
+      paths.map(async (p) => [p, await readSetting(db, SNI_HUNT_KEYS[p])] as const),
+    ),
+  ) as Record<HuntPath, unknown>;
+  const D = SNI_HUNT_DEFAULTS;
+  const int = (p: HuntIntPath) =>
+    sanitizeInt(raw[p], SNI_HUNT_BOUNDS[p].min, SNI_HUNT_BOUNDS[p].max, D[p]);
+  const depth = int('depth');
+  return {
+    enabled: sanitizeBool(raw.enabled, D.enabled),
+    depth,
+    wwwDepth: Math.min(int('wwwDepth'), depth),
+    lookupsPerSecond: int('lookupsPerSecond'),
+    sweepEveryDays: int('sweepEveryDays'),
+    checksPerTick: int('checksPerTick'),
+    recheckHours: int('recheckHours'),
+    shortlist: int('shortlist'),
+    ctRequestsPerHour: int('ctRequestsPerHour'),
+    ctPagesPerDomain: int('ctPagesPerDomain'),
+    timingPerHour: int('timingPerHour'),
+  };
+}
+
+/** The appSettings writes for a `hunt` patch; unknown keys and wrong types are ignored. */
+export function sniHuntConfigWrites(patch: Record<string, unknown>): {
+  writes: { key: string; value: string }[];
+  changedKeys: string[];
+} {
+  const writes: { key: string; value: string }[] = [];
+  const changedKeys: string[] = [];
+  for (const p of Object.keys(SNI_HUNT_KEYS) as HuntPath[]) {
+    const v = patch[p];
+    let value: unknown;
+    if (p === 'enabled') {
+      if (typeof v !== 'boolean') continue;
+      value = v;
+    } else {
+      if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+      value = sanitizeInt(v, SNI_HUNT_BOUNDS[p].min, SNI_HUNT_BOUNDS[p].max, SNI_HUNT_DEFAULTS[p]);
+    }
+    writes.push({ key: SNI_HUNT_KEYS[p], value: JSON.stringify(value) });
+    changedKeys.push(`hunt.${p}`);
+  }
+  return { writes, changedKeys };
+}

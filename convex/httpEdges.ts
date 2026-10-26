@@ -158,6 +158,12 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   const [a, b, c, d] = parts;
   // Qualifying server names opens sockets from the control plane.
   if (a === 'sni' && b === 'qualify' && !c) return 'admin.edges.provider-call';
+  // Finding names: a target's certificate is a handshake from the control plane;
+  // a certificate-log read and a sweep call third-party services.
+  if (a === 'sni' && b === 'hunt' && c === 'families' && d && parts[4] === 'cert' && !parts[5])
+    return 'admin.edges.provider-call';
+  if (a === 'sni' && b === 'hunt' && (c === 'ct' || c === 'sweep') && !d)
+    return 'admin.edges.provider-call';
   // Reading a network's announced ranges calls a third-party service.
   if (a === 'networks' && b && c === 'refresh' && !d) return 'admin.edges.provider-call';
   // Checking names from inside a country spends third-party measurements.
@@ -306,6 +312,15 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     if (b === 'rollouts' && c && !d)
       return json(
         await ctx.runQuery(internal.sniRollouts.status, { rolloutId: id<'sniRollouts'>(c) }),
+      );
+    // Finding names (docs/edges.md "Finding names").
+    if (b === 'hunt' && !c) return json(await ctx.runQuery(internal.sniHunt.overview, {}));
+    if (b === 'hunt' && (c === 'networks' || c === 'families') && d && !parts[4])
+      return json(
+        await ctx.runQuery(internal.sniHunt.scopeView, {
+          ...(c === 'networks' ? { network: d } : { family: d }),
+          ...huntViewQuery(query),
+        }),
       );
     return notFound();
   }
@@ -712,6 +727,10 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...act,
         }),
       );
+    }
+    if (b === 'hunt') {
+      const r = await postHunt(ctx, parts, body, act);
+      if (r) return r;
     }
     if (b === 'qualify' && !c) return json(await ctx.runAction(internal.sniQualifyOps.run, {}));
     if (b === 'bindings' && c && d === 'plan' && !e)
@@ -1751,6 +1770,95 @@ function pickOptionsOf(body: Record<string, unknown>): { pickOptions?: Record<st
   return Object.keys(out).length > 0 ? { pickOptions: out } : {};
 }
 
+const strings = (raw: unknown): string[] => (Array.isArray(raw) ? raw.map(String) : []);
+
+const HUNT_VIEW_STATES = ['new', 'added', 'ignored', 'gone', 'failing', 'all'] as const;
+/** `?state=` and `?cursor=` of a candidates page (absent: the first page of `new`). */
+function huntViewQuery(query: URLSearchParams) {
+  const state = HUNT_VIEW_STATES.find((x) => x === query.get('state'));
+  const cursor = query.get('cursor');
+  return { ...(state ? { state } : {}), ...(cursor ? { cursor } : {}) };
+}
+const optString = (raw: unknown): string | undefined =>
+  typeof raw === 'string' && raw ? raw : undefined;
+
+/** `POST sni/hunt/...`: finding names (docs/edges.md "Finding names"). */
+async function postHunt(
+  ctx: ActionCtx,
+  parts: string[],
+  body: Record<string, unknown>,
+  act: { actorAdminId?: Id<'adminUsers'> },
+): Promise<Response | null> {
+  const [, , c, d, e] = parts;
+  if (c === 'sweep' && !d) return json(await ctx.runMutation(internal.sniHunt.startSweep, act));
+  if (c === 'import' && !d) {
+    const lines = Array.isArray(body.lines)
+      ? strings(body.lines)
+      : typeof body.text === 'string'
+        ? body.text.split(/\r?\n/)
+        : undefined;
+    return json(
+      await ctx.runMutation(internal.sniHunt.importCandidates, {
+        ...(optString(body.network) ? { network: optString(body.network) } : {}),
+        ...(optString(body.family) ? { family: optString(body.family) } : {}),
+        ...(lines ? { lines } : {}),
+        ...(body.seed !== undefined ? { seed: body.seed } : {}),
+        ...act,
+      }),
+    );
+  }
+  if (c === 'ct' && !d)
+    return json(
+      await ctx.runMutation(internal.sniHunt.requestCt, {
+        domains: strings(body.domains),
+        ...(optString(body.network) ? { network: optString(body.network) } : {}),
+        ...(optString(body.family) ? { family: optString(body.family) } : {}),
+        ...act,
+      }),
+    );
+  if (c === 'families' && d && e === 'cert' && !parts[5])
+    return json(await ctx.runAction(internal.sniHuntOps.readCert, { slug: d, ...act }));
+  if (c === 'networks' && d && !e)
+    return json(
+      await ctx.runMutation(internal.edgeNetworks.setHunt, {
+        slug: d,
+        enabled: body.enabled === true,
+        ...(body.place && typeof body.place === 'object'
+          ? {
+              place: {
+                country: String((body.place as Record<string, unknown>).country ?? ''),
+                ...(optString((body.place as Record<string, unknown>).city)
+                  ? { city: optString((body.place as Record<string, unknown>).city) }
+                  : {}),
+              },
+            }
+          : {}),
+        ...act,
+      }),
+    );
+  if (c === 'candidates' && d === 'add' && !e) {
+    // Added through the family's normal path, so they are qualified like any pasted name.
+    const slug = String(body.family ?? '');
+    const names = strings(body.names);
+    // The import marks the found names it added as `added` itself.
+    return json(
+      await ctx.runMutation(internal.sniFamilies.importNames, { slug, lines: names, ...act }),
+    );
+  }
+  const CANDIDATE_ACTIONS = ['ignore', 'unignore', 'recheck'] as const;
+  const action = CANDIDATE_ACTIONS.find((x) => x === d);
+  if (c === 'candidates' && action && !e)
+    return json(
+      await ctx.runMutation(internal.sniHunt.setCandidates, {
+        ids: strings(body.ids),
+        action,
+        ...(body.kind === 'site' || body.kind === 'name' ? { kind: body.kind } : {}),
+        ...act,
+      }),
+    );
+  return null;
+}
+
 function snis(body: Record<string, unknown>): string[] {
   const raw = body.snis ?? body.sni;
   if (Array.isArray(raw)) return raw.map(String);
@@ -1867,6 +1975,8 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin, _body, query) => 
     return json(await ctx.runMutation(internal.edgeNetworks.remove, { slug: b, ...act }));
   if (a === 'sni' && b === 'families' && c && !d)
     return json(await ctx.runMutation(internal.sniFamilies.remove, { slug: c, ...act }));
+  if (a === 'sni' && b === 'hunt' && c === 'sweep' && !d)
+    return json(await ctx.runMutation(internal.sniHunt.cancelSweep, act));
   if (a === 'sni' && b === 'bindings' && c && !d)
     return json(
       await ctx.runMutation(internal.sniFamilies.unbind, {

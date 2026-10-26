@@ -145,6 +145,12 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Server-name families: check names from inside opted-in countries',
   },
   {
+    name: 'sni-hunt',
+    everyMs: 10 * MIN,
+    description:
+      'Finding names: drive the top-sites sweep, check candidates, read certificate logs',
+  },
+  {
     name: 'edge-networks',
     everyMs: 60 * MIN,
     description: 'Networks: read announced ranges once a day, learn each location’s network',

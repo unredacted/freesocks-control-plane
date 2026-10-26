@@ -2950,7 +2950,7 @@ of a node with one transport per network gets an address and the names of that a
 network. Per-country names and per-country addresses (§ "Delivery by country") work within each
 transport as for any other.
 
-**For a later discovery of names per network.** Everything it needs is an API call: create a
+**Finding names for a network** (§ "Finding names" finds the candidates). Everything else is an API call: create a
 network with the provider's ASNs (`POST networks {slug, label, asns, manualPrefixes?}`), create a
 family on it with a target on that network (`POST sni/families {..., network}`), paste names
 (`POST sni/families/{slug}/names`): only names that resolve on the network and that the target
@@ -2965,6 +2965,140 @@ locations set to it go back to none), `POST networks/{slug}/refresh` (throttled 
 call). Audit: `edge.network.create|update|delete` (slug and counts, never a range or an address),
 `edge.location.network`. Admin: Server names, Networks (add, edit, read ranges again, remove), a
 family's Network, and a location's Network on its provider account page.
+
+### Finding names
+
+Ships dormant: `edge.sni.hunt.enabled` is off. Off, no list is swept, nothing is checked and no
+certificate log is read; candidates found before stay readable.
+
+A family on a network needs real sites on that network, near the node, whose target serves
+their names. Finding them by hand worked through four routes, all passive, and the hunter does
+the same: it **finds candidates and shows them**. Adding one goes through the family's normal
+path (`POST sni/families/{slug}/names`, then qualification), and nothing is added, activated or
+marked by itself. **No address range is ever scanned**, actively or through a third party's
+reverse-IP data: names are resolved, and only a family's target or a candidate's own DNS answers
+are dialled, on the target's port. That was left out on purpose (a scan from the control plane
+draws abuse reports).
+
+**Sources** (`sniCandidates.sources`):
+
+| Source    | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cert`    | The DNS names on the certificate a family's target presents: one handshake to the target, through qualification's guarded dial (`dialAddress`), presenting the target's own hostname (or, for a literal target, a name the family has). FCP talks only to that target. Wildcards are dropped.                                                                                                                                                                                                                                                          |
+| `pasted`  | Lines an operator pastes, into a network or a family (up to 1,000 at a time).                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `seed`    | A JSON file a hand-run study wrote: `{networks: [{network: {slug, label, asns}, families: [{create_family: {slug, label, targetAddress, targetPort, requireH2}, import_names: {lines}, target?: {tranco_rank}}]}]}`. It only makes candidates: a family FCP has gets its names, a family it lacks waits on its network (target and names). What FCP lacks comes back as **proposals** the operator may create; nothing is created by the import. One seed carries at most 800 names (targets included) in 100 families; a bigger one is refused whole. |
+| `toplist` | The Tranco top-sites list, resolved by ordinary lookups and kept where an answer lies in a hunting network's stored ranges (the sweep, below).                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `ct`      | Certificate transparency: the names that certificates of a registrable domain list (Cert Spotter), for a family's target or candidates the operator picks. Only names of that domain are kept.                                                                                                                                                                                                                                                                                                                                                         |
+
+A name a family already holds, one the operator ignored (the name, or its whole site: the
+registrable domain, public-suffix aware), and one past the scope's cap (2,000) is counted, never
+added. A candidate belongs to one **scope**: a network (a possible target and the names on its
+address), a family (names its target may serve), or both (a family on a network). Each scope
+holding candidates has a counts row (`sniHuntScopes`: how many it holds and how many are ready).
+An insert adds to its count at once, so the cap holds; any other change marks it for a recount,
+which the cron makes first (two a tick) before the scope in turn. The overview reads these rows,
+never the candidates themselves.
+
+**The top-sites sweep** (`sniHuntRuns`). Started by the cron when the last one ended
+`sweepEveryDays` ago and some network is hunting (Networks, "Find names on this network"; a
+network with ranges), or by `POST sni/hunt/sweep`. The list's latest id is read, its first
+`depth` entries downloaded once (sized by FCP: the list service's own path, never a URL from an
+answer) and stored in chunks of 10,000 (`sniHuntChunks`, plain `rank<TAB>name` lines) for the run's life, each site followed by
+its `www.` name while the rank is within `wwwDepth`. Then a **chain of short steps** resolves it:
+
+- A step **claims** the run (running, the generation it reads, an expired lease) and holds a
+  3-minute lease; a second step finds the lease held and leaves.
+- It resolves batches of up to 100 names, sized so a batch's lookups take at most half a step at
+  the configured rate (11 names at 1 a second with AAAA): A for every name, and AAAA for every
+  name too whenever a hunting network has IPv6 ranges (an AAAA-only name is a hit), at no more
+  than `lookupsPerSecond` (each lookup starts on its own slot).
+- After each batch it **checkpoints** with a compare-and-set on the generation, the lease and
+  the cursor: the hits become candidates, the cursor moves, the lease is renewed. A cancel
+  (`DELETE sni/hunt/sweep`, which bumps the generation) or a step that lost its lease writes
+  nothing, so what it resolved is discarded.
+- It starts no batch past 60 s (the action limit is 120 s), hands the lease back and schedules
+  the next step 5 s later. A step that died is taken over by the cron once its lease lapses.
+- Once the run ends (done, cancelled, failed), its stored list is deleted 16 chunks per
+  scheduled mutation (a full list is far more than one transaction may read).
+
+At the defaults (300,000 sites, www for the top 100,000: 400,000 names), 800,000 lookups at 20 a
+second take about 12 hours with AAAA (the gaps between steps included), 6 without. Every membership test is local (the ranges are
+compiled to sorted intervals, `lib/edges/sni/hunt/ranges.ts`).
+
+**Checks** (`sniHuntOps.check`, scheduled by the cron, apart from the sweep, so they progress
+during one). Due candidates (never checked first, then older than `recheckHours`) are claimed
+under a new generation and a lease, `checksPerTick` at a time; a run starts no candidate past
+60 s and hands back the ones it did not reach. Each candidate:
+
+1. Every A and every AAAA answer is read. The network test is on the **complete** set: one
+   answer off the network fails it, and only then are at most 4 addresses kept for the page.
+2. **Qualification's own verdict** (`judgeHandshake`, `qualificationNetworkCode`): a family
+   candidate against the family's target (the target dialled through the guarded dial,
+   presenting the candidate, the family's `requireH2`), exactly as qualification will judge it
+   once added; a network candidate against its own address (it would be the target), h2
+   required, dialled on the first address kept for the page (the one shown as its target). A
+   code (`q_*`) means it cannot be added.
+3. After a pass, two more handshakes on the same address: an X25519-only and an
+   X25519MLKEM768-only offer (TLS 1.3). They are recorded apart (`extra`: accepted, refused, or
+   an error when the server could not be reached) and never change the verdict.
+
+Handshakes keep qualification's pace (500 ms apart). `sni-qualify` itself is unchanged.
+
+**Score** (`lib/edges/sni/hunt/score.ts`, 0 to 100). A candidate that would not qualify scores 0.
+`baseScore`: popularity by rank (25), how many passing candidates of the scope share its first
+address (10), ML-KEM accepted and h2 (5 each), stability (5: passes at least a day apart).
+`score` adds evidence: near the node (30) and standing per country (20); missing or expired
+evidence counts **half** its part, so a measured good candidate ranks above an unmeasured one and
+a measured bad one below it. Penalties come off last.
+
+**States.** `new` (ready when it passed), `failing`, `gone` (it was on its network and now
+resolves off it; deleted after 30 days), `ignored`, `added` (a family holds it now; names are
+fleet-unique, so in every scope; the family import marks it, whichever route added the name). Ignored and added candidates are not checked. A name already
+in a family keeps today's guard: qualification suspends it when it moves off its network.
+
+**Certificate transparency** (`sniHuntCt`, one row per registrable domain and scope). A request
+reads one page after the last id read (`include_subdomains=true`, `expand=dns_names`; the
+service pages from the least recently discovered, so the newest certificates are on the last
+pages). Every request counts against `ctRequestsPerHour` before it is made, whatever its answer.
+A 429 waits for its Retry-After (`rate_limited`) and resumes from the same place. An empty page
+makes the answer `complete`, reused for 7 days; after `ctPagesPerDomain` pages it is
+`truncated` (never treated as complete: asked again, it reads further). An error is tried again
+after 6 hours.
+
+**The cron** `sni-hunt` (10 min) does no network work itself: it keeps the sweep's chain alive,
+starts a due sweep, schedules one check run and one certificate-log read when something is due,
+recounts the scopes whose candidates changed and rescores one more in turn (through
+`sniHuntScopes`, however many scopes there are), and deletes what aged out.
+
+| Setting (`edge.sni.hunt.*`) | Default           | What it does                                     |
+| --------------------------- | ----------------- | ------------------------------------------------ |
+| `enabled`                   | off               | The switch                                       |
+| `depth` / `wwwDepth`        | 300,000 / 100,000 | Sites swept, and how many of them also as `www.` |
+| `lookupsPerSecond`          | 20                | A and AAAA alike                                 |
+| `sweepEveryDays`            | 30                | A new sweep after the last one ended             |
+| `checksPerTick`             | 12                | Candidates per check run                         |
+| `recheckHours`              | 72                | A checked candidate is checked again             |
+| `shortlist`                 | 10                | Candidates per scope that get evidence           |
+| `ctRequestsPerHour`         | 6                 | Certificate-log requests, whatever their answer  |
+| `ctPagesPerDomain`          | 20                | Pages before an answer is `truncated`            |
+| `timingPerHour`             | 6                 | Timing measurements                              |
+
+Routes, under `/api/v1/admin/edges/`: `GET sni/hunt` (settings, the sweep, counts per network and
+family), `GET sni/hunt/networks/{slug}` and `GET sni/hunt/families/{slug}` (a page of 200 candidates of one
+state, best first: `?state=new|failing|gone|ignored|added|all`, default `new`, and `?cursor=` for
+the next page, so ignored and added rows never take the place of ones to decide; the sites
+grouped by the first address they live on; the certificate-log reads), `POST sni/hunt/sweep`,
+`DELETE sni/hunt/sweep`, `POST sni/hunt/networks/{slug} {enabled, place?: {country, city?}}`
+(where its nodes are: a place name for the timing checks, never an address), `POST
+sni/hunt/import {network | family, lines} | {seed}`, `POST sni/hunt/families/{slug}/cert`, `POST
+sni/hunt/ct {domains, network | family}`, `POST sni/hunt/candidates/{ignore|unignore|recheck}
+{ids, kind?: name | site}` (a site is read once per scope through its index, however many of
+its names were picked), `POST sni/hunt/candidates/add {family, names}` (the family's
+`importNames`, answered with its verdict per line). Settings: `PATCH sni/config {hunt: {...}}`. Rolling back to a build without finding names:
+run `sniHunt:clearForRollback` until it answers `left: 0` first (it deletes found candidates
+and their bookkeeping, and clears each network's `hunt`; families, names and networks stay).
+Audit: `edge.sni.hunt.*` and `edge.network.hunt`, with slugs and counts, never a name or an
+address.
 
 ### The page
 

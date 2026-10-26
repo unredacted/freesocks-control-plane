@@ -191,6 +191,10 @@ crons.interval('sni-report-sweep', { hours: 24 }, internal.sniReports.sweep, {})
 // Checks of names from inside opted-in countries: sweep, then at most one batch
 // per tick within the hourly budget (dormant until switched on per country).
 crons.interval('sni-vantage', { minutes: 10 }, internal.sniVantage.tick, {});
+// Finding names: keep the top-sites sweep's chain alive, start the next sweep
+// when due, and schedule one check run and one certificate-transparency read
+// (dormant until switched on; docs/edges.md "Finding names").
+crons.interval('sni-hunt', { minutes: 10 }, internal.sniHunt.tick, {});
 // Networks: read each network's announced ranges once a day (the request
 // carries the ASN only), then learn every location's network from its edges.
 crons.interval('edge-networks', { hours: 1 }, internal.edgeNetworks.tick, {});
