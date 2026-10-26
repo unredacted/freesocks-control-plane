@@ -1,7 +1,8 @@
 /**
  * Finding names (docs/edges.md "Finding names"): the only writer of
- * `sniCandidates`, `sniHuntIgnores`, `sniHuntRuns`, `sniHuntCt` and
- * `sniHuntCalls`.
+ * `sniCandidates` (but for the family import marking a held name `added`,
+ * `lib/edges/sni/hunt/store.ts`), `sniHuntIgnores`, `sniHuntRuns`,
+ * `sniHuntCt`, `sniHuntCalls` and `sniHuntScopes`.
  *
  * Candidate REALITY server names come from passive sources only: the
  * certificate a family's target already presents, a pasted list or seed, a
@@ -57,6 +58,8 @@ import {
   type HuntPlace,
 } from './lib/edges/sni/hunt/evidence';
 import { huntName, parseSeed, siteOf, type SeedNetwork } from './lib/edges/sni/hunt/sources';
+import { candidateScope, scopeRow, touchScope } from './lib/edges/sni/hunt/store';
+import { MAX_NETWORKS } from './edgeNetworks';
 import {
   passesAfterCheck,
   scoreCandidate,
@@ -94,6 +97,13 @@ const CHECK_SCAN_CAP = 400;
 const CT_DOMAINS_PER_REQUEST = 10;
 /** Lines one import may carry. */
 const MAX_IMPORT_LINES = 1000;
+/** What one seed may carry: each name costs a few index reads in the one mutation. */
+const SEED_MAX_NAMES = 800;
+const SEED_MAX_FAMILIES = 100;
+/** Dirty scopes recounted per cron tick, before the one in turn. */
+const DIRTY_SCOPES_PER_TICK = 2;
+/** List chunks deleted per mutation (each holds up to SWEEP_CHUNK_ENTRIES lines). */
+const CHUNK_DROP_PAGE = 16;
 
 const actor = { actorAdminId: v.optional(v.id('adminUsers')) };
 const refuse = (code: string, message: string): never => {
@@ -117,6 +127,9 @@ async function audit(
 
 const iso = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 const sameScope = (c: Scope, s: Scope) => c.networkId === s.networkId && c.familyId === s.familyId;
+/** Ready: not ignored, added, gone or failing, and passed its last check. */
+const passing = (c: Pick<Candidate, 'state' | 'check'>) =>
+  c.state === 'new' && c.check?.code === null;
 
 // --- scopes ----------------------------------------------------------------------------------
 
@@ -242,7 +255,8 @@ async function upsertNames(
       t.ignored++;
       continue;
     }
-    size ??= (await scopeRows(ctx.db, s).take(MAX_CANDIDATES_PER_SCOPE + 1)).length;
+    // The scope's count (inserts add to it at once, so it never runs short).
+    size ??= (await scopeRow(ctx.db, s))?.total ?? 0;
     if (size >= MAX_CANDIDATES_PER_SCOPE) {
       t.capped++;
       continue;
@@ -266,6 +280,7 @@ async function upsertNames(
     size++;
     t.added++;
   }
+  if (t.added > 0) await touchScope(ctx.db, s, now, t.added);
   return t;
 }
 
@@ -322,6 +337,13 @@ export const importCandidates = internalMutation({
     if (a.seed !== undefined) {
       const seed = parseSeed(a.seed);
       if (!seed) return refuse('edge.sni.hunt.bad_seed', 'That is not a seed');
+      const families = seed.flatMap((n) => n.families);
+      const names = families.reduce((sum, f) => sum + 1 + f.names.length, 0);
+      if (names > SEED_MAX_NAMES || families.length > SEED_MAX_FAMILIES)
+        return refuse(
+          'edge.sni.hunt.too_many',
+          `A seed holds at most ${SEED_MAX_NAMES} names in ${SEED_MAX_FAMILIES} families at a time`,
+        );
       for (const n of seed) {
         const net = await ctx.db
           .query('edgeNetworks')
@@ -386,6 +408,32 @@ export const importCandidates = internalMutation({
 
 // --- operator actions on candidates ----------------------------------------------------------
 
+/** A scope's candidates of one site, through its index (never the whole scope). */
+function siteRows(db: QueryCtx['db'], s: Scope, site: string) {
+  return db
+    .query('sniCandidates')
+    .withIndex('by_scope_site', (q) =>
+      q.eq('networkId', s.networkId).eq('familyId', s.familyId).eq('site', site),
+    )
+    .take(MAX_CANDIDATES_PER_SCOPE);
+}
+
+/** The names and sites ignored for a scope or everywhere, read once. */
+async function ignoredIn(db: QueryCtx['db'], s: Scope) {
+  const names = new Set<string>();
+  const sites = new Set<string>();
+  const keep = (r: Doc<'sniHuntIgnores'>) => (r.kind === 'name' ? names : sites).add(r.key);
+  for await (const r of s.familyId
+    ? db.query('sniHuntIgnores').withIndex('by_family', (q) => q.eq('familyId', s.familyId))
+    : db.query('sniHuntIgnores').withIndex('by_network', (q) => q.eq('networkId', s.networkId)))
+    if (sameScope(r, s)) keep(r);
+  for await (const r of db
+    .query('sniHuntIgnores')
+    .withIndex('by_network', (q) => q.eq('networkId', undefined)))
+    if (!r.familyId) keep(r);
+  return { names, sites };
+}
+
 export const setCandidates = internalMutation({
   args: {
     ids: v.array(v.string()),
@@ -401,14 +449,15 @@ export const setCandidates = internalMutation({
   handler: async (ctx, a) => {
     const now = Date.now();
     let changed = 0;
+    // A site is handled once per scope, however many of its names were picked.
+    const sitesDone = new Set<string>();
+    const touched = new Map<string, Scope>();
     for (const raw of a.ids.slice(0, 200)) {
       const id = ctx.db.normalizeId('sniCandidates', raw);
       const c = id ? await ctx.db.get(id) : null;
       if (!c) continue;
-      const scope: Scope = {
-        ...(c.networkId ? { networkId: c.networkId } : {}),
-        ...(c.familyId ? { familyId: c.familyId } : {}),
-      };
+      const scope = candidateScope(c);
+      const scopeKey = `${scope.networkId ?? ''}|${scope.familyId ?? ''}`;
       if (a.action === 'recheck') {
         if (c.state === 'ignored' || c.state === 'added') continue;
         await ctx.db.patch(c._id, { checkDueAt: 0, updatedAt: now });
@@ -425,6 +474,10 @@ export const setCandidates = internalMutation({
       const kind = a.kind ?? 'name';
       const key = kind === 'site' ? c.site : c.name;
       if (a.action === 'ignore') {
+        if (kind === 'site') {
+          if (sitesDone.has(`${scopeKey}|${c.site}`)) continue;
+          sitesDone.add(`${scopeKey}|${c.site}`);
+        }
         let existing = false;
         for await (const r of ctx.db
           .query('sniHuntIgnores')
@@ -438,15 +491,11 @@ export const setCandidates = internalMutation({
             at: now,
             ...(a.actorAdminId ? { by: a.actorAdminId } : {}),
           });
-        const rows =
-          kind === 'site'
-            ? (await scopeRows(ctx.db, scope).take(MAX_CANDIDATES_PER_SCOPE)).filter(
-                (r) => r.site === c.site,
-              )
-            : [c];
+        const rows = kind === 'site' ? await siteRows(ctx.db, scope, c.site) : [c];
         for (const r of rows)
-          if (r.state !== 'added') {
+          if (r.state !== 'added' && r.state !== 'ignored') {
             await ctx.db.patch(r._id, { state: 'ignored', updatedAt: now });
+            touched.set(scopeKey, scope);
             changed++;
           }
         continue;
@@ -454,6 +503,7 @@ export const setCandidates = internalMutation({
       // unignore: the name's and its site's ignores in this scope go. A site's
       // ignore covered every name of the site here, so all of them come back
       // (unless a name of theirs is ignored on its own), and are checked again.
+      if (sitesDone.has(`${scopeKey}|${c.site}`)) continue;
       let siteRule = false;
       for (const [k, key2] of [
         ['name', c.name],
@@ -469,53 +519,25 @@ export const setCandidates = internalMutation({
             if (k === 'site') siteRule = true;
           }
       }
-      const back = siteRule
-        ? (await scopeRows(ctx.db, scope).take(MAX_CANDIDATES_PER_SCOPE)).filter(
-            (r) => r.site === c.site,
-          )
-        : [c];
+      if (siteRule) sitesDone.add(`${scopeKey}|${c.site}`);
+      const back = siteRule ? await siteRows(ctx.db, scope, c.site) : [c];
+      // What is still ignored, read once for the site's names (never per name).
+      const still = siteRule ? await ignoredIn(ctx.db, scope) : null;
       for (const r of back) {
         if (r.state !== 'ignored') continue;
-        if (r._id !== c._id && (await isIgnored(ctx.db, r.name, r.site, scope))) continue;
+        if (r._id !== c._id && still && (still.names.has(r.name) || still.sites.has(r.site)))
+          continue;
         await ctx.db.patch(r._id, { state: 'new', checkDueAt: 0, updatedAt: now });
+        touched.set(scopeKey, scope);
         changed++;
       }
     }
+    for (const scope of touched.values()) await touchScope(ctx.db, scope, now);
     await audit(ctx, `edge.sni.hunt.${a.action}`, a.actorAdminId, {
       count: changed,
       ...(a.action === 'ignore' ? { kind: a.kind ?? 'name' } : {}),
     });
     return { changed };
-  },
-});
-
-/**
- * After names were added to a family (through `sniFamilies.importNames`): every
- * candidate row of a name a family now holds is `added`. Names are
- * fleet-unique, so that holds in every scope.
- */
-export const noteAdded = internalMutation({
-  args: { names: v.array(v.string()) },
-  handler: async (ctx, a) => {
-    const now = Date.now();
-    let marked = 0;
-    for (const raw of a.names.slice(0, MAX_IMPORT_LINES)) {
-      const name = huntName(raw);
-      if (!name) continue;
-      const held = await ctx.db
-        .query('sniNames')
-        .withIndex('by_name', (q) => q.eq('name', name))
-        .first();
-      if (!held) continue;
-      for await (const c of ctx.db
-        .query('sniCandidates')
-        .withIndex('by_name', (q) => q.eq('name', name)))
-        if (c.state !== 'added') {
-          await ctx.db.patch(c._id, { state: 'added', updatedAt: now });
-          marked++;
-        }
-    }
-    return { marked };
   },
 });
 
@@ -546,21 +568,40 @@ export const sweepNetworks = internalQuery({
     (await huntingNetworks(ctx.db)).map((n) => ({ key: n.id as string, prefixes: n.prefixes })),
 });
 
+/**
+ * A run's stored list goes once the run ends, a page of chunks per mutation:
+ * a full list is far more than one transaction may read.
+ */
 async function dropChunks(ctx: MutationCtx, run: Doc<'sniHuntRuns'>) {
-  for await (const c of ctx.db
-    .query('sniHuntChunks')
-    .withIndex('by_run_index', (q) => q.eq('runId', run._id)))
-    await ctx.db.delete(c._id);
+  await ctx.scheduler.runAfter(0, internal.sniHunt.dropRunChunks, { runId: run._id });
 }
 
-/** A candidate goes with its in-country checks (they repeat its name and address). */
-async function deleteCandidate(ctx: MutationCtx, id: Id<'sniCandidates'>) {
+export const dropRunChunks = internalMutation({
+  args: { runId: v.id('sniHuntRuns') },
+  handler: async (ctx, a) => {
+    const page = await ctx.db
+      .query('sniHuntChunks')
+      .withIndex('by_run_index', (q) => q.eq('runId', a.runId))
+      .take(CHUNK_DROP_PAGE);
+    for (const c of page) await ctx.db.delete(c._id);
+    if (page.length === CHUNK_DROP_PAGE)
+      await ctx.scheduler.runAfter(0, internal.sniHunt.dropRunChunks, a);
+    return { deleted: page.length };
+  },
+});
+
+/**
+ * A candidate goes with its in-country checks (they repeat its name and
+ * address), and its scope is recounted.
+ */
+async function deleteCandidate(ctx: MutationCtx, c: Candidate) {
   for (const p of await ctx.db
     .query('sniHuntProbes')
-    .withIndex('by_candidate', (q) => q.eq('candidateId', id))
+    .withIndex('by_candidate', (q) => q.eq('candidateId', c._id))
     .take(100))
     await ctx.db.delete(p._id);
-  await ctx.db.delete(id);
+  await ctx.db.delete(c._id);
+  await touchScope(ctx.db, candidateScope(c), Date.now());
 }
 
 /** One chunk of a downloading run's list, kept only while that download is current. */
@@ -834,9 +875,6 @@ function scoreRow(
   return { baseScore: scored.baseScore, score: scored.score, scoreParts: scored.parts };
 }
 
-const passing = (c: Pick<Candidate, 'state' | 'check'>) =>
-  c.state === 'new' && c.check?.code === null;
-
 /** Rescore one row after new evidence (the cluster part is kept as last computed). */
 /** Where a scope's nodes are, as timing stores it (`CC` or `CC/City`); null without a place. */
 async function placeKeyOf(db: QueryCtx['db'], networkId: Id<'edgeNetworks'> | undefined) {
@@ -902,7 +940,7 @@ export const claimChecks = internalMutation({
         const f = fams.get(k);
         // Gone, or moved to another network since it was found: its scope is no more.
         if (!f || f.networkId !== c.networkId) {
-          await deleteCandidate(ctx, c._id);
+          await deleteCandidate(ctx, c);
           continue;
         }
         target = { address: f.target.address, port: f.target.port, requireH2: f.requireH2 };
@@ -913,7 +951,7 @@ export const claimChecks = internalMutation({
           const n = await ctx.db.get(c.networkId);
           nets.set(k, n ? (hasPrefixes(n.prefixes) ? n.prefixes : null) : null);
           if (!n) {
-            await deleteCandidate(ctx, c._id);
+            await deleteCandidate(ctx, c);
             continue;
           }
         }
@@ -1011,6 +1049,8 @@ export const recordCheck = internalMutation({
       ...scored,
       updatedAt: a.at,
     });
+    if (passing(c) !== (state === 'new' && a.code === null))
+      await touchScope(ctx.db, candidateScope(c), a.at);
     return { ok: true as const, state };
   },
 });
@@ -1824,19 +1864,32 @@ async function rescoreScope(ctx: MutationCtx, s: Scope, now: number) {
       changed++;
     }
   }
+  await recountScope(ctx, s, rows, now);
   return changed;
 }
 
-/** Every scope that may hold candidates: hunting networks and families. */
-async function allScopes(db: QueryCtx['db']): Promise<Scope[]> {
-  const out: Scope[] = [];
-  for (const n of await db.query('edgeNetworks').take(200))
-    if (n.hunt?.enabled) out.push({ networkId: n._id });
-  for (const f of await db.query('sniFamilies').take(500))
-    out.push({ familyId: f._id, ...(f.networkId ? { networkId: f.networkId } : {}) });
-  return out;
+/** A scope's counts from its rows; a scope left empty drops out of the rotation. */
+async function recountScope(ctx: MutationCtx, s: Scope, rows: readonly Candidate[], now: number) {
+  const row = await scopeRow(ctx.db, s);
+  if (rows.length === 0) {
+    if (row) await ctx.db.delete(row._id);
+    return;
+  }
+  const counts = { total: rows.length, ready: rows.filter(passing).length };
+  if (!row)
+    await ctx.db.insert('sniHuntScopes', {
+      ...candidateScope(s),
+      kind: s.familyId ? 'family' : 'network',
+      ...counts,
+      countedAt: now,
+      updatedAt: now,
+    });
+  else await ctx.db.patch(row._id, { ...counts, dirty: undefined, countedAt: now, updatedAt: now });
 }
 
+const scopeOfRow = (r: Doc<'sniHuntScopes'>): Scope => candidateScope(r);
+
+/** The `_creationTime` of the scope rescored last in turn. */
 const RESCORE_KEY = 'sni:hunt:rescore';
 
 /**
@@ -1856,7 +1909,7 @@ export const tick = internalMutation({
       .query('sniCandidates')
       .withIndex('by_gone', (q) => q.gt('goneAt', 0).lt('goneAt', now - GONE_KEEP_MS))
       .take(100))
-      await deleteCandidate(ctx, g._id);
+      await deleteCandidate(ctx, g);
     for (const kind of ['ct', 'timing'] as const)
       for (const c of await ctx.db
         .query('sniHuntCalls')
@@ -1945,12 +1998,25 @@ export const tick = internalMutation({
       await ctx.scheduler.runAfter(0, internal.sniHuntOps.ctStep, {});
       scheduled.push('ct');
     }
-    // Rescore one scope a tick, in turn.
-    const scopes = await allScopes(ctx.db);
-    if (scopes.length > 0) {
-      const turn = (await readStateJson<number>(ctx.db, RESCORE_KEY)) ?? 0;
-      await rescoreScope(ctx, scopes[turn % scopes.length]!, now);
-      await writeStateJson(ctx.db, RESCORE_KEY, (turn + 1) % 1_000_000);
+    // Scopes whose candidates changed are recounted first; then one in turn,
+    // through every scope holding candidates (however many there are).
+    const done = new Set<string>();
+    for (const r of await ctx.db
+      .query('sniHuntScopes')
+      .withIndex('by_dirty', (q) => q.eq('dirty', true))
+      .take(DIRTY_SCOPES_PER_TICK)) {
+      await rescoreScope(ctx, scopeOfRow(r), now);
+      done.add(r._id);
+    }
+    const after = (await readStateJson<number>(ctx.db, RESCORE_KEY)) ?? 0;
+    const turn =
+      (await ctx.db
+        .query('sniHuntScopes')
+        .withIndex('by_creation_time', (q) => q.gt('_creationTime', after))
+        .first()) ?? (await ctx.db.query('sniHuntScopes').withIndex('by_creation_time').first());
+    if (turn) {
+      if (!done.has(turn._id)) await rescoreScope(ctx, scopeOfRow(turn), now);
+      await writeStateJson(ctx.db, RESCORE_KEY, turn._creationTime);
     }
     return { reason: null, scheduled };
   },
@@ -1998,10 +2064,22 @@ export const dropScope = internalMutation({
           .take(PAGE);
     // A candidate's in-country checks go with it: a batch already queued then
     // finds nothing of it left to dial.
-    for (const c of candidates) await deleteCandidate(ctx, c._id);
+    for (const c of candidates) await deleteCandidate(ctx, c);
     for (const r of [...ct, ...ignores]) await ctx.db.delete(r._id);
     const more = [candidates, ct, ignores].some((rows) => rows.length === PAGE);
     if (more) await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, a);
+    else
+      // Its counts rows go last (a network's include its families' scopes on it).
+      for (const r of fam
+        ? await ctx.db
+            .query('sniHuntScopes')
+            .withIndex('by_family', (q) => q.eq('familyId', fam))
+            .collect()
+        : await ctx.db
+            .query('sniHuntScopes')
+            .withIndex('by_scope', (q) => q.eq('networkId', net))
+            .collect())
+        await ctx.db.delete(r._id);
     return { deleted: candidates.length + ct.length + ignores.length };
   },
 });
@@ -2028,6 +2106,7 @@ export const clearForRollback = internalMutation({
       'sniHuntCt',
       'sniHuntCalls',
       'sniHuntProbes',
+      'sniHuntScopes',
     ] as const) {
       const rows = await ctx.db.query(table).take(PAGE);
       for (const r of rows) {
@@ -2244,29 +2323,32 @@ export const overview = internalQuery({
     const run =
       (await activeRun(ctx.db)) ??
       (await ctx.db.query('sniHuntRuns').withIndex('by_started').order('desc').first());
-    const count = async (s: Scope) => {
-      const rows = await scopeRows(ctx.db, s).take(MAX_CANDIDATES_PER_SCOPE);
-      return {
-        total: rows.length,
-        ready: rows.filter((r) => r.state === 'new' && r.check?.code === null).length,
-      };
-    };
+    // Counts as the scopes' last recount left them (`sniHuntScopes`): a scope
+    // whose candidates changed is recounted by the next cron tick.
     const networks = [];
-    for (const n of await ctx.db.query('edgeNetworks').take(200)) {
-      const any = n.hunt?.enabled || (await scopeRows(ctx.db, { networkId: n._id }).first());
+    for (const n of await ctx.db.query('edgeNetworks').take(MAX_NETWORKS)) {
+      const row = await scopeRow(ctx.db, { networkId: n._id });
       networks.push({
         slug: n.slug,
         label: n.label,
         hunt: { enabled: !!n.hunt?.enabled, place: n.hunt?.place ?? null },
         ranges: { v4: n.prefixes.v4.length, v6: n.prefixes.v6.length },
-        candidates: any ? await count({ networkId: n._id }) : { total: 0, ready: 0 },
+        candidates: { total: row?.total ?? 0, ready: row?.ready ?? 0 },
       });
     }
+    // Every family holding candidates (a family that moved network may hold two scopes).
+    const byFamily = new Map<string, { total: number; ready: number }>();
+    for await (const r of ctx.db
+      .query('sniHuntScopes')
+      .withIndex('by_kind', (q) => q.eq('kind', 'family'))) {
+      if (!r.familyId || r.total === 0) continue;
+      const had = byFamily.get(r.familyId) ?? { total: 0, ready: 0 };
+      byFamily.set(r.familyId, { total: had.total + r.total, ready: had.ready + r.ready });
+    }
     const families = [];
-    for (const f of await ctx.db.query('sniFamilies').take(500)) {
-      const s: Scope = { familyId: f._id, ...(f.networkId ? { networkId: f.networkId } : {}) };
-      if (!(await scopeRows(ctx.db, s).first())) continue;
-      families.push({ slug: f.slug, label: f.label, candidates: await count(s) });
+    for (const [id, candidates] of byFamily) {
+      const f = await ctx.db.get(id as Id<'sniFamilies'>);
+      if (f) families.push({ slug: f.slug, label: f.label, candidates });
     }
     networks.sort((x, y) => x.label.localeCompare(y.label));
     families.sort((x, y) => x.label.localeCompare(y.label));

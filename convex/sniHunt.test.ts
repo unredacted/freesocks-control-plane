@@ -24,7 +24,8 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { insertPanelServer, registerRelay } from './lib/edges/testing/fixtures';
-import { __setHuntDepsForTests, type HuntDeps } from './sniHuntOps';
+import { candidateScope, touchScope } from './lib/edges/sni/hunt/store';
+import { __setHuntDepsForTests, sweepBatchSize, type HuntDeps } from './sniHuntOps';
 import { SniHuntOverview, SniHuntScopeView } from '../src/shared/contracts/sni';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -280,6 +281,8 @@ describe('the top-sites sweep', () => {
     expect(await candidates(t)).toEqual([]);
     const run = (await t.run((ctx) => ctx.db.get(runId)))!;
     expect(run).toMatchObject({ state: 'cancelled', gen: 2, cursor: 0, chunks: [] });
+    // The stored list goes in scheduled pages.
+    await t.mutation(internal.sniHunt.dropRunChunks, { runId });
     expect(await t.run((ctx) => ctx.db.query('sniHuntChunks').collect())).toEqual([]);
     expect(await t.run((ctx) => ctx.db.query('sniHuntProbes').collect())).toEqual([]);
   });
@@ -719,8 +722,8 @@ describe('evidence', () => {
       fresh?: boolean;
     },
   ) {
-    return t.run((ctx) =>
-      ctx.db.insert('sniCandidates', {
+    return t.run(async (ctx) => {
+      const id = await ctx.db.insert('sniCandidates', {
         name: o.name,
         site: o.name.split('.').slice(-2).join('.'),
         ...(o.networkId ? { networkId: o.networkId } : {}),
@@ -759,8 +762,11 @@ describe('evidence', () => {
         score: 0,
         firstSeenAt: clock,
         updatedAt: clock,
-      }),
-    );
+      });
+      // As every insert does: the scope's counts row (the cron rotates through these).
+      await touchScope(ctx.db, candidateScope(o), clock, 1);
+      return id;
+    });
   }
 
   /** Globalping that answers by the address dialled: connect ms per address. */
@@ -1164,8 +1170,8 @@ async function listedCandidate(
     shown: string[];
   },
 ) {
-  return t.run((ctx) =>
-    ctx.db.insert('sniCandidates', {
+  return t.run(async (ctx) => {
+    const id = await ctx.db.insert('sniCandidates', {
       name: o.name,
       site: o.name.split('.').slice(-2).join('.'),
       networkId: o.networkId,
@@ -1189,8 +1195,10 @@ async function listedCandidate(
       score: 10,
       firstSeenAt: clock,
       updatedAt: clock,
-    }),
-  );
+    });
+    await touchScope(ctx.db, candidateScope(o), clock, 1);
+    return id;
+  });
 }
 
 describe('review round 2', () => {
@@ -1422,6 +1430,163 @@ describe('review round 3', () => {
     expect(
       await t.query(internal.sniHunt.countryBatchContext, { batch: 'b-requested' }),
     ).toBeNull();
+  });
+});
+
+describe('review round 2: sources and scopes', () => {
+  test('a sweep at the slowest lookup rate still advances', async () => {
+    // AAAA too (the fixture network has IPv6 ranges): two lookups a name.
+    expect(sweepBatchSize(1, 2)).toBeGreaterThanOrEqual(1);
+    expect((sweepBatchSize(1, 2) * 2 * 1000) / 1 + 8000).toBeLessThanOrEqual(30_000);
+    expect(sweepBatchSize(20, 2)).toBe(100);
+    const { t } = await seed();
+    await setting(t, 'edge.sni.hunt.lookupsPerSecond', 1);
+    const runId = await storedRun(
+      t,
+      Array.from({ length: 50 }, (_, i) => `n${i}.example`),
+    );
+    fakeDeps(
+      {},
+      {
+        sleep: async (ms) => {
+          clock += ms;
+        },
+      },
+    );
+    const r = await t.action(internal.sniHuntOps.sweepStep, { runId });
+    expect(r.batches).toBeGreaterThanOrEqual(1);
+    expect((await t.run((ctx) => ctx.db.get(runId)))!.cursor).toBeGreaterThan(0);
+  });
+
+  test('a network candidate is dialled on the address stored as its target', async () => {
+    const { t } = await seed();
+    await t.mutation(internal.sniHunt.importCandidates, {
+      network: 'net-a',
+      lines: ['two.example.org'],
+    });
+    // DNS order differs from the stored (sorted) order.
+    const { shakes } = fakeDeps({ 'two.example.org': { a: ['192.0.2.3', '192.0.2.20'] } });
+    await t.action(internal.sniHuntOps.check, {});
+    const [c] = await candidates(t);
+    expect(c!.check?.shown[0]).toBe('192.0.2.20');
+    expect(shakes[0]!.host).toBe('192.0.2.20');
+  });
+
+  test('a name added through the family import itself is marked added', async () => {
+    const { t } = await seed();
+    await t.mutation(internal.sniHunt.importCandidates, {
+      family: 'fam-a',
+      lines: ['good.example.com'],
+    });
+    await t.mutation(internal.sniFamilies.importNames, {
+      slug: 'fam-a',
+      lines: ['good.example.com'],
+    });
+    expect((await candidates(t))[0]!.state).toBe('added');
+  });
+
+  test('a list far past one transaction is deleted a page at a time', async () => {
+    const { t } = await seed();
+    const runId = await storedRun(t, ['a.example']);
+    await t.run(async (ctx) => {
+      for (let i = 1; i < 40; i++)
+        await ctx.db.insert('sniHuntChunks', { runId, index: i, text: `${i}\tn${i}.example` });
+    });
+    await t.mutation(internal.sniHunt.cancelSweep, {});
+    const sizes: number[] = [];
+    for (let i = 0; i < 4; i++)
+      sizes.push((await t.mutation(internal.sniHunt.dropRunChunks, { runId })).deleted);
+    expect(sizes).toEqual([16, 16, 8, 0]);
+  });
+
+  test('the overview counts from the scope rows, every family holding candidates included', async () => {
+    const { t, networkId } = await seed();
+    const slugs = await t.run(async (ctx) => {
+      const out: string[] = [];
+      for (let i = 0; i < 510; i++) {
+        const slug = `f${i}`;
+        await ctx.db.insert('sniFamilies', {
+          slug,
+          label: `F ${i}`,
+          target: { kind: 'static', address: 'target.example.com', port: 443 },
+          enabled: true,
+          requireH2: true,
+          networkId,
+          nextSeq: 0,
+          updatedAt: clock,
+        });
+        out.push(slug);
+      }
+      return out;
+    });
+    await t.mutation(internal.sniHunt.importCandidates, {
+      family: slugs.at(-1)!,
+      lines: ['late.example.com', 'later.example.com'],
+    });
+    const view = await t.query(internal.sniHunt.overview, {});
+    expect(view.families).toEqual([
+      { slug: 'f509', label: 'F 509', candidates: { total: 2, ready: 0 } },
+    ]);
+    // Checked and recounted by the cron, the ready count follows.
+    fakeDeps({
+      'late.example.com': { a: ['192.0.2.30'] },
+      'later.example.com': { a: ['192.0.2.31'] },
+      'target.example.com': { a: [TARGET_IP] },
+    });
+    await t.action(internal.sniHuntOps.check, {});
+    await t.mutation(internal.sniHunt.tick, { now: clock });
+    const after = await t.query(internal.sniHunt.overview, {});
+    expect(after.families[0]!.candidates).toEqual({ total: 2, ready: 2 });
+  });
+
+  test('a seed past its budget is refused whole', async () => {
+    const { t } = await seed();
+    await expect(
+      t.mutation(internal.sniHunt.importCandidates, {
+        seed: {
+          networks: [
+            {
+              network: { slug: 'net-a', label: 'Net A', asns: [64500] },
+              families: [
+                {
+                  create_family: { slug: 'fam-a', targetAddress: 'target.example.com' },
+                  import_names: {
+                    lines: Array.from({ length: 900 }, (_, i) => `n${i}.example.com`),
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ).rejects.toThrow(/at most/);
+    expect(await candidates(t)).toEqual([]);
+  });
+
+  test('ignoring a site reads its names once, however many of them were picked', async () => {
+    const { t } = await seed();
+    await t.mutation(internal.sniHunt.importCandidates, {
+      network: 'net-a',
+      lines: [...Array.from({ length: 30 }, (_, i) => `n${i}.big.example`), 'keep.other.example'],
+    });
+    const rows = await candidates(t);
+    const big = rows.filter((c) => c.site === 'big.example').map((c) => c._id as string);
+    const r = await t.mutation(internal.sniHunt.setCandidates, {
+      ids: big,
+      action: 'ignore',
+      kind: 'site',
+    });
+    expect(r.changed).toBe(30);
+    const after = await candidates(t);
+    expect(after.filter((c) => c.state === 'ignored')).toHaveLength(30);
+    expect(after.find((c) => c.name === 'keep.other.example')!.state).toBe('new');
+    expect(await t.run((ctx) => ctx.db.query('sniHuntIgnores').collect())).toHaveLength(1);
+    // Stopping it brings every name of the site back.
+    const back = await t.mutation(internal.sniHunt.setCandidates, {
+      ids: [big[0]!],
+      action: 'unignore',
+    });
+    expect(back.changed).toBe(30);
   });
 });
 
