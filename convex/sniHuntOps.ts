@@ -560,16 +560,30 @@ export const ctStep = internalAction({
 
 // --- evidence: timing and OONI -----------------------------------------------------------------------
 
-/** A measurement is given this long to finish (inside the action limit). */
+/** A measurement is given at most this long to finish. */
 const MEASURE_DEADLINE_MS = 45_000;
 const OONI_TIMEOUT_MS = 20_000;
+/**
+ * One deadline for a whole evidence run, inside the 120 s action limit: no
+ * timing starts past 40 s and none waits past 70 s; no OONI request starts
+ * past 75 s and none waits past 100 s. What a run cannot get to is handed back
+ * (`releaseEvidence`).
+ */
+const TIMING_START_UNTIL_MS = 40_000;
+const TIMING_WAIT_UNTIL_MS = 70_000;
+const OONI_START_UNTIL_MS = 75_000;
+const RUN_END_MS = 100_000;
 
-/** One Globalping measurement, created and waited for; its items, or null. */
-async function measure(client: GlobalpingLike, req: unknown): Promise<unknown[] | null> {
+/** One Globalping measurement, created and waited for (at most `waitMs`); its items, or null. */
+async function measure(
+  client: GlobalpingLike,
+  req: unknown,
+  waitMs: number,
+): Promise<unknown[] | null> {
   const res = await client.createMeasurement(req);
   const id = res.ok ? (res.data as { id?: unknown } | undefined)?.id : undefined;
   if (typeof id !== 'string') return null;
-  const deadline = deps.now() + MEASURE_DEADLINE_MS;
+  const deadline = deps.now() + Math.max(0, waitMs);
   while (deps.now() < deadline) {
     await deps.sleep(2000);
     const r = await client.getMeasurement(id);
@@ -579,10 +593,10 @@ async function measure(client: GlobalpingLike, req: unknown): Promise<unknown[] 
   return null;
 }
 
-async function ooniFor(domain: string, curated: readonly string[]) {
+async function ooniFor(domain: string, curated: readonly string[], timeoutMs: number) {
   try {
     const res = await deps.fetch(ooniUrl(domain, deps.now()), {
-      signal: AbortSignal.timeout(OONI_TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.max(1000, timeoutMs)),
       redirect: 'error',
       headers: { accept: 'application/json' },
     });
@@ -597,33 +611,50 @@ async function ooniFor(domain: string, curated: readonly string[]) {
 /**
  * Evidence for the shortlist: timing from the network's place (the family's
  * target presenting the name, which is what REALITY relays to; the candidate's
- * own site apart), and OONI for the exact name and, as context, its site.
+ * own site at the same time, apart), and OONI for the exact name and, as
+ * context, its site. Bounded by one deadline for the whole run.
  */
 export const evidence = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ timed: number; ooni: number }> => {
+  handler: async (ctx): Promise<{ timed: number; ooni: number; released: number }> => {
+    const started = deps.now();
+    const until = (ms: number) => started + ms - deps.now();
     const work: { timing: TimingItem[]; ooni: OoniItem[]; curated: string[]; token: string } =
-      await ctx.runMutation(internal.sniHunt.claimEvidence, { now: deps.now() });
+      await ctx.runMutation(internal.sniHunt.claimEvidence, { now: started });
+    const release: Array<{
+      id: Id<'sniCandidates'>;
+      calls: Id<'sniHuntCalls'>[];
+      measure: boolean;
+    }> = [];
     let timed = 0;
     if (work.timing.length > 0) {
       const client = deps.globalping(work.token);
+      let stop = false;
       for (const t of work.timing) {
-        const tests = globalpingTestsOf(timingRequest({ ...t, host: t.host }, t.place));
-        if ((await globalpingFits(client, tests * (t.own ? 2 : 1))) === false) break;
-        const items = await measure(
-          client,
-          timingRequest({ address: t.address, port: t.port, host: t.host }, t.place),
-        );
-        const main = items ? timingOf(items, t.place.country) : null;
-        let own: { endpoint: string; port: number; timing: NonNullable<typeof main> } | undefined;
-        if (t.own) {
-          const ownItems = await measure(
-            client,
-            timingRequest({ address: t.own.address, port: t.own.port, host: t.host }, t.place),
-          );
-          const o = ownItems ? timingOf(ownItems, t.place.country) : null;
-          if (o) own = { endpoint: t.own.address, port: t.own.port, timing: o };
+        const req = timingRequest({ address: t.address, port: t.port, host: t.host }, t.place);
+        if (!stop && until(TIMING_START_UNTIL_MS) <= 0) stop = true;
+        if (!stop) {
+          const tests = globalpingTestsOf(req) * (t.own ? 2 : 1);
+          if ((await globalpingFits(client, tests)) === false) stop = true;
         }
+        if (stop) {
+          release.push({ id: t.id, calls: t.calls, measure: t.measure });
+          continue;
+        }
+        const wait = Math.min(MEASURE_DEADLINE_MS, until(TIMING_WAIT_UNTIL_MS));
+        // The target and the candidate's own site from the same place, at the same time.
+        const [items, ownItems] = await Promise.all([
+          measure(client, req, wait),
+          t.own
+            ? measure(
+                client,
+                timingRequest({ address: t.own.address, port: t.own.port, host: t.host }, t.place),
+                wait,
+              )
+            : Promise.resolve(null),
+        ]);
+        const main = items ? timingOf(items, t.place.country) : null;
+        const o = ownItems ? timingOf(ownItems, t.place.country) : null;
         await ctx.runMutation(internal.sniHunt.recordTiming, {
           id: t.id,
           at: deps.now(),
@@ -631,36 +662,50 @@ export const evidence = internalAction({
           endpoint: t.address,
           port: t.port,
           ...(main ? { timing: main } : {}),
-          ...(own ? { own } : {}),
+          ...(o && t.own ? { own: { endpoint: t.own.address, port: t.own.port, timing: o } } : {}),
         });
         if (main) timed++;
       }
     }
     let read = 0;
-    for (const o of work.ooni) {
-      const exact = await ooniFor(o.name, work.curated);
-      if (!exact) continue;
-      // The site's apex and www: context only, never scored for another name.
-      const siteNames = [...new Set([o.site, `www.${o.site}`])].filter((d) => d !== o.name);
-      const site: NonNullable<typeof exact> = [];
-      for (const d of siteNames) {
-        const r = await ooniFor(d, work.curated);
-        if (!r) continue;
-        for (const x of r) {
-          const prev = site.find((y) => y.cc === x.cc);
-          if (!prev) site.push(x);
-          else if (x.measurements > prev.measurements) Object.assign(prev, x);
+    if (work.ooni.length > 0 && until(OONI_START_UNTIL_MS) <= 0) {
+      for (const o of work.ooni) release.push({ id: o.id, calls: [], measure: o.measure });
+    } else if (work.ooni.length > 0) {
+      const timeout = Math.min(OONI_TIMEOUT_MS, until(RUN_END_MS));
+      const answers = await Promise.all(
+        work.ooni.map(async (o) => {
+          // The site's apex and www: context only, never scored for another name.
+          const siteNames = [...new Set([o.site, `www.${o.site}`])].filter((d) => d !== o.name);
+          const [exact, ...sites] = await Promise.all([
+            ooniFor(o.name, work.curated, timeout),
+            ...siteNames.map((d) => ooniFor(d, work.curated, timeout)),
+          ]);
+          return { o, exact, sites };
+        }),
+      );
+      for (const { o, exact, sites } of answers) {
+        if (!exact) continue;
+        const site: NonNullable<typeof exact> = [];
+        for (const r of sites) {
+          if (!r) continue;
+          for (const x of r) {
+            const prev = site.find((y) => y.cc === x.cc);
+            if (!prev) site.push(x);
+            else if (x.measurements > prev.measurements) Object.assign(prev, x);
+          }
         }
+        await ctx.runMutation(internal.sniHunt.recordOoni, {
+          id: o.id,
+          at: deps.now(),
+          exact,
+          site,
+        });
+        read++;
       }
-      await ctx.runMutation(internal.sniHunt.recordOoni, {
-        id: o.id,
-        at: deps.now(),
-        exact,
-        site,
-      });
-      read++;
     }
-    return { timed, ooni: read };
+    if (release.length > 0)
+      await ctx.runMutation(internal.sniHunt.releaseEvidence, { items: release, now: deps.now() });
+    return { timed, ooni: read, released: release.length };
   },
 });
 

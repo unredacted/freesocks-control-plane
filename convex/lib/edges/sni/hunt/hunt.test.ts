@@ -332,18 +332,39 @@ describe('evidence', () => {
     ).toEqual([{ country: 'US', city: 'Springfield', limit: 2 }]);
   });
 
-  test('near the node: only fresh timing of the address the check dials now', () => {
+  test('near the node: only fresh timing of the address dialled now, from the place named now', () => {
     const now = 100 * 24 * 3_600_000;
-    const timing = { at: now - 1000, endpoint: '192.0.2.10', port: 443, connectMs: 12 };
-    expect(nearOf({ check: { dialled: '192.0.2.10', port: 443 }, timing }, now)).toBe(30);
+    const timing = {
+      at: now - 1000,
+      place: 'US/A',
+      endpoint: '192.0.2.10',
+      port: 443,
+      connectMs: 12,
+    };
+    const check = { dialled: '192.0.2.10', port: 443 };
+    expect(nearOf({ check, timing }, now, 'US/A')).toBe(30);
     // The target moved: the measurement is of another address.
-    expect(nearOf({ check: { dialled: '192.0.2.11', port: 443 }, timing }, now)).toBeUndefined();
     expect(
-      nearOf(
-        { check: { dialled: '192.0.2.10' }, timing: { ...timing, at: now - 15 * 86_400_000 } },
-        now,
-      ),
+      nearOf({ check: { dialled: '192.0.2.11', port: 443 }, timing }, now, 'US/A'),
     ).toBeUndefined();
+    expect(
+      nearOf({ check, timing: { ...timing, at: now - 15 * 86_400_000 } }, now, 'US/A'),
+    ).toBeUndefined();
+    // The network's place changed, or was cleared: measured from elsewhere.
+    expect(nearOf({ check, timing }, now, 'US/B')).toBeUndefined();
+    expect(nearOf({ check, timing }, now, null)).toBeUndefined();
+  });
+
+  test('a phase a probe did not time is left out, never read as zero', () => {
+    const items = [
+      {
+        probe: { country: 'US' },
+        result: { status: 'finished', timings: { tcp: null, tls: null } },
+      },
+      { probe: { country: 'US' }, result: { status: 'finished', timings: { tcp: 90, tls: null } } },
+    ];
+    expect(timingOf(items, 'US')).toEqual({ connectMs: 90, probes: 1 });
+    expect(timingOf([items[0]], 'US')).toBeNull();
   });
 
   test('OONI statuses and the per-country part (exact name only)', () => {
