@@ -920,6 +920,33 @@ export default defineSchema({
     .index('by_state', ['state', 'updatedAt'])
     .index('by_subscription', ['subscriptionId', 'state']),
 
+  // Suspicion (docs/edges.md "Address enumeration", docs/privacy.md). An
+  // account is named only by its MARK: HMAC(EDGE_MARK_PEPPER, `trust:` + userId)
+  // (lib/edges/trust.ts), so a database copy without the deployment's
+  // environment cannot tie a row to an account. Never in logs, audit or analytics.
+  //
+  // The FIRST time a trusted address was handed to an account (`/sub`, the
+  // raw-config view, a mirror): one row per (mark, edge), never rewritten, kept
+  // while the address lives and deleted with it. `edgeId` joins to the address
+  // in `edges`, and the mark links one account's rows across addresses.
+  edgeExposures: defineTable({
+    mark: v.string(),
+    edgeId: v.id('edges'),
+    at: v.number(),
+  })
+    .index('by_edge_at', ['edgeId', 'at'])
+    .index('by_mark_edge', ['mark', 'edgeId']),
+
+  // An account's strikes (timestamps, spaced and expired by lib/edges/trust.ts):
+  // deleted once its newest strike stops counting (`expiresAt`).
+  edgeTrust: defineTable({
+    mark: v.string(),
+    strikes: v.array(v.number()),
+    expiresAt: v.number(),
+  })
+    .index('by_mark', ['mark'])
+    .index('by_expires', ['expiresAt']),
+
   tierHistory: defineTable({
     userId: v.id('users'),
     fromTierId: v.optional(v.id('tiers')),
@@ -2180,6 +2207,11 @@ export default defineSchema({
     // were switched on; absent = open, for good (every address published
     // before lanes, or while they were off, was handed to everyone).
     lane: v.optional(v.literal('trusted')),
+    // The first time this (trusted) address was judged blocked (convex/edgeTrust.ts
+    // `noteBlocked`): claimed once, so repeated detector passes, a manual mark and
+    // a country round strike its fresh holders once. `evidenceAt`: when the block's
+    // evidence began.
+    blockClaim: v.optional(v.object({ at: v.number(), evidenceAt: v.number() })),
     updatedAt: v.number(),
   })
     .index('by_relay_status', ['relayId', 'status'])

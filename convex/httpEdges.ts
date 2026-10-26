@@ -67,6 +67,8 @@ const fail = makeFail('edges', statusFromCode);
  */
 const RESERVED = new Set([
   'summary',
+  // Address suspicion, counts only (convex/edgeTrust.ts).
+  'trust',
   'config',
   'providers',
   'templates',
@@ -388,6 +390,8 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     ]);
     return json({ templates, schemas });
   }
+  // Address suspicion (docs/edges.md "Address enumeration"): counts only, never an account.
+  if (a === 'trust' && !b) return json(await ctx.runAction(internal.edgeTrust.summary, {}));
   if (a === 'relays') {
     if (!b) return json(await ctx.runQuery(internal.relays.listForAdmin, {}));
     if (b === 'lookup' && !c) {

@@ -101,23 +101,31 @@ async function renderMirrorBody(
   return { ...out, content: finishMemberBody(out.content, naming) };
 }
 
-/** A mirror body as rendered, and what it left out (noted once an upload of it is accepted). */
+/**
+ * A mirror body as rendered, what it left out and the addresses it hands out
+ * (both noted once an upload of it is accepted).
+ */
 interface MirrorRender {
   content: string;
   renderedEpoch: number | null;
   validated: MirrorValidation | null;
   withheld?: WithheldNote;
+  handed?: { subscriptionId: Id<'subscriptions'>; edgeIds: Id<'edges'>[] };
 }
 
 /**
- * The render left entries out and its body now serves from the mirror (an
- * upload accepted under the mirror barrier, or the identical body already
- * there): tell the operator, as the fronted route does. Never for a body that
- * was not uploaded or that a moved policy overtook.
+ * The body now serves from the mirror (an upload accepted under the mirror
+ * barrier, or the identical body already there): if the render left entries
+ * out, tell the operator, as the fronted route does; and the account was
+ * handed its addresses (their first exposure, convex/edgeTrust.ts). Never for
+ * a body that was not uploaded or that a moved policy overtook: an account is
+ * never held to an address its mirror did not serve.
  */
-async function noteMirrorWithheld(ctx: ActionCtx, rendered: MirrorRender): Promise<void> {
-  if (!rendered.withheld) return;
-  await noteWithheldEntries(ctx, rendered.withheld.rctx, rendered.withheld.names, Date.now());
+async function noteMirrorAccepted(ctx: ActionCtx, rendered: MirrorRender): Promise<void> {
+  if (rendered.withheld)
+    await noteWithheldEntries(ctx, rendered.withheld.rctx, rendered.withheld.names, Date.now());
+  if (rendered.handed && rendered.handed.edgeIds.length > 0)
+    await ctx.runMutation(internal.edgeTrust.noteExposure, rendered.handed);
 }
 
 /** The edge-render half of `renderMirrorBody`. */
@@ -166,11 +174,15 @@ async function renderMirrorEndpoints(
     avoidBlockedIn: rctx.storedAvoidBlockedIn,
   });
   if (out.delivery.kind !== 'serve') return stub(rctx.epoch);
+  const handed = [out.snapshot.primaryEdgeId, out.snapshot.backupEdgeId].filter(
+    (x): x is string => !!x,
+  ) as Id<'edges'>[];
   return {
     content: out.body,
     renderedEpoch: rctx.epoch,
-    // Noted only once an upload of this body is accepted (`noteMirrorWithheld`).
+    // Both noted only once an upload of this body is accepted (`noteMirrorAccepted`).
     ...(out.withheld?.length ? { withheld: { rctx, names: out.withheld } } : {}),
+    handed: { subscriptionId: sub.id, edgeIds: handed },
     validated: {
       policyVersion: policy.bindingVersion ?? 0,
       epoch: rctx.epoch,
@@ -458,7 +470,7 @@ export const provisionMirror = internalAction({
     // the repair pass re-renders it under the policy that holds now.
     if ((await tokenOf()) === tokenBefore) {
       await ctx.runMutation(internal.mirrorUploads.settle, { id: obligationId });
-      await noteMirrorWithheld(ctx, rendered);
+      await noteMirrorAccepted(ctx, rendered);
     }
     return {
       status: 'ok',
@@ -652,7 +664,7 @@ async function refreshOneSubMirrors(
       // and the mirror is already correct, so record it.
       await recordPin();
       await stampContent();
-      await noteMirrorWithheld(ctx, rendered);
+      await noteMirrorAccepted(ctx, rendered);
       return false;
     }
     // The mirror barrier: the obligation is open before the object is
@@ -716,7 +728,7 @@ async function refreshOneSubMirrors(
       ...(allSucceeded && !moved ? { rawContentHash: hash } : {}),
     });
     if (moved) return true;
-    await noteMirrorWithheld(ctx, rendered);
+    await noteMirrorAccepted(ctx, rendered);
     if (allSucceeded)
       // Nothing moved and every copy was rewritten: the obligation is met (and
       // every earlier one of these copies with it).

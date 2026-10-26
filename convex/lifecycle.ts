@@ -35,6 +35,7 @@ import { resolvePlacementTarget } from './lib/remnawavePlacement';
 import { resolveDefaultFreeTier } from './tiers';
 import type { BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
+import { forgetAccount } from './edgeTrust';
 
 // --- entitlement seam ------------------------------------------------------
 
@@ -1172,6 +1173,8 @@ export const deleteInactiveUser = internalMutation({
       driftDelta: u.backendPushFailedAt != null ? -1 : 0,
       creationTime: u._creationTime,
     });
+    // Address suspicion's rows about this account (convex/edgeTrust.ts).
+    await forgetAccount(ctx, userId);
     await ctx.db.delete(userId);
     return null;
   },

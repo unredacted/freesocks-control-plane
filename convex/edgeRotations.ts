@@ -175,6 +175,7 @@ import { clientCheckFailedNow, clientCheckReadiness, runClientCheck } from './ed
 import { locationTicked } from './lib/edges/tickedLocation';
 import { replacementPlacement, replacementPolicyOf } from './lib/edges/replacementHolders';
 import { isOpenLaneReplace, laneForPublish, openBudgetLeft, openReplacesToday } from './edgeLanes';
+import { noteBlockedIn } from './edgeTrust';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -1367,6 +1368,10 @@ export async function startRotation(
       : {}),
     updatedAt: now,
   });
+  // An operator's "address is blocked": judged blocked for suspicion now
+  // (convex/edgeTrust.ts; the detector's own burns are judged in its pass).
+  if (a.kind === 'replace' && a.burn && a.trigger !== 'detector' && a.targetEdgeId)
+    await noteBlockedIn(ctx, a.targetEdgeId, now, now);
   if (
     a.kind === 'provision' &&
     a.allowUnqualified &&

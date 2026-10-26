@@ -26,6 +26,7 @@
   import MaintenanceCard from './settings/MaintenanceCard.svelte';
   import FreedomDeliveryCard from './settings/FreedomDeliveryCard.svelte';
   import ClientCheckCard from './settings/ClientCheckCard.svelte';
+  import TrustCounts from './settings/TrustCounts.svelte';
   import { ConfigForm } from './settings/form.svelte';
   import {
     AUTO_PROVISION,
@@ -174,6 +175,7 @@
           <ConfigField {field} {form} />
         {/each}
       </div>
+      <TrustCounts />
       {#each drainCodes as code (code)}
         <CodeNote issue={{ code }} tone="warning" class="mt-4" />
       {/each}

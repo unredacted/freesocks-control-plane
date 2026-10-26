@@ -182,6 +182,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Origin edges: score reports + load + probes per origin; opt-in auto-rotate',
   },
   {
+    name: 'edge-trust-sweep',
+    everyMs: DAY,
+    description: 'Address suspicion: drop expired strikes and exposures of addresses gone',
+  },
+  {
     name: 'alerts-dispatch',
     everyMs: 5 * MIN,
     description: 'Operator alerts: post new alert-worthy attention items to the webhook (opt-in)',

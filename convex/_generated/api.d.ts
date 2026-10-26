@@ -66,6 +66,7 @@ import type * as edgeSimulations from "../edgeSimulations.js";
 import type * as edgeTemplates from "../edgeTemplates.js";
 import type * as edgeTestCredentials from "../edgeTestCredentials.js";
 import type * as edgeTestLinks from "../edgeTestLinks.js";
+import type * as edgeTrust from "../edgeTrust.js";
 import type * as edgeVerification from "../edgeVerification.js";
 import type * as edges from "../edges.js";
 import type * as freeTier from "../freeTier.js";
@@ -253,6 +254,7 @@ declare const fullApi: ApiFromModules<{
   edgeTemplates: typeof edgeTemplates;
   edgeTestCredentials: typeof edgeTestCredentials;
   edgeTestLinks: typeof edgeTestLinks;
+  edgeTrust: typeof edgeTrust;
   edgeVerification: typeof edgeVerification;
   edges: typeof edges;
   freeTier: typeof freeTier;

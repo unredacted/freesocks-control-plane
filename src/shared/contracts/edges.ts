@@ -2196,7 +2196,25 @@ export const EdgeConfigView = z.object({
       clientCheck: z.object({ enabled: z.boolean() }).default({ enabled: false }),
       replacement: z.object({ reblockHours: z.number() }).default({ reblockHours: 24 }),
       /** Address lanes (absent from an older server: the defaults). */
-      trust: z.object({ promoteAfterDays: z.number() }).default({ promoteAfterDays: 14 }),
+      trust: z
+        .object({
+          promoteAfterDays: z.number(),
+          windowDays: z.number().default(7),
+          firstWaveHours: z.number().default(24),
+          maxFreshHolders: z.number().default(50),
+          strikeSpacingHours: z.number().default(24),
+          strikesToSuspect: z.number().default(3),
+          strikeDays: z.number().default(30),
+        })
+        .default({
+          promoteAfterDays: 14,
+          windowDays: 7,
+          firstWaveHours: 24,
+          maxFreshHolders: 50,
+          strikeSpacingHours: 24,
+          strikesToSuspect: 3,
+          strikeDays: 30,
+        }),
       lanes: z
         .object({ openReplacesPerDay: z.number(), openReplacesPerFleetDay: z.number() })
         .default({ openReplacesPerDay: 1, openReplacesPerFleetDay: 10 }),
@@ -2492,6 +2510,16 @@ export const LanesView = z.object({
   openReplacesPerDay: z.number(),
 });
 export type LanesView = z.infer<typeof LanesView>;
+
+/** `GET trust`: address suspicion as counts only (docs/edges.md "Address enumeration"). */
+export const TrustSummary = z.object({
+  suspected: z.number(),
+  withStrikes: z.number(),
+  strikesToday: z.number(),
+  demotionsToday: z.number(),
+  since: isoN,
+});
+export type TrustSummary = z.infer<typeof TrustSummary>;
 
 /** `POST relays/{id}/lanes`. */
 export const LanesResponse = z.object({

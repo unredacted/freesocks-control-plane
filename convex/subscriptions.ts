@@ -19,6 +19,7 @@ import { resolveCensoredCountries } from './lib/censoredCountries';
 import { storedCountry } from './lib/memberCountry';
 import { carriedCountry, onPlacementChanged, resolveMemberCountryConfig } from './memberCountry';
 import { memberLaneOfUser } from './edgeLanes';
+import { noteExposures } from './edgeTrust';
 
 const mirror = v.object({
   provider: v.string(),
@@ -343,6 +344,12 @@ export const markDelivered = internalMutation({
     const sub = await ctx.db.get(subscriptionId);
     if (!sub) return null;
     const now = Date.now();
+    // Whatever else is kept, the account WAS handed these addresses: their
+    // first exposure is recorded (convex/edgeTrust.ts), stale revision, moved
+    // lane or not. Only when the snapshot differs from the stored one, so a
+    // poll that hands out the same pair writes nothing.
+    if (given && !sameSnapshot(sub.lastRender, given))
+      await noteExposures(ctx, sub.userId, [given.primaryEdgeId, given.backupEdgeId], now);
     // A request that read the row before the key moved in place served what it
     // carried THEN: the delivery is recorded, never its content time, epoch or
     // snapshot (they describe a placement the key has left). The same for a

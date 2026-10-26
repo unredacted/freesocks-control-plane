@@ -32,6 +32,7 @@ import { edgeOutage, sustainedCountriesOf } from './lib/edges/probes/sustained';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { resolveSniVantageConfig } from './lib/sniConfig';
 import { addressFamily } from './lib/edges/ip';
+import { noteBlockedIn } from './edgeTrust';
 import {
   EMPTY_ADDRESS_TRACK,
   EMPTY_HANDSHAKE_TRACK,
@@ -619,6 +620,13 @@ export async function refreshEdgeCountryState(
   await ctx.db.patch(edge._id, {
     countryState: byCountry.length > 0 ? { byCountry, updatedAt: now } : undefined,
   });
+  // A trusted address newly blocked somewhere is judged blocked for suspicion
+  // too (convex/edgeTrust.ts, claimed once per address), from now.
+  const wasBlocked = new Set(
+    (edge.countryState?.byCountry ?? []).filter((c) => c.state === 'blocked').map((c) => c.country),
+  );
+  const newly = byCountry.filter((c) => c.state === 'blocked' && !wasBlocked.has(c.country));
+  if (newly.length > 0 && edge.lane === 'trusted') await noteBlockedIn(ctx, edge._id, now, now);
 }
 
 // --- reads for the setup runs and rotations ---------------------------------------------------------
