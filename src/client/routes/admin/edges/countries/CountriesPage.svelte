@@ -2,8 +2,9 @@
   /**
    * Admin -> Edges -> Countries (`/admin/edges/countries`): every country on the
    * censored-country list with how many published addresses and server names
-   * work or are blocked there, nodes at risk, and how many members there hold
-   * a blocked address. Each row opens the country (CountryPage).
+   * work or are blocked there, nodes at risk, how many members there hold a
+   * blocked address, and when the outside probes from there fall short (not
+   * asked, or a source gone quiet and why). Each row opens the country (CountryPage).
    *
    * All wording lives in ./words.ts (pure, unit-tested).
    */
@@ -15,7 +16,14 @@
   import StatusDot from '../simple/StatusDot.svelte';
   import { edgesPaths } from '../lib/routes';
   import { relativeTime } from '../lib/time';
-  import { countryDot, countryLabel, percent, switchNotes, totalsLine } from './words';
+  import {
+    countryDot,
+    countryLabel,
+    coverageNote,
+    percent,
+    switchNotes,
+    totalsLine,
+  } from './words';
 
   const summary = countryViewSummaryQuery();
   let now = $derived(summary.data?.generatedAt ?? Date.now());
@@ -60,6 +68,12 @@
   {:else}
     <ul class="space-y-3" aria-label="Countries">
       {#each summary.data.countries as c (c.country)}
+        {@const probesNote = coverageNote(
+          c.probes,
+          summary.data.sources,
+          summary.data.switches.probes,
+          now,
+        )}
         <li>
           <Link
             href={edgesPaths.country(c.country)}
@@ -87,6 +101,9 @@
                   ? `Newest evidence ${relativeTime(c.totals.lastEvidenceAt, now)}.`
                   : 'No evidence yet.'}
               </span>
+              {#if probesNote}
+                <span class="block text-sm text-amber-700 dark:text-amber-300">{probesNote}</span>
+              {/if}
             </span>
             <ChevronRight
               class="text-muted-foreground size-4 shrink-0 rtl:rotate-180"

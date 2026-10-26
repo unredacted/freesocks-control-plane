@@ -4,7 +4,8 @@
  * the per-country evidence of each (edge tracks, marks, location grades,
  * address-level probes, the names' marks, the checks from inside, member
  * reports), handed to the pure builder (lib/edges/country/view.ts) once per
- * country. Read only: nothing here writes.
+ * country, and which outside probe sources still answer from each country
+ * (lib/edges/country/coverage.ts). Read only: nothing here writes.
  *
  * Every per-edge, per-location and per-name read covers EVERY country in one
  * index range (`prefetch`), and each country is then built in memory: the
@@ -32,6 +33,8 @@ import { countryGroupKey } from './lib/edges/country/group';
 import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
 import { suggest } from './lib/edges/sni/vantage';
 import { readingOf } from './lib/edges/sni/realHost';
+import { coverageOf, newestAnswers, type NewestAnswers } from './lib/edges/country/coverage';
+import { enabledSources } from './probes';
 import {
   actedState,
   buildCountryView,
@@ -188,6 +191,19 @@ interface Prefetched {
   families: Map<string, Doc<'sniFamilies'> | null>;
   nameMarks: Map<string, Doc<'sniNameCountry'>>;
   vantage: Map<string, Doc<'sniVantageEvidence'>>;
+  /** Each outside source's newest answer per country, over every address shown (coverage.ts). */
+  answers: NewestAnswers;
+}
+
+/** Every country's rollup rows of one probe target, folded into `into` (one index range). */
+async function answersOf(db: Db, kind: 'edge' | 'relay', ref: string, into: NewestAnswers) {
+  newestAnswers(
+    await db
+      .query('probeReachability')
+      .withIndex('by_target_country', (q) => q.eq('targetKind', kind).eq('targetRef', ref))
+      .collect(),
+    into,
+  );
 }
 
 async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
@@ -200,11 +216,14 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
     families: new Map(),
     nameMarks: new Map(),
     vantage: new Map(),
+    answers: new Map(),
   };
   const groups = new Set<string>();
-  for (const o of loaded.origins)
+  for (const o of loaded.origins) {
+    if (o.input.direct) await answersOf(db, 'relay', o.input.relayId, p.answers);
     for (const { doc, groupKey } of o.edges) {
       groups.add(groupKey);
+      await answersOf(db, 'edge', doc._id, p.answers);
       for (const r of await db
         .query('edgeCountryEvidence')
         .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id))
@@ -216,6 +235,7 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
         .collect())
         if (m.scope === 'edge') p.edgeMarks.set(keyOf(doc._id, m.country), m);
     }
+  }
   for (const g of groups) {
     for (const m of await db
       .query('countryMarks')
@@ -280,7 +300,25 @@ async function settingsOf(db: Db) {
     },
     nameCheckCountries: vantageOn ? vantageCountries(vantage, sni.curatedCountries) : [],
     controls: controlCountriesOf(cfg, censored.codes),
+    probeSources: enabledSources(cfg, secrets),
+    // How long an answer counts: the reachability summaries' own window (probes.ts).
+    answerWindowMs: 2 * cfg.probe.intervalMinutes * 60_000,
   };
+}
+
+/** Which outside sources answer from a country, and since when (coverage.ts). */
+function coverageFor(
+  st: Settings,
+  pre: Prefetched,
+  country: string,
+  listed: ReturnType<typeof listedOf>,
+  now: number,
+) {
+  return coverageOf(pre.answers, country, st.probeSources, {
+    asked: st.switches.probes && !!listed?.checkEdges,
+    windowMs: st.answerWindowMs,
+    now,
+  });
 }
 
 type Settings = Awaited<ReturnType<typeof settingsOf>>;
@@ -564,9 +602,11 @@ export const summary = internalQuery({
       const handedBlocked = origins.flatMap((o) =>
         o.listeners.filter((l) => l.members.computed).map((l) => l.members.onBlockedAddress),
       );
+      const listed = listedOf(st, c.code)!;
       countries.push({
         country: c.code,
-        listed: listedOf(st, c.code)!,
+        listed,
+        probes: coverageFor(st, pre, c.code, listed, now),
         totals,
         /** The worst share of members holding an address blocked there, over every transport. */
         worstOnBlocked: handedBlocked.length > 0 ? Math.max(...handedBlocked) : null,
@@ -593,10 +633,12 @@ export const country = internalQuery({
     const pre = await prefetch(ctx.db, loaded);
     const reports = await reportsFor(ctx.db, pre, code, st, now);
     const { origins, totals } = viewOf(loaded, pre, st, code, now, reports);
+    const listed = listedOf(st, code);
     return {
       country: code,
       generatedAt: now,
-      listed: listedOf(st, code),
+      listed,
+      probes: coverageFor(st, pre, code, listed, now),
       switches: st.switches,
       controls: st.controls,
       curated: st.sni.curatedCountries.includes(code),

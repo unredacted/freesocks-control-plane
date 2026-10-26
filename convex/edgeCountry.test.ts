@@ -387,6 +387,13 @@ describe('edgeCountry: a source that errors is no evidence', () => {
     const runs = await t.query(internal.probes.listRuns, { target: { kind: 'edge', ref: edgeId } });
     expect(runs.map((r) => r.source).sort()).toEqual(['globalping', 'internal', 'internal']);
     expect(gp.requests).toHaveLength(1);
+    // No failed run says Globalping sat the round out: its cap's use does.
+    const health = await t.query(internal.probes.sourceHealthView, {});
+    const cap = health.sources.find((s) => s.source === 'globalping')!.cap!;
+    const asked = runs.find((r) => r.source === 'globalping')!.tests;
+    expect(asked).toBeGreaterThan(0);
+    expect(cap).toMatchObject({ perHour: 10, used: asked });
+    expect(cap.used + cap.perRun).toBeGreaterThan(cap.perHour);
   });
 });
 

@@ -38,7 +38,12 @@ import {
   type EdgeConfig,
 } from './lib/edgeConfig';
 import { resolveCensoredCountries } from './lib/censoredCountries';
-import { failureCode, sourceHealth, type SourceHealth } from './lib/edges/country/sourceHealth';
+import {
+  failureCode,
+  sourceHealth,
+  type GlobalpingCap,
+  type SourceHealth,
+} from './lib/edges/country/sourceHealth';
 import { networkIdOf } from './lib/edges/country/verdict';
 import { settleRoundIfDone, dueRepeatEdges } from './edgeCountry';
 import { addressFamily, bracketIfV6 } from './lib/edges/ip';
@@ -541,9 +546,9 @@ export function globalpingTestsPerRun(cfg: EdgeConfig, controls: number): number
 }
 
 /**
- * Globalping probes asked for in the last hour (`probeRuns.tests`). Reads the
- * same bounded window as `spentThisHour` (the run budget caps how many there
- * can be).
+ * Globalping probes asked for in the last hour (`probeRuns.tests`), whatever
+ * the runs' state: Globalping's own runs only, bounded like `spentThisHour`'s
+ * five status reads (the run budget caps how many there can be).
  */
 async function globalpingTestsThisHour(
   db: QueryCtx['db'],
@@ -552,13 +557,13 @@ async function globalpingTestsThisHour(
 ): Promise<number> {
   const hourStart = now - 60 * MIN;
   let tests = 0;
-  for (const status of ['requested', 'running', 'finished', 'failed', 'timeout'] as const) {
-    for (const r of await db
-      .query('probeRuns')
-      .withIndex('by_status_requested', (q) => q.eq('status', status).gte('requestedAt', hourStart))
-      .take(hourlyBudget + 1))
-      if (r.source === 'globalping') tests += r.tests ?? 0;
-  }
+  for (const r of await db
+    .query('probeRuns')
+    .withIndex('by_source_requested', (q) =>
+      q.eq('source', 'globalping').gte('requestedAt', hourStart),
+    )
+    .take(5 * (hourlyBudget + 1)))
+    tests += r.tests ?? 0;
   return tests;
 }
 
@@ -1302,7 +1307,19 @@ export async function probeSourceHealth(db: QueryCtx['db'], now: number): Promis
         results: r.results.length,
         ...(r.error !== undefined ? { error: r.error } : {}),
       });
-  return sourceHealth(sources, runs, now);
+  const health = sourceHealth(sources, runs, now);
+  if (!sources.includes('globalping')) return health;
+  // A round that would pass Globalping's hourly cap runs without it: no failed
+  // run says so, only the cap's use does.
+  const controls = cfg.country.enabled
+    ? controlCountriesOf(cfg, (await resolveCensoredCountries(db)).codes).length
+    : 0;
+  const cap: GlobalpingCap = {
+    used: await globalpingTestsThisHour(db, now, cfg.probe.hourlyBudget),
+    perHour: cfg.probe.globalpingTestsPerHour,
+    perRun: globalpingTestsPerRun(cfg, controls),
+  };
+  return health.map((h) => (h.source === 'globalping' ? { ...h, cap } : h));
 }
 
 const isoOrNull = (n: number | null) => (n === null ? null : new Date(n).toISOString());

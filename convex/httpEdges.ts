@@ -522,11 +522,22 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     return r ? json(r) : notFound();
   }
   // The country view (edgeCountryView.ts): every listed country with its totals,
-  // or one country in full (origins -> transports -> addresses and names).
-  if (a === 'countries' && b === 'summary' && !c)
-    return json(await ctx.runQuery(internal.edgeCountryView.summary, {}));
-  if (a === 'countries' && b && /^[A-Za-z]{2}$/.test(b) && !c)
-    return json(await ctx.runQuery(internal.edgeCountryView.country, { country: b }));
+  // or one country in full (origins -> transports -> addresses and names), with
+  // the probe sources' health (a failing or capped source is why a country goes quiet).
+  if (a === 'countries' && b === 'summary' && !c) {
+    const [view, sources] = await Promise.all([
+      ctx.runQuery(internal.edgeCountryView.summary, {}),
+      ctx.runQuery(internal.probes.sourceHealthView, {}),
+    ]);
+    return json({ ...view, sources: sources.sources });
+  }
+  if (a === 'countries' && b && /^[A-Za-z]{2}$/.test(b) && !c) {
+    const [view, sources] = await Promise.all([
+      ctx.runQuery(internal.edgeCountryView.country, { country: b }),
+      ctx.runQuery(internal.probes.sourceHealthView, {}),
+    ]);
+    return json({ ...view, sources: sources.sources });
+  }
   if (a === 'countries' && !b) {
     // Per-country checks of edges (edgeCountry.ts): grades, tracks, marks, sources.
     const [overview, sources] = await Promise.all([
