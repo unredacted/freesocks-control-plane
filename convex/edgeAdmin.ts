@@ -9,6 +9,7 @@ import { ConvexError, v } from 'convex/values';
 import { verificationListenerOf } from './lib/edges/verificationContext';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import {
@@ -563,6 +564,42 @@ export const setEdgePick = internalMutation({
       payload: { relaySlug: origin.slug, version: version ?? 'legacy' },
     });
     return { ok: true as const, changed, edgePick: version };
+  },
+});
+
+/**
+ * The step before rolling back to a build without seats and the address pick
+ * (docs/edges.md § "Deploy notes"): drops `users.renderSeat` and
+ * `relays.edgePick`, page by page, scheduling itself until done. Every key keeps
+ * its `renderKey`, so nobody moves; origins go back to the legacy walk.
+ */
+export const clearSeatsForRollback = internalMutation({
+  args: {
+    phase: v.optional(v.union(v.literal('users'), v.literal('relays'))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, { phase, cursor }) => {
+    let cleared = 0;
+    if ((phase ?? 'users') === 'users') {
+      const page = await ctx.db.query('users').paginate({ cursor: cursor ?? null, numItems: 200 });
+      for (const u of page.page)
+        if (u.renderSeat !== undefined) {
+          await ctx.db.patch(u._id, { renderSeat: undefined });
+          cleared++;
+        }
+      await ctx.scheduler.runAfter(
+        0,
+        internal.edgeAdmin.clearSeatsForRollback,
+        page.isDone ? { phase: 'relays' } : { phase: 'users', cursor: page.continueCursor },
+      );
+      return { cleared, done: false };
+    }
+    for (const r of await ctx.db.query('relays').collect())
+      if (r.edgePick !== undefined) {
+        await ctx.db.patch(r._id, { edgePick: undefined });
+        cleared++;
+      }
+    return { cleared, done: true };
   },
 });
 

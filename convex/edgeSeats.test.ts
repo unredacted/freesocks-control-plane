@@ -7,7 +7,7 @@
  * operator action whose preview says how many members move.
  */
 import { convexTest } from 'convex-test';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -163,5 +163,22 @@ describe('the origin’s address pick', () => {
     // Back to the legacy walk is the same explicit action.
     await t.mutation(internal.edgeAdmin.setEdgePick, { relayId, version: null });
     expect((await relay()).edgePick).toBeUndefined();
+  });
+});
+
+describe('rolling back', () => {
+  test('clearSeatsForRollback drops every seat and pick, and leaves every render key', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedUser(t);
+    const subId = await issue(t, userId, 9);
+    const key = await keyOf(t, subId);
+    const { relayId } = await seedEdgeFixture(t);
+    vi.useFakeTimers();
+    await t.mutation(internal.edgeAdmin.clearSeatsForRollback, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+    expect(await t.run(async (ctx) => (await ctx.db.get(userId))!.renderSeat ?? null)).toBeNull();
+    expect((await t.query(internal.relays.get, { id: relayId }))!.edgePick).toBeUndefined();
+    expect(await keyOf(t, subId)).toBe(key);
   });
 });

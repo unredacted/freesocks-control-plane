@@ -5164,6 +5164,14 @@ deploy, no migration, no env change. The deploy's `seedCutover` settles listener
 it (`relayListeners.reconcileCountryMarks`): every listener with a judged name moves onto `hrw1`
 at once, its members re-ranked among names the node already accepts at their next refresh.
 
+**Stable seats and spread replacements** (§ "Address enumeration") add two optional fields
+(`users.renderSeat`, `relays.edgePick`) and one rate-limit key (`account.reissue.day`, 10 a day):
+one deploy, no migration, nobody moves. An account gets its seat (its newest key's
+`renderKey`) at its next issue. Origins created after it start on `hrw1`; existing ones stay on
+the legacy walk until an operator spreads them. To roll back, run
+`edgeAdmin:clearSeatsForRollback` with no arguments (it pages through the accounts, then the
+origins, scheduling itself) before deploying the older build.
+
 **Replacing a blocked address without a spare** adds optional fields only
 (`edges.verification.method` gains `client_check` and `engines`, `edges.replacementOf`,
 `relays.autoReplaceHolds`, `edgeRotations.clientCheckGate`) and two settings with defaults
