@@ -41,21 +41,13 @@ import {
   scheduleMirrorRefresh,
 } from './lib/edges/relayGuards';
 import { listenersOf } from './relayListeners';
+import { suspectedOf } from './edgeTrust';
 import { refreshTemplateEdges, todayKey } from './relays';
 
 type Origin = Doc<'relays'>;
 type Edge = Doc<'edges'>;
 
 // --- the member -------------------------------------------------------------------------------
-
-/**
- * Whether the account is suspected of handing addresses to a censor. Nothing
- * suspects anyone yet (the suspicion part adds it); paid or old, a suspected
- * account draws from the open lane.
- */
-export async function suspectedOf(_db: DatabaseReader, _userId: Id<'users'>): Promise<boolean> {
-  return false;
-}
 
 /** The lane an account draws from now (lib/edges/lanes.ts `memberLane`). */
 export async function memberLaneOfUser(

@@ -50,6 +50,7 @@ import { __setFrontIngressCheckForTests } from './nodeIntentOps';
 import { __setFrontChecker } from './frontQualifyOps';
 import { MIRROR_UNAVAILABLE_STUB, __setS3SendForTests, type S3Op } from './storage';
 import { REPAIR_GRACE_MS } from './mirrorUploads';
+import { markOf } from './edgeTrust';
 import { onSetupRunEnded } from './edgeSetupRuns';
 import { publicationAdmission } from './nodeActivation';
 import { signValue } from './lib/cookies';
@@ -2477,6 +2478,92 @@ describe('the mirror barrier', () => {
     expect(res.status).toBe('ok');
     const open = await openMirrorUploads(t, { subscriptionId: live.subId });
     expect(open.map((o) => o.kind)).toEqual(['initial']);
+    vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
+    await t.action(internal.storage.repairMirrorUploads, {});
+    const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    expect(repaired.body).toBe(MIRROR_UNAVAILABLE_STUB);
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
+  });
+
+  /**
+   * Address lanes on the live node, its one address trusted and the member
+   * trusted (any age counts): until a demotion, the member's mirror carries it.
+   */
+  async function trustedMember(w: World, live: Awaited<ReturnType<typeof liveL4>>) {
+    const { t } = w;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(live.relayId, {
+        edgePick: 'hrw1',
+        lanes: { open: 1, trusted: 1 },
+        lanesSince: 1,
+      });
+      await ctx.db.patch(live.e1, { lane: 'trusted' });
+      await ctx.db.insert('appSettings', {
+        key: 'edge.trust.promoteAfterDays',
+        value: '0',
+        updatedAt: Date.now(),
+      });
+    });
+    return (await t.run((c) => c.db.get(live.subId)))!.userId;
+  }
+  /** Three strikes a day apart: suspected, so the open lane (which has no address here). */
+  const demote = (t: T, userId: Id<'users'>) =>
+    t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert('edgeTrust', {
+        mark: markOf(userId)!,
+        strikes: [now - 3 * 86_400_000, now - 2 * 86_400_000, now - 86_400_000],
+        expiresAt: now + 30 * 86_400_000,
+      });
+    });
+
+  test('a demotion while a mirror refresh uploads leaves it open, and the repair renders it for the open lane', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    await withMirrorProvider(t);
+    const userId = await trustedMember(w, live);
+    await t.run((ctx) =>
+      ctx.db.patch(live.subId, {
+        subscriptionMirrors: [
+          {
+            provider: 'p1',
+            publicUrl: 'https://cdn.example/mirrors/m1',
+            objectPath: 'mirrors/m1',
+            status: 'ok',
+          },
+        ],
+      }),
+    );
+    w.hooks.duringPut = () => demote(t, userId);
+    await t.action(internal.storage.refreshMirrorsForSubscription, {
+      subscriptionId: live.subId,
+      force: true,
+    });
+    const stale = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    expect(stale.body).toContain(await edgeAddress(t, live.e1));
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toHaveLength(1);
+    w.hooks.duringPut = null;
+    vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
+    await t.action(internal.storage.repairMirrorUploads, {});
+    const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };
+    expect(repaired.body).toBe(MIRROR_UNAVAILABLE_STUB);
+    expect(await openMirrorUploads(t, { subscriptionId: live.subId })).toEqual([]);
+  });
+
+  test('a demotion while a first mirror uploads is repaired the same way', async () => {
+    const w = await world();
+    const { t } = w;
+    const live = await liveL4(w);
+    await withMirrorProvider(t);
+    const userId = await trustedMember(w, live);
+    w.hooks.duringPut = () => demote(t, userId);
+    const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res.status).toBe('ok');
+    expect((await openMirrorUploads(t, { subscriptionId: live.subId })).map((o) => o.kind)).toEqual(
+      ['initial'],
+    );
+    w.hooks.duringPut = null;
     vi.advanceTimersByTime(REPAIR_GRACE_MS + 1_000);
     await t.action(internal.storage.repairMirrorUploads, {});
     const repaired = w.calls.s3.filter((x) => x.op.kind === 'put').at(-1)!.op as { body: string };

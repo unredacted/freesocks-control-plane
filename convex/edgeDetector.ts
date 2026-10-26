@@ -602,7 +602,7 @@ interface Evaluated {
   w: RelayWindow;
   ev: Evaluation;
   /** The live test blocks laid over this origin's inputs (empty unless the deployment opts in). */
-  sims: Array<SimulatedEvidence & { id: Id<'edgeBlockSimulations'> }>;
+  sims: Array<SimulatedEvidence & { id: Id<'edgeBlockSimulations'>; startedAt: number }>;
 }
 
 /** The countries the evaluation's evidence names for one edge (a detector start's snapshot). */
@@ -791,6 +791,26 @@ export const run = internalAction({
             ...(sims.length > 0 ? { simulated: true } : {}),
             ...(lastRotateError !== undefined ? { lastRotateError } : {}),
           });
+          // Suspicion (convex/edgeTrust.ts): a trusted address with edge-level
+          // evidence of a block, not an outage, is judged blocked; its first such
+          // judgement strikes its fresh holders (claimed once per address). The
+          // evidence began a detector window before it was first seen, or when a
+          // test block began.
+          if (ev.state === 'suspected' && !ev.nodeOffline && w.lanes) {
+            for (const x of ev.edgeEvidence) {
+              if (w.lanes.openEdgeIds.includes(x.edgeId)) continue;
+              if (ev.outageEdges.includes(x.edgeId)) continue;
+              if (x.source === 'probes' && ev.probeSourcesDown) continue;
+              const sim = sims.find((s) => s.edgeId === x.edgeId);
+              const evidenceAt = sim
+                ? sim.startedAt
+                : (ev.firstSeenAt ?? now) - edgeMs.detectWindow(w.cfg);
+              await ctx.runMutation(internal.edgeTrust.noteBlocked, {
+                edgeId: x.edgeId as Id<'edges'>,
+                evidenceAt,
+              });
+            }
+          }
           // Reports alone raised suspicion: ask the probes for edge-level evidence now.
           if (ev.transition === 'suspected' && ev.hintLevel === 'reports' && w.cfg.probe.enabled) {
             // Stagger like a batch: offsets are CUMULATIVE runs-per-source of the

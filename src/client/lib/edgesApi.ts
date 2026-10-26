@@ -59,6 +59,7 @@ import {
   EdgePickView,
   LanesResponse,
   LanesView,
+  TrustSummary,
   EdgeLiveResponse,
   EdgeAccountCostRequest,
   EdgeCatalogRefreshResponse,
@@ -828,6 +829,7 @@ export const edgeKeys = {
   relayEdges: (slug: string) => [...ROOT, 'relay', slug, 'edges'] as const,
   relayProviders: (slug: string) => [...ROOT, 'relay', slug, 'providers'] as const,
   relayLanes: (slug: string) => [...ROOT, 'relay', slug, 'lanes'] as const,
+  trust: [...ROOT, 'trust'] as const,
   relaySimulations: (slug: string) => [...ROOT, 'relay', slug, 'simulations'] as const,
   nodeCandidates: (backendServerId: string) =>
     [...ROOT, 'node-candidates', backendServerId] as const,
@@ -1152,6 +1154,14 @@ export const relayProvidersQuery = (r: RelayRef) =>
     enabled: relayEnabled(r),
     staleTime: 10_000,
     refetchInterval: relayInterval(r),
+  }));
+
+/** Address suspicion, counts only (the settings page). */
+export const trustSummaryQuery = () =>
+  createQuery(() => ({
+    queryKey: edgeKeys.trust,
+    queryFn: () => apiClient.get(`${BASE}/trust`, TrustSummary),
+    staleTime: 60_000,
   }));
 
 /** The node's address lanes (the node page's lanes card). */

@@ -166,6 +166,16 @@ async function renderMirrorEndpoints(
     avoidBlockedIn: rctx.storedAvoidBlockedIn,
   });
   if (out.delivery.kind !== 'serve') return stub(rctx.epoch);
+  // The mirror's reader is the account: what it holds counts as handed to it
+  // (its first exposure, convex/edgeTrust.ts).
+  const handed = [out.snapshot.primaryEdgeId, out.snapshot.backupEdgeId].filter(
+    (x): x is string => !!x,
+  );
+  if (handed.length > 0)
+    await ctx.runMutation(internal.edgeTrust.noteExposure, {
+      subscriptionId: sub.id,
+      edgeIds: handed as Id<'edges'>[],
+    });
   return {
     content: out.body,
     renderedEpoch: rctx.epoch,

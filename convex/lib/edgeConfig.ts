@@ -183,6 +183,18 @@ export interface EdgeConfig {
    */
   trust: {
     promoteAfterDays: number;
+    /**
+     * Suspicion (docs/edges.md "Address enumeration"): an account first handed
+     * a trusted address in the `windowDays` before it was judged blocked is a
+     * fresh holder; 1 to `maxFreshHolders` of them each get a strike (more is
+     * not attributable); strikes at least `strikeSpacingHours` apart count, and
+     * `strikesToSuspect` of them within `strikeDays` suspect the account.
+     */
+    windowDays: number;
+    maxFreshHolders: number;
+    strikeSpacingHours: number;
+    strikesToSuspect: number;
+    strikeDays: number;
   };
   /** The open lane's own replacement budget: it never uses the node's or the fleet's daily caps. */
   lanes: {
@@ -325,6 +337,11 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   },
   trust: {
     promoteAfterDays: 14,
+    windowDays: 7,
+    maxFreshHolders: 50,
+    strikeSpacingHours: 24,
+    strikesToSuspect: 3,
+    strikeDays: 30,
   },
   lanes: {
     openReplacesPerDay: 1,
@@ -487,6 +504,11 @@ export const EDGE_KEYS = {
   'clientCheck.enabled': 'edge.clientCheck.enabled',
   'replacement.reblockHours': 'edge.replacement.reblockHours',
   'trust.promoteAfterDays': 'edge.trust.promoteAfterDays',
+  'trust.windowDays': 'edge.trust.windowDays',
+  'trust.maxFreshHolders': 'edge.trust.maxFreshHolders',
+  'trust.strikeSpacingHours': 'edge.trust.strikeSpacingHours',
+  'trust.strikesToSuspect': 'edge.trust.strikesToSuspect',
+  'trust.strikeDays': 'edge.trust.strikeDays',
   'lanes.openReplacesPerDay': 'edge.lanes.openReplacesPerDay',
   'lanes.openReplacesPerFleetDay': 'edge.lanes.openReplacesPerFleetDay',
   'l7.autoSelect': 'edge.l7.autoSelect',
@@ -662,6 +684,16 @@ export function sanitizeRelayConfig(
         365,
         D.trust.promoteAfterDays,
       ),
+      windowDays: sanitizeInt(raw['trust.windowDays'], 1, 14, D.trust.windowDays),
+      maxFreshHolders: sanitizeInt(raw['trust.maxFreshHolders'], 1, 500, D.trust.maxFreshHolders),
+      strikeSpacingHours: sanitizeInt(
+        raw['trust.strikeSpacingHours'],
+        0,
+        168,
+        D.trust.strikeSpacingHours,
+      ),
+      strikesToSuspect: sanitizeInt(raw['trust.strikesToSuspect'], 1, 20, D.trust.strikesToSuspect),
+      strikeDays: sanitizeInt(raw['trust.strikeDays'], 1, 90, D.trust.strikeDays),
     },
     lanes: {
       openReplacesPerDay: sanitizeInt(
@@ -854,6 +886,31 @@ export function sanitizeUpdateIntervalHours(v: unknown): number {
  */
 export async function resolveUpdateIntervalHours(db: DatabaseReader): Promise<number> {
   return sanitizeUpdateIntervalHours(await readSetting(db, EDGE_KEYS.updateIntervalHours));
+}
+
+/** The suspicion settings alone (lib/edges/trust.ts): read on every render of a lanes node. */
+export async function resolveTrustSettings(db: DatabaseReader): Promise<{
+  windowDays: number;
+  maxFreshHolders: number;
+  strikeSpacingHours: number;
+  strikesToSuspect: number;
+  strikeDays: number;
+}> {
+  const D = EDGE_DEFAULTS.trust;
+  const [w, m, sp, ts, sd] = await Promise.all([
+    readSetting(db, EDGE_KEYS['trust.windowDays']),
+    readSetting(db, EDGE_KEYS['trust.maxFreshHolders']),
+    readSetting(db, EDGE_KEYS['trust.strikeSpacingHours']),
+    readSetting(db, EDGE_KEYS['trust.strikesToSuspect']),
+    readSetting(db, EDGE_KEYS['trust.strikeDays']),
+  ]);
+  return {
+    windowDays: sanitizeInt(w, 1, 14, D.windowDays),
+    maxFreshHolders: sanitizeInt(m, 1, 500, D.maxFreshHolders),
+    strikeSpacingHours: sanitizeInt(sp, 0, 168, D.strikeSpacingHours),
+    strikesToSuspect: sanitizeInt(ts, 1, 20, D.strikesToSuspect),
+    strikeDays: sanitizeInt(sd, 1, 90, D.strikeDays),
+  };
 }
 
 /** `edge.trust.promoteAfterDays` alone: the member's lane is read on every subscription fetch. */
@@ -1155,6 +1212,11 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'detect.sustainedMinutes': { min: 30, max: 2880 },
   'replacement.reblockHours': { min: 0, max: 168 },
   'trust.promoteAfterDays': { min: 0, max: 365 },
+  'trust.windowDays': { min: 1, max: 14 },
+  'trust.maxFreshHolders': { min: 1, max: 500 },
+  'trust.strikeSpacingHours': { min: 0, max: 168 },
+  'trust.strikesToSuspect': { min: 1, max: 20 },
+  'trust.strikeDays': { min: 1, max: 90 },
   'lanes.openReplacesPerDay': { min: 0, max: 50 },
   'lanes.openReplacesPerFleetDay': { min: 0, max: 500 },
   'l7.maxSameProviderReplacementsPerDay': { min: 0, max: 50 },

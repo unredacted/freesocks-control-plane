@@ -287,6 +287,17 @@ and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
   how old it is. They are read at each render and written nowhere; only the address itself
   carries a lane (`edges.lane`). A cached body records the lane it was rendered for, on the
   member's own row, and is dropped with the rest of that cache.
+- **Address suspicion keeps two small records under a pseudonym.** To tell an account that
+  keeps blocking the trusted addresses it is handed (`docs/edges.md` § "Address enumeration"),
+  FCP stores, for trusted addresses only, the first time each one was handed to an account
+  (`edgeExposures`: a mark, an edge id and a time, kept while that address lives and deleted with
+  it), and an account's recent strikes (`edgeTrust`: a mark and up to a few timestamps, deleted
+  once the newest is 30 days old). The mark is HMAC(`EDGE_MARK_PEPPER`, `trust:` + the account
+  id): a stable pseudonym, so the rows do link one account's exposures across addresses, and an
+  edge id joins to its address in `edges`; what the mark buys is that a copy of the database
+  without the deployment's environment cannot tie a row to an account. No address, server name,
+  country or IP is in these rows. They are never written to logs, the audit log or analytics, the
+  admin sees counts only, the member is not told, and both go when the account is deleted.
 - **FCP's own client check uses FCP's own account and logs nothing.** The `edge-client-check`
   service connects through an edge address with the origin's qualification account (or a
   temporary key made for the check and removed after it), never a member's. It logs nothing

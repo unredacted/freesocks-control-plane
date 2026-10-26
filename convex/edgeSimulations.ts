@@ -211,6 +211,8 @@ export const liveForRelay = internalQuery({
       edgeId: s.edgeId as string,
       country: s.country,
       reporters: s.reporters,
+      // When the test block began: where its evidence starts (convex/edgeTrust.ts).
+      startedAt: s._creationTime,
     })),
 });
 

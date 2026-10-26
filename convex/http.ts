@@ -1131,6 +1131,15 @@ http.route({
           503,
           { reason: out.reason },
         );
+      // Not a delivery stamp, but the account was handed these addresses
+      // (their first exposure, convex/edgeTrust.ts).
+      if (out.render)
+        await ctx.runMutation(internal.edgeTrust.noteExposure, {
+          subscriptionId: place.subscriptionId,
+          edgeIds: [out.render.primaryEdgeId, out.render.backupEdgeId].filter(
+            (x): x is Id<'edges'> => !!x,
+          ),
+        });
       return json({
         content: out.content,
         contentType: fetched.contentType ?? 'text/plain',

@@ -28,6 +28,7 @@ import { MEMBER_TTL_MS } from './auth';
 import { freeWindowExpiryMs } from './lifecycle';
 import { applyCountsDelta } from './lib/statusCounters';
 import { writeAuditLog } from './lib/audit';
+import { forgetAccount } from './edgeTrust';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 
 // Explicit return type breaks the same-file internal-reference inference cycle.
@@ -82,6 +83,7 @@ export const deleteFreeUser = internalMutation({
   handler: async (ctx, { userId }) => {
     const u = await ctx.db.get(userId);
     if (!u) return null;
+    await forgetAccount(ctx, userId);
     await ctx.db.delete(userId);
     await applyCountsDelta(ctx, {
       statusFrom: u.status,
