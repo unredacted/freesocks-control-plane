@@ -1934,6 +1934,47 @@ export const dropScope = internalMutation({
   },
 });
 
+/**
+ * Rollback one-off (docs/edges.md "Finding names"): before a build without
+ * finding names is deployed over this one, its rows must be gone (a schema
+ * push refuses documents it does not describe). Deletes a page of every
+ * finding-names table and clears `edgeNetworks.hunt`; run it again until it
+ * answers `left: 0`. Deletes found candidates only: no family, name or
+ * network is touched otherwise.
+ */
+export const clearForRollback = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const PAGE = 500;
+    let deleted = 0;
+    let left = 0;
+    for (const table of [
+      'sniCandidates',
+      'sniHuntIgnores',
+      'sniHuntRuns',
+      'sniHuntCt',
+      'sniHuntCalls',
+    ] as const) {
+      const rows = await ctx.db.query(table).take(PAGE);
+      for (const r of rows) {
+        if (table === 'sniHuntRuns') await dropChunks(ctx, r as Doc<'sniHuntRuns'>);
+        await ctx.db.delete(r._id);
+      }
+      deleted += rows.length;
+      if (rows.length === PAGE) left++;
+    }
+    for (const n of await ctx.db.query('edgeNetworks').take(200))
+      if (n.hunt !== undefined) await ctx.db.patch(n._id, { hunt: undefined });
+    for (const key of [RESCORE_KEY])
+      for (const row of await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .take(1))
+        await ctx.db.delete(row._id);
+    return { deleted, left };
+  },
+});
+
 // --- views -----------------------------------------------------------------------------------
 
 function candidateView(c: Candidate, inFamily: { slug: string; label: string } | null) {

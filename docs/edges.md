@@ -2972,7 +2972,9 @@ grouped by the first address they live on; the certificate-log reads), `POST sni
 sni/hunt/import {network | family, lines} | {seed}`, `POST sni/hunt/families/{slug}/cert`, `POST
 sni/hunt/ct {domains, network | family}`, `POST sni/hunt/candidates/{ignore|unignore|recheck|measure}
 {ids, kind?: name | site}`, `POST sni/hunt/candidates/add {family, names}` (the family's
-`importNames`, answered with its verdict per line). Settings: `PATCH sni/config {hunt: {...}}`.
+`importNames`, answered with its verdict per line). Settings: `PATCH sni/config {hunt: {...}}`. Rolling back to a build without finding names:
+run `sniHunt:clearForRollback` until it answers `left: 0` first (it deletes found candidates
+and their bookkeeping, and clears each network's `hunt`; families, names and networks stay).
 Audit: `edge.sni.hunt.*` and `edge.network.hunt`, with slugs and counts, never a name or an
 address.
 
