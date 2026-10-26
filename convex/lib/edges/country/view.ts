@@ -21,6 +21,7 @@ import {
   fnv1a32,
   type Assignment,
   type CountryContext,
+  type EdgePickVersion,
   type PublishedEdge,
 } from '../assignment';
 import type {
@@ -281,6 +282,8 @@ export interface OriginInput {
   edges: readonly EdgeInput[];
   /** The published pool as the assignment sees it (`publishedEdgesOf`, ineligible kept). */
   published: readonly PublishedEdge[];
+  /** How the origin walks its pool (`relays.edgePick`); absent = the legacy walk. */
+  edgePick?: EdgePickVersion;
 }
 
 export interface ViewSettings {
@@ -461,7 +464,7 @@ const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1
  * transport), the member's country as their stored one.
  */
 export function handedOn(
-  origin: Pick<OriginInput, 'enabled' | 'published'>,
+  origin: Pick<OriginInput, 'enabled' | 'published' | 'edgePick'>,
   listener: Pick<ListenerInput, 'listenerId' | 'sniPick'>,
   s: ViewSettings,
   blockedEdges: ReadonlySet<string>,
@@ -506,6 +509,7 @@ export function handedOn(
     const a: Assignment = assignEndpoints(sampleKey(i), pool, {
       now: s.now,
       preferDistinctProviders: s.preferDistinctProviders,
+      ...(origin.edgePick ? { edgePick: origin.edgePick } : {}),
       includeBackup: s.rule.includeBackup,
       canEmitV6: s.rule.canEmitV6,
       namesPerEndpoint: s.rule.namesPerEndpoint,

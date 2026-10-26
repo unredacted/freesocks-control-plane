@@ -884,10 +884,13 @@ create"). Worst case per origin per day: as many
 short-lived load balancers as the daily cap, each destroyed after a failed check.
 
 **Who receives a replacement** is one decision, `replacementPlacement()`
-(`lib/edges/replacementHolders.ts`), called by `applyPublish` for every replace. Its one policy
-today, `inherit`, gives the replacement its target's pool index, so exactly the members who held
-the blocked address get the new one. That includes an account a censor holds; spreading or
-screening those holders belongs in that function and nowhere else.
+(`lib/edges/replacementHolders.ts`), called by `applyPublish` for every replace. The policy
+follows the origin's address pick (§ "Address enumeration"): on the legacy walk, `inherit` gives
+the replacement its target's pool index, so exactly the members who held the blocked address get
+the new one together, an account a censor holds included; on `hrw1`, `spread`: the blocked
+address's holders scatter, each to their own next best address, and the replacement goes to the
+members it now outranks, about 3 in P+1 of the old holders. The pool index is kept either way
+so the listener's template Host stays where it was.
 
 **The re-block guard.** A replacement records where it came from (`edges.replacementOf`). When
 the detector would replace an address that a replace put in use less than
@@ -922,9 +925,11 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    body format, or whose verification is no longer current (a lapsed L7 proof, an L4
    confirmation gone stale after a listener or address change) **ineligible** (it keeps its
    pool index);
-3. assigns primary (+ backup) with a stable PRF keyed on the subscription's `renderKey` over
-   the FULL pool order, walking forward past ineligible positions; the backup is the next
-   assignable edge away from the primary's failure domain (with `render.preferDistinctProviders`):
+3. assigns primary (+ backup) with a stable PRF keyed on the subscription's `renderKey` (the
+   account's seat, § "Address enumeration"): on an origin with `edgePick: 'hrw1'` every edge is
+   ranked by its own score and the walk takes them best first; on the legacy walk the seed
+   indexes the FULL pool order and the walk goes forward past ineligible positions. The
+   backup is the next assignable edge in the walk away from the primary's failure domain (with `render.preferDistinctProviders`):
    another provider first, then another location (`PublishedEdge.locationKey`, admin-only and
    never rendered; a missing key counts as unknown), else the next one; one server name per emitted
    connection for name-presenting listeners, chosen from the listener's active names (a
@@ -1245,6 +1250,54 @@ Outline member imports a dynamic access key
 `ssconf://<fcp-host>/api/v1/sub/<token>` and follows rotations by re-fetching. Outline over an
 edge is **TCP-only** today (no adapter forwards UDP).
 
+### Address enumeration
+
+A censor can sign up accounts, read the addresses FCP hands them and block each one. Once FCP
+replaces blocked addresses by itself (§ "Replacing a blocked address without a spare"), every
+replacement handed back to the same accounts is blocked again and costs a load balancer. What
+bounds that:
+
+**What one view shows.** A member is handed a primary and a backup, two addresses of their
+node's pool. Mean number of views needed to see a node's addresses (a seeded simulation):
+
+| Addresses on the node | all of them | half | 90%  |
+| --------------------- | ----------- | ---- | ---- |
+| 2                     | 1           | 1    | 1    |
+| 8                     | 10.5        | 2.5  | 10.4 |
+| 16                    | 26          | 5.4  | 19   |
+| 64                    | 150         | 22   | 73   |
+
+**The seat.** The key a subscription's assignment and name selection are computed from
+(`subscriptions.renderKey`) is the account's seat (`users.renderSeat`, `subscriptions.ts`
+`seatOf`): every new subscription row takes it, so a regenerate, a mode, server or backend
+switch, or an issue long after every old row was swept is handed the same addresses on the same
+node, and re-issuing is no way to draw new ones. An account that had none takes its most recent
+row's key once (nobody moved when this landed). Before the seat, every regenerate was a fresh
+draw: one account regenerating could see a 64-address node in about 15 hours. Moving to another
+node shows that node's two addresses; the shared daily bucket `account.reissue.day` (10 a day,
+on top of the hourly `account.reissue`) bounds how fast one account walks the fleet.
+
+**The pick** (`relays.edgePick`). On the legacy walk the seat indexes the pool by a modulus over
+its length: one more published address moves almost every member (a free new view for
+everyone), and the members of an address move together. On `hrw1` (rendezvous over edges,
+`lib/edges/assignment.ts` `edgeScore`) each member ranks every address by its own score:
+
+- a blocked address's holders scatter, each to their own next best address, instead of moving
+  together onto its replacement;
+- a new or replacement address takes the members it now outranks: about 2 in P of everyone, and
+  about 3 in P+1 of the blocked address's own holders (their other address sat lower in their
+  ranking), so it reaches the account that burned its predecessor with probability 3/(P+1)
+  (18% at 16 addresses, under 5% at 64) instead of always;
+- growing the pool moves only the members the new address takes.
+
+Scattering also makes the account that burns addresses the one thing successive blocks have in
+common, while the members around it change every time. New origins start on `hrw1`; an existing
+one is switched on its node page ("Spread members over the addresses", `POST
+relays/{id}/edge-pick`), whose dialog first shows the share of members that would be handed at
+least one different address (an estimate over synthetic seats with the pool as it is; a primary
+and backup that only swap places do not count). Switching moves those members once, to other
+addresses already in use, and is audited `relay.edge_pick`.
+
 ## Operations
 
 | Operation                                 | Precondition                                                                                                                                                                                                                                                                                         | Spends budget                      | Writes Hosts                                                                  | Result                                                                                                                                    |
@@ -1282,6 +1335,7 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `GET delivery-bindings`, `POST delivery-bindings/{id}/release`      | The edge-required places, including ones whose origin was deleted with `keep-dark`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `GET config`                                                        | Also carries `bounds` and `defaults` per flat key, so the settings forms validate against the server's own limits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `POST relays/{id}/rebalance`                                        | Coverage at the cap: unpublish ONE removable edge (not its listener's template edge, its removal does not increase the coverage deficit; highest pool index first) back to standby, bump the epoch, refresh mirrors; upkeep then publishes what is missing. Refuses `edge.no_duplicate`, and the usual rotation / quarantine guard. Audited `edge.relay.rebalanced`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `GET relays/{id}/edge-pick`, `POST relays/{id}/edge-pick {version}` | How members' addresses are picked from the pool (§ "Address enumeration"). The GET returns the pick (`hrw1`, or null for the legacy walk) and how many of a fixed sample of synthetic seats would be handed at least one different address if it were switched; the POST takes `version`, `'hrw1'` or `null` (required: a missing field is refused, never read as the legacy walk), moves the publication epoch and refreshes mirrors. Refused while a rotation or quarantine holds the origin. Audited `relay.edge_pick`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `POST automation {on}`                                              | The one automation switch (settings scope): in ONE mutation sets `edge.enabled`, `edge.autoRotate`, `edge.probe.enabled` and `edge.autoProvisionToDesired` to `on` (and `edge.clientCheck.enabled` where the client-check service is set up), and `edge.standbyPerListener = 1` when turning on unless that service answers its health check (left as-is when off). Never `render.enabled` or `l7.autoSelect`; touches no origin row (an origin's own `autoRotate` keeps its meaning under the global gate: `cfg.enabled && cfg.autoRotate && relay.autoRotate`). Audited `edge.automation.set` (the boolean only).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `POST setup-runs/plan {backendServerId, nodeUuid}`                  | The guided setup's read-only plan for one backend node (`listenerKeys?` as on create; throttled: it lists the node's transports and Hosts): frontable transports, direct Hosts tagged covered / uncovered, compatible accounts with reasons, the fleet-wide rendering consequence, disabled client families, and the `planHash` a run creation must echo. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `POST setup-runs`, `GET setup-runs[/{id}]`                          | Create a run (`{backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`: `listenerKeys` is the operator's choice of 1 to 8 frontable transports when the node has more, covered by the plan hash; `edge.plan_stale`, `edge.account_incompatible`, `edge.too_many_inbounds`, `edge.setup_run_active`), list runs, poll one (stage, state, the interruption, per-listener verdicts, the `try_it` test links).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |

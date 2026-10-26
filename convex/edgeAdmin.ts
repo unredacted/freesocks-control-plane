@@ -58,7 +58,9 @@ import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
 import { EDGE_NEW_ACCOUNT_OPTION_DEFAULTS, optionFieldsOf } from './lib/edges/providers/templates';
 import { defaultsOf } from './lib/edges/providers/options';
 import { EDGE_PROVIDER_IDS } from './lib/edgeProviderIds';
-import { setupRunLiveOn } from './lib/edges/relayGuards';
+import { bumpEpochAndRefresh, setupRunLiveOn } from './lib/edges/relayGuards';
+import { pickMoves } from './lib/edges/edgePick';
+import { assertAdmission } from './lib/edges/maintenance';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 
@@ -490,6 +492,80 @@ export const relayListenersView = internalQuery({
   },
 });
 
+/**
+ * The origin's address pick and what switching it would cost: the share of
+ * members whose pair of addresses changes, estimated over synthetic seats with
+ * the pool as it is now (lib/edges/edgePick.ts). Read by the node page before
+ * the operator switches.
+ */
+export const edgePickView = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
+    const origin = await ctx.db.get(relayId);
+    if (!origin) return null;
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const { published } = await publishedEdgesOf(
+      ctx,
+      origin,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
+    const current = origin.edgePick ?? null;
+    const other = current === 'hrw1' ? null : ('hrw1' as const);
+    const moves = pickMoves(published, current, other, {
+      now: Date.now(),
+      preferDistinctProviders: cfg.render.preferDistinctProviders,
+      includeBackup: true,
+    });
+    return {
+      relaySlug: origin.slug,
+      edgePick: current,
+      published: published.length,
+      switchTo: other,
+      sampled: moves.sampled,
+      moved: moves.moved,
+    };
+  },
+});
+
+/**
+ * Choose how members' addresses are picked from this origin's pool. `hrw1`
+ * (rendezvous) is what stops a blocked address's holders from moving together
+ * onto its replacement (docs/edges.md "Address enumeration"); `null` returns
+ * to the legacy modulus walk. Every member whose pair changes gets a new
+ * configuration at their next refresh (the preview says how many), so it is an
+ * explicit, audited operator action and never a side effect.
+ */
+export const setEdgePick = internalMutation({
+  args: {
+    relayId: v.id('relays'),
+    version: v.union(v.literal('hrw1'), v.null()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { relayId, version, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'registration');
+    const origin = await ctx.db.get(relayId);
+    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    await assertNoRotationOrQuarantine(ctx.db, origin);
+    const changed = (origin.edgePick ?? null) !== version;
+    if (changed) {
+      await ctx.db.patch(relayId, { edgePick: version ?? undefined, updatedAt: Date.now() });
+      // Reads the fresh row: the epoch is bumped on top of the patch above.
+      const fresh = (await ctx.db.get(relayId))!;
+      await bumpEpochAndRefresh(ctx, fresh);
+    }
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'relay.edge_pick',
+      targetType: 'relay',
+      targetId: relayId,
+      payload: { relaySlug: origin.slug, version: version ?? 'legacy' },
+    });
+    return { ok: true as const, changed, edgePick: version };
+  },
+});
+
 export const endpoints = internalQuery({
   args: { relayId: v.id('relays') },
   handler: async (ctx, { relayId }) => {
@@ -509,6 +585,7 @@ export const endpoints = internalQuery({
     const assigned = assignEndpoints(SAMPLE_RENDER_KEY, published, {
       now: Date.now(),
       preferDistinctProviders: cfg.render.preferDistinctProviders,
+      ...(origin.edgePick ? { edgePick: origin.edgePick } : {}),
       includeBackup: true,
       canEmitV6: RENDER_CLIENT_FAMILIES.every(
         (f) => effectiveRule(cfg.render, cfg.render.clients[f]).ipv6Mode !== 'off',
@@ -614,6 +691,7 @@ export async function renderPreviewFor(
         published,
         rule: effectiveRule(cfg.render, cfg.render.clients[fam]),
         preferDistinctProviders: cfg.render.preferDistinctProviders,
+        ...(origin.edgePick ? { edgePick: origin.edgePick } : {}),
         originAddress: '192.0.2.10',
         deliveryStyle: origin.backendServerId
           ? await deliveryStyleOf(ctx, origin.backendServerId)

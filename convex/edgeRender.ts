@@ -579,6 +579,7 @@ export const decideForSubscription = internalQuery({
         published,
         rule,
         preferDistinctProviders: cfg.render.preferDistinctProviders,
+        ...(relay.edgePick ? { edgePick: relay.edgePick } : {}),
         minProvenForExclusive: cfg.country.minProvenForExclusive,
         renderKey: sub.renderKey ?? null,
         // For a render with NO request behind it (a mirror): the member's own

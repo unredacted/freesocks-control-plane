@@ -55,6 +55,8 @@ import {
   EdgeDiscoverResponse,
   EdgeIdResponse,
   EdgeInventoryResponse,
+  EdgePickResponse,
+  EdgePickView,
   EdgeLiveResponse,
   EdgeAccountCostRequest,
   EdgeCatalogRefreshResponse,
@@ -403,6 +405,12 @@ export const reprotectRelay = (
     { ...(mode ? { mode } : {}), ...(pickOptions ? { pickOptions } : {}) },
     SetupRunCreatedResponse,
   );
+/** How members' addresses are picked on this node, and what switching would move. */
+export const fetchRelayEdgePick = (relayId: string) =>
+  apiClient.get(`${BASE}/relays/${enc(relayId)}/edge-pick`, EdgePickView);
+/** Switch the node's address pick (`null` = back to the legacy walk). */
+export const setRelayEdgePick = (relayId: string, version: 'hrw1' | null) =>
+  apiClient.post(`${BASE}/relays/${enc(relayId)}/edge-pick`, { version }, EdgePickResponse);
 /** The node's provider set: its picks, what they hold, what could be added. */
 export const fetchProviderSet = (relayId: string) =>
   apiClient.get(`${BASE}/relays/${enc(relayId)}/providers`, ProviderSetView);

@@ -159,6 +159,7 @@ async function load(db: Db): Promise<Loaded> {
           })),
         })),
         published,
+        ...(relay.edgePick ? { edgePick: relay.edgePick } : {}),
       },
       edges,
       style: relay.backendServerId

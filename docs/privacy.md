@@ -534,7 +534,10 @@ member reports. Neither adds member data anywhere.
   raise a hint for the operator; they change nothing a member is given.
 - **Rendering** replaces template entries in a member's subscription with their
   assigned edges. The assignment key (`subscriptions.renderKey`) is random,
-  server-side only, and independent of the subscription URL token.
+  server-side only, and independent of the subscription URL token. It is the
+  account's seat (`users.renderSeat`), copied into every subscription row the
+  account is issued, so re-issuing keeps the same addresses; it lives as long as
+  the account and says nothing about the member.
 
 ## Downstream-deployer checklist
 

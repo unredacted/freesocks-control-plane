@@ -282,6 +282,7 @@ export const context = internalQuery({
       published,
       matchers,
       preferDistinctProviders: cfg.render.preferDistinctProviders,
+      ...(relay.edgePick ? { edgePick: relay.edgePick } : {}),
       rules: Object.fromEntries(
         RENDER_CLIENT_FAMILIES.map((f) => [f, effectiveRule(cfg.render, cfg.render.clients[f])]),
       ),
@@ -470,6 +471,7 @@ async function rehearseBody(
     published: c.published,
     rule: { ...c.rules[family], enabled: true },
     preferDistinctProviders: c.preferDistinctProviders,
+    ...(c.edgePick ? { edgePick: c.edgePick } : {}),
     originAddress: c.originAddress,
     nodeAddresses: c.nodeAddresses,
     deliveryStyle: c.deliveryStyle,
