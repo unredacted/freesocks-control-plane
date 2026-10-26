@@ -10,6 +10,7 @@ import {
   PROBE_FAILURE_CLASSES,
 } from '../../../../../shared/contracts/edgeCodes';
 import {
+  capSpent,
   COUNTRY_REASON_WORDS,
   GROUP_GRADE_WORDS,
   PROBE_FAILURE_WORDS,
@@ -496,6 +497,7 @@ describe('sourceWords', () => {
     lastFailAt: at(2 * H),
     lastError: 'timeout',
     failing: false,
+    cap: null as { used: number; perHour: number; perRun: number } | null,
     ...over,
   });
   test('working, working with failures, failing, idle', () => {
@@ -509,6 +511,22 @@ describe('sourceWords', () => {
     expect(failing.detail).toMatch(/5 runs in a row brought nothing/);
     expect(sourceWords(h({ runs: 0 }), NOW).label).toBe('No runs yet');
     for (const w of [sourceWords(h(), NOW), failing]) expect(w.detail).not.toMatch(/—/);
+  });
+
+  test("Globalping's hourly cap: its use shown, and spent says rounds go without it", () => {
+    const cap = (used: number) => ({ cap: { used, perHour: 400, perRun: 21 } });
+    const working = sourceWords(h(cap(120)), NOW);
+    expect(working).toMatchObject({ label: 'Working', tone: 'success' });
+    expect(working.detail).toContain('Its hourly cap: 120 of 400 tests used in the last hour');
+    expect(capSpent(h(cap(379)))).toBe(false);
+    expect(capSpent(h(cap(380)))).toBe(true);
+    expect(capSpent(h())).toBe(false);
+    const spent = sourceWords(h(cap(390)), NOW);
+    expect(spent).toMatchObject({ label: 'Hourly cap spent', tone: 'warning' });
+    expect(spent.detail).toContain('rounds run without it until the hour rolls on');
+    expect(spent.detail).not.toMatch(/—/);
+    // Failing outranks the cap: no evidence at all is the bigger problem.
+    expect(sourceWords(h({ ...cap(390), failing: true, streak: 3 }), NOW).tone).toBe('danger');
   });
 });
 

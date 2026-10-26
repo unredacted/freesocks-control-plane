@@ -4,7 +4,8 @@
    * every enabled origin, each of its transports, and for each its addresses
    * and server names: what they count as from this country, why (a mark, the
    * checks with controls, the checks from inside, the probes, member reports)
-   * and how old that is, plus what a member here is handed today (the
+   * and how old that is, which outside probe sources answer from here (and
+   * why one went quiet), plus what a member here is handed today (the
    * assignment itself over a sample of keys). Read only: marks and checks are
    * made on the node and name pages.
    *
@@ -27,6 +28,7 @@
     addressWhy,
     checksLine,
     countryLabel,
+    coverageLines,
     handedWords,
     handshakeLine,
     markLine,
@@ -114,6 +116,9 @@
           : 'No evidence from here yet.'}
         {v.controls.length > 0 ? `Control countries: ${v.controls.join(', ')}.` : ''}
       </p>
+      {#each coverageLines(v.probes, v.sources, v.switches.probes, now) as line (line)}
+        <p class="text-muted-foreground">{line}</p>
+      {/each}
       {#each notes as n (n)}<p class="text-muted-foreground">{n}</p>{/each}
       <p class="text-muted-foreground">{HANDED_SCOPE}</p>
     </CardContent>

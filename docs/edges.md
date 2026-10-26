@@ -3486,7 +3486,12 @@ with `delivery.country.steer` on (next section).
   settled runs brought back nothing (of its newest 50; `no_route` runs are left out: the source
   works, FCP's host just lacks the family), with nothing working for six hours, raises attention
   `probe_source_failing` (warning) and shows on `GET probes/sources` and `GET probes/matrix`
-  (`sources`).
+  (`sources`). A round that runs without Globalping because of the cap leaves no failed run, so
+  Globalping's health also carries `cap {used, perHour, perRun}` (the tests asked in the last
+  hour, the setting, what one run of an edge asks); the Probes page reads "Hourly cap spent" when
+  no further run fits. Each summary keeps only rows newer than two probe intervals, so a country
+  that only Globalping reaches (check-host has no node in several censored countries) drops out
+  of every summary while the cap holds Globalping back for longer than that.
 - **Admin API.** `GET countries` (checked and control countries, grades, every edge's tracks
   per country with its effective state, marks, sources; never an address), `POST countries/marks
 {scope: edge | group, ref, country, state: proven | blocked | null}` (a listed country only),
@@ -3600,11 +3605,26 @@ now, why do we think so, and what is a member there handed" (Admin -> Edges -> C
 Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, pure builder
 `convex/lib/edges/country/view.ts`).
 
-- **Routes** (read scope): `GET countries/summary` (every censored country with its totals, the
-  switches that feed the view, the control countries) and `GET countries/{CC}` (one country in
-  full; a code off the list answers too, `listed: null`). Contracts `CountryViewSummaryResponse`
-  and `CountryViewResponse` in `src/shared/contracts/edges.ts`. Times are epoch ms. Unlike
-  `GET countries`, the view carries addresses and names: it is the admin page that shows them.
+- **Routes** (read scope): `GET countries/summary` (every censored country with its totals and
+  probe coverage, the switches that feed the view, the control countries, the probe sources'
+  health) and `GET countries/{CC}` (one country in full; a code off the list answers too,
+  `listed: null`). Contracts `CountryViewSummaryResponse` and `CountryViewResponse` in
+  `src/shared/contracts/edges.ts`. Times are epoch ms. Unlike `GET countries`, the view carries
+  addresses and names: it is the admin page that shows them.
+- **Which outside probes answer from there** (`probes`, pure `lib/edges/country/coverage.ts`):
+  `asked` (probes on and "Check edges from here" on for the country), and for each outside source
+  in use its newest answer from the country over the addresses shown (the `probeReachability`
+  rows of every active edge and probed origin, one index range each: a row's `updatedAt` moves
+  only when that source answered from that country) and whether it still counts (`fresh`: newer
+  than two probe intervals, the summaries' own window). An address's probes come from its
+  reachability summary, which keeps only fresh rows, so without this a country whose only source
+  went quiet would read "no evidence" with no word on why. The page says it: a country not
+  asked, one no source in use has ever answered from (it may have no vantage there), one whose
+  sources all went quiet (when each last answered, and why from the sources' health: failing,
+  or Globalping's hourly cap spent), and one that only some sources still answer from. An
+  address the probes alone left not known says why: too few vantages reached it (one on a
+  residential network, or two others, are needed), mixed answers, or failures from too few
+  networks to call it blocked.
 - **What is read.** Every enabled origin, its non-retired listeners, its active edges (published
   ones first in pool order, then spares) and its published pool as the assignment sees it
   (`publishedEdgesOf`, ineligible kept); per edge every country's evidence row and mark, per
@@ -3638,7 +3658,8 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   blocked there (first or backup; `onBlockedFirst` the first only), holding a name blocked
   there (on either). No member row is read. Whatever changes in the assignment shows here by
   itself.
-- **Totals**: published addresses by state, active names by the state delivery acts on (a mark;
+- **Totals**: published addresses by state (the list says how many are not known beside the
+  working and blocked ones), active names by the state delivery acts on (a mark;
   an unapplied suggestion counts as not judged; each name once), nodes whose every published
   address is blocked there (`atRisk`), the newest piece of evidence. The summary adds the worst
   share of members holding a blocked address over every transport.

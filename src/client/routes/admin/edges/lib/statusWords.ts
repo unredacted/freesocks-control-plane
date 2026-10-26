@@ -22,7 +22,8 @@
  *   countryLine(line, now)       one edge in one country: label, tone, reason, where from, age, conflict
  *   countryChip(line, now, waiting)  the same as a short chip ("checking" while its round is out)
  *   gradeWords(cell, now)        one location in one country: label, tone, age, mark, conflict
- *   sourceWords(health, now)     one probe source: working or failing, and why
+ *   sourceWords(health, now)     one probe source: working, failing or capped, and why
+ *   capSpent(health)             Globalping's hourly cap leaves no room for another run
  */
 import type {
   FleetStatus,
@@ -492,10 +493,19 @@ export interface SourceWords {
   detail: string;
 }
 
-/** One probe source: working, failing (with its last failure in words), or idle. */
+/** Globalping's hourly cap leaves no room for another run: rounds go without it for now. */
+export function capSpent(h: Pick<ProbeSourceHealth, 'cap'>): boolean {
+  return !!h.cap && h.cap.used + h.cap.perRun > h.cap.perHour;
+}
+
+/** One probe source: working, failing (with its last failure in words), capped, or idle. */
 export function sourceWords(h: ProbeSourceHealth, now: number): SourceWords {
   const counted = `${h.withEvidence} of ${h.runs} recent ${h.runs === 1 ? 'run' : 'runs'} brought evidence.`;
-  if (h.runs === 0) return { label: 'No runs yet', tone: 'muted', detail: 'Nothing has run yet.' };
+  const capUse = h.cap
+    ? ` Its hourly cap: ${h.cap.used} of ${h.cap.perHour} tests used in the last hour, ${h.cap.perRun} a run.`
+    : '';
+  if (h.runs === 0)
+    return { label: 'No runs yet', tone: 'muted', detail: `Nothing has run yet.${capUse}` };
   const last = h.lastError ? probeFailureWords(h.lastError) : null;
   if (h.failing)
     return {
@@ -505,15 +515,21 @@ export function sourceWords(h: ProbeSourceHealth, now: number): SourceWords {
         h.lastOkAt ? `; the last good one was ${ago(h.lastOkAt, now)}` : ''
       }. The countries it alone covers read as not known.`.trim(),
     };
+  if (h.cap && capSpent(h))
+    return {
+      label: 'Hourly cap spent',
+      tone: 'warning',
+      detail: `${h.cap.used} of the ${h.cap.perHour} tests allowed an hour were asked in the last hour, and a run asks ${h.cap.perRun}: rounds run without it until the hour rolls on, and the countries only it reaches go quiet. Raise "Globalping tests per hour" (within what your Globalping account allows) or lower "Vantage points per country". ${counted}`,
+    };
   if (h.streak > 0 && last)
     return {
       label: 'Working, with failures',
       tone: 'warning',
-      detail: `The newest ${h.streak === 1 ? 'run' : `${h.streak} runs`} failed: ${last.label.toLowerCase()}. ${counted}`,
+      detail: `The newest ${h.streak === 1 ? 'run' : `${h.streak} runs`} failed: ${last.label.toLowerCase()}. ${counted}${capUse}`,
     };
   return {
     label: 'Working',
     tone: 'success',
-    detail: `${counted}${h.lastOkAt ? ` The last good run was ${ago(h.lastOkAt, now)}.` : ''}`,
+    detail: `${counted}${h.lastOkAt ? ` The last good run was ${ago(h.lastOkAt, now)}.` : ''}${capUse}`,
   };
 }

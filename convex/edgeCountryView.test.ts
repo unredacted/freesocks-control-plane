@@ -306,6 +306,84 @@ describe('the country view', () => {
     expect((await t.fetch('/api/v1/admin/edges/countries/summary')).status).toBe(401);
   });
 
+  test('which outside probes answer from each country, and why one went quiet', async () => {
+    const { t, works } = await setup();
+    const now = Date.now();
+    const MIN = 60_000;
+    await t.run(async (ctx) => {
+      await upsertSettingRow(
+        ctx,
+        CENSORED_COUNTRIES_KEY,
+        JSON.stringify([
+          { code: 'IR', checkEdges: true, checkNamesInside: true },
+          { code: 'RU', checkEdges: true, checkNamesInside: false },
+          { code: 'MM', checkEdges: false, checkNamesInside: false },
+        ]),
+      );
+      const row = (country: string, source: 'globalping' | 'checkhost', updatedAt: number) =>
+        ctx.db.insert('probeReachability', {
+          targetKind: 'edge',
+          targetRef: works,
+          country,
+          source,
+          ipVersion: 4,
+          port: 443,
+          okCount: 1,
+          failCount: 0,
+          verdict: 'unknown',
+          updatedAt,
+        });
+      await row('IR', 'globalping', now - 5 * MIN);
+      // RU: check-host still answers, Globalping went quiet three hours ago.
+      await row('RU', 'checkhost', now - 10 * MIN);
+      await row('RU', 'globalping', now - 3 * H);
+      // Globalping's cap is spent for the hour (a round would run without it).
+      await ctx.db.insert('probeRuns', {
+        targetKind: 'custom',
+        targetRef: 'any',
+        source: 'globalping',
+        target: '198.51.100.9:443',
+        status: 'finished',
+        trigger: 'cron',
+        requestedAt: now - 10 * MIN,
+        finishedAt: now - 9 * MIN,
+        results: [],
+        tests: 398,
+      });
+    });
+    const cookie = await adminCookie(t);
+    const get = async (path: string) =>
+      (await t.fetch(`/api/v1/admin/edges/${path}`, { headers: { cookie } })).json();
+    const summary = CountryViewSummaryResponse.parse(await get('countries/summary'));
+    const by = Object.fromEntries(summary.countries.map((c) => [c.country, c.probes]));
+    const WINDOW = 30 * MIN; // two default 15-minute probe intervals
+    expect(by.IR).toEqual({
+      asked: true,
+      windowMs: WINDOW,
+      sources: [
+        { source: 'globalping', lastAt: now - 5 * MIN, fresh: true },
+        { source: 'checkhost', lastAt: null, fresh: false },
+      ],
+    });
+    expect(by.RU!.sources).toEqual([
+      { source: 'globalping', lastAt: now - 3 * H, fresh: false },
+      { source: 'checkhost', lastAt: now - 10 * MIN, fresh: true },
+    ]);
+    // Not asked: "check edges" is off for it.
+    expect(by.MM!.asked).toBe(false);
+    // The sources' health rides along: Globalping's cap (2 checked countries x 3 vantages a run).
+    expect(summary.sources.find((s) => s.source === 'globalping')!.cap).toEqual({
+      used: 398,
+      perHour: 400,
+      perRun: 6,
+    });
+    const ru = CountryViewResponse.parse(await get('countries/RU'));
+    expect(ru.probes).toEqual(by.RU);
+    expect(ru.sources.map((s) => s.source)).toEqual(['globalping', 'checkhost', 'internal']);
+    // Off the list: nothing is asked from there.
+    expect(CountryViewResponse.parse(await get('countries/DE')).probes.asked).toBe(false);
+  });
+
   test('a report suspect is judged against every name of its family, shown or not', async () => {
     const { t } = await setup();
     await t.run(async (ctx) => {

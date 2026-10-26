@@ -11,15 +11,18 @@
  *   REAL_HOST_WORDS / realHostLine / addressRealHostLine   the real-host controls
  *   handedWords                      what a member there is handed on one transport
  *   switchNotes                      what is off, and what that leaves the view without
+ *   coverageNote / coverageLines     which outside probes answer from there, and why one went quiet
  *   countryLabel / percent           display helpers
  */
 import type {
   CountryViewAddress,
+  CountryViewCoverage,
   CountryViewHanded,
   CountryViewListener,
   CountryViewName,
   CountryViewSwitches,
   CountryViewTotals,
+  ProbeSourceHealth,
 } from '@shared/contracts/edges';
 import type {
   CountryTrackState,
@@ -30,8 +33,15 @@ import type {
 } from '@shared/contracts/edgeCodes';
 import { countryName } from '@client/lib/countries';
 import { durationLabel, relativeTime } from '../lib/time';
-import { countryReasonSentence, GROUP_GRADE_WORDS, ROUND_RESULT_WORDS } from '../lib/statusWords';
+import {
+  capSpent,
+  countryReasonSentence,
+  GROUP_GRADE_WORDS,
+  probeFailureWords,
+  ROUND_RESULT_WORDS,
+} from '../lib/statusWords';
 import { VANTAGE_REASON_WORDS } from '../names/lib/words';
+import { PROBE_SOURCE_LABELS } from '../probes/matrix';
 import type { Dot } from '../simple/runStages';
 import type { Tone } from '@client/lib/edgeCodes';
 
@@ -86,6 +96,12 @@ export function addressWhy(a: CountryViewAddress): string {
       return `${base} Every probe there failed while other countries reached it.`;
     if (p.verdict === 'unreachable')
       return `${base} Probes there failed, but it fails elsewhere too: broken, not blocked.`;
+    if (p.verdict === 'mixed')
+      return `${base} Some vantages there reached it and some did not, so it is not judged.`;
+    if (p.verdict === 'unknown' && p.okVantages > 0 && p.failVantages === 0)
+      return `${base} Too few vantages there reached it to call it working: that takes one on a residential network, or two others.`;
+    if (p.verdict === 'unknown' && p.failVantages > 0)
+      return `${base} Probes there failed, but from too few networks to call it blocked.`;
   }
   if (a.basis === 'checks') {
     const reason = countryReasonSentence(a.evidence.address?.reason);
@@ -335,12 +351,99 @@ export function switchNotes(s: CountryViewSwitches, nameChecksHere: boolean | nu
   return out;
 }
 
+// --- which outside probes answer from there -----------------------------------------------------
+
+const sourceLabel = (s: string) => PROBE_SOURCE_LABELS[s] ?? s;
+
+/** "A", "A and B", "A, B and C". */
+function andList(xs: readonly string[]): string {
+  return xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
+}
+
+/** Why a source in use went quiet, from its health (null: nothing known). */
+function quietWhy(source: string, health: readonly ProbeSourceHealth[]): string | null {
+  const h = health.find((x) => x.source === source);
+  if (!h) return null;
+  if (h.failing) return `it is failing (${probeFailureWords(h.lastError).label.toLowerCase()})`;
+  if (h.cap && capSpent(h))
+    return `its hourly cap is spent (${h.cap.used} of ${h.cap.perHour} tests in the last hour)`;
+  return null;
+}
+
+type SourceCoverage = CountryViewCoverage['sources'][number];
+
+function quietPart(s: SourceCoverage, health: readonly ProbeSourceHealth[], now: number): string {
+  const why = quietWhy(s.source, health);
+  return `${sourceLabel(s.source)} last answered ${relativeTime(s.lastAt, now)}${why ? `, and ${why}` : ''}`;
+}
+
+const NOT_ASKED =
+  'Edges are not checked from here: "Check edges from here" is off for this country (Settings, Censored countries).';
+
+/**
+ * One sentence for the countries list when the outside probes from there fall
+ * short (null: every source in use that ever answered from there still does,
+ * or the probes are off, which the page says once).
+ */
+export function coverageNote(
+  c: CountryViewCoverage,
+  health: readonly ProbeSourceHealth[],
+  probesOn: boolean,
+  now = Date.now(),
+): string | null {
+  if (!probesOn) return null;
+  if (!c.asked) return 'Edges are not checked from here.';
+  if (c.sources.length === 0) return 'No outside probe source is in use.';
+  const fresh = c.sources.filter((s) => s.fresh);
+  const quiet = c.sources.filter((s) => !s.fresh && s.lastAt !== null);
+  if (fresh.length === 0 && quiet.length === 0)
+    return 'No probe has answered from here yet: the sources in use may have no vantage here.';
+  const parts = quiet.map((s) => quietPart(s, health, now)).join('; ');
+  if (fresh.length === 0)
+    return `No probe has answered from here in the last ${durationLabel(c.windowMs)}: ${parts}.`;
+  if (quiet.length === 0) return null;
+  return `Only ${andList(fresh.map((s) => sourceLabel(s.source)))} answers from here now: ${parts}.`;
+}
+
+/** The outside probes from there, source by source (the country page; empty: probes off). */
+export function coverageLines(
+  c: CountryViewCoverage,
+  health: readonly ProbeSourceHealth[],
+  probesOn: boolean,
+  now = Date.now(),
+): string[] {
+  if (!probesOn) return [];
+  if (!c.asked) return [NOT_ASKED];
+  if (c.sources.length === 0)
+    return ['No outside probe source is in use, so nothing measures the addresses from here.'];
+  const out: string[] = [];
+  const fresh = c.sources.filter((s) => s.fresh);
+  const window = durationLabel(c.windowMs);
+  if (fresh.length === 0)
+    out.push(
+      `No probe has answered from here in the last ${window}, so the probes judge nothing here.`,
+    );
+  else
+    out.push(
+      `Answering from here: ${andList(fresh.map((s) => `${sourceLabel(s.source)} (${relativeTime(s.lastAt, now)})`))}.`,
+    );
+  for (const s of c.sources) {
+    if (s.fresh) continue;
+    out.push(
+      s.lastAt === null
+        ? `${sourceLabel(s.source)} has never answered from here: it may have no vantage here.`
+        : `${quietPart(s, health, now)}; an answer counts for ${window}.`,
+    );
+  }
+  return out;
+}
+
 /** One country's totals in a sentence (the countries list). */
 export function totalsLine(t: CountryViewTotals): string {
   const a = t.addresses;
   const n = t.names;
   const total = a.proven + a.blocked + a.unknown;
-  const addr = `${a.proven} of ${plural(total, 'published address', 'published addresses')} ${a.proven === 1 ? 'works' : 'work'}, ${a.blocked} blocked`;
+  const addr = `${a.proven} of ${plural(total, 'published address', 'published addresses')} ${a.proven === 1 ? 'works' : 'work'}, ${a.blocked} blocked${a.unknown > 0 ? `, ${a.unknown} not known` : ''}`;
   const names = `${plural(n.proven, 'server name', 'server names')} ${n.proven === 1 ? 'works' : 'work'}, ${n.blocked} blocked, ${n.unknown} not judged`;
   return `${addr}. ${names}.`;
 }
