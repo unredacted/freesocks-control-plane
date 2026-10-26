@@ -1388,11 +1388,18 @@ export const ProbeSourceHealth = z.object({
   failing: z.boolean(),
   /**
    * Globalping only: its hourly cap (`probe.globalpingTestsPerHour`) against
-   * the probes asked in the last hour, and what one run of an edge asks. A
-   * round that would pass the cap runs without Globalping (no failed run).
+   * the probes asked in the last hour, what one run of an edge asks, and the
+   * last hour's cron rounds with how many ran without Globalping. A round
+   * that would pass the cap runs without it (no failed run).
    */
   cap: z
-    .object({ used: z.number(), perHour: z.number(), perRun: z.number() })
+    .object({
+      used: z.number(),
+      perHour: z.number(),
+      perRun: z.number(),
+      rounds: z.number().default(0),
+      skipped: z.number().default(0),
+    })
     .nullable()
     .default(null),
 });

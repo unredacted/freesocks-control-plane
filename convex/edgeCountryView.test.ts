@@ -350,6 +350,24 @@ describe('the country view', () => {
         results: [],
         tests: 398,
       });
+      // Two cron rounds in the hour: one with Globalping, one the cap left it out of.
+      const cron = (source: 'globalping' | 'checkhost', roundId: string) =>
+        ctx.db.insert('probeRuns', {
+          targetKind: 'edge',
+          targetRef: works,
+          roundId,
+          source,
+          target: '198.51.100.2:443',
+          status: 'finished',
+          trigger: 'cron',
+          requestedAt: now - 20 * MIN,
+          finishedAt: now - 19 * MIN,
+          results: [],
+          ...(source === 'globalping' ? { tests: 0 } : {}),
+        });
+      await cron('globalping', 'with');
+      await cron('checkhost', 'with');
+      await cron('checkhost', 'without');
     });
     const cookie = await adminCookie(t);
     const get = async (path: string) =>
@@ -376,6 +394,8 @@ describe('the country view', () => {
       used: 398,
       perHour: 400,
       perRun: 6,
+      rounds: 2,
+      skipped: 1,
     });
     const ru = CountryViewResponse.parse(await get('countries/RU'));
     expect(ru.probes).toEqual(by.RU);

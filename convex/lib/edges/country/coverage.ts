@@ -25,6 +25,25 @@ export interface AnswerRow {
 /** `<country>|<source>` -> the newest answer over every row given. */
 export type NewestAnswers = Map<string, number>;
 
+/** At most this many addresses' rollup rows are read per view: one index range each. */
+export const MAX_ANSWER_TARGETS = 256;
+
+/**
+ * The probe targets (`<kind>:<ref>`) a view reads answers for, bounded so a
+ * large fleet cannot push the view past a transaction's index-range limit:
+ * the ones marked `first` (probed origins, published addresses), then the
+ * rest, in the order given, at most `max`. An address left out reads no
+ * answers, as before coverage existed.
+ */
+export function answerTargets(
+  targets: ReadonlyArray<{ key: string; first: boolean }>,
+  max = MAX_ANSWER_TARGETS,
+): string[] {
+  return [...targets.filter((t) => t.first), ...targets.filter((t) => !t.first)]
+    .slice(0, Math.max(0, max))
+    .map((t) => t.key);
+}
+
 const answerKey = (country: string, source: string) => `${country}|${source}`;
 
 /** Fold rows into each (country, source)'s newest answer. */

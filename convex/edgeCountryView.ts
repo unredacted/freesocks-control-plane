@@ -35,6 +35,7 @@ import { suggest } from './lib/edges/sni/vantage';
 import { readingOf } from './lib/edges/sni/realHost';
 import {
   answersFor,
+  answerTargets,
   coverageOf,
   newestAnswers,
   type NewestAnswers,
@@ -202,14 +203,28 @@ interface Prefetched {
   answersByTarget: Map<string, NewestAnswers>;
 }
 
-/** Every country's rollup rows of one probe target, read once (one index range). */
-async function answersOf(db: Db, p: Prefetched, kind: 'edge' | 'relay', ref: string) {
-  const rows = await db
-    .query('probeReachability')
-    .withIndex('by_target_country', (q) => q.eq('targetKind', kind).eq('targetRef', ref))
-    .collect();
-  p.answersByTarget.set(`${kind}:${ref}`, newestAnswers(rows));
-  newestAnswers(rows, p.answers);
+/**
+ * Every country's rollup rows of the probed addresses, one index range each,
+ * for at most `MAX_ANSWER_TARGETS` of them (probed origins and published
+ * addresses first: `answerTargets`).
+ */
+async function answersOf(db: Db, p: Prefetched, loaded: Loaded) {
+  const targets = loaded.origins.flatMap((o) => [
+    ...(o.input.direct ? [{ key: `relay:${o.input.relayId}`, first: true }] : []),
+    ...o.edges.map(({ doc }) => ({
+      key: `edge:${doc._id}`,
+      first: doc.publication === 'published',
+    })),
+  ]);
+  for (const key of answerTargets(targets)) {
+    const [kind, ref] = key.split(':') as ['edge' | 'relay', string];
+    const rows = await db
+      .query('probeReachability')
+      .withIndex('by_target_country', (q) => q.eq('targetKind', kind).eq('targetRef', ref))
+      .collect();
+    p.answersByTarget.set(key, newestAnswers(rows));
+    newestAnswers(rows, p.answers);
+  }
 }
 
 async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
@@ -225,12 +240,11 @@ async function prefetch(db: Db, loaded: Loaded): Promise<Prefetched> {
     answers: new Map(),
     answersByTarget: new Map(),
   };
+  await answersOf(db, p, loaded);
   const groups = new Set<string>();
   for (const o of loaded.origins) {
-    if (o.input.direct) await answersOf(db, p, 'relay', o.input.relayId);
     for (const { doc, groupKey } of o.edges) {
       groups.add(groupKey);
-      await answersOf(db, p, 'edge', doc._id);
       for (const r of await db
         .query('edgeCountryEvidence')
         .withIndex('by_edge_country', (q) => q.eq('edgeId', doc._id))
