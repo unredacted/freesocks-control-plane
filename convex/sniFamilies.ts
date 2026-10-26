@@ -48,6 +48,7 @@ import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { listenersOfTransport, syncTransportNetwork } from './lib/edges/networkScope';
 import { networkIdOfSlug, networkPrefixes } from './edgeNetworks';
+import { markCandidatesAdded } from './lib/edges/sni/hunt/store';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -542,10 +543,12 @@ async function addFamilyNames(ctx: MutationCtx, f: Doc<'sniFamilies'>, input: re
   const current = (await namesOf(ctx, f._id)).length;
   let seq = f.nextSeq;
   let added = 0;
+  const addedNames: string[] = [];
   for (const l of verdicts) {
     if (l.verdict !== 'added' || !l.name) continue;
     if (current + added >= MAX_NAMES_PER_FAMILY)
       return refuse('edge.sni.cap', `A family holds at most ${MAX_NAMES_PER_FAMILY} names`);
+    addedNames.push(l.name);
     await ctx.db.insert('sniNames', {
       familyId: f._id,
       name: l.name,
@@ -558,6 +561,9 @@ async function addFamilyNames(ctx: MutationCtx, f: Doc<'sniFamilies'>, input: re
     added++;
   }
   await ctx.db.patch(f._id, { nextSeq: seq, updatedAt: Date.now() });
+  // A found name a family now holds is no longer a candidate anywhere,
+  // whichever route added it (docs/edges.md "Finding names").
+  await markCandidatesAdded(ctx.db, addedNames, Date.now());
   return { added, lines: verdicts };
 }
 

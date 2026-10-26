@@ -3542,7 +3542,27 @@ export default defineSchema({
     .index('by_name', ['name'])
     .index('by_name_scope', ['name', 'networkId', 'familyId'])
     .index('by_check_due', ['checkDueAt'])
-    .index('by_gone', ['goneAt']),
+    .index('by_gone', ['goneAt'])
+    .index('by_scope_site', ['networkId', 'familyId', 'site']),
+
+  // One row per scope (network, family, or both) holding candidates: how many
+  // it holds and how many are ready, counted by the scope's rescore. An insert
+  // adds to `total` at once (so the per-scope cap holds between counts); any
+  // other change marks it `dirty`, and the cron recounts dirty scopes first.
+  sniHuntScopes: defineTable({
+    networkId: v.optional(v.id('edgeNetworks')),
+    familyId: v.optional(v.id('sniFamilies')),
+    kind: v.union(v.literal('network'), v.literal('family')),
+    total: v.number(),
+    ready: v.number(),
+    dirty: v.optional(v.boolean()),
+    countedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_scope', ['networkId', 'familyId'])
+    .index('by_family', ['familyId'])
+    .index('by_kind', ['kind'])
+    .index('by_dirty', ['dirty']),
 
   // Names and sites an operator ignored, so no later sweep or import brings
   // them back. A scope (network or family) limits it there; none = everywhere.

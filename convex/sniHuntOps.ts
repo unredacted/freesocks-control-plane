@@ -57,10 +57,21 @@ import type { ClaimedCheck, UpsertTally } from './sniHunt';
 const STEP_DEADLINE_MS = 60_000;
 /** A check run stops starting candidates past this. */
 const CHECK_DEADLINE_MS = 60_000;
-/** Names per checkpoint (a chunk of the stored list is a multiple of it). */
+/** Names per checkpoint at most (the end of a chunk of the stored list ends a batch early). */
 const SWEEP_BATCH = 100;
 /** What a batch may take beyond its paced lookups (the slowest lookup's timeout). */
 const LOOKUP_TAIL_MS = 8_000;
+
+/**
+ * Names per batch at a lookup rate: as many as fit half a step with the tail
+ * (so the first batch of a step always starts), at most SWEEP_BATCH, at least one.
+ */
+export function sweepBatchSize(lookupsPerSecond: number, lookupsPerName: number) {
+  const fit = Math.floor(
+    (((STEP_DEADLINE_MS / 2 - LOOKUP_TAIL_MS) / 1000) * lookupsPerSecond) / lookupsPerName,
+  );
+  return Math.max(1, Math.min(SWEEP_BATCH, fit));
+}
 /** The next step starts this long after a step ends. */
 const STEP_GAP_MS = 5_000;
 /** Between handshakes: the same pace as qualification. */
@@ -277,7 +288,9 @@ export const sweepStep = internalAction({
     }
     const withV6 = networks.some((n) => hasV6(n.ranges));
     const perName = withV6 ? 2 : 1;
-    const batchMs = ((SWEEP_BATCH * perName) / claim.lookupsPerSecond) * 1000 + LOOKUP_TAIL_MS;
+    // Sized to the rate, so a batch's lookups take at most half a step even at the slowest.
+    const batchSize = sweepBatchSize(claim.lookupsPerSecond, perName);
+    const batchMs = ((batchSize * perName) / claim.lookupsPerSecond) * 1000 + LOOKUP_TAIL_MS;
     let cursor = claim.cursor;
     let chunk = null as { index: number; entries: ListEntry[] } | null;
     let batches = 0;
@@ -299,7 +312,7 @@ export const sweepStep = internalAction({
         chunk = { index, entries: decodeChunk(text) };
       }
       const offset = cursor - index * SWEEP_CHUNK_ENTRIES;
-      const batch = chunk.entries.slice(offset, offset + SWEEP_BATCH);
+      const batch = chunk.entries.slice(offset, offset + batchSize);
       if (batch.length === 0) break;
       const answers = await resolvePaced(
         batch.map((e) => e.name),
@@ -385,7 +398,8 @@ async function checkOne(c: ClaimedCheck, p: NetworkPrefixes | undefined): Promis
       const off = p ? ownTargetCode(qualificationNetworkCode(answers, answers, p)) : null;
       if (off) shake = { ok: false, error: off };
       else {
-        dial = { host: a4[0] ?? a6[0]!, port: 443 };
+        // The first shown answer: the address stored as the candidate's target.
+        dial = { host: base.shown[0]!, port: 443 };
         shake = await deps.tlsInspect({ ...dial, servername: c.name });
       }
     }

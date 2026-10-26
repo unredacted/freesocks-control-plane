@@ -1788,13 +1788,10 @@ async function postHunt(
     // Added through the family's normal path, so they are qualified like any pasted name.
     const slug = String(body.family ?? '');
     const names = strings(body.names);
-    const result = await ctx.runMutation(internal.sniFamilies.importNames, {
-      slug,
-      lines: names,
-      ...act,
-    });
-    await ctx.runMutation(internal.sniHunt.noteAdded, { names });
-    return json(result);
+    // The import marks the found names it added as `added` itself.
+    return json(
+      await ctx.runMutation(internal.sniFamilies.importNames, { slug, lines: names, ...act }),
+    );
   }
   const CANDIDATE_ACTIONS = ['ignore', 'unignore', 'recheck'] as const;
   const action = CANDIDATE_ACTIONS.find((x) => x === d);
