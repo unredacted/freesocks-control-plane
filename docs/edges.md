@@ -2887,7 +2887,8 @@ a measured bad one below it. Penalties come off last.
 lists the top `shortlist - 3` passing candidates by `baseScore` (never by `score`, so evidence
 some candidates already have cannot keep the others out) and 3 rotating slots for passing
 candidates without fresh evidence, the one asked about longest ago first. "Measure now" (`POST
-sni/hunt/candidates/measure {ids}`) puts a passing candidate first in line. Timing and OONI
+sni/hunt/candidates/measure {ids}`) puts a passing candidate first in line; the request is
+dropped if the candidate stops passing first (ignored, added or failing). Timing and OONI
 answers count for 14 days; older counts as missing (half).
 
 - **Near the node** (`timing`): a Globalping `HEAD /` from 2 probes at the network's place
@@ -2921,9 +2922,12 @@ answers count for 14 days; older counts as missing (half).
   an FCP address (left out when the batch is planned, and skipped as `real_is_ours` if one became
   FCP's since). The whole shortlist is read, so names checked lately never hide the rest.
   The batch is read like the vantage batches: a failure counts as **interference** only when the
-  same vantage got through for another name of the batch, from `minVantages` vantages on
-  `minNetworks` networks; a failure nothing paired is **inconclusive** (a broken probe, a route, a
-  site outage: no penalty); a batch where nothing got through reads **path**.
+  same vantage reached another name of the batch (`ok`, or `answered`: the far end answered
+  without TLS details), from `minVantages` vantages on `minNetworks` networks; a failure nothing
+  paired is **inconclusive** (a broken probe, a route, a site outage: no penalty); failures where
+  no vantage reached any name of the batch read **path**. A name with no results at all (probes
+  offline or outside the country) gets no reading and stays due. A candidate's checks are deleted
+  with it (its scope removed, or gone for 30 days).
 
 The per-country part is 20 times the mean over the curated countries of: 1 where a fresh reading
 is `ok` (or, without a decisive reading, OONI has the exact name `ok`), 0 where it reads
@@ -2947,7 +2951,11 @@ after 6 hours.
 
 **The cron** `sni-hunt` (10 min) does no network work itself: it keeps the sweep's chain alive,
 starts a due sweep, schedules one check run and one certificate-log read when something is due,
-rescores one scope (in turn), and deletes what aged out.
+rescores one scope (in turn), and deletes what aged out. It schedules an evidence run when a
+"Measure now" waits or once some shortlisted candidate's evidence may be due: a run that finds
+nothing to do stores when the next refresh falls due (appState `sni:hunt:evidenceNext`), and a
+rescore that sees a shortlisted name due now (newly listed, its endpoint or its network's place
+changed) brings it forward.
 
 | Setting (`edge.sni.hunt.*`) | Default           | What it does                                     |
 | --------------------------- | ----------------- | ------------------------------------------------ |

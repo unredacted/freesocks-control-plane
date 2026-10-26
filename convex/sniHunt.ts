@@ -48,6 +48,7 @@ import {
   COUNTRY_CHECK_EVERY_MS,
   OONI_REFRESH_MS,
   countryOf,
+  evidenceDueAt,
   isFresh,
   nearOf,
   placeKey,
@@ -552,6 +553,16 @@ async function dropChunks(ctx: MutationCtx, run: Doc<'sniHuntRuns'>) {
     await ctx.db.delete(c._id);
 }
 
+/** A candidate goes with its in-country checks (they repeat its name and address). */
+async function deleteCandidate(ctx: MutationCtx, id: Id<'sniCandidates'>) {
+  for (const p of await ctx.db
+    .query('sniHuntProbes')
+    .withIndex('by_candidate', (q) => q.eq('candidateId', id))
+    .take(100))
+    await ctx.db.delete(p._id);
+  await ctx.db.delete(id);
+}
+
 /** One chunk of a downloading run's list, kept only while that download is current. */
 export const storeChunk = internalMutation({
   args: { runId: v.id('sniHuntRuns'), gen: v.number(), index: v.number(), text: v.string() },
@@ -891,7 +902,7 @@ export const claimChecks = internalMutation({
         const f = fams.get(k);
         // Gone, or moved to another network since it was found: its scope is no more.
         if (!f || f.networkId !== c.networkId) {
-          await ctx.db.delete(c._id);
+          await deleteCandidate(ctx, c._id);
           continue;
         }
         target = { address: f.target.address, port: f.target.port, requireH2: f.requireH2 };
@@ -902,7 +913,7 @@ export const claimChecks = internalMutation({
           const n = await ctx.db.get(c.networkId);
           nets.set(k, n ? (hasPrefixes(n.prefixes) ? n.prefixes : null) : null);
           if (!n) {
-            await ctx.db.delete(c._id);
+            await deleteCandidate(ctx, c._id);
             continue;
           }
         }
@@ -1294,6 +1305,14 @@ async function placeOf(
 
 /** Rows walked per evidence claim to find the ones waiting (the shortlist is per scope). */
 const EVIDENCE_SCAN_CAP = 3000;
+/**
+ * No shortlisted candidate's evidence is due before this time (ms), as the
+ * last evidence claim that found nothing to do worked out; 0 when something
+ * may be due now. The cron schedules an evidence run only once it has passed
+ * (or a "Measure now" waits); a rescore that sees a shortlisted name due now
+ * (newly listed, its endpoint or its network's place changed) sets it to 0.
+ */
+const EVIDENCE_NEXT_KEY = 'sni:hunt:evidenceNext';
 
 /**
  * One evidence run's work: shortlisted candidates (and those an operator asked
@@ -1327,9 +1346,17 @@ export const claimEvidence = internalMutation({
     const timing: TimingItem[] = [];
     const ooni: OoniItem[] = [];
     const seen = new Set<string>();
+    // When the next refresh falls due, unless work is in hand or left over.
+    let nextDue = now + DAY;
+    let busy = false;
     const consider = async (c: Candidate) => {
-      if (seen.has(c._id) || !passing(c)) return;
+      if (seen.has(c._id)) return;
       seen.add(c._id);
+      if (!passing(c)) {
+        // Asked to measure, then ignored, added or failing: the request goes.
+        if (c.measureAt) await ctx.db.patch(c._id, { measureAt: undefined, updatedAt: now });
+        return;
+      }
       const want = !!c.measureAt;
       const place = await placeOf(ctx.db, c, places);
       let took = false;
@@ -1370,18 +1397,29 @@ export const claimEvidence = internalMutation({
         ooni.push({ id: c._id, name: c.name, site: c.site, measure: want });
         took = true;
       }
-      if (took)
+      if (took) {
+        busy = true;
         await ctx.db.patch(c._id, { evidenceAskedAt: now, measureAt: undefined, updatedAt: now });
+        return;
+      }
+      const due = evidenceDueAt(c, now, place ? placeKey(place) : null, dialable(c.check?.dialled));
+      // Due but not taken (the hour's budget, the run's size): the next tick tries again.
+      if (due <= now || want) busy = true;
+      else nextDue = Math.min(nextDue, due);
     };
     for (const c of asked) await consider(c);
     let scanned = 0;
     for await (const c of ctx.db
       .query('sniCandidates')
       .withIndex('by_listed', (q) => q.eq('listed', true))) {
-      if (++scanned > EVIDENCE_SCAN_CAP) break;
+      if (++scanned > EVIDENCE_SCAN_CAP) {
+        busy = true;
+        break;
+      }
       if (timing.length >= EVIDENCE_PER_RUN && ooni.length >= EVIDENCE_PER_RUN) break;
       await consider(c);
     }
+    await writeStateJson(ctx.db, EVIDENCE_NEXT_KEY, busy ? 0 : nextDue);
     if (timing.length === 0 && ooni.length === 0) return empty;
     const { curatedCountries } = await resolveSniConfig(ctx.db);
     return {
@@ -1762,6 +1800,16 @@ async function rescoreScope(ctx: MutationCtx, s: Scope, now: number) {
     })),
     cfg.shortlist,
   );
+  // A shortlisted name due now (newly listed, its endpoint or the place
+  // changed) brings the next evidence run forward.
+  const dueNow = rows.some(
+    (r) =>
+      listed.has(r._id as string) &&
+      passing(r) &&
+      evidenceDueAt(r, now, place, isPublicIpLiteral(r.check?.dialled ?? '')) <= now,
+  );
+  if (dueNow && ((await readStateJson<number>(ctx.db, EVIDENCE_NEXT_KEY)) ?? 0) > now)
+    await writeStateJson(ctx.db, EVIDENCE_NEXT_KEY, 0);
   let changed = 0;
   for (const r of rows) {
     const next = scored.get(r._id as string)!;
@@ -1808,7 +1856,7 @@ export const tick = internalMutation({
       .query('sniCandidates')
       .withIndex('by_gone', (q) => q.gt('goneAt', 0).lt('goneAt', now - GONE_KEEP_MS))
       .take(100))
-      await ctx.db.delete(g._id);
+      await deleteCandidate(ctx, g._id);
     for (const kind of ['ct', 'timing'] as const)
       for (const c of await ctx.db
         .query('sniHuntCalls')
@@ -1870,16 +1918,20 @@ export const tick = internalMutation({
       await ctx.scheduler.runAfter(0, internal.sniHuntOps.check, {});
       scheduled.push('check');
     }
-    // One evidence run when a shortlisted candidate waits for some.
+    // One evidence run when a "Measure now" waits, or once a shortlisted
+    // candidate's evidence may be due (EVIDENCE_NEXT_KEY).
+    const evidenceNext = (await readStateJson<number>(ctx.db, EVIDENCE_NEXT_KEY)) ?? 0;
     const waiting =
       (await ctx.db
         .query('sniCandidates')
         .withIndex('by_measure', (q) => q.gt('measureAt', 0))
         .first()) ??
-      (await ctx.db
-        .query('sniCandidates')
-        .withIndex('by_listed', (q) => q.eq('listed', true))
-        .first());
+      (evidenceNext <= now
+        ? await ctx.db
+            .query('sniCandidates')
+            .withIndex('by_listed', (q) => q.eq('listed', true))
+            .first()
+        : null);
     if (waiting) {
       await ctx.scheduler.runAfter(0, internal.sniHuntOps.evidence, {});
       scheduled.push('evidence');
@@ -1906,8 +1958,8 @@ export const tick = internalMutation({
 
 /**
  * Everything found for a scope that is going away (a network or a family
- * deleted): its candidates, its certificate-log reads and its ignores, a page
- * of each per run, again until none is left.
+ * deleted): its candidates with their in-country checks, its certificate-log
+ * reads and its ignores, a page of each per run, again until none is left.
  */
 export const dropScope = internalMutation({
   args: { networkId: v.optional(v.id('edgeNetworks')), familyId: v.optional(v.id('sniFamilies')) },
@@ -1944,7 +1996,10 @@ export const dropScope = internalMutation({
           .query('sniHuntIgnores')
           .withIndex('by_network', (q) => q.eq('networkId', net))
           .take(PAGE);
-    for (const r of [...candidates, ...ct, ...ignores]) await ctx.db.delete(r._id);
+    // A candidate's in-country checks go with it: a batch already queued then
+    // finds nothing of it left to dial.
+    for (const c of candidates) await deleteCandidate(ctx, c._id);
+    for (const r of [...ct, ...ignores]) await ctx.db.delete(r._id);
     const more = [candidates, ct, ignores].some((rows) => rows.length === PAGE);
     if (more) await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, a);
     return { deleted: candidates.length + ct.length + ignores.length };
@@ -1983,7 +2038,7 @@ export const clearForRollback = internalMutation({
     }
     for (const n of await ctx.db.query('edgeNetworks').take(200))
       if (n.hunt !== undefined) await ctx.db.patch(n._id, { hunt: undefined });
-    for (const key of [RESCORE_KEY])
+    for (const key of [RESCORE_KEY, EVIDENCE_NEXT_KEY])
       for (const row of await ctx.db
         .query('appState')
         .withIndex('by_key', (q) => q.eq('key', key))

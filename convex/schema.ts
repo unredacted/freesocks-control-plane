@@ -3650,7 +3650,8 @@ export default defineSchema({
   })
     .index('by_requested', ['requestedAt'])
     .index('by_batch', ['batch'])
-    .index('by_status_requested', ['status', 'requestedAt']),
+    .index('by_status_requested', ['status', 'requestedAt'])
+    .index('by_candidate', ['candidateId']),
 
   // Names and sites an operator ignored, so no later sweep or import brings
   // them back. A scope (network or family) limits it there; none = everywhere.

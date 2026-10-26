@@ -163,34 +163,39 @@ interface BatchRow {
 }
 
 const FAILS = new Set(['reset', 'timeout', 'cert_mismatch']);
+/** The site was reached: a full check, or the far end answered without TLS details. */
+const reached = (o: string) => o === 'ok' || o === 'answered';
 
 /**
  * One batch's reading per name, paired like the vantage batches: a failure
- * counts as interference only when the SAME vantage got through for another
- * name of the batch (`singled`), from at least `minVantages` vantages on
+ * counts as interference only when the SAME vantage reached another name of
+ * the batch (`singled`), from at least `minVantages` vantages on
  * `minNetworks` networks. A failure nothing paired is inconclusive (a broken
- * probe, a route, a site outage: no penalty). A batch where nothing got
- * through reads `path`. `ok` needs the same floors.
+ * probe, a route, a site outage: no penalty). Failures where no vantage
+ * reached any name of the batch read `path`. `ok` needs the same floors of
+ * full checks. A name with no results at all has no reading (it stays due).
  */
 export function readCountryBatch(
   rows: readonly BatchRow[],
   floors: { minVantages: number; minNetworks: number },
 ): Map<string, { reading: CountryReading; vantages: number; networks: number; singled: number }> {
-  const okBy = new Map<string, Set<string>>(); // vantage -> keys it got through for
+  const reachedBy = new Map<string, Set<string>>(); // vantage -> keys it reached
   for (const r of rows)
     for (const x of r.results)
-      if (x.outcome === 'ok' && x.vantage)
-        okBy.set(x.vantage, new Set([...(okBy.get(x.vantage) ?? []), r.key]));
-  const anyOk = okBy.size > 0;
+      if (reached(x.outcome) && x.vantage)
+        reachedBy.set(x.vantage, new Set([...(reachedBy.get(x.vantage) ?? []), r.key]));
+  const anyReached = reachedBy.size > 0;
   const out = new Map<
     string,
     { reading: CountryReading; vantages: number; networks: number; singled: number }
   >();
   for (const r of rows) {
+    if (r.results.length === 0) continue;
     const okV = new Set<string>();
     const okN = new Set<string>();
     const sV = new Set<string>();
     const sN = new Set<string>();
+    let failed = 0;
     for (const x of r.results) {
       if (!x.vantage) continue;
       const net = x.asn ?? x.network;
@@ -198,7 +203,8 @@ export function readCountryBatch(
         okV.add(x.vantage);
         if (net) okN.add(net);
       } else if (FAILS.has(x.outcome)) {
-        const others = okBy.get(x.vantage);
+        failed++;
+        const others = reachedBy.get(x.vantage);
         if (others && [...others].some((k) => k !== r.key)) {
           sV.add(x.vantage);
           if (net) sN.add(net);
@@ -206,9 +212,8 @@ export function readCountryBatch(
       }
     }
     let reading: CountryReading;
-    if (!anyOk) reading = 'path';
-    else if (sV.size >= floors.minVantages && sN.size >= floors.minNetworks)
-      reading = 'interference';
+    if (sV.size >= floors.minVantages && sN.size >= floors.minNetworks) reading = 'interference';
+    else if (failed > 0 && !anyReached) reading = 'path';
     else if (sV.size === 0 && okV.size >= floors.minVantages && okN.size >= floors.minNetworks)
       reading = 'ok';
     else reading = 'inconclusive';
@@ -243,6 +248,27 @@ export function nearOf(c: EvidenceView, now: number, place: string | null): numb
   if (!c.check?.dialled || c.check.dialled !== t.endpoint || (c.check.port ?? 443) !== t.port)
     return undefined;
   return nearPoints(t.connectMs);
+}
+
+/**
+ * When a shortlisted candidate's evidence is next due: now when its OONI
+ * answer, or its timing where it can be timed (`timeable`: its network names
+ * a place and its endpoint may be dialled), is missing or stale; otherwise
+ * the earlier of the two refreshes.
+ */
+export function evidenceDueAt(
+  c: EvidenceView,
+  now: number,
+  place: string | null,
+  timeable: boolean,
+): number {
+  let due = c.ooni ? c.ooni.at + OONI_REFRESH_MS : now;
+  if (place && timeable)
+    due = Math.min(
+      due,
+      nearOf(c, now, place) === undefined ? now : c.timing!.at + EVIDENCE_FRESH_MS,
+    );
+  return due;
 }
 
 /**
