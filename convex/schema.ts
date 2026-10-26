@@ -3666,8 +3666,8 @@ export default defineSchema({
     .index('by_family', ['familyId'])
     .index('by_network', ['networkId']),
 
-  // One top-sites sweep: the list, downloaded once and kept in file storage in
-  // chunks while the run lasts, is resolved by a chain of short steps. A step
+  // One top-sites sweep: the list, downloaded once and kept in chunks
+  // (`sniHuntChunks`) while the run lasts, is resolved by a chain of short steps. A step
   // holds the lease; every checkpoint is a compare-and-set on `gen` and
   // `cursor`, so a cancelled run (gen bumped) or a duplicate step discards its
   // results.
@@ -3684,7 +3684,7 @@ export default defineSchema({
     listDate: v.optional(v.string()),
     depth: v.number(),
     wwwDepth: v.number(),
-    chunks: v.array(v.id('_storage')),
+    chunks: v.array(v.id('sniHuntChunks')),
     total: v.number(),
     cursor: v.number(),
     hits: v.number(),
@@ -3700,6 +3700,14 @@ export default defineSchema({
   })
     .index('by_started', ['startedAt'])
     .index('by_state', ['state']),
+
+  // The list of one sweep, 10,000 entries (`rank<TAB>name` lines) a row, kept
+  // only while the run lasts.
+  sniHuntChunks: defineTable({
+    runId: v.id('sniHuntRuns'),
+    index: v.number(),
+    text: v.string(),
+  }).index('by_run_index', ['runId', 'index']),
 
   // Certificate transparency, one registrable domain for one scope: read a page
   // at a time after `after` (the log service pages from the least recently
