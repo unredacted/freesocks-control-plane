@@ -35,6 +35,8 @@ import {
   parseNames,
   serverErrorWords,
   serverNamesLabel,
+  frontsHint,
+  splitAddresses,
 } from './words';
 
 const inbound = (over: Record<string, unknown> = {}) => ({
@@ -204,6 +206,30 @@ describe('what the page says', () => {
     expect(countryLabel('nl')).toBe('Netherlands');
   });
 
+  test("the operator's own fronts are split from the addresses members get, in order", () => {
+    const a = (remark: string, operatorFront: boolean) => ({ remark, operatorFront });
+    expect(
+      splitAddresses([a('lb-1', true), a('node-one-relay-a', false), a('lb-2', true)]),
+    ).toEqual({
+      members: [a('node-one-relay-a', false)],
+      fronts: [a('lb-1', true), a('lb-2', true)],
+    });
+    expect(frontsHint(1)).toBe(
+      "Members get this node's edges instead. Once its traffic stops, delete this front at its provider, and its address here.",
+    );
+    expect(frontsHint(2)).toMatch(/delete these fronts at their provider/);
+  });
+
+  test('a transport whose only addresses are fronts left out has none for members', () => {
+    const fronts = [{ remark: 'lb-1', operatorFront: true }] as never[];
+    expect(nodeNotes(node({ transports: [inbound({ addresses: fronts })] }) as never)).toEqual([
+      'reality-in has no address for members.',
+    ]);
+    expect(quietNotes(tree([node({ transports: [inbound({ addresses: fronts })] })]))).toEqual([
+      'reality-in is unused on node-one: no address for members.',
+    ]);
+  });
+
   test('house style: no em-dash, no API path, no bare code word', () => {
     const all = [
       ...needsYou(
@@ -225,6 +251,8 @@ describe('what the page says', () => {
       fleetSentence([node(), node({ online: false })] as never).text,
       nodeWords(node({ online: false }) as never).sentence,
       nodeWords(node({ profile: null }) as never).sentence,
+      frontsHint(1),
+      frontsHint(2),
     ].join('\n');
     expect(all).not.toMatch(/—|–/);
     expect(all).not.toMatch(/\/api\//);

@@ -15,11 +15,13 @@ import { internal } from './_generated/api';
 import type { Doc, Id, TableNames } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
+import { originNameOf } from './lib/backend/nodeRename';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { resolveModeCatalog } from './lib/connectionModes';
 import { poolFromConfig } from './lib/remnawavePlacement';
 import { flattenServerConfig, resolveServerConfig, serverConfigWrites } from './lib/serverConfig';
 import { modeRefOf } from './nodeIntents';
+import { deliveryBindingFor } from './relays';
 import { realityClientRefusal } from '../src/shared/contracts/realityClients';
 
 const iso = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
@@ -242,7 +244,8 @@ function mapInbound(i: Doc<'panelProfiles'>['inbounds'][number]) {
   };
 }
 
-function mapHost(h: Doc<'panelHosts'>) {
+/** `isFront`: whether it is an operator front the node's members no longer get (`leftOutFronts`). */
+function mapHost(h: Doc<'panelHosts'>, isFront?: (h: Doc<'panelHosts'>) => boolean) {
   return {
     addressUuid: h.hostUuid,
     remark: h.remark,
@@ -261,7 +264,44 @@ function mapHost(h: Doc<'panelHosts'>) {
     configProfileUuid: h.configProfileUuid ?? null,
     transportUuid: h.configProfileInboundUuid ?? null,
     nodeUuids: h.nodeUuids,
+    operatorFront: isFront?.(h) ?? false,
   };
+}
+
+/**
+ * Per node (by uuid), which of its Hosts are operator fronts its members no
+ * longer get: those `relays.operatorFronts` records for the origin the node's
+ * delivery binding names, by Host uuid (a backend does not keep remarks
+ * unique; a record from before uuids were kept matches by remark until the
+ * next look rewrites it). A member render leaves them out (docs/edges.md
+ * "Direct-Host hides and the restore workflow"). A node with no active
+ * binding is served the raw body, fronts included, so it has none.
+ */
+async function leftOutFronts(
+  db: DatabaseReader,
+  sid: Id<'backendServers'>,
+  nodes: readonly Doc<'panelNodes'>[],
+): Promise<Map<string, (h: Doc<'panelHosts'>) => boolean>> {
+  const out = new Map<string, (h: Doc<'panelHosts'>) => boolean>();
+  const relays = await db
+    .query('relays')
+    .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
+    .collect(); // small operator table
+  const bySlug = new Map(relays.filter((r) => r.operatorFronts).map((r) => [r.slug, r]));
+  if (bySlug.size === 0) return out;
+  for (const n of nodes) {
+    const binding = await deliveryBindingFor(db, sid, originNameOf(n.name));
+    const fronts = binding && bySlug.get(binding.relaySlug)?.operatorFronts;
+    if (!fronts) continue;
+    if (fronts.hostUuids) {
+      const uuids = new Set(fronts.hostUuids.map((u) => u.toLowerCase()));
+      out.set(n.nodeUuid, (h) => uuids.has(h.hostUuid.toLowerCase()));
+    } else {
+      const remarks = new Set(fronts.remarks);
+      out.set(n.nodeUuid, (h) => remarks.has(h.remark));
+    }
+  }
+  return out;
 }
 
 /**
@@ -302,6 +342,7 @@ export const tree = internalQuery({
         .withIndex('by_server', (q) => q.eq('backendServerId', server._id))
         .unique(),
     ]);
+    const frontsOf = await leftOutFronts(ctx.db, sid, nodes);
     const profileBy = new Map(profiles.map((p) => [p.profileUuid, p]));
     const usedProfiles = new Set<string>();
     const placedHosts = new Set<string>();
@@ -331,7 +372,7 @@ export const tree = internalQuery({
                 : null,
               addresses: mine
                 .sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0))
-                .map(mapHost),
+                .map((h) => mapHost(h, frontsOf.get(n.nodeUuid))),
               modeGroups: squads
                 .filter((sq) => sq.inboundUuids.includes(i.inboundUuid))
                 .map((sq) => ({ groupUuid: sq.squadUuid, name: sq.name })),
@@ -385,7 +426,9 @@ export const tree = internalQuery({
           transportTags: sq.inboundUuids.map((u) => tagOf.get(u) ?? null),
           transportUuids: sq.inboundUuids,
         })),
-      addresses: hosts.sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0)).map(mapHost),
+      addresses: hosts
+        .sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0))
+        .map((h) => mapHost(h)),
       unattached: {
         profiles: profiles.filter((p) => !usedProfiles.has(p.profileUuid)).map((p) => p.name),
         addresses: hosts.filter((h) => !placedHosts.has(h.hostUuid)).map((h) => h.remark),

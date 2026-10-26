@@ -5,7 +5,8 @@
    * edges when an origin protects it (the Edges panel, loaded lazily; the old
    * `/admin/edges/nodes/<slug>` address redirects here, `?test=<edgeId>` opens
    * its test card), the transports it serves with the addresses members get
-   * for each, and every action on the node in the header. Nothing on this page
+   * for each (the operator's own fronts members no longer get are listed
+   * apart), and every action on the node in the header. Nothing on this page
    * changes a backend unless changes are allowed and the node role has handed
    * it over.
    *
@@ -40,6 +41,7 @@
   import { pickInstance, serversPaths } from './lib/routes';
   import {
     countryLabel,
+    frontsHint,
     inboundSummary,
     intentRestarting,
     nodeNotes,
@@ -48,6 +50,7 @@
     renameWords,
     serverErrorWords,
     serverNamesLabel,
+    splitAddresses,
   } from './lib/words';
 
   let { uuid }: { uuid: string } = $props();
@@ -106,6 +109,25 @@
     hostOpen = true;
   };
 </script>
+
+{#snippet addressRow(inbound: TransportView, host: AddressView)}
+  <li class={host.isDisabled ? 'text-muted-foreground line-through' : ''}>
+    {#if canWrite}
+      <button
+        type="button"
+        class="hover:text-foreground focus-visible:ring-ring/50 rounded text-start underline-offset-2 outline-none hover:underline focus-visible:ring-3"
+        onclick={() => editHost(inbound, host)}
+      >
+        <span class="break-all">{host.remark}</span>
+      </button>
+    {:else}
+      <span class="break-all">{host.remark}</span>
+    {/if}
+    <span class="text-muted-foreground break-all">
+      {host.address}:{host.port}{host.sni ? ` · ${host.sni}` : ''}
+    </span>
+  </li>
+{/snippet}
 
 {#if summary.isPending || tree.isPending || (!node && intents.isPending)}
   <SectionHeader title="Node" {back} />
@@ -218,6 +240,7 @@
         <ul class="space-y-3">
           {#each node.transports as inbound (inbound.transportUuid)}
             {@const names = serverNamesLabel(inbound)}
+            {@const split = splitAddresses(inbound.addresses)}
             <li class="rounded-lg border p-3 text-sm">
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <p class="font-medium break-all">
@@ -271,27 +294,12 @@
                 <h3 class="text-muted-foreground text-xs font-medium uppercase">
                   {notLiveYet ? 'Addresses members will get once live' : 'Addresses members get'}
                 </h3>
-                {#if inbound.addresses.length === 0}
+                {#if split.members.length === 0}
                   <p class="text-muted-foreground">None yet.</p>
                 {:else}
                   <ul class="mt-1 space-y-0.5">
-                    {#each inbound.addresses as host (host.addressUuid)}
-                      <li class={host.isDisabled ? 'text-muted-foreground line-through' : ''}>
-                        {#if canWrite}
-                          <button
-                            type="button"
-                            class="hover:text-foreground focus-visible:ring-ring/50 rounded text-start underline-offset-2 outline-none hover:underline focus-visible:ring-3"
-                            onclick={() => editHost(inbound, host)}
-                          >
-                            <span class="break-all">{host.remark}</span>
-                          </button>
-                        {:else}
-                          <span class="break-all">{host.remark}</span>
-                        {/if}
-                        <span class="text-muted-foreground break-all">
-                          {host.address}:{host.port}{host.sni ? ` · ${host.sni}` : ''}
-                        </span>
-                      </li>
+                    {#each split.members as host (host.addressUuid)}
+                      {@render addressRow(inbound, host)}
                     {/each}
                   </ul>
                 {/if}
@@ -306,6 +314,20 @@
                   </Button>
                 {/if}
               </div>
+
+              {#if split.fronts.length > 0}
+                <div class="text-muted-foreground mt-3">
+                  <h3 class="text-xs font-medium uppercase">
+                    Your own fronts, left out of members' subscriptions
+                  </h3>
+                  <p>{frontsHint(split.fronts.length)}</p>
+                  <ul class="mt-1 space-y-0.5">
+                    {#each split.fronts as host (host.addressUuid)}
+                      {@render addressRow(inbound, host)}
+                    {/each}
+                  </ul>
+                </div>
+              {/if}
 
               <p class="text-muted-foreground mt-2">
                 {#if inbound.modeGroups.length === 0}

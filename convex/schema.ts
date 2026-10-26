@@ -1814,8 +1814,17 @@ export default defineSchema({
     // operator built by hand). A render leaves them out like any entry it cannot
     // place, but they are known not to be the node: a withheld entry named by
     // one raises attention `front_host_unused` (info), never
-    // `direct_host_reappeared`.
-    operatorFronts: v.optional(v.object({ at: v.number(), remarks: v.array(v.string()) })),
+    // `direct_host_reappeared`. Every front, uncapped (bounded by the node's
+    // Hosts in one listing): `remarks` for the renders' entries, `hostUuids`
+    // for the node page (a backend does not keep remarks unique). Absent
+    // `hostUuids`: recorded before they were kept, until the next look.
+    operatorFronts: v.optional(
+      v.object({
+        at: v.number(),
+        remarks: v.array(v.string()),
+        hostUuids: v.optional(v.array(v.string())),
+      }),
+    ),
     // The node's REALITY transports that refuse sing-box or Mihomo clients, as
     // the reconcile's last look at the panel saw them (edgeRealityClients.note;
     // src/shared/contracts/realityClients.ts): attention `reality_refuses_clients`

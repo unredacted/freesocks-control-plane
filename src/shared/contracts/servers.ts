@@ -71,6 +71,14 @@ export const AddressView = z.object({
   configProfileUuid: z.string().nullable(),
   transportUuid: z.string().nullable(),
   nodeUuids: z.array(z.string()),
+  /**
+   * Under a node: an operator front (a load balancer the operator built by
+   * hand) that the member render leaves out, because the node is bound to its
+   * edges (docs/edges.md "Direct-Host hides and the restore workflow"). False
+   * in the backend-wide list, and before the node is bound (members still get
+   * it then).
+   */
+  operatorFront: z.boolean().default(false),
 });
 export type AddressView = z.infer<typeof AddressView>;
 
