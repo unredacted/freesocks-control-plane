@@ -476,7 +476,11 @@ export const SniHuntScopeView = z.object({
     target: z.object({ address: z.string(), port: z.number() }).nullable(),
     hunt: z.object({ enabled: z.boolean(), place: HuntPlace.nullable() }).nullable(),
   }),
+  /** One page of one state's candidates, best first (`?state=`, `?cursor=`). */
   candidates: z.array(SniCandidateRow),
+  page: z
+    .object({ cursor: z.string().nullable(), done: z.boolean() })
+    .default({ cursor: null, done: true }),
   /** Candidates by the first address they live on: a possible target and its names. */
   groups: z.array(
     z.object({ address: z.string(), names: z.number(), passing: z.number(), best: z.string() }),

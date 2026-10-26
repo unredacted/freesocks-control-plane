@@ -423,13 +423,20 @@ async function checkOne(c: ClaimedCheck, p: NetworkPrefixes | undefined): Promis
     ...(verdict.alpn ? { alpn: verdict.alpn } : {}),
   };
   if (!verdict.ok || !dial) return out;
-  // Two more facts, recorded apart: whichever way they go, the verdict stands.
+  // Two more facts, recorded apart: whichever way they go (a runtime that
+  // does not know the group throws), the verdict stands.
+  const at = dial;
+  const extraShake = async (ecdhCurve: string): Promise<HandshakeResult> => {
+    try {
+      return await deps.tlsInspect({ ...at, servername: c.name, ecdhCurve });
+    } catch {
+      return { ok: false, error: 'unsupported' };
+    }
+  };
   await deps.sleep(HANDSHAKE_GAP_MS);
-  const x = extraFact(await deps.tlsInspect({ ...dial, servername: c.name, ecdhCurve: 'X25519' }));
+  const x = extraFact(await extraShake('X25519'));
   await deps.sleep(HANDSHAKE_GAP_MS);
-  const m = extraFact(
-    await deps.tlsInspect({ ...dial, servername: c.name, ecdhCurve: 'X25519MLKEM768' }),
-  );
+  const m = extraFact(await extraShake('X25519MLKEM768'));
   const error = x.error ?? m.error;
   out.extra = {
     ...(x.value !== undefined ? { x25519: x.value } : {}),
@@ -483,11 +490,11 @@ type CertOutcome =
   | { ok: false; code: string | undefined };
 
 export const readCert = internalAction({
-  args: { slug: v.string() },
+  args: { slug: v.string(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, a): Promise<CertOutcome> => {
     const t: { address: string; port: number; servername: string } = await ctx.runQuery(
       internal.sniHunt.certTarget,
-      a,
+      { slug: a.slug },
     );
     const at = await dialAddress(t.address, deps.lookup);
     if (!at.ok) return { ok: false as const, code: judgeHandshake(at, { requireH2: false }).code };
@@ -503,6 +510,7 @@ export const readCert = internalAction({
       slug: a.slug,
       source: 'cert',
       names: shake.names ?? [],
+      ...(a.actorAdminId ? { actorAdminId: a.actorAdminId } : {}),
     });
     return { ok: true as const, listed: shake.names?.length ?? 0, ...tally };
   },
