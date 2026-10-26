@@ -96,6 +96,20 @@ describe('the seat', () => {
         updatedAt: 2,
       });
     });
+    // A failed issuance's compensation row, newer than the key members hold: never adopted.
+    await t.run((ctx) =>
+      ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'failed',
+        backendShortId: 'failed',
+        subscriptionUrl: 'https://sub.example/failed',
+        subscriptionMirrors: [],
+        renderKey: 'ef'.repeat(32),
+        state: 'deleted',
+        updatedAt: 3,
+      }),
+    );
     expect(await keyOf(t, await issue(t, userId, 4))).toBe(legacy);
     expect(await t.run(async (ctx) => (await ctx.db.get(userId))!.renderSeat)).toBe(legacy);
   });

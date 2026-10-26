@@ -8,12 +8,18 @@ const view = (sampled: number, moved: number) => ({
   switchTo: 'hrw1' as const,
   sampled,
   moved,
+  upTo: false,
 });
 
 describe('spreadMovesWords', () => {
   test('a share of the members', () => {
     expect(spreadMovesWords(view(600, 450))).toBe(
       "About 75% of this node's members get at least one different address.",
+    );
+  });
+  test('families that render differently: the larger share, said as such', () => {
+    expect(spreadMovesWords({ ...view(600, 300), upTo: true })).toBe(
+      "Up to 50% of this node's members get at least one different address.",
     );
   });
   test('loading, nobody handed anything, nobody moving', () => {

@@ -111,20 +111,30 @@ export const resolveCurrentOrActive = internalQuery({
  * switch, or an issue long after every old row was swept keeps it: on a node
  * the account is always handed the same addresses, and re-issuing is no way to
  * draw new ones (docs/edges.md "Address enumeration"). An account without one
- * takes its most recent row's key once (nobody moves when this lands), else a
- * new one. Random, server-side only, never the subscription token.
+ * takes the key its members' apps hold now once (nobody moves when this
+ * lands): its current or newest active key's, else its newest row's that was
+ * not deleted (a failed issuance's compensation row is never one), else a new
+ * one. Random, server-side only, never the subscription token.
  */
 export async function seatOf(ctx: MutationCtx, userId: Id<'users'>): Promise<string> {
   const user = await ctx.db.get(userId);
-  if (user?.renderSeat) return user.renderSeat;
-  const latest = await ctx.db
-    .query('subscriptions')
-    .withIndex('by_user', (q) => q.eq('userId', userId))
-    .order('desc')
-    .filter((q) => q.neq(q.field('renderKey'), undefined))
-    .first();
-  const seat = latest?.renderKey ?? randomHex(32);
-  if (user) await ctx.db.patch(userId, { renderSeat: seat });
+  if (!user) return randomHex(32);
+  if (user.renderSeat) return user.renderSeat;
+  const active = await currentOrActiveSub(ctx.db, user);
+  const held =
+    active?.renderKey ??
+    (
+      await ctx.db
+        .query('subscriptions')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .order('desc')
+        .filter((q) =>
+          q.and(q.neq(q.field('renderKey'), undefined), q.neq(q.field('state'), 'deleted')),
+        )
+        .first()
+    )?.renderKey;
+  const seat = held ?? randomHex(32);
+  await ctx.db.patch(userId, { renderSeat: seat });
   return seat;
 }
 

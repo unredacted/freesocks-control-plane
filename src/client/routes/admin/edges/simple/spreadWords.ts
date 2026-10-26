@@ -24,5 +24,5 @@ export function spreadMovesWords(view: EdgePickView | null): string | null {
   if (view.sampled === 0) return 'No member is handed an address here yet, so nobody moves.';
   const pct = Math.round((100 * view.moved) / view.sampled);
   if (pct === 0) return 'Hardly any member gets a different address.';
-  return `About ${pct}% of this node's members get at least one different address.`;
+  return `${view.upTo ? 'Up to' : 'About'} ${pct}% of this node's members get at least one different address.`;
 }

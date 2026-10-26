@@ -38,7 +38,7 @@ import { PREVIEW_DEFAULT_PROTO } from './lib/edges/preview';
 import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
 import { previewBody } from './lib/edges/preview';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
-import { effectiveRule } from './lib/edges/render';
+import { effectiveRule, ruleForDelivery } from './lib/edges/render';
 import { publishedCount } from './lib/edges/pool';
 import { isTerminalPhase, progressPercent } from './lib/edges/rotation';
 import { isTerminalRunState } from './lib/edges/setupRuns';
@@ -495,9 +495,11 @@ export const relayListenersView = internalQuery({
 
 /**
  * The origin's address pick and what switching it would cost: the share of
- * members whose pair of addresses changes, estimated over synthetic seats with
- * the pool as it is now (lib/edges/edgePick.ts). Read by the node page before
- * the operator switches.
+ * members handed at least one different address, estimated over synthetic
+ * seats with the pool as it is now (lib/edges/edgePick.ts), under the rule
+ * members are actually rendered with: one address for a single-key backend or
+ * a client family without a backup, two otherwise. Where the families differ,
+ * the larger share (`upTo`). Read by the node page before the operator switches.
  */
 export const edgePickView = internalQuery({
   args: { relayId: v.id('relays') },
@@ -513,18 +515,34 @@ export const edgePickView = internalQuery({
     );
     const current = origin.edgePick ?? null;
     const other = current === 'hrw1' ? null : ('hrw1' as const);
-    const moves = pickMoves(published, current, other, {
-      now: Date.now(),
-      preferDistinctProviders: cfg.render.preferDistinctProviders,
-      includeBackup: true,
-    });
+    const style = origin.backendServerId
+      ? await deliveryStyleOf(ctx, origin.backendServerId)
+      : 'subscription';
+    // The backup settings members are rendered with, across the enabled families.
+    const backups = new Set(
+      RENDER_CLIENT_FAMILIES.map((f) => effectiveRule(cfg.render, cfg.render.clients[f]))
+        .filter((r) => r.enabled)
+        .map((r) => ruleForDelivery(r, style).includeBackup),
+    );
+    if (backups.size === 0) backups.add(style === 'subscription');
+    const estimates = [...backups].map((includeBackup) =>
+      pickMoves(published, current, other, {
+        now: Date.now(),
+        preferDistinctProviders: cfg.render.preferDistinctProviders,
+        includeBackup,
+      }),
+    );
+    const share = (m: { sampled: number; moved: number }) =>
+      m.sampled === 0 ? 0 : m.moved / m.sampled;
+    const worst = estimates.reduce((a, b) => (share(b) > share(a) ? b : a));
     return {
       relaySlug: origin.slug,
       edgePick: current,
       published: published.length,
       switchTo: other,
-      sampled: moves.sampled,
-      moved: moves.moved,
+      sampled: worst.sampled,
+      moved: worst.moved,
+      upTo: estimates.length > 1,
     };
   },
 });

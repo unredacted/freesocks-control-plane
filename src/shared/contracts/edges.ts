@@ -2451,9 +2451,11 @@ export const EdgePickView = z.object({
   edgePick: z.literal('hrw1').nullable(),
   published: z.number(),
   switchTo: z.literal('hrw1').nullable(),
-  /** Synthetic seats sampled, and how many of them get a different pair. */
+  /** Synthetic seats sampled, and how many of them are handed at least one different address. */
   sampled: z.number(),
   moved: z.number(),
+  /** Client families render with and without a backup: `moved` is the larger share. */
+  upTo: z.boolean().default(false),
 });
 export type EdgePickView = z.infer<typeof EdgePickView>;
 

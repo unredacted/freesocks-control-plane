@@ -757,6 +757,7 @@
     title={SPREAD_CONFIRM.title}
     body={SPREAD_CONFIRM.body}
     confirmLabel={SPREAD_CONFIRM.label}
+    disabled={!spreadView}
     run={async () => {
       await setRelayEdgePick(relay.id, 'hrw1');
       toast.success('Members are spread over the addresses from their next refresh.');
