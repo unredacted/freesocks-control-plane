@@ -2822,18 +2822,22 @@ draws abuse reports).
 
 **Sources** (`sniCandidates.sources`):
 
-| Source    | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `cert`    | The DNS names on the certificate a family's target presents: one handshake to the target, through qualification's guarded dial (`dialAddress`), presenting the target's own hostname (or, for a literal target, a name the family has). FCP talks only to that target. Wildcards are dropped.                                                                                                                                                    |
-| `pasted`  | Lines an operator pastes, into a network or a family (up to 1,000 at a time).                                                                                                                                                                                                                                                                                                                                                                    |
-| `seed`    | A JSON file a hand-run study wrote: `{networks: [{network: {slug, label, asns}, families: [{create_family: {slug, label, targetAddress, targetPort, requireH2}, import_names: {lines}, target?: {tranco_rank}}]}]}`. It only makes candidates: a family FCP has gets its names, a family it lacks waits on its network (target and names). What FCP lacks comes back as **proposals** the operator may create; nothing is created by the import. |
-| `toplist` | The Tranco top-sites list, resolved by ordinary lookups and kept where an answer lies in a hunting network's stored ranges (the sweep, below).                                                                                                                                                                                                                                                                                                   |
-| `ct`      | Certificate transparency: the names that certificates of a registrable domain list (Cert Spotter), for a family's target or candidates the operator picks. Only names of that domain are kept.                                                                                                                                                                                                                                                   |
+| Source    | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cert`    | The DNS names on the certificate a family's target presents: one handshake to the target, through qualification's guarded dial (`dialAddress`), presenting the target's own hostname (or, for a literal target, a name the family has). FCP talks only to that target. Wildcards are dropped.                                                                                                                                                                                                                                                          |
+| `pasted`  | Lines an operator pastes, into a network or a family (up to 1,000 at a time).                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `seed`    | A JSON file a hand-run study wrote: `{networks: [{network: {slug, label, asns}, families: [{create_family: {slug, label, targetAddress, targetPort, requireH2}, import_names: {lines}, target?: {tranco_rank}}]}]}`. It only makes candidates: a family FCP has gets its names, a family it lacks waits on its network (target and names). What FCP lacks comes back as **proposals** the operator may create; nothing is created by the import. One seed carries at most 800 names (targets included) in 100 families; a bigger one is refused whole. |
+| `toplist` | The Tranco top-sites list, resolved by ordinary lookups and kept where an answer lies in a hunting network's stored ranges (the sweep, below).                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `ct`      | Certificate transparency: the names that certificates of a registrable domain list (Cert Spotter), for a family's target or candidates the operator picks. Only names of that domain are kept.                                                                                                                                                                                                                                                                                                                                                         |
 
 A name a family already holds, one the operator ignored (the name, or its whole site: the
 registrable domain, public-suffix aware), and one past the scope's cap (2,000) is counted, never
 added. A candidate belongs to one **scope**: a network (a possible target and the names on its
-address), a family (names its target may serve), or both (a family on a network).
+address), a family (names its target may serve), or both (a family on a network). Each scope
+holding candidates has a counts row (`sniHuntScopes`: how many it holds and how many are ready).
+An insert adds to its count at once, so the cap holds; any other change marks it for a recount,
+which the cron makes first (two a tick) before the scope in turn. The overview reads these rows,
+never the candidates themselves.
 
 **The top-sites sweep** (`sniHuntRuns`). Started by the cron when the last one ended
 `sweepEveryDays` ago and some network is hunting (Networks, "Find names on this network"; a
@@ -2844,15 +2848,18 @@ its `www.` name while the rank is within `wwwDepth`. Then a **chain of short ste
 
 - A step **claims** the run (running, the generation it reads, an expired lease) and holds a
   3-minute lease; a second step finds the lease held and leaves.
-- It resolves batches of 100 names: A for every name, and AAAA for every name too whenever a
-  hunting network has IPv6 ranges (an AAAA-only name is a hit), at no more than
-  `lookupsPerSecond` (each lookup starts on its own slot).
+- It resolves batches of up to 100 names, sized so a batch's lookups take at most half a step at
+  the configured rate (11 names at 1 a second with AAAA): A for every name, and AAAA for every
+  name too whenever a hunting network has IPv6 ranges (an AAAA-only name is a hit), at no more
+  than `lookupsPerSecond` (each lookup starts on its own slot).
 - After each batch it **checkpoints** with a compare-and-set on the generation, the lease and
   the cursor: the hits become candidates, the cursor moves, the lease is renewed. A cancel
   (`DELETE sni/hunt/sweep`, which bumps the generation) or a step that lost its lease writes
   nothing, so what it resolved is discarded.
 - It starts no batch past 60 s (the action limit is 120 s), hands the lease back and schedules
   the next step 5 s later. A step that died is taken over by the cron once its lease lapses.
+- Once the run ends (done, cancelled, failed), its stored list is deleted 16 chunks per
+  scheduled mutation (a full list is far more than one transaction may read).
 
 At the defaults (300,000 sites, www for the top 100,000: 400,000 names), 800,000 lookups at 20 a
 second take about 12 hours with AAAA (the gaps between steps included), 6 without. Every membership test is local (the ranges are
@@ -2869,7 +2876,8 @@ under a new generation and a lease, `checksPerTick` at a time; a run starts no c
    candidate against the family's target (the target dialled through the guarded dial,
    presenting the candidate, the family's `requireH2`), exactly as qualification will judge it
    once added; a network candidate against its own address (it would be the target), h2
-   required. A code (`q_*`) means it cannot be added.
+   required, dialled on the first address kept for the page (the one shown as its target). A
+   code (`q_*`) means it cannot be added.
 3. After a pass, two more handshakes on the same address: an X25519-only and an
    X25519MLKEM768-only offer (TLS 1.3). They are recorded apart (`extra`: accepted, refused, or
    an error when the server could not be reached) and never change the verdict.
@@ -2887,7 +2895,8 @@ a measured bad one below it. Penalties come off last.
 lists the top `shortlist - 3` passing candidates by `baseScore` (never by `score`, so evidence
 some candidates already have cannot keep the others out) and 3 rotating slots for passing
 candidates without fresh evidence, the one asked about longest ago first. "Measure now" (`POST
-sni/hunt/candidates/measure {ids}`) puts a passing candidate first in line. Timing and OONI
+sni/hunt/candidates/measure {ids}`) puts a passing candidate first in line; the request is
+dropped if the candidate stops passing first (ignored, added or failing). Timing and OONI
 answers count for 14 days; older counts as missing (half).
 
 - **Near the node** (`timing`): a Globalping `HEAD /` from 2 probes at the network's place
@@ -2921,9 +2930,12 @@ answers count for 14 days; older counts as missing (half).
   an FCP address (left out when the batch is planned, and skipped as `real_is_ours` if one became
   FCP's since). The whole shortlist is read, so names checked lately never hide the rest.
   The batch is read like the vantage batches: a failure counts as **interference** only when the
-  same vantage got through for another name of the batch, from `minVantages` vantages on
-  `minNetworks` networks; a failure nothing paired is **inconclusive** (a broken probe, a route, a
-  site outage: no penalty); a batch where nothing got through reads **path**.
+  same vantage reached another name of the batch (`ok`, or `answered`: the far end answered
+  without TLS details), from `minVantages` vantages on `minNetworks` networks; a failure nothing
+  paired is **inconclusive** (a broken probe, a route, a site outage: no penalty); failures where
+  no vantage reached any name of the batch read **path**. A name with no results at all (probes
+  offline or outside the country) gets no reading and stays due. A candidate's checks are deleted
+  with it (its scope removed, or gone for 30 days).
 
 The per-country part is 20 times the mean over the curated countries of: 1 where a fresh reading
 is `ok` (or, without a decisive reading, OONI has the exact name `ok`), 0 where it reads
@@ -2933,7 +2945,7 @@ interference.
 
 **States.** `new` (ready when it passed), `failing`, `gone` (it was on its network and now
 resolves off it; deleted after 30 days), `ignored`, `added` (a family holds it now; names are
-fleet-unique, so in every scope). Ignored and added candidates are not checked. A name already
+fleet-unique, so in every scope; the family import marks it, whichever route added the name). Ignored and added candidates are not checked. A name already
 in a family keeps today's guard: qualification suspends it when it moves off its network.
 
 **Certificate transparency** (`sniHuntCt`, one row per registrable domain and scope). A request
@@ -2947,7 +2959,12 @@ after 6 hours.
 
 **The cron** `sni-hunt` (10 min) does no network work itself: it keeps the sweep's chain alive,
 starts a due sweep, schedules one check run and one certificate-log read when something is due,
-rescores one scope (in turn), and deletes what aged out.
+recounts the scopes whose candidates changed and rescores one more in turn (through
+`sniHuntScopes`, however many scopes there are), and deletes what aged out. It schedules an
+evidence run when a "Measure now" waits or once some shortlisted candidate's evidence may be due:
+a run that finds nothing to do stores when the next refresh falls due (appState
+`sni:hunt:evidenceNext`), and a rescore that sees a shortlisted name due now (newly listed, its
+endpoint or its network's place changed) brings it forward.
 
 | Setting (`edge.sni.hunt.*`) | Default           | What it does                                     |
 | --------------------------- | ----------------- | ------------------------------------------------ |
@@ -2971,7 +2988,8 @@ grouped by the first address they live on; the certificate-log reads), `POST sni
 (where its nodes are: a place name for the timing checks, never an address), `POST
 sni/hunt/import {network | family, lines} | {seed}`, `POST sni/hunt/families/{slug}/cert`, `POST
 sni/hunt/ct {domains, network | family}`, `POST sni/hunt/candidates/{ignore|unignore|recheck|measure}
-{ids, kind?: name | site}`, `POST sni/hunt/candidates/add {family, names}` (the family's
+{ids, kind?: name | site}` (a site is read once per scope through its index, however many of
+its names were picked), `POST sni/hunt/candidates/add {family, names}` (the family's
 `importNames`, answered with its verdict per line). Settings: `PATCH sni/config {hunt: {...}}`. Rolling back to a build without finding names:
 run `sniHunt:clearForRollback` until it answers `left: 0` first (it deletes found candidates
 and their bookkeeping, and clears each network's `hunt`; families, names and networks stay).

@@ -312,6 +312,40 @@ describe('evidence', () => {
     expect(none.get('b')!.reading).toBe('path');
   });
 
+  test('an answered site pairs like a full check; no failure is never path; no results, no reading', () => {
+    // The far end answered without TLS details: reached, so the reset beside it is singled.
+    const paired = readCountryBatch(
+      [
+        { key: 'a', results: [v('1', 'answered'), v('2', 'answered'), v('3', 'answered')] },
+        { key: 'b', results: [v('1', 'reset'), v('2', 'reset'), v('3', 'timeout')] },
+      ],
+      floors,
+    );
+    expect(paired.get('b')).toMatchObject({ reading: 'interference', singled: 3 });
+    // Reached but never fully checked: not ok, and never path.
+    expect(paired.get('a')!.reading).toBe('inconclusive');
+    const quiet = readCountryBatch(
+      [
+        { key: 'a', results: [v('1', 'answered'), v('2', 'answered')] },
+        { key: 'b', results: [] },
+        { key: 'c', results: [v('1', 'error')] },
+      ],
+      floors,
+    );
+    expect(quiet.get('a')!.reading).toBe('inconclusive');
+    expect(quiet.has('b')).toBe(false);
+    // Nothing reached, but nothing failed the way interference does either.
+    const silent = readCountryBatch(
+      [
+        { key: 'a', results: [v('1', 'refused')] },
+        { key: 'b', results: [v('1', 'error')] },
+      ],
+      floors,
+    );
+    expect(silent.get('a')!.reading).toBe('inconclusive');
+    expect(silent.get('b')!.reading).toBe('inconclusive');
+  });
+
   test('timing: medians of the place country probes that finished', () => {
     const items = [
       { probe: { country: 'US' }, result: { status: 'finished', timings: { tcp: 10, tls: 20 } } },
