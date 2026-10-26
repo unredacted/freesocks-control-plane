@@ -23,6 +23,7 @@
  * target or a candidate's own answers are dialled, on the target's port.
  */
 import { randomUUID } from 'node:crypto';
+import { Globalping } from 'globalping';
 import { v } from 'convex/values';
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
@@ -51,7 +52,25 @@ import {
   ownTargetCode,
   shownAnswers,
 } from './lib/edges/sni/hunt/check';
-import type { ClaimedCheck, UpsertTally } from './sniHunt';
+import type { ClaimedCheck, OoniItem, TimingItem, UpsertTally } from './sniHunt';
+import {
+  GLOBALPING_USER_AGENT,
+  globalpingTestsOf,
+  globalpingFits,
+  type GlobalpingLike,
+} from './lib/edges/probes/globalping';
+import {
+  globalpingNameRequest,
+  isNoProbesError,
+  parseGlobalpingNameResults,
+} from './lib/edges/probes/nameCheck';
+import {
+  ooniUrl,
+  parseOoni,
+  placeKey,
+  timingOf,
+  timingRequest,
+} from './lib/edges/sni/hunt/evidence';
 
 /** A step stops starting chunks past this (the action limit is 120 s). */
 const STEP_DEADLINE_MS = 60_000;
@@ -91,6 +110,8 @@ export interface HuntDeps {
   /** What qualification resolves a target with. */
   lookup(name: string): Promise<string[]>;
   tlsInspect: typeof tlsInspect;
+  /** A Globalping client for one token. */
+  globalping(token: string): GlobalpingLike;
   now(): number;
   sleep(ms: number): Promise<void>;
 }
@@ -121,6 +142,12 @@ const realDeps: HuntDeps = {
     return (await dns.lookup(name, { all: true, verbatim: true })).map((x) => x.address);
   },
   tlsInspect,
+  globalping: (token) =>
+    new Globalping({
+      auth: token || undefined,
+      userAgent: GLOBALPING_USER_AGENT,
+      timeout: 20_000,
+    }) as unknown as GlobalpingLike,
   now: () => Date.now(),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 };
@@ -352,6 +379,8 @@ export const sweepStep = internalAction({
 
 type CheckResult = {
   code: string | null;
+  dialled?: string;
+  port?: number;
   tlsVersion?: string;
   alpn?: string;
   answers: { v4: number; v6: number; onNetwork: 'all' | 'some' | 'none' | 'unknown' };
@@ -407,6 +436,7 @@ async function checkOne(c: ClaimedCheck, p: NetworkPrefixes | undefined): Promis
   const verdict = judgeHandshake(shake, { requireH2 });
   const out: CheckResult = {
     ...base,
+    ...(dial ? { dialled: dial.host, port: dial.port } : {}),
     code: verdict.ok ? null : (verdict.code ?? 'q_unreachable'),
     ...(verdict.tlsVersion ? { tlsVersion: verdict.tlsVersion } : {}),
     ...(verdict.alpn ? { alpn: verdict.alpn } : {}),
@@ -544,5 +574,269 @@ export const ctStep = internalAction({
     if (outcome.kind === 'page')
       await ctx.scheduler.runAfter(CT_GAP_MS, internal.sniHuntOps.ctStep, {});
     return { read: true, kind: outcome.kind };
+  },
+});
+
+// --- evidence: timing and OONI -----------------------------------------------------------------------
+
+/** A measurement is given at most this long to finish. */
+const MEASURE_DEADLINE_MS = 45_000;
+const OONI_TIMEOUT_MS = 20_000;
+/**
+ * One deadline for a whole evidence run, inside the 120 s action limit: no
+ * timing starts past 40 s and none waits past 70 s; no OONI request starts
+ * past 75 s and none waits past 100 s. What a run cannot get to is handed back
+ * (`releaseEvidence`).
+ */
+const TIMING_START_UNTIL_MS = 40_000;
+const TIMING_WAIT_UNTIL_MS = 70_000;
+const OONI_START_UNTIL_MS = 75_000;
+const RUN_END_MS = 100_000;
+
+/** One Globalping measurement, created and waited for (at most `waitMs`); its items, or null. */
+async function measure(
+  client: GlobalpingLike,
+  req: unknown,
+  waitMs: number,
+): Promise<unknown[] | null> {
+  const res = await client.createMeasurement(req);
+  const id = res.ok ? (res.data as { id?: unknown } | undefined)?.id : undefined;
+  if (typeof id !== 'string') return null;
+  const deadline = deps.now() + Math.max(0, waitMs);
+  while (deps.now() < deadline) {
+    await deps.sleep(2000);
+    const r = await client.getMeasurement(id);
+    const data = r.ok ? (r.data as { status?: unknown; results?: unknown }) : null;
+    if (data?.status === 'finished') return Array.isArray(data.results) ? data.results : [];
+  }
+  return null;
+}
+
+async function ooniFor(domain: string, curated: readonly string[], timeoutMs: number) {
+  try {
+    const res = await deps.fetch(ooniUrl(domain, deps.now()), {
+      signal: AbortSignal.timeout(Math.max(1000, timeoutMs)),
+      redirect: 'error',
+      headers: { accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    const text = await readCapped(res, 2 * 1024 * 1024);
+    return text === null ? null : parseOoni(JSON.parse(text), curated);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Evidence for the shortlist: timing from the network's place (the family's
+ * target presenting the name, which is what REALITY relays to; the candidate's
+ * own site at the same time, apart), and OONI for the exact name and, as
+ * context, its site. Bounded by one deadline for the whole run.
+ */
+export const evidence = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ timed: number; ooni: number; released: number }> => {
+    const started = deps.now();
+    const until = (ms: number) => started + ms - deps.now();
+    const work: { timing: TimingItem[]; ooni: OoniItem[]; curated: string[]; token: string } =
+      await ctx.runMutation(internal.sniHunt.claimEvidence, { now: started });
+    const release: Array<{
+      id: Id<'sniCandidates'>;
+      calls: Id<'sniHuntCalls'>[];
+      measure: boolean;
+    }> = [];
+    let timed = 0;
+    if (work.timing.length > 0) {
+      const client = deps.globalping(work.token);
+      let stop = false;
+      for (const t of work.timing) {
+        const req = timingRequest({ address: t.address, port: t.port, host: t.host }, t.place);
+        if (!stop && until(TIMING_START_UNTIL_MS) <= 0) stop = true;
+        if (!stop) {
+          const tests = globalpingTestsOf(req) * (t.own ? 2 : 1);
+          if ((await globalpingFits(client, tests)) === false) stop = true;
+        }
+        if (stop) {
+          release.push({ id: t.id, calls: t.calls, measure: t.measure });
+          continue;
+        }
+        const wait = Math.min(MEASURE_DEADLINE_MS, until(TIMING_WAIT_UNTIL_MS));
+        // The target and the candidate's own site from the same place, at the same time.
+        const [items, ownItems] = await Promise.all([
+          measure(client, req, wait),
+          t.own
+            ? measure(
+                client,
+                timingRequest({ address: t.own.address, port: t.own.port, host: t.host }, t.place),
+                wait,
+              )
+            : Promise.resolve(null),
+        ]);
+        const main = items ? timingOf(items, t.place.country) : null;
+        const o = ownItems ? timingOf(ownItems, t.place.country) : null;
+        await ctx.runMutation(internal.sniHunt.recordTiming, {
+          id: t.id,
+          at: deps.now(),
+          place: placeKey(t.place),
+          endpoint: t.address,
+          port: t.port,
+          ...(main ? { timing: main } : {}),
+          ...(o && t.own ? { own: { endpoint: t.own.address, port: t.own.port, timing: o } } : {}),
+        });
+        if (main) timed++;
+      }
+    }
+    let read = 0;
+    if (work.ooni.length > 0 && until(OONI_START_UNTIL_MS) <= 0) {
+      for (const o of work.ooni) release.push({ id: o.id, calls: [], measure: o.measure });
+    } else if (work.ooni.length > 0) {
+      const timeout = Math.min(OONI_TIMEOUT_MS, until(RUN_END_MS));
+      const answers = await Promise.all(
+        work.ooni.map(async (o) => {
+          // The site's apex and www: context only, never scored for another name.
+          const siteNames = [...new Set([o.site, `www.${o.site}`])].filter((d) => d !== o.name);
+          const [exact, ...sites] = await Promise.all([
+            ooniFor(o.name, work.curated, timeout),
+            ...siteNames.map((d) => ooniFor(d, work.curated, timeout)),
+          ]);
+          return { o, exact, sites };
+        }),
+      );
+      for (const { o, exact, sites } of answers) {
+        if (!exact) continue;
+        const site: NonNullable<typeof exact> = [];
+        for (const r of sites) {
+          if (!r) continue;
+          for (const x of r) {
+            const prev = site.find((y) => y.cc === x.cc);
+            if (!prev) site.push(x);
+            else if (x.measurements > prev.measurements) Object.assign(prev, x);
+          }
+        }
+        await ctx.runMutation(internal.sniHunt.recordOoni, {
+          id: o.id,
+          at: deps.now(),
+          exact,
+          site,
+        });
+        read++;
+      }
+    }
+    if (release.length > 0)
+      await ctx.runMutation(internal.sniHunt.releaseEvidence, { items: release, now: deps.now() });
+    return { timed, ooni: read, released: release.length };
+  },
+});
+
+// --- evidence: real-site checks from inside a country ----------------------------------------------
+
+/**
+ * One in-country batch (admitted by the vantage planner): Globalping `HEAD /`
+ * from probes in the country to each candidate's own on-network address,
+ * presenting its name, every name from the first measurement's probes. Its
+ * gates are checked again first; a closed gate settles the rows without
+ * dialling anything, and an address that is one of FCP's own is never dialled.
+ */
+export const countryBatch = internalAction({
+  args: { batch: v.string() },
+  handler: async (ctx, a): Promise<{ measured: number; gate: string | null }> => {
+    const c: {
+      gate: string | null;
+      country: string;
+      perCountryLimit: number;
+      preferEyeball: boolean;
+      spacingMs: number;
+      token: string;
+      rows: Array<{ id: Id<'sniHuntProbes'>; name: string; address: string; ours: boolean }>;
+    } | null = await ctx.runQuery(internal.sniHunt.countryBatchContext, a);
+    if (!c) return { measured: 0, gate: null };
+    type Settle = {
+      id: Id<'sniHuntProbes'>;
+      status: 'finished' | 'failed' | 'skipped';
+      results: Array<{
+        vantage?: string;
+        asn?: string;
+        network?: string;
+        outcome: string;
+        stage?: string;
+      }>;
+      error?: string;
+    };
+    const settle: Settle[] = [];
+    if (c.gate) {
+      for (const r of c.rows)
+        settle.push({ id: r.id, status: 'skipped', results: [], error: c.gate });
+      await ctx.runMutation(internal.sniHunt.recordCountryBatch, {
+        batch: a.batch,
+        rows: settle,
+        now: deps.now(),
+      });
+      return { measured: 0, gate: c.gate };
+    }
+    const client = deps.globalping(c.token);
+    const created: Array<{ row: (typeof c.rows)[number]; mid: string }> = [];
+    let first: string | null = null;
+    for (const [i, row] of c.rows.entries()) {
+      if (row.ours) {
+        settle.push({ id: row.id, status: 'skipped', results: [], error: 'real_is_ours' });
+        continue;
+      }
+      if (i > 0) await deps.sleep(c.spacingMs);
+      const t = { address: row.address, port: 443, name: row.name };
+      const where = first
+        ? { reuse: first }
+        : { country: c.country, limit: c.perCountryLimit, preferEyeball: c.preferEyeball };
+      let res = await client.createMeasurement(globalpingNameRequest(t, where));
+      if (!res.ok && !first && c.preferEyeball && isNoProbesError(res.response?.status, res.data))
+        res = await client.createMeasurement(
+          globalpingNameRequest(t, { country: c.country, limit: c.perCountryLimit }),
+        );
+      const mid = res.ok ? (res.data as { id?: unknown } | undefined)?.id : undefined;
+      if (typeof mid !== 'string') {
+        settle.push({
+          id: row.id,
+          status: 'failed',
+          results: [],
+          error: isNoProbesError(res.response?.status, res.data) ? 'no_probes' : 'create_failed',
+        });
+        continue;
+      }
+      first ??= mid;
+      created.push({ row, mid });
+    }
+    const deadline = deps.now() + MEASURE_DEADLINE_MS;
+    const pending = new Map(created.map((x) => [x.mid, x]));
+    while (pending.size > 0 && deps.now() < deadline) {
+      await deps.sleep(3000);
+      for (const [mid, { row }] of pending) {
+        const r = await client.getMeasurement(mid);
+        const data = r.ok ? (r.data as { status?: unknown; results?: unknown }) : null;
+        if (data?.status !== 'finished') continue;
+        const results = parseGlobalpingNameResults(data.results, c.country, [
+          row.name,
+          row.address,
+        ]);
+        settle.push({
+          id: row.id,
+          status: 'finished',
+          results: results.map((x) => ({
+            ...(x.vantage ? { vantage: x.vantage } : {}),
+            ...(x.asn ? { asn: x.asn } : {}),
+            ...(x.network ? { network: x.network } : {}),
+            outcome: x.outcome,
+            ...(x.stage ? { stage: x.stage } : {}),
+          })),
+        });
+        pending.delete(mid);
+      }
+    }
+    for (const { row } of pending.values())
+      settle.push({ id: row.id, status: 'failed', results: [], error: 'timeout' });
+    await ctx.runMutation(internal.sniHunt.recordCountryBatch, {
+      batch: a.batch,
+      rows: settle,
+      now: deps.now(),
+    });
+    return { measured: created.length, gate: null };
   },
 });

@@ -21,6 +21,16 @@ import {
 } from './sources';
 import { answersOnNetwork, extraFact, ownTargetCode, shownAnswers } from './check';
 import {
+  countryOf,
+  nearOf,
+  ooniStatus,
+  parseOoni,
+  readCountryBatch,
+  shortlistOf,
+  timingOf,
+  timingRequest,
+} from './evidence';
+import {
   nearPoints,
   passesAfterCheck,
   popularityPoints,
@@ -262,5 +272,192 @@ describe('score', () => {
     p = passesAfterCheck(p, true, DAY);
     expect(p.passes).toBe(2);
     expect(passesAfterCheck(p, false, 2 * DAY)).toEqual({ passes: 0 });
+  });
+});
+
+describe('evidence', () => {
+  const floors = { minVantages: 3, minNetworks: 2 };
+  const v = (vantage: string, outcome: string, asn = `AS${vantage}`) => ({ vantage, asn, outcome });
+
+  test('a failure counts only when the same vantage got through for another name', () => {
+    const r = readCountryBatch(
+      [
+        { key: 'a', results: [v('1', 'ok'), v('2', 'ok'), v('3', 'ok')] },
+        { key: 'b', results: [v('1', 'reset'), v('2', 'timeout'), v('3', 'reset')] },
+      ],
+      floors,
+    );
+    expect(r.get('a')).toMatchObject({ reading: 'ok', vantages: 3, networks: 3 });
+    expect(r.get('b')).toMatchObject({ reading: 'interference', singled: 3 });
+  });
+
+  test('a lone timeout reads inconclusive; nothing through anywhere reads path', () => {
+    const lone = readCountryBatch(
+      [
+        { key: 'a', results: [v('1', 'ok'), v('2', 'ok'), v('3', 'ok')] },
+        // Its failing vantage got through for nothing else.
+        { key: 'b', results: [v('9', 'timeout'), v('2', 'ok'), v('3', 'ok')] },
+      ],
+      floors,
+    );
+    expect(lone.get('b')!.reading).toBe('inconclusive');
+    const none = readCountryBatch(
+      [
+        { key: 'a', results: [v('1', 'timeout')] },
+        { key: 'b', results: [v('1', 'reset')] },
+      ],
+      floors,
+    );
+    expect(none.get('a')!.reading).toBe('path');
+    expect(none.get('b')!.reading).toBe('path');
+  });
+
+  test('an answered site pairs like a full check; no failure is never path; no results, no reading', () => {
+    // The far end answered without TLS details: reached, so the reset beside it is singled.
+    const paired = readCountryBatch(
+      [
+        { key: 'a', results: [v('1', 'answered'), v('2', 'answered'), v('3', 'answered')] },
+        { key: 'b', results: [v('1', 'reset'), v('2', 'reset'), v('3', 'timeout')] },
+      ],
+      floors,
+    );
+    expect(paired.get('b')).toMatchObject({ reading: 'interference', singled: 3 });
+    // Reached but never fully checked: not ok, and never path.
+    expect(paired.get('a')!.reading).toBe('inconclusive');
+    const quiet = readCountryBatch(
+      [
+        { key: 'a', results: [v('1', 'answered'), v('2', 'answered')] },
+        { key: 'b', results: [] },
+        { key: 'c', results: [v('1', 'error')] },
+      ],
+      floors,
+    );
+    expect(quiet.get('a')!.reading).toBe('inconclusive');
+    expect(quiet.has('b')).toBe(false);
+    // Nothing reached, but nothing failed the way interference does either.
+    const silent = readCountryBatch(
+      [
+        { key: 'a', results: [v('1', 'refused')] },
+        { key: 'b', results: [v('1', 'error')] },
+      ],
+      floors,
+    );
+    expect(silent.get('a')!.reading).toBe('inconclusive');
+    expect(silent.get('b')!.reading).toBe('inconclusive');
+  });
+
+  test('timing: medians of the place country probes that finished', () => {
+    const items = [
+      { probe: { country: 'US' }, result: { status: 'finished', timings: { tcp: 10, tls: 20 } } },
+      { probe: { country: 'US' }, result: { status: 'finished', timings: { tcp: 30, tls: 40 } } },
+      { probe: { country: 'DE' }, result: { status: 'finished', timings: { tcp: 1, tls: 1 } } },
+      { probe: { country: 'US' }, result: { status: 'failed' } },
+    ];
+    expect(timingOf(items, 'US')).toEqual({ connectMs: 20, tlsMs: 30, probes: 2 });
+    expect(timingOf([], 'US')).toBeNull();
+    expect(
+      timingRequest(
+        { address: '192.0.2.1', port: 443, host: 'a.example.com' },
+        {
+          country: 'US',
+          city: 'Springfield',
+        },
+      ).locations,
+    ).toEqual([{ country: 'US', city: 'Springfield', limit: 2 }]);
+  });
+
+  test('near the node: only fresh timing of the address dialled now, from the place named now', () => {
+    const now = 100 * 24 * 3_600_000;
+    const timing = {
+      at: now - 1000,
+      place: 'US/A',
+      endpoint: '192.0.2.10',
+      port: 443,
+      connectMs: 12,
+    };
+    const check = { dialled: '192.0.2.10', port: 443 };
+    expect(nearOf({ check, timing }, now, 'US/A')).toBe(30);
+    // The target moved: the measurement is of another address.
+    expect(
+      nearOf({ check: { dialled: '192.0.2.11', port: 443 }, timing }, now, 'US/A'),
+    ).toBeUndefined();
+    expect(
+      nearOf({ check, timing: { ...timing, at: now - 15 * 86_400_000 } }, now, 'US/A'),
+    ).toBeUndefined();
+    // The network's place changed, or was cleared: measured from elsewhere.
+    expect(nearOf({ check, timing }, now, 'US/B')).toBeUndefined();
+    expect(nearOf({ check, timing }, now, null)).toBeUndefined();
+  });
+
+  test('a phase a probe did not time is left out, never read as zero', () => {
+    const items = [
+      {
+        probe: { country: 'US' },
+        result: { status: 'finished', timings: { tcp: null, tls: null } },
+      },
+      { probe: { country: 'US' }, result: { status: 'finished', timings: { tcp: 90, tls: null } } },
+    ];
+    expect(timingOf(items, 'US')).toEqual({ connectMs: 90, probes: 1 });
+    expect(timingOf([items[0]], 'US')).toBeNull();
+  });
+
+  test('OONI statuses and the per-country part (exact name only)', () => {
+    expect(
+      ooniStatus({ measurement_count: 0, ok_count: 0, anomaly_count: 0, confirmed_count: 0 }),
+    ).toBe('no_data');
+    expect(
+      ooniStatus({ measurement_count: 20, ok_count: 2, anomaly_count: 18, confirmed_count: 5 }),
+    ).toBe('blocked');
+    expect(
+      ooniStatus({ measurement_count: 20, ok_count: 19, anomaly_count: 1, confirmed_count: 0 }),
+    ).toBe('ok');
+    expect(
+      parseOoni({ result: [{ probe_cc: 'IR', measurement_count: 4, ok_count: 4 }] }, ['IR', 'RU']),
+    ).toEqual([
+      { cc: 'IR', status: 'thin', measurements: 4 },
+      { cc: 'RU', status: 'no_data', measurements: 0 },
+    ]);
+    const now = 10 * 86_400_000;
+    const ok = countryOf(
+      {
+        ooni: { at: now, exact: [{ cc: 'IR', status: 'ok' }] },
+        countries: [{ cc: 'RU', at: now, reading: 'ok' }],
+      },
+      ['IR', 'RU'],
+      now,
+    );
+    expect(ok).toEqual({ points: 20, penalty: 0 });
+    const bad = countryOf(
+      {
+        ooni: { at: now, exact: [{ cc: 'IR', status: 'blocked' }] },
+        countries: [{ cc: 'RU', at: now, reading: 'interference' }],
+      },
+      ['IR', 'RU'],
+      now,
+    );
+    expect(bad).toEqual({ points: 0, penalty: 48 });
+    expect(countryOf({}, ['IR'], now)).toEqual({ points: undefined, penalty: 0 });
+  });
+
+  test('the shortlist: candidate eleven gets a rotating slot while the measured ten stay ranked', () => {
+    const rows = Array.from({ length: 11 }, (_, i) => ({
+      id: `c${i + 1}`,
+      baseScore: 100 - i,
+      passing: true,
+      fresh: i < 10,
+      evidenceAskedAt: i < 10 ? 1000 : undefined,
+    }));
+    const list = shortlistOf(rows, 10);
+    expect(list.has('c11')).toBe(true);
+    for (const id of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']) expect(list.has(id)).toBe(true);
+    // Evidence never decides who is listed: a failing candidate never is.
+    expect(shortlistOf([{ id: 'x', baseScore: 99, passing: false, fresh: false }], 10).size).toBe(
+      0,
+    );
+    expect(
+      shortlistOf([{ id: 'x', baseScore: 1, passing: true, fresh: true, measureAt: 5 }], 0).has(
+        'x',
+      ),
+    ).toBe(true);
   });
 });

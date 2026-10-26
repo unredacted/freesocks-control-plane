@@ -1845,7 +1845,7 @@ async function postHunt(
       await ctx.runMutation(internal.sniFamilies.importNames, { slug, lines: names, ...act }),
     );
   }
-  const CANDIDATE_ACTIONS = ['ignore', 'unignore', 'recheck'] as const;
+  const CANDIDATE_ACTIONS = ['ignore', 'unignore', 'recheck', 'measure'] as const;
   const action = CANDIDATE_ACTIONS.find((x) => x === d);
   if (c === 'candidates' && action && !e)
     return json(

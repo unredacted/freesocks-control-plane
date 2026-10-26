@@ -536,8 +536,13 @@ member reports. Neither adds member data anywhere.
   through its own resolver, and asks a certificate-transparency service (Cert Spotter) which names
   certificates of a registrable domain list. Those requests carry the list's id, a site name or a
   domain, nothing else. It makes TLS handshakes to a family's target and to candidate sites, as
-  qualification already does. No member data, no FCP address and no address range is involved,
-  and no range is ever scanned. Stored: the candidate names with their checks and scores, until
+  qualification already does. For a shortlist it also asks Globalping for a `HEAD /` from probes
+  at a place the operator names (a country and a city) to a family's target or a candidate site,
+  asks OONI's public API about a candidate name and its site, and, from countries opted in to the
+  checks from inside a country and within their budget, asks Globalping for a `HEAD /` from
+  vantages there to a candidate's own site, presenting its name. Whoever runs a vantage sees the
+  site and the name, never an FCP address. No member data, no FCP address and no address range is
+  involved, and no range is ever scanned. Stored: the candidate names with their checks and scores, until
   an operator removes their network or family (a name that left its network is deleted after 30
   days).
 - **Report attribution** labels a member's issue report with the origin

@@ -2658,7 +2658,8 @@ volunteers' home connections. These rules are built in, not settings:
   address carries no other name), and the names that waited longest go first. Each 10-minute
   tick starts at most **one** batch (one address, one country, `batchNames` names, default 3),
   within `edge.sni.vantage.hourlyBudget` measurements an hour (default 12; one measurement = one
-  name, one source, at most `perCountryLimit` vantages, default 3). Calls to one service inside a
+  name, one source, at most `perCountryLimit` vantages, default 3; real-site checks of candidate
+  names count too, and only get what deployed names leave, § Finding names). Calls to one service inside a
   batch are spaced like the address-level probes (1.5 s apart, `EDGE_PLUMBING.probeSourceSpacingMs`).
 - **Opt-in per country.** Nothing runs until the switch is on **and** a country on the
   censored-country list has "Check names from inside" on (Settings, Censored countries). Turning
@@ -3051,6 +3052,58 @@ address (10), ML-KEM accepted and h2 (5 each), stability (5: passes at least a d
 evidence counts **half** its part, so a measured good candidate ranks above an unmeasured one and
 a measured bad one below it. Penalties come off last.
 
+**Evidence** (`lib/edges/sni/hunt/evidence.ts`), for the **shortlist** only. Per scope, the rescore
+lists the top `shortlist - 3` passing candidates by `baseScore` (never by `score`, so evidence
+some candidates already have cannot keep the others out) and 3 rotating slots for passing
+candidates without fresh evidence, the one asked about longest ago first. "Measure now" (`POST
+sni/hunt/candidates/measure {ids}`) puts a passing candidate first in line; the request is
+dropped if the candidate stops passing first (ignored, added or failing). Timing and OONI
+answers count for 14 days; older counts as missing (half).
+
+- **Near the node** (`timing`): a Globalping `HEAD /` from 2 probes at the network's place
+  (`hunt.place`: a country and a city, never an address) to the address the check dialled, on
+  its port, presenting the name. For a family candidate that is the **family's target**: the leg
+  a REALITY node relays every unauthenticated handshake over, whatever the candidate's own DNS
+  says. Its own site is timed apart (`own`), shown and never scored. A measurement is stored
+  with the endpoint and port it measured, and stops counting when the check dials another
+  address. Points by the median connect: 15 ms or less 30, 35 ms 22, 80 ms 12, 150 ms 4, more 0.
+  Within `timingPerHour` (reserved before the request) and Globalping's own limit. A measurement
+  counts only from the place the network names now, and timing never dials an address that is
+  FCP's own or not public. A run has one deadline inside the action limit (no timing starts past
+  40 s, no OONI request past 75 s, everything ends by 100 s); what it cannot get to is handed back
+  (its reservations freed, "Measure now" asked again). A phase a probe did not time is left out,
+  never read as zero.
+- **OONI** (`ooni`): the aggregation API (`web_connectivity`, 90 days) per curated country, for
+  the **exact** name, which is what scores, and for its site's apex and `www.`, kept as context
+  only: OONI measures the URLs it was given, so a site's answer says nothing sure about another
+  name. Asked again after 7 days. Statuses: `blocked` (confirmed a fifth or more), `likely_blocked`
+  (anomalies half or more), `thin` (under 10), `ok` (85% or more clean), `mixed`, `no_data`.
+- **From inside a country** (`countries`): a real-site check from each country with "Check names
+  from inside" on, under the same gates as the checks of deployed names (§ Checks from inside a
+  country) and in their **hourly budget**. The vantage planner (`sniVantage.tick`) admits a hunt
+  batch only in a tick where no deployed name is due in any country, and only with what the hour
+  has left after keeping one full deployed batch's cost in reserve; inserting its rows
+  (`sniHuntProbes`) is the reservation. A batch is one country and 2 to 3 shortlisted candidates
+  (a lone one takes another passing candidate of its scope as its control), each a Globalping
+  `HEAD /` to the candidate's own on-network address presenting its name, every one from the
+  first one's probes. Globalping only (RIPE Atlas cannot speak TLS 1.3). At most once per name
+  and country a week (a lone name's control must be due there too); only public addresses, never
+  an FCP address (left out when the batch is planned, and skipped as `real_is_ours` if one became
+  FCP's since). The whole shortlist is read, so names checked lately never hide the rest.
+  The batch is read like the vantage batches: a failure counts as **interference** only when the
+  same vantage reached another name of the batch (`ok`, or `answered`: the far end answered
+  without TLS details), from `minVantages` vantages on `minNetworks` networks; a failure nothing
+  paired is **inconclusive** (a broken probe, a route, a site outage: no penalty); failures where
+  no vantage reached any name of the batch read **path**. A name with no results at all (probes
+  offline or outside the country) gets no reading and stays due. A candidate's checks are deleted
+  with it (its scope removed, or gone for 30 days).
+
+The per-country part is 20 times the mean over the curated countries of: 1 where a fresh reading
+is `ok` (or, without a decisive reading, OONI has the exact name `ok`), 0 where it reads
+`interference` (or OONI has it blocked or likely blocked), else one half. Penalties: 40 when OONI
+has the exact name blocked or likely blocked in a curated country, 8 for each country with
+interference.
+
 **States.** `new` (ready when it passed), `failing`, `gone` (it was on its network and now
 resolves off it; deleted after 30 days), `ignored`, `added` (a family holds it now; names are
 fleet-unique, so in every scope; the family import marks it, whichever route added the name). Ignored and added candidates are not checked. A name already
@@ -3068,7 +3121,11 @@ after 6 hours.
 **The cron** `sni-hunt` (10 min) does no network work itself: it keeps the sweep's chain alive,
 starts a due sweep, schedules one check run and one certificate-log read when something is due,
 recounts the scopes whose candidates changed and rescores one more in turn (through
-`sniHuntScopes`, however many scopes there are), and deletes what aged out.
+`sniHuntScopes`, however many scopes there are), and deletes what aged out. It schedules an
+evidence run when a "Measure now" waits or once some shortlisted candidate's evidence may be due:
+a run that finds nothing to do stores when the next refresh falls due (appState
+`sni:hunt:evidenceNext`), and a rescore that sees a shortlisted name due now (newly listed, its
+endpoint or its network's place changed) brings it forward.
 
 | Setting (`edge.sni.hunt.*`) | Default           | What it does                                     |
 | --------------------------- | ----------------- | ------------------------------------------------ |
@@ -3091,7 +3148,7 @@ grouped by the first address they live on; the certificate-log reads), `POST sni
 `DELETE sni/hunt/sweep`, `POST sni/hunt/networks/{slug} {enabled, place?: {country, city?}}`
 (where its nodes are: a place name for the timing checks, never an address), `POST
 sni/hunt/import {network | family, lines} | {seed}`, `POST sni/hunt/families/{slug}/cert`, `POST
-sni/hunt/ct {domains, network | family}`, `POST sni/hunt/candidates/{ignore|unignore|recheck}
+sni/hunt/ct {domains, network | family}`, `POST sni/hunt/candidates/{ignore|unignore|recheck|measure}
 {ids, kind?: name | site}` (a site is read once per scope through its index, however many of
 its names were picked), `POST sni/hunt/candidates/add {family, names}` (the family's
 `importNames`, answered with its verdict per line). Settings: `PATCH sni/config {hunt: {...}}`. Rolling back to a build without finding names:

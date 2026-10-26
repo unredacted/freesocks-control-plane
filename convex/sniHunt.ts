@@ -33,7 +33,30 @@ import { recordHeartbeat } from './cronHeartbeat';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
 import { hasPrefixes, type NetworkPrefixes } from './lib/edges/networks';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
-import { resolveSniHuntConfig } from './lib/sniConfig';
+import {
+  resolveSniConfig,
+  resolveSniHuntConfig,
+  resolveSniVantageConfig,
+  usableSources,
+  vantageCountries,
+  type SniVantageConfig,
+} from './lib/sniConfig';
+import { EDGE_PLUMBING, resolveEdgeConfig, resolveEdgeSecrets } from './lib/edgeConfig';
+import { ownAddresses } from './lib/edges/sni/ownAddresses';
+import { normalizeAddress } from './lib/edges/hosts';
+import { isPublicIpLiteral } from './lib/edges/ip';
+import {
+  COUNTRY_CHECK_EVERY_MS,
+  OONI_REFRESH_MS,
+  countryOf,
+  evidenceDueAt,
+  isFresh,
+  nearOf,
+  placeKey,
+  readCountryBatch,
+  shortlistOf,
+  type HuntPlace,
+} from './lib/edges/sni/hunt/evidence';
 import { huntName, parseSeed, siteOf, type SeedNetwork } from './lib/edges/sni/hunt/sources';
 import { candidateScope, scopeRow, touchScope } from './lib/edges/sni/hunt/store';
 import { MAX_NETWORKS } from './edgeNetworks';
@@ -414,7 +437,12 @@ async function ignoredIn(db: QueryCtx['db'], s: Scope) {
 export const setCandidates = internalMutation({
   args: {
     ids: v.array(v.string()),
-    action: v.union(v.literal('ignore'), v.literal('unignore'), v.literal('recheck')),
+    action: v.union(
+      v.literal('ignore'),
+      v.literal('unignore'),
+      v.literal('recheck'),
+      v.literal('measure'),
+    ),
     kind: v.optional(v.union(v.literal('name'), v.literal('site'))),
     ...actor,
   },
@@ -433,6 +461,13 @@ export const setCandidates = internalMutation({
       if (a.action === 'recheck') {
         if (c.state === 'ignored' || c.state === 'added') continue;
         await ctx.db.patch(c._id, { checkDueAt: 0, updatedAt: now });
+        changed++;
+        continue;
+      }
+      if (a.action === 'measure') {
+        // Only a candidate that would qualify is worth evidence.
+        if (!passing(c)) continue;
+        await ctx.db.patch(c._id, { measureAt: now, listed: true, updatedAt: now });
         changed++;
         continue;
       }
@@ -555,8 +590,16 @@ export const dropRunChunks = internalMutation({
   },
 });
 
-/** A candidate goes (its scope is recounted). */
+/**
+ * A candidate goes with its in-country checks (they repeat its name and
+ * address), and its scope is recounted.
+ */
 async function deleteCandidate(ctx: MutationCtx, c: Candidate) {
+  for (const p of await ctx.db
+    .query('sniHuntProbes')
+    .withIndex('by_candidate', (q) => q.eq('candidateId', c._id))
+    .take(100))
+    await ctx.db.delete(p._id);
   await ctx.db.delete(c._id);
   await touchScope(ctx.db, candidateScope(c), Date.now());
 }
@@ -802,6 +845,54 @@ export const stepRelease = internalMutation({
   },
 });
 
+// --- scoring -----------------------------------------------------------------------------------------
+
+type Scorable = Pick<
+  Candidate,
+  'rank' | 'check' | 'extra' | 'passes' | 'timing' | 'ooni' | 'countries'
+>;
+
+/** A candidate's score now: its check, its extras, and the evidence still fresh. */
+function scoreRow(
+  c: Scorable,
+  cluster: number,
+  curated: readonly string[],
+  now: number,
+  place: string | null,
+) {
+  const country = countryOf(c, curated, now);
+  const scored = scoreCandidate({
+    rank: c.rank,
+    code: c.check ? c.check.code : undefined,
+    alpn: c.check?.alpn,
+    mlkem: c.extra?.mlkem,
+    passes: c.passes,
+    cluster,
+    near: nearOf(c, now, place),
+    country: country.points,
+    penalty: country.penalty,
+  });
+  return { baseScore: scored.baseScore, score: scored.score, scoreParts: scored.parts };
+}
+
+/** Rescore one row after new evidence (the cluster part is kept as last computed). */
+/** Where a scope's nodes are, as timing stores it (`CC` or `CC/City`); null without a place. */
+async function placeKeyOf(db: QueryCtx['db'], networkId: Id<'edgeNetworks'> | undefined) {
+  if (!networkId) return null;
+  const place = (await db.get(networkId))?.hunt?.place;
+  return place ? placeKey(place) : null;
+}
+
+async function rescoreRow(ctx: MutationCtx, c: Candidate, now: number) {
+  const { curatedCountries } = await resolveSniConfig(ctx.db);
+  const fresh = (await ctx.db.get(c._id))!;
+  const place = await placeKeyOf(ctx.db, fresh.networkId);
+  await ctx.db.patch(c._id, {
+    ...scoreRow(fresh, fresh.scoreParts?.cluster ?? 1, curatedCountries, now, place),
+    updatedAt: now,
+  });
+}
+
 // --- checks ----------------------------------------------------------------------------------------
 
 export interface ClaimedCheck {
@@ -909,6 +1000,8 @@ export const recordCheck = internalMutation({
       ),
     }),
     shown: v.array(v.string()),
+    dialled: v.optional(v.string()),
+    port: v.optional(v.number()),
     extra: v.optional(
       v.object({
         x25519: v.optional(v.boolean()),
@@ -921,32 +1014,31 @@ export const recordCheck = internalMutation({
     const c = await ctx.db.get(a.id);
     if (!c || c.checkGen !== a.gen) return { ok: false as const };
     const cfg = await resolveSniHuntConfig(ctx.db);
+    const { curatedCountries } = await resolveSniConfig(ctx.db);
     const wasOnNetwork = c.check?.answers.onNetwork === 'all' || c.passes > 0;
     const state: CandidateState = stateAfterCheck(c.state, a.code, wasOnNetwork);
     const passes = passesAfterCheck(c, a.code === null, a.at);
     // The extra handshakes run only after a pass; without one the last facts are dropped.
     const extra =
       a.code === null && a.extra ? { at: a.at, ...a.extra } : a.code === null ? c.extra : undefined;
-    const scored = scoreCandidate({
-      rank: c.rank,
+    const check = {
+      at: a.at,
       code: a.code,
-      alpn: a.alpn,
-      mlkem: extra?.mlkem,
-      passes: passes.passes,
-      cluster: c.scoreParts?.cluster ?? 1,
-      near: c.scoreParts?.near ?? undefined,
-      country: c.scoreParts?.country ?? undefined,
-      penalty: c.scoreParts?.penalty,
-    });
+      ...(a.tlsVersion ? { tlsVersion: a.tlsVersion } : {}),
+      ...(a.alpn ? { alpn: a.alpn } : {}),
+      answers: a.answers,
+      shown: a.shown.slice(0, 4),
+      ...(a.dialled ? { dialled: a.dialled, port: a.port ?? 443 } : {}),
+    };
+    const scored = scoreRow(
+      { ...c, check, extra, passes: passes.passes },
+      c.scoreParts?.cluster ?? 1,
+      curatedCountries,
+      a.at,
+      await placeKeyOf(ctx.db, c.networkId),
+    );
     await ctx.db.patch(c._id, {
-      check: {
-        at: a.at,
-        code: a.code,
-        ...(a.tlsVersion ? { tlsVersion: a.tlsVersion } : {}),
-        ...(a.alpn ? { alpn: a.alpn } : {}),
-        answers: a.answers,
-        shown: a.shown.slice(0, 4),
-      },
+      check,
       extra,
       state,
       goneAt: state === 'gone' ? (c.goneAt ?? a.at) : undefined,
@@ -954,9 +1046,7 @@ export const recordCheck = internalMutation({
       lastPassAt: passes.lastPassAt,
       checkDueAt: a.at + cfg.recheckHours * HOUR,
       checkLeaseUntil: undefined,
-      baseScore: scored.baseScore,
-      score: scored.score,
-      scoreParts: scored.parts,
+      ...scored,
       updatedAt: a.at,
     });
     if (passing(c) !== (state === 'new' && a.code === null))
@@ -1217,40 +1307,560 @@ export const recordCt = internalMutation({
   },
 });
 
+// --- evidence ----------------------------------------------------------------------------------------
+
+/** Evidence fetched per run, at most (each a few third-party requests). */
+const EVIDENCE_PER_RUN = 3;
+
+export interface TimingItem {
+  id: Id<'sniCandidates'>;
+  /** The hour's budget it holds, and whether an operator asked for it. */
+  calls: Id<'sniHuntCalls'>[];
+  measure: boolean;
+  /** The address REALITY would relay to (the family's target, or its own) and the name presented. */
+  address: string;
+  port: number;
+  host: string;
+  place: HuntPlace;
+  /** A family candidate's own site, timed apart (shown, never scored). */
+  own?: { address: string; port: number };
+}
+export interface OoniItem {
+  id: Id<'sniCandidates'>;
+  measure: boolean;
+  name: string;
+  site: string;
+}
+
+async function placeOf(
+  db: QueryCtx['db'],
+  c: Candidate,
+  places: Map<string, HuntPlace | null>,
+): Promise<HuntPlace | null> {
+  if (!c.networkId) return null;
+  const k = c.networkId as string;
+  if (!places.has(k)) places.set(k, (await db.get(c.networkId))?.hunt?.place ?? null);
+  return places.get(k) ?? null;
+}
+
+/** Rows walked per evidence claim to find the ones waiting (the shortlist is per scope). */
+const EVIDENCE_SCAN_CAP = 3000;
+/**
+ * No shortlisted candidate's evidence is due before this time (ms), as the
+ * last evidence claim that found nothing to do worked out; 0 when something
+ * may be due now. The cron schedules an evidence run only once it has passed
+ * (or a "Measure now" waits); a rescore that sees a shortlisted name due now
+ * (newly listed, its endpoint or its network's place changed) sets it to 0.
+ */
+const EVIDENCE_NEXT_KEY = 'sni:hunt:evidenceNext';
+
+/**
+ * One evidence run's work: shortlisted candidates (and those an operator asked
+ * to measure, first) whose timing or OONI answer is missing, old, or from a
+ * place the network no longer names. Timing measurements are reserved in the
+ * hourly budget here, before they are made (`calls`, handed back by
+ * `releaseEvidence` when the run cannot make them). Timing never dials an
+ * address that is FCP's own or not public.
+ */
+export const claimEvidence = internalMutation({
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, a) => {
+    const now = a.now ?? Date.now();
+    const cfg = await resolveSniHuntConfig(ctx.db);
+    const empty = {
+      timing: [] as TimingItem[],
+      ooni: [] as OoniItem[],
+      curated: [] as string[],
+      token: '',
+    };
+    if (!cfg.enabled || !(await admitted(ctx.db))) return empty;
+    const asked = await ctx.db
+      .query('sniCandidates')
+      .withIndex('by_measure', (q) => q.gt('measureAt', 0))
+      .take(50);
+    let left = cfg.timingPerHour - (await callsThisHour(ctx.db, 'timing', now, cfg.timingPerHour));
+    const own = new Set(await ownAddresses(ctx.db, []));
+    const dialable = (ip: string | undefined): ip is string =>
+      !!ip && isPublicIpLiteral(ip) && !own.has(normalizeAddress(ip));
+    const places = new Map<string, HuntPlace | null>();
+    const timing: TimingItem[] = [];
+    const ooni: OoniItem[] = [];
+    const seen = new Set<string>();
+    // When the next refresh falls due, unless work is in hand or left over.
+    let nextDue = now + DAY;
+    let busy = false;
+    const consider = async (c: Candidate) => {
+      if (seen.has(c._id)) return;
+      seen.add(c._id);
+      if (!passing(c)) {
+        // Asked to measure, then ignored, added or failing: the request goes.
+        if (c.measureAt) await ctx.db.patch(c._id, { measureAt: undefined, updatedAt: now });
+        return;
+      }
+      const want = !!c.measureAt;
+      const place = await placeOf(ctx.db, c, places);
+      let took = false;
+      if (
+        timing.length < EVIDENCE_PER_RUN &&
+        place &&
+        dialable(c.check?.dialled) &&
+        (want || nearOf(c, now, placeKey(place)) === undefined)
+      ) {
+        const shown = c.check!.shown[0];
+        const ownSite =
+          c.familyId && shown !== c.check!.dialled && dialable(shown)
+            ? { address: shown, port: 443 }
+            : undefined;
+        const cost = ownSite ? 2 : 1;
+        if (left >= cost) {
+          const calls: Id<'sniHuntCalls'>[] = [];
+          for (let i = 0; i < cost; i++)
+            calls.push(await ctx.db.insert('sniHuntCalls', { kind: 'timing', at: now }));
+          left -= cost;
+          timing.push({
+            id: c._id,
+            address: c.check!.dialled!,
+            port: c.check!.port ?? 443,
+            host: c.name,
+            place,
+            calls,
+            measure: want,
+            ...(ownSite ? { own: ownSite } : {}),
+          });
+          took = true;
+        }
+      }
+      if (
+        ooni.length < EVIDENCE_PER_RUN &&
+        (want || !c.ooni || now - c.ooni.at >= OONI_REFRESH_MS)
+      ) {
+        ooni.push({ id: c._id, name: c.name, site: c.site, measure: want });
+        took = true;
+      }
+      if (took) {
+        busy = true;
+        await ctx.db.patch(c._id, { evidenceAskedAt: now, measureAt: undefined, updatedAt: now });
+        return;
+      }
+      const due = evidenceDueAt(c, now, place ? placeKey(place) : null, dialable(c.check?.dialled));
+      // Due but not taken (the hour's budget, the run's size): the next tick tries again.
+      if (due <= now || want) busy = true;
+      else nextDue = Math.min(nextDue, due);
+    };
+    for (const c of asked) await consider(c);
+    let scanned = 0;
+    for await (const c of ctx.db
+      .query('sniCandidates')
+      .withIndex('by_listed', (q) => q.eq('listed', true))) {
+      if (++scanned > EVIDENCE_SCAN_CAP) {
+        busy = true;
+        break;
+      }
+      if (timing.length >= EVIDENCE_PER_RUN && ooni.length >= EVIDENCE_PER_RUN) break;
+      await consider(c);
+    }
+    await writeStateJson(ctx.db, EVIDENCE_NEXT_KEY, busy ? 0 : nextDue);
+    if (timing.length === 0 && ooni.length === 0) return empty;
+    const { curatedCountries } = await resolveSniConfig(ctx.db);
+    return {
+      timing,
+      ooni,
+      curated: curatedCountries,
+      token: timing.length > 0 ? (await resolveEdgeSecrets(ctx.db)).globalpingToken : '',
+    };
+  },
+});
+
+/**
+ * What a run could not get to before its deadline: the timing reservations go
+ * back to the hour's budget, and a candidate an operator asked to measure is
+ * asked again (it is taken first by the next run).
+ */
+export const releaseEvidence = internalMutation({
+  args: {
+    items: v.array(
+      v.object({
+        id: v.id('sniCandidates'),
+        calls: v.array(v.id('sniHuntCalls')),
+        measure: v.boolean(),
+      }),
+    ),
+    now: v.optional(v.number()),
+  },
+  handler: async (ctx, a) => {
+    const now = a.now ?? Date.now();
+    for (const it of a.items) {
+      for (const id of it.calls) if (await ctx.db.get(id)) await ctx.db.delete(id);
+      if (it.measure && (await ctx.db.get(it.id)))
+        await ctx.db.patch(it.id, { measureAt: now, updatedAt: now });
+    }
+  },
+});
+
+const timingV = v.object({
+  connectMs: v.number(),
+  tlsMs: v.optional(v.number()),
+  probes: v.number(),
+});
+
+/** A timing measurement's result (none: no probe finished; the old one stays). */
+export const recordTiming = internalMutation({
+  args: {
+    id: v.id('sniCandidates'),
+    at: v.number(),
+    place: v.string(),
+    endpoint: v.string(),
+    port: v.number(),
+    timing: v.optional(timingV),
+    own: v.optional(v.object({ endpoint: v.string(), port: v.number(), timing: timingV })),
+  },
+  handler: async (ctx, a) => {
+    const c = await ctx.db.get(a.id);
+    if (!c) return { ok: false };
+    await ctx.db.patch(c._id, {
+      ...(a.timing
+        ? { timing: { at: a.at, place: a.place, endpoint: a.endpoint, port: a.port, ...a.timing } }
+        : {}),
+      ...(a.own
+        ? {
+            own: {
+              at: a.at,
+              place: a.place,
+              endpoint: a.own.endpoint,
+              port: a.own.port,
+              ...a.own.timing,
+            },
+          }
+        : {}),
+    });
+    await rescoreRow(ctx, c, a.at);
+    return { ok: true };
+  },
+});
+
+const ooniV = v.array(
+  v.object({
+    cc: v.string(),
+    status: v.union(
+      v.literal('ok'),
+      v.literal('mixed'),
+      v.literal('likely_blocked'),
+      v.literal('blocked'),
+      v.literal('thin'),
+      v.literal('no_data'),
+    ),
+    measurements: v.number(),
+  }),
+);
+
+/** OONI's answer: the exact name (scored) and its site's apex and www (context). */
+export const recordOoni = internalMutation({
+  args: { id: v.id('sniCandidates'), at: v.number(), exact: ooniV, site: ooniV },
+  handler: async (ctx, a) => {
+    const c = await ctx.db.get(a.id);
+    if (!c) return { ok: false };
+    await ctx.db.patch(c._id, { ooni: { at: a.at, exact: a.exact, site: a.site } });
+    await rescoreRow(ctx, c, a.at);
+    return { ok: true };
+  },
+});
+
+// --- real-site checks from inside a country (admitted by the vantage planner) ----------------------
+
+/** An open in-country check is given up after this long. */
+const HUNT_PROBE_TIMEOUT_MS = 15 * MIN;
+/** Names per in-country batch, the control included. */
+const HUNT_BATCH_NAMES = 3;
+
+/**
+ * Called by the vantage planner (`sniVantage.tick`) in its own transaction,
+ * and only once no deployed name is due in any country: one real-site batch
+ * for shortlisted candidates, if what the hour has left minus one full
+ * deployed batch's cost (the reserve) still pays for it. Inserting its rows
+ * IS the reservation (`spentThisHour` counts them). Globalping only (RIPE
+ * Atlas cannot speak TLS 1.3). Nothing here involves an FCP address.
+ */
+export async function admitHuntBatch(
+  ctx: MutationCtx,
+  a: {
+    countries: readonly string[];
+    sources: readonly string[];
+    remaining: number;
+    reserve: number;
+    now: number;
+  },
+): Promise<{ measurements: number; country: string } | null> {
+  if (!a.sources.includes('globalping')) return null;
+  const cfg = await resolveSniHuntConfig(ctx.db);
+  if (!cfg.enabled) return null;
+  const room = a.remaining - a.reserve;
+  if (room < 2) return null;
+  // Batches admitted lately and not yet read (a read lands on the candidate's
+  // `countries`): their names are not due again meanwhile.
+  const pending = new Set(
+    (
+      await ctx.db
+        .query('sniHuntProbes')
+        .withIndex('by_requested', (q) => q.gte('requestedAt', a.now - DAY))
+        .take(2000)
+    ).map((r) => `${r.candidateId}|${r.country}`),
+  );
+  const isDue = (c: Candidate, country: string) =>
+    !pending.has(`${c._id}|${country}`) &&
+    !(c.countries ?? []).some((x) => x.cc === country && a.now - x.at < COUNTRY_CHECK_EVERY_MS);
+  const own = new Set(await ownAddresses(ctx.db, []));
+  // The whole shortlist, a page at a time: names checked lately never hide the rest.
+  const listed: Candidate[] = [];
+  let scanned = 0;
+  for await (const c of ctx.db
+    .query('sniCandidates')
+    .withIndex('by_listed', (q) => q.eq('listed', true))) {
+    if (++scanned > EVIDENCE_SCAN_CAP) break;
+    const address = c.check?.shown[0];
+    // Only a public address that is not FCP's own is ever dialled from a country.
+    if (!passing(c) || !address || !isPublicIpLiteral(address)) continue;
+    if (own.has(normalizeAddress(address))) continue;
+    if (a.countries.some((country) => isDue(c, country))) listed.push(c);
+  }
+  if (listed.length === 0) return null;
+  const scopeKey = (c: Candidate) => `${c.networkId ?? ''}|${c.familyId ?? ''}`;
+  for (const country of a.countries) {
+    const dueHere = listed.filter((c) => isDue(c, country));
+    const due = dueHere
+      .sort((x, y) => y.baseScore - x.baseScore)
+      .slice(0, Math.min(HUNT_BATCH_NAMES, room));
+    if (due.length === 0) continue;
+    const rows: { c: Candidate; role: 'candidate' | 'control' }[] = due.map((c) => ({
+      c,
+      role: 'candidate',
+    }));
+    // A lone name takes a control: another candidate of its scope, due there too.
+    if (rows.length === 1) {
+      const control = dueHere.find(
+        (c) => c._id !== due[0]!._id && scopeKey(c) === scopeKey(due[0]!),
+      );
+      if (!control) continue;
+      rows.push({ c: control, role: 'control' });
+    }
+    const batch = `hunt-${a.now.toString(36)}-${country}`;
+    for (const r of rows)
+      await ctx.db.insert('sniHuntProbes', {
+        batch,
+        candidateId: r.c._id,
+        name: r.c.name,
+        address: r.c.check!.shown[0]!,
+        country,
+        role: r.role,
+        status: 'requested',
+        requestedAt: a.now,
+        results: [],
+        updatedAt: a.now,
+      });
+    await ctx.scheduler.runAfter(0, internal.sniHuntOps.countryBatch, { batch });
+    return { measurements: rows.length, country };
+  }
+  return null;
+}
+
+/** Hunt rows this hour (the vantage budget counts them with its own). */
+export async function huntProbesThisHour(db: QueryCtx['db'], now: number, cap: number) {
+  return (
+    await db
+      .query('sniHuntProbes')
+      .withIndex('by_requested', (q) => q.gte('requestedAt', now - HOUR))
+      .take(cap + 1)
+  ).length;
+}
+
+/**
+ * What a batch's action needs, with its gates checked again at execution: a
+ * switch turned off, a country or source taken out, a freeze, or the hunt
+ * switched off since the plan settles the rows without dialling anything. An
+ * address that is one of FCP's own is never dialled as a real site.
+ */
+export const countryBatchContext = internalQuery({
+  args: { batch: v.string() },
+  handler: async (ctx, a) => {
+    const rows = (
+      await ctx.db
+        .query('sniHuntProbes')
+        .withIndex('by_batch', (q) => q.eq('batch', a.batch))
+        .collect()
+    ).filter((r) => r.status === 'requested');
+    if (rows.length === 0) return null;
+    const vcfg: SniVantageConfig = await resolveSniVantageConfig(ctx.db);
+    const sni = await resolveSniConfig(ctx.db);
+    const hunt = await resolveSniHuntConfig(ctx.db);
+    const secrets = await resolveEdgeSecrets(ctx.db);
+    const country = rows[0]!.country;
+    const gate =
+      !sni.enabled || !vcfg.enabled || !hunt.enabled
+        ? 'gate_off'
+        : !vantageCountries(vcfg, sni.curatedCountries).includes(country)
+          ? 'gate_country'
+          : !usableSources(vcfg, secrets).includes('globalping')
+            ? 'gate_source'
+            : !(await admitted(ctx.db))
+              ? 'gate_maintenance'
+              : null;
+    const own = new Set(gate ? [] : await ownAddresses(ctx.db, []));
+    return {
+      gate,
+      country,
+      perCountryLimit: vcfg.perCountryLimit,
+      preferEyeball: (await resolveEdgeConfig(ctx.db)).probe.preferEyeball,
+      spacingMs: EDGE_PLUMBING.probeSourceSpacingMs,
+      token: secrets.globalpingToken,
+      rows: rows.map((r) => ({
+        id: r._id,
+        name: r.name,
+        address: r.address,
+        ours: own.has(normalizeAddress(r.address)),
+      })),
+    };
+  },
+});
+
+const huntResultV = v.object({
+  vantage: v.optional(v.string()),
+  asn: v.optional(v.string()),
+  network: v.optional(v.string()),
+  outcome: v.string(),
+  stage: v.optional(v.string()),
+});
+
+/**
+ * A batch's results. Once every row of it is settled, the batch is read as a
+ * whole (`readCountryBatch`: a failure counts only when the same vantage got
+ * through for another name) and each name's reading replaces its last one
+ * for that country.
+ */
+export const recordCountryBatch = internalMutation({
+  args: {
+    batch: v.string(),
+    rows: v.array(
+      v.object({
+        id: v.id('sniHuntProbes'),
+        status: v.union(v.literal('finished'), v.literal('failed'), v.literal('skipped')),
+        results: v.array(huntResultV),
+        error: v.optional(v.string()),
+      }),
+    ),
+    now: v.optional(v.number()),
+  },
+  handler: async (ctx, a) => {
+    const now = a.now ?? Date.now();
+    for (const r of a.rows) {
+      const row = await ctx.db.get(r.id);
+      if (!row || row.batch !== a.batch || (row.status !== 'requested' && row.status !== 'running'))
+        continue;
+      await ctx.db.patch(r.id, {
+        status: r.status,
+        results: r.results.slice(0, 20),
+        ...(r.error ? { error: r.error.slice(0, 40) } : {}),
+        finishedAt: now,
+        updatedAt: now,
+      });
+    }
+    return { read: await readBatchIfSettled(ctx, a.batch, now) };
+  },
+});
+
+async function readBatchIfSettled(ctx: MutationCtx, batch: string, now: number) {
+  const rows = await ctx.db
+    .query('sniHuntProbes')
+    .withIndex('by_batch', (q) => q.eq('batch', batch))
+    .collect();
+  if (rows.length === 0 || rows.some((r) => r.status === 'requested' || r.status === 'running'))
+    return 0;
+  const vcfg = await resolveSniVantageConfig(ctx.db);
+  const readings = readCountryBatch(
+    rows
+      .filter((r) => r.status === 'finished')
+      .map((r) => ({ key: r._id as string, results: r.results })),
+    { minVantages: vcfg.minVantages, minNetworks: vcfg.minNetworks },
+  );
+  let read = 0;
+  for (const r of rows) {
+    const reading = readings.get(r._id as string);
+    if (!reading) continue;
+    const c = await ctx.db.get(r.candidateId);
+    if (!c) continue;
+    const countries = [
+      ...(c.countries ?? []).filter((x) => x.cc !== r.country),
+      { cc: r.country, at: now, ...reading },
+    ];
+    await ctx.db.patch(c._id, { countries });
+    await rescoreRow(ctx, c, now);
+    read++;
+  }
+  return read;
+}
+
 // --- upkeep --------------------------------------------------------------------------------------
 
 /**
- * Recompute one scope's scores: how many passing candidates share each first
- * address (the "names the address serves" part) is a property of the scope,
- * not of one row.
+ * Recompute one scope's scores and its shortlist. How many passing candidates
+ * share each first address (the "names the address serves" part) is a
+ * property of the scope, not of one row; so is who gets evidence
+ * (`shortlistOf`: by `baseScore`, the last slots rotating among candidates
+ * without fresh evidence).
  */
 async function rescoreScope(ctx: MutationCtx, s: Scope, now: number) {
   const rows = await scopeRows(ctx.db, s).take(MAX_CANDIDATES_PER_SCOPE);
+  const { curatedCountries } = await resolveSniConfig(ctx.db);
+  const cfg = await resolveSniHuntConfig(ctx.db);
+  const network = s.networkId ? await ctx.db.get(s.networkId) : null;
+  const place = network?.hunt?.place ? placeKey(network.hunt.place) : null;
   const clusters = new Map<string, number>();
   for (const r of rows)
     if (r.check?.code === null && r.check.shown[0])
       clusters.set(r.check.shown[0], (clusters.get(r.check.shown[0]) ?? 0) + 1);
+  const scored = new Map(
+    rows.map((r) => [
+      r._id as string,
+      scoreRow(
+        r,
+        r.check?.shown[0] ? (clusters.get(r.check.shown[0]) ?? 1) : 1,
+        curatedCountries,
+        now,
+        place,
+      ),
+    ]),
+  );
+  const listed = shortlistOf(
+    rows.map((r) => ({
+      id: r._id as string,
+      baseScore: scored.get(r._id as string)!.baseScore,
+      passing: passing(r),
+      // Fresh evidence it can have: timing where its network has a place, OONI always.
+      fresh: (!place || nearOf(r, now, place) !== undefined) && isFresh(r.ooni?.at, now),
+      evidenceAskedAt: r.evidenceAskedAt,
+      measureAt: r.measureAt,
+    })),
+    cfg.shortlist,
+  );
+  // A shortlisted name due now (newly listed, its endpoint or the place
+  // changed) brings the next evidence run forward.
+  const dueNow = rows.some(
+    (r) =>
+      listed.has(r._id as string) &&
+      passing(r) &&
+      evidenceDueAt(r, now, place, isPublicIpLiteral(r.check?.dialled ?? '')) <= now,
+  );
+  if (dueNow && ((await readStateJson<number>(ctx.db, EVIDENCE_NEXT_KEY)) ?? 0) > now)
+    await writeStateJson(ctx.db, EVIDENCE_NEXT_KEY, 0);
   let changed = 0;
   for (const r of rows) {
-    if (!r.check) continue;
-    const scored = scoreCandidate({
-      rank: r.rank,
-      code: r.check.code,
-      alpn: r.check.alpn,
-      mlkem: r.extra?.mlkem,
-      passes: r.passes,
-      cluster: r.check.shown[0] ? (clusters.get(r.check.shown[0]) ?? 1) : 1,
-      near: r.scoreParts?.near ?? undefined,
-      country: r.scoreParts?.country ?? undefined,
-      penalty: r.scoreParts?.penalty,
-    });
-    if (scored.baseScore !== r.baseScore || scored.score !== r.score) {
-      await ctx.db.patch(r._id, {
-        baseScore: scored.baseScore,
-        score: scored.score,
-        scoreParts: scored.parts,
-        updatedAt: now,
-      });
+    const next = scored.get(r._id as string)!;
+    const isListed = listed.has(r._id as string);
+    if (
+      next.baseScore !== r.baseScore ||
+      next.score !== r.score ||
+      isListed !== !!r.listed ||
+      JSON.stringify(next.scoreParts) !== JSON.stringify(r.scoreParts)
+    ) {
+      await ctx.db.patch(r._id, { ...next, listed: isListed || undefined, updatedAt: now });
       changed++;
     }
   }
@@ -1306,6 +1916,26 @@ export const tick = internalMutation({
         .withIndex('by_kind_at', (q) => q.eq('kind', kind).lt('at', now - CALLS_KEEP_MS))
         .take(200))
         await ctx.db.delete(c._id);
+    // In-country checks left open past their ceiling time out (their batch is
+    // then read with what came back); rows past the vantage window go.
+    const vcfg = await resolveSniVantageConfig(ctx.db);
+    const settled = new Set<string>();
+    for (const status of ['requested', 'running'] as const)
+      for (const r of await ctx.db
+        .query('sniHuntProbes')
+        .withIndex('by_status_requested', (q) =>
+          q.eq('status', status).lt('requestedAt', now - HUNT_PROBE_TIMEOUT_MS),
+        )
+        .take(100)) {
+        await ctx.db.patch(r._id, { status: 'timeout', finishedAt: now, updatedAt: now });
+        settled.add(r.batch);
+      }
+    for (const b of [...settled].slice(0, 5)) await readBatchIfSettled(ctx, b, now);
+    for (const r of await ctx.db
+      .query('sniHuntProbes')
+      .withIndex('by_requested', (q) => q.lt('requestedAt', now - vcfg.windowDays * DAY))
+      .take(200))
+      await ctx.db.delete(r._id);
     const cfg = await resolveSniHuntConfig(ctx.db);
     if (!cfg.enabled) return { reason: 'off' };
     if (!(await admitted(ctx.db))) return { reason: 'maintenance' };
@@ -1340,6 +1970,24 @@ export const tick = internalMutation({
     if (dueCheck) {
       await ctx.scheduler.runAfter(0, internal.sniHuntOps.check, {});
       scheduled.push('check');
+    }
+    // One evidence run when a "Measure now" waits, or once a shortlisted
+    // candidate's evidence may be due (EVIDENCE_NEXT_KEY).
+    const evidenceNext = (await readStateJson<number>(ctx.db, EVIDENCE_NEXT_KEY)) ?? 0;
+    const waiting =
+      (await ctx.db
+        .query('sniCandidates')
+        .withIndex('by_measure', (q) => q.gt('measureAt', 0))
+        .first()) ??
+      (evidenceNext <= now
+        ? await ctx.db
+            .query('sniCandidates')
+            .withIndex('by_listed', (q) => q.eq('listed', true))
+            .first()
+        : null);
+    if (waiting) {
+      await ctx.scheduler.runAfter(0, internal.sniHuntOps.evidence, {});
+      scheduled.push('evidence');
     }
     // One certificate-transparency read when one is due and the budget has room.
     const dueCt = await dueCtRow(ctx.db, now);
@@ -1376,8 +2024,8 @@ export const tick = internalMutation({
 
 /**
  * Everything found for a scope that is going away (a network or a family
- * deleted): its candidates, its certificate-log reads and its ignores, a page
- * of each per run, again until none is left.
+ * deleted): its candidates with their in-country checks, its certificate-log
+ * reads and its ignores, a page of each per run, again until none is left.
  */
 export const dropScope = internalMutation({
   args: { networkId: v.optional(v.id('edgeNetworks')), familyId: v.optional(v.id('sniFamilies')) },
@@ -1414,7 +2062,10 @@ export const dropScope = internalMutation({
           .query('sniHuntIgnores')
           .withIndex('by_network', (q) => q.eq('networkId', net))
           .take(PAGE);
-    for (const r of [...candidates, ...ct, ...ignores]) await ctx.db.delete(r._id);
+    // A candidate's in-country checks go with it: a batch already queued then
+    // finds nothing of it left to dial.
+    for (const c of candidates) await deleteCandidate(ctx, c);
+    for (const r of [...ct, ...ignores]) await ctx.db.delete(r._id);
     const more = [candidates, ct, ignores].some((rows) => rows.length === PAGE);
     if (more) await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, a);
     else
@@ -1454,6 +2105,7 @@ export const clearForRollback = internalMutation({
       'sniHuntRuns',
       'sniHuntCt',
       'sniHuntCalls',
+      'sniHuntProbes',
       'sniHuntScopes',
     ] as const) {
       const rows = await ctx.db.query(table).take(PAGE);
@@ -1465,7 +2117,7 @@ export const clearForRollback = internalMutation({
     }
     for (const n of await ctx.db.query('edgeNetworks').take(200))
       if (n.hunt !== undefined) await ctx.db.patch(n._id, { hunt: undefined });
-    for (const key of [RESCORE_KEY])
+    for (const key of [RESCORE_KEY, EVIDENCE_NEXT_KEY])
       for (const row of await ctx.db
         .query('appState')
         .withIndex('by_key', (q) => q.eq('key', key))
@@ -1494,6 +2146,8 @@ function candidateView(c: Candidate, inFamily: { slug: string; label: string } |
           alpn: c.check.alpn ?? null,
           answers: c.check.answers,
           shown: c.check.shown,
+          dialled: c.check.dialled ?? null,
+          port: c.check.port ?? null,
         }
       : null,
     extra: c.extra
@@ -1507,7 +2161,26 @@ function candidateView(c: Candidate, inFamily: { slug: string; label: string } |
     baseScore: c.baseScore,
     score: c.score,
     parts: c.scoreParts ?? null,
+    listed: !!c.listed,
+    timing: c.timing ? timingView(c.timing) : null,
+    own: c.own ? timingView(c.own) : null,
+    ooni: c.ooni
+      ? { at: new Date(c.ooni.at).toISOString(), exact: c.ooni.exact, site: c.ooni.site }
+      : null,
+    countries: (c.countries ?? []).map((x) => ({ ...x, at: new Date(x.at).toISOString() })),
     firstSeenAt: new Date(c.firstSeenAt).toISOString(),
+  };
+}
+
+function timingView(t: NonNullable<Candidate['timing']>) {
+  return {
+    at: new Date(t.at).toISOString(),
+    place: t.place,
+    endpoint: t.endpoint,
+    port: t.port,
+    connectMs: t.connectMs,
+    tlsMs: t.tlsMs ?? null,
+    probes: t.probes,
   };
 }
 

@@ -367,6 +367,21 @@ export const SniHuntOverview = z.object({
 });
 export type SniHuntOverview = z.infer<typeof SniHuntOverview>;
 
+export const HuntTiming = z.object({
+  at: z.string(),
+  place: z.string(),
+  endpoint: z.string(),
+  port: z.number(),
+  connectMs: z.number(),
+  tlsMs: z.number().nullable(),
+  probes: z.number(),
+});
+export const HuntOoni = z.object({
+  cc: z.string(),
+  status: z.enum(['ok', 'mixed', 'likely_blocked', 'blocked', 'thin', 'no_data']),
+  measurements: z.number(),
+});
+
 export const SniCandidateRow = z.object({
   id: z.string(),
   name: z.string(),
@@ -389,6 +404,8 @@ export const SniCandidateRow = z.object({
         onNetwork: z.enum(['all', 'some', 'none', 'unknown']),
       }),
       shown: z.array(z.string()),
+      dialled: z.string().nullable().default(null),
+      port: z.number().nullable().default(null),
     })
     .nullable(),
   extra: z
@@ -412,6 +429,28 @@ export const SniCandidateRow = z.object({
       penalty: z.number(),
     })
     .nullable(),
+  /** On the shortlist that gets evidence. */
+  listed: z.boolean().default(false),
+  /** From probes at the network's place to the address REALITY would relay to (scored). */
+  timing: HuntTiming.nullable().default(null),
+  /** A family candidate's own site, from the same place (shown only). */
+  own: HuntTiming.nullable().default(null),
+  ooni: z
+    .object({ at: z.string(), exact: z.array(HuntOoni), site: z.array(HuntOoni) })
+    .nullable()
+    .default(null),
+  countries: z
+    .array(
+      z.object({
+        cc: z.string(),
+        at: z.string(),
+        reading: z.enum(['ok', 'interference', 'inconclusive', 'path']),
+        vantages: z.number(),
+        networks: z.number(),
+        singled: z.number(),
+      }),
+    )
+    .default([]),
   firstSeenAt: z.string(),
 });
 export type SniCandidateRow = z.infer<typeof SniCandidateRow>;
