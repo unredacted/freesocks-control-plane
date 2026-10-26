@@ -110,6 +110,11 @@ export interface PublishedEdge {
   provenIn?: string[];
   blockedIn?: string[];
   /**
+   * `trusted`: handed only to trusted members (lib/edges/lanes.ts); absent =
+   * open. Read only when the assignment is given a `memberLane`.
+   */
+  lane?: 'trusted';
+  /**
    * False when the edge is published but must not be selected (listener retired,
    * undeployed or disabled, no codec for the body, no template entry). It still occupies its pool index so the
    * modulus does not shift the other subscribers. Absent = eligible.
@@ -526,6 +531,14 @@ export interface AssignOptions {
   /** How the origin walks its pool (`relays.edgePick`). Absent = the legacy modulus walk. */
   edgePick?: EdgePickVersion;
   /**
+   * The member's lane, on a node with lanes on (docs/edges.md "Address
+   * enumeration"). `open`: a trusted address is never handed out, whatever
+   * else is left. `trusted`: trusted addresses first, an open one only where
+   * every trusted one is blocked in the member's country or cannot be emitted
+   * (and as the backup when no other trusted one is left). Absent = no lanes.
+   */
+  memberLane?: 'open' | 'trusted';
+  /**
    * @deprecated No longer consulted: a retired server name is never selected,
    * whoever held it. Kept so existing callers type-check; remove at will.
    */
@@ -573,11 +586,23 @@ export function assignEndpoints(
   published: readonly PublishedEdge[],
   opts: AssignOptions,
 ): Assignment {
-  const pool = [...published].sort((a, b) => a.poolIndex - b.poolIndex);
+  // An open member is never handed a trusted address: it stays in the walk
+  // (its position holds) but is not assignable for them.
+  const pool = [...published]
+    .sort((a, b) => a.poolIndex - b.poolIndex)
+    .map((e) =>
+      opts.memberLane === 'open' && e.lane === 'trusted' ? { ...e, eligible: false } : e,
+    );
   if (pool.length === 0) return { primary: null, backup: null };
+  // A trusted member walks the trusted lane first (`assignByTier`'s lane rank).
+  const laneRank =
+    opts.memberLane === 'trusted'
+      ? (e: PublishedEdge): 0 | 1 => (e.lane === 'trusted' ? 0 : 1)
+      : undefined;
   if (opts.edgeCountry)
     return assignByTier(subscriberKey, pool, opts, (e) => edgeTier(e, opts.edgeCountry!), {
       dropBlockedBackup: true,
+      laneRank,
     });
   if (opts.avoidBlockedIn && opts.avoidBlockedIn.length > 0) {
     const avoid = opts.avoidBlockedIn;
@@ -586,9 +611,14 @@ export function assignEndpoints(
       pool,
       opts,
       (e) => ((e.blockedIn ?? []).some((c) => avoid.includes(c)) ? 2 : 1),
-      { dropBlockedBackup: false },
+      { dropBlockedBackup: false, laneRank },
     );
   }
+  if (laneRank)
+    return assignByTier(subscriberKey, pool, opts, () => 1, {
+      dropBlockedBackup: false,
+      laneRank,
+    });
   // An edge every one of whose names is excluded for this member's country is
   // not assignable FOR THEM: the walk moves on to the next edge. Without a
   // country, an edge with no universal name stays out while any edge has one,
@@ -645,14 +675,17 @@ function differentLocation(a: PublishedEdge, b: PublishedEdge): boolean {
  * where the member is. `dropBlockedBackup`: the member's own country is known,
  * so a backup blocked THERE behind a primary that is not adds nothing but an
  * address that fails; it is left out. A mirror without the member's choice
- * keeps it (its reader may be anywhere).
+ * keeps it (its reader may be anywhere). `laneRank` (a trusted member on a
+ * node with lanes): inside "not blocked there", trusted addresses (0) before
+ * open ones (1), then the tier; the backup prefers the trusted lane before
+ * another provider. Without it every edge ranks 0 and nothing changes.
  */
 function assignByTier(
   subscriberKey: string,
   pool: readonly PublishedEdge[],
   opts: AssignOptions,
   ownTier: (e: PublishedEdge) => EdgeTier,
-  rule: { dropBlockedBackup: boolean },
+  rule: { dropBlockedBackup: boolean; laneRank?: (e: PublishedEdge) => 0 | 1 },
 ): Assignment {
   const assignable = lastResortOnly(
     pool.map((e) => assignableFor(subscriberKey, e, opts)),
@@ -667,12 +700,16 @@ function assignByTier(
     return t === 0 && !exclusive ? 1 : t;
   };
   const tiers = pool.map(tierOf);
-  let best: EdgeTier | null = null;
+  const lanes = pool.map((e) => rule.laneRank?.(e) ?? 0);
+  // Not blocked there first; inside that, the lane, then the tier. With every
+  // lane 0 this orders exactly as the tier does.
+  const rank = (i: number) => (tiers[i] === 2 ? 4 + 2 * lanes[i]! : 2 * lanes[i]! + tiers[i]!);
+  let best: number | null = null;
   for (let i = 0; i < pool.length; i++)
-    if (assignable[i] && (best === null || tiers[i]! < best)) best = tiers[i]!;
+    if (assignable[i] && (best === null || rank(i) < best)) best = rank(i);
   if (best === null) return { primary: null, backup: null };
   const pIdx = primaryOrder(subscriberKey, pool, opts.edgePick).find(
-    (i) => assignable[i] && tiers[i] === best,
+    (i) => assignable[i] && rank(i) === best,
   )!;
   const primaryEdge = pool[pIdx]!;
   const primaryTier = ownTier(primaryEdge);
@@ -691,6 +728,7 @@ function assignByTier(
         e,
         key: [
           tiers[i] === 2 ? 1 : 0,
+          lanes[i]!,
           distinct && e.provider === primaryEdge.provider ? 1 : 0,
           tiers[i]!,
           distinct && !differentLocation(e, primaryEdge) ? 1 : 0,
@@ -800,9 +838,14 @@ export function steeringAvoids(
   country: string,
   paths: readonly DeliveryPath[],
   curated: readonly string[],
-  opts: { universal?: boolean } = {},
+  opts: { universal?: boolean; lanes?: boolean } = {},
 ): boolean {
   if (edgeTier(chosen, country) !== 2) return false;
+  // With lanes, an open member can only be steered onto another open address;
+  // a trusted member may take either lane (a blocked trusted address ranks
+  // below any open one that is not blocked there).
+  const laneOk = (e: PublishedEdge) =>
+    !opts.lanes || chosen.lane === 'trusted' || e.lane !== 'trusted';
   const where: CountryContext = { country, curated };
   const usableThere = (e: PublishedEdge) =>
     e.sniPick !== 'hrw1' ||
@@ -821,7 +864,7 @@ export function steeringAvoids(
   const nowhere: CountryContext = { country: null, curated };
   return served.every((p) => {
     const need = p.backupFirst ? 2 : 1;
-    const others = published.filter((e) => e.edgeId !== chosen.edgeId && on(e, p));
+    const others = published.filter((e) => e.edgeId !== chosen.edgeId && on(e, p) && laneOk(e));
     if (others.filter((e) => edgeTier(e, country) < 2).length < need) return false;
     return (
       !opts.universal ||

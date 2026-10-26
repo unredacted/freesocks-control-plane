@@ -284,6 +284,8 @@ export interface OriginInput {
   published: readonly PublishedEdge[];
   /** How the origin walks its pool (`relays.edgePick`); absent = the legacy walk. */
   edgePick?: EdgePickVersion;
+  /** The node's address lanes are on (convex/edgeLanes.ts). */
+  lanes?: boolean;
 }
 
 export interface ViewSettings {
@@ -469,6 +471,7 @@ export function handedOn(
   s: ViewSettings,
   blockedEdges: ReadonlySet<string>,
   blockedNames: ReadonlySet<string>,
+  memberLane?: 'open' | 'trusted',
 ): Handed {
   const n = s.sample ?? HANDED_SAMPLE;
   // Delivery judges per country only a country on the list (a curated one);
@@ -510,6 +513,7 @@ export function handedOn(
       now: s.now,
       preferDistinctProviders: s.preferDistinctProviders,
       ...(origin.edgePick ? { edgePick: origin.edgePick } : {}),
+      ...(memberLane ? { memberLane } : {}),
       includeBackup: s.rule.includeBackup,
       canEmitV6: s.rule.canEmitV6,
       namesPerEndpoint: s.rule.namesPerEndpoint,
@@ -602,7 +606,10 @@ export interface ListenerView {
   usable: boolean;
   addresses: AddressView[];
   names: NameView[];
+  /** What a member there is handed (a trusted member's, when the node has lanes). */
   members: Handed;
+  /** With lanes on: what an open member there (a new or suspected account) is handed. */
+  openMembers: Handed | null;
   /** What the transport's target adds to a handshake from there (null: no timed pair). */
   targetAdds: TargetAdds | null;
 }
@@ -791,7 +798,15 @@ export function buildCountryView(
           })
           .map(({ n }) => n.name),
       );
-      const members = handedOn(o, l, s, blockedEdges, blockedNames);
+      const members = handedOn(
+        o,
+        l,
+        s,
+        blockedEdges,
+        blockedNames,
+        o.lanes ? 'trusted' : undefined,
+      );
+      const openMembers = o.lanes ? handedOn(o, l, s, blockedEdges, blockedNames, 'open') : null;
       const primaryShare = new Map(members.primary.map((x) => [x.id, x.share]));
       const backupShare = new Map(members.backup.map((x) => [x.id, x.share]));
       const nameShare = new Map(members.names.map((x) => [x.id, x.share]));
@@ -845,6 +860,7 @@ export function buildCountryView(
         addresses,
         names,
         members,
+        openMembers,
         // Its names measured on its own addresses (an edge of it, or the origin itself).
         targetAdds: targetAddsOn(
           [...edges.map((e) => `edge:${e.edgeId}:`), `relay:${o.relayId}:`],

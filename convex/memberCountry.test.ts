@@ -330,8 +330,16 @@ describe('the cache keeps no body for another country', () => {
         ]),
       }),
     );
+    // The account's address lane rides on every entry the route writes (a new account: open).
     const entry = (ua: string, region: string | null) =>
-      JSON.stringify({ content: 'y', contentType: 'text/plain', ua, at: Date.now(), region });
+      JSON.stringify({
+        content: 'y',
+        contentType: 'text/plain',
+        ua,
+        at: Date.now(),
+        region,
+        lane: 'open',
+      });
     await t.mutation(internal.subscriptions.writeContentCache, {
       subscriptionId: subId,
       entry: entry('b', 'IR'),

@@ -591,6 +591,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'relay.listener.name.reactivate': ['relaySlug', 'listenerKey', 'count'],
   'relay.listener.sni_pick': ['relaySlug', 'listenerKey', 'version', 'reason'],
   'relay.edge_pick': ['relaySlug', 'version'],
+  'relay.lanes': ['relaySlug', 'open', 'trusted', 'tainted'],
+  'edge.lane_retired': ['relaySlug', 'edgeId', 'epoch'],
   // Server-name families: slugs and COUNTS only, never a hostname.
   'edge.sni.config.update': ['changedKeys'],
   'edge.sni.family.create': ['slug', 'targetKind', 'network'],

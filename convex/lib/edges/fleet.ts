@@ -19,6 +19,8 @@ import { readStateJson, writeStateJson } from '../appStateJson';
 
 export const FLEET_BRAKE_KEY = 'edge:fleetBrake';
 export const FLEET_ROTATIONS_KEY = 'edge:fleetRotations';
+/** Open-lane replacements per UTC day across the fleet: their own budget, never the cap above. */
+export const FLEET_OPEN_REPLACES_KEY = 'edge:fleetOpenReplaces';
 /** A brake needs this many suspected origins, so a small fleet keeps automatic rotation. */
 export const FLEET_BRAKE_MIN_SUSPECTED = 3;
 
@@ -82,5 +84,17 @@ export async function fleetRotationsToday(db: DatabaseReader, now: number): Prom
 export async function countFleetRotation(db: DatabaseWriter, now: number): Promise<number> {
   const used = (await fleetRotationsToday(db, now)) + 1;
   await writeStateJson(db, FLEET_ROTATIONS_KEY, { day: fleetDayKey(now), count: used });
+  return used;
+}
+
+/** Open-lane replacements started today across the fleet (docs/edges.md "Address enumeration"). */
+export async function fleetOpenReplacesToday(db: DatabaseReader, now: number): Promise<number> {
+  const v = await readStateJson<{ day?: string; count?: number }>(db, FLEET_OPEN_REPLACES_KEY);
+  return v && v.day === fleetDayKey(now) && typeof v.count === 'number' ? v.count : 0;
+}
+
+export async function countFleetOpenReplace(db: DatabaseWriter, now: number): Promise<number> {
+  const used = (await fleetOpenReplacesToday(db, now)) + 1;
+  await writeStateJson(db, FLEET_OPEN_REPLACES_KEY, { day: fleetDayKey(now), count: used });
   return used;
 }

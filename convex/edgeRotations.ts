@@ -152,7 +152,12 @@ import type {
 } from './lib/edges/providers/types';
 import { admitted, assertAdmission } from './lib/edges/maintenance';
 import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
-import { countFleetRotation, fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
+import {
+  countFleetOpenReplace,
+  countFleetRotation,
+  fleetRotationsToday,
+  readFleetBrake,
+} from './lib/edges/fleet';
 import { hostSecurityLayer } from './hostOps';
 import {
   publicationAdmission,
@@ -169,6 +174,7 @@ import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { clientCheckFailedNow, clientCheckReadiness, runClientCheck } from './edgeClientCheck';
 import { locationTicked } from './lib/edges/tickedLocation';
 import { replacementPlacement, replacementPolicyOf } from './lib/edges/replacementHolders';
+import { isOpenLaneReplace, laneForPublish, openBudgetLeft, openReplacesToday } from './edgeLanes';
 
 type Rotation = Doc<'edgeRotations'>;
 type Edge = Doc<'edges'>;
@@ -424,6 +430,8 @@ export const holdAutoReplace = internalMutation({
     const holds = origin.autoReplaceHolds ?? [];
     if (holds.some((h) => h.listenerId === edge.listenerId)) return { held: true };
     const now = Date.now();
+    // An open address blocked again is expected: its budget bounds it, no hold.
+    if (ifReblocked && isOpenLaneReplace(origin, edge)) return { held: false };
     if (
       ifReblocked &&
       (edge.publication !== 'published' ||
@@ -763,6 +771,12 @@ export async function collectStartBlockers(
   listenerId: Id<'relayListeners'> | undefined;
   /** A publish's node approval (null for any other kind). */
   approval: PublicationAdmission | null;
+  /**
+   * A replace of an OPEN address on a node with lanes (convex/edgeLanes.ts):
+   * the open lane's own budget, never the node's or the fleet's daily cap,
+   * the cooldown or the re-block hold, which stay whole for trusted ones.
+   */
+  openLane: boolean;
 }> {
   const blockers: StartBlocker[] = [];
   const push = (code: string, message: string) => blockers.push({ code, message });
@@ -777,6 +791,7 @@ export async function collectStartBlockers(
       targetEdge: null,
       listenerId: a.listenerId,
       approval,
+      openLane: false,
     };
   }
   const cfg = await resolveEdgeConfig(ctx.db);
@@ -806,13 +821,16 @@ export async function collectStartBlockers(
   if (a.trigger === 'detector' && !(cfg.enabled && cfg.autoRotate && origin.autoRotate)) {
     push('edge.auto_rotate_disabled', 'Automatic rotation is not enabled for this origin');
   }
+  // A replace of an open address on a node with lanes: its own budget below.
+  const early = a.kind === 'replace' && a.targetEdgeId ? await ctx.db.get(a.targetEdgeId) : null;
+  const openLane = !!early && early.relayId === a.relayId && isOpenLaneReplace(origin, early);
   // The fleet guards (lib/edges/fleet.ts), read in the same transaction that
   // would start the rotation: a mass block holds every automatic rotation, and
   // the fleet's daily cap bounds them together. Never applied to a manual start.
   if (a.trigger === 'detector') {
     if ((await readFleetBrake(ctx.db)).engaged)
       push('edge.fleet_brake', 'Automatic rotation is held fleet-wide: many origins look blocked');
-    if ((await fleetRotationsToday(ctx.db, now)) >= cfg.detect.fleetRotationsPerDay)
+    if (!openLane && (await fleetRotationsToday(ctx.db, now)) >= cfg.detect.fleetRotationsPerDay)
       push('edge.fleet_daily_cap', 'The fleet-wide daily cap on automatic rotations is reached');
   }
   if ((await countActiveRotations(ctx)) >= cfg.maxConcurrentRotations) {
@@ -845,7 +863,7 @@ export async function collectStartBlockers(
           'edge.auto_replace_held',
           'Automatic replacement of this transport is held; resume it on the node page',
         );
-      else if (reblockedSoon(targetEdge, cfg, now))
+      else if (!openLane && reblockedSoon(targetEdge, cfg, now))
         push(
           'edge.replacement_reblocked',
           'This address replaced a blocked one and looks blocked again already',
@@ -860,12 +878,23 @@ export async function collectStartBlockers(
       }
     }
     if (!force) {
-      if (origin.cooldownUntil && origin.cooldownUntil > now)
-        push('edge.cooldown', 'Origin is cooling down');
-      const today = todayKey(now);
-      const used = origin.rotationsDayKey === today ? origin.rotationsToday : 0;
-      if (used >= originPolicy(origin, cfg).maxRotationsPerDay)
-        push('edge.daily_cap', 'Daily rotation cap reached');
+      if (openLane) {
+        // Open addresses are expected to be blocked: their own small budget,
+        // so they can never use up what trusted ones need (docs/edges.md
+        // "Address enumeration").
+        if (!(await openBudgetLeft(ctx.db, origin, cfg, now)))
+          push(
+            'edge.open_lane_budget',
+            'The open addresses used today\u2019s replacement budget; they are replaced again tomorrow',
+          );
+      } else {
+        if (origin.cooldownUntil && origin.cooldownUntil > now)
+          push('edge.cooldown', 'Origin is cooling down');
+        const today = todayKey(now);
+        const used = origin.rotationsDayKey === today ? origin.rotationsToday : 0;
+        if (used >= originPolicy(origin, cfg).maxRotationsPerDay)
+          push('edge.daily_cap', 'Daily rotation cap reached');
+      }
     }
     if (targetEdge) listenerId = targetEdge.listenerId;
     // Replacing an L4 edge switches to an already-tested spare, unless FCP's
@@ -1121,7 +1150,7 @@ export async function collectStartBlockers(
         'Nothing fits what the node was approved for; review and approve it again',
       );
   }
-  return { blockers, origin, cfg, targetEdge, listenerId, approval };
+  return { blockers, origin, cfg, targetEdge, listenerId, approval, openLane };
 }
 
 export const start = internalMutation({
@@ -1287,6 +1316,7 @@ export async function startRotation(
     trigger: a.trigger,
     burn: a.burn ?? false,
     force,
+    ...(g.openLane ? { openLane: true } : {}),
     forceGeoEvidence: a.forceGeoEvidence === true ? true : undefined,
     publishOnDone: a.kind === 'provision' ? (a.publishOnDone ?? false) : undefined,
     targetEdgeId: a.targetEdgeId,
@@ -1320,15 +1350,20 @@ export async function startRotation(
     startedAt: now,
     updatedAt: now,
   });
-  if (a.trigger === 'detector') await countFleetRotation(ctx.db, now);
+  // The open lane counts against its own budget only (convex/edgeLanes.ts).
+  if (g.openLane) await countFleetOpenReplace(ctx.db, now);
+  else if (a.trigger === 'detector') await countFleetRotation(ctx.db, now);
   const today = todayKey(now);
   await ctx.db.patch(a.relayId, {
     activeRotationId: id,
-    ...(a.kind === 'replace'
+    ...(a.kind === 'replace' && !g.openLane
       ? {
           rotationsDayKey: today,
           rotationsToday: (origin.rotationsDayKey === today ? origin.rotationsToday : 0) + 1,
         }
+      : {}),
+    ...(g.openLane
+      ? { openReplaces: { day: today, count: openReplacesToday(origin, now) + 1 } }
       : {}),
     updatedAt: now,
   });
@@ -2208,6 +2243,8 @@ export const applyPublish = internalMutation({
     let published = origin.publishedEdgeIds;
     let poolIndex: number | null = null;
     let previousBinding: Rotation['previousBinding'] = undefined;
+    // The address a replace swaps out: the new one takes its lane (lib/edges/lanes.ts).
+    let replaced: Edge | null = null;
     if (r.kind === 'provision' && !r.publishOnDone) {
       // Standby provision: verified, paid for, deliberately not rendered — it is
       // finalized whatever its publishability right now (a profile disabled
@@ -2281,6 +2318,7 @@ export const applyPublish = internalMutation({
       const target = r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null;
       if (!target || target.publication !== 'published' || target.poolIndex === undefined)
         return { ok: false as const, code: 'target_gone' as const };
+      replaced = target;
       // Who receives the replacement: ONE decision (lib/edges/replacementHolders.ts).
       poolIndex = replacementPlacement({
         policy: replacementPolicyOf(origin),
@@ -2337,9 +2375,12 @@ export const applyPublish = internalMutation({
       }
       poolIndex = alloc.index;
     }
+    // Its lane, fixed now at its first publication (before `publishedAt` is set).
+    const lane = await laneForPublish(ctx.db, origin, to, replaced);
     await ctx.db.patch(to._id, {
       publication: 'published',
       poolIndex,
+      ...lane,
       publishedAt: now,
       // The re-block guard reads where a replacement came from.
       ...(previousBinding
@@ -2683,8 +2724,12 @@ export const finalize = internalMutation({
       ...(sameProviderL7
         ? { l7ReplacementsDayKey: today, l7ReplacementsToday: usedToday + 1 }
         : {}),
+      // An open-lane replace sets no cooldown: it would hold the trusted lane back.
       ...(r.kind === 'replace'
-        ? { lastRotatedAt: now, cooldownUntil: now + originPolicy(origin, cfg).cooldownMs }
+        ? {
+            lastRotatedAt: now,
+            ...(r.openLane ? {} : { cooldownUntil: now + originPolicy(origin, cfg).cooldownMs }),
+          }
         : {}),
       // A detector burn: the burned address's pick cools on this origin (D6),
       // so no automatic path allocates, provisions or publishes into it until then.

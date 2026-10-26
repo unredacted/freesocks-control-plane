@@ -23,6 +23,7 @@ import { allocatePoolIndex, withEdgeAt, type PoolAdmit } from './lib/edges/pool'
 import { isCooling } from './lib/edges/setState';
 import { publicationApproval, startRotation } from './edgeRotations';
 import { recordCandidateEdge } from './nodeActivation';
+import { laneForPublish } from './edgeLanes';
 
 export const markDestroyed = internalMutation({
   args: { edgeId: v.id('edges') },
@@ -299,6 +300,7 @@ export const publishStandby = internalMutation({
       await ctx.db.patch(edgeId, {
         publication: 'published',
         poolIndex: idx,
+        ...(await laneForPublish(ctx.db, origin, edge)),
         publishedAt: now,
         updatedAt: now,
       });

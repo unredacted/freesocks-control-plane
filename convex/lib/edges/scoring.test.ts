@@ -417,6 +417,49 @@ describe('autoRotateDecision', () => {
   const decide = (over: Partial<Parameters<typeof autoRotateDecision>[0]> = {}) =>
     autoRotateDecision({ evaluation: suspectedEv, cfg: on, origin, published, now, ...over });
 
+  describe('with address lanes on', () => {
+    // e1 carries the evidence. Open: it has its own budget and skips the caps.
+    test('an open address is replaced on its own budget, past the cap and the cooldown', () => {
+      const capped = {
+        ...origin,
+        rotationsToday: 3,
+        cooldownUntil: now + 60_000,
+      };
+      expect(
+        decide({ origin: capped, lanes: { openEdgeIds: ['e1'], openBudgetLeft: true } }),
+      ).toMatchObject({ edgeId: 'e1' });
+      expect(
+        decide({
+          origin: capped,
+          lanes: { openEdgeIds: ['e1'], openBudgetLeft: true },
+          fleet: { brakeEngaged: false, rotationsToday: 99, rotationsPerDay: 12 },
+        }),
+      ).toMatchObject({ edgeId: 'e1' });
+      // The fleet brake (a mass block) still holds it.
+      expect(
+        decide({
+          lanes: { openEdgeIds: ['e1'], openBudgetLeft: true },
+          fleet: { brakeEngaged: true, rotationsToday: 0, rotationsPerDay: 12 },
+        }),
+      ).toEqual({ veto: 'fleet_brake' });
+    });
+
+    test('its budget spent: vetoed, never taken from the trusted lane', () => {
+      expect(decide({ lanes: { openEdgeIds: ['e1'], openBudgetLeft: false } })).toEqual({
+        veto: 'open_lane_budget',
+      });
+    });
+
+    test('a trusted address keeps the caps', () => {
+      expect(
+        decide({
+          origin: { ...origin, rotationsToday: 3 },
+          lanes: { openEdgeIds: [], openBudgetLeft: true },
+        }),
+      ).toEqual({ veto: 'daily_cap' });
+    });
+  });
+
   describe('with delivery by country on (steering vetoes)', () => {
     const REALITY = { protocol: 'vless', streamTransport: 'raw', security: 'reality' } as const;
     const pub = (

@@ -192,6 +192,29 @@ export const ROTATION_FIELDS: Field[] = [
     helper:
       'A replacement that looks blocked again this soon after going into use stops automatic replacement of its transport on that node until you resume it. 0 never holds.',
   },
+  {
+    kind: 'number',
+    path: 'trust.promoteAfterDays',
+    label: 'Trusted addresses after',
+    unit: 'days',
+    helper:
+      'On a node with trusted addresses, a free account this old is handed them; younger ones get the open addresses. Paid members get them at once.',
+  },
+  {
+    kind: 'number',
+    path: 'lanes.openReplacesPerDay',
+    label: 'Open addresses replaced per node',
+    unit: 'a day',
+    helper:
+      'Open addresses are expected to be blocked. This is their own budget: it never uses the daily cap meant for trusted addresses.',
+  },
+  {
+    kind: 'number',
+    path: 'lanes.openReplacesPerFleetDay',
+    label: 'Open addresses replaced in all',
+    unit: 'a day',
+    helper: 'The same budget across every node.',
+  },
 ];
 
 const IPV6_GLOBAL = [

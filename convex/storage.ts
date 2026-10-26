@@ -48,12 +48,15 @@ export interface MirrorValidation {
 
 /**
  * The mirror barrier's token for one upload (convex/mirrorUploads.ts): the
- * delivery token of the place the body resolved to (`edgeRender.epochFor`)
- * and the key's own `deliveryRev`, so an in-place mode or server switch that
+ * delivery token of the place the body resolved to (`edgeRender.epochFor`),
+ * the key's own `deliveryRev`, so an in-place mode or server switch that
  * lands while the body is fetched or the object written counts as a policy
- * move (subscriptions.ts `invalidateDelivery`). `readRev`: the revision the
- * caller read BEFORE it fetched the body; the baseline is taken with it, so a
- * switch that lands during the fetch is already a move. Absent, the live one.
+ * move (subscriptions.ts `invalidateDelivery`), and the account's address lane
+ * (convex/edgeLanes.ts), so an upload that straddles a lane change stays open
+ * and the repair pass renders it again under the lane the account has now.
+ * `readRev`: the revision the caller read BEFORE it fetched the body; the
+ * baseline is taken with it, so a switch that lands during the fetch is
+ * already a move. Absent, the live one.
  */
 async function mirrorToken(
   ctx: ActionCtx,
@@ -62,13 +65,14 @@ async function mirrorToken(
   node: string | undefined,
   readRev?: number,
 ): Promise<string> {
-  const [place, rev] = await Promise.all([
+  const [place, rev, lane] = await Promise.all([
     backendServerId
       ? ctx.runQuery(internal.edgeRender.epochFor, { backendServerId, nodeName: node })
       : Promise.resolve(null),
     readRev ?? ctx.runQuery(internal.subscriptions.deliveryRevOf, { subscriptionId }),
+    ctx.runQuery(internal.edgeLanes.laneOf, { subscriptionId }),
   ]);
-  return `r${rev ?? '-'}|${place ?? ''}`;
+  return `r${rev ?? '-'}|${place ?? ''}|l${lane ?? '-'}`;
 }
 
 /**

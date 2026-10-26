@@ -18,6 +18,7 @@ import { resolveUpdateIntervalHours } from './lib/edgeConfig';
 import { resolveCensoredCountries } from './lib/censoredCountries';
 import { storedCountry } from './lib/memberCountry';
 import { carriedCountry, onPlacementChanged, resolveMemberCountryConfig } from './memberCountry';
+import { memberLaneOfUser } from './edgeLanes';
 
 const mirror = v.object({
   provider: v.string(),
@@ -332,18 +333,24 @@ export const markDelivered = internalMutation({
     render: v.optional(v.union(renderSnapshotValidator, v.null())),
     /** The row's `deliveryRev` the request read. */
     deliveryRev: v.optional(v.number()),
+    /** The account's address lane the request rendered (or found the body) under. */
+    lane: v.optional(v.union(v.literal('open'), v.literal('trusted'), v.null())),
   },
   handler: async (
     ctx,
-    { subscriptionId, contentAt, renderedEpoch, render: given, deliveryRev },
+    { subscriptionId, contentAt, renderedEpoch, render: given, deliveryRev, lane },
   ) => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub) return null;
     const now = Date.now();
     // A request that read the row before the key moved in place served what it
     // carried THEN: the delivery is recorded, never its content time, epoch or
-    // snapshot (they describe a placement the key has left).
-    if (!revCurrent(sub, deliveryRev)) {
+    // snapshot (they describe a placement the key has left). The same for a
+    // body rendered under an address lane the account no longer has (the
+    // fence, convex/edgeLanes.ts).
+    const laneMoved =
+      lane !== undefined && lane !== (await memberLaneOfUser(ctx.db, sub.userId, now));
+    if (!revCurrent(sub, deliveryRev) || laneMoved) {
       if (now - (sub.lastDeliveredAt ?? 0) >= DELIVERY_STAMP_THROTTLE_MS)
         await ctx.db.patch(subscriptionId, { lastDeliveredAt: now });
       return null;
@@ -426,6 +433,8 @@ interface SubCacheEntry {
   at: number;
   /** The stored country the body was shaped for (convex/memberCountry.ts). */
   region?: string | null;
+  /** The account's address lane it was rendered for (convex/edgeLanes.ts). */
+  lane?: 'open' | 'trusted' | null;
   // The route's further fields (format version, edge token, render epoch,
   // validity) pass through untouched; see SubCacheEntry in convex/http.ts.
 }
@@ -463,7 +472,12 @@ export const writeContentCache = internalMutation({
       resolveCensoredCountries(ctx.db),
     ]);
     const stored = storedCountry(sub, countryCfg, censored.codes, Date.now());
-    const allowed = (e: SubCacheEntry) => e.region == null || e.region === stored;
+    // The address lane (the fence, convex/edgeLanes.ts): a body rendered for
+    // the lane the account had when the request read it is kept only while it
+    // still has that lane; an entry for another lane is dropped.
+    const lane = await memberLaneOfUser(ctx.db, sub.userId, Date.now());
+    const allowed = (e: SubCacheEntry) =>
+      (e.region == null || e.region === stored) && (e.lane ?? null) === lane;
     if (!allowed(incoming)) return;
     let existing: SubCacheEntry[] = [];
     if (sub.subCache) {

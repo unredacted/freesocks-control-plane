@@ -52,7 +52,9 @@
    *
    * A node on the legacy address pick shows "Spread members over the
    * addresses" (`relays.edgePick`): its dialog reads how many members would
-   * get a different pair before the operator switches (spreadWords.ts).
+   * get a different pair before the operator switches (spreadWords.ts). A
+   * spread node shows its trusted addresses instead (LanesCard.svelte), and each
+   * address in use says which lane it is in while lanes are on.
    *
    * Props:
    *   slug: string                          the origin's slug
@@ -122,6 +124,7 @@
   import StatusDot from './StatusDot.svelte';
   import { endNowWords } from './drainWords';
   import { SPREAD_CARD, SPREAD_CONFIRM, spreadMovesWords } from './spreadWords';
+  import LanesCard from './LanesCard.svelte';
   import {
     heldSpareWords,
     nodeAutomationWords,
@@ -551,6 +554,7 @@
                 listener={l}
                 {edges}
                 onTest={(edgeId) => (testEdgeIds = [edgeId])}
+                lanes={!!relay.lanes}
                 publishable={busy ? null : (putInUse?.edgeId ?? null)}
                 onPublish={() => (putInUseOpen = true)}
                 onRetiring={canEndDrains
@@ -570,7 +574,17 @@
       {/if}
     </section>
 
-    {#if relay.edgePick !== 'hrw1'}
+    {#if relay.edgePick === 'hrw1'}
+      <LanesCard
+        relay={{ id: relay.id, slug: relay.slug, lanes: relay.lanes }}
+        {busy}
+        promoteAfterDays={config.data?.config.trust.promoteAfterDays ?? 14}
+        nameOf={(key) => {
+          const l = listeners.find((x) => x.listenerKey === key);
+          return l ? transportName(l) : key;
+        }}
+      />
+    {:else}
       <section class="rounded-lg border p-3" aria-labelledby={`${uid}-spread`}>
         <h3 id={`${uid}-spread`} class="text-sm font-semibold">{SPREAD_CARD.title}</h3>
         <p class="text-muted-foreground mt-1 text-sm">{SPREAD_CARD.body}</p>

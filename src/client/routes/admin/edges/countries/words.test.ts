@@ -273,6 +273,7 @@ describe('country view words', () => {
       addresses: [],
       names: [],
       members: handed(),
+      openMembers: null,
       targetAdds,
     });
     expect(W.targetAddsLine(listener(null), NOW)).toBeNull();
