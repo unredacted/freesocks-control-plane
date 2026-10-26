@@ -696,3 +696,230 @@ describe('imports, ignores and adding', () => {
     await expect(t.mutation(internal.sniHunt.startSweep, {})).rejects.toThrow(/switched off/);
   });
 });
+
+describe('review fixes', () => {
+  test('complete certificate-log reads never stand in front of one still to read', async () => {
+    const { t, familyId, networkId } = await seed();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 150; i++)
+        await ctx.db.insert('sniHuntCt', {
+          domain: `d${i}.example.com`,
+          familyId,
+          networkId,
+          state: 'complete',
+          pages: 1,
+          names: 0,
+          nextAt: 0,
+          completedAt: clock,
+          requestedAt: clock,
+          updatedAt: clock,
+        });
+      await ctx.db.insert('sniHuntCt', {
+        domain: 'late.example.com',
+        familyId,
+        networkId,
+        state: 'partial',
+        pages: 0,
+        names: 0,
+        nextAt: clock,
+        requestedAt: clock,
+        updatedAt: clock,
+      });
+    });
+    const claim = await t.mutation(internal.sniHunt.claimCt, { now: clock });
+    expect(claim?.domain).toBe('late.example.com');
+  });
+
+  test('a deleted family takes every one of its reads, ignores and candidates with it', async () => {
+    const { t, familyId, networkId } = await seed();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 450; i++) {
+        await ctx.db.insert('sniHuntCt', {
+          domain: `d${i}.example.com`,
+          familyId,
+          networkId,
+          state: 'complete',
+          pages: 1,
+          names: 0,
+          nextAt: 0,
+          requestedAt: clock,
+          updatedAt: clock,
+        });
+        await ctx.db.insert('sniHuntIgnores', {
+          kind: 'name',
+          key: `n${i}.example.com`,
+          familyId,
+          networkId,
+          at: clock,
+        });
+      }
+    });
+    // Runs again until nothing is left (the follow-ups are scheduled).
+    for (let i = 0; i < 5; i++) await t.mutation(internal.sniHunt.dropScope, { familyId });
+    expect(await t.run((ctx) => ctx.db.query('sniHuntCt').collect())).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query('sniHuntIgnores').collect())).toHaveLength(0);
+  });
+
+  test('a page of one state at a time: ignored rows never take the place of ones to decide', async () => {
+    const { t, call } = await seed();
+    const names = Array.from({ length: 250 }, (_, i) => `n${i}.example.com`);
+    await t.mutation(internal.sniHunt.importCandidates, { network: 'net-a', lines: names });
+    // The best-scored ones are ignored.
+    await t.run(async (ctx) => {
+      for (const c of await ctx.db.query('sniCandidates').collect()) {
+        const i = Number(c.name.slice(1).split('.')[0]);
+        await ctx.db.patch(c._id, { score: 1000 - i, ...(i < 30 ? { state: 'ignored' } : {}) });
+      }
+    });
+    const first = SniHuntScopeView.parse(
+      await (await call('GET', 'sni/hunt/networks/net-a')).json(),
+    );
+    expect(first.candidates).toHaveLength(200);
+    expect(first.candidates.every((c) => c.state === 'new')).toBe(true);
+    expect(first.page.done).toBe(false);
+    const second = SniHuntScopeView.parse(
+      await (
+        await call(
+          'GET',
+          `sni/hunt/networks/net-a?cursor=${encodeURIComponent(first.page.cursor!)}`,
+        )
+      ).json(),
+    );
+    expect(second.candidates).toHaveLength(20);
+    expect(second.page.done).toBe(true);
+    const ignored = SniHuntScopeView.parse(
+      await (await call('GET', 'sni/hunt/networks/net-a?state=ignored')).json(),
+    );
+    expect(ignored.candidates).toHaveLength(30);
+  });
+
+  test('a name found in many scopes is found again in each, never twice', async () => {
+    const { t } = await seed();
+    const nets = await t.run(async (ctx) => {
+      const ids = [];
+      for (let i = 0; i < 60; i++)
+        ids.push(
+          await ctx.db.insert('edgeNetworks', {
+            slug: `n-${i}`,
+            label: `N ${i}`,
+            asns: [64500],
+            announced: NET_PREFIXES,
+            manualPrefixes: [],
+            prefixes: NET_PREFIXES,
+            updatedAt: clock,
+          }),
+        );
+      return ids;
+    });
+    for (let i = 0; i < 60; i++)
+      await t.mutation(internal.sniHunt.importCandidates, {
+        network: `n-${i}`,
+        lines: ['shared.example.com'],
+      });
+    const again = await t.mutation(internal.sniHunt.importCandidates, {
+      network: 'n-59',
+      lines: ['shared.example.com'],
+    });
+    expect(again).toMatchObject({ added: 0, known: 1 });
+    expect((await candidates(t)).filter((c) => c.networkId === nets[59])).toHaveLength(1);
+  });
+
+  test("a target's certificate is not read during a maintenance freeze", async () => {
+    const { t } = await seed();
+    await t.run((ctx) =>
+      ctx.db.insert('appState', {
+        key: 'edge:maintenance',
+        value: JSON.stringify({ frozen: true, since: clock, reason: 'test' }),
+        updatedAt: clock,
+      }),
+    );
+    const { shakes } = fakeDeps({ 'target.example.com': { a: [TARGET_IP] } });
+    await expect(t.action(internal.sniHuntOps.readCert, { slug: 'fam-a' })).rejects.toThrow(
+      /maintenance/i,
+    );
+    expect(shakes).toEqual([]);
+  });
+
+  test('an extra handshake that throws leaves a passing verdict alone', async () => {
+    const { t, familyId, networkId } = await seed();
+    const id = await t.run((ctx) =>
+      ctx.db.insert('sniCandidates', {
+        name: 'www.example.com',
+        site: 'example.com',
+        networkId,
+        familyId,
+        sources: ['cert'],
+        state: 'new',
+        checkGen: 0,
+        checkDueAt: 0,
+        passes: 0,
+        baseScore: 0,
+        score: 0,
+        firstSeenAt: clock,
+        updatedAt: clock,
+      }),
+    );
+    fakeDeps(
+      { 'target.example.com': { a: [TARGET_IP] }, 'www.example.com': { a: ['192.0.2.11'] } },
+      {
+        tlsInspect: async (o) => {
+          if (o.ecdhCurve === 'X25519MLKEM768') throw new TypeError('Unsupported curve');
+          return { ok: true, authorized: true, protocol: 'TLSv1.3', alpn: 'h2' };
+        },
+      },
+    );
+    await t.action(internal.sniHuntOps.check, {});
+    const c = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(c.check?.code).toBeNull();
+    expect(c.extra).toMatchObject({ x25519: true, error: 'unsupported' });
+  });
+
+  test('a certificate read is audited as the admin who asked', async () => {
+    const { t } = await seed();
+    const adminId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'b',
+        displayName: 'B',
+        isActive: true,
+        updatedAt: clock,
+      }),
+    );
+    fakeDeps(
+      { 'target.example.com': { a: [TARGET_IP] } },
+      {
+        tlsInspect: async () => ({
+          ok: true,
+          authorized: true,
+          protocol: 'TLSv1.3',
+          names: ['a.example.com'],
+        }),
+      },
+    );
+    await t.action(internal.sniHuntOps.readCert, { slug: 'fam-a', actorAdminId: adminId });
+    const row = await t.run(async (ctx) =>
+      (await ctx.db.query('auditLog').collect()).find((r) => r.action === 'edge.sni.hunt.cert'),
+    );
+    expect(row).toMatchObject({ actorType: 'admin', actorId: adminId });
+  });
+
+  test("stopping a site's ignore brings back every name of the site", async () => {
+    const { t } = await seed();
+    await t.mutation(internal.sniHunt.importCandidates, {
+      network: 'net-a',
+      lines: ['a.bad.example', 'b.bad.example', 'c.bad.example'],
+    });
+    const rows = await candidates(t);
+    await t.mutation(internal.sniHunt.setCandidates, {
+      ids: [rows[0]!._id],
+      action: 'ignore',
+      kind: 'site',
+    });
+    expect((await candidates(t)).every((c) => c.state === 'ignored')).toBe(true);
+    const r = await t.mutation(internal.sniHunt.setCandidates, {
+      ids: [rows[1]!._id],
+      action: 'unignore',
+    });
+    expect(r.changed).toBe(3);
+    expect((await candidates(t)).every((c) => c.state === 'new' && c.checkDueAt === 0)).toBe(true);
+  });
+});

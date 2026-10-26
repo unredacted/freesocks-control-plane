@@ -3537,8 +3537,10 @@ export default defineSchema({
   })
     .index('by_scope_base', ['networkId', 'familyId', 'baseScore'])
     .index('by_scope_score', ['networkId', 'familyId', 'score'])
+    .index('by_scope_state_score', ['networkId', 'familyId', 'state', 'score'])
     .index('by_family', ['familyId'])
     .index('by_name', ['name'])
+    .index('by_name_scope', ['name', 'networkId', 'familyId'])
     .index('by_check_due', ['checkDueAt'])
     .index('by_gone', ['goneAt']),
 
@@ -3551,7 +3553,10 @@ export default defineSchema({
     familyId: v.optional(v.id('sniFamilies')),
     at: v.number(),
     by: v.optional(v.id('adminUsers')),
-  }).index('by_key', ['key']),
+  })
+    .index('by_key', ['key'])
+    .index('by_family', ['familyId'])
+    .index('by_network', ['networkId']),
 
   // One top-sites sweep: the list, downloaded once and kept in file storage in
   // chunks while the run lasts, is resolved by a chain of short steps. A step
@@ -3615,7 +3620,10 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_domain', ['domain'])
-    .index('by_next', ['nextAt']),
+    // Only readable states are ever due: a complete or truncated row never stands in the queue.
+    .index('by_state_next', ['state', 'nextAt'])
+    .index('by_family', ['familyId'])
+    .index('by_network', ['networkId']),
 
   // One row per request to a rate-limited third-party service (the hourly
   // budgets count requests, whatever their answer). Kept two hours.

@@ -142,11 +142,7 @@ async function isIgnored(db: QueryCtx['db'], name: string, site: string, s: Scop
     ['name', name],
     ['site', site],
   ] as const) {
-    const rows = await db
-      .query('sniHuntIgnores')
-      .withIndex('by_key', (q) => q.eq('key', key))
-      .take(50);
-    for (const r of rows) {
+    for await (const r of db.query('sniHuntIgnores').withIndex('by_key', (q) => q.eq('key', key))) {
       if (r.kind !== kind) continue;
       if ((!r.networkId && !r.familyId) || sameScope(r, s)) return true;
     }
@@ -192,11 +188,12 @@ async function upsertNames(
       continue;
     }
     const rank = item.rank && item.rank > 0 ? item.rank : undefined;
-    const rows = await ctx.db
+    const mine = await ctx.db
       .query('sniCandidates')
-      .withIndex('by_name', (q) => q.eq('name', name))
-      .take(50);
-    const mine = rows.find((r) => sameScope(r, s));
+      .withIndex('by_name_scope', (q) =>
+        q.eq('name', name).eq('networkId', s.networkId).eq('familyId', s.familyId),
+      )
+      .first();
     if (mine) {
       const sources = mine.sources.includes(source) ? mine.sources : [...mine.sources, source];
       const better = rank !== undefined && (mine.rank === undefined || rank < mine.rank);
@@ -255,6 +252,7 @@ export const addFamilyCandidates = internalMutation({
     slug: v.string(),
     source: v.union(v.literal('cert'), v.literal('ct')),
     names: v.array(v.string()),
+    ...actor,
   },
   handler: async (ctx, a) => {
     const { scope, family } = await scopeOf(ctx.db, { family: a.slug });
@@ -265,7 +263,7 @@ export const addFamilyCandidates = internalMutation({
       a.names.slice(0, MAX_IMPORT_LINES).map((name) => ({ name })),
       Date.now(),
     );
-    await audit(ctx, 'edge.sni.hunt.cert', undefined, { slug: family!.slug, ...tally });
+    await audit(ctx, 'edge.sni.hunt.cert', a.actorAdminId, { slug: family!.slug, ...tally });
     return tally;
   },
 });
@@ -392,12 +390,11 @@ export const setCandidates = internalMutation({
       const kind = a.kind ?? 'name';
       const key = kind === 'site' ? c.site : c.name;
       if (a.action === 'ignore') {
-        const existing = (
-          await ctx.db
-            .query('sniHuntIgnores')
-            .withIndex('by_key', (q) => q.eq('key', key))
-            .take(50)
-        ).find((r) => r.kind === kind && sameScope(r, scope));
+        let existing = false;
+        for await (const r of ctx.db
+          .query('sniHuntIgnores')
+          .withIndex('by_key', (q) => q.eq('key', key)))
+          if (r.kind === kind && sameScope(r, scope)) existing = true;
         if (!existing)
           await ctx.db.insert('sniHuntIgnores', {
             kind,
@@ -419,7 +416,10 @@ export const setCandidates = internalMutation({
           }
         continue;
       }
-      // unignore: the name's and its site's ignores in this scope go, and it is checked again.
+      // unignore: the name's and its site's ignores in this scope go. A site's
+      // ignore covered every name of the site here, so all of them come back
+      // (unless a name of theirs is ignored on its own), and are checked again.
+      let siteRule = false;
       for (const [k, key2] of [
         ['name', c.name],
         ['site', c.site],
@@ -427,11 +427,22 @@ export const setCandidates = internalMutation({
         const rows = await ctx.db
           .query('sniHuntIgnores')
           .withIndex('by_key', (q) => q.eq('key', key2))
-          .take(50);
-        for (const r of rows) if (r.kind === k && sameScope(r, scope)) await ctx.db.delete(r._id);
+          .collect();
+        for (const r of rows)
+          if (r.kind === k && sameScope(r, scope)) {
+            await ctx.db.delete(r._id);
+            if (k === 'site') siteRule = true;
+          }
       }
-      if (c.state === 'ignored') {
-        await ctx.db.patch(c._id, { state: 'new', checkDueAt: 0, updatedAt: now });
+      const back = siteRule
+        ? (await scopeRows(ctx.db, scope).take(MAX_CANDIDATES_PER_SCOPE)).filter(
+            (r) => r.site === c.site,
+          )
+        : [c];
+      for (const r of back) {
+        if (r.state !== 'ignored') continue;
+        if (r._id !== c._id && (await isIgnored(ctx.db, r.name, r.site, scope))) continue;
+        await ctx.db.patch(r._id, { state: 'new', checkDueAt: 0, updatedAt: now });
         changed++;
       }
     }
@@ -461,10 +472,9 @@ export const noteAdded = internalMutation({
         .withIndex('by_name', (q) => q.eq('name', name))
         .first();
       if (!held) continue;
-      for (const c of await ctx.db
+      for await (const c of ctx.db
         .query('sniCandidates')
-        .withIndex('by_name', (q) => q.eq('name', name))
-        .take(50))
+        .withIndex('by_name', (q) => q.eq('name', name)))
         if (c.state !== 'added') {
           await ctx.db.patch(c._id, { state: 'added', updatedAt: now });
           marked++;
@@ -917,6 +927,8 @@ export const certTarget = internalQuery({
     if (!f) return refuse('not_found', 'No such family');
     const cfg = await resolveSniHuntConfig(ctx.db);
     if (!cfg.enabled) return refuse('edge.sni.hunt.off', 'Finding names is switched off');
+    // A maintenance freeze starts no new work, this handshake included.
+    await assertAdmission(ctx.db, 'probe.request');
     // The name to present: the target's own hostname, else a name the family already has.
     const literal = /^[0-9.]+$/.test(f.target.address) || f.target.address.includes(':');
     const first = literal
@@ -968,12 +980,14 @@ export const requestCt = internalMutation({
     let queued = 0;
     let cached = 0;
     for (const domain of domains) {
-      const row = (
-        await ctx.db
-          .query('sniHuntCt')
-          .withIndex('by_domain', (q) => q.eq('domain', domain))
-          .take(50)
-      ).find((r) => sameScope(r, scope));
+      let row: Doc<'sniHuntCt'> | null = null;
+      for await (const r of ctx.db
+        .query('sniHuntCt')
+        .withIndex('by_domain', (q) => q.eq('domain', domain)))
+        if (sameScope(r, scope)) {
+          row = r;
+          break;
+        }
       if (row?.state === 'complete' && (row.completedAt ?? 0) + CT_FRESH_MS > now) {
         cached++;
         continue;
@@ -1021,7 +1035,23 @@ async function callsThisHour(db: QueryCtx['db'], kind: 'ct' | 'timing', now: num
   ).length;
 }
 
-const CT_READABLE = new Set(['partial', 'rate_limited', 'error']);
+/** The states a read can continue from; `complete` and `truncated` never stand in the queue. */
+const CT_READABLE = ['partial', 'rate_limited', 'error'] as const;
+
+/** The row due longest, among the readable states, whose lease and backoff have passed. */
+async function dueCtRow(db: QueryCtx['db'], now: number) {
+  let best: Doc<'sniHuntCt'> | null = null;
+  for (const state of CT_READABLE)
+    for (const row of await db
+      .query('sniHuntCt')
+      .withIndex('by_state_next', (q) => q.eq('state', state).lte('nextAt', now))
+      .take(20)) {
+      if ((row.leaseUntil ?? 0) > now || (row.backoffUntil ?? 0) > now) continue;
+      if (!best || row.nextAt < best.nextAt) best = row;
+      break;
+    }
+  return best;
+}
 
 /**
  * One certificate-transparency request: within the hourly budget (every
@@ -1036,17 +1066,11 @@ export const claimCt = internalMutation({
     if (!cfg.enabled || !(await admitted(ctx.db))) return null;
     if ((await callsThisHour(ctx.db, 'ct', now, cfg.ctRequestsPerHour)) >= cfg.ctRequestsPerHour)
       return null;
-    for (const row of await ctx.db
-      .query('sniHuntCt')
-      .withIndex('by_next', (q) => q.lte('nextAt', now))
-      .take(100)) {
-      if (!CT_READABLE.has(row.state)) continue;
-      if ((row.leaseUntil ?? 0) > now || (row.backoffUntil ?? 0) > now) continue;
-      await ctx.db.insert('sniHuntCalls', { kind: 'ct', at: now });
-      await ctx.db.patch(row._id, { leaseUntil: now + HUNT_LEASE_MS, updatedAt: now });
-      return { id: row._id, domain: row.domain, after: row.after ?? null };
-    }
-    return null;
+    const row = await dueCtRow(ctx.db, now);
+    if (!row) return null;
+    await ctx.db.insert('sniHuntCalls', { kind: 'ct', at: now });
+    await ctx.db.patch(row._id, { leaseUntil: now + HUNT_LEASE_MS, updatedAt: now });
+    return { id: row._id, domain: row.domain, after: row.after ?? null };
   },
 });
 
@@ -1243,10 +1267,7 @@ export const tick = internalMutation({
       scheduled.push('check');
     }
     // One certificate-transparency read when one is due and the budget has room.
-    const dueCt = await ctx.db
-      .query('sniHuntCt')
-      .withIndex('by_next', (q) => q.lte('nextAt', now))
-      .first();
+    const dueCt = await dueCtRow(ctx.db, now);
     if (
       dueCt &&
       (await callsThisHour(ctx.db, 'ct', now, cfg.ctRequestsPerHour)) < cfg.ctRequestsPerHour
@@ -1265,37 +1286,50 @@ export const tick = internalMutation({
   },
 });
 
-/** Everything found for a scope that is going away (a network or family deleted). */
+/**
+ * Everything found for a scope that is going away (a network or a family
+ * deleted): its candidates, its certificate-log reads and its ignores, a page
+ * of each per run, again until none is left.
+ */
 export const dropScope = internalMutation({
   args: { networkId: v.optional(v.id('edgeNetworks')), familyId: v.optional(v.id('sniFamilies')) },
   handler: async (ctx, a) => {
     const PAGE = 200;
-    const rows = a.familyId
+    const fam = a.familyId;
+    const net = a.networkId;
+    if (!fam && !net) return { deleted: 0 };
+    const candidates = fam
       ? await ctx.db
           .query('sniCandidates')
-          .withIndex('by_family', (q) => q.eq('familyId', a.familyId))
+          .withIndex('by_family', (q) => q.eq('familyId', fam))
           .take(PAGE)
-      : a.networkId
-        ? await ctx.db
-            .query('sniCandidates')
-            .withIndex('by_scope_base', (q) => q.eq('networkId', a.networkId))
-            .take(PAGE)
-        : [];
-    for (const r of rows) await ctx.db.delete(r._id);
-    for (const r of await ctx.db.query('sniHuntCt').take(500))
-      if (
-        (a.familyId && r.familyId === a.familyId) ||
-        (a.networkId && !a.familyId && r.networkId === a.networkId)
-      )
-        await ctx.db.delete(r._id);
-    for (const r of await ctx.db.query('sniHuntIgnores').take(1000))
-      if (
-        (a.familyId && r.familyId === a.familyId) ||
-        (a.networkId && !a.familyId && r.networkId === a.networkId)
-      )
-        await ctx.db.delete(r._id);
-    if (rows.length === PAGE) await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, a);
-    return { deleted: rows.length };
+      : await ctx.db
+          .query('sniCandidates')
+          .withIndex('by_scope_base', (q) => q.eq('networkId', net))
+          .take(PAGE);
+    // A network's own reads and ignores (a family's live under its familyId).
+    const ct = fam
+      ? await ctx.db
+          .query('sniHuntCt')
+          .withIndex('by_family', (q) => q.eq('familyId', fam))
+          .take(PAGE)
+      : await ctx.db
+          .query('sniHuntCt')
+          .withIndex('by_network', (q) => q.eq('networkId', net))
+          .take(PAGE);
+    const ignores = fam
+      ? await ctx.db
+          .query('sniHuntIgnores')
+          .withIndex('by_family', (q) => q.eq('familyId', fam))
+          .take(PAGE)
+      : await ctx.db
+          .query('sniHuntIgnores')
+          .withIndex('by_network', (q) => q.eq('networkId', net))
+          .take(PAGE);
+    for (const r of [...candidates, ...ct, ...ignores]) await ctx.db.delete(r._id);
+    const more = [candidates, ct, ignores].some((rows) => rows.length === PAGE);
+    if (more) await ctx.scheduler.runAfter(0, internal.sniHunt.dropScope, a);
+    return { deleted: candidates.length + ct.length + ignores.length };
   },
 });
 
@@ -1347,28 +1381,50 @@ function ctView(r: Doc<'sniHuntCt'>) {
   };
 }
 
-const VIEW_ROWS = 500;
+/** Candidates per page of a scope's list. */
+const VIEW_PAGE = 200;
+const STATES = ['new', 'added', 'ignored', 'gone', 'failing'] as const;
 
-/** One network's or family's candidates, best first, with the certificate-log reads for it. */
+/**
+ * One network's or family's candidates, best first, a page at a time, of one
+ * state (or all of them): ignored and added rows never take the place of the
+ * ones still to decide. With the sites grouped by the first address they live
+ * on, and the certificate-log reads for the scope.
+ */
 export const scopeView = internalQuery({
-  args: { network: v.optional(v.string()), family: v.optional(v.string()) },
+  args: {
+    network: v.optional(v.string()),
+    family: v.optional(v.string()),
+    state: v.optional(v.union(...STATES.map((x) => v.literal(x)), v.literal('all'))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
   handler: async (ctx, a) => {
     const { scope, network, family } = await scopeOf(ctx.db, a);
-    const rows = await ctx.db
-      .query('sniCandidates')
-      .withIndex('by_scope_score', (q) =>
-        q.eq('networkId', scope.networkId).eq('familyId', scope.familyId),
-      )
+    const state = a.state ?? 'new';
+    const base =
+      state === 'all'
+        ? ctx.db
+            .query('sniCandidates')
+            .withIndex('by_scope_score', (q) =>
+              q.eq('networkId', scope.networkId).eq('familyId', scope.familyId),
+            )
+        : ctx.db
+            .query('sniCandidates')
+            .withIndex('by_scope_state_score', (q) =>
+              q.eq('networkId', scope.networkId).eq('familyId', scope.familyId).eq('state', state),
+            );
+    const page = await base
       .order('desc')
-      .take(VIEW_ROWS);
+      .paginate({ numItems: VIEW_PAGE, cursor: a.cursor ?? null });
+    const all = await scopeRows(ctx.db, scope).take(MAX_CANDIDATES_PER_SCOPE);
     const counts = { new: 0, failing: 0, gone: 0, ignored: 0, added: 0, unchecked: 0 };
-    for (const c of await scopeRows(ctx.db, scope).take(MAX_CANDIDATES_PER_SCOPE)) {
+    for (const c of all) {
       counts[c.state]++;
       if (!c.check && c.state === 'new') counts.unchecked++;
     }
     const families = new Map<string, { slug: string; label: string } | null>();
     const out = [];
-    for (const c of rows) {
+    for (const c of page.page) {
       let inFamily: { slug: string; label: string } | null = null;
       if (c.state === 'added') {
         const held = await ctx.db
@@ -1386,22 +1442,41 @@ export const scopeView = internalQuery({
       }
       out.push(candidateView(c, inFamily));
     }
-    // What each first address serves: a possible target and its names (network scope).
+    // What each first address serves (a possible target and its names), over the whole scope.
     const groups = new Map<
       string,
-      { address: string; names: number; passing: number; best: string }
+      { address: string; names: number; passing: number; best: string; bestScore: number }
     >();
-    for (const c of out) {
+    for (const c of all) {
+      if (c.state === 'ignored' || c.state === 'added') continue;
       const address = c.check?.shown[0];
       if (!address) continue;
-      const g = groups.get(address) ?? { address, names: 0, passing: 0, best: c.name };
+      const g = groups.get(address) ?? {
+        address,
+        names: 0,
+        passing: 0,
+        best: c.name,
+        bestScore: -1,
+      };
       g.names++;
-      if (c.check?.code === null) g.passing++;
+      if (c.check?.code === null) {
+        g.passing++;
+        if (c.score > g.bestScore) {
+          g.best = c.name;
+          g.bestScore = c.score;
+        }
+      }
       groups.set(address, g);
     }
-    const ct = (await ctx.db.query('sniHuntCt').take(500))
-      .filter((r) => sameScope(r, scope))
-      .map(ctView);
+    const ctRows = family
+      ? await ctx.db
+          .query('sniHuntCt')
+          .withIndex('by_family', (q) => q.eq('familyId', family._id))
+          .take(100)
+      : await ctx.db
+          .query('sniHuntCt')
+          .withIndex('by_network', (q) => q.eq('networkId', network!._id))
+          .take(100);
     return {
       scope: {
         kind: family ? ('family' as const) : ('network' as const),
@@ -1414,9 +1489,13 @@ export const scopeView = internalQuery({
           : null,
       },
       candidates: out,
-      groups: [...groups.values()].sort((x, y) => y.passing - x.passing || y.names - x.names),
+      page: { cursor: page.isDone ? null : page.continueCursor, done: page.isDone },
+      groups: [...groups.values()]
+        .sort((x, y) => y.passing - x.passing || y.names - x.names)
+        .slice(0, 50)
+        .map(({ bestScore: _s, ...g }) => g),
       counts,
-      ct,
+      ct: ctRows.filter((r) => sameScope(r, scope)).map(ctView),
     };
   },
 });

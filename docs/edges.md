@@ -2914,8 +2914,10 @@ rescores one scope (in turn), and deletes what aged out.
 | `timingPerHour`             | 6                 | Timing measurements                              |
 
 Routes, under `/api/v1/admin/edges/`: `GET sni/hunt` (settings, the sweep, counts per network and
-family), `GET sni/hunt/networks/{slug}` and `GET sni/hunt/families/{slug}` (candidates best first,
-grouped by the first address they live on, and the certificate-log reads), `POST sni/hunt/sweep`,
+family), `GET sni/hunt/networks/{slug}` and `GET sni/hunt/families/{slug}` (a page of 200 candidates of one
+state, best first: `?state=new|failing|gone|ignored|added|all`, default `new`, and `?cursor=` for
+the next page, so ignored and added rows never take the place of ones to decide; the sites
+grouped by the first address they live on; the certificate-log reads), `POST sni/hunt/sweep`,
 `DELETE sni/hunt/sweep`, `POST sni/hunt/networks/{slug} {enabled, place?: {country, city?}}`
 (where its nodes are: a place name for the timing checks, never an address), `POST
 sni/hunt/import {network | family, lines} | {seed}`, `POST sni/hunt/families/{slug}/cert`, `POST
