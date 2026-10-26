@@ -71,6 +71,7 @@ import {
   type PoolListener,
 } from './lib/edges/pool';
 import { ensurePoolCapacity } from './lib/edges/poolCapacity';
+import { laneForPublish } from './edgeLanes';
 import { admissionOf, publishedRefOf, setStateOf } from './lib/edges/setState';
 import { removableUnder } from './lib/edges/providerSet';
 import { resolveTemplateFor } from './edgeTemplates';
@@ -499,6 +500,8 @@ export function mapRelayAdmin(
       at: new Date(h.at).toISOString(),
     })),
     edgePick: r.edgePick ?? null,
+    lanes: r.lanes ?? null,
+    lanesSince: r.lanesSince ? new Date(r.lanesSince).toISOString() : null,
     cooldownMinutes: Math.round(policy.cooldownMs / 60_000),
     maxRotationsPerDay: policy.maxRotationsPerDay,
     drainMinutes: Math.round(policy.drainMs / 60_000),
@@ -1943,6 +1946,7 @@ export const publishEdge = internalMutation({
     await ctx.db.patch(edgeId, {
       publication: 'published',
       poolIndex: idx,
+      ...(await laneForPublish(ctx.db, origin, edge)),
       publishedAt: now,
       updatedAt: now,
     });

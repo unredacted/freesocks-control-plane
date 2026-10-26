@@ -358,7 +358,10 @@ export type AutoRotateVeto =
   // from is under the country-wide guard, an outage or a probe problem
   // (`country_wide`). A global burn would act on either.
   | 'country_scoped'
-  | 'country_wide';
+  | 'country_wide'
+  // Lanes (convex/edgeLanes.ts): only open addresses look blocked, and the open
+  // lane's own replacement budget is used up for today.
+  | 'open_lane_budget';
 
 /** The vetoes that describe who owns the origin's pool (a guided setup), not the evidence. */
 const SETUP_VETOES: ReadonlySet<string> = new Set(['setup_owned', 'not_live']);
@@ -399,6 +402,8 @@ export interface SteeringInput {
    * privacy-family members keep it whatever the steering says.
    */
   freedomListeners: string[];
+  /** The node's lanes are on: the way around an open address must be open too. */
+  lanes?: boolean;
 }
 
 /**
@@ -423,7 +428,10 @@ export function steeringVeto(
   const routed = countries.filter(
     (c) =>
       !s.held.includes(c) &&
-      steeringAvoids(edge, s.published, c, s.paths, s.curated, { universal: true }),
+      steeringAvoids(edge, s.published, c, s.paths, s.curated, {
+        universal: true,
+        ...(s.lanes ? { lanes: true } : {}),
+      }),
   );
   if (held.length + routed.length < countries.length) return null;
   return routed.length > 0 ? 'country_scoped' : 'country_wide';
@@ -461,6 +469,12 @@ export function autoRotateDecision(args: {
   fleet?: { brakeEngaged: boolean; rotationsToday: number; rotationsPerDay: number };
   /** Delivery by country is on: its vetoes apply. Absent = steering off, nothing changes. */
   steering?: SteeringInput;
+  /**
+   * The node's lanes are on (convex/edgeLanes.ts): its open addresses, and
+   * whether the open lane's own replacement budget has one left today.
+   * Absent = no lanes.
+   */
+  lanes?: { openEdgeIds: string[]; openBudgetLeft: boolean };
 }): { edgeId: string; source: 'reports' | 'probes' } | { veto: AutoRotateVeto } {
   const { evaluation: ev, cfg, origin } = args;
   // 1. enabled  2. autoRotate (global, then the origin's own opt-in)  2b. not setup-owned
@@ -485,8 +499,24 @@ export function autoRotateDecision(args: {
   const candidates = evidence.filter((e) => !ev.outageEdges.includes(e.edgeId));
   if (candidates.length === 0) return { veto: 'edge_outage' };
   if (allPublishedEquallyUnreachable(ev, args.published)) return { veto: 'protocol_level_block' };
-  const reportBacked = candidates.find((c) => c.source === 'reports');
-  const chosen = reportBacked ?? candidates[0];
+  // 5'. lanes: a blocked trusted address before an open one (open ones are
+  //     expected to be blocked), and an open one only while its own budget
+  //     has a replacement left today.
+  const open = new Set(args.lanes?.openEdgeIds ?? []);
+  const trusted = candidates.filter((c) => !open.has(c.edgeId));
+  const tier = args.lanes
+    ? trusted.length > 0
+      ? trusted
+      : args.lanes.openBudgetLeft
+        ? candidates
+        : []
+    : candidates;
+  if (tier.length === 0) return { veto: 'open_lane_budget' };
+  const reportBacked = tier.find((c) => c.source === 'reports');
+  const chosen = reportBacked ?? tier[0]!;
+  // An open address has its own budget: none of the caps, cooldown or fleet
+  // cap below that keep the trusted lane's replacements whole.
+  const openChosen = open.has(chosen.edgeId);
   if (chosen.source === 'probes' && !reportBacked) {
     if (!cfg.detect.allowProbeOnlyAutoRotate) return { veto: 'probe_only_disallowed' };
     if (ev.probeSourcesDown) return { veto: 'probe_sources_down' };
@@ -500,13 +530,15 @@ export function autoRotateDecision(args: {
   }
   // 5b. the fleet brake (a mass block) and the fleet's daily cap
   if (args.fleet?.brakeEngaged) return { veto: 'fleet_brake' };
-  if (args.fleet && args.fleet.rotationsToday >= args.fleet.rotationsPerDay)
+  if (!openChosen && args.fleet && args.fleet.rotationsToday >= args.fleet.rotationsPerDay)
     return { veto: 'fleet_daily_cap' };
   // 6. no quarantine  7. no running rotation  8. cooldown  9. daily cap
   if (origin.quarantined) return { veto: 'quarantined' };
   if (origin.rotationActive) return { veto: 'rotation_active' };
-  if (origin.cooldownUntil !== null && origin.cooldownUntil > args.now) return { veto: 'cooldown' };
-  if (origin.rotationsToday >= origin.maxRotationsPerDay) return { veto: 'daily_cap' };
+  if (!openChosen && origin.cooldownUntil !== null && origin.cooldownUntil > args.now)
+    return { veto: 'cooldown' };
+  if (!openChosen && origin.rotationsToday >= origin.maxRotationsPerDay)
+    return { veto: 'daily_cap' };
   // 10. a manageable Host when the target holds index 0
   const idx = args.published.find((p) => p.edgeId === chosen.edgeId)?.poolIndex ?? -1;
   if (idx === 0 && !origin.hostManaged) return { veto: 'hosts_unmanaged' };

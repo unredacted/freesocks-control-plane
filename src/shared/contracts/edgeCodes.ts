@@ -183,6 +183,9 @@ export const PREFLIGHT_BLOCKER_CODES = [
   // the fleet guards on an automatic rotation (lib/edges/fleet.ts)
   'fleet_brake',
   'fleet_daily_cap',
+  // the open lane's own replacement budget is used up for today (docs/edges.md "Address
+  // enumeration"); it never takes the node's or the fleet's caps
+  'open_lane_budget',
   // selection on an enrolled node: nothing fits the shape it was approved for
   'outside_approved_shape',
   // a load balancer for a WebSocket node's transport (lib/edges/websocketNode.ts)
@@ -326,6 +329,9 @@ export const ATTENTION_KINDS = [
   // node with one address in use (no backup while a replacement is made).
   'auto_replace_held',
   'single_address',
+  // Address lanes (docs/edges.md "Address enumeration"): a transport of a node with
+  // lanes on has no open address in use, so its open members get nothing.
+  'open_lane_empty',
   // A location whose provider refused, for good, to create one of a node's addresses
   // (a quota, a setting it rejects): the node's automatic work takes another location
   // for a while (`relays.refusedLocations`).
@@ -416,6 +422,9 @@ export const DELIVERY_UNAVAILABLE_CODES = [
   // a freedom-family key at a node no live edge covers, while freedom modes are only served
   // through edges (`edge.freedom.edgesOnly`)
   'node_unprotected',
+  // an open-lane member at a node with lanes on whose open addresses are all gone: never
+  // handed a trusted one instead (docs/edges.md "Address enumeration")
+  'open_lane_empty',
 ] as const;
 export type DeliveryUnavailableCode = (typeof DELIVERY_UNAVAILABLE_CODES)[number];
 

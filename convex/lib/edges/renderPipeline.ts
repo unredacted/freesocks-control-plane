@@ -44,6 +44,12 @@ export interface EdgeRenderContext {
   preferDistinctProviders: boolean;
   /** How the origin walks its pool (`relays.edgePick`); absent = the legacy walk. */
   edgePick?: EdgePickVersion;
+  /**
+   * The member's lane on a node with lanes on (lib/edges/lanes.ts); absent =
+   * no lanes. An open member with no open address left is refused
+   * `open_lane_empty`, never handed a trusted one.
+   */
+  memberLane?: 'open' | 'trusted';
   originAddress: string;
   /**
    * Other addresses the node is known by (an enrolled node's other public
@@ -133,6 +139,7 @@ export function applyEdgeRender(
     now: opts.now,
     preferDistinctProviders: rctx.preferDistinctProviders,
     ...(rctx.edgePick ? { edgePick: rctx.edgePick } : {}),
+    ...(rctx.memberLane ? { memberLane: rctx.memberLane } : {}),
     includeBackup: rule.includeBackup,
     canEmitV6,
     namesPerEndpoint: rule.namesPerEndpoint,
@@ -154,9 +161,19 @@ export function applyEdgeRender(
     edgeAddresses: edgeAddressesOf(rctx.published),
     deliveryStyle: rctx.deliveryStyle,
   });
+  // An open member left with nothing because only trusted addresses remain:
+  // its own reason (fail closed), so the refusal counter tells it apart.
+  const delivery =
+    rctx.memberLane === 'open' &&
+    out.delivery.kind === 'unavailable' &&
+    out.delivery.reason === 'empty_pool' &&
+    published.some((e) => e.lane === 'trusted' && e.eligible !== false)
+      ? { kind: 'unavailable' as const, reason: 'open_lane_empty' as const }
+      : out.delivery;
   // (6): the eligibility snapshot the DB half persists on the subscription.
   return {
     ...out,
+    delivery,
     snapshot: {
       listenerKeys: [...resolved].sort(),
       primaryEdgeId: assigned.primary?.edge.edgeId ?? null,

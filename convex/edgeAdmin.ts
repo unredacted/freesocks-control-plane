@@ -61,6 +61,7 @@ import { defaultsOf } from './lib/edges/providers/options';
 import { EDGE_PROVIDER_IDS } from './lib/edgeProviderIds';
 import { bumpEpochAndRefresh, setupRunLiveOn } from './lib/edges/relayGuards';
 import { pickMoves } from './lib/edges/edgePick';
+import { lanesOn } from './lib/edges/lanes';
 import { assertAdmission } from './lib/edges/maintenance';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
@@ -677,8 +678,13 @@ export const renderPreview = internalQuery({
      * while `delivery.country.steer` is on, their addresses ordered for it.
      */
     country: v.optional(v.string()),
+    /**
+     * "As an open / a trusted member" on a node with address lanes on
+     * (convex/edgeLanes.ts); absent = a trusted member there.
+     */
+    lane: v.optional(v.union(v.literal('open'), v.literal('trusted'))),
   },
-  handler: async (ctx, { relayId, family, sampleKey, country }) => {
+  handler: async (ctx, { relayId, family, sampleKey, country, lane }) => {
     if (!(RENDER_CLIENT_FAMILIES as readonly string[]).includes(family)) {
       throw new ConvexError({ code: 'validation', message: 'unknown client family' });
     }
@@ -693,7 +699,7 @@ export const renderPreview = internalQuery({
           message: 'The country is not on the censored-country list',
         });
     }
-    return renderPreviewFor(ctx, origin, family as RenderClientFamily, sampleKey, code);
+    return renderPreviewFor(ctx, origin, family as RenderClientFamily, sampleKey, code, lane);
   },
 });
 
@@ -705,6 +711,8 @@ export async function renderPreviewFor(
   sampleKey?: string,
   /** A listed country to render for (the member's stored country); absent = no country at all. */
   country?: string,
+  /** The member's address lane on a node with lanes on; absent = a trusted member. */
+  lane?: 'open' | 'trusted',
 ) {
   {
     const cfg = await resolveEdgeConfig(ctx.db);
@@ -747,6 +755,7 @@ export async function renderPreviewFor(
         rule: effectiveRule(cfg.render, cfg.render.clients[fam]),
         preferDistinctProviders: cfg.render.preferDistinctProviders,
         ...(origin.edgePick ? { edgePick: origin.edgePick } : {}),
+        ...(lanesOn(origin) ? { memberLane: lane ?? 'trusted' } : {}),
         originAddress: '192.0.2.10',
         deliveryStyle: origin.backendServerId
           ? await deliveryStyleOf(ctx, origin.backendServerId)

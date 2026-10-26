@@ -270,6 +270,7 @@ export type DeliveryVerdict =
         | 'ambiguous_match'
         | 'entry_mismatch'
         | 'empty_pool'
+        | 'open_lane_empty'
         | 'leak_detected'
         | 'render_failed';
     };

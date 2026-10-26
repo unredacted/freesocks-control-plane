@@ -1633,6 +1633,15 @@ export default defineSchema({
     // one takes a random slice); absent = the legacy modulus walk. New origins
     // start on `hrw1`; switching moves members once (`relays.setEdgePick`).
     edgePick: v.optional(v.literal('hrw1')),
+    // Address lanes (docs/edges.md "Address enumeration"): per transport, how
+    // many open and how many trusted addresses the node keeps in use. Absent =
+    // lanes off (every member may be handed every address). `lanesSince`: when
+    // they were last switched on; only addresses made after it can be trusted.
+    lanes: v.optional(v.object({ open: v.number(), trusted: v.number() })),
+    lanesSince: v.optional(v.number()),
+    // The open lane's own replacement count today (UTC day key): it never uses
+    // the node's daily cap (`rotationsToday`), which stays whole for trusted ones.
+    openReplaces: v.optional(v.object({ day: v.string(), count: v.number() })),
     // Per-origin OVERRIDES of the fleet knobs, one rule for all five
     // (`originPolicy` in lib/edgeConfig.ts): absent = follow `edge.*`.
     standbyPerRelay: v.optional(v.number()),
@@ -2165,6 +2174,12 @@ export default defineSchema({
     replacementOf: v.optional(
       v.object({ edgeId: v.id('edges'), at: v.number(), trigger: v.string() }),
     ),
+    // The address's lane (lib/edges/lanes.ts, docs/edges.md "Address
+    // enumeration"): `trusted` = handed only to trusted members. Decided at its
+    // FIRST publication, and only for an address made after its origin's lanes
+    // were switched on; absent = open, for good (every address published
+    // before lanes, or while they were off, was handed to everyone).
+    lane: v.optional(v.literal('trusted')),
     updatedAt: v.number(),
   })
     .index('by_relay_status', ['relayId', 'status'])
@@ -2182,6 +2197,9 @@ export default defineSchema({
   edgeRotations: defineTable({
     relayId: v.id('relays'),
     kind: v.union(v.literal('provision'), v.literal('publish'), v.literal('replace')),
+    // A replace of an open address on a node with lanes (convex/edgeLanes.ts):
+    // counted against the open lane's own budget, and it sets no cooldown.
+    openLane: v.optional(v.boolean()),
     trigger: v.union(
       v.literal('manual'),
       v.literal('detector'),

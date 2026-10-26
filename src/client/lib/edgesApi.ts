@@ -57,6 +57,8 @@ import {
   EdgeInventoryResponse,
   EdgePickResponse,
   EdgePickView,
+  LanesResponse,
+  LanesView,
   EdgeLiveResponse,
   EdgeAccountCostRequest,
   EdgeCatalogRefreshResponse,
@@ -294,6 +296,8 @@ export interface RenderPreviewBody {
   sampleKey?: string;
   /** "As a member in <country>" (a listed country). */
   country?: string;
+  /** "As an open / a trusted member" on a node with address lanes. */
+  lane?: 'open' | 'trusted';
 }
 
 /** Either a trailing window ending now, or an explicit custom date range (mirrors queries.ts). */
@@ -411,6 +415,12 @@ export const fetchRelayEdgePick = (relayId: string) =>
 /** Switch the node's address pick (`null` = back to the legacy walk). */
 export const setRelayEdgePick = (relayId: string, version: 'hrw1' | null) =>
   apiClient.post(`${BASE}/relays/${enc(relayId)}/edge-pick`, { version }, EdgePickResponse);
+/** The node's address lanes and what each transport's lanes hold. */
+export const fetchRelayLanes = (relayId: string) =>
+  apiClient.get(`${BASE}/relays/${enc(relayId)}/lanes`, LanesView);
+/** Switch the node's lanes on (per transport) or off (`null`). */
+export const setRelayLanes = (relayId: string, lanes: { open: number; trusted: number } | null) =>
+  apiClient.post(`${BASE}/relays/${enc(relayId)}/lanes`, { lanes }, LanesResponse);
 /** The node's provider set: its picks, what they hold, what could be added. */
 export const fetchProviderSet = (relayId: string) =>
   apiClient.get(`${BASE}/relays/${enc(relayId)}/providers`, ProviderSetView);
@@ -817,6 +827,7 @@ export const edgeKeys = {
   relayQuarantine: (slug: string) => [...ROOT, 'relay', slug, 'quarantine'] as const,
   relayEdges: (slug: string) => [...ROOT, 'relay', slug, 'edges'] as const,
   relayProviders: (slug: string) => [...ROOT, 'relay', slug, 'providers'] as const,
+  relayLanes: (slug: string) => [...ROOT, 'relay', slug, 'lanes'] as const,
   relaySimulations: (slug: string) => [...ROOT, 'relay', slug, 'simulations'] as const,
   nodeCandidates: (backendServerId: string) =>
     [...ROOT, 'node-candidates', backendServerId] as const,
@@ -1138,6 +1149,16 @@ export const relayProvidersQuery = (r: RelayRef) =>
   createQuery(() => ({
     queryKey: edgeKeys.relayProviders(r.slug() ?? ''),
     queryFn: () => fetchProviderSet(r.id()!),
+    enabled: relayEnabled(r),
+    staleTime: 10_000,
+    refetchInterval: relayInterval(r),
+  }));
+
+/** The node's address lanes (the node page's lanes card). */
+export const relayLanesQuery = (r: RelayRef) =>
+  createQuery(() => ({
+    queryKey: edgeKeys.relayLanes(r.slug() ?? ''),
+    queryFn: () => fetchRelayLanes(r.id()!),
     enabled: relayEnabled(r),
     staleTime: 10_000,
     refetchInterval: relayInterval(r),

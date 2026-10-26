@@ -50,6 +50,8 @@ import { resolveSniConfig } from './lib/sniConfig';
 import { resolveWhere } from './lib/edges/sni/country';
 import { freedomEdgesOnly, freedomHoldOf, type NodeProtection } from './lib/edges/freedomDelivery';
 import type { EdgeLayer } from '../src/shared/contracts/edges';
+import { lanesOn } from './lib/edges/lanes';
+import { memberLaneOfUser } from './edgeLanes';
 
 const familyValidator = v.union(
   ...(RENDER_CLIENT_FAMILIES.map((f) => v.literal(f)) as [
@@ -270,6 +272,7 @@ export function toPublishedEdge(
     ...(listener.sniPick ? { sniPick: listener.sniPick } : {}),
     ...(provenIn.length > 0 ? { provenIn } : {}),
     ...(blockedIn.length > 0 ? { blockedIn } : {}),
+    ...(edge.lane === 'trusted' ? { lane: 'trusted' as const } : {}),
     ...((edge.layer ?? 'l4') === 'l7' && edge.frontQualification?.ok
       ? { proofExpiresAt: edge.frontQualification.expiresAt }
       : {}),
@@ -580,6 +583,10 @@ export const decideForSubscription = internalQuery({
         rule,
         preferDistinctProviders: cfg.render.preferDistinctProviders,
         ...(relay.edgePick ? { edgePick: relay.edgePick } : {}),
+        // Lanes on: the account's lane decides which addresses it may be handed.
+        ...(lanesOn(relay)
+          ? { memberLane: await memberLaneOfUser(ctx.db, sub.userId, Date.now()) }
+          : {}),
         minProvenForExclusive: cfg.country.minProvenForExclusive,
         renderKey: sub.renderKey ?? null,
         // For a render with NO request behind it (a mirror): the member's own

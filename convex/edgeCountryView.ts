@@ -16,6 +16,7 @@
  * already show them); audit rows are untouched.
  */
 import { v } from 'convex/values';
+import { lanesOn } from './lib/edges/lanes';
 import { internalQuery, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { resolveEdgeConfig, controlCountriesOf } from './lib/edgeConfig';
@@ -160,6 +161,7 @@ async function load(db: Db): Promise<Loaded> {
         })),
         published,
         ...(relay.edgePick ? { edgePick: relay.edgePick } : {}),
+        ...(lanesOn(relay) ? { lanes: true } : {}),
       },
       edges,
       style: relay.backendServerId
