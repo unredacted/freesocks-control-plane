@@ -31,6 +31,7 @@ import type {
   RealHostReading,
 } from '../../../../src/shared/contracts/edgeCodes';
 import { TARGET_ADDS_FLAG_MS, type HandshakeTiming, type PairCounts } from '../sni/realHost';
+import type { SourceCoverage } from './coverage';
 
 export type ViewState = 'proven' | 'blocked' | 'unknown';
 
@@ -118,6 +119,11 @@ export interface EdgeInput {
     from: 'edge' | 'group' | 'mark';
   }>;
   reachability: readonly ReachRow[];
+  /**
+   * Each outside source's newest answer about it from this country (coverage.ts),
+   * fresh or not: its reachability summary drops the ones too old to count.
+   */
+  answers?: readonly SourceCoverage[];
   /** This country's evidence row, mark, location mark and location grade. */
   evidence: EvidenceRow | null;
   mark: { state: 'proven' | 'blocked'; at: number } | null;
@@ -276,7 +282,11 @@ export interface OriginInput {
   nodeName: string | null;
   enabled: boolean;
   /** The origin itself, when it opted into probing (`probeNode`). */
-  direct: { address: string; reachability: readonly ReachRow[] } | null;
+  direct: {
+    address: string;
+    reachability: readonly ReachRow[];
+    answers?: readonly SourceCoverage[];
+  } | null;
   listeners: readonly ListenerInput[];
   /** Active edges (any publication), for the address rows. */
   edges: readonly EdgeInput[];
@@ -573,6 +583,8 @@ export interface AddressView {
     handshake: (Omit<EvidenceRow['handshake'], 'pathBatches'> & { batches: number }) | null;
     round: EvidenceRow['lastRound'] | null;
     probes: ReachRow | null;
+    /** Each outside source's newest answer about it from there, fresh or not. */
+    answers: SourceCoverage[];
     /** The real-host controls of the names checked on it (null: none). */
     realHost: AddressRealHost | null;
   };
@@ -685,6 +697,7 @@ function edgeView(
           : null,
       round: ev?.lastRound ?? null,
       probes: reachIn(e.reachability, country),
+      answers: [...(e.answers ?? [])],
       realHost,
     },
     handed: {
@@ -721,6 +734,7 @@ function originAddressView(
       handshake: null,
       round: null,
       probes,
+      answers: [...(d.answers ?? [])],
       realHost,
     },
     handed: { primary: 0, backup: 0 },
@@ -735,6 +749,8 @@ function newestOf(a: AddressView): number | null {
     a.evidence.handshake?.lastBatchAt,
     a.evidence.round?.at,
     a.evidence.probes?.lastAt,
+    // A source's answer too old to count is still the newest word from there.
+    ...a.evidence.answers.map((x) => x.lastAt),
     a.evidence.realHost?.at,
   ].filter((t): t is number => typeof t === 'number');
   return ts.length > 0 ? Math.max(...ts) : null;

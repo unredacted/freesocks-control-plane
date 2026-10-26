@@ -1594,6 +1594,17 @@ export const CountryViewProbes = z.object({
     .optional(),
 });
 
+/**
+ * One outside probe source's newest answer from a country (`probeReachability.updatedAt`),
+ * and whether it is recent enough to count (two probe intervals).
+ */
+export const CountryViewSourceAnswer = z.object({
+  source: z.string(),
+  lastAt: z.number().nullable(),
+  fresh: z.boolean(),
+});
+export type CountryViewSourceAnswer = z.infer<typeof CountryViewSourceAnswer>;
+
 /** One address (an edge, or the origin itself) of one transport, from one country. */
 export const CountryViewAddress = z.object({
   edgeId: z.string().nullable(),
@@ -1658,6 +1669,8 @@ export const CountryViewAddress = z.object({
       })
       .nullable(),
     probes: CountryViewProbes.nullable(),
+    /** Each outside source's newest answer about it from there, fresh or not. */
+    answers: z.array(CountryViewSourceAnswer).default([]),
     realHost: CountryViewAddressRealHost.nullable().default(null),
   }),
   /** Shares (0..1) of the sampled members there holding it as primary / backup. */
@@ -1797,9 +1810,7 @@ export const CountryViewCoverage = z.object({
   asked: z.boolean(),
   /** How long an answer counts (two probe intervals, like the reachability summaries). */
   windowMs: z.number(),
-  sources: z.array(
-    z.object({ source: z.string(), lastAt: z.number().nullable(), fresh: z.boolean() }),
-  ),
+  sources: z.array(CountryViewSourceAnswer),
 });
 export type CountryViewCoverage = z.infer<typeof CountryViewCoverage>;
 const noCoverage = { asked: false, windowMs: 0, sources: [] };
