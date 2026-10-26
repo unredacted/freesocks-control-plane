@@ -118,6 +118,8 @@ export const ATTENTION_ACTION_PLAN = {
   open_probes: { type: 'navigate' },
   // A guided setup run's sheet (Try again, when it failed).
   open_run: { type: 'navigate' },
+  // The family's page (its "Find more names" card).
+  find_names: { type: 'navigate' },
 } as const satisfies Record<AttentionAction, AttentionPlan>;
 
 /**
@@ -213,6 +215,10 @@ export function attentionTarget(item: AttentionItem): string {
       if (run) return edgesPaths.home({ run });
       return slug ? edgesPaths.node(slug) : edgesPaths.home();
     }
+    case 'find_names': {
+      const family = factString(item, 'family');
+      return family ? edgesPaths.family(family) : edgesPaths.findNames();
+    }
   }
 }
 
@@ -244,6 +250,12 @@ export function attentionFactsLine(item: AttentionItem): string {
   const name = str('name');
   const location = str('location');
   if (name !== null) out.push(location ? `Account ${name}, ${location}` : `Account ${name}`);
+  // A thin family: which one, and how many of its names qualify.
+  const family = str('familyLabel') ?? str('family');
+  if (family !== null) out.push(`Family ${family}`);
+  const qualifying = num('qualifying');
+  if (qualifying !== null)
+    out.push(`${qualifying} ${qualifying === 1 ? 'name qualifies' : 'names qualify'}`);
   const op = str('op');
   if (op !== null) out.push(op === 'create' ? 'Creating the Host' : 'Deleting the Host');
   const published = num('published');

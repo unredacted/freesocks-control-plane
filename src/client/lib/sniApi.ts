@@ -3,7 +3,7 @@
  * The only place these API paths are built. Same three layers as edgesApi.ts:
  * typed route functions, the key tree, query wrappers.
  */
-import { createQuery, type QueryClient } from '@tanstack/svelte-query';
+import { createInfiniteQuery, createQuery, type QueryClient } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
 import {
@@ -22,6 +22,13 @@ import {
   SniTestLink,
   SniVantageApplied,
   SniVantageRequested,
+  SniHuntCertRead,
+  SniHuntChanged,
+  SniHuntCtQueued,
+  SniHuntImported,
+  SniHuntOverview,
+  SniHuntScopeView,
+  type HuntPlace,
   type SniBindRequest,
   type SniConfigPatch,
 } from '../../shared/contracts/sni';
@@ -119,6 +126,50 @@ export const buildNameTestLink = (rolloutId: string, edgeId: string, sni?: strin
 export const confirmNameTest = (receiptId: string) =>
   apiClient.post(`${BASE}/receipts/${enc(receiptId)}/confirm`, {}, SniReceiptConfirmed);
 
+// --- finding names (docs/edges.md "Finding names") ------------------------------------------
+const HUNT = `${BASE}/hunt`;
+export const fetchHunt = () => apiClient.get(HUNT, SniHuntOverview);
+export type HuntViewState = 'new' | 'failing' | 'gone' | 'ignored' | 'added' | 'all';
+/** One page of a network's or family's candidates of one state (first page: no cursor). */
+export const fetchHuntScope = (
+  kind: 'network' | 'family',
+  slug: string,
+  state: HuntViewState = 'new',
+  cursor?: string,
+) => {
+  const q = new URLSearchParams({ state });
+  if (cursor) q.set('cursor', cursor);
+  return apiClient.get(
+    `${HUNT}/${kind === 'network' ? 'networks' : 'families'}/${enc(slug)}?${q.toString()}`,
+    SniHuntScopeView,
+  );
+};
+export const fetchHuntNetwork = (slug: string) => fetchHuntScope('network', slug);
+export const fetchHuntFamily = (slug: string) => fetchHuntScope('family', slug);
+export const startSweep = () => apiClient.post(`${HUNT}/sweep`, {}, Loose);
+export const cancelSweep = () => apiClient.delete(`${HUNT}/sweep`, Loose);
+/** Whether the sweep matches against a network, and where its nodes are (a place name). */
+export const setNetworkHunt = (slug: string, body: { enabled: boolean; place?: HuntPlace }) =>
+  apiClient.post(`${HUNT}/networks/${enc(slug)}`, body, Loose);
+/** Pasted lines into a network or a family, or a seed file. */
+export const importCandidates = (
+  body: { network?: string; family?: string; text: string } | { seed: unknown },
+) => apiClient.post(`${HUNT}/import`, body, SniHuntImported);
+export const readTargetCert = (familySlug: string) =>
+  apiClient.post(`${HUNT}/families/${enc(familySlug)}/cert`, {}, SniHuntCertRead);
+export const lookUpCt = (domains: string[], scope: { network?: string; family?: string }) =>
+  apiClient.post(`${HUNT}/ct`, { domains, ...scope }, SniHuntCtQueued);
+export type CandidateAction = 'ignore' | 'unignore' | 'recheck' | 'measure';
+export const actOnCandidates = (action: CandidateAction, ids: string[], kind?: 'name' | 'site') =>
+  apiClient.post(
+    `${HUNT}/candidates/${action}`,
+    { ids, ...(kind ? { kind } : {}) },
+    SniHuntChanged,
+  );
+/** Added through the family's normal path: each name is qualified like a pasted one. */
+export const addCandidates = (familySlug: string, names: string[]) =>
+  apiClient.post(`${HUNT}/candidates/add`, { family: familySlug, names }, SniImportResult);
+
 const ROOT = ['admin', 'edges', 'sni'] as const;
 export const sniKeys = {
   all: ROOT,
@@ -127,6 +178,9 @@ export const sniKeys = {
   family: (slug: string) => [...ROOT, 'family', slug] as const,
   rollout: (id: string) => [...ROOT, 'rollout', id] as const,
   networks: [...ROOT, 'networks'] as const,
+  hunt: [...ROOT, 'hunt'] as const,
+  huntNetwork: (slug: string) => [...ROOT, 'hunt', 'network', slug] as const,
+  huntFamily: (slug: string) => [...ROOT, 'hunt', 'family', slug] as const,
 };
 
 export const networksQuery = () =>
@@ -152,6 +206,36 @@ export const rolloutQuery = (id: () => string | null) =>
     queryFn: () => fetchRollout(id()!),
     enabled: !!id(),
     refetchInterval: 10_000,
+  }));
+
+export const huntQuery = () =>
+  createQuery(() => ({ queryKey: sniKeys.hunt, queryFn: fetchHunt, refetchInterval: 30_000 }));
+export const huntNetworkQuery = (slug: () => string) =>
+  createQuery(() => ({
+    queryKey: sniKeys.huntNetwork(slug()),
+    queryFn: () => fetchHuntNetwork(slug()),
+    refetchInterval: 30_000,
+  }));
+export const huntFamilyQuery = (slug: () => string) =>
+  createQuery(() => ({
+    queryKey: sniKeys.huntFamily(slug()),
+    queryFn: () => fetchHuntFamily(slug()),
+    refetchInterval: 60_000,
+  }));
+
+/** A scope's candidates of one state, page after page ("Show more"). */
+export const huntCandidatesQuery = (
+  kind: () => 'network' | 'family',
+  slug: () => string,
+  state: () => HuntViewState,
+) =>
+  createInfiniteQuery(() => ({
+    queryKey: [...sniKeys.hunt, 'candidates', kind(), slug(), state()] as const,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      fetchHuntScope(kind(), slug(), state(), pageParam),
+    getNextPageParam: (last: SniHuntScopeView) => last.page.cursor ?? undefined,
+    refetchInterval: 60_000,
   }));
 
 export function invalidateSni(qc: QueryClient): void {

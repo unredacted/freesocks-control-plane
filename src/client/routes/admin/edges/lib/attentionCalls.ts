@@ -164,6 +164,7 @@ export async function runAttentionCall(
       case 'open_modes':
       case 'open_probes':
       case 'open_run':
+      case 'find_names':
         deps.navigate(attentionTarget(item));
         return;
       default: {

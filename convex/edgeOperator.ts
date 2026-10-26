@@ -27,6 +27,7 @@ import { probeSourceHealth } from './probes';
 import { countryWideHolds, newEdgeBlockedIn } from './edgeCountry';
 import { networkPrefixes } from './edgeNetworks';
 import { edgeNetworkVerdict } from './lib/edges/networks';
+import { THIN_BELOW, THIN_FAMILIES_KEY, type ThinFamilies } from './lib/edges/sni/hunt/thin';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { readMaintenance } from './lib/edges/maintenance';
 import {
@@ -806,7 +807,8 @@ export interface AttentionItem {
     | 'open_node'
     | 'open_modes'
     | 'open_probes'
-    | 'open_run';
+    | 'open_run'
+    | 'find_names';
   since: string | null;
 }
 
@@ -2135,6 +2137,25 @@ export const attention = internalQuery({
         facts: {},
         action: 'open_settings',
         since: iso(clientCheck.at),
+      });
+    }
+    // A family on a network, bound to a transport, with fewer than three names
+    // that qualify (docs/edges.md "Finding names"): with names blocked in one
+    // country a last resort elsewhere, a family this small runs out fast. The
+    // `sni-hunt` cron counts them in turn (counting reads names); this reads its answer.
+    const thin = await readStateJson<ThinFamilies>(ctx.db, THIN_FAMILIES_KEY);
+    for (const [id, t] of Object.entries(thin?.thin ?? {})) {
+      const familyId = ctx.db.normalizeId('sniFamilies', id);
+      const f = familyId ? await ctx.db.get(familyId) : null;
+      if (!f || !f.enabled || !f.networkId || t.qualifying >= THIN_BELOW) continue;
+      items.push({
+        ...fleetBase,
+        id: `sni_family_thin:${id}`,
+        kind: 'sni_family_thin',
+        severity: 'info',
+        facts: { family: f.slug, familyLabel: f.label, qualifying: t.qualifying },
+        action: 'find_names',
+        since: null,
       });
     }
     // The fleet guards on automatic rotation (lib/edges/fleet.ts).

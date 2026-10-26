@@ -45,6 +45,8 @@ export type EdgesRoute =
   | { page: 'settings' }
   | { page: 'names' }
   | { page: 'family'; slug: string }
+  | { page: 'findNames' }
+  | { page: 'findNetwork'; slug: string }
   | { page: 'countries' }
   | { page: 'country'; code: string }
   | { page: 'not-found' };
@@ -62,6 +64,8 @@ export const EDGES_ROUTES = [
   ['/admin/edges/settings', 'settings'],
   ['/admin/edges/names', 'names'],
   ['/admin/edges/names/:slug', 'family'],
+  ['/admin/edges/find-names', 'findNames'],
+  ['/admin/edges/find-names/:slug', 'findNetwork'],
   ['/admin/edges/countries', 'countries'],
   ['/admin/edges/countries/:code', 'country'],
 ] as const;
@@ -70,7 +74,7 @@ export function resolveEdgesRoute(pathname: string): EdgesRoute {
   for (const [pattern, page] of EDGES_ROUTES) {
     const m = matchRoute(pattern, pathname);
     if (!m) continue;
-    if (page === 'relay' || page === 'node' || page === 'family')
+    if (page === 'relay' || page === 'node' || page === 'family' || page === 'findNetwork')
       return { page, slug: m.params.slug ?? '' };
     if (page === 'provider') return { page, id: m.params.id ?? '' };
     if (page === 'country') {
@@ -171,6 +175,9 @@ export const edgesPaths = {
   /** Server-name families (under Advanced). */
   names: () => '/admin/edges/names',
   family: (slug: string) => `/admin/edges/names/${enc(slug)}`,
+  /** Finding names: every network, and one network's candidates. */
+  findNames: () => '/admin/edges/find-names',
+  findNetwork: (slug: string) => `/admin/edges/find-names/${enc(slug)}`,
   /** The country view: every censored country, and one country in full (`?node=<slug>` jumps to a node). */
   countries: () => '/admin/edges/countries',
   country: (code: string, params?: { node?: string | null }) =>

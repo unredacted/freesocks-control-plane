@@ -1498,6 +1498,12 @@ const COPY = {
       'This transport’s server names are sites on one network, so only addresses from that network may front it. This place, or this address, is not on it, or its network is not known yet.',
     fix: 'Pick a location on that network, or set the location’s network on its provider account.',
   },
+  sni_family_thin: {
+    label: 'Few names on a network family',
+    explain:
+      'A family on a network, used by a transport, has fewer than three names that qualify. A name blocked in one country is a last resort elsewhere, so a family this small runs out fast.',
+    fix: 'Find more names for it: the names on its target’s certificate, certificate logs, or sites on its network.',
+  },
   edge_off_network: {
     label: 'Address off its network',
     explain:
@@ -2337,6 +2343,7 @@ export const PLAIN_ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_modes: 'Open Connection modes',
   open_probes: 'See the checks',
   open_run: 'Open the run',
+  find_names: 'Find names',
 };
 
 export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
@@ -2362,6 +2369,7 @@ export const ATTENTION_ACTION_LABELS: Record<AttentionAction, string> = {
   open_modes: 'Connection modes',
   open_probes: 'Open probes',
   open_run: 'Open run',
+  find_names: 'Find names',
 };
 
 export function severityTone(s: AttentionSeverity): Tone {

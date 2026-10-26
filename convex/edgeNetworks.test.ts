@@ -362,6 +362,35 @@ describe('a transport scoped to a network', () => {
     ).toEqual([[inUse.edgeId, 'network_no_ranges']]);
   });
 
+  test('a bound family on a network with fewer than three names that qualify is named', async () => {
+    const { t, call } = await bound();
+    expect((await bind(call)).status).toBe(200);
+    await call('POST', 'sni/families/fam-a/names', {
+      lines: ['a.example', 'b.example', 'c.example'],
+    });
+    // The sni-hunt cron counts the families; the attention list reads its answer.
+    const thin = async () => {
+      await t.mutation(internal.sniHunt.tick, {});
+      return (await t.query(internal.edgeOperator.attention, {})).items.filter(
+        (i: { kind: string }) => i.kind === 'sni_family_thin',
+      );
+    };
+    const [item] = await thin();
+    expect(item).toMatchObject({
+      severity: 'info',
+      action: 'find_names',
+      facts: { family: 'fam-a', qualifying: 0 },
+    });
+    // Three names that qualify: enough.
+    await t.run(async (ctx) => {
+      for (const n of await ctx.db.query('sniNames').collect())
+        await ctx.db.patch(n._id, {
+          qualification: { state: 'ok', consecutiveFails: 0, tlsVersion: 'TLSv1.3' },
+        });
+    });
+    expect(await thin()).toEqual([]);
+  });
+
   test('an address off the network is never published there; one that falls off is named', async () => {
     const { t, call, relay } = await bound();
     expect((await bind(call)).status).toBe(200);

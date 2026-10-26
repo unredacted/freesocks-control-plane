@@ -336,6 +336,9 @@ export const ATTENTION_KINDS = [
   // (a quota, a setting it rejects): the node's automatic work takes another location
   // for a while (`relays.refusedLocations`).
   'location_refused',
+  // A family on a network, bound to a transport, holds fewer than three names that qualify:
+  // the "blocked somewhere" last tier empties such a family fast (docs/edges.md "Finding names").
+  'sni_family_thin',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -370,6 +373,8 @@ export const ATTENTION_ACTIONS = [
   'open_probes',
   // A guided setup run's sheet (its progress, and Try again when it failed).
   'open_run',
+  // A family's page, to find more names for it (docs/edges.md "Finding names").
+  'find_names',
 ] as const;
 export type AttentionAction = (typeof ATTENTION_ACTIONS)[number];
 
