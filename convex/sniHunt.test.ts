@@ -178,6 +178,9 @@ describe('the top-sites sweep', () => {
     expect(fetched[1]).toBe('https://tranco-list.eu/download/ABC12/300000');
     const run = await t.run((ctx) => ctx.db.get(runId as Id<'sniHuntRuns'>));
     expect(run).toMatchObject({ state: 'running', total: 4, listId: 'ABC12' });
+    // The first step of the chain is scheduled at once.
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.some((f) => f.name.includes('sweepStep'))).toBe(true);
     expect(run!.chunks).toHaveLength(1);
     await t.action(internal.sniHuntOps.sweepStep, { runId: runId as Id<'sniHuntRuns'> });
     const c = await candidates(t);

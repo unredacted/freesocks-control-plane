@@ -665,10 +665,12 @@ export const listReady = internalMutation({
       ...(a.total > 0 ? {} : { finishedAt: now }),
       updatedAt: now,
     });
-    if (a.total === 0)
-      for (const id of a.chunks)
-        if (await ctx.db.get(id)) await ctx.db.delete(id);
-        else await ctx.scheduler.runAfter(0, internal.sniHuntOps.sweepStep, { runId: run._id });
+    if (a.total === 0) {
+      for (const id of a.chunks) if (await ctx.db.get(id)) await ctx.db.delete(id);
+    } else {
+      // The first step of the chain starts at once.
+      await ctx.scheduler.runAfter(0, internal.sniHuntOps.sweepStep, { runId: run._id });
+    }
     return { ok: true };
   },
 });
