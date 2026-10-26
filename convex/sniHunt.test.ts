@@ -493,7 +493,11 @@ describe('a target certificate and certificate transparency', () => {
         }) as typeof fetch,
       },
     );
-    await t.mutation(internal.sniHunt.requestCt, { domains: ['www.example.com'], family: 'fam-a' });
+    await t.mutation(internal.sniHunt.requestCt, {
+      domains: ['www.example.com'],
+      family: 'fam-a',
+      now: clock,
+    });
     await t.action(internal.sniHuntOps.ctStep, {});
     await t.action(internal.sniHuntOps.ctStep, {});
     let row = (await t.run((ctx) => ctx.db.query('sniHuntCt').first()))!;
@@ -518,7 +522,11 @@ describe('a target certificate and certificate transparency', () => {
     ]);
     // A complete answer is reused within a week.
     expect(
-      await t.mutation(internal.sniHunt.requestCt, { domains: ['example.com'], family: 'fam-a' }),
+      await t.mutation(internal.sniHunt.requestCt, {
+        domains: ['example.com'],
+        family: 'fam-a',
+        now: clock,
+      }),
     ).toEqual({ queued: 0, cached: 1 });
   });
 
@@ -535,7 +543,11 @@ describe('a target certificate and certificate transparency', () => {
           )) as typeof fetch,
       },
     );
-    await t.mutation(internal.sniHunt.requestCt, { domains: ['example.com'], network: 'net-a' });
+    await t.mutation(internal.sniHunt.requestCt, {
+      domains: ['example.com'],
+      network: 'net-a',
+      now: clock,
+    });
     await t.action(internal.sniHuntOps.ctStep, {});
     await t.action(internal.sniHuntOps.ctStep, {});
     expect(await t.action(internal.sniHuntOps.ctStep, {})).toEqual({ read: false });
@@ -543,7 +555,11 @@ describe('a target certificate and certificate transparency', () => {
     expect(row).toMatchObject({ state: 'truncated', pages: 2, after: '2' });
     // Asked again, it reads further from where it stopped (not cached).
     expect(
-      await t.mutation(internal.sniHunt.requestCt, { domains: ['example.com'], network: 'net-a' }),
+      await t.mutation(internal.sniHunt.requestCt, {
+        domains: ['example.com'],
+        network: 'net-a',
+        now: clock,
+      }),
     ).toEqual({ queued: 1, cached: 0 });
   });
 });
