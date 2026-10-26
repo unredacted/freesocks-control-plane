@@ -1108,6 +1108,8 @@ export const requestCt = internalMutation({
     domains: v.array(v.string()),
     network: v.optional(v.string()),
     family: v.optional(v.string()),
+    // The time the queue is read against (`claimCt` takes the same; tests pass their clock).
+    now: v.optional(v.number()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -1116,7 +1118,7 @@ export const requestCt = internalMutation({
     if (cfg.ctRequestsPerHour === 0)
       return refuse('edge.sni.hunt.ct_off', 'Certificate-transparency reads are set to none');
     const { scope, network, family } = await scopeOf(ctx.db, a);
-    const now = Date.now();
+    const now = a.now ?? Date.now();
     const domains = [
       ...new Set(
         a.domains
