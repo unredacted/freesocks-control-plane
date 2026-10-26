@@ -80,6 +80,7 @@ export const ATTENTION_RANK = [
   'spare_untested',
   'pool_below_desired',
   'single_address',
+  'open_lane_empty',
   'reduced_resilience',
   'pick_cooling',
   'account_budget_unlimited',

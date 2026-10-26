@@ -563,7 +563,42 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         }
         // Nothing automatic can cover it this tick; fall through to the origin-wide rules.
       }
-      if (publishedNow < desired && uncovered.length === 0) {
+      // 5L. Lanes (convex/edgeLanes.ts): the pool size follows them; an old open
+      // address above target leaves once its transport's trusted lane is full;
+      // a transport short of a lane gets a fitting spare, else a provision for
+      // it (the lane is decided where the address is first published). The
+      // origin-wide fill below is the lanes' job while they are on.
+      const lanes =
+        uncovered.length === 0
+          ? await ctx.runMutation(internal.edgeLanes.reconcileLanes, { relayId: origin._id })
+          : ({ kind: 'off' } as const);
+      if (lanes.kind === 'retired') {
+        report.published++;
+        continue;
+      }
+      if (lanes.kind === 'short') {
+        if (cfg.autoPublishStandby && lanes.spares.length > 0) {
+          const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
+            relayId: origin._id,
+            candidates: lanes.spares,
+          });
+          if (res.published) {
+            report.published++;
+            continue;
+          }
+          if (res.rotationId) {
+            report.started++;
+            starts++;
+            continue;
+          }
+          if (res.awaitingVerification) continue;
+        }
+        if (cfg.autoProvisionToDesired) {
+          await provision(lanes.listenerId, true);
+          continue;
+        }
+      }
+      if (lanes.kind === 'off' && publishedNow < desired && uncovered.length === 0) {
         // 5b. Origin-wide fill (every listener covered): any publishable standby, else a provision.
         if (cfg.autoPublishStandby && standbys.length > 0) {
           const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
@@ -588,7 +623,10 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           await provision(null, true);
           continue;
         }
-      } else if (publishedNow >= desired && cfg.autoProvisionToDesired) {
+      } else if (
+        (lanes.kind === 'off' ? publishedNow >= desired : lanes.kind === 'full') &&
+        cfg.autoProvisionToDesired
+      ) {
         // 5c. Spares: the origin-wide reserve (`standbyPerRelay`) plus
         // `standbyPerListener` verified standbys per coverage listener.
         const policy = originPolicy(origin, cfg);

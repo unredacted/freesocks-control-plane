@@ -687,6 +687,10 @@ export default defineSchema({
     // signal the deactivate-idle-free sweep keys off (an ACTIVE free user whose
     // key has expired and wasn't refreshed is deactivated). Unset for paid users.
     freeKeyExpiresAt: v.optional(v.number()),
+    // The account's seat for edge assignment (subscriptions.ts `seatOf`): copied
+    // into every subscription's `renderKey`, so re-issuing never re-draws the
+    // addresses an account is handed. Random, server-side only.
+    renderSeat: v.optional(v.string()),
     // Durable donor marker: the ms timestamp of the member's FIRST settled
     // donation (set once, never cleared). Backs the persistent account donor
     // badge so the read path needs no billing-order scan. Unset ⇒ not a donor.
@@ -940,6 +944,33 @@ export default defineSchema({
   })
     .index('by_state', ['state', 'updatedAt'])
     .index('by_subscription', ['subscriptionId', 'state']),
+
+  // Suspicion (docs/edges.md "Address enumeration", docs/privacy.md). An
+  // account is named only by its MARK: HMAC(EDGE_MARK_PEPPER, `trust:` + userId)
+  // (lib/edges/trust.ts), so a database copy without the deployment's
+  // environment cannot tie a row to an account. Never in logs, audit or analytics.
+  //
+  // The FIRST time a trusted address was handed to an account (`/sub`, the
+  // raw-config view, a mirror): one row per (mark, edge), never rewritten, kept
+  // while the address lives and deleted with it. `edgeId` joins to the address
+  // in `edges`, and the mark links one account's rows across addresses.
+  edgeExposures: defineTable({
+    mark: v.string(),
+    edgeId: v.id('edges'),
+    at: v.number(),
+  })
+    .index('by_edge_at', ['edgeId', 'at'])
+    .index('by_mark_edge', ['mark', 'edgeId']),
+
+  // An account's strikes (timestamps, spaced and expired by lib/edges/trust.ts):
+  // deleted once its newest strike stops counting (`expiresAt`).
+  edgeTrust: defineTable({
+    mark: v.string(),
+    strikes: v.array(v.number()),
+    expiresAt: v.number(),
+  })
+    .index('by_mark', ['mark'])
+    .index('by_expires', ['expiresAt']),
 
   tierHistory: defineTable({
     userId: v.id('users'),
@@ -1658,6 +1689,20 @@ export default defineSchema({
     // The published-pool size (state: setup runs and re-protect widen it), seeded
     // from `edge.desiredPublishedDefault`.
     desiredPublished: v.number(),
+    // How members' addresses are picked from the pool (lib/edges/assignment.ts):
+    // `hrw1` = rendezvous over edges (a blocked address's holders scatter, a new
+    // one takes a random slice); absent = the legacy modulus walk. New origins
+    // start on `hrw1`; switching moves members once (`relays.setEdgePick`).
+    edgePick: v.optional(v.literal('hrw1')),
+    // Address lanes (docs/edges.md "Address enumeration"): per transport, how
+    // many open and how many trusted addresses the node keeps in use. Absent =
+    // lanes off (every member may be handed every address). `lanesSince`: when
+    // they were last switched on; only addresses made after it can be trusted.
+    lanes: v.optional(v.object({ open: v.number(), trusted: v.number() })),
+    lanesSince: v.optional(v.number()),
+    // The open lane's own replacement count today (UTC day key): it never uses
+    // the node's daily cap (`rotationsToday`), which stays whole for trusted ones.
+    openReplaces: v.optional(v.object({ day: v.string(), count: v.number() })),
     // Per-origin OVERRIDES of the fleet knobs, one rule for all five
     // (`originPolicy` in lib/edgeConfig.ts): absent = follow `edge.*`.
     standbyPerRelay: v.optional(v.number()),
@@ -2190,6 +2235,17 @@ export default defineSchema({
     replacementOf: v.optional(
       v.object({ edgeId: v.id('edges'), at: v.number(), trigger: v.string() }),
     ),
+    // The address's lane (lib/edges/lanes.ts, docs/edges.md "Address
+    // enumeration"): `trusted` = handed only to trusted members. Decided at its
+    // FIRST publication, and only for an address made after its origin's lanes
+    // were switched on; absent = open, for good (every address published
+    // before lanes, or while they were off, was handed to everyone).
+    lane: v.optional(v.literal('trusted')),
+    // The first time this (trusted) address was judged blocked (convex/edgeTrust.ts
+    // `noteBlocked`): claimed once, so repeated detector passes, a manual mark and
+    // a country round strike its fresh holders once. `evidenceAt`: when the block's
+    // evidence began.
+    blockClaim: v.optional(v.object({ at: v.number(), evidenceAt: v.number() })),
     updatedAt: v.number(),
   })
     .index('by_relay_status', ['relayId', 'status'])
@@ -2207,6 +2263,9 @@ export default defineSchema({
   edgeRotations: defineTable({
     relayId: v.id('relays'),
     kind: v.union(v.literal('provision'), v.literal('publish'), v.literal('replace')),
+    // A replace of an open address on a node with lanes (convex/edgeLanes.ts):
+    // counted against the open lane's own budget, and it sets no cooldown.
+    openLane: v.optional(v.boolean()),
     trigger: v.union(
       v.literal('manual'),
       v.literal('detector'),

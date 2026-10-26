@@ -175,11 +175,13 @@ function issuanceErrorResponse(err: unknown, requestId: string): Response {
  * forgetting the `finally` release (a lock leak). The caller's `run` performs the
  * action call and shapes the success Response. (Review P3.)
  *
- * TWO rate limits apply: the per-route policy (caller's policyKey) AND a shared
- * cross-route bucket ('account.reissue'). The per-route buckets alone let a
- * member triple their issuance rate by rotating across the three routes; every
- * re-issue mints a fresh traffic counter, so issuance rate IS quota rate.
- * (Review D-M3.)
+ * THREE rate limits apply: the per-route policy (caller's policyKey), a shared
+ * cross-route bucket ('account.reissue') AND its daily twin
+ * ('account.reissue.day'). The per-route buckets alone let a member triple
+ * their issuance rate by rotating across the routes; every re-issue mints a
+ * fresh traffic counter, so issuance rate IS quota rate. (Review D-M3.) The
+ * daily one bounds how fast an account can walk across nodes and see each
+ * one's addresses (docs/edges.md "Address enumeration").
  */
 async function withIssuanceSaga(
   ctx: ActionCtx,
@@ -187,14 +189,16 @@ async function withIssuanceSaga(
   policyKey: string,
   run: (requestId: string) => Promise<Response>,
 ): Promise<Response> {
-  const sharedRl = await ctx.runMutation(internal.rateLimits.enforce, {
-    policyKey: 'account.reissue',
-    subject: userId,
-  });
-  if (!sharedRl.allowed) {
-    return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
-      retryAfterMs: sharedRl.retryAfterMs,
+  for (const shared of ['account.reissue', 'account.reissue.day'] as const) {
+    const sharedRl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: shared,
+      subject: userId,
     });
+    if (!sharedRl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
+        retryAfterMs: sharedRl.retryAfterMs,
+      });
+    }
   }
   const rl = await ctx.runMutation(internal.rateLimits.enforce, { policyKey, subject: userId });
   if (!rl.allowed) {
@@ -282,6 +286,13 @@ interface SubCacheEntry {
   relay?: string | number | null;
   /** The member's own stored country answer this body was rendered for; never an inferred one. */
   region?: string | null;
+  /**
+   * The account's address lane when the body was rendered (convex/edgeLanes.ts
+   * `laneOf`): served only to the same lane, so a body holding trusted
+   * addresses never answers an account that has since been moved to the open
+   * lane (and an open body is not kept after a promotion).
+   */
+  lane?: 'open' | 'trusted' | null;
   // The epoch the body was actually RENDERED against (origin endpoints applied
   // or template entries dropped), null when the render failed open and the
   // body is the backend's. Only this is stamped on the subscription: a
@@ -1120,6 +1131,15 @@ http.route({
           503,
           { reason: out.reason },
         );
+      // Not a delivery stamp, but the account was handed these addresses
+      // (their first exposure, convex/edgeTrust.ts).
+      if (out.render)
+        await ctx.runMutation(internal.edgeTrust.noteExposure, {
+          subscriptionId: place.subscriptionId,
+          edgeIds: [out.render.primaryEdgeId, out.render.backupEdgeId].filter(
+            (x): x is Id<'edges'> => !!x,
+          ),
+        });
       return json({
         content: out.content,
         contentType: fetched.contentType ?? 'text/plain',
@@ -1258,16 +1278,20 @@ http.route({
       countryRev: sub.countryRev ?? 0,
       deliveryRev: sub.deliveryRev ?? 0,
     };
-    const location = await locateMember(ctx, place, req);
+    const [location, lane] = await Promise.all([
+      locateMember(ctx, place, req),
+      ctx.runQuery(internal.edgeLanes.laneOf, { subscriptionId: sub._id }),
+    ]);
     const { edgeToken, sensitive, located } = location;
     const useCache = cacheIsServable(located.source, sensitive);
     // An entry answers THIS request only for this UA's format, under the current
-    // edge token and for the same stored country; and never once a proof inside
-    // it has lapsed.
+    // edge token, for the same stored country and the same address lane; and
+    // never once a proof inside it has lapsed.
     const servesHere = (e: SubCacheEntry): boolean =>
       e.ua === ua &&
       (e.relay ?? null) === edgeToken &&
       (e.region ?? null) === (located.source === 'override' ? located.where.country : null) &&
+      (e.lane ?? null) === lane &&
       withinValidity(e.validUntil, subscriptionNow());
     const fresh = useCache
       ? cached.find((e) => servesHere(e) && now - e.at < SUBSCRIPTION_CACHE_TTL_MS)
@@ -1281,6 +1305,7 @@ http.route({
         renderedEpoch: fresh.renderedEpoch ?? null,
         render: fresh.render ?? null,
         deliveryRev: place.deliveryRev,
+        lane,
       });
       // fresh + same format → cache hit
       return (await subscriptionResponse(await memberNamed(fresh), { hints, ifNoneMatch }))
@@ -1304,6 +1329,7 @@ http.route({
             renderedEpoch: held.renderedEpoch ?? null,
             render: held.render ?? null,
             deliveryRev: place.deliveryRev,
+            lane,
           });
           return answer.response;
         }
@@ -1360,6 +1386,7 @@ http.route({
         render: renderSnapshot,
         // Only ever the member's OWN answer; an inferred country is not cached at all.
         ...(at.located.source === 'override' ? { region: at.located.where.country } : {}),
+        lane,
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
       // UA) must reach the backend too, for its own registration + enforcement.
@@ -1369,7 +1396,8 @@ http.route({
           subscriptionId: sub._id,
           entry: JSON.stringify(entry),
           // A key that moved in place meanwhile (a mode or server switch)
-          // never gets this body back: it is the old placement's.
+          // never gets this body back: it is the old placement's. The entry
+          // carries the lane it was rendered for, judged again there.
           deliveryRev: place.deliveryRev,
         });
       }
@@ -1382,6 +1410,7 @@ http.route({
         renderedEpoch,
         render: renderSnapshot,
         deliveryRev: place.deliveryRev,
+        lane,
       });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       // An inferred country shaped this body: it is this member's, here, now.
@@ -1412,6 +1441,7 @@ http.route({
           renderedEpoch: stale.renderedEpoch ?? null,
           render: stale.render ?? null,
           deliveryRev: place.deliveryRev,
+          lane,
         });
         return (await subscriptionResponse(await memberNamed(stale), { hints, ifNoneMatch }))
           .response;

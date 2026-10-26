@@ -884,10 +884,13 @@ create"). Worst case per origin per day: as many
 short-lived load balancers as the daily cap, each destroyed after a failed check.
 
 **Who receives a replacement** is one decision, `replacementPlacement()`
-(`lib/edges/replacementHolders.ts`), called by `applyPublish` for every replace. Its one policy
-today, `inherit`, gives the replacement its target's pool index, so exactly the members who held
-the blocked address get the new one. That includes an account a censor holds; spreading or
-screening those holders belongs in that function and nowhere else.
+(`lib/edges/replacementHolders.ts`), called by `applyPublish` for every replace. The policy
+follows the origin's address pick (§ "Address enumeration"): on the legacy walk, `inherit` gives
+the replacement its target's pool index, so exactly the members who held the blocked address get
+the new one together, an account a censor holds included; on `hrw1`, `spread`: the blocked
+address's holders scatter, each to their own next best address, and the replacement goes to the
+members it now outranks, about 3 in P+1 of the old holders. The pool index is kept either way
+so the listener's template Host stays where it was.
 
 **The re-block guard.** A replacement records where it came from (`edges.replacementOf`). When
 the detector would replace an address that a replace put in use less than
@@ -922,9 +925,11 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    body format, or whose verification is no longer current (a lapsed L7 proof, an L4
    confirmation gone stale after a listener or address change) **ineligible** (it keeps its
    pool index);
-3. assigns primary (+ backup) with a stable PRF keyed on the subscription's `renderKey` over
-   the FULL pool order, walking forward past ineligible positions; the backup is the next
-   assignable edge away from the primary's failure domain (with `render.preferDistinctProviders`):
+3. assigns primary (+ backup) with a stable PRF keyed on the subscription's `renderKey` (the
+   account's seat, § "Address enumeration"): on an origin with `edgePick: 'hrw1'` every edge is
+   ranked by its own score and the walk takes them best first; on the legacy walk the seed
+   indexes the FULL pool order and the walk goes forward past ineligible positions. The
+   backup is the next assignable edge in the walk away from the primary's failure domain (with `render.preferDistinctProviders`):
    another provider first, then another location (`PublishedEdge.locationKey`, admin-only and
    never rendered; a missing key counts as unknown), else the next one; one server name per emitted
    connection for name-presenting listeners, chosen from the listener's active names (a
@@ -1245,6 +1250,159 @@ Outline member imports a dynamic access key
 `ssconf://<fcp-host>/api/v1/sub/<token>` and follows rotations by re-fetching. Outline over an
 edge is **TCP-only** today (no adapter forwards UDP).
 
+### Address enumeration
+
+A censor can sign up accounts, read the addresses FCP hands them and block each one. Once FCP
+replaces blocked addresses by itself (§ "Replacing a blocked address without a spare"), every
+replacement handed back to the same accounts is blocked again and costs a load balancer. What
+bounds that:
+
+**What one view shows.** A member is handed a primary and a backup, two addresses of their
+node's pool. Mean number of views needed to see a node's addresses (a seeded simulation):
+
+| Addresses on the node | all of them | half | 90%  |
+| --------------------- | ----------- | ---- | ---- |
+| 2                     | 1           | 1    | 1    |
+| 8                     | 10.5        | 2.5  | 10.4 |
+| 16                    | 26          | 5.4  | 19   |
+| 64                    | 150         | 22   | 73   |
+
+**The seat.** The key a subscription's assignment and name selection are computed from
+(`subscriptions.renderKey`) is the account's seat (`users.renderSeat`, `subscriptions.ts`
+`seatOf`): every new subscription row takes it, so a regenerate, a mode, server or backend
+switch, or an issue long after every old row was swept is handed the same addresses on the same
+node, and re-issuing is no way to draw new ones. An account that had none takes its most recent
+row's key once (nobody moved when this landed). Before the seat, every regenerate was a fresh
+draw: one account regenerating could see a 64-address node in about 15 hours. Moving to another
+node shows that node's two addresses; the shared daily bucket `account.reissue.day` (10 a day,
+on top of the hourly `account.reissue`) bounds how fast one account walks the fleet.
+
+**The pick** (`relays.edgePick`). On the legacy walk the seat indexes the pool by a modulus over
+its length: one more published address moves almost every member (a free new view for
+everyone), and the members of an address move together. On `hrw1` (rendezvous over edges,
+`lib/edges/assignment.ts` `edgeScore`) each member ranks every address by its own score:
+
+- a blocked address's holders scatter, each to their own next best address, instead of moving
+  together onto its replacement;
+- a new or replacement address takes the members it now outranks: about 2 in P of everyone, and
+  about 3 in P+1 of the blocked address's own holders (their other address sat lower in their
+  ranking), so it reaches the account that burned its predecessor with probability 3/(P+1)
+  (18% at 16 addresses, under 5% at 64) instead of always;
+- growing the pool moves only the members the new address takes.
+
+Scattering also makes the account that burns addresses the one thing successive blocks have in
+common, while the members around it change every time. New origins start on `hrw1`; an existing
+one is switched on its node page ("Spread members over the addresses", `POST
+relays/{id}/edge-pick`), whose dialog first shows the share of members that would be handed at
+least one different address (an estimate over synthetic seats with the pool as it is; a primary
+and backup that only swap places do not count). Switching moves those members once, to other
+addresses already in use, and is audited `relay.edge_pick`.
+
+**Lanes** (`relays.lanes`, `convex/edgeLanes.ts`, the rules in `lib/edges/lanes.ts`). Spread or
+not, a pool any account can draw from is one a censor's accounts can see. A node with lanes on
+keeps, per transport, `open` OPEN addresses that anyone may be handed and `trusted` TRUSTED ones
+that only trusted members ever see:
+
+- **Who is trusted**: a paid member (a tier other than the free one, while the membership runs),
+  or an account at least `edge.trust.promoteAfterDays` old (default 14), and in either case not
+  suspected. Everyone else (a new free account) draws from the open lane. This is read from the
+  account at every render; nothing new is stored about a member for it.
+- **What each is handed**: an open member only open addresses, ordered by country as in §
+  "Delivery by country"; with none left that can be emitted the body is refused
+  `open_lane_empty` (fail closed: never a trusted address instead; counted with the other
+  refusals, attention `open_lane_empty`). A trusted member: trusted addresses first, an open one
+  only where every trusted one is blocked in their country or cannot be emitted, and as the
+  backup when no other trusted one is left. Lanes come before the country tiers. The country veto
+  (`steeringAvoids`) asks for the way around an open address to be open as well.
+- **Which addresses can be trusted** (the taint rule): only one made after the node's lanes were
+  last switched on (`relays.lanesSince`, strictly after) that was never published before, never
+  imported, and whose address FCP did not hand out before under another row (the node's own
+  edges, the fleet's 1,000 most recently destroyed). Its lane (`edges.lane: 'trusted'`; absent =
+  open) is fixed at its first publication, by the one helper every first publication calls
+  (`laneForPublish`): a replacement takes its target's lane; growth fills an empty open lane
+  first, then the trusted lane up to its target. Republishing (a rollback, a quarantine
+  resolve) keeps the lane.
+- **Switching on** (node page, "Trusted addresses"; `POST relays/{id}/lanes {lanes: {open,
+trusted}}`, open 0..32, trusted 1..32) needs the node spread first (`edge.lanes_need_spread`).
+  Every address in use at that moment has been handed to everyone, so all of them are open. The
+  reconcile then keeps the lanes (step 5L, `edgeLanes.reconcileLanes`): `desiredPublished` follows
+  them (per transport, the larger of the open addresses in use and the open target, plus the
+  larger of the trusted ones and their target); a transport short of a lane gets a fitting spare
+  (for the trusted lane only one that may be trusted), else a provision for it; and once a
+  transport's trusted lane is full, its oldest open address above target leaves (drained like a
+  replaced address, audited `edge.lane_retired`; never the address the transport's backend Host
+  points at). Until the trusted addresses are in, trusted members are handed the open ones.
+- **Switching off** (`{lanes: null}`) makes every trusted address of the node open for good,
+  since every member may be handed it from then on; switching on again starts from new
+  addresses. Audited `relay.lanes` (the targets and how many addresses became open).
+- **The open lane's own budget.** Open addresses are expected to be blocked. Replacing one counts
+  against `edge.lanes.openReplacesPerDay` per node (default 1, `relays.openReplaces`) and
+  `edge.lanes.openReplacesPerFleetDay` (default 10, appState `edge:fleetOpenReplaces`), and
+  nothing else: it never counts toward or is refused by the node's daily cap, the fleet's daily
+  cap or the cooldown, it sets no cooldown, and a quick re-block holds nothing. Over budget a
+  start is refused `edge.open_lane_budget` and the detector vetoes `open_lane_budget`. The
+  detector replaces a blocked trusted address before an open one, and a node whose only block
+  evidence is on open addresses does not count toward the fleet brake (the brake, once engaged,
+  still holds open replacements too).
+- **The fence.** A member's lane can change (an account comes of age, a membership ends, a
+  suspicion). Every cached body records the lane it was rendered for and answers only that lane;
+  the cache write and the delivery stamp work the lane out again in their own transaction and
+  keep nothing rendered for another; the mirror barrier's token carries it
+  (`r<deliveryRev>|<place>|l<lane>`), so an upload that straddles a change stays open and is
+  rendered again under the lane the account has now.
+
+**Suspicion** (`convex/edgeTrust.ts`, the rules in `lib/edges/trust.ts`). An account that keeps
+blocking trusted addresses it was just handed loses its trust:
+
+- **First exposure.** Every path that hands addresses to an account records the FIRST time each
+  trusted address was handed to it (`edgeExposures`): the subscription route's delivery stamp
+  (`markDelivered`, whenever its snapshot changes, stale revision or moved lane included), the
+  raw-config view and every mirror render. One row per account and address, never rewritten,
+  kept while the address lives (the daily `edge-trust-sweep` removes the rows of an address that
+  is destroyed, gone or no longer trusted). Open addresses are not recorded.
+- **Judged blocked, once per address.** The first time a trusted address is judged blocked
+  (`noteBlocked`) claims it (`edges.blockClaim`): the detector naming it with edge-level evidence
+  that is not an outage (from a detector window before the suspicion was first seen, or from when
+  a test block began), an operator's "address is blocked" replace (from then), or a country round
+  or mark newly blocking it somewhere (from then). Later judgements of the same address do nothing.
+  An address published before recording began (`edge:trustSince`, set by the first deploy's
+  `seedCutover`) strikes nobody: its first exposures are not all known.
+- **Strikes.** The fresh holders are the accounts first handed the address in the
+  `edge.trust.windowDays` (7) before the evidence began, and not in the address's first
+  `edge.trust.firstWaveHours` (24) in use. One handed it after the block began cannot have caused
+  it, and a long-time holder is never fresh. Nor is the address's first wave: a new address
+  (a replacement, a lane being filled) goes to whoever it outranks, so those holders say nothing,
+  and on a small node they would be struck together with whoever blocked it. What does say
+  something is an account that moved onto an address already in use and blocked it soon after,
+  which is what a censor's account does once its own addresses are burned. With 1 to
+  `edge.trust.maxFreshHolders` (50) fresh holders each gets a strike; more is not attributable (a
+  block found by other means) and nobody gets one. A strike within `edge.trust.strikeSpacingHours`
+  (24) of the account's newest one does not count, so one mass block is one strike. Blocking new
+  addresses in their first wave earns a censor no strike; that is bounded by the replacement caps
+  and the re-block hold (§ "Replacing a blocked address without a spare"), not by suspicion.
+- **Suspected**: `edge.trust.strikesToSuspect` (3) strikes within `edge.trust.strikeDays` (30).
+  The account then draws from the open lane, paid or not, until its strikes stop counting (its
+  row is deleted then). A demotion renders every mirror again (one full pass), and the lane fence
+  keeps a body rendered while it was trusted out of every cache.
+- **What the admin sees**: counts only (`GET trust`, the Rotation settings card: accounts
+  suspected now, with a strike, strikes and demotions today). No per-member view, no reset, nothing
+  said to the member (it would tell the censor). No log line or audit row names an account, a mark
+  or an address.
+
+Why innocent members are safe: a member who held an address long before it was blocked is never
+fresh, nor is one handed a new address in its first wave, and after scattering an innocent is
+fresh only briefly and only sometimes on an address a censor watches. Modelled (a 64-address lane, 10 watching accounts) an innocent collects about 0.6
+strikes a month against a threshold of 3; a watching account that blocks what it learns is out
+after about 3 days and about 6 trusted addresses; a patient one has to leave each address working
+for 7 days to avoid strikes.
+
+What it buys, from the table above: the open lane is seen by anyone (a single account sees an
+open lane of 1 or 2). The trusted lane takes accounts that are paid for or 14 days old: about 5 of
+them to see half of a 16-address lane and about 26 to see all of it, and a replacement reaches
+any one of them with probability 3/(P+1). Where enumeration is seen, 1 or 2 open and 8 to 16
+trusted addresses per transport is a reasonable shape (each trusted address is a load balancer;
+with 2, one watching account sees the whole lane).
+
 ## Operations
 
 | Operation                                 | Precondition                                                                                                                                                                                                                                                                                         | Spends budget                      | Writes Hosts                                                                  | Result                                                                                                                                    |
@@ -1282,6 +1440,9 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `GET delivery-bindings`, `POST delivery-bindings/{id}/release`      | The edge-required places, including ones whose origin was deleted with `keep-dark`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `GET config`                                                        | Also carries `bounds` and `defaults` per flat key, so the settings forms validate against the server's own limits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `POST relays/{id}/rebalance`                                        | Coverage at the cap: unpublish ONE removable edge (not its listener's template edge, its removal does not increase the coverage deficit; highest pool index first) back to standby, bump the epoch, refresh mirrors; upkeep then publishes what is missing. Refuses `edge.no_duplicate`, and the usual rotation / quarantine guard. Audited `edge.relay.rebalanced`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `GET relays/{id}/edge-pick`, `POST relays/{id}/edge-pick {version}` | How members' addresses are picked from the pool (§ "Address enumeration"). The GET returns the pick (`hrw1`, or null for the legacy walk) and how many of a fixed sample of synthetic seats would be handed at least one different address if it were switched; the POST takes `version`, `'hrw1'` or `null` (required: a missing field is refused, never read as the legacy walk), moves the publication epoch and refreshes mirrors. Refused while a rotation or quarantine holds the origin. Audited `relay.edge_pick`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `GET relays/{id}/lanes`, `POST relays/{id}/lanes {lanes}`           | Address lanes (§ "Address enumeration"). The GET returns the targets, when they were switched on and, per transport, the addresses of each lane in use, what is missing and the old open ones still to leave, with today's open replacements against their budget; the POST takes `lanes`, `{open, trusted}` (open 0..32, trusted 1..32) or `null` (required), refuses a node not spread yet (`edge.lanes_need_spread`), makes every trusted address open when switching off, moves the epoch and refreshes mirrors. Audited `relay.lanes`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `GET trust`                                                         | Address suspicion as counts only (§ "Address enumeration"): accounts suspected now, accounts with a strike still counting, today's strikes and demotions, and when recording began. Never an account, a mark or an address.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `POST automation {on}`                                              | The one automation switch (settings scope): in ONE mutation sets `edge.enabled`, `edge.autoRotate`, `edge.probe.enabled` and `edge.autoProvisionToDesired` to `on` (and `edge.clientCheck.enabled` where the client-check service is set up), and `edge.standbyPerListener = 1` when turning on unless that service answers its health check (left as-is when off). Never `render.enabled` or `l7.autoSelect`; touches no origin row (an origin's own `autoRotate` keeps its meaning under the global gate: `cfg.enabled && cfg.autoRotate && relay.autoRotate`). Audited `edge.automation.set` (the boolean only).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `POST setup-runs/plan {backendServerId, nodeUuid}`                  | The guided setup's read-only plan for one backend node (`listenerKeys?` as on create; throttled: it lists the node's transports and Hosts): frontable transports, direct Hosts tagged covered / uncovered, compatible accounts with reasons, the fleet-wide rendering consequence, disabled client families, and the `planHash` a run creation must echo. See § "Guided setup runs".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `POST setup-runs`, `GET setup-runs[/{id}]`                          | Create a run (`{backendServerId, nodeUuid, accountId, planHash, approvedHideUuids[], keepDirect?, listenerKeys?}`: `listenerKeys` is the operator's choice of 1 to 8 frontable transports when the node has more, covered by the plan hash; `edge.plan_stale`, `edge.account_incompatible`, `edge.too_many_inbounds`, `edge.setup_run_active`), list runs, poll one (stage, state, the interruption, per-listener verdicts, the `try_it` test links).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -5301,6 +5462,33 @@ longer gets a backup known blocked in their country, and a backup keeps names pr
 deploy, no migration, no env change. The deploy's `seedCutover` settles listeners written before
 it (`relayListeners.reconcileCountryMarks`): every listener with a judged name moves onto `hrw1`
 at once, its members re-ranked among names the node already accepts at their next refresh.
+
+**Suspicion** (§ "Address enumeration") adds two tables (`edgeExposures`, `edgeTrust`), one
+optional field (`edges.blockClaim`), six settings with defaults (`edge.trust.windowDays` 7,
+`firstWaveHours` 24, `maxFreshHolders` 50, `strikeSpacingHours` 24, `strikesToSuspect` 3, `strikeDays` 30), the daily
+`edge-trust-sweep` cron and the direct dependency `@noble/hashes` (already in the tree under
+`@noble/curves`). It needs a pepper (`EDGE_MARK_PEPPER`, else `IP_HASH_SALT`; without one nothing
+is recorded and nobody is suspected). The deploy's `seedCutover` stores when recording began; only
+trusted addresses published after it can strike anyone. To roll back, run
+`edgeTrust:clearForRollback` with no arguments (it pages through the exposures, the strikes and
+the block claims, then removes its two state keys) before deploying the older build.
+
+**Address lanes** (§ "Address enumeration") add optional fields only (`edges.lane`,
+`relays.lanes`, `relays.lanesSince`, `relays.openReplaces`, `edgeRotations.openLane`) and three
+settings with defaults (`edge.trust.promoteAfterDays` 14, `edge.lanes.openReplacesPerDay` 1,
+`edge.lanes.openReplacesPerFleetDay` 10): one deploy, no migration. Nothing changes until an
+operator switches a node's lanes on. Bodies cached before the deploy carry no lane and are rendered
+once more at their next fetch. To roll back, run `edgeLanes:clearForRollback` with no arguments
+(it pages through the edges, the rotations, then the origins, scheduling itself; every node's
+lanes end up off) before deploying the older build.
+
+**Stable seats and spread replacements** (§ "Address enumeration") add two optional fields
+(`users.renderSeat`, `relays.edgePick`) and one rate-limit key (`account.reissue.day`, 10 a day):
+one deploy, no migration, nobody moves. An account gets its seat (its newest key's
+`renderKey`) at its next issue. Origins created after it start on `hrw1`; existing ones stay on
+the legacy walk until an operator spreads them. To roll back, run
+`edgeAdmin:clearSeatsForRollback` with no arguments (it pages through the accounts, then the
+origins, scheduling itself) before deploying the older build.
 
 **Replacing a blocked address without a spare** adds optional fields only
 (`edges.verification.method` gains `client_check` and `engines`, `edges.replacementOf`,

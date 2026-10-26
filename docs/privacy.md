@@ -281,6 +281,23 @@ and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
   slugs, listener keys and codes, never addresses, hostnames or provider account names. The one
   member fact the delivery uses is where they connect from, which lives on their subscription
   row under the rules in §1 and nowhere in the edges tables.
+- **Address lanes read the account, store nothing about it.** On a node with lanes on
+  (`docs/edges.md` § "Address enumeration"), which addresses a member may be handed follows
+  from facts the account already has: whether its tier is paid while the membership runs, and
+  how old it is. They are read at each render and written nowhere; only the address itself
+  carries a lane (`edges.lane`). A cached body records the lane it was rendered for, on the
+  member's own row, and is dropped with the rest of that cache.
+- **Address suspicion keeps two small records under a pseudonym.** To tell an account that
+  keeps blocking the trusted addresses it is handed (`docs/edges.md` § "Address enumeration"),
+  FCP stores, for trusted addresses only, the first time each one was handed to an account
+  (`edgeExposures`: a mark, an edge id and a time, kept while that address lives and deleted with
+  it), and an account's recent strikes (`edgeTrust`: a mark and up to a few timestamps, deleted
+  once the newest is 30 days old). The mark is HMAC(`EDGE_MARK_PEPPER`, `trust:` + the account
+  id): a stable pseudonym, so the rows do link one account's exposures across addresses, and an
+  edge id joins to its address in `edges`; what the mark buys is that a copy of the database
+  without the deployment's environment cannot tie a row to an account. No address, server name,
+  country or IP is in these rows. They are never written to logs, the audit log or analytics, the
+  admin sees counts only, the member is not told, and both go when the account is deleted.
 - **FCP's own client check uses FCP's own account and logs nothing.** The `edge-client-check`
   service connects through an edge address with the origin's qualification account (or a
   temporary key made for the check and removed after it), never a member's. It logs nothing
@@ -549,7 +566,10 @@ member reports. Neither adds member data anywhere.
   raise a hint for the operator; they change nothing a member is given.
 - **Rendering** replaces template entries in a member's subscription with their
   assigned edges. The assignment key (`subscriptions.renderKey`) is random,
-  server-side only, and independent of the subscription URL token.
+  server-side only, and independent of the subscription URL token. It is the
+  account's seat (`users.renderSeat`), copied into every subscription row the
+  account is issued, so re-issuing keeps the same addresses; it lives as long as
+  the account and says nothing about the member.
 
 ## Downstream-deployer checklist
 

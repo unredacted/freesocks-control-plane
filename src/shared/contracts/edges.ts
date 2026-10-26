@@ -700,6 +700,14 @@ export const OriginAdmin = z.object({
   autoReplaceHolds: z
     .array(z.object({ listenerId: z.string(), code: z.string(), at: iso }))
     .default([]),
+  /**
+   * How members' addresses are picked from the pool: `hrw1` (rendezvous: a
+   * blocked address's holders scatter) or null (the legacy modulus walk).
+   */
+  edgePick: z.literal('hrw1').nullable().default(null),
+  /** Address lanes per transport (null = off) and when they were last switched on. */
+  lanes: z.object({ open: z.number(), trusted: z.number() }).nullable().default(null),
+  lanesSince: isoN.default(null),
   cooldownMinutes: z.number(),
   maxRotationsPerDay: z.number(),
   drainMinutes: z.number(),
@@ -1055,6 +1063,8 @@ export const EdgeAdmin = z.object({
   id: z.string(),
   relayId: z.string(),
   listenerId: z.string(),
+  /** Address lanes: `trusted` (handed only to trusted members), or null for an open address. */
+  lane: z.literal('trusted').nullable().default(null),
   accountId: z.string().nullable(),
   /** The location the edge was created in (frozen; null for an import without an account). */
   locationId: z.string().nullable().default(null),
@@ -1714,6 +1724,8 @@ export const CountryViewListener = z.object({
   addresses: z.array(CountryViewAddress),
   names: z.array(CountryViewName),
   members: CountryViewHanded,
+  /** With address lanes on: what an open member there (a new or suspected account) is handed. */
+  openMembers: CountryViewHanded.nullable().default(null),
   targetAdds: CountryViewTargetAdds.nullable().default(null),
 });
 export type CountryViewListener = z.infer<typeof CountryViewListener>;
@@ -2183,6 +2195,29 @@ export const EdgeConfigView = z.object({
       /** FCP's own client check confirms and replaces (absent from an older server: off). */
       clientCheck: z.object({ enabled: z.boolean() }).default({ enabled: false }),
       replacement: z.object({ reblockHours: z.number() }).default({ reblockHours: 24 }),
+      /** Address lanes (absent from an older server: the defaults). */
+      trust: z
+        .object({
+          promoteAfterDays: z.number(),
+          windowDays: z.number().default(7),
+          firstWaveHours: z.number().default(24),
+          maxFreshHolders: z.number().default(50),
+          strikeSpacingHours: z.number().default(24),
+          strikesToSuspect: z.number().default(3),
+          strikeDays: z.number().default(30),
+        })
+        .default({
+          promoteAfterDays: 14,
+          windowDays: 7,
+          firstWaveHours: 24,
+          maxFreshHolders: 50,
+          strikeSpacingHours: 24,
+          strikesToSuspect: 3,
+          strikeDays: 30,
+        }),
+      lanes: z
+        .object({ openReplacesPerDay: z.number(), openReplacesPerFleetDay: z.number() })
+        .default({ openReplacesPerDay: 1, openReplacesPerFleetDay: 10 }),
       render: z
         .object({
           enabled: z.boolean(),
@@ -2439,6 +2474,68 @@ export const EdgeAutomationResponse = z.object({
   changedKeys: z.array(z.string()),
 });
 export type EdgeAutomationResponse = z.infer<typeof EdgeAutomationResponse>;
+
+/** `GET relays/{id}/edge-pick`: the origin's address pick and what switching would move. */
+export const EdgePickView = z.object({
+  relaySlug: z.string(),
+  edgePick: z.literal('hrw1').nullable(),
+  published: z.number(),
+  switchTo: z.literal('hrw1').nullable(),
+  /** Synthetic seats sampled, and how many of them are handed at least one different address. */
+  sampled: z.number(),
+  moved: z.number(),
+  /** Client families render with and without a backup: `moved` is the larger share. */
+  upTo: z.boolean().default(false),
+});
+export type EdgePickView = z.infer<typeof EdgePickView>;
+
+/** `GET relays/{id}/lanes`: the targets and, per transport, what each lane holds. */
+export const LanesView = z.object({
+  relaySlug: z.string(),
+  edgePick: z.literal('hrw1').nullable(),
+  lanes: z.object({ open: z.number(), trusted: z.number() }).nullable(),
+  since: isoN,
+  transports: z.array(
+    z.object({
+      listenerId: z.string(),
+      listenerKey: z.string(),
+      open: z.number(),
+      trusted: z.number(),
+      openExcess: z.number(),
+      trustedDeficit: z.number(),
+      openDeficit: z.number(),
+    }),
+  ),
+  openReplacesToday: z.number(),
+  openReplacesPerDay: z.number(),
+});
+export type LanesView = z.infer<typeof LanesView>;
+
+/** `GET trust`: address suspicion as counts only (docs/edges.md "Address enumeration"). */
+export const TrustSummary = z.object({
+  suspected: z.number(),
+  withStrikes: z.number(),
+  strikesToday: z.number(),
+  demotionsToday: z.number(),
+  since: isoN,
+});
+export type TrustSummary = z.infer<typeof TrustSummary>;
+
+/** `POST relays/{id}/lanes`. */
+export const LanesResponse = z.object({
+  ok: z.literal(true),
+  lanes: z.object({ open: z.number(), trusted: z.number() }).nullable(),
+  tainted: z.number(),
+});
+export type LanesResponse = z.infer<typeof LanesResponse>;
+
+/** `POST relays/{id}/edge-pick`. */
+export const EdgePickResponse = z.object({
+  ok: z.literal(true),
+  changed: z.boolean(),
+  edgePick: z.literal('hrw1').nullable(),
+});
+export type EdgePickResponse = z.infer<typeof EdgePickResponse>;
 
 /** `POST relays/{id}/rebalance`: the duplicate that went back to standby. */
 export const RelayRebalanceResponse = z.object({

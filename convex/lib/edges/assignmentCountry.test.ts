@@ -467,36 +467,43 @@ describe('steeringAvoids', () => {
     ).toBe(false);
   });
 
-  test('cross-check: whenever it says yes, no member in that country gets the chosen edge first on any path', () => {
-    const paths: DeliveryPath[] = [
-      ...PATHS,
-      { format: 'links', canEmitV6: true, backupFirst: true },
-    ];
-    let checked = 0;
-    for (const { edges } of corpus(11, 400)) {
-      for (const c of edges) {
-        if (!steeringAvoids(c, edges, 'IR', paths, ['IR', 'RU'], { universal: true })) continue;
-        checked++;
-        for (const path of paths) {
-          for (let k = 0; k < 60; k++) {
-            const base = {
-              ...OPTS,
-              canEmitV6: path.canEmitV6,
-              where: { country: 'IR', curated: ['IR', 'RU'] },
-            };
-            // A member whose stored country is IR, and a mirror without a choice.
-            for (const a of [
-              assignEndpoints(keyOf(k), edges, { ...base, edgeCountry: 'IR' }),
-              assignEndpoints(keyOf(k), edges, { ...base, avoidBlockedIn: ['IR', 'RU'] }),
-            ]) {
-              if (a.primary) expect(a.primary.edge.edgeId).not.toBe(c.edgeId);
-              // Where the backup is handed out first it must not be the chosen edge either.
-              if (path.backupFirst && a.backup) expect(a.backup.edge.edgeId).not.toBe(c.edgeId);
+  test.each([
+    ['legacy', undefined],
+    ['hrw1', 'hrw1'],
+  ] as const)(
+    'cross-check (%s pick): whenever it says yes, no member in that country gets the chosen edge first on any path',
+    (_name, edgePick) => {
+      const paths: DeliveryPath[] = [
+        ...PATHS,
+        { format: 'links', canEmitV6: true, backupFirst: true },
+      ];
+      let checked = 0;
+      for (const { edges } of corpus(11, 400)) {
+        for (const c of edges) {
+          if (!steeringAvoids(c, edges, 'IR', paths, ['IR', 'RU'], { universal: true })) continue;
+          checked++;
+          for (const path of paths) {
+            for (let k = 0; k < 60; k++) {
+              const base = {
+                ...OPTS,
+                canEmitV6: path.canEmitV6,
+                where: { country: 'IR', curated: ['IR', 'RU'] },
+                ...(edgePick ? { edgePick } : {}),
+              };
+              // A member whose stored country is IR, and a mirror without a choice.
+              for (const a of [
+                assignEndpoints(keyOf(k), edges, { ...base, edgeCountry: 'IR' }),
+                assignEndpoints(keyOf(k), edges, { ...base, avoidBlockedIn: ['IR', 'RU'] }),
+              ]) {
+                if (a.primary) expect(a.primary.edge.edgeId).not.toBe(c.edgeId);
+                // Where the backup is handed out first it must not be the chosen edge either.
+                if (path.backupFirst && a.backup) expect(a.backup.edge.edgeId).not.toBe(c.edgeId);
+              }
             }
           }
         }
       }
-    }
-    expect(checked).toBeGreaterThan(10);
-  });
+      expect(checked).toBeGreaterThan(10);
+    },
+  );
 });

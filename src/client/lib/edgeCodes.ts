@@ -996,6 +996,23 @@ const COPY = {
       "The provider refused to create an address for this node in this location (a quota, or a setting it rejects), so automatic work makes this node's next address in another location for a while.",
     fix: "Read the provider's reason on the failed run, then raise the quota or fix the setting. Adding an address there by hand lifts the hold once it is created.",
   },
+  open_lane_empty: {
+    label: 'No open address',
+    explain:
+      'This node hands its trusted addresses only to paid members and older accounts. Its open addresses, which new and suspected accounts get, are all gone, so those members get nothing until one is replaced.',
+    fix: 'Wait for the next open address (its own daily budget), add one, or raise the open addresses wanted on the node.',
+  },
+  open_lane_budget: {
+    label: 'Open address budget used',
+    explain:
+      "The open addresses were replaced as often as today's budget allows. They are expected to be blocked, so they never use the replacements kept for trusted addresses.",
+    fix: 'They are replaced again tomorrow (UTC). Raise the budget under Settings if needed.',
+  },
+  lanes_need_spread: {
+    label: 'Spread members first',
+    explain:
+      'Trusted addresses only stay out of reach if the members of a blocked address scatter. Spread members over the addresses on this node first.',
+  },
   single_address: {
     label: 'One address in use',
     explain:
@@ -2653,6 +2670,9 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'relay.listener.name.retire': 'Server name retired',
   'relay.listener.name.reactivate': 'Server name reactivated',
   'relay.listener.sni_pick': 'Server name selection changed',
+  'relay.edge_pick': 'Address selection changed',
+  'relay.lanes': 'Address lanes changed',
+  'edge.lane_retired': 'Old open address retired',
   'relay.host.created': 'Backend Host created',
   'relay.host.deleted': 'Backend Host deleted',
   'relay.host.adopted': 'Backend Host adopted',
@@ -2909,6 +2929,9 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'relay.upsert': 'Node registered',
   'relay.update': 'Settings changed',
   'relay.delete': 'Protection removed',
+  'relay.edge_pick': 'Members spread over the addresses',
+  'relay.lanes': 'Trusted addresses changed',
+  'edge.lane_retired': 'Old open address taken out of use',
   'relay.host.created': 'Backend updated with the new address',
   'relay.host.deleted': 'Old address removed from the backend',
   'edge.published': 'Address in use',

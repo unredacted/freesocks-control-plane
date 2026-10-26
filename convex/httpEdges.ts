@@ -67,6 +67,8 @@ const fail = makeFail('edges', statusFromCode);
  */
 const RESERVED = new Set([
   'summary',
+  // Address suspicion, counts only (convex/edgeTrust.ts).
+  'trust',
   'config',
   'providers',
   'templates',
@@ -403,6 +405,8 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     ]);
     return json({ templates, schemas });
   }
+  // Address suspicion (docs/edges.md "Address enumeration"): counts only, never an account.
+  if (a === 'trust' && !b) return json(await ctx.runAction(internal.edgeTrust.summary, {}));
   if (a === 'relays') {
     if (!b) return json(await ctx.runQuery(internal.relays.listForAdmin, {}));
     if (b === 'lookup' && !c) {
@@ -473,6 +477,16 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       return json(
         await ctx.runQuery(internal.edgeOperator.quarantineView, { relayId: id<'relays'>(b) }),
       );
+    // Address lanes: the targets and what each transport's lanes hold.
+    if (c === 'lanes' && !d) {
+      const r = await ctx.runQuery(internal.edgeLanes.lanesView, { relayId: id<'relays'>(b) });
+      return r ? json(r) : notFound();
+    }
+    // The address pick and what switching it would move (the node page's dialog).
+    if (c === 'edge-pick' && !d) {
+      const r = await ctx.runQuery(internal.edgeAdmin.edgePickView, { relayId: id<'relays'>(b) });
+      return r ? json(r) : notFound();
+    }
     // Test block evidence on this origin (edgeSimulations.ts): accepted here at all, live, recent.
     if (c === 'simulations' && !d)
       return json(
@@ -1230,6 +1244,42 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         }),
       );
     }
+    // Address lanes on (per transport `{open, trusted}`) or off (`null`). The
+    // field is REQUIRED: off makes every trusted address open for good, so an
+    // empty body must never be read as that.
+    if (c === 'lanes' && !d) {
+      if (!('lanes' in body))
+        return errorJson('validation', 'lanes is required: {open, trusted} or null', 400);
+      const lanes = body.lanes as unknown;
+      const n = (x: unknown) => (typeof x === 'number' ? x : NaN);
+      const parsed =
+        lanes === null
+          ? null
+          : lanes && typeof lanes === 'object'
+            ? {
+                open: n((lanes as Record<string, unknown>).open),
+                trusted: n((lanes as Record<string, unknown>).trusted),
+              }
+            : undefined;
+      if (parsed === undefined)
+        return errorJson('validation', 'lanes must be {open, trusted} or null', 400);
+      return json(
+        await ctx.runMutation(internal.edgeLanes.setLanes, { relayId, lanes: parsed, ...act }),
+      );
+    }
+    // How members' addresses are picked from the pool. The field is REQUIRED:
+    // `null` means "back to the legacy walk", which moves members, so an empty
+    // body or a missing field must never be read as that.
+    if (c === 'edge-pick' && !d) {
+      if (!('version' in body))
+        return errorJson('validation', "version is required: 'hrw1' or null", 400);
+      const version = body.version;
+      if (version !== null && version !== 'hrw1')
+        return errorJson('validation', "version must be 'hrw1' or null", 400);
+      return json(
+        await ctx.runMutation(internal.edgeAdmin.setEdgePick, { relayId, version, ...act }),
+      );
+    }
     // Automatic replacement held for a transport (a replacement blocked again
     // soon after going into use): the operator resumes it, one transport or all.
     if (c === 'auto-replace' && d === 'resume' && !parts[4])
@@ -1684,6 +1734,8 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         sampleKey: typeof body.sampleKey === 'string' ? body.sampleKey : undefined,
         // "As a member in <country>" (a listed country).
         country: typeof body.country === 'string' ? body.country : undefined,
+        // "As an open / a trusted member" on a node with address lanes.
+        lane: body.lane === 'open' || body.lane === 'trusted' ? body.lane : undefined,
       }),
     );
   }

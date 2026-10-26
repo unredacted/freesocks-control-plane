@@ -192,6 +192,75 @@ export const ROTATION_FIELDS: Field[] = [
     helper:
       'A replacement that looks blocked again this soon after going into use stops automatic replacement of its transport on that node until you resume it. 0 never holds.',
   },
+  {
+    kind: 'number',
+    path: 'trust.promoteAfterDays',
+    label: 'Trusted addresses after',
+    unit: 'days',
+    helper:
+      'On a node with trusted addresses, a free account this old is handed them; younger ones get the open addresses. Paid members get them at once.',
+  },
+  {
+    kind: 'number',
+    path: 'lanes.openReplacesPerDay',
+    label: 'Open addresses replaced per node',
+    unit: 'a day',
+    helper:
+      'Open addresses are expected to be blocked. This is their own budget: it never uses the daily cap meant for trusted addresses.',
+  },
+  {
+    kind: 'number',
+    path: 'lanes.openReplacesPerFleetDay',
+    label: 'Open addresses replaced in all',
+    unit: 'a day',
+    helper: 'The same budget across every node.',
+  },
+  {
+    kind: 'number',
+    path: 'trust.strikesToSuspect',
+    label: 'Suspect an account after',
+    unit: 'strikes',
+    helper:
+      'A strike: a trusted address blocked soon after it was first handed to the account, with few others handed it then. A suspected account gets open addresses only.',
+  },
+  {
+    kind: 'number',
+    path: 'trust.strikeDays',
+    label: 'Strikes count for',
+    unit: 'days',
+    helper: 'Older strikes are deleted, so suspicion ends by itself.',
+  },
+  {
+    kind: 'number',
+    path: 'trust.strikeSpacingHours',
+    label: 'At most one strike per account every',
+    unit: 'hours',
+    helper: 'So one mass block never counts as several strikes.',
+  },
+  {
+    kind: 'number',
+    path: 'trust.windowDays',
+    label: 'Handed out recently means within',
+    unit: 'days',
+    helper:
+      'Only accounts first handed the address this long before it was blocked can get a strike. Records of who was handed which trusted address live as long as the address.',
+  },
+  {
+    kind: 'number',
+    path: 'trust.firstWaveHours',
+    label: 'Not counted in an address\u2019s first',
+    unit: 'hours',
+    helper:
+      'Accounts handed an address when it is new got it because it outranks theirs, so a block then strikes none of them.',
+  },
+  {
+    kind: 'number',
+    path: 'trust.maxFreshHolders',
+    label: 'No strike when more accounts got it recently than',
+    unit: 'accounts',
+    helper:
+      'A brand-new address handed to many members at once tells nothing about any one of them.',
+  },
 ];
 
 const IPV6_GLOBAL = [

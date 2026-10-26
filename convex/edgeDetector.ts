@@ -49,6 +49,8 @@ import {
   type WindowReports,
 } from './lib/edges/scoring';
 import type { Verdict } from './lib/edges/probes/verdict';
+import { lanesOn } from './lib/edges/lanes';
+import { openBudgetLeft } from './edgeLanes';
 import {
   applySimulatedEvidence,
   blockSimulatorAllowedIn,
@@ -284,6 +286,13 @@ async function loadRelayContext(ctx: QueryCtx, relayId: Id<'relays'>, now: numbe
   return {
     origin,
     cfg,
+    // Lanes on: the open addresses, and whether their own budget has one left.
+    lanes: lanesOn(origin)
+      ? {
+          openEdgeIds: await openEdgeIdsOf(ctx, published),
+          openBudgetLeft: await openBudgetLeft(ctx.db, origin, cfg, now),
+        }
+      : null,
     steering: await steeringInputFor(ctx, origin, cfg, now),
     since: now - edgeMs.detectWindow(cfg),
     baseline,
@@ -330,7 +339,20 @@ async function steeringInputFor(
     curated: (await resolveCensoredCountries(ctx.db)).codes,
     held: await heldCountries(ctx.db, cfg.probe.countries, now),
     freedomListeners: await freedomListenersOf(ctx, origin),
+    ...(lanesOn(origin) ? { lanes: true } : {}),
   };
+}
+
+async function openEdgeIdsOf(
+  ctx: QueryCtx,
+  published: ReadonlyArray<{ edgeId: string }>,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const p of published) {
+    const e = await ctx.db.get(p.edgeId as Id<'edges'>);
+    if (e && e.lane !== 'trusted') out.push(p.edgeId);
+  }
+  return out;
 }
 
 /**
@@ -580,7 +602,7 @@ interface Evaluated {
   w: RelayWindow;
   ev: Evaluation;
   /** The live test blocks laid over this origin's inputs (empty unless the deployment opts in). */
-  sims: Array<SimulatedEvidence & { id: Id<'edgeBlockSimulations'> }>;
+  sims: Array<SimulatedEvidence & { id: Id<'edgeBlockSimulations'>; startedAt: number }>;
 }
 
 /** The countries the evaluation's evidence names for one edge (a detector start's snapshot). */
@@ -614,6 +636,7 @@ export const run = internalAction({
       // Pass 1: evaluate every origin. The fleet brake is judged over the whole
       // pass BEFORE any rotation starts, so a mass block never replaces the
       // first origins of the list and only then notices the rest.
+      let brakeSuspected = 0;
       const evaluated: Evaluated[] = [];
       for (const o of origins) {
         if (o.deleting) continue;
@@ -650,7 +673,16 @@ export const run = internalAction({
               : null,
           });
           report.evaluated++;
-          if (ev.state === 'suspected') report.suspected++;
+          if (ev.state === 'suspected') {
+            report.suspected++;
+            // A node whose only evidence is on open addresses (lanes on: they
+            // are expected to be blocked) is no sign of a mass block.
+            const openOnly =
+              !!w.lanes &&
+              ev.edgeEvidence.length > 0 &&
+              ev.edgeEvidence.every((x) => w.lanes!.openEdgeIds.includes(x.edgeId));
+            if (!openOnly) brakeSuspected++;
+          }
           evaluated.push({ origin: o, w, ev, sims });
         } catch (err) {
           report.errors++;
@@ -660,7 +692,7 @@ export const run = internalAction({
         }
       }
       const fleet = await ctx.runMutation(internal.edgeDetector.recordFleetBrake, {
-        suspected: report.suspected,
+        suspected: brakeSuspected,
         evaluated: report.evaluated,
         now,
       });
@@ -694,6 +726,7 @@ export const run = internalAction({
               rotationsPerDay: w.cfg.detect.fleetRotationsPerDay,
             },
             ...(w.steering ? { steering: w.steering } : {}),
+            ...(w.lanes ? { lanes: w.lanes } : {}),
           });
           const veto = 'veto' in decision ? decision.veto : null;
           let lastRotateError: string | null | undefined = undefined;
@@ -758,6 +791,26 @@ export const run = internalAction({
             ...(sims.length > 0 ? { simulated: true } : {}),
             ...(lastRotateError !== undefined ? { lastRotateError } : {}),
           });
+          // Suspicion (convex/edgeTrust.ts): a trusted address with edge-level
+          // evidence of a block, not an outage, is judged blocked; its first such
+          // judgement strikes its fresh holders (claimed once per address). The
+          // evidence began a detector window before it was first seen, or when a
+          // test block began.
+          if (ev.state === 'suspected' && !ev.nodeOffline && w.lanes) {
+            for (const x of ev.edgeEvidence) {
+              if (w.lanes.openEdgeIds.includes(x.edgeId)) continue;
+              if (ev.outageEdges.includes(x.edgeId)) continue;
+              if (x.source === 'probes' && ev.probeSourcesDown) continue;
+              const sim = sims.find((s) => s.edgeId === x.edgeId);
+              const evidenceAt = sim
+                ? sim.startedAt
+                : (ev.firstSeenAt ?? now) - edgeMs.detectWindow(w.cfg);
+              await ctx.runMutation(internal.edgeTrust.noteBlocked, {
+                edgeId: x.edgeId as Id<'edges'>,
+                evidenceAt,
+              });
+            }
+          }
           // Reports alone raised suspicion: ask the probes for edge-level evidence now.
           if (ev.transition === 'suspected' && ev.hintLevel === 'reports' && w.cfg.probe.enabled) {
             // Stagger like a batch: offsets are CUMULATIVE runs-per-source of the

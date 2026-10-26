@@ -669,6 +669,9 @@ export const seedCutover = internalAction({
     // name is on the growth-stable pick (rows written before that was kept; a
     // no-op afterwards). docs/edges.md § "Names for the member's country".
     await ctx.runMutation(internal.relayListeners.reconcileCountryMarks, {});
+    // Suspicion records from the first deploy on (convex/edgeTrust.ts); an address
+    // published before it never strikes anyone. A no-op once stored.
+    await ctx.runMutation(internal.edgeTrust.ensureSince, {});
     return {
       freeTierId,
       memberTierId,

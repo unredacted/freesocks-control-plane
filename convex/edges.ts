@@ -169,6 +169,8 @@ export function mapEdgeAdmin(e: Edge, listener?: VerifiableListener | null) {
     id: e._id as string,
     relayId: e.relayId as string,
     listenerId: e.listenerId as string,
+    // Address lanes (convex/edgeLanes.ts): `trusted`, or null for an open one.
+    lane: e.lane ?? null,
     accountId: (e.accountId as string | undefined) ?? null,
     locationId: (e.locationId as string | undefined) ?? null,
     placeKey: e.placeKey ?? null,

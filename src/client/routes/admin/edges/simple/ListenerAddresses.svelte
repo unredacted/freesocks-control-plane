@@ -50,6 +50,8 @@
     onPublish?: () => void;
     onRetiring?: (edge: EdgeAdmin, action: 'delete' | 'keep') => void;
     countries?: EdgeCountriesResponse | null;
+    /** The node's address lanes are on: each address in use says its lane. */
+    lanes?: boolean;
   }
   let {
     listener,
@@ -59,6 +61,7 @@
     onPublish,
     onRetiring,
     countries = null,
+    lanes = false,
   }: Props = $props();
 
   const qc = useQueryClient();
@@ -109,6 +112,9 @@
   const address = (e: EdgeAdmin) =>
     e.addresses.hostname ?? e.addresses.v4 ?? e.addresses.v6 ?? e.name;
   const WORD = { published: 'In use', unpublished: 'Spare', draining: 'Retiring' } as const;
+  // With address lanes on, an address in use says which lane it serves.
+  const laneWord = (e: EdgeAdmin) =>
+    lanes && e.publication === 'published' ? (e.lane === 'trusted' ? ' (trusted)' : ' (open)') : '';
   const CHECKED_BY_FCP = "checked by FCP's client";
   // The provider's check is not the members' view: whether it answers from outside, apart.
   const reachWord = (e: EdgeAdmin) =>
@@ -168,7 +174,9 @@
               {/if}
             {:else}
               <span class="text-muted-foreground">
-                {WORD[e.publication]}, {healthLabel(e.health).toLowerCase()}, {reachWord(e)}{#if t}, {t}{/if}
+                {WORD[e.publication]}{laneWord(e)}, {healthLabel(e.health).toLowerCase()}, {reachWord(
+                  e,
+                )}{#if t}, {t}{/if}
               </span>
             {/if}
             {#if t && t !== 'tested' && t !== CHECKED_BY_FCP}

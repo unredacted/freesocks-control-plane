@@ -42,7 +42,7 @@ import {
   CLIENT_CHECK_TIME_HEADER,
 } from './lib/edges/clientCheck/protocol';
 import { ReplayGuard, verifyRequest } from './lib/edges/clientCheck/signing';
-import { REPLACEMENT_POLICY, replacementPlacement } from './lib/edges/replacementHolders';
+import { replacementPlacement, replacementPolicyOf } from './lib/edges/replacementHolders';
 import type { ClientCheckEngine, ClientCheckSessionCode } from '../src/shared/contracts/edgeCodes';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -802,11 +802,13 @@ describe('a location whose provider refused the create', () => {
 });
 
 describe('the pieces', () => {
-  test('who receives a replacement: inherit keeps the target’s pool index', () => {
-    expect(REPLACEMENT_POLICY).toBe('inherit');
-    expect(replacementPlacement({ policy: 'inherit', target: { poolIndex: 3 } })).toEqual({
-      poolIndex: 3,
-    });
+  test('who receives a replacement: the policy follows the origin’s pick, the index is kept', () => {
+    expect(replacementPolicyOf({})).toBe('inherit');
+    expect(replacementPolicyOf({ edgePick: 'hrw1' })).toBe('spread');
+    for (const policy of ['inherit', 'spread'] as const)
+      expect(replacementPlacement({ policy, target: { poolIndex: 3 } })).toEqual({
+        poolIndex: 3,
+      });
   });
 
   test('rollback: the new fields go, an address FCP confirmed keeps serving as a named connection', async () => {

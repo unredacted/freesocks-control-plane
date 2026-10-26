@@ -9,6 +9,7 @@ import { ConvexError, v } from 'convex/values';
 import { verificationListenerOf } from './lib/edges/verificationContext';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import {
@@ -37,7 +38,7 @@ import { PREVIEW_DEFAULT_PROTO } from './lib/edges/preview';
 import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
 import { previewBody } from './lib/edges/preview';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
-import { effectiveRule } from './lib/edges/render';
+import { effectiveRule, ruleForDelivery } from './lib/edges/render';
 import { publishedCount } from './lib/edges/pool';
 import { isTerminalPhase, progressPercent } from './lib/edges/rotation';
 import { isTerminalRunState } from './lib/edges/setupRuns';
@@ -58,7 +59,10 @@ import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
 import { EDGE_NEW_ACCOUNT_OPTION_DEFAULTS, optionFieldsOf } from './lib/edges/providers/templates';
 import { defaultsOf } from './lib/edges/providers/options';
 import { EDGE_PROVIDER_IDS } from './lib/edgeProviderIds';
-import { setupRunLiveOn } from './lib/edges/relayGuards';
+import { bumpEpochAndRefresh, setupRunLiveOn } from './lib/edges/relayGuards';
+import { pickMoves } from './lib/edges/edgePick';
+import { lanesOn } from './lib/edges/lanes';
+import { assertAdmission } from './lib/edges/maintenance';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 
@@ -181,6 +185,9 @@ export const configView = internalQuery({
  * receives, so it bumps every enabled origin's publication epoch (the /sub cache
  * token) and refreshes the stored mirrors once.
  */
+/** The settings that decide which accounts are trusted now (not only future strikes). */
+const LANE_KEYS = new Set(['trust.promoteAfterDays', 'trust.strikesToSuspect', 'trust.strikeDays']);
+
 export const patchConfig = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
@@ -201,6 +208,11 @@ export const patchConfig = internalMutation({
       for (const r of relays) {
         await ctx.db.patch(r._id, { publicationEpoch: r.publicationEpoch + 1, updatedAt: now });
       }
+      await scheduleMirrorRefresh(ctx);
+    } else if (changedKeys.some((k) => LANE_KEYS.has(k))) {
+      // Which accounts are trusted moved (convex/edgeLanes.ts): a cached body
+      // already answers only its own lane, but a stored mirror is rendered
+      // again so none keeps trusted addresses for an account now open.
       await scheduleMirrorRefresh(ctx);
     }
     if (changed.length > 0) {
@@ -490,6 +502,134 @@ export const relayListenersView = internalQuery({
   },
 });
 
+/**
+ * The origin's address pick and what switching it would cost: the share of
+ * members handed at least one different address, estimated over synthetic
+ * seats with the pool as it is now (lib/edges/edgePick.ts), under the rule
+ * members are actually rendered with: one address for a single-key backend or
+ * a client family without a backup, two otherwise. Where the families differ,
+ * the larger share (`upTo`). Read by the node page before the operator switches.
+ */
+export const edgePickView = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
+    const origin = await ctx.db.get(relayId);
+    if (!origin) return null;
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const { published } = await publishedEdgesOf(
+      ctx,
+      origin,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
+    const current = origin.edgePick ?? null;
+    const other = current === 'hrw1' ? null : ('hrw1' as const);
+    const style = origin.backendServerId
+      ? await deliveryStyleOf(ctx, origin.backendServerId)
+      : 'subscription';
+    // The backup settings members are rendered with, across the enabled families.
+    const backups = new Set(
+      RENDER_CLIENT_FAMILIES.map((f) => effectiveRule(cfg.render, cfg.render.clients[f]))
+        .filter((r) => r.enabled)
+        .map((r) => ruleForDelivery(r, style).includeBackup),
+    );
+    if (backups.size === 0) backups.add(style === 'subscription');
+    const estimates = [...backups].map((includeBackup) =>
+      pickMoves(published, current, other, {
+        now: Date.now(),
+        preferDistinctProviders: cfg.render.preferDistinctProviders,
+        includeBackup,
+      }),
+    );
+    const share = (m: { sampled: number; moved: number }) =>
+      m.sampled === 0 ? 0 : m.moved / m.sampled;
+    const worst = estimates.reduce((a, b) => (share(b) > share(a) ? b : a));
+    return {
+      relaySlug: origin.slug,
+      edgePick: current,
+      published: published.length,
+      switchTo: other,
+      sampled: worst.sampled,
+      moved: worst.moved,
+      upTo: estimates.length > 1,
+    };
+  },
+});
+
+/**
+ * Choose how members' addresses are picked from this origin's pool. `hrw1`
+ * (rendezvous) is what stops a blocked address's holders from moving together
+ * onto its replacement (docs/edges.md "Address enumeration"); `null` returns
+ * to the legacy modulus walk. Every member whose pair changes gets a new
+ * configuration at their next refresh (the preview says how many), so it is an
+ * explicit, audited operator action and never a side effect.
+ */
+export const setEdgePick = internalMutation({
+  args: {
+    relayId: v.id('relays'),
+    version: v.union(v.literal('hrw1'), v.null()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { relayId, version, actorAdminId }) => {
+    await assertAdmission(ctx.db, 'registration');
+    const origin = await ctx.db.get(relayId);
+    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+    await assertNoRotationOrQuarantine(ctx.db, origin);
+    const changed = (origin.edgePick ?? null) !== version;
+    if (changed) {
+      await ctx.db.patch(relayId, { edgePick: version ?? undefined, updatedAt: Date.now() });
+      // Reads the fresh row: the epoch is bumped on top of the patch above.
+      const fresh = (await ctx.db.get(relayId))!;
+      await bumpEpochAndRefresh(ctx, fresh);
+    }
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'relay.edge_pick',
+      targetType: 'relay',
+      targetId: relayId,
+      payload: { relaySlug: origin.slug, version: version ?? 'legacy' },
+    });
+    return { ok: true as const, changed, edgePick: version };
+  },
+});
+
+/**
+ * The step before rolling back to a build without seats and the address pick
+ * (docs/edges.md § "Deploy notes"): drops `users.renderSeat` and
+ * `relays.edgePick`, page by page, scheduling itself until done. Every key keeps
+ * its `renderKey`, so nobody moves; origins go back to the legacy walk.
+ */
+export const clearSeatsForRollback = internalMutation({
+  args: {
+    phase: v.optional(v.union(v.literal('users'), v.literal('relays'))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, { phase, cursor }) => {
+    let cleared = 0;
+    if ((phase ?? 'users') === 'users') {
+      const page = await ctx.db.query('users').paginate({ cursor: cursor ?? null, numItems: 200 });
+      for (const u of page.page)
+        if (u.renderSeat !== undefined) {
+          await ctx.db.patch(u._id, { renderSeat: undefined });
+          cleared++;
+        }
+      await ctx.scheduler.runAfter(
+        0,
+        internal.edgeAdmin.clearSeatsForRollback,
+        page.isDone ? { phase: 'relays' } : { phase: 'users', cursor: page.continueCursor },
+      );
+      return { cleared, done: false };
+    }
+    for (const r of await ctx.db.query('relays').collect())
+      if (r.edgePick !== undefined) {
+        await ctx.db.patch(r._id, { edgePick: undefined });
+        cleared++;
+      }
+    return { cleared, done: true };
+  },
+});
+
 export const endpoints = internalQuery({
   args: { relayId: v.id('relays') },
   handler: async (ctx, { relayId }) => {
@@ -509,6 +649,7 @@ export const endpoints = internalQuery({
     const assigned = assignEndpoints(SAMPLE_RENDER_KEY, published, {
       now: Date.now(),
       preferDistinctProviders: cfg.render.preferDistinctProviders,
+      ...(origin.edgePick ? { edgePick: origin.edgePick } : {}),
       includeBackup: true,
       canEmitV6: RENDER_CLIENT_FAMILIES.every(
         (f) => effectiveRule(cfg.render, cfg.render.clients[f]).ipv6Mode !== 'off',
@@ -545,8 +686,13 @@ export const renderPreview = internalQuery({
      * while `delivery.country.steer` is on, their addresses ordered for it.
      */
     country: v.optional(v.string()),
+    /**
+     * "As an open / a trusted member" on a node with address lanes on
+     * (convex/edgeLanes.ts); absent = a trusted member there.
+     */
+    lane: v.optional(v.union(v.literal('open'), v.literal('trusted'))),
   },
-  handler: async (ctx, { relayId, family, sampleKey, country }) => {
+  handler: async (ctx, { relayId, family, sampleKey, country, lane }) => {
     if (!(RENDER_CLIENT_FAMILIES as readonly string[]).includes(family)) {
       throw new ConvexError({ code: 'validation', message: 'unknown client family' });
     }
@@ -561,7 +707,7 @@ export const renderPreview = internalQuery({
           message: 'The country is not on the censored-country list',
         });
     }
-    return renderPreviewFor(ctx, origin, family as RenderClientFamily, sampleKey, code);
+    return renderPreviewFor(ctx, origin, family as RenderClientFamily, sampleKey, code, lane);
   },
 });
 
@@ -573,6 +719,8 @@ export async function renderPreviewFor(
   sampleKey?: string,
   /** A listed country to render for (the member's stored country); absent = no country at all. */
   country?: string,
+  /** The member's address lane on a node with lanes on; absent = a trusted member. */
+  lane?: 'open' | 'trusted',
 ) {
   {
     const cfg = await resolveEdgeConfig(ctx.db);
@@ -614,6 +762,8 @@ export async function renderPreviewFor(
         published,
         rule: effectiveRule(cfg.render, cfg.render.clients[fam]),
         preferDistinctProviders: cfg.render.preferDistinctProviders,
+        ...(origin.edgePick ? { edgePick: origin.edgePick } : {}),
+        ...(lanesOn(origin) ? { memberLane: lane ?? 'trusted' } : {}),
         originAddress: '192.0.2.10',
         deliveryStyle: origin.backendServerId
           ? await deliveryStyleOf(ctx, origin.backendServerId)

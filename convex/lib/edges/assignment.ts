@@ -10,12 +10,21 @@
  * each with exactly ONE SNI.
  *
  * Stability rules:
- *  - primary = published[ h0 mod publishedCount ] over the FULL pool order
- *    (ineligible edges included in the modulus); when that edge is not
- *    assignable the walk continues forward in pool order, so an edge losing
- *    eligibility (profile disabled, no active name, no emittable address)
- *    moves only the subscribers that were on it. A replacement edge inherits
- *    its predecessor's pool index, so only subscribers on that index move.
+ *  - legacy (an origin without `edgePick`): primary = published[ h0 mod
+ *    publishedCount ] over the FULL pool order (ineligible edges included in
+ *    the modulus); when that edge is not assignable the walk continues forward
+ *    in pool order, so an edge losing eligibility (profile disabled, no active
+ *    name, no emittable address) moves only the subscribers that were on it. A
+ *    replacement edge inherits its predecessor's pool index, so only
+ *    subscribers on that index move, together. A modulus over the pool LENGTH:
+ *    one more published edge moves almost every subscriber.
+ *  - `hrw1` (rendezvous over edges, `edgeScore`): every edge scores on its own
+ *    for (subscriber, edge) and the walk takes them best first. An edge that
+ *    leaves moves only its holders, each to their OWN next best (they scatter
+ *    over the pool instead of moving as a group); a new edge takes only the
+ *    subscribers it now outranks, about 2 in P for a primary and a backup, a
+ *    random slice that has nothing to do with who held the address it
+ *    replaced (docs/edges.md "Address enumeration").
  *  - the SNI PRF runs over the profile's FULL ordered serverNames list (retired
  *    entries keep their index) so a retirement never shifts other subscribers;
  *    a subscriber whose pick is retired re-hashes over the ACTIVE set only. A
@@ -46,6 +55,9 @@ import type { MatchRule } from './registration';
 
 /** Name-selection PRF versions a listener can opt into (absent = legacy modulus). */
 export type SniPickVersion = 'hrw1';
+
+/** Edge-selection versions an origin can opt into (absent = the legacy modulus walk). */
+export type EdgePickVersion = 'hrw1';
 
 export interface AssignableSni {
   sni: string;
@@ -97,6 +109,11 @@ export interface PublishedEdge {
    */
   provenIn?: string[];
   blockedIn?: string[];
+  /**
+   * `trusted`: handed only to trusted members (lib/edges/lanes.ts); absent =
+   * open. Read only when the assignment is given a `memberLane`.
+   */
+  lane?: 'trusted';
   /**
    * False when the edge is published but must not be selected (listener retired,
    * undeployed or disabled, no codec for the body, no template entry). It still occupies its pool index so the
@@ -313,6 +330,62 @@ export function poolSeed(subscriberKey: string): number {
 }
 
 /**
+ * The murmur3 finaliser. FNV-1a mixes its last input bytes into the high bits
+ * through a single multiply, and edge ids share long prefixes, so the raw
+ * hashes of one subscriber's edges are correlated; a rendezvous ranking
+ * compares whole scores, so they are mixed first.
+ */
+export function mix32(h: number): number {
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/** `hrw1`: one edge's score for one subscriber (higher ranks first). */
+export function edgeScore(subscriberKey: string, edgeId: string): number {
+  return mix32(fnv1a32(`${subscriberKey}:edge:${edgeId}`));
+}
+
+/**
+ * The positions of `pool` in the order the primary is looked for: legacy, from
+ * the seeded index forward (wrapping); `hrw1`, best score first (ties on the
+ * id, so the order is total).
+ */
+function primaryOrder(
+  subscriberKey: string,
+  pool: readonly PublishedEdge[],
+  pick?: EdgePickVersion,
+): number[] {
+  if (pick === 'hrw1') return rankedPositions(subscriberKey, pool);
+  const start = poolSeed(subscriberKey) % pool.length;
+  return pool.map((_, step) => (start + step) % pool.length);
+}
+
+/**
+ * The positions other than the primary's, in the order the backup is looked
+ * for (its last tie-break): legacy, forward from the primary (wrapping);
+ * `hrw1`, the ranking without the primary.
+ */
+function backupOrder(
+  subscriberKey: string,
+  pool: readonly PublishedEdge[],
+  pIdx: number,
+  pick?: EdgePickVersion,
+): number[] {
+  if (pick === 'hrw1') return rankedPositions(subscriberKey, pool).filter((i) => i !== pIdx);
+  return pool.slice(1).map((_, k) => (pIdx + k + 1) % pool.length);
+}
+
+function rankedPositions(subscriberKey: string, pool: readonly PublishedEdge[]): number[] {
+  const scored = pool.map((e, i) => ({ i, id: e.edgeId, s: edgeScore(subscriberKey, e.edgeId) }));
+  scored.sort((a, b) => b.s - a.s || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return scored.map((x) => x.i);
+}
+
+/**
  * Pick one SNI for (subscriber, edge): the PRF index over the FULL list keeps
  * everyone else stable when a name is retired; a retired pick re-hashes over
  * the active set. Null when no name is active (the edge is then not
@@ -455,6 +528,16 @@ export interface AssignOptions {
    * people who are blocked, and no member data shapes it). Absent = none.
    */
   avoidBlockedIn?: readonly string[];
+  /** How the origin walks its pool (`relays.edgePick`). Absent = the legacy modulus walk. */
+  edgePick?: EdgePickVersion;
+  /**
+   * The member's lane, on a node with lanes on (docs/edges.md "Address
+   * enumeration"). `open`: a trusted address is never handed out, whatever
+   * else is left. `trusted`: trusted addresses first, an open one only where
+   * every trusted one is blocked in the member's country or cannot be emitted
+   * (and as the backup when no other trusted one is left). Absent = no lanes.
+   */
+  memberLane?: 'open' | 'trusted';
   /**
    * @deprecated No longer consulted: a retired server name is never selected,
    * whoever held it. Kept so existing callers type-check; remove at will.
@@ -483,14 +566,15 @@ function assignableFor(
 }
 
 /**
- * Assign primary (+ backup) over the published edges in pool order. The seed
+ * Assign primary (+ backup) over the published edges. Legacy: the seed
  * indexes the FULL pool (assignable or not) and walks forward to the first
  * assignable edge, so a single edge turning ineligible moves only its own
- * subscribers; the backup is the next assignable edge after the primary,
- * preferring a different provider.
+ * subscribers; `hrw1` walks every edge best score first. The backup is the
+ * next assignable edge after the primary in the walk, preferring a different
+ * provider.
  *
  * With an `edgeCountry` the walk is by TIER (`edgeTier`): the primary is the
- * first assignable edge from the seeded index whose tier is the best any
+ * first assignable edge in the walk whose tier is the best any
  * assignable edge has (blocked only when nothing else is left), so a member
  * moves only when a tier changes and the modulus spread holds inside a tier;
  * the backup prefers, in order: not blocked, another provider, the better
@@ -502,11 +586,23 @@ export function assignEndpoints(
   published: readonly PublishedEdge[],
   opts: AssignOptions,
 ): Assignment {
-  const pool = [...published].sort((a, b) => a.poolIndex - b.poolIndex);
+  // An open member is never handed a trusted address: it stays in the walk
+  // (its position holds) but is not assignable for them.
+  const pool = [...published]
+    .sort((a, b) => a.poolIndex - b.poolIndex)
+    .map((e) =>
+      opts.memberLane === 'open' && e.lane === 'trusted' ? { ...e, eligible: false } : e,
+    );
   if (pool.length === 0) return { primary: null, backup: null };
+  // A trusted member walks the trusted lane first (`assignByTier`'s lane rank).
+  const laneRank =
+    opts.memberLane === 'trusted'
+      ? (e: PublishedEdge): 0 | 1 => (e.lane === 'trusted' ? 0 : 1)
+      : undefined;
   if (opts.edgeCountry)
     return assignByTier(subscriberKey, pool, opts, (e) => edgeTier(e, opts.edgeCountry!), {
       dropBlockedBackup: true,
+      laneRank,
     });
   if (opts.avoidBlockedIn && opts.avoidBlockedIn.length > 0) {
     const avoid = opts.avoidBlockedIn;
@@ -515,9 +611,14 @@ export function assignEndpoints(
       pool,
       opts,
       (e) => ((e.blockedIn ?? []).some((c) => avoid.includes(c)) ? 2 : 1),
-      { dropBlockedBackup: false },
+      { dropBlockedBackup: false, laneRank },
     );
   }
+  if (laneRank)
+    return assignByTier(subscriberKey, pool, opts, () => 1, {
+      dropBlockedBackup: false,
+      laneRank,
+    });
   // An edge every one of whose names is excluded for this member's country is
   // not assignable FOR THEM: the walk moves on to the next edge. Without a
   // country, an edge with no universal name stays out while any edge has one,
@@ -528,27 +629,18 @@ export function assignEndpoints(
     pool,
     opts.where,
   );
-  const start = poolSeed(subscriberKey) % pool.length;
-  // Walk forward (wrapping) from the seeded index to the first assignable edge.
-  let pIdx = -1;
-  for (let step = 0; step < pool.length; step++) {
-    const i = (start + step) % pool.length;
-    if (assignable[i]) {
-      pIdx = i;
-      break;
-    }
-  }
+  // The first assignable edge in the walk order (legacy: forward, wrapping,
+  // from the seeded index; `hrw1`: best score first).
+  const pIdx = primaryOrder(subscriberKey, pool, opts.edgePick).find((i) => assignable[i]) ?? -1;
   if (pIdx < 0) return { primary: null, backup: null };
   const primaryEdge = pool[pIdx];
   if (!opts.includeBackup) return endpointsFor(subscriberKey, primaryEdge, null, opts);
-  // Backup: the next assignable edge after the primary in pool order, away
-  // from the primary's failure domain: another provider first, then another
+  // Backup: the next assignable edge after the primary in the walk, away from
+  // the primary's failure domain: another provider first, then another
   // location (a missing key counts as unknown, never as "different").
-  const ordered: PublishedEdge[] = [];
-  for (let step = 1; step < pool.length; step++) {
-    const i = (pIdx + step) % pool.length;
-    if (assignable[i]) ordered.push(pool[i]);
-  }
+  const ordered = backupOrder(subscriberKey, pool, pIdx, opts.edgePick)
+    .filter((i) => assignable[i])
+    .map((i) => pool[i]!);
   const backupEdge =
     ordered.length === 0
       ? null
@@ -583,14 +675,17 @@ function differentLocation(a: PublishedEdge, b: PublishedEdge): boolean {
  * where the member is. `dropBlockedBackup`: the member's own country is known,
  * so a backup blocked THERE behind a primary that is not adds nothing but an
  * address that fails; it is left out. A mirror without the member's choice
- * keeps it (its reader may be anywhere).
+ * keeps it (its reader may be anywhere). `laneRank` (a trusted member on a
+ * node with lanes): inside "not blocked there", trusted addresses (0) before
+ * open ones (1), then the tier; the backup prefers the trusted lane before
+ * another provider. Without it every edge ranks 0 and nothing changes.
  */
 function assignByTier(
   subscriberKey: string,
   pool: readonly PublishedEdge[],
   opts: AssignOptions,
   ownTier: (e: PublishedEdge) => EdgeTier,
-  rule: { dropBlockedBackup: boolean },
+  rule: { dropBlockedBackup: boolean; laneRank?: (e: PublishedEdge) => 0 | 1 },
 ): Assignment {
   const assignable = lastResortOnly(
     pool.map((e) => assignableFor(subscriberKey, e, opts)),
@@ -605,26 +700,27 @@ function assignByTier(
     return t === 0 && !exclusive ? 1 : t;
   };
   const tiers = pool.map(tierOf);
-  let best: EdgeTier | null = null;
+  const lanes = pool.map((e) => rule.laneRank?.(e) ?? 0);
+  // Not blocked there first; inside that, the lane, then the tier. With every
+  // lane 0 this orders exactly as the tier does.
+  const rank = (i: number) => (tiers[i] === 2 ? 4 + 2 * lanes[i]! : 2 * lanes[i]! + tiers[i]!);
+  let best: number | null = null;
   for (let i = 0; i < pool.length; i++)
-    if (assignable[i] && (best === null || tiers[i]! < best)) best = tiers[i]!;
+    if (assignable[i] && (best === null || rank(i) < best)) best = rank(i);
   if (best === null) return { primary: null, backup: null };
-  const start = poolSeed(subscriberKey) % pool.length;
-  let pIdx = -1;
-  for (let step = 0; step < pool.length; step++) {
-    const i = (start + step) % pool.length;
-    if (assignable[i] && tiers[i] === best) {
-      pIdx = i;
-      break;
-    }
-  }
+  const pIdx = primaryOrder(subscriberKey, pool, opts.edgePick).find(
+    (i) => assignable[i] && rank(i) === best,
+  )!;
   const primaryEdge = pool[pIdx]!;
   const primaryTier = ownTier(primaryEdge);
   let backupEdge: PublishedEdge | null = null;
   if (opts.includeBackup) {
     const candidates: Array<{ e: PublishedEdge; key: number[] }> = [];
-    for (let step = 1; step < pool.length; step++) {
-      const i = (pIdx + step) % pool.length;
+    const order = backupOrder(subscriberKey, pool, pIdx, opts.edgePick);
+    for (let k = 0; k < order.length; k++) {
+      const i = order[k]!;
+      // The walk position is the last tie-break (legacy: the distance from the primary).
+      const step = k + 1;
       if (!assignable[i]) continue;
       const e = pool[i]!;
       const distinct = opts.preferDistinctProviders;
@@ -632,6 +728,7 @@ function assignByTier(
         e,
         key: [
           tiers[i] === 2 ? 1 : 0,
+          lanes[i]!,
           distinct && e.provider === primaryEdge.provider ? 1 : 0,
           tiers[i]!,
           distinct && !differentLocation(e, primaryEdge) ? 1 : 0,
@@ -741,9 +838,14 @@ export function steeringAvoids(
   country: string,
   paths: readonly DeliveryPath[],
   curated: readonly string[],
-  opts: { universal?: boolean } = {},
+  opts: { universal?: boolean; lanes?: boolean } = {},
 ): boolean {
   if (edgeTier(chosen, country) !== 2) return false;
+  // With lanes, an open member can only be steered onto another open address;
+  // a trusted member may take either lane (a blocked trusted address ranks
+  // below any open one that is not blocked there).
+  const laneOk = (e: PublishedEdge) =>
+    !opts.lanes || chosen.lane === 'trusted' || e.lane !== 'trusted';
   const where: CountryContext = { country, curated };
   const usableThere = (e: PublishedEdge) =>
     e.sniPick !== 'hrw1' ||
@@ -762,7 +864,7 @@ export function steeringAvoids(
   const nowhere: CountryContext = { country: null, curated };
   return served.every((p) => {
     const need = p.backupFirst ? 2 : 1;
-    const others = published.filter((e) => e.edgeId !== chosen.edgeId && on(e, p));
+    const others = published.filter((e) => e.edgeId !== chosen.edgeId && on(e, p) && laneOk(e));
     if (others.filter((e) => edgeTier(e, country) < 2).length < need) return false;
     return (
       !opts.universal ||

@@ -13,6 +13,7 @@
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
+import { lanesOn } from './lib/edges/lanes';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -1421,6 +1422,32 @@ export const attention = internalQuery({
             severity: 'warning',
             code: null,
             facts: { inUse },
+            action: 'open_relay',
+            since: null,
+          });
+      }
+      // Lanes on (convex/edgeLanes.ts): a transport with no open address in use
+      // leaves its open members (new free accounts, suspected ones) with
+      // nothing: they are refused `open_lane_empty`, never given a trusted one.
+      if (lanesOn(relay) && relay.lanes!.open > 0 && bindingState.bound) {
+        const empty = listeners
+          .filter((l) => l.deployed && l.enabled && !l.retired)
+          .filter(
+            (l) =>
+              !edges.some(
+                (e) =>
+                  e.publication === 'published' && e.listenerId === l._id && e.lane !== 'trusted',
+              ),
+          )
+          .map((l) => l.listenerKey);
+        if (empty.length > 0)
+          items.push({
+            ...base(relay),
+            id: `open_lane_empty:${relay._id}`,
+            kind: 'open_lane_empty',
+            severity: 'warning',
+            code: null,
+            facts: { transports: empty },
             action: 'open_relay',
             since: null,
           });
