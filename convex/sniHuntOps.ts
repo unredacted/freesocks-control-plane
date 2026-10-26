@@ -5,8 +5,8 @@
  * back through `sniHunt.ts` with a compare-and-set, so a run that is cut off,
  * cancelled or duplicated changes nothing it should not:
  *
- *  - `downloadList`: the top-sites list, once per sweep, into file storage in
- *    chunks.
+ *  - `downloadList`: the top-sites list, once per sweep, stored in chunks
+ *    (`sniHuntChunks`) for the run's life.
  *  - `sweepStep`: one step of a sweep. It holds the run's lease, resolves
  *    chunks of names with ordinary lookups (A, and AAAA whenever a hunting
  *    network has IPv6 ranges) at no more than `lookupsPerSecond`, checkpoints
@@ -23,7 +23,6 @@
  * target or a candidate's own answers are dialled, on the target's port.
  */
 import { randomUUID } from 'node:crypto';
-import { gunzipSync, gzipSync } from 'node:zlib';
 import { v } from 'convex/values';
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
@@ -182,14 +181,19 @@ export const downloadList = internalAction({
     if (csv === null) return await fail('list_too_large');
     const entries = trancoEntries(csv, info.depth, info.wwwDepth);
     if (entries.length === 0) return await fail('list_bad_answer');
-    const chunks: Id<'_storage'>[] = [];
+    const chunks: Id<'sniHuntChunks'>[] = [];
     try {
       for (let i = 0; i < entries.length; i += SWEEP_CHUNK_ENTRIES) {
-        const gz = gzipSync(encodeChunk(entries.slice(i, i + SWEEP_CHUNK_ENTRIES)));
-        chunks.push(await ctx.storage.store(new Blob([new Uint8Array(gz)])));
+        const id: Id<'sniHuntChunks'> | null = await ctx.runMutation(internal.sniHunt.storeChunk, {
+          ...a,
+          index: i / SWEEP_CHUNK_ENTRIES,
+          text: encodeChunk(entries.slice(i, i + SWEEP_CHUNK_ENTRIES)),
+        });
+        // Cancelled while downloading: what was stored goes with the run.
+        if (!id) return { ok: false };
+        chunks.push(id);
       }
     } catch {
-      for (const id of chunks) await ctx.storage.delete(id).catch(() => undefined);
       return await fail('store_failed');
     }
     const r: { ok: boolean } = await ctx.runMutation(internal.sniHunt.listReady, {
@@ -281,8 +285,10 @@ export const sweepStep = internalAction({
       if (deps.now() - started + batchMs > STEP_DEADLINE_MS) break;
       const index = Math.floor(cursor / SWEEP_CHUNK_ENTRIES);
       if (chunk?.index !== index) {
-        const blob: Blob | null = await ctx.storage.get(claim.chunks[index] as Id<'_storage'>);
-        if (!blob) {
+        const text: string | null = await ctx.runQuery(internal.sniHunt.chunkText, {
+          id: claim.chunks[index] as Id<'sniHuntChunks'>,
+        });
+        if (text === null) {
           await ctx.runMutation(internal.sniHunt.runFailed, {
             runId: a.runId,
             gen: claim.gen,
@@ -290,7 +296,6 @@ export const sweepStep = internalAction({
           });
           return { claimed: true, failed: true };
         }
-        const text = gunzipSync(Buffer.from(await blob.arrayBuffer())).toString('utf8');
         chunk = { index, entries: decodeChunk(text) };
       }
       const offset = cursor - index * SWEEP_CHUNK_ENTRIES;
