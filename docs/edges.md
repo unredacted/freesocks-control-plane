@@ -3011,8 +3011,10 @@ the name, a delete), so the cap holds and the overview never waits for a tick; i
 row for a recount that makes the counts absolute again, which the cron makes first (two a tick,
 the oldest-marked first, whether finding names is on or not) before the scope in turn. The
 overview reads these rows, never the candidates themselves. A family moved to another network
-loses what was found for it on the old one (`sniHunt.dropFamilyScope`), with its counts row; its
-ignores and certificate-log reads stay.
+loses what was found for it on the old one, with its certificate-log reads for it and its counts
+row (`sniHunt.dropFamilyScope`, a page a run; its ignores stay); back on that network before the
+cleanup ended, its finds there are kept, and an answer to a certificate-log read for a network the
+family has left adds nothing.
 
 **The top-sites sweep** (`sniHuntRuns`). Started by the cron when the last one ended
 `sweepEveryDays` ago and some network is hunting (Networks, "Find names on this network"; a
