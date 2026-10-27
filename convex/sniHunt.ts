@@ -2448,7 +2448,11 @@ export const overview = internalQuery({
       networks.push({
         slug: n.slug,
         label: n.label,
-        hunt: { enabled: !!n.hunt?.enabled, place: n.hunt?.place ?? null },
+        hunt: {
+          enabled: !!n.hunt?.enabled,
+          place: n.hunt?.place ?? null,
+          placeFrom: n.hunt?.placeFrom ?? null,
+        },
         ranges: { v4: n.prefixes.v4.length, v6: n.prefixes.v6.length },
         candidates: { total: row?.total ?? 0, ready: row?.ready ?? 0 },
       });

@@ -2482,6 +2482,55 @@ on the backend every name an origin still hands out or that is still draining, w
 and whatever its family says, and a later rollout drops it once nothing holds it. A burn is
 immediate on the origins and restarts nothing.
 
+### A transport's names
+
+What a node's page shows for each REALITY transport, and the one call that hands its names to
+FCP (`convex/sniTransports.ts`, `convex/sniTransportOps.ts`; the steps after it are the routes
+above).
+
+**Where a name stands** (`lib/edges/sni/delivery.ts`, one answer for the transports view and
+the family page, so every count agrees): `in_use` (handed to the members of every node of the
+transport), `waiting_test` (in the newest rollout the backend was seen to hold, not handed out on
+some node yet: a test there proves it), `to_send` (qualified, the family bound, not on the backend:
+the next rollout adds it), `idle` (qualified but on no way to members now: the family is bound to
+nothing, the backend lists it outside any confirmed rollout, or no node is protected; the next
+rollout covers it), `checking` (waiting for its first qualification), `failing` (its last check
+failed, or it is suspended), `off` (retired or burned). A node is a protected listener of the
+transport: names reach members only through an origin's addresses (§ Rollout and acceptance).
+
+**`GET sni/transports?backend=<slug>`**: every REALITY transport of the backend as Servers last
+read it: its tag, port, target (`coverSite`), how many names it lists, the backend nodes running
+its profile, its family (with the counts above and how many found names it may add, the overview's
+number), its newest rollout, and per protected node how many names its members get, how many a
+test there would add, and the addresses a test link can go through (a current endpoint
+confirmation). A transport with no family lists the families with its target that no transport
+uses. It also says which switch holds a step back: `edge.sni.enabled`, finding names,
+`servers.manage.enabled` (a rollout writes the backend through it) and whether the backend is set
+up.
+
+**`POST sni/transports/manage {backendSlug, transportUuid, dryRun?, family?, network?, label?,
+requireH2?}`**, throttled like a provider call:
+
+- `dryRun`: resolves the target the way qualification does (every answer public) and suggests the
+  one network holding the target **and** every address in use on the transport. A family on a
+  network fails every name whose target is off it, so a network is never suggested from the
+  addresses alone. Nothing is written.
+- Otherwise, in one mutation: a new family with the transport's own target (short id from the tag,
+  made unique; label "<tag> names"), or `family`, an existing one with that target that no
+  transport uses; bound with the names the transport lists now taken in (§ Server-name families,
+  a transport whose names were set by hand). A refusal leaves nothing behind. On a network whose
+  place for the timing checks is not set, the network takes the node's: its country, and the city
+  its backend's location label starts with (`edgeNetworks.hunt.placeFrom: node`; an operator
+  saving another place makes it theirs). Then, with finding names on, the target's certificate is
+  read once for suggestions (§ Finding names, `cert`). Nothing reaches the backend: the names are
+  qualified, and reach a node through the usual rollout and test.
+
+Refused while server names are off (`edge.sni.disabled`), for a transport that already has a
+family (`conflict`), and by every check of a bind. Audit `edge.sni.transport.manage` (slugs,
+counts, whether a family was created, whether the place was set). `GET sni/families/{slug}`
+gives every name its `delivery` (state, on how many nodes it is in use, of how many) and the
+family's `suggestions`.
+
 ### When a name leaves
 
 A family name that is **burned**, **retired**, or that **stops qualifying** (suspended) leaves

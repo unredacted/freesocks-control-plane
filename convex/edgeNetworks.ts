@@ -364,8 +364,17 @@ export const setHunt = internalMutation({
         refuse('edge.network.bad_place', 'A place is a two-letter country code and a city');
       place = { country, ...(city ? { city } : {}) };
     }
+    // A place taken from a node stays marked so while it is sent back unchanged.
+    const same =
+      place &&
+      n.hunt?.place?.country === place.country &&
+      (n.hunt.place.city ?? '') === (place.city ?? '');
     await ctx.db.patch(n._id, {
-      hunt: { enabled: a.enabled, ...(place ? { place } : {}) },
+      hunt: {
+        enabled: a.enabled,
+        ...(place ? { place } : {}),
+        ...(same && n.hunt?.placeFrom ? { placeFrom: n.hunt.placeFrom } : {}),
+      },
       updatedAt: Date.now(),
     });
     await audit(ctx, 'edge.network.hunt', a.actorAdminId, {

@@ -624,6 +624,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.sni.names.recheck': ['slug', 'count'],
   'edge.sni.inbound.bind': ['slug', 'backendSlug', 'inboundTag', 'imported', 'notImported'],
   'edge.sni.inbound.unbind': ['slug', 'backendSlug', 'inboundTag'],
+  'edge.sni.transport.manage': [
+    'slug',
+    'backendSlug',
+    'inboundTag',
+    'created',
+    'imported',
+    'placeSet',
+  ],
   'edge.sni.names.country': ['slug', 'country', 'state', 'count'],
   'edge.sni.names.accepted': ['relaySlug', 'listenerKey', 'generation', 'count', 'witness'],
   // Checks from inside a country: slugs, the country, the source and counts, never a name or an address.
