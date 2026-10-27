@@ -607,6 +607,8 @@ export const SniTransportNode = z.object({
   inUse: z.number(),
   /** Usable names on the backend in the newest confirmed rollout, not handed out here yet. */
   waitingTest: z.number(),
+  /** Those names (the first 50): any of them can be the one a test presents. */
+  pending: z.array(z.string()).default([]),
   /** Addresses a test link can go through (a current endpoint confirmation). */
   testable: z.array(z.object({ edgeId: z.string(), name: z.string() })),
 });
@@ -642,6 +644,8 @@ export const SniTransport = z.object({
       rolloutId: z.string(),
       generation: z.number(),
       phase: z.enum(['writing', 'panel_confirmed', 'failed', 'superseded']),
+      /** A name the port never listed before: one test of it proves the whole send on a node. */
+      witness: z.string().nullable().default(null),
     })
     .nullable(),
   /** Each protected node behind it (one per listener). */

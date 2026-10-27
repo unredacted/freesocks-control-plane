@@ -136,23 +136,27 @@ export function countDeliveries(states: readonly NameDelivery[]): TransportCount
 /**
  * One node: how many of the family's names its members are handed (whatever
  * their last check said: a name being checked again, or one that stopped
- * qualifying but is an origin's last, is still handed out), and how many usable
- * names a test there would add.
+ * qualifying but is an origin's last, is still handed out), and the usable
+ * names a test there would add (each of them can be the one tested).
  */
 export function nodeCounts(
   names: readonly DeliveryName[],
   provable: ReadonlySet<string>,
   handedOut: ReadonlySet<string>,
-): { inUse: number; waitingTest: number } {
+): { inUse: number; waitingTest: number; pending: string[] } {
   let inUse = 0;
-  let waitingTest = 0;
+  const pending: string[] = [];
   for (const n of names) {
     if (n.status === 'retired' || n.status === 'burned') continue;
     if (handedOut.has(n.name)) inUse++;
-    else if (usableName(n) && provable.has(n.name)) waitingTest++;
+    else if (usableName(n) && provable.has(n.name)) pending.push(n.name);
   }
-  return { inUse, waitingTest };
+  // The names a test there can still prove (the first few: one is tested at a time).
+  return { inUse, waitingTest: pending.length, pending: pending.slice(0, NODE_PENDING_SHOWN) };
 }
+
+/** How many of a node's names still waiting for a test are listed by name. */
+export const NODE_PENDING_SHOWN = 50;
 
 /**
  * The network to keep a transport's names on, when one is plain: the only

@@ -184,7 +184,9 @@ export const status = internalQuery({
             relaySlug: relay.slug,
             nodeUuid: node?.nodeUuid ?? origin?.nodeUuid ?? null,
             nodeName: node?.name ?? origin?.nodeName ?? relay.slug,
-            ...(family ? nodeCounts(names, provable, handedOut[k]!) : { inUse: 0, waitingTest: 0 }),
+            ...(family
+              ? nodeCounts(names, provable, handedOut[k]!)
+              : { inUse: 0, waitingTest: 0, pending: [] }),
             testable: edges
               .filter(
                 (e) =>
@@ -227,6 +229,8 @@ export const status = internalQuery({
                 rolloutId: rollout._id as string,
                 generation: rollout.generation,
                 phase: rollout.phase,
+                // A name this port never listed: one test of it proves the whole send on a node.
+                witness: rollout.witness ?? null,
               }
             : null,
           nodes,
