@@ -3001,11 +3001,18 @@ draws abuse reports).
 A name a family already holds, one the operator ignored (the name, or its whole site: the
 registrable domain, public-suffix aware), and one past the scope's cap (2,000) is counted, never
 added. A candidate belongs to one **scope**: a network (a possible target and the names on its
-address), a family (names its target may serve), or both (a family on a network). Each scope
-holding candidates has a counts row (`sniHuntScopes`: how many it holds and how many are ready).
-An insert adds to its count at once, so the cap holds; any other change marks it for a recount,
-which the cron makes first (two a tick) before the scope in turn. The overview reads these rows,
-never the candidates themselves.
+address), a family (names its target may serve), or both (a family on a network). A candidate is
+**usable** when it is still to decide (not ignored, added, gone or failing) and its last check
+gave qualification's pass: `usableCandidate` (`src/shared/contracts/sni.ts`), the one definition
+every count, filter and list uses, on the server and on the page. Each scope holding candidates
+has a counts row (`sniHuntScopes`: how many it holds and how many are usable). Every change moves
+it at once (an insert, a check that starts or stops passing, an ignore or its undo, a family taking
+the name, a delete), so the cap holds and the overview never waits for a tick; it also marks the
+row for a recount that makes the counts absolute again, which the cron makes first (two a tick,
+the oldest-marked first, whether finding names is on or not) before the scope in turn. The
+overview reads these rows, never the candidates themselves. A family moved to another network
+loses what was found for it on the old one (`sniHunt.dropFamilyScope`), with its counts row; its
+ignores and certificate-log reads stay.
 
 **The top-sites sweep** (`sniHuntRuns`). Started by the cron when the last one ended
 `sweepEveryDays` ago and some network is hunting (Networks, "Find names on this network"; a
@@ -3151,7 +3158,9 @@ Routes, under `/api/v1/admin/edges/`: `GET sni/hunt` (settings, the sweep, count
 family), `GET sni/hunt/networks/{slug}` and `GET sni/hunt/families/{slug}` (a page of 200 candidates of one
 state, best first: `?state=new|failing|gone|ignored|added|all`, default `new`, and `?cursor=` for
 the next page, so ignored and added rows never take the place of ones to decide; the sites
-grouped by the first address they live on; the certificate-log reads), `POST sni/hunt/sweep`,
+grouped by the first address they live on; the counts, `usable` among them; for a network, what
+was found for each family on it, by family, never grouped with the network's own sites, since
+each was checked against its family's target; the certificate-log reads), `POST sni/hunt/sweep`,
 `DELETE sni/hunt/sweep`, `POST sni/hunt/networks/{slug} {enabled, place?: {country, city?}}`
 (where its nodes are: a place name for the timing checks, never an address), `POST
 sni/hunt/import {network | family, lines} | {seed}`, `POST sni/hunt/families/{slug}/cert`, `POST

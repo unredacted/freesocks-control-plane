@@ -4,11 +4,12 @@
  * (qualification's own verdict), what was measured (near the node, from
  * inside countries, OONI) and what adding does (the family's normal path).
  */
-import type {
-  SniCandidateRow,
-  SniHuntCtRow,
-  SniHuntImported,
-  SniHuntOverview,
+import {
+  usableCandidate,
+  type SniCandidateRow,
+  type SniHuntCtRow,
+  type SniHuntImported,
+  type SniHuntOverview,
 } from '../../../../../../shared/contracts/sni';
 import { CHECK_WORDS, type Dot } from './words';
 
@@ -45,7 +46,8 @@ export const HUNT_FILTER_LABEL: Record<HuntFilter, string> = {
   all: 'All',
 };
 
-const ready = (c: SniCandidateRow) => c.state === 'new' && c.check?.code === null;
+/** The same rule as every count of found names (`usableCandidate`). */
+const ready = (c: SniCandidateRow) => usableCandidate(c);
 
 /** Which state's pages a filter reads (the rest is narrowed on the page). */
 export const HUNT_FILTER_STATE: Record<
@@ -94,10 +96,12 @@ export function candidateWords(c: SniCandidateRow): { dot: Dot; sentence: string
   if (c.state === 'gone')
     return { dot: 'grey', sentence: 'It left its network: it now resolves outside it.' };
   if (!c.check) return { dot: 'grey', sentence: 'Not checked yet.' };
-  if (c.check.code !== null)
+  if (!ready(c))
     return {
       dot: 'red',
-      sentence: CHECK_WORDS[c.check.code] ?? 'It fails the check this family would run on it.',
+      sentence:
+        (c.check.code && CHECK_WORDS[c.check.code]) ??
+        'It fails the check this family would run on it.',
     };
   return { dot: 'green', sentence: checkPassWords(c) };
 }
@@ -174,7 +178,8 @@ export function siteOoniWords(c: SniCandidateRow): string | null {
 
 export function scoreWords(c: SniCandidateRow): string {
   if (!c.check) return 'No score until it is checked.';
-  if (c.check.code !== null) return 'No score: it would not qualify.';
+  if (!ready(c) && c.state !== 'ignored' && c.state !== 'added')
+    return 'No score: it would not qualify.';
   return `Score ${Math.round(c.score)} of 100 (${Math.round(c.baseScore)} before measurements).`;
 }
 

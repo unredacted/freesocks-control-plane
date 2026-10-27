@@ -3733,13 +3733,15 @@ export default defineSchema({
     total: v.number(),
     ready: v.number(),
     dirty: v.optional(v.boolean()),
+    // When it was marked for a recount: the oldest-marked is recounted first.
+    dirtyAt: v.optional(v.number()),
     countedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_scope', ['networkId', 'familyId'])
     .index('by_family', ['familyId'])
     .index('by_kind', ['kind'])
-    .index('by_dirty', ['dirty']),
+    .index('by_dirty', ['dirty', 'dirtyAt']),
 
   // Names and sites an operator ignored, so no later sweep or import brings
   // them back. A scope (network or family) limits it there; none = everywhere.

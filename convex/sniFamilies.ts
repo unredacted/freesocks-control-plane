@@ -461,6 +461,13 @@ export const update = internalMutation({
               : {}),
             updatedAt: Date.now(),
           });
+    // What was found for it on the old network was checked against that
+    // network: it goes (docs/edges.md "Finding names").
+    if (networkMoved)
+      await ctx.scheduler.runAfter(0, internal.sniHunt.dropFamilyScope, {
+        familyId: f._id,
+        ...(f.networkId ? { networkId: f.networkId } : {}),
+      });
     // Switched back on: names the qualification walked past meanwhile are due.
     if (a.enabled === true && !f.enabled && !recheck)
       await ctx.scheduler.runAfter(0, internal.edgeNetworks.requeueFamilyNames, {

@@ -235,7 +235,9 @@ export const huntCandidatesQuery = (
     queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
       fetchHuntScope(kind(), slug(), state(), pageParam),
     getNextPageParam: (last: SniHuntScopeView) => last.page.cursor ?? undefined,
-    refetchInterval: 60_000,
+    // Names waiting for their check move within minutes: read them again sooner.
+    refetchInterval: (q: { state: { data?: { pages: SniHuntScopeView[] } } }) =>
+      (q.state.data?.pages ?? []).some((p) => p.candidates.some((c) => !c.check)) ? 15_000 : 60_000,
   }));
 
 export function invalidateSni(qc: QueryClient): void {

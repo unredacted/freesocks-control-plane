@@ -23,7 +23,12 @@ import {
   siteOoniWords,
   sweepWords,
 } from './huntWords';
-import { HUNT_SOURCES, type SniCandidateRow } from '../../../../../../shared/contracts/sni';
+import {
+  HUNT_SOURCES,
+  HUNT_STATES,
+  usableCandidate,
+  type SniCandidateRow,
+} from '../../../../../../shared/contracts/sni';
 
 const base: SniCandidateRow = {
   id: 'c1',
@@ -159,6 +164,20 @@ describe('find names words', () => {
       'No score: it would not qualify.',
     );
     expect(matchesHuntFilter({ ...base, state: 'gone' }, 'ready')).toBe(false);
+  });
+
+  test('"ready" and "would qualify" follow the one rule every count uses', () => {
+    for (const state of HUNT_STATES)
+      for (const code of [null, 'q_cert'])
+        for (const check of [null, { ...base.check!, code }]) {
+          const c = { ...base, state, check };
+          expect(matchesHuntFilter(c, 'ready')).toBe(usableCandidate(c));
+          // Green "it would qualify" only for a usable candidate (an added one says its family).
+          if (state !== 'added')
+            expect(candidateWords(c).sentence.startsWith('It would qualify')).toBe(
+              usableCandidate(c),
+            );
+        }
   });
 
   test('the sweep, an import, a place and a family id in words', () => {
