@@ -245,9 +245,14 @@ describe('the reconcile keeps the lanes', () => {
   test('a short trusted lane is named with only clean spares; once full, the oldest open address leaves', async () => {
     const t = convexTest(schema, modules);
     const { relayId, listenerId, old1, old2 } = await seedNode(t);
-    const unclean = await freshEdge(t, relayId, listenerId, '198.51.100.50');
-    await t.mutation(internal.edgeLanes.setLanes, { relayId, lanes: { open: 1, trusted: 1 } });
+    // A second between each step: convex-test spaces creation times within one
+    // millisecond by 0.001, so a spare made in the switch's millisecond would
+    // read as made after it.
     vi.useFakeTimers({ now: Date.now() + 1000 });
+    const unclean = await freshEdge(t, relayId, listenerId, '198.51.100.50');
+    vi.setSystemTime(Date.now() + 1000);
+    await t.mutation(internal.edgeLanes.setLanes, { relayId, lanes: { open: 1, trusted: 1 } });
+    vi.setSystemTime(Date.now() + 1000);
     const clean = await freshEdge(t, relayId, listenerId, '198.51.100.51');
     const short = await t.mutation(internal.edgeLanes.reconcileLanes, { relayId });
     expect(short).toMatchObject({ kind: 'short', lane: 'trusted', spares: [clean] });
