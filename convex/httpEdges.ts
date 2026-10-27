@@ -762,6 +762,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ...(m.network !== undefined ? { network: m.network } : {}),
           ...(m.label !== undefined ? { label: m.label } : {}),
           ...(m.requireH2 !== undefined ? { requireH2: m.requireH2 } : {}),
+          ...(m.nodeUuid ? { nodeUuid: m.nodeUuid } : {}),
           ...act,
         }),
       );

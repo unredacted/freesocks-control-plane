@@ -39,6 +39,7 @@ export const manage = internalAction({
     network: v.optional(v.union(v.string(), v.null())),
     label: v.optional(v.string()),
     requireH2: v.optional(v.boolean()),
+    nodeUuid: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a): Promise<Record<string, unknown>> => {
@@ -51,7 +52,7 @@ export const manage = internalAction({
       const network = at.ok ? suggestNetwork(at.all, c.addresses, c.networks, onNetworkOf) : null;
       return {
         dryRun: true,
-        coverSite: `${c.target.address}:${c.target.port}`,
+        coverSite: c.coverSite,
         resolved: at.ok,
         network: network ? { slug: network.slug, label: network.label } : null,
         label: `${c.tag} names`,
@@ -64,6 +65,7 @@ export const manage = internalAction({
       ...(a.network !== undefined ? { network: a.network } : {}),
       ...(a.label !== undefined ? { label: a.label } : {}),
       ...(a.requireH2 !== undefined ? { requireH2: a.requireH2 } : {}),
+      ...(a.nodeUuid ? { nodeUuid: a.nodeUuid } : {}),
       ...(a.actorAdminId ? { actorAdminId: a.actorAdminId } : {}),
     });
     // Suggestions come from the target's own certificate first.

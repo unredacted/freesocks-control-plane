@@ -48,8 +48,8 @@ import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { listenersOfTransport, syncTransportNetwork } from './lib/edges/networkScope';
 import { networkIdOfSlug, networkPrefixes } from './edgeNetworks';
-import { markCandidatesAdded, scopeRow } from './lib/edges/sni/hunt/store';
-import { nameDelivery } from './lib/edges/sni/delivery';
+import { familyUsable, markCandidatesAdded } from './lib/edges/sni/hunt/store';
+import { combineDeliveries, nameDelivery, type DeliveryFacts } from './lib/edges/sni/delivery';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -275,10 +275,12 @@ export const detail = internalQuery({
     // name stands on its way to members across the family's transports
     // (lib/edges/sni/delivery.ts): on the backend, provable by a test, handed out.
     const latest = new Map<string, string>();
-    const onBackend = new Set<string>();
-    const provable = new Set<string>();
-    const handedOut: Set<string>[] = [];
+    // Each transport answers for itself: its own backend, rollout and nodes.
+    const perBinding: DeliveryFacts[] = [];
     for (const b of bindings) {
+      const onBackend = new Set<string>();
+      const provable = new Set<string>();
+      const handedOut: Set<string>[] = [];
       const rollouts = await ctx.db
         .query('sniRollouts')
         .withIndex('by_binding', (q) => q.eq('bindingId', b._id))
@@ -299,12 +301,21 @@ export const detail = internalQuery({
         handedOut.push(
           new Set((l.tlsNames ?? []).filter((n) => n.status === 'active').map((n) => n.name)),
         );
+      perBinding.push({ bound: true, onBackend, provable, nodes: handedOut });
     }
-    const facts = { bound: bindings.length > 0, onBackend, provable, nodes: handedOut };
-    const found = await scopeRow(ctx.db, {
-      ...(f.networkId ? { networkId: f.networkId } : {}),
-      familyId: f._id,
-    });
+    const unbound: DeliveryFacts = {
+      bound: false,
+      onBackend: new Set(),
+      provable: new Set(),
+      nodes: [],
+    };
+    const deliveryOf = (n: Doc<'sniNames'>) => {
+      const dn = { name: n.name, status: n.status, qualification: n.qualification.state };
+      return combineDeliveries(
+        perBinding.map((facts) => nameDelivery(dn, facts)),
+        nameDelivery(dn, unbound),
+      );
+    };
     // Where member reports single a name out (a hint; lib/edges/sni/health.ts).
     const sniCfg = await resolveSniConfig(ctx.db);
     const since = dayOf(Date.now() - sniCfg.reportWindowDays * 86_400_000);
@@ -368,12 +379,9 @@ export const detail = internalQuery({
         tlsVersion: n.qualification.tlsVersion ?? null,
         alpn: n.qualification.alpn ?? null,
         checkedAt: n.checkedAt ? new Date(n.checkedAt).toISOString() : null,
-        delivery: nameDelivery(
-          { name: n.name, status: n.status, qualification: n.qualification.state },
-          facts,
-        ),
+        delivery: deliveryOf(n),
       })),
-      suggestions: found?.ready ?? 0,
+      suggestions: await familyUsable(ctx.db, f._id),
       bindings: bindings.map((b) => ({
         id: b._id as string,
         backendSlug: servers.get(b.backendServerId as string) ?? '',

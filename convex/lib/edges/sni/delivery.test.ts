@@ -5,6 +5,7 @@
  */
 import { describe, expect, test } from 'vitest';
 import {
+  combineDeliveries,
   countDeliveries,
   familySlugForTransport,
   nameDelivery,
@@ -88,6 +89,38 @@ describe('a name on its way to members', () => {
     expect(
       nodeCounts(names, new Set(['b.example', 'c.example']), new Set(['a.example', 'c.example'])),
     ).toEqual({ inUse: 1, waitingTest: 1 });
+  });
+});
+
+describe('a family bound to several transports', () => {
+  test('each transport answers for itself; the step still needed somewhere wins', () => {
+    const unbound = { state: 'idle' as const, inUseOn: 0, nodes: 0 };
+    // A rollout confirmed on transport A only: proof there, a send still due on B.
+    const onA = nameDelivery(
+      usable('c.example'),
+      facts({
+        onBackend: new Set(['c.example']),
+        provable: new Set(['c.example']),
+        nodes: [new Set()],
+      }),
+    );
+    const onB = nameDelivery(usable('c.example'), facts({ nodes: [new Set()] }));
+    expect([onA.state, onB.state]).toEqual(['waiting_test', 'to_send']);
+    expect(combineDeliveries([onA, onB], unbound)).toEqual({
+      state: 'waiting_test',
+      inUseOn: 0,
+      nodes: 2,
+    });
+    // In use on A, to send on B: still a send to make.
+    const used = nameDelivery(usable('c.example'), facts({ nodes: [new Set(['c.example'])] }));
+    expect(combineDeliveries([used, onB], unbound)).toEqual({
+      state: 'to_send',
+      inUseOn: 1,
+      nodes: 2,
+    });
+    // In use everywhere it can be: in use.
+    expect(combineDeliveries([used, used], unbound).state).toBe('in_use');
+    expect(combineDeliveries([], unbound)).toBe(unbound);
   });
 });
 

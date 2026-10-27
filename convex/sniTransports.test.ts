@@ -293,6 +293,84 @@ describe('the transports of a backend', () => {
   });
 });
 
+describe('refusals and edges of the view', () => {
+  test('a dry run on a transport that is not REALITY is refused by name', async () => {
+    const { call } = await seed();
+    const res = await call('POST', 'transports/manage', {
+      backendSlug: 'panel-a',
+      transportUuid: 'i-ws',
+      dryRun: true,
+    });
+    expect(res.status).not.toBe(200);
+    expect((await res.json()).error.code).toBe('servers.not_reality');
+  });
+
+  test('a family another transport uses is never taken', async () => {
+    const { t, call } = await seed();
+    await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });
+    await t.mutation(internal.sniFamilies.create, {
+      slug: 'shared',
+      label: 'Shared',
+      targetAddress: 'target.example',
+      targetPort: 443,
+    });
+    await t.run(async (ctx) => {
+      const f = (await ctx.db.query('sniFamilies').first())!;
+      const serverId = (await ctx.db.query('backendServers').first())!._id;
+      await ctx.db.insert('sniInboundBindings', {
+        backendServerId: serverId,
+        profileUuid: PROFILE,
+        inboundTag: 'OTHER',
+        inboundUuid: 'i-other',
+        familyId: f._id,
+        generation: 0,
+        panelConfirmedGeneration: 0,
+        updatedAt: Date.now(),
+      });
+    });
+    const res = await call('POST', 'transports/manage', { ...manageBody, family: 'shared' });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('edge.sni.family_in_use');
+    expect(await t.run((ctx) => ctx.db.query('sniNames').collect())).toEqual([]);
+  });
+
+  test('a backend set up once stays set up through a later setup run', async () => {
+    const { t, serverId, view } = await seed();
+    await t.run((ctx) =>
+      ctx.db.insert('panelSetups', {
+        backendServerId: serverId,
+        desired: '{}',
+        desiredHash: 'fixture',
+        generation: 2,
+        state: 'failed',
+        readyAt: Date.now() - 60_000,
+        profileName: 'FreeSocks-Config',
+        modes: [],
+        templates: [],
+        originDns: null,
+        adopted: false,
+        gateVersion: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect((await view()).switches.backendSetUp).toBe(true);
+  });
+
+  test('an IPv6 target is a valid host and port', async () => {
+    const { t, view } = await seed();
+    await t.run(async (ctx) => {
+      const p = (await ctx.db.query('panelProfiles').first())!;
+      await ctx.db.patch(p._id, {
+        inbounds: p.inbounds.map((i) =>
+          i.reality ? { ...i, reality: { ...i.reality, target: '[2001:db8::1]:443' } } : i,
+        ),
+      });
+    });
+    expect((await view()).transports[0]!.coverSite).toBe('[2001:db8::1]:443');
+  });
+});
+
 describe('the network', () => {
   async function network(t: T) {
     const NET = { v4: ['192.0.2.0/24'], v6: [] as string[] };
@@ -341,6 +419,46 @@ describe('the network', () => {
       await (await call('POST', 'transports/manage', { ...manageBody, dryRun: true })).json(),
     );
     expect(r.network).toBeNull();
+  });
+
+  test("nodes in different countries: the place is the asking node's, or none", async () => {
+    const { t, call } = await seed({ edgeIp: '192.0.2.7' });
+    const networkId = await network(t);
+    await t.mutation(internal.sniFamilies.patchConfig, { patch: { enabled: true } });
+    const other = '44444444-4444-4444-8444-444444444444';
+    await t.run(async (ctx) => {
+      const n = (await ctx.db.query('panelNodes').first())!;
+      const { _id: _i, _creationTime: _c, ...row } = n;
+      await ctx.db.insert('panelNodes', {
+        ...row,
+        nodeUuid: other,
+        name: 'node-two',
+        countryCode: 'DE',
+      });
+    });
+    // Nobody named, and the nodes disagree: no place is guessed.
+    const done = SniManaged.parse(
+      await (await call('POST', 'transports/manage', { ...manageBody, network: 'net-a' })).json(),
+    );
+    expect(done.placeSet).toBe(false);
+    expect((await t.run((ctx) => ctx.db.get(networkId)))!.hunt).toBeUndefined();
+    // Asked from the second node's page: its country.
+    await call('DELETE', `bindings/${done.bindingId}`);
+    await call('DELETE', `families/${done.family}`);
+    const again = SniManaged.parse(
+      await (
+        await call('POST', 'transports/manage', {
+          ...manageBody,
+          network: 'net-a',
+          nodeUuid: other,
+        })
+      ).json(),
+    );
+    expect(again.placeSet).toBe(true);
+    expect((await t.run((ctx) => ctx.db.get(networkId)))!.hunt?.place).toEqual({
+      country: 'DE',
+      city: 'Example City',
+    });
   });
 
   test("managed on a network without a place, the network takes the node's", async () => {

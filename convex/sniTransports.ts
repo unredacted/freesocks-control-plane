@@ -30,8 +30,9 @@ import { verificationListenersOf } from './lib/edges/verificationContext';
 import { resolveServerConfig } from './lib/serverConfig';
 import { resolveSniConfig, resolveSniHuntConfig } from './lib/sniConfig';
 import { bindFamily, insertFamily } from './sniFamilies';
-import { MAX_CANDIDATES_PER_SCOPE } from './sniHunt';
-import { usableCandidate } from '../src/shared/contracts/sni';
+import { fcpWrites } from './backendSetup';
+import { familyUsable } from './lib/edges/sni/hunt/store';
+import { hostPort } from './lib/edges/ip';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -62,17 +63,6 @@ async function listenersByTransport(db: QueryCtx['db'], serverId: Id<'backendSer
       out.set(uuid, [...(out.get(uuid) ?? []), { relay, listener }]);
     }
   return out;
-}
-
-/** Found names a family may add now: its own finds, checked against its target, still undecided. */
-async function suggestionCount(db: QueryCtx['db'], f: Doc<'sniFamilies'>) {
-  const rows = await db
-    .query('sniCandidates')
-    .withIndex('by_scope_state_score', (q) =>
-      q.eq('networkId', f.networkId).eq('familyId', f._id).eq('state', 'new'),
-    )
-    .take(MAX_CANDIDATES_PER_SCOPE);
-  return rows.filter(usableCandidate).length;
 }
 
 const deliveryName = (n: Doc<'sniNames'>): DeliveryName => ({
@@ -216,7 +206,7 @@ export const status = internalQuery({
           profileUuid: p.profileUuid,
           profileName: p.name,
           port: i.port,
-          coverSite: target ? `${target.address}:${target.port}` : null,
+          coverSite: target ? hostPort(target.address, target.port) : null,
           listed: i.reality.serverNames.length,
           profileNodes: panelNodes
             .filter((n) => n.configProfileUuid === p.profileUuid)
@@ -228,7 +218,8 @@ export const status = internalQuery({
                 enabled: family.enabled,
                 bindingId: binding!._id as string,
                 counts: countDeliveries(names.map((n) => nameDelivery(n, facts).state)),
-                suggestions: await suggestionCount(ctx.db, family),
+                // The overview's number (every scope of the family, exact counts).
+                suggestions: await familyUsable(ctx.db, family._id),
               }
             : null,
           send: rollout
@@ -248,7 +239,8 @@ export const status = internalQuery({
         names: sni.enabled,
         findNames: hunt.enabled,
         backendChanges: servers.manage.enabled,
-        backendSetUp: setup?.state === 'ready',
+        // Established once (or adopted): what the backend ledger writes against.
+        backendSetUp: fcpWrites(setup),
       },
       transports,
     };
@@ -261,7 +253,9 @@ export const manageContext = internalQuery({
   handler: async (ctx, a) => {
     const server = await serverBySlug(ctx.db, a.backendSlug);
     const i = await transportOf(ctx.db, server._id, a.transportUuid);
-    const target = parseRealityTarget(i.reality!.target);
+    if (i.security !== 'reality' || !i.reality)
+      return refuse('servers.not_reality', 'Only a REALITY transport takes a server-name family');
+    const target = parseRealityTarget(i.reality.target);
     if (!target)
       return refuse('edge.sni.bad_target', 'The transport has no target that FCP can check');
     // Every address in use on the transport (a network suggestion must hold them all).
@@ -281,7 +275,13 @@ export const manageContext = internalQuery({
     for (const n of await ctx.db.query('edgeNetworks').take(200))
       if (hasPrefixes(n.prefixes))
         networks.push({ slug: n.slug, label: n.label, prefixes: n.prefixes });
-    return { tag: i.tag, target, addresses, networks };
+    return {
+      tag: i.tag,
+      target,
+      coverSite: hostPort(target.address, target.port),
+      addresses,
+      networks,
+    };
   },
 });
 
@@ -324,6 +324,8 @@ export const manage = internalMutation({
     network: v.optional(v.union(v.string(), v.null())),
     label: v.optional(v.string()),
     requireH2: v.optional(v.boolean()),
+    // The node whose page asked: its place is the network's, when unset.
+    nodeUuid: v.optional(v.string()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -344,6 +346,13 @@ export const manage = internalMutation({
         .withIndex('by_slug', (q) => q.eq('slug', a.family!))
         .unique();
       if (!found) return refuse('not_found', 'No such family');
+      // Only a family no transport uses: another transport's would take these names too.
+      const used = await ctx.db
+        .query('sniInboundBindings')
+        .withIndex('by_family', (q) => q.eq('familyId', found._id))
+        .first();
+      if (used)
+        return refuse('edge.sni.family_in_use', 'Another transport already uses this family');
       f = found;
     } else {
       // A short id from the tag, unique among families.
@@ -379,13 +388,21 @@ export const manage = internalMutation({
     if (f.networkId) {
       const network = await ctx.db.get(f.networkId);
       if (network && !network.hunt?.place) {
-        const node = (
+        // The node that asked, else only a country every node running it agrees on.
+        const running = (
           await ctx.db
             .query('panelNodes')
             .withIndex('by_server', (q) => q.eq('backendServerId', server._id))
             .collect()
-        ).find((n) => n.activeInboundUuids.includes(i.inboundUuid) && n.countryCode);
-        const place = placeFromNode(node?.countryCode, server.locationLabel);
+        ).filter((n) => n.activeInboundUuids.includes(i.inboundUuid));
+        const asked = a.nodeUuid ? running.find((n) => n.nodeUuid === a.nodeUuid) : undefined;
+        const countries = new Set(running.map((n) => n.countryCode?.toUpperCase() ?? ''));
+        const country = asked
+          ? asked.countryCode
+          : countries.size === 1
+            ? [...countries][0]
+            : undefined;
+        const place = placeFromNode(country, server.locationLabel);
         if (place) {
           await ctx.db.patch(network._id, {
             hunt: { enabled: network.hunt?.enabled ?? false, place, placeFrom: 'node' },

@@ -73,6 +73,33 @@ export function nameDelivery(n: DeliveryName, f: DeliveryFacts): NameDeliveryVie
   return view('idle');
 }
 
+/**
+ * One name of a family bound to several transports: each transport answers
+ * for itself (`nameDelivery` with its own backend, rollout and nodes), and the
+ * name shows the step still needed somewhere (a test, then a send), else in
+ * use, with the nodes of every transport counted together. Bound to none: the
+ * `unbound` answer.
+ */
+export function combineDeliveries(
+  views: readonly NameDeliveryView[],
+  unbound: NameDeliveryView,
+): NameDeliveryView {
+  if (views.length === 0) return unbound;
+  const inUseOn = views.reduce((n, v) => n + v.inUseOn, 0);
+  const nodes = views.reduce((n, v) => n + v.nodes, 0);
+  const order: NameDelivery[] = [
+    'off',
+    'failing',
+    'checking',
+    'waiting_test',
+    'to_send',
+    'in_use',
+    'idle',
+  ];
+  const state = order.find((s) => views.some((v) => v.state === s)) ?? 'idle';
+  return { state, inUseOn, nodes };
+}
+
 export interface TransportCounts {
   inUse: number;
   waitingTest: number;

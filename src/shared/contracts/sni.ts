@@ -678,6 +678,8 @@ export const SniManageRequest = z.object({
   network: z.string().min(1).nullable().optional(),
   label: z.string().max(80).optional(),
   requireH2: z.boolean().optional(),
+  /** The node whose page asked: its place becomes an unplaced network's. */
+  nodeUuid: z.string().min(1).optional(),
 });
 export type SniManageRequest = z.infer<typeof SniManageRequest>;
 

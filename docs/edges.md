@@ -2496,34 +2496,42 @@ the next rollout adds it), `idle` (qualified but on no way to members now: the f
 nothing, the backend lists it outside any confirmed rollout, or no node is protected; the next
 rollout covers it), `checking` (waiting for its first qualification), `failing` (its last check
 failed, or it is suspended), `off` (retired or burned). A node is a protected listener of the
-transport: names reach members only through an origin's addresses (§ Rollout and acceptance).
+transport: names reach members only through an origin's addresses (§ Rollout and acceptance). A
+family bound to several transports is judged per transport (its own backend, rollout and nodes),
+and a name shows the step still needed somewhere (a test, then a send), else in use, with the
+nodes of every transport counted together.
 
 **`GET sni/transports?backend=<slug>`**: every REALITY transport of the backend as Servers last
-read it: its tag, port, target (`coverSite`), how many names it lists, the backend nodes running
-its profile, its family (with the counts above and how many found names it may add, the overview's
+read it: its tag, port, target (`coverSite`, `host:port`, an IPv6 host in brackets), how many
+names it lists, the backend nodes running its profile, its family (with the counts above and how
+many found names it may add: the usable ones of every scope of the family, the overview's
 number), its newest rollout, and per protected node how many names its members get, how many a
 test there would add, and the addresses a test link can go through (a current endpoint
 confirmation). A transport with no family lists the families with its target that no transport
 uses. It also says which switch holds a step back: `edge.sni.enabled`, finding names,
-`servers.manage.enabled` (a rollout writes the backend through it) and whether the backend is set
-up.
+`servers.manage.enabled` (a rollout writes the backend through it) and whether the backend was set
+up (once, or adopted: what the backend ledger writes against, whatever a later setup run is doing).
 
 **`POST sni/transports/manage {backendSlug, transportUuid, dryRun?, family?, network?, label?,
-requireH2?}`**, throttled like a provider call:
+requireH2?, nodeUuid?}`**, throttled like a provider call:
 
 - `dryRun`: resolves the target the way qualification does (every answer public) and suggests the
   one network holding the target **and** every address in use on the transport. A family on a
   network fails every name whose target is off it, so a network is never suggested from the
-  addresses alone. Nothing is written.
+  addresses alone. Nothing is written. A transport that is not REALITY is refused
+  (`servers.not_reality`).
 - Otherwise, in one mutation: a new family with the transport's own target (short id from the tag,
   made unique; label "<tag> names"), or `family`, an existing one with that target that no
-  transport uses; bound with the names the transport lists now taken in (§ Server-name families,
-  a transport whose names were set by hand). A refusal leaves nothing behind. On a network whose
-  place for the timing checks is not set, the network takes the node's: its country, and the city
-  its backend's location label starts with (`edgeNetworks.hunt.placeFrom: node`; an operator
-  saving another place makes it theirs). Then, with finding names on, the target's certificate is
-  read once for suggestions (§ Finding names, `cert`). Nothing reaches the backend: the names are
-  qualified, and reach a node through the usual rollout and test.
+  transport uses (one another transport uses is refused, `edge.sni.family_in_use`: it would hand
+  these names to that transport too); bound with the names the transport lists now taken in
+  (§ Server-name families, a transport whose names were set by hand). A refusal leaves nothing
+  behind. On a network whose place for the timing checks is not set, the network takes the node's:
+  the country of the node whose page asked (`nodeUuid`), else the one country every node running
+  the transport agrees on (none when they differ), and the city its backend's location label starts
+  with (`edgeNetworks.hunt.placeFrom: node`; an operator saving another place makes it theirs).
+  Then, with finding names on, the target's certificate is read once for suggestions (§ Finding
+  names, `cert`). Nothing reaches the backend: the names are qualified, and reach a node through the
+  usual rollout and test.
 
 Refused while server names are off (`edge.sni.disabled`), for a transport that already has a
 family (`conflict`), and by every check of a bind. Audit `edge.sni.transport.manage` (slugs,
