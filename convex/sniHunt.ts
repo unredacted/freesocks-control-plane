@@ -129,6 +129,9 @@ async function audit(
 
 const iso = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 const sameScope = (c: Scope, s: Scope) => c.networkId === s.networkId && c.familyId === s.familyId;
+/** Whether a family is on the network a scope of it names (it may have moved since). */
+const familyOn = (f: Doc<'sniFamilies'>, networkId: Id<'edgeNetworks'> | undefined) =>
+  (f.networkId ?? undefined) === (networkId ?? undefined);
 /** Usable (the one definition: `usableCandidate`): not ignored, added, gone or failing, and passed its last check. */
 const passing = (c: Pick<Candidate, 'state' | 'check'>) => usableCandidate(c);
 
@@ -1282,8 +1285,10 @@ export const recordCt = internalMutation({
       ...(row.networkId ? { networkId: row.networkId } : {}),
       ...(row.familyId ? { familyId: row.familyId } : {}),
     };
+    const family = scope.familyId ? await ctx.db.get(scope.familyId) : null;
     const exists = scope.familyId
-      ? await ctx.db.get(scope.familyId)
+      ? // A family that moved to another network since: this read was for the old one.
+        family && familyOn(family, scope.networkId)
       : scope.networkId
         ? await ctx.db.get(scope.networkId)
         : null;
@@ -2160,23 +2165,35 @@ export const dropScope = internalMutation({
 /**
  * A family moved to another network: what was found for it on the old one was
  * checked against that network, so it goes (a page per run, again until none
- * is left), with its counts row. Its ignores and certificate-log reads stay.
+ * is left), with its certificate-log reads for it and its counts row. Its
+ * ignores stay. Each page first reads where the family is now: back on that
+ * network before the cleanup ended, its finds there are current again and
+ * nothing more is deleted (a deleted family is `dropScope`'s).
  */
 export const dropFamilyScope = internalMutation({
   args: { familyId: v.id('sniFamilies'), networkId: v.optional(v.id('edgeNetworks')) },
   handler: async (ctx, a) => {
     const PAGE = 200;
+    const f = await ctx.db.get(a.familyId);
+    if (!f || familyOn(f, a.networkId)) return { deleted: 0 };
     const rows = await ctx.db
       .query('sniCandidates')
       .withIndex('by_scope_base', (q) => q.eq('networkId', a.networkId).eq('familyId', a.familyId))
       .take(PAGE);
     for (const c of rows) await deleteCandidate(ctx, c);
+    const reads = (
+      await ctx.db
+        .query('sniHuntCt')
+        .withIndex('by_family', (q) => q.eq('familyId', a.familyId))
+        .take(PAGE)
+    ).filter((r) => r.networkId === a.networkId);
+    for (const r of reads) await ctx.db.delete(r._id);
     if (rows.length === PAGE) await ctx.scheduler.runAfter(0, internal.sniHunt.dropFamilyScope, a);
     else {
       const row = await scopeRow(ctx.db, { networkId: a.networkId, familyId: a.familyId });
       if (row) await ctx.db.delete(row._id);
     }
-    return { deleted: rows.length };
+    return { deleted: rows.length + reads.length };
   },
 });
 
@@ -2384,14 +2401,15 @@ export const scopeView = internalQuery({
     // candidates were checked against each family's target, never as this
     // network's own sites, so they are listed apart, never grouped here).
     const onNetwork = [];
+    // One counts row per family scope on the network: every one is read (a few
+    // small rows per family), and only families on the network now are listed.
     if (!family && network)
-      for (const r of await ctx.db
+      for await (const r of ctx.db
         .query('sniHuntScopes')
-        .withIndex('by_scope', (q) => q.eq('networkId', network._id))
-        .take(200)) {
+        .withIndex('by_scope', (q) => q.eq('networkId', network._id))) {
         if (!r.familyId || r.total === 0) continue;
         const f = await ctx.db.get(r.familyId);
-        if (f)
+        if (f && familyOn(f, network._id))
           onNetwork.push({
             slug: f.slug,
             label: f.label,

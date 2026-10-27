@@ -255,6 +255,44 @@ describe('scopes', () => {
     expect(await t.run((ctx) => ctx.db.query('sniCandidates').collect())).toEqual([]);
   });
 
+  test('moved away and back before the cleanup ran, its finds there are kept', async () => {
+    const { t, get } = await seed();
+    deps();
+    await net(t, 'net-b');
+    await t.action(internal.sniHuntOps.readCert, { slug: 'fam-a' });
+    await t.action(internal.sniHuntOps.check, {});
+    await t.mutation(internal.sniFamilies.update, { slug: 'fam-a', network: 'net-b' });
+    // The old network's page no longer lists it, cleanup or not.
+    expect((await get('sni/hunt/networks/net-a')).families).toEqual([]);
+    await t.mutation(internal.sniFamilies.update, { slug: 'fam-a', network: 'net-a' });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await liveUsable(get)).toBe(12);
+    expect(await famCounts(t)).toEqual({ total: 12, ready: 12 });
+  });
+
+  test('a certificate-log read for the network a family left adds nothing', async () => {
+    const { t } = await seed();
+    deps();
+    await net(t, 'net-b');
+    await t.mutation(internal.sniHunt.requestCt, {
+      domains: ['example.com'],
+      family: 'fam-a',
+      now: clock,
+    });
+    const read = (await t.run((ctx) => ctx.db.query('sniHuntCt').first()))!;
+    await t.mutation(internal.sniFamilies.update, { slug: 'fam-a', network: 'net-b' });
+    // Its answer arrives before the cleanup ran.
+    expect(
+      await t.mutation(internal.sniHunt.recordCt, {
+        id: read._id,
+        outcome: { kind: 'page', names: ['late.example.com'], lastId: null, done: true },
+        now: clock,
+      }),
+    ).toEqual({ ok: false });
+    expect(await t.run((ctx) => ctx.db.query('sniCandidates').collect())).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query('sniHuntCt').collect())).toEqual([]);
+  });
+
   test("a network's page lists what was found for its families, apart from its own sites", async () => {
     const { t, get } = await seed();
     deps();
