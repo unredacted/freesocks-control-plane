@@ -96,7 +96,7 @@ describe('a name on its way to members', () => {
         new Set(['b.example', 'd.example']),
         new Set(['a.example', 'c.example', 'e.example']),
       ),
-    ).toEqual({ inUse: 2, waitingTest: 1 });
+    ).toEqual({ inUse: 2, waitingTest: 1, pending: ['b.example'] });
   });
 });
 

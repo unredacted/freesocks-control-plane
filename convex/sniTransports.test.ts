@@ -251,8 +251,12 @@ describe('the transports of a backend', () => {
     });
     tr = (await view()).transports[0]!;
     expect(tr.list!.counts).toMatchObject({ inUse: 2, waitingTest: 1, toSend: 0 });
-    expect(tr.nodes[0]).toMatchObject({ inUse: 2, waitingTest: 1 });
-    expect(tr.send).toMatchObject({ generation: 1, phase: 'panel_confirmed' });
+    expect(tr.nodes[0]).toMatchObject({ inUse: 2, waitingTest: 1, pending: ['c.example'] });
+    expect(tr.send).toMatchObject({
+      generation: 1,
+      phase: 'panel_confirmed',
+      witness: 'c.example',
+    });
     // The family page says the same, name by name.
     const detail = SniFamilyDetail.parse(
       await (await call('GET', 'families/vless-relay-a')).json(),

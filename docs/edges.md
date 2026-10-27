@@ -2502,15 +2502,17 @@ and a name shows the step still needed somewhere (a test, then a send), else in 
 nodes of every transport counted together.
 
 **`GET sni/transports?backend=<slug>`**: every REALITY transport of the backend as Servers last
-read it: its tag, port, target (`coverSite`, `host:port`, an IPv6 host in brackets), how many
-names it lists, the backend nodes running its profile, its family (with the counts above and how
-many found names it may add: the usable ones of every scope of the family, the overview's
-number), its newest rollout, and per protected node how many names its members get, how many a
-test there would add, and the addresses a test link can go through (a current endpoint
-confirmation). A transport with no family lists the families with its target that no transport
-uses. It also says which switch holds a step back: `edge.sni.enabled`, finding names,
-`servers.manage.enabled` (a rollout writes the backend through it) and whether the backend was set
-up (once, or adopted: what the backend ledger writes against, whatever a later setup run is doing).
+read it: its tag, port, target (`coverSite`, `host:port`, an IPv6 host in brackets), how many names
+it lists, the backend nodes running its profile, its family (with the counts above and how many
+found names it may add: the usable ones of every scope of the family, the overview's number), its
+newest rollout (with its witness, the name whose one test proves the whole rollout on a node), and
+per protected node how many names its members get, the names a test there would add (any of them
+can be the one a test presents: a rollout without a witness needs one test per name), and the
+addresses a test link can go through (a current endpoint confirmation). A transport with no family
+lists the families with its target that no transport uses. It also says which switch holds a step
+back: `edge.sni.enabled`, finding names, `servers.manage.enabled` (a rollout writes the backend
+through it) and whether the backend was set up (once, or adopted: what the backend ledger writes
+against, whatever a later setup run is doing).
 
 **`POST sni/transports/manage {backendSlug, transportUuid, dryRun?, family?, network?, label?,
 requireH2?, nodeUuid?}`**, throttled like a provider call:
