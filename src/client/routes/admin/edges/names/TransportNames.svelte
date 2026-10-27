@@ -29,6 +29,7 @@
   import Link from '@client/components/Link.svelte';
   import { ApiCallError } from '@client/lib/api';
   import { invalidateSni, lookUpCt, readTargetCert, unbindFamily } from '@client/lib/sniApi';
+  import { invalidateServers } from '@client/lib/serversApi';
   import { router } from '@client/stores/router.svelte';
   import type { SniTransport, SniTransportsView } from '../../../../../shared/contracts/sni';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
@@ -71,6 +72,15 @@
   let step = $derived(transport && switches ? namesStep(transport, switches, nodeUuid) : null);
   let status = $derived(transport ? namesStatus(transport, nodeUuid) : null);
   let button = $derived(step ? (STEP_BUTTON[step.kind] ?? null) : null);
+
+  // Once the backend is seen to hold a send, the port's names as Servers reads
+  // them change too: read them again, so this card never shows two lists.
+  let lastPhase: string | null = null;
+  $effect(() => {
+    const phase = transport?.send?.phase ?? null;
+    if (lastPhase === 'writing' && phase !== 'writing') invalidateServers(qc);
+    lastPhase = phase;
+  });
 
   let manageOpen = $state(false);
   let addOpen = $state(false);
@@ -226,7 +236,7 @@
       <SendNamesDialog bind:open={sendOpen} {transport} />
     {/if}
     {#if step.kind === 'test' && transport.send}
-      <TestNameDialog bind:open={testOpen} rolloutId={transport.send.rolloutId} node={step.node} />
+      <TestNameDialog bind:open={testOpen} send={transport.send} node={step.node} />
     {/if}
     <ConfirmDialog
       bind:open={stopOpen}

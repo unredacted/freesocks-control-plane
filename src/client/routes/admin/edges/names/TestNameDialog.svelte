@@ -8,7 +8,13 @@
    * cannot stand in for it: a node that has not taken the names still answers
    * one.
    *
-   * Props: open (bindable), rolloutId, node (this node behind the port).
+   * Which name: the send's witness while it still waits here (one test of it
+   * proves the whole send), else one of the names still waiting here, the
+   * operator's pick when there are several (each proves only itself). Only the
+   * answer to the newest request is shown: changing the address or the name,
+   * or closing, drops what an older request brings back.
+   *
+   * Props: open (bindable), send (the newest rollout), node (this node behind the port).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -17,44 +23,63 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import { ApiCallError } from '@client/lib/api';
   import { buildNameTestLink, confirmNameTest, invalidateSni } from '@client/lib/sniApi';
-  import type { SniTestLink, SniTransportNode } from '../../../../../shared/contracts/sni';
+  import type {
+    SniTestLink,
+    SniTransport,
+    SniTransportNode,
+  } from '../../../../../shared/contracts/sni';
   import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import TestLink from '../simple/TestLink.svelte';
-  import { provenWords } from './lib/transportWords';
+  import { provenWords, testNameChoice } from './lib/transportWords';
   import { sniErrorWords } from './lib/words';
 
   let {
     open = $bindable(false),
-    rolloutId,
+    send,
     node,
-  }: { open: boolean; rolloutId: string; node: SniTransportNode } = $props();
+  }: {
+    open: boolean;
+    send: NonNullable<SniTransport['send']>;
+    node: SniTransportNode;
+  } = $props();
   const qc = useQueryClient();
   const uid = $props.id();
   const codeOf = (e: unknown) => (e instanceof ApiCallError ? e.payload.error.code : null);
 
   let edgeId = $state('');
+  // The name to present: null lets the server present the witness.
+  let sni = $state<string | null>(null);
+  let choice = $derived(testNameChoice(send, node));
   let test = $state<SniTestLink | null>(null);
   let error = $state<string | null>(null);
   let failed = $state(false);
   let busy = $state(false);
+  // Bumped by every request and by closing: an older answer is dropped.
+  let request = 0;
 
   async function build() {
     if (!edgeId) return;
+    const mine = ++request;
     test = null;
     error = null;
     failed = false;
     busy = true;
     try {
-      test = await buildNameTestLink(rolloutId, edgeId);
+      const built = await buildNameTestLink(send.rolloutId, edgeId, sni ?? undefined);
+      if (mine === request) test = built;
     } catch (e) {
-      error = sniErrorWords(codeOf(e));
+      if (mine === request) error = sniErrorWords(codeOf(e));
     } finally {
-      busy = false;
+      if (mine === request) busy = false;
     }
   }
   $effect(() => {
-    if (!open) return;
+    if (!open) {
+      request++;
+      return;
+    }
     edgeId = node.testable[0]?.edgeId ?? '';
+    sni = choice.kind === 'pick' ? (choice.names[0] ?? null) : null;
     void build();
   });
 
@@ -97,6 +122,24 @@
             {/each}
           </select>
         </label>
+      {/if}
+      {#if choice.kind === 'pick' && choice.names.length > 1}
+        <label class="flex flex-wrap items-center gap-2" for={`${uid}-sni`}>
+          <span class="text-muted-foreground">Name</span>
+          <select
+            id={`${uid}-sni`}
+            bind:value={sni}
+            onchange={build}
+            class="border-input bg-background h-11 max-w-full rounded-md border px-2 sm:h-9"
+          >
+            {#each choice.names as n (n)}
+              <option value={n}>{n}</option>
+            {/each}
+          </select>
+        </label>
+        <p class="text-muted-foreground">
+          These names were on this port before, so each one needs its own test here.
+        </p>
       {/if}
       {#if error}
         <p class="text-destructive">{error}</p>

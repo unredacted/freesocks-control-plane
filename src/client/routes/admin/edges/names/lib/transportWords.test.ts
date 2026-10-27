@@ -18,6 +18,7 @@ import {
   namesStatus,
   namesStep,
   provenWords,
+  testNameChoice,
   sendPlanWords,
   stepWords,
   suggestionReason,
@@ -59,7 +60,7 @@ function transport(o: Partial<SniTransport> = {}, c: Partial<typeof counts> = {}
       counts: { ...counts, ...c },
       suggestions: 0,
     },
-    send: { rolloutId: 'r-1', generation: 2, phase: 'panel_confirmed' },
+    send: { rolloutId: 'r-1', generation: 2, phase: 'panel_confirmed', witness: null },
     nodes: [
       {
         relaySlug: 'node-one',
@@ -67,6 +68,7 @@ function transport(o: Partial<SniTransport> = {}, c: Partial<typeof counts> = {}
         nodeName: 'node-one',
         inUse: 4,
         waitingTest: 0,
+        pending: [],
         testable: [{ edgeId: 'e-1', name: 'edge-a' }],
       },
     ],
@@ -87,7 +89,10 @@ describe('the next step', () => {
     expect(
       kind(
         namesStep(
-          transport({ send: { rolloutId: 'r', generation: 3, phase: 'writing' } }, { toSend: 2 }),
+          transport(
+            { send: { rolloutId: 'r', generation: 3, phase: 'writing', witness: null } },
+            { toSend: 2 },
+          ),
           on,
           NODE,
         ),
@@ -97,7 +102,10 @@ describe('the next step', () => {
     expect(
       kind(
         namesStep(
-          transport({ send: { rolloutId: 'r', generation: 3, phase: 'failed' } }, { toSend: 2 }),
+          transport(
+            { send: { rolloutId: 'r', generation: 3, phase: 'failed', witness: null } },
+            { toSend: 2 },
+          ),
           on,
           NODE,
         ),
@@ -335,5 +343,24 @@ describe('what each action did, in words', () => {
     ).toBe(
       "The cover site's certificate lists 6 names, 1 new. Certificate logs are being read too. New names show up as suggestions once checked.",
     );
+  });
+});
+
+describe('which name a test presents', () => {
+  test("the send's witness while it waits there, else a name still waiting there", () => {
+    expect(
+      testNameChoice({ witness: 'w.example' }, { pending: ['a.example', 'w.example'] }),
+    ).toEqual({
+      kind: 'witness',
+    });
+    // Proven already (no longer waiting), or no witness: one of the names still waiting.
+    expect(testNameChoice({ witness: 'w.example' }, { pending: ['a.example'] })).toEqual({
+      kind: 'pick',
+      names: ['a.example'],
+    });
+    expect(testNameChoice({ witness: null }, { pending: ['a.example', 'b.example'] })).toEqual({
+      kind: 'pick',
+      names: ['a.example', 'b.example'],
+    });
   });
 });

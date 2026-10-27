@@ -14,6 +14,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import { ApiCallError } from '@client/lib/api';
   import { invalidateSni, planRollout, startRollout } from '@client/lib/sniApi';
+  import { invalidateServers } from '@client/lib/serversApi';
   import type { SniRolloutPlan, SniTransport } from '../../../../../shared/contracts/sni';
   import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { sendPlanWords } from './lib/transportWords';
@@ -51,6 +52,8 @@
     } finally {
       busy = false;
       invalidateSni(qc);
+      // The port's names as Servers reads them (the card lists them too).
+      invalidateServers(qc);
     }
   }
 </script>

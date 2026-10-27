@@ -54,18 +54,22 @@
     return [...by.entries()].map(([site, names]) => ({ site, names }));
   });
 
+  // Everything offered starts picked; unpick what you do not want. Each answer
+  // (a refetch included) is reconciled: a name offered for the first time is
+  // picked, one no longer offered drops out, an unpick is kept.
   let picked = $state<string[]>([]);
-  let seeded = $state(false);
+  let offered = new Set<string>();
   $effect(() => {
     if (!open) {
-      seeded = false;
+      offered = new Set();
+      picked = [];
       return;
     }
-    // Everything offered starts picked; unpick what you do not want.
-    if (!seeded && found.data) {
-      picked = rows.map((r) => r.id);
-      seeded = true;
-    }
+    if (!found.data) return;
+    const ids = rows.map((r) => r.id);
+    const kept = new Set(picked);
+    picked = ids.filter((id) => kept.has(id) || !offered.has(id));
+    offered = new Set([...offered, ...ids]);
   });
   const toggle = (id: string, on: boolean) =>
     (picked = on ? [...picked, id] : picked.filter((x) => x !== id));

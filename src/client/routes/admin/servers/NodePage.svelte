@@ -286,6 +286,7 @@
                     : undefined}
                 />
               {:else if names}
+                {@const unknown = inbound.security === 'reality' && sniTransports.isError}
                 <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <details class="min-w-0">
                     <summary class="text-muted-foreground cursor-pointer">
@@ -297,7 +298,7 @@
                       {/each}
                     </ul>
                   </details>
-                  {#if canWrite && node.profile}
+                  {#if canWrite && node.profile && !unknown}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -309,6 +310,12 @@
                     >
                       Edit
                     </Button>
+                  {/if}
+                  {#if unknown}
+                    <span class="text-muted-foreground basis-full">
+                      Whether FCP manages these names could not be read just now. Reload to try
+                      again.
+                    </span>
                   {/if}
                 </div>
               {/if}

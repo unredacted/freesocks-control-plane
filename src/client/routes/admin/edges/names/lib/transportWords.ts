@@ -207,6 +207,19 @@ export function sendPlanWords(p: SniRolloutPlan, t: SniTransport): string[] {
   return out;
 }
 
+/**
+ * Which name a test on a node presents: the send's witness while it still
+ * waits there (one test of it proves the whole send), else one of the names
+ * still waiting there (each proves only itself, so the operator may pick).
+ */
+export function testNameChoice(
+  send: Pick<NonNullable<SniTransport['send']>, 'witness'>,
+  node: Pick<SniTransportNode, 'pending'>,
+): { kind: 'witness' } | { kind: 'pick'; names: string[] } {
+  if (send.witness && node.pending.includes(send.witness)) return { kind: 'witness' };
+  return { kind: 'pick', names: [...node.pending] };
+}
+
 /** After "It connected". */
 export function provenWords(activated: number, nodeName: string): string {
   return activated === 0
