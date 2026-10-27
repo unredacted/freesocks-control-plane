@@ -38,9 +38,11 @@ jobs:
           path: .cache/compat/bin
           key: compat-bin-${{ hashFiles('tests/compat/manifest.ts') }}
       - run: bunx tsc -p tests/compat/tsconfig.json --noEmit
-      - run: bunx vitest run convex/clientCompatibility.test.ts convex/subscriptionFront.test.ts convex/issueReports.test.ts convex/lib/backends/remnawave.test.ts
+      - name: Client catalogue, multi-proxy regressions and subscription delivery
+        run: bunx vitest run convex/clientCompatibility.test.ts convex/subscriptionFront.test.ts convex/issueReports.test.ts convex/lib/backends/remnawave.test.ts
       - run: bun run test:integration:remnawave
-      - run: bun run test:compat
+      - name: All client formats, per-proxy connections and packaged SFL
+        run: bun run test:compat
       - if: always()
         run: bun --no-env-file scripts/compat/report.ts
       - uses: actions/upload-artifact@v7

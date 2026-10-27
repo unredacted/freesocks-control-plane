@@ -5,6 +5,8 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildImportLink } from '../../src/client/lib/appLinks';
+import { assertSubscription } from './assertions';
+import { COMPAT_ENDPOINTS } from './fixture';
 
 const url = process.env.FCP_COMPAT_SUB_URL;
 if (!url || !['127.0.0.1', 'localhost', 'host.docker.internal'].includes(new URL(url).hostname))
@@ -90,9 +92,7 @@ try {
       content: await (window as any).desktop.profiles.readContent(profile.id),
     };
   });
-  const config = JSON.parse(selected.content);
-  if (!config.outbounds.some((o: any) => o.type === 'vless'))
-    throw new Error('SFL imported no VLESS outbound');
+  assertSubscription(selected.content, 'singbox', COMPAT_ENDPOINTS);
   await page.getByRole('button', { name: 'Update', exact: true }).click();
   await expect
     .poll(async () =>
@@ -102,6 +102,11 @@ try {
       }, selected.id),
     )
     .toBeGreaterThan(selected.lastUpdated);
+  const refreshed = await page.evaluate(
+    (id) => (window as any).desktop.profiles.readContent(id),
+    selected.id,
+  );
+  assertSubscription(refreshed, 'singbox', COMPAT_ENDPOINTS);
   await page.screenshot({ path: `${output}/imported.png` });
   await writeFile(
     `${output}/result.json`,
@@ -111,6 +116,8 @@ try {
         import: 'passed',
         manualUrlEntry: 'passed',
         refresh: 'passed',
+        endpointsAfterImport: COMPAT_ENDPOINTS.length,
+        endpointsAfterRefresh: COMPAT_ENDPOINTS.length,
         tunnel: 'not-tested',
         os: process.env.FCP_COMPAT_OS ?? 'debian-13-container',
       },

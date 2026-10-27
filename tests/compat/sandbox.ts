@@ -52,3 +52,23 @@ export function routing(engine: 'singbox' | 'mihomo', body: string): unknown {
   const c = YAML.parse(body) as Obj;
   return { mode: c.mode, proxies: c.proxies, groups: c['proxy-groups'], rules: c.rules };
 }
+
+/** A separate per-endpoint probe: the default selector has exactly one choice. */
+export function selectProxy(engine: 'singbox' | 'mihomo', body: string, name: string): string {
+  if (engine === 'singbox') {
+    const c = JSON.parse(body) as Obj;
+    const group = c.outbounds.find((o: Obj) => o.tag === c.route.final);
+    if (group?.type !== 'selector' || !group.outbounds.includes(name))
+      throw new Error('Probe proxy is not in the default selector');
+    group.outbounds = [name];
+    group.default = name;
+    return JSON.stringify(c);
+  }
+  const c = YAML.parse(body) as Obj;
+  const target = c.rules.at(-1).split(',')[1].trim();
+  const group = c['proxy-groups'].find((g: Obj) => g.name === target);
+  if (group?.type !== 'select' || !group.proxies.includes(name))
+    throw new Error('Probe proxy is not in the default selector');
+  group.proxies = [name];
+  return YAML.stringify(c);
+}

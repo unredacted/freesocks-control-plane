@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { compose } from '../../tests/compat/compose';
+import { COMPAT_ENDPOINTS } from '../../tests/compat/fixture';
 
 const bunVersion = JSON.parse(readFileSync('package.json', 'utf8')).packageManager.split('@')[1];
 const root = resolve('.cache/compat/runtime');
@@ -35,7 +36,7 @@ try {
       '-subj',
       '/CN=compat-origin',
       '-addext',
-      'subjectAltName=DNS:compat-origin',
+      `subjectAltName=${COMPAT_ENDPOINTS.map((endpoint) => `DNS:${endpoint.serverName}`).join(',')}`,
     ],
     { stdio: 'ignore' },
   );

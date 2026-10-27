@@ -9,9 +9,10 @@ import {
   type TemplateFamily,
 } from '../../convex/lib/backend/subscriptionTemplates';
 import { compose } from './compose';
+import { COMPAT_NODE, COMPAT_ENDPOINTS } from './fixture';
 
 /** The seeded node's name: it must never reach a member body. */
-export const COMPAT_NODE = 'compat-node';
+export { COMPAT_NODE } from './fixture';
 export const COMPAT_REMARK = addressRemark(COMPAT_NODE, 'compat-origin');
 /** The selector group's name in the backend's own subscription templates. */
 export const COMPAT_TEMPLATE_GROUP = '→ Remnawave';
@@ -100,43 +101,46 @@ export async function seedPanel() {
   const profile = await api('config-profiles', 'POST', {
     name: 'FCP compatibility',
     config: {
-      inbounds: [
-        {
-          tag: 'compat-reality',
-          port: 443,
-          protocol: 'vless',
-          settings: { clients: [], decryption: 'none' },
-          streamSettings: {
-            network: 'tcp',
-            security: 'reality',
-            realitySettings: {
-              dest: 'compat-origin:8443',
-              serverNames: ['compat-origin'],
-              privateKey,
-              publicKey,
-              shortIds: [shortId],
-            },
+      inbounds: COMPAT_ENDPOINTS.map((endpoint) => ({
+        tag: `compat-reality-${endpoint.port}`,
+        port: endpoint.port,
+        protocol: 'vless',
+        settings: { clients: [], decryption: 'none' },
+        streamSettings: {
+          network: 'tcp',
+          security: 'reality',
+          realitySettings: {
+            dest: 'compat-origin:8443',
+            serverNames: [endpoint.serverName],
+            privateKey,
+            publicKey,
+            shortIds: [shortId],
           },
         },
-      ],
+      })),
       outbounds: [{ protocol: 'freedom', tag: 'DIRECT' }],
     },
   });
-  const inbound = profile.inbounds[0];
   const squad = await api('internal-squads', 'POST', {
     name: 'FCP compatibility',
-    inbounds: [inbound.uuid],
+    inbounds: profile.inbounds.map((inbound: { uuid: string }) => inbound.uuid),
   });
-  await api('hosts', 'POST', {
-    inbound: { configProfileUuid: profile.uuid, configProfileInboundUuid: inbound.uuid },
-    // FCP's own address remark for a direct node (`<node> | <server name>`):
-    // members receive it renamed (convex/lib/memberEntryNames.ts).
-    remark: COMPAT_REMARK,
-    address: 'compat-proxy',
-    port: 443,
-    sni: 'compat-origin',
-    fingerprint: 'chrome',
-  });
+  for (const endpoint of COMPAT_ENDPOINTS) {
+    const inbound = profile.inbounds.find(
+      (inbound: { tag: string }) => inbound.tag === `compat-reality-${endpoint.port}`,
+    );
+    if (!inbound) throw new Error('Panel did not create a compatibility inbound');
+    await api('hosts', 'POST', {
+      inbound: { configProfileUuid: profile.uuid, configProfileInboundUuid: inbound.uuid },
+      // FCP's own address remark for a direct node (`<node> | <server name>`):
+      // members receive it renamed (convex/lib/memberEntryNames.ts).
+      remark: addressRemark(COMPAT_NODE, endpoint.serverName),
+      address: endpoint.server,
+      port: endpoint.port,
+      sni: endpoint.serverName,
+      fingerprint: 'chrome',
+    });
+  }
   await useTemplates(api, 'fixture');
   const issued = await remnawaveIssueUser(cfg, {
     username: `compat_${randomUUID().slice(0, 8)}`,
@@ -152,24 +156,22 @@ export async function seedPanel() {
     '.cache/compat/runtime/server.json',
     JSON.stringify({
       log: { level: 'error' },
-      inbounds: [
-        {
-          type: 'vless',
-          listen: '::',
-          listen_port: 443,
-          users: [{ uuid, flow: 'xtls-rprx-vision' }],
-          tls: {
+      inbounds: COMPAT_ENDPOINTS.map((endpoint) => ({
+        type: 'vless',
+        listen: '::',
+        listen_port: endpoint.port,
+        users: [{ uuid, flow: 'xtls-rprx-vision' }],
+        tls: {
+          enabled: true,
+          server_name: endpoint.serverName,
+          reality: {
             enabled: true,
-            server_name: 'compat-origin',
-            reality: {
-              enabled: true,
-              private_key: privateKey,
-              short_id: [shortId],
-              handshake: { server: 'compat-origin', server_port: 8443 },
-            },
+            private_key: privateKey,
+            short_id: [shortId],
+            handshake: { server: 'compat-origin', server_port: 8443 },
           },
         },
-      ],
+      })),
       outbounds: [{ type: 'direct' }],
     }),
   );
