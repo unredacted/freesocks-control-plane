@@ -6,7 +6,9 @@
    * `/admin/edges/nodes/<slug>` address redirects here, `?test=<edgeId>` opens
    * its test card), the transports it serves with the addresses members get
    * for each (the operator's own fronts members no longer get are listed
-   * apart), and every action on the node in the header. Nothing on this page
+   * apart), each REALITY transport's server names with their one next step
+   * (TransportNames: manage, add suggestions, send, test), and every action on
+   * the node in the header. Nothing on this page
    * changes a backend unless changes are allowed and the node role has handed
    * it over.
    *
@@ -29,6 +31,8 @@
   import type { AddressView, TransportView } from '../../../../shared/contracts/servers';
   import SectionHeader from '../edges/components/SectionHeader.svelte';
   import { edgeSummaryQuery } from '@client/lib/edgesApi';
+  import { transportsQuery } from '@client/lib/sniApi';
+  import TransportNames from '../edges/names/TransportNames.svelte';
   import StatusDot from '../edges/simple/StatusDot.svelte';
   import ActivationSection from './components/ActivationSection.svelte';
   import HostDialog from './components/HostDialog.svelte';
@@ -92,6 +96,8 @@
     )?.relay.slug ?? null,
   );
   const EdgesPanel = () => import('../edges/simple/NodeEdgesPanel.svelte');
+  // Each REALITY transport's names: where they stand and the next step.
+  const sniTransports = transportsQuery(() => slug);
   let back = $derived({
     href: serversPaths.home({ instance: slug ?? undefined }),
     label: 'Servers',
@@ -262,7 +268,24 @@
                 {/if}
               </div>
 
-              {#if names}
+              {#if inbound.security === 'reality' && slug && !sniTransports.isError}
+                <TransportNames
+                  backendSlug={slug}
+                  nodeUuid={uuid}
+                  transport={sniTransports.data?.transports.find(
+                    (t) => t.transportUuid === inbound.transportUuid,
+                  )}
+                  switches={sniTransports.data?.switches}
+                  names={inbound.serverNames ?? []}
+                  serversHref={back.href}
+                  onEditByHand={canWrite && node.profile
+                    ? () => {
+                        namesFor = { profileUuid: node.profile!.profileUuid, inbound };
+                        namesOpen = true;
+                      }
+                    : undefined}
+                />
+              {:else if names}
                 <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <details class="min-w-0">
                     <summary class="text-muted-foreground cursor-pointer">

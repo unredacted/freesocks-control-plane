@@ -28,7 +28,11 @@ import {
   SniHuntImported,
   SniHuntOverview,
   SniHuntScopeView,
+  SniManageDryRun,
+  SniManaged,
+  SniTransportsView,
   type HuntPlace,
+  type SniManageRequest,
   type SniBindRequest,
   type SniConfigPatch,
 } from '../../shared/contracts/sni';
@@ -126,6 +130,17 @@ export const buildNameTestLink = (rolloutId: string, edgeId: string, sni?: strin
 export const confirmNameTest = (receiptId: string) =>
   apiClient.post(`${BASE}/receipts/${enc(receiptId)}/confirm`, {}, SniReceiptConfirmed);
 
+// --- a transport's names (docs/edges.md "A transport's names") ------------------------------
+/** Every REALITY transport of a backend, with where its names stand. */
+export const fetchTransports = (backendSlug: string) =>
+  apiClient.get(`${BASE}/transports?backend=${enc(backendSlug)}`, SniTransportsView);
+/** What managing a transport's names would suggest (the network); nothing is written. */
+export const previewManage = (body: Omit<SniManageRequest, 'dryRun'>) =>
+  apiClient.post(`${BASE}/transports/manage`, { ...body, dryRun: true }, SniManageDryRun);
+/** Manage a transport's names with FCP: a name list with its cover site, its names taken in. */
+export const manageTransport = (body: Omit<SniManageRequest, 'dryRun'>) =>
+  apiClient.post(`${BASE}/transports/manage`, body, SniManaged);
+
 // --- finding names (docs/edges.md "Finding names") ------------------------------------------
 const HUNT = `${BASE}/hunt`;
 export const fetchHunt = () => apiClient.get(HUNT, SniHuntOverview);
@@ -181,7 +196,22 @@ export const sniKeys = {
   hunt: [...ROOT, 'hunt'] as const,
   huntNetwork: (slug: string) => [...ROOT, 'hunt', 'network', slug] as const,
   huntFamily: (slug: string) => [...ROOT, 'hunt', 'family', slug] as const,
+  transports: (backendSlug: string) => [...ROOT, 'transports', backendSlug] as const,
 };
+
+/** A backend's transports and their names: sooner while a send runs or names are checked. */
+export const transportsQuery = (backendSlug: () => string | null) =>
+  createQuery(() => ({
+    queryKey: sniKeys.transports(backendSlug() ?? ''),
+    queryFn: () => fetchTransports(backendSlug()!),
+    enabled: !!backendSlug(),
+    refetchInterval: (q: { state: { data?: SniTransportsView } }) =>
+      (q.state.data?.transports ?? []).some(
+        (t) => t.send?.phase === 'writing' || (t.list?.counts.checking ?? 0) > 0,
+      )
+        ? 10_000
+        : 30_000,
+  }));
 
 export const networksQuery = () =>
   createQuery(() => ({ queryKey: sniKeys.networks, queryFn: fetchNetworks, staleTime: 30_000 }));
