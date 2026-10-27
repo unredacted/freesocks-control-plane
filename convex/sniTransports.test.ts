@@ -207,6 +207,8 @@ describe('the transports of a backend', () => {
     let tr = (await view()).transports[0]!;
     expect(tr.list).toMatchObject({ slug: 'vless-relay-a', label: `${TAG} names` });
     expect(tr.list!.counts).toMatchObject({ checking: 2, inUse: 0 });
+    // Members are still handed both while they are checked: in use on the node.
+    expect(tr.nodes[0]).toMatchObject({ inUse: 2, waitingTest: 0 });
     expect(await t.run((ctx) => ctx.db.query('panelOps').collect())).toEqual([]);
     // Checked: the node already hands both out.
     await qualifyAll(t);

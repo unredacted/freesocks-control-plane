@@ -84,11 +84,19 @@ describe('a name on its way to members', () => {
     const names = [
       usable('a.example'),
       usable('b.example'),
-      { ...usable('c.example'), qualification: 'failed' as const },
+      { ...usable('c.example'), qualification: 'pending' as const },
+      { ...usable('d.example'), qualification: 'failed' as const },
+      { ...usable('e.example'), status: 'retired' as const },
     ];
+    // Handed out is in use whatever its check says now (a name being checked
+    // again is still what members get); a test only proves usable names.
     expect(
-      nodeCounts(names, new Set(['b.example', 'c.example']), new Set(['a.example', 'c.example'])),
-    ).toEqual({ inUse: 1, waitingTest: 1 });
+      nodeCounts(
+        names,
+        new Set(['b.example', 'd.example']),
+        new Set(['a.example', 'c.example', 'e.example']),
+      ),
+    ).toEqual({ inUse: 2, waitingTest: 1 });
   });
 });
 

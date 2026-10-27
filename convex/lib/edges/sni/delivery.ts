@@ -133,7 +133,12 @@ export function countDeliveries(states: readonly NameDelivery[]): TransportCount
   return c;
 }
 
-/** One node: how many usable names its members get, and how many a test there would add. */
+/**
+ * One node: how many of the family's names its members are handed (whatever
+ * their last check said: a name being checked again, or one that stopped
+ * qualifying but is an origin's last, is still handed out), and how many usable
+ * names a test there would add.
+ */
 export function nodeCounts(
   names: readonly DeliveryName[],
   provable: ReadonlySet<string>,
@@ -142,9 +147,9 @@ export function nodeCounts(
   let inUse = 0;
   let waitingTest = 0;
   for (const n of names) {
-    if (!usableName(n)) continue;
+    if (n.status === 'retired' || n.status === 'burned') continue;
     if (handedOut.has(n.name)) inUse++;
-    else if (provable.has(n.name)) waitingTest++;
+    else if (usableName(n) && provable.has(n.name)) waitingTest++;
   }
   return { inUse, waitingTest };
 }
