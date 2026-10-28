@@ -287,3 +287,21 @@ export function nameActionWords(
     );
   return parts.join(' ');
 }
+
+/**
+ * Why the checks from inside a country put a name under "Needs you", in one
+ * line: they suggest it is blocked somewhere, or disagree with a mark. Null
+ * when they do not.
+ */
+export function checksWantWords(n: SniNameRow): string | null {
+  const blocked = n.vantage
+    .filter((v) => v.decision === 'suggest' && v.suggestion === 'blocked')
+    .map((v) => v.country);
+  const conflict = n.vantage.filter((v) => v.decision === 'conflict').map((v) => v.country);
+  const parts: string[] = [];
+  if (blocked.length) parts.push(`suggest it is blocked in ${blocked.join(', ')}`);
+  if (conflict.length) parts.push(`disagree with your mark in ${conflict.join(', ')}`);
+  return parts.length
+    ? `The checks from inside a country ${parts.join(' and ')}: see Details.`
+    : null;
+}

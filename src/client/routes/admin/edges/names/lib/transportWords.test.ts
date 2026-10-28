@@ -122,6 +122,23 @@ describe('the next step', () => {
     expect(kind(namesStep(transport(), on, NODE))).toBe('done');
   });
 
+  test('a port or a node with no protected address never reads "in use"', () => {
+    // A node with no protected address of its own, on its page.
+    expect(namesStep(transport(), on, 'n-unprotected')).toEqual({
+      kind: 'unprotected',
+      here: true,
+    });
+    expect(namesStatus(transport(), 'n-unprotected')).toEqual({
+      dot: 'grey',
+      text: '4 names on the port',
+    });
+    // A port nobody protects, on the name list's page.
+    const bare = transport({ nodes: [] }, { inUse: 0, idle: 4 });
+    expect(namesStep(bare, on, null)).toEqual({ kind: 'unprotected', here: false });
+    expect(namesStatus(bare, null).text).toBe('4 names on the port');
+    expect(stepWords({ kind: 'unprotected', here: false }, bare)).toMatch(/^No node behind/);
+  });
+
   test('a send comes before a test: one test afterwards proves all of it', () => {
     const t = transport({}, { toSend: 1, waitingTest: 2 });
     t.nodes[0]!.waitingTest = 2;
@@ -133,7 +150,7 @@ describe('the next step', () => {
     t.nodes[0]!.waitingTest = 2;
     expect(kind(namesStep(t, on, NODE))).toBe('test');
     // Another node's page: nothing to test there.
-    expect(kind(namesStep(t, on, 'n-2'))).toBe('done');
+    expect(kind(namesStep(t, on, 'n-2'))).toBe('unprotected');
     // A name list's page (every node at once): the test is per node, below.
     expect(namesStep(t, on, null)).toEqual({ kind: 'test_nodes', nodes: 1 });
     t.nodes[0]!.testable = [];
@@ -164,6 +181,8 @@ describe('the next step', () => {
       { kind: 'test', node: t.nodes[0]! },
       { kind: 'test_needs_address', node: t.nodes[0]! },
       { kind: 'test_nodes', nodes: 2 },
+      { kind: 'unprotected', here: true },
+      { kind: 'unprotected', here: false },
       { kind: 'add_suggestions', count: 2 },
       { kind: 'checking', count: 2 },
       { kind: 'done' },

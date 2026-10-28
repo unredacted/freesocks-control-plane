@@ -44,6 +44,8 @@ export type NamesStep =
   | { kind: 'test_needs_address'; node: SniTransportNode }
   /** For every node at once (a name list's page): names wait for a test on these nodes. */
   | { kind: 'test_nodes'; nodes: number }
+  /** No protected node hands the names out: on this node's page (here) or behind the port at all. */
+  | { kind: 'unprotected'; here: boolean }
   /** Found names the cover site serves, ready to add. */
   | { kind: 'add_suggestions'; count: number }
   /** Names are being checked against the cover site (minutes). */
@@ -85,6 +87,9 @@ export function namesStep(
     return { kind: 'test_nodes', nodes: waiting };
   if (t.list.suggestions > 0) return { kind: 'add_suggestions', count: t.list.suggestions };
   if (c.checking > 0) return { kind: 'checking', count: c.checking };
+  // Names reach members only through protected addresses: nothing is "in use" without them.
+  if (nodeUuid !== null && !node) return { kind: 'unprotected', here: true };
+  if (t.nodes.length === 0) return { kind: 'unprotected', here: false };
   return { kind: 'done' };
 }
 
@@ -107,16 +112,21 @@ export function namesStatus(t: SniTransport, nodeUuid: string | null): { dot: Do
   }
   const c = t.list.counts;
   const node = nodeOf(t, nodeUuid);
+  // No protected node (here, or behind the port): the names are on the port, handed out by none.
+  const unprotected = nodeUuid !== null ? !node : t.nodes.length === 0;
   const inUse = node ? node.inUse : c.inUse;
   const waiting = node ? node.waitingTest : c.waitingTest;
-  const parts = [`${plural(inUse, 'name')} in use`];
+  const parts = [
+    unprotected ? `${plural(t.listed, 'name')} on the port` : `${plural(inUse, 'name')} in use`,
+  ];
   if (waiting) parts.push(`${waiting} waiting for a test`);
   if (c.toSend) parts.push(`${c.toSend} to send`);
   if (c.checking) parts.push(`${c.checking} being checked`);
   if (c.failing) parts.push(`${c.failing} failing`);
   if (t.list.suggestions) parts.push(plural(t.list.suggestions, 'suggestion'));
-  const dot: Dot =
-    !t.list.enabled || inUse === 0
+  const dot: Dot = unprotected
+    ? 'grey'
+    : !t.list.enabled || inUse === 0
       ? inUse === 0 && c.checking + c.toSend + waiting > 0
         ? 'amber'
         : 'grey'
@@ -167,6 +177,10 @@ export function stepWords(step: NamesStep, t: SniTransport): string {
       return 'The node has the new names. Members get them once one test proves the node accepts them.';
     case 'test_nodes':
       return `The new names are on the node. Members get them once a test proves the node accepts them: test one on ${step.nodes === 1 ? 'the node' : `each of the ${step.nodes} nodes`} below.`;
+    case 'unprotected':
+      return step.here
+        ? "This node is not protected, so FCP hands its members none of these names: they get the one name on each of the node's own addresses. Protect it to hand them out."
+        : 'No node behind this port is protected, so FCP hands these names to no member yet: members get names only through protected addresses.';
     case 'test_needs_address':
       return 'The node has the new names, but none of its addresses has been tried yet. Try one on its Edges first: a name is tested through an address that already works.';
     case 'add_suggestions':
