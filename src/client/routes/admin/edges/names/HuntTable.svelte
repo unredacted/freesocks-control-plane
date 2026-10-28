@@ -26,7 +26,7 @@
     lookUpCt,
     type CandidateAction,
   } from '@client/lib/sniApi';
-  import type { SniCandidateRow } from '../../../../../shared/contracts/sni';
+  import { usableCandidate, type SniCandidateRow } from '../../../../../shared/contracts/sni';
   import {
     HUNT_FILTERS,
     HUNT_FILTER_LABEL,
@@ -149,7 +149,8 @@
     });
     if (r) {
       picked = [];
-      toast.success(addedWords(r));
+      // A network's lists may be used by no port yet: no send is promised.
+      toast.success(addedWords(r, false));
     }
   }
   async function lookUp() {
@@ -270,7 +271,7 @@
                 <span class="font-mono break-words">{c.name}</span>
               </p>
               <p class="text-muted-foreground">
-                {w.dot === 'green' ? suggestionReason(c) : w.sentence}
+                {usableCandidate(c) ? suggestionReason(c) : w.sentence}
               </p>
               <Collapsible.Root>
                 <Collapsible.Trigger

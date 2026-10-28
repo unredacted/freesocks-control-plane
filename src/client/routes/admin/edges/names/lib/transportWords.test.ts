@@ -326,6 +326,10 @@ describe('what each action did, in words', () => {
     expect(addedWords({ added: 3, lines: lines(3, 'added') })).toBe(
       '3 names added. Each is checked against the cover site, then goes to the node with the next send.',
     );
+    // A list no port uses has no send to promise.
+    expect(addedWords({ added: 1, lines: lines(1, 'added') }, false)).toBe(
+      '1 name added. Each is checked against the cover site first.',
+    );
     // Each reason a line was left out, with its count: a typo is never "already listed".
     expect(
       addedWords({

@@ -160,7 +160,8 @@ describe('find names words', () => {
   test('three filters: usable, not usable, all', () => {
     expect(matchesHuntFilter(base, 'usable')).toBe(true);
     expect(matchesHuntFilter(base, 'not_usable')).toBe(false);
-    expect(matchesHuntFilter({ ...base, state: 'gone' }, 'not_usable')).toBe(true);
+    expect(matchesHuntFilter({ ...base, state: 'failing' }, 'not_usable')).toBe(true);
+    expect(matchesHuntFilter({ ...base, state: 'gone' }, 'all')).toBe(true);
     expect(matchesHuntFilter({ ...base, check: null }, 'not_usable')).toBe(false);
     expect(matchesHuntFilter({ ...base, state: 'ignored' }, 'all')).toBe(true);
     // Not checked yet is not "would not qualify".

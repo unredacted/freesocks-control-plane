@@ -36,9 +36,11 @@ export const HUNT_FILTER_LABEL: Record<HuntFilter, string> = {
 const ready = (c: SniCandidateRow) => usableCandidate(c);
 
 /** Which state's pages a filter reads (the rest is narrowed on the page). */
-export const HUNT_FILTER_STATE: Record<HuntFilter, 'new' | 'all'> = {
+export const HUNT_FILTER_STATE: Record<HuntFilter, 'new' | 'failing' | 'all'> = {
   usable: 'new',
-  not_usable: 'all',
+  // Read from the server by state, so the first page is all failing names
+  // (a name that moved off its network is under All).
+  not_usable: 'failing',
   all: 'all',
 };
 
@@ -47,9 +49,7 @@ export function matchesHuntFilter(c: SniCandidateRow, f: HuntFilter): boolean {
     case 'usable':
       return ready(c);
     case 'not_usable':
-      return (
-        c.state === 'failing' || c.state === 'gone' || (c.state === 'new' && !!c.check && !ready(c))
-      );
+      return c.state === 'failing';
     case 'all':
       return true;
   }

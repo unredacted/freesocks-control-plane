@@ -1501,7 +1501,7 @@ const COPY = {
   sni_family_thin: {
     label: 'Few names in a name list',
     explain:
-      'A name list on a network, used by a port, has fewer than three names its cover site serves. A name blocked in one country is a last resort elsewhere, so a list this small runs out fast.',
+      'A name list on a network, used by a port, has fewer than three active names that pass their check against its cover site (retired and burned names do not count). A name blocked in one country is a last resort elsewhere, so a list this small runs out fast.',
     fix: 'Open the list and look for more names: its cover site’s certificate, certificate logs, or sites on its network.',
   },
   edge_off_network: {
