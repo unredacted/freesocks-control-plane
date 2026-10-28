@@ -308,6 +308,21 @@ describe('what each action did, in words', () => {
     ).toBe(
       "FCP manages these names now: 2 names taken in, each checked against the cover site first. Left out: 1 in another list. The cover site's certificate lists 6 names: new ones show up as suggestions once checked.",
     );
+    // Taking an existing list back: its names are already in it, never "left out".
+    expect(
+      managedWords({
+        dryRun: false,
+        family: 'f',
+        created: false,
+        bindingId: 'b',
+        imported: {
+          added: 0,
+          lines: lines(9, 'added').map((l) => ({ ...l, verdict: 'duplicate' as const })),
+        },
+        placeSet: false,
+        cert: null,
+      }),
+    ).toBe('FCP manages these names now. 9 names were already in the list.');
     expect(addedWords({ added: 3, lines: lines(3, 'added') })).toBe(
       '3 names added. Each is checked against the cover site, then goes to the node with the next send.',
     );
