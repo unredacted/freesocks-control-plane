@@ -105,7 +105,7 @@
         target, then add the others.
       </p>
       {#if v.groups.length === 0}
-        <p class="text-muted-foreground">Nothing checked yet.</p>
+        <p class="text-muted-foreground">No site of this network has been found and checked yet.</p>
       {:else}
         <ul class="divide-y rounded-md border" aria-label="Sites by address">
           {#each allGroups ? v.groups : v.groups.slice(0, GROUPS_FIRST) as g (g.address)}
@@ -135,6 +135,23 @@
             {allGroups ? `Show the first ${GROUPS_FIRST}` : `Show all ${v.groups.length} addresses`}
           </Button>
         {/if}
+      {/if}
+      {#if v.families.length > 0}
+        <div class="space-y-1">
+          <p class="font-medium">Found for the families on this network</p>
+          <p class="text-muted-foreground">
+            Each was checked against its family's target, so they are listed on the family's page.
+          </p>
+          <ul>
+            {#each v.families as f (f.slug)}
+              <li>
+                <Link href={edgesPaths.family(f.slug)} class="underline underline-offset-4">
+                  {f.label}
+                </Link>: {f.candidates.total} found, {f.candidates.ready} would qualify.
+              </li>
+            {/each}
+          </ul>
+        </div>
       {/if}
       {#if v.ct.length > 0}
         <div class="space-y-1">

@@ -59,8 +59,9 @@ import {
   type HuntPlace,
 } from './lib/edges/sni/hunt/evidence';
 import { huntName, parseSeed, siteOf, type SeedNetwork } from './lib/edges/sni/hunt/sources';
-import { candidateScope, scopeRow, touchScope } from './lib/edges/sni/hunt/store';
+import { bumpScope, candidateScope, scopeRow, touchScope } from './lib/edges/sni/hunt/store';
 import { MAX_NETWORKS } from './edgeNetworks';
+import { usableCandidate } from '../src/shared/contracts/sni';
 import {
   passesAfterCheck,
   scoreCandidate,
@@ -128,9 +129,11 @@ async function audit(
 
 const iso = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
 const sameScope = (c: Scope, s: Scope) => c.networkId === s.networkId && c.familyId === s.familyId;
-/** Ready: not ignored, added, gone or failing, and passed its last check. */
-const passing = (c: Pick<Candidate, 'state' | 'check'>) =>
-  c.state === 'new' && c.check?.code === null;
+/** Whether a family is on the network a scope of it names (it may have moved since). */
+const familyOn = (f: Doc<'sniFamilies'>, networkId: Id<'edgeNetworks'> | undefined) =>
+  (f.networkId ?? undefined) === (networkId ?? undefined);
+/** Usable (the one definition: `usableCandidate`): not ignored, added, gone or failing, and passed its last check. */
+const passing = (c: Pick<Candidate, 'state' | 'check'>) => usableCandidate(c);
 
 // --- scopes ----------------------------------------------------------------------------------
 
@@ -452,7 +455,10 @@ export const setCandidates = internalMutation({
     let changed = 0;
     // A site is handled once per scope, however many of its names were picked.
     const sitesDone = new Set<string>();
-    const touched = new Map<string, Scope>();
+    // Per scope: how many usable candidates stopped or started being so.
+    const touched = new Map<string, { scope: Scope; ready: number }>();
+    const note = (key: string, scope: Scope, ready: number) =>
+      touched.set(key, { scope, ready: (touched.get(key)?.ready ?? 0) + ready });
     for (const raw of a.ids.slice(0, 200)) {
       const id = ctx.db.normalizeId('sniCandidates', raw);
       const c = id ? await ctx.db.get(id) : null;
@@ -496,7 +502,7 @@ export const setCandidates = internalMutation({
         for (const r of rows)
           if (r.state !== 'added' && r.state !== 'ignored') {
             await ctx.db.patch(r._id, { state: 'ignored', updatedAt: now });
-            touched.set(scopeKey, scope);
+            note(scopeKey, scope, passing(r) ? -1 : 0);
             changed++;
           }
         continue;
@@ -529,11 +535,11 @@ export const setCandidates = internalMutation({
         if (r._id !== c._id && still && (still.names.has(r.name) || still.sites.has(r.site)))
           continue;
         await ctx.db.patch(r._id, { state: 'new', checkDueAt: 0, updatedAt: now });
-        touched.set(scopeKey, scope);
+        note(scopeKey, scope, passing({ ...r, state: 'new' }) ? 1 : 0);
         changed++;
       }
     }
-    for (const scope of touched.values()) await touchScope(ctx.db, scope, now);
+    for (const { scope, ready } of touched.values()) await bumpScope(ctx.db, scope, now, { ready });
     await audit(ctx, `edge.sni.hunt.${a.action}`, a.actorAdminId, {
       count: changed,
       ...(a.action === 'ignore' ? { kind: a.kind ?? 'name' } : {}),
@@ -602,7 +608,10 @@ async function deleteCandidate(ctx: MutationCtx, c: Candidate) {
     .take(100))
     await ctx.db.delete(p._id);
   await ctx.db.delete(c._id);
-  await touchScope(ctx.db, candidateScope(c), Date.now());
+  await bumpScope(ctx.db, candidateScope(c), Date.now(), {
+    total: -1,
+    ready: passing(c) ? -1 : 0,
+  });
 }
 
 /** One chunk of a downloading run's list, kept only while that download is current. */
@@ -1050,8 +1059,10 @@ export const recordCheck = internalMutation({
       ...scored,
       updatedAt: a.at,
     });
-    if (passing(c) !== (state === 'new' && a.code === null))
-      await touchScope(ctx.db, candidateScope(c), a.at);
+    const before = passing(c);
+    const after = passing({ state, check });
+    if (before !== after)
+      await bumpScope(ctx.db, candidateScope(c), a.at, { ready: after ? 1 : -1 });
     return { ok: true as const, state };
   },
 });
@@ -1274,8 +1285,10 @@ export const recordCt = internalMutation({
       ...(row.networkId ? { networkId: row.networkId } : {}),
       ...(row.familyId ? { familyId: row.familyId } : {}),
     };
+    const family = scope.familyId ? await ctx.db.get(scope.familyId) : null;
     const exists = scope.familyId
-      ? await ctx.db.get(scope.familyId)
+      ? // A family that moved to another network since: this read was for the old one.
+        family && familyOn(family, scope.networkId)
       : scope.networkId
         ? await ctx.db.get(scope.networkId)
         : null;
@@ -1817,7 +1830,7 @@ async function rescoreScope(ctx: MutationCtx, s: Scope, now: number) {
   const place = network?.hunt?.place ? placeKey(network.hunt.place) : null;
   const clusters = new Map<string, number>();
   for (const r of rows)
-    if (r.check?.code === null && r.check.shown[0])
+    if (passing(r) && r.check?.shown[0])
       clusters.set(r.check.shown[0], (clusters.get(r.check.shown[0]) ?? 0) + 1);
   const scored = new Map(
     rows.map((r) => [
@@ -1887,7 +1900,14 @@ async function recountScope(ctx: MutationCtx, s: Scope, rows: readonly Candidate
       countedAt: now,
       updatedAt: now,
     });
-  else await ctx.db.patch(row._id, { ...counts, dirty: undefined, countedAt: now, updatedAt: now });
+  else
+    await ctx.db.patch(row._id, {
+      ...counts,
+      dirty: undefined,
+      dirtyAt: undefined,
+      countedAt: now,
+      updatedAt: now,
+    });
 }
 
 const scopeOfRow = (r: Doc<'sniHuntScopes'>): Scope => candidateScope(r);
@@ -1993,6 +2013,16 @@ export const tick = internalMutation({
       .withIndex('by_requested', (q) => q.lt('requestedAt', now - vcfg.windowDays * DAY))
       .take(200))
       await ctx.db.delete(r._id);
+    // Scopes marked for a recount are recounted first, oldest-marked first,
+    // whether finding names is on or not: it is bookkeeping, no network work.
+    const done = new Set<string>();
+    for (const r of await ctx.db
+      .query('sniHuntScopes')
+      .withIndex('by_dirty', (q) => q.eq('dirty', true))
+      .take(DIRTY_SCOPES_PER_TICK)) {
+      await rescoreScope(ctx, scopeOfRow(r), now);
+      done.add(r._id);
+    }
     const cfg = await resolveSniHuntConfig(ctx.db);
     if (!cfg.enabled) return { reason: 'off' };
     if (!(await admitted(ctx.db))) return { reason: 'maintenance' };
@@ -2055,16 +2085,7 @@ export const tick = internalMutation({
       await ctx.scheduler.runAfter(0, internal.sniHuntOps.ctStep, {});
       scheduled.push('ct');
     }
-    // Scopes whose candidates changed are recounted first; then one in turn,
-    // through every scope holding candidates (however many there are).
-    const done = new Set<string>();
-    for (const r of await ctx.db
-      .query('sniHuntScopes')
-      .withIndex('by_dirty', (q) => q.eq('dirty', true))
-      .take(DIRTY_SCOPES_PER_TICK)) {
-      await rescoreScope(ctx, scopeOfRow(r), now);
-      done.add(r._id);
-    }
+    // Then one scope in turn, through every scope holding candidates (however many there are).
     const after = (await readStateJson<number>(ctx.db, RESCORE_KEY)) ?? 0;
     const turn =
       (await ctx.db
@@ -2138,6 +2159,41 @@ export const dropScope = internalMutation({
             .collect())
         await ctx.db.delete(r._id);
     return { deleted: candidates.length + ct.length + ignores.length };
+  },
+});
+
+/**
+ * A family moved to another network: what was found for it on the old one was
+ * checked against that network, so it goes (a page per run, again until none
+ * is left), with its certificate-log reads for it and its counts row. Its
+ * ignores stay. Each page first reads where the family is now: back on that
+ * network before the cleanup ended, its finds there are current again and
+ * nothing more is deleted (a deleted family is `dropScope`'s).
+ */
+export const dropFamilyScope = internalMutation({
+  args: { familyId: v.id('sniFamilies'), networkId: v.optional(v.id('edgeNetworks')) },
+  handler: async (ctx, a) => {
+    const PAGE = 200;
+    const f = await ctx.db.get(a.familyId);
+    if (!f || familyOn(f, a.networkId)) return { deleted: 0 };
+    const rows = await ctx.db
+      .query('sniCandidates')
+      .withIndex('by_scope_base', (q) => q.eq('networkId', a.networkId).eq('familyId', a.familyId))
+      .take(PAGE);
+    for (const c of rows) await deleteCandidate(ctx, c);
+    const reads = (
+      await ctx.db
+        .query('sniHuntCt')
+        .withIndex('by_family', (q) => q.eq('familyId', a.familyId))
+        .take(PAGE)
+    ).filter((r) => r.networkId === a.networkId);
+    for (const r of reads) await ctx.db.delete(r._id);
+    if (rows.length === PAGE) await ctx.scheduler.runAfter(0, internal.sniHunt.dropFamilyScope, a);
+    else {
+      const row = await scopeRow(ctx.db, { networkId: a.networkId, familyId: a.familyId });
+      if (row) await ctx.db.delete(row._id);
+    }
+    return { deleted: rows.length + reads.length };
   },
 });
 
@@ -2289,10 +2345,11 @@ export const scopeView = internalQuery({
       .order('desc')
       .paginate({ numItems: VIEW_PAGE, cursor: a.cursor ?? null });
     const all = await scopeRows(ctx.db, scope).take(MAX_CANDIDATES_PER_SCOPE);
-    const counts = { new: 0, failing: 0, gone: 0, ignored: 0, added: 0, unchecked: 0 };
+    const counts = { new: 0, failing: 0, gone: 0, ignored: 0, added: 0, unchecked: 0, usable: 0 };
     for (const c of all) {
       counts[c.state]++;
       if (!c.check && c.state === 'new') counts.unchecked++;
+      if (passing(c)) counts.usable++;
     }
     const families = new Map<string, { slug: string; label: string } | null>();
     const out = [];
@@ -2331,7 +2388,7 @@ export const scopeView = internalQuery({
         bestScore: -1,
       };
       g.names++;
-      if (c.check?.code === null) {
+      if (passing(c)) {
         g.passing++;
         if (c.score > g.bestScore) {
           g.best = c.name;
@@ -2340,6 +2397,26 @@ export const scopeView = internalQuery({
       }
       groups.set(address, g);
     }
+    // A network's page: what was found for the families on it, by family (their
+    // candidates were checked against each family's target, never as this
+    // network's own sites, so they are listed apart, never grouped here).
+    const onNetwork = [];
+    // One counts row per family scope on the network: every one is read (a few
+    // small rows per family), and only families on the network now are listed.
+    if (!family && network)
+      for await (const r of ctx.db
+        .query('sniHuntScopes')
+        .withIndex('by_scope', (q) => q.eq('networkId', network._id))) {
+        if (!r.familyId || r.total === 0) continue;
+        const f = await ctx.db.get(r.familyId);
+        if (f && familyOn(f, network._id))
+          onNetwork.push({
+            slug: f.slug,
+            label: f.label,
+            candidates: { total: r.total, ready: r.ready },
+          });
+      }
+    onNetwork.sort((x, y) => x.label.localeCompare(y.label));
     const ctRows = family
       ? await ctx.db
           .query('sniHuntCt')
@@ -2367,6 +2444,7 @@ export const scopeView = internalQuery({
         .sort((x, y) => y.passing - x.passing || y.names - x.names)
         .map(({ bestScore: _s, ...g }) => g),
       counts,
+      families: onNetwork,
       ct: ctRows.filter((r) => sameScope(r, scope)).map(ctView),
     };
   },

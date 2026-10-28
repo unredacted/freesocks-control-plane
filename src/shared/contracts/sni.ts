@@ -334,6 +334,19 @@ export type HuntPlace = z.infer<typeof HuntPlace>;
 export const HUNT_SOURCES = ['cert', 'seed', 'pasted', 'toplist', 'ct'] as const;
 export const HUNT_STATES = ['new', 'added', 'ignored', 'gone', 'failing'] as const;
 
+/**
+ * Usable: a found name still to decide (not ignored, added, gone or failing)
+ * whose last check gave qualification's pass. The ONE definition every count,
+ * filter and list of found names uses, on the server and on the page.
+ */
+export function usableCandidate(c: {
+  state: string;
+  check?: { code: string | null } | null;
+}): boolean {
+  return c.state === 'new' && !!c.check && c.check.code === null;
+}
+
+/** A scope's counts: how many it holds, and how many are usable (`usableCandidate`). */
 export const HuntCounts = z.object({ total: z.number(), ready: z.number() });
 
 /** `GET sni/hunt`. */
@@ -492,7 +505,16 @@ export const SniHuntScopeView = z.object({
     ignored: z.number(),
     added: z.number(),
     unchecked: z.number(),
+    /** `usableCandidate`: the same number the overview shows for this scope. */
+    usable: z.number().default(0),
   }),
+  /**
+   * A network's page: what was found for the families on it (each checked
+   * against its family's target, so never mixed into this network's own sites).
+   */
+  families: z
+    .array(z.object({ slug: z.string(), label: z.string(), candidates: HuntCounts }))
+    .default([]),
   ct: z.array(SniHuntCtRow),
 });
 export type SniHuntScopeView = z.infer<typeof SniHuntScopeView>;
