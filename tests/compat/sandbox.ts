@@ -57,7 +57,9 @@ export function routing(engine: 'singbox' | 'mihomo', body: string): unknown {
 export function selectProxy(engine: 'singbox' | 'mihomo', body: string, name: string): string {
   if (engine === 'singbox') {
     const c = JSON.parse(body) as Obj;
-    const group = c.outbounds.find((o: Obj) => o.tag === c.route.final);
+    // The shipped template omits route.final: sing-box uses its first outbound.
+    const target = c.route?.final ?? c.outbounds[0]?.tag;
+    const group = c.outbounds.find((o: Obj) => o.tag === target);
     if (group?.type !== 'selector' || !group.outbounds.includes(name))
       throw new Error('Probe proxy is not in the default selector');
     group.outbounds = [name];

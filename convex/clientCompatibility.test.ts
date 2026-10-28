@@ -4,8 +4,9 @@ import YAML from 'yaml';
 import { clients, artifacts, type Format } from '../tests/compat/manifest';
 import { assertSubscription } from '../tests/compat/assertions';
 import { COMPAT_ENDPOINTS, COMPAT_NODE } from '../tests/compat/fixture';
-import { selectProxy } from '../tests/compat/sandbox';
+import { sandboxed, selectProxy } from '../tests/compat/sandbox';
 import { addressRemark } from './lib/backend/hostRemark';
+import { SINGBOX_JSON } from './lib/backend/subscriptionTemplates/SINGBOX';
 import { pinSubscriptionToNode } from './lib/nodePinning';
 import { finishMemberBody } from './lib/subscriptionDelivery';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
@@ -132,6 +133,27 @@ describe('multi-endpoint client compatibility regression', () => {
   }
   test('base64 link lists preserve all three named endpoints too', () => {
     assertSubscription(Buffer.from(fixture('links')).toString('base64'), 'links', COMPAT_ENDPOINTS);
+  });
+  test('the shipped sing-box template selects every endpoint without route.final', () => {
+    const config = JSON.parse(JSON.stringify(SINGBOX_JSON));
+    const proxies = JSON.parse(fixture('singbox')).outbounds.slice(1);
+    config.outbounds[0].outbounds = proxies.map((p: { tag: string }) => p.tag);
+    config.outbounds.splice(1, 0, ...proxies);
+    const body = sandboxed(
+      'singbox',
+      finishMemberBody(JSON.stringify(config), { siteName: 'FreeSocks', place: null }),
+    );
+    const served = JSON.parse(body);
+    expect(served.route.final).toBeUndefined();
+    assertSubscription(body, 'singbox', COMPAT_ENDPOINTS);
+    const servedProxies = served.outbounds.filter((p: { type: string }) => p.type === 'vless');
+    for (const proxy of servedProxies) {
+      const selected = JSON.parse(selectProxy('singbox', body, proxy.tag));
+      expect(selected.outbounds[0].outbounds).toEqual([proxy.tag]);
+      expect(selected.outbounds[0].default).toBe(proxy.tag);
+      expect(selected.route).toEqual(served.route);
+      expect(selected.outbounds.slice(1)).toEqual(served.outbounds.slice(1));
+    }
   });
   for (const engine of ['singbox', 'mihomo'] as const) {
     const parse = (body: string): Record<string, any> =>
