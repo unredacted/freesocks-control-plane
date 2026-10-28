@@ -188,7 +188,14 @@ export function managedWords(done: SniManaged): string {
       ? `FCP manages these names now: ${plural(taken, 'name')} taken in, each checked against the cover site first.`
       : 'FCP manages these names now.',
   ];
-  const left = leftOutWords(done.imported).trim();
+  // An existing list already holds the port's names: they are in it, not left out.
+  const already = done.imported.lines.filter((l) => l.verdict === 'duplicate').length;
+  if (already)
+    parts.push(`${plural(already, 'name')} ${already === 1 ? 'was' : 'were'} already in the list.`);
+  const left = leftOutWords({
+    ...done.imported,
+    lines: done.imported.lines.filter((l) => l.verdict !== 'duplicate'),
+  }).trim();
   if (left) parts.push(left);
   if (done.cert?.ok)
     parts.push(

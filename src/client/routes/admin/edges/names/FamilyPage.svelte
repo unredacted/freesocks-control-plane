@@ -65,6 +65,7 @@
     listRows,
     listSwitchLine,
     matchesListFilter,
+    nameActionWords,
     type ListFilter,
   } from './lib/listWords';
   import { addedWords, lookedWords } from './lib/transportWords';
@@ -142,7 +143,12 @@
   );
   async function act(action: NameAction) {
     const names = [...picked];
-    if ((await run(() => actOnNames(slug, action, names))) !== null) picked = [];
+    const r = await run(() => actOnNames(slug, action, names));
+    if (r === null) return;
+    picked = [];
+    const words = nameActionWords(action, r as Parameters<typeof nameActionWords>[1]);
+    if (words.includes('busy')) toast.warning(words);
+    else toast.success(words);
   }
 
   // --- a found name: add it, ignore it, or take it back ---------------------------------------
