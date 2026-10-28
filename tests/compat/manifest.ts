@@ -94,7 +94,15 @@ export const clients: CompatibilityClient[] = [
   {
     name: 'FlClash',
     format: 'mihomo',
-    userAgents: ['FlClash/0.8'],
+    // Default UA built by v0.9.2 lib/common/package.dart; custom UAs remain possible.
+    // https://github.com/chen08209/FlClash/blob/v0.9.2/lib/common/package.dart
+    userAgents: [
+      'FlClash/v0.9.2 clash-verge Platform/linux',
+      'FlClash/v0.9.2 clash-verge Platform/android',
+      'FlClash/v0.9.2 clash-verge Platform/windows',
+      'FlClash/v0.9.2 clash-verge Platform/macos',
+      'FlClash/0.8',
+    ],
     application: 'manual',
     limitation:
       'Contract plus reference Mihomo engine; packaged application requires device verification.',

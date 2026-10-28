@@ -10,9 +10,10 @@ import YAML from 'yaml';
 import schema from '../../convex/schema';
 import { defaultRouteFaults } from '../../convex/lib/backend/subscriptionTemplates/defaultRoute';
 import { clients } from './manifest';
-import { assertSubscription } from './assertions';
+import { assertSubscription, subscriptionEntries } from './assertions';
+import { COMPAT_ENDPOINTS } from './fixture';
 import { COMPAT_NODE, COMPAT_REMARK, docker, seedPanel, useTemplates } from './panel';
-import { routing, sandboxed } from './sandbox';
+import { routing, sandboxed, selectProxy } from './sandbox';
 
 const modules = import.meta.glob('../../convex/**/*.*s');
 const t = convexTest(schema, modules);
@@ -130,7 +131,7 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
     for (const ua of client.userAgents) {
       test(`${client.name}: ${ua}`, async () => {
         const body = await subscription(ua);
-        assertSubscription(body, client.format);
+        assertSubscription(body, client.format, COMPAT_ENDPOINTS);
         expectMemberNames(body, client.format);
         // An immediate repeat is a fresh-cache hit for this UA and must be byte-identical.
         expect(await subscription(ua)).toBe(body);
@@ -146,9 +147,9 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
     const byFormat = (format: string) => clients.find((c) => c.format === format)!.userAgents[0]!;
     const singbox = byFormat('singbox');
     const first = await subscription(singbox);
-    assertSubscription(first, 'singbox');
-    assertSubscription(await subscription(byFormat('mihomo')), 'mihomo');
-    assertSubscription(await subscription(byFormat('links')), 'links');
+    assertSubscription(first, 'singbox', COMPAT_ENDPOINTS);
+    assertSubscription(await subscription(byFormat('mihomo')), 'mihomo', COMPAT_ENDPOINTS);
+    assertSubscription(await subscription(byFormat('links')), 'links', COMPAT_ENDPOINTS);
     const cache = await t.run(
       async (ctx) => (await ctx.db.query('subscriptions').first())!.subCache,
     );
@@ -157,26 +158,38 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
       expect.arrayContaining([singbox, byFormat('mihomo'), byFormat('links')]),
     );
     const again = await subscription(singbox);
-    assertSubscription(again, 'singbox');
+    assertSubscription(again, 'singbox', COMPAT_ENDPOINTS);
     expect(again).toBe(first);
-    assertSubscription(await subscription(byFormat('mihomo')), 'mihomo');
+    assertSubscription(await subscription(byFormat('mihomo')), 'mihomo', COMPAT_ENDPOINTS);
   });
   test('unknown subscription is rejected', async () => {
     expect((await t.fetch('/api/v1/sub/unknown')).status).toBe(404);
   });
-  test('refresh after upstream Host change delivers the new endpoint', async () => {
+  test('every catalogued User-Agent refreshes all three endpoints after an upstream Host change', async () => {
     const hosts = await panel.api('hosts');
-    const host = (hosts.hosts ?? hosts)[0];
-    // A remark that names no node passes through as it is, so the refresh shows.
-    await panel.api('hosts', 'PATCH', { uuid: host.uuid, remark: 'compat-refreshed' });
+    const host = (hosts.hosts ?? hosts).find((h: { remark: string }) => h.remark === COMPAT_REMARK);
+    if (!host) throw new Error('Missing refresh fixture Host');
+    const cases = clients
+      .filter((c) => c.format !== 'outline')
+      .flatMap((client) => client.userAgents.map((ua) => ({ ua, format: client.format })));
+    // Fetch every UA before the change; the bounded cache retains the newest.
+    for (const { ua, format } of cases)
+      assertSubscription(await subscription(ua), format, COMPAT_ENDPOINTS);
+    await panel.api('hosts', 'PATCH', { uuid: host.uuid, address: 'compat-refreshed' });
     try {
       await clearSubCache();
-      const body = await subscription(clients[0]!.userAgents[0]!);
-      assertSubscription(body, 'singbox');
-      expect(body.includes('compat-refreshed')).toBe(true);
+      const refreshed = COMPAT_ENDPOINTS.map((e) => ({
+        ...e,
+        server: e.port === 443 ? 'compat-refreshed' : e.server,
+      }));
+      for (const { ua, format } of cases) {
+        const body = await subscription(ua);
+        assertSubscription(body, format, refreshed);
+        expect(await subscription(ua)).toBe(body);
+        await revalidated(ua);
+      }
     } finally {
-      // The engines below run the member-facing (renamed) body.
-      await panel.api('hosts', 'PATCH', { uuid: host.uuid, remark: COMPAT_REMARK });
+      await panel.api('hosts', 'PATCH', { uuid: host.uuid, address: COMPAT_ENDPOINTS[0].server });
       await clearSubCache();
     }
   });
@@ -330,17 +343,24 @@ describe('reference engines: real panel-generated REALITY connections', () => {
       }
     });
   }
-  test('wrong VLESS credential cannot pass through a direct fallback', async () => {
-    const config = JSON.parse(await subscription(clients[0]!.userAgents[0]!));
-    for (const outbound of config.outbounds)
-      if (outbound.type === 'vless') outbound.uuid = randomUUID();
-    try {
-      await startEngine('singbox', JSON.stringify(config));
-      await expect(httpsProbe()).rejects.toThrow();
-    } finally {
-      stopEngine();
-    }
-  });
+  for (const engine of ['singbox', 'mihomo'] as const) {
+    test(`${engine}: wrong VLESS credentials cannot pass through a fallback`, async () => {
+      const ua = clients.find((c) => c.format === engine)!.userAgents[0]!;
+      const body = await subscription(ua);
+      const config = engine === 'singbox' ? JSON.parse(body) : YAML.parse(body);
+      for (const outbound of engine === 'singbox' ? config.outbounds : config.proxies)
+        if (outbound.type === 'vless') outbound.uuid = randomUUID();
+      try {
+        await startEngine(
+          engine,
+          engine === 'singbox' ? JSON.stringify(config) : YAML.stringify(config),
+        );
+        await expect(httpsProbe()).rejects.toThrow();
+      } finally {
+        stopEngine();
+      }
+    });
+  }
 });
 
 /**
@@ -368,23 +388,30 @@ describe('the templates FCP ships: a member reaches the origin through the proxy
     expect((YAML.parse(body) as { mode?: unknown }).mode).toBe('rule');
     expect(defaultRouteFaults(body, 'FreeSocks Select')).toEqual([]);
   });
-  for (const [engine, ua] of [
-    ['singbox', clients[0]!.userAgents[0]!],
-    ['mihomo', 'mihomo/1.19.30'],
-  ] as const) {
-    test(`${engine} (${ua}): the served routing, unchanged, carries HTTPS to the origin`, async () => {
-      try {
-        const body = await subscription(ua);
-        expectMemberNames(body, engine);
-        expect(defaultRouteFaults(body, 'FreeSocks Select')).toEqual([]);
-        const config = sandboxed(engine, body);
-        expect(routing(engine, config)).toEqual(routing(engine, body));
-        await startEngine(engine, config);
-        await httpsProbe();
-      } finally {
-        stopEngine();
-      }
-    });
+  for (const client of clients.filter((c) => c.format === 'singbox' || c.format === 'mihomo')) {
+    for (const ua of client.userAgents) {
+      const engine = client.format as 'singbox' | 'mihomo';
+      test(`${client.name} (${ua}): default routing and each of three proxies carry HTTPS`, async () => {
+        try {
+          const body = await subscription(ua);
+          assertSubscription(body, engine, COMPAT_ENDPOINTS);
+          expectMemberNames(body, engine);
+          expect(defaultRouteFaults(body, 'FreeSocks Select')).toEqual([]);
+          const config = sandboxed(engine, body);
+          expect(routing(engine, config)).toEqual(routing(engine, body));
+          await startEngine(engine, config);
+          await httpsProbe();
+          for (const entry of subscriptionEntries(body, engine)) {
+            // Keep the served endpoints; narrow the selector to one choice so a
+            // good default cannot hide a broken secondary endpoint.
+            await startEngine(engine, selectProxy(engine, config, entry.name));
+            await httpsProbe();
+          }
+        } finally {
+          stopEngine();
+        }
+      });
+    }
   }
 });
 
