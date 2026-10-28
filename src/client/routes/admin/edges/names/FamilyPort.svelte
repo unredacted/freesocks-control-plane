@@ -85,10 +85,7 @@
     {#if !transport}
       <Skeleton class="mt-2 h-5 w-48" />
     {:else if transport.nodes.length === 0}
-      <p class="text-muted-foreground mt-2">
-        No node behind this port is protected yet: members get its names through protected addresses
-        only.
-      </p>
+      <!-- The block above says no node behind this port is protected. -->
     {:else}
       <ul class="mt-3 divide-y rounded-md border" aria-label="Nodes">
         {#each transport.nodes as n (n.relaySlug)}

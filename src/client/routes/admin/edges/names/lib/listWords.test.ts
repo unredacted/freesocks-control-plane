@@ -11,6 +11,7 @@ import type {
 } from '../../../../../../shared/contracts/sni';
 import {
   LIST_FILTERS,
+  checksWantWords,
   STATE_LABEL,
   listDot,
   listLine,
@@ -263,5 +264,43 @@ describe('what an action on names did', () => {
         relays: { listeners: 1, retired: 0, skipped: 0, kept: 1 },
       }),
     ).toBe('1 name retired. 1 node keeps handing out its last name.');
+  });
+});
+
+describe('why the checks want a look', () => {
+  const v = (
+    country: string,
+    decision: 'suggest' | 'conflict' | 'agrees',
+    suggestion: 'blocked' | 'proven',
+  ) => ({
+    country,
+    latest: 'failing' as const,
+    suggestion,
+    reason: null,
+    decision,
+    okVantages: 0,
+    okNetworks: 0,
+    failVantages: 2,
+    failNetworks: 2,
+    pathFailures: 0,
+    reportsAgree: false,
+    lastAt: null,
+    lastOkAt: null,
+    lastRequestedAt: null,
+  });
+  test('a block suggestion and a disagreement are said on the row', () => {
+    expect(checksWantWords(name('a.site.example'))).toBeNull();
+    expect(
+      checksWantWords(
+        name('a.site.example', {
+          vantage: [v('CN', 'conflict', 'proven'), v('IR', 'suggest', 'blocked')],
+        }),
+      ),
+    ).toBe(
+      'The checks from inside a country suggest it is blocked in IR and disagree with your mark in CN: see Details.',
+    );
+    expect(
+      checksWantWords(name('a.site.example', { vantage: [v('CN', 'agrees', 'blocked')] })),
+    ).toBeNull();
   });
 });

@@ -61,6 +61,7 @@
   import {
     LIST_FILTERS,
     LIST_FILTER_LABEL,
+    checksWantWords,
     STATE_LABEL,
     listRows,
     listSwitchLine,
@@ -472,6 +473,9 @@
                   <p class="text-muted-foreground">{r.sentence}</p>
                   {#if n.suspectIn.length > 0}
                     <p class="text-amber-700 dark:text-amber-400">{suspectWords(n.suspectIn)}</p>
+                  {/if}
+                  {#if checksWantWords(n)}
+                    <p class="text-amber-700 dark:text-amber-400">{checksWantWords(n)}</p>
                   {/if}
                   {#if n.provenIn.length > 0 || n.blockedIn.length > 0}
                     <p>

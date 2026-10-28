@@ -2554,7 +2554,9 @@ or why it cannot run (changes to the backend off, the backend not set up, each w
 addresses whose endpoint is confirmed, a QR code, "It connected" is the receipt), or, with no such
 address, a line saying to try one of the node's addresses first; **Add suggestions** (the found
 names the cover site serves, best first, grouped by site, a one-line reason each and the rest under
-Details); names being checked; done. A send comes before a test: one test after it proves
+Details); names being checked; with no protected node (this node on its page, or any node
+behind the port on the list's page), a line saying FCP hands the names to no member yet and the
+status counts the names on the port, never "in use"; done. A send comes before a test: one test after it proves
 everything new. "More" holds the name list, looking for more names (the cover site's certificate
 and certificate logs), and Stop managing (an unbind: the names stay); a transport FCP does not
 manage offers editing its names by hand there instead.
