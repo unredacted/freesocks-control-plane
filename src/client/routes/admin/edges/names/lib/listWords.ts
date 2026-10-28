@@ -258,3 +258,32 @@ export function listSwitchLine(on: boolean): string {
     ? 'On. Its names are checked and can be sent to the node.'
     : 'Off. Nothing new is checked or sent. Members keep the names they have.';
 }
+
+/** What an action on picked names did (`POST sni/families/{slug}/names/{action}`). */
+export function nameActionWords(
+  action: 'retire' | 'reactivate' | 'burn' | 'recheck',
+  r: {
+    count: number;
+    relays?: { listeners: number; retired: number; skipped: number; kept: number } | null;
+  },
+): string {
+  const done = {
+    retire: 'retired',
+    reactivate: 'brought back',
+    burn: 'burned',
+    recheck: 'checked again soon',
+  }[action];
+  const parts = [`${plural(r.count, 'name')} ${done}.`];
+  const relays = r.relays;
+  if (relays?.kept)
+    parts.push(
+      `${plural(relays.kept, 'node')} ${relays.kept === 1 ? 'keeps' : 'keep'} handing out its last name.`,
+    );
+  // A node a send, a replacement or a removal is still changing is left alone:
+  // it hands the names out until the action is made again.
+  if (relays?.skipped)
+    parts.push(
+      `${plural(relays.skipped, 'node')} ${relays.skipped === 1 ? 'was' : 'were'} busy and still ${relays.skipped === 1 ? 'hands' : 'hand'} ${r.count === 1 ? 'it' : 'them'} out: ${action === 'burn' ? 'burn' : 'retire'} ${r.count === 1 ? 'it' : 'them'} again in a few minutes.`,
+    );
+  return parts.join(' ');
+}

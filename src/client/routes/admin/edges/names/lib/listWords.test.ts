@@ -17,6 +17,7 @@ import {
   listRows,
   listSwitchLine,
   matchesListFilter,
+  nameActionWords,
   namesSwitchLine,
 } from './listWords';
 
@@ -240,5 +241,27 @@ describe('the Server names page', () => {
     expect(namesSwitchLine(false)).toMatch(/^Off\./);
     expect(listSwitchLine(true)).toMatch(/^On\./);
     expect(listSwitchLine(false)).toMatch(/^Off\./);
+  });
+});
+
+describe('what an action on names did', () => {
+  test('a busy node is said, with what to do', () => {
+    expect(nameActionWords('recheck', { count: 3, relays: null })).toBe(
+      '3 names checked again soon.',
+    );
+    expect(
+      nameActionWords('retire', {
+        count: 2,
+        relays: { listeners: 0, retired: 0, skipped: 1, kept: 0 },
+      }),
+    ).toBe(
+      '2 names retired. 1 node was busy and still hands them out: retire them again in a few minutes.',
+    );
+    expect(
+      nameActionWords('retire', {
+        count: 1,
+        relays: { listeners: 1, retired: 0, skipped: 0, kept: 1 },
+      }),
+    ).toBe('1 name retired. 1 node keeps handing out its last name.');
   });
 });
