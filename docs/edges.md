@@ -3052,7 +3052,7 @@ Routes (under `/api/v1/admin/edges/`): `GET networks` (counts only, never a rang
 `DELETE networks/{slug}` (refused while a family or a transport is on it, `edge.network.in_use`;
 locations set to it go back to none), `POST networks/{slug}/refresh` (throttled like a provider
 call). Audit: `edge.network.create|update|delete` (slug and counts, never a range or an address),
-`edge.location.network`. Admin: Server names, Networks (add, edit, read ranges again, remove), a
+`edge.location.network`. Admin: Server names, Advanced, Networks (add, edit, read ranges again, remove), a
 family's Network, and a location's Network on its provider account page.
 
 ### Finding names
@@ -3098,7 +3098,7 @@ cleanup ended, its finds there are kept, and an answer to a certificate-log read
 family has left adds nothing.
 
 **The top-sites sweep** (`sniHuntRuns`). Started by the cron when the last one ended
-`sweepEveryDays` ago and some network is hunting (Networks, "Find names on this network"; a
+`sweepEveryDays` ago and some network is hunting (Server names, Advanced, "Include it in the top-sites search"; a
 network with ranges), or by `POST sni/hunt/sweep`. The list's latest id is read, its first
 `depth` entries downloaded once (sized by FCP: the list service's own path, never a URL from an
 answer) and stored in chunks of 10,000 (`sniHuntChunks`, plain `rank<TAB>name` lines) for the run's life, each site followed by
@@ -3285,7 +3285,7 @@ transport's names).
   certificate logs. "Add names by hand" (the answer says what happened to every kind of line) and
   Settings ("Use this list", whose line says what is true now; the network; HTTP/2 only; using the
   list on another port with the same cover site; removing it) are folded away below.
-- Checks from inside countries (the Server names page): the switch for `edge.sni.vantage.enabled`,
+- Checks from inside countries (the Advanced page, below): the switch for `edge.sni.vantage.enabled`,
   the countries they run from (read only: changed on Settings, Censored countries), the services,
   "Apply suggestions by themselves", the budget in one line, and the residual risk next to the
   switch. On a list, every name shows under Details one line per country it was checked from (what
@@ -3293,20 +3293,27 @@ transport's names).
   the checks instead" on a conflict); a block suggestion or a conflict also puts the name under
   "Needs you".
 
-- Find names (`/admin/edges/find-names`, "Find names" on the list page; § Finding names): the
-  switch, the top-sites sweep (start, stop, how far it got), each network's "Search it" switch and
-  where its nodes are (a country code and a city), imports (a pasted list into a network or a
-  family, or a seed file, whose missing networks and families are offered to create), and where
-  candidates were found. A network's page (`/admin/edges/find-names/{slug}`) groups the sites by
-  the address they live on ("Make a family with this target" prefills a family on the network,
-  target fixed) and lists every candidate with qualification's verdict, the extra handshakes,
-  near the node (for a family candidate: the family's target, its own site beside it), what the
-  checks from inside countries and OONI say, and the score. Picked candidates can be added to a
-  family on the network (its normal path), ignored (the name or the whole site), checked again,
+- Advanced (`/admin/edges/find-names`, "Advanced" on the Server names page; `names/NamesAdvanced.svelte`):
+  what most setups never need, in one place. Finding names: its switch (its line says what is true
+  now), each network's "Include it in the top-sites search" and where its nodes are, in one line
+  ("Timed from <city> (<cc>), taken from a node on it" when it came from managing a port, § A
+  transport's names; Change opens the country and city), and what was found for each name list.
+  The top-sites search: how far the last one got, its cost said before it starts (the sites, up to
+  how many lookups, about how many hours: `sweepCostWords`), and a secondary "Search the top sites"
+  that confirms with the same words; "Stop the search" while one runs. Networks (add, edit, read
+  ranges again, remove). Import (a pasted list into a network or a name list, or a seed file, whose
+  missing networks and name lists are offered to create). Checks from inside countries (above). A
+  network's page (`/admin/edges/find-names/{slug}`) groups the sites by the address they live on
+  ("Make a name list with this cover site" prefills a list on the network, cover site fixed), lists
+  what was found for the name lists on it, and its found names with three filters (Usable, Not
+  usable, All), each with a one-line reason, the rest (qualification's verdict, the extra
+  handshakes, near the node, the checks from inside countries and OONI, sources, the score) under
+  Details, and a site's other names folded behind its best one. Picked names can be added to a name
+  list on the network (its normal path), ignored (the name or the whole site), checked again,
   measured now, or looked up in certificate logs. On a name list's page its own finds are rows of
   its one list (above). Wording is in `names/lib/huntWords.ts`.
-- Attention `sni_family_thin` (info, "Find names"): a family on a network, bound to a transport,
-  with fewer than three active names that qualify. A name blocked in one country is a last resort
+- Attention `sni_family_thin` (info, "Find names", worded "Few names in a name list"): a family on
+  a network, bound to a transport, with fewer than three active names that qualify. A name blocked in one country is a last resort
   elsewhere (§ Names for the member's country), so a family that small runs out fast. Counting
   reads names, so the `sni-hunt` cron counts the families in turn (every family, a read budget
   per tick, a family always whole) and keeps the answer in `appState` (`sni:hunt:thin`); the

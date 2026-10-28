@@ -276,8 +276,12 @@ export function lookedWords(
 // --- the suggestions dialog -----------------------------------------------------------------------
 
 /** What adding suggestions did, in one sentence. */
-export function addedWords(r: SniImportResult): string {
-  return `${plural(r.added, 'name')} added. Each is checked against the cover site, then goes to the node with the next send.${leftOutWords(r)}`;
+export function addedWords(r: SniImportResult, onPort = true): string {
+  // Only a list a port uses has a node to send to.
+  const next = onPort
+    ? 'Each is checked against the cover site, then goes to the node with the next send.'
+    : 'Each is checked against the cover site first.';
+  return `${plural(r.added, 'name')} added. ${next}${leftOutWords(r)}`;
 }
 
 /** Why lines of an import were not added, each reason with its count (empty when none was). */

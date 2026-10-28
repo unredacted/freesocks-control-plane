@@ -1,11 +1,13 @@
 <script lang="ts">
   /**
-   * Candidate names of one network or one family (docs/edges.md "Finding
-   * names"): each with qualification's own verdict, the extra handshakes,
-   * what was measured, and the score. Picked candidates can be added to a
-   * family (its normal path: each is qualified like a pasted name), ignored
-   * (the name or its whole site), checked again, measured now, or have their
-   * sites looked up in certificate logs. Nothing here is applied by itself.
+   * Names found on one network (docs/edges.md "Finding names"): three
+   * filters (usable, not usable, all), each name with its state and a one-line
+   * reason, what was measured (the handshakes, timing, countries, OONI,
+   * sources, the score) under Details, and the other names of one site folded
+   * behind the first. Picked names can be added to a name list (its normal
+   * path: each is checked like a pasted name), ignored (the name or its whole
+   * site), checked again, measured now, or have their sites looked up in
+   * certificate logs. Nothing here is applied by itself.
    *
    * All wording lives in ./lib/huntWords.ts (pure, unit-tested).
    */
@@ -13,6 +15,8 @@
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
   import { Checkbox } from '@client/components/ui/checkbox';
+  import * as Collapsible from '@client/components/ui/collapsible';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { ApiCallError } from '@client/lib/api';
   import {
     actOnCandidates,
@@ -22,6 +26,7 @@
     lookUpCt,
     type CandidateAction,
   } from '@client/lib/sniApi';
+  import { usableCandidate, type SniCandidateRow } from '../../../../../shared/contracts/sni';
   import {
     HUNT_FILTERS,
     HUNT_FILTER_LABEL,
@@ -36,7 +41,8 @@
     sourcesWords,
     type HuntFilter,
   } from './lib/huntWords';
-  import { importWords, sniErrorWords, type Dot } from './lib/words';
+  import { addedWords, suggestionReason } from './lib/transportWords';
+  import { sniErrorWords, type Dot } from './lib/words';
 
   let {
     kind,
@@ -45,7 +51,7 @@
   }: {
     kind: 'network' | 'family';
     slug: string;
-    /** Where picked names may be added: the family itself on its page, the network's families on a network. */
+    /** Where picked names may be added: the name lists on the network. */
     families: { slug: string; label: string }[];
   } = $props();
 
@@ -74,7 +80,7 @@
     }
   }
 
-  let filter = $state<HuntFilter>('ready');
+  let filter = $state<HuntFilter>('usable');
   let picked = $state<string[]>([]);
   // One state's pages at a time, best first; "Show more" reads the next page.
   const list = huntCandidatesQuery(
@@ -85,6 +91,13 @@
   let loaded = $derived((list.data?.pages ?? []).flatMap((p) => p.candidates));
   let shown = $derived(loaded.filter((c) => matchesHuntFilter(c, filter)));
   let allPicked = $derived(shown.length > 0 && shown.every((c) => picked.includes(c.id)));
+  // One entry per site (best name first); its other names fold behind it.
+  let sites = $derived.by(() => {
+    const by = new Map<string, SniCandidateRow[]>();
+    for (const c of shown) by.set(c.site, [...(by.get(c.site) ?? []), c]);
+    return [...by.values()];
+  });
+  let opened = $state<string[]>([]);
   const toggle = (id: string, on: boolean) =>
     (picked = on ? [...picked, id] : picked.filter((x) => x !== id));
   const toggleAll = (on: boolean) => (picked = on ? shown.map((c) => c.id) : []);
@@ -136,7 +149,8 @@
     });
     if (r) {
       picked = [];
-      toast.success(importWords(r).join(' '));
+      // A network's lists may be used by no port yet: no send is promised.
+      toast.success(addedWords(r, false));
     }
   }
   async function lookUp() {
@@ -186,8 +200,8 @@
       {#if families.length > 0}
         <label class="flex items-center gap-2">
           <span class="text-muted-foreground">Add to</span>
-          <select bind:value={family} class={SELECT} aria-label="Family">
-            <option value="" disabled>family</option>
+          <select bind:value={family} class={SELECT} aria-label="Name list">
+            <option value="" disabled>name list</option>
             {#each families as f (f.slug)}
               <option value={f.slug}>{f.label}</option>
             {/each}
@@ -210,7 +224,7 @@
       <Button variant="outline" size="sm" disabled={busy} onclick={() => act('ignore', 'site')}>
         Ignore the whole site
       </Button>
-      {#if filter === 'ignored'}
+      {#if pickedRows.some((c) => c.state === 'ignored')}
         <Button variant="outline" size="sm" disabled={busy} onclick={() => act('unignore')}>
           Stop ignoring
         </Button>
@@ -233,39 +247,73 @@
       />
       <span class="text-muted-foreground">{shown.length} shown, best first</span>
     </div>
-    <ul class="divide-y rounded-md border" aria-label="Candidate names">
-      {#each shown as c (c.id)}
-        {@const w = candidateWords(c)}
-        {@const extra = extraWords(c)}
-        {@const countries = countryWords(c)}
-        {@const site = siteOoniWords(c)}
-        <li class="flex items-start gap-3 p-3">
-          <Checkbox
-            checked={picked.includes(c.id)}
-            onCheckedChange={(v) => toggle(c.id, v === true)}
-            aria-label={`Pick ${c.name}`}
-          />
-          <div class="min-w-0 flex-1 space-y-1">
-            <p class="flex flex-wrap items-center gap-2">
-              <span
-                class={`inline-block size-2 shrink-0 rounded-full ${DOT[w.dot]}`}
-                aria-hidden="true"
-              ></span>
-              <span class="font-mono break-all">{c.name}</span>
-              {#if c.listed}<span class="text-muted-foreground text-xs">(on the shortlist)</span
-                >{/if}
-            </p>
-            <p>{w.sentence}{extra ? ` ${extra}` : ''}</p>
-            {#if c.check && c.check.code === null}
-              <p class="text-muted-foreground">{nearWords(c, isFamily)}</p>
-              {#if countries.length > 0}
-                <p class="text-muted-foreground">{countries.join(' · ')}</p>
-              {/if}
-              {#if site}<p class="text-muted-foreground">{site}</p>{/if}
-            {/if}
-            <p class="text-muted-foreground">{sourcesWords(c)} · {scoreWords(c)}</p>
-          </div>
-        </li>
+    <ul class="divide-y rounded-md border" aria-label="Found names">
+      {#each sites as names (names[0]!.site)}
+        {@const more = names.length - 1}
+        {@const open = opened.includes(names[0]!.site)}
+        {#each open ? names : names.slice(0, 1) as c (c.id)}
+          {@const w = candidateWords(c)}
+          {@const extra = extraWords(c)}
+          {@const countries = countryWords(c)}
+          {@const site = siteOoniWords(c)}
+          <li class="flex items-start gap-3 p-3">
+            <Checkbox
+              checked={picked.includes(c.id)}
+              onCheckedChange={(v) => toggle(c.id, v === true)}
+              aria-label={`Pick ${c.name}`}
+            />
+            <div class="min-w-0 flex-1 space-y-1">
+              <p class="flex flex-wrap items-center gap-2">
+                <span
+                  class={`inline-block size-2 shrink-0 rounded-full ${DOT[w.dot]}`}
+                  aria-hidden="true"
+                ></span>
+                <span class="font-mono break-words">{c.name}</span>
+              </p>
+              <p class="text-muted-foreground">
+                {usableCandidate(c) ? suggestionReason(c) : w.sentence}
+              </p>
+              <Collapsible.Root>
+                <Collapsible.Trigger
+                  class="group text-muted-foreground hover:text-foreground flex min-h-11 items-center gap-1 text-xs sm:min-h-0"
+                >
+                  <ChevronRight
+                    class="size-3.5 transition-transform group-data-[state=open]:rotate-90"
+                    aria-hidden="true"
+                  />
+                  Details
+                </Collapsible.Trigger>
+                <Collapsible.Content class="text-muted-foreground mt-1 space-y-0.5 text-xs">
+                  <p>{w.sentence}{extra ? ` ${extra}` : ''}</p>
+                  {#if c.check && c.check.code === null}
+                    <p>{nearWords(c, isFamily)}</p>
+                    {#if countries.length > 0}<p>{countries.join(' · ')}</p>{/if}
+                    {#if site}<p>{site}</p>{/if}
+                  {/if}
+                  <p>Found in: {sourcesWords(c)}.</p>
+                  <p>{scoreWords(c)}</p>
+                </Collapsible.Content>
+              </Collapsible.Root>
+            </div>
+          </li>
+        {/each}
+        {#if more > 0}
+          <li class="px-3 py-2">
+            <Button
+              variant="link"
+              size="sm"
+              class="h-auto p-0"
+              onclick={() =>
+                (opened = open
+                  ? opened.filter((x) => x !== names[0]!.site)
+                  : [...opened, names[0]!.site])}
+            >
+              {open
+                ? `Fold the names of ${names[0]!.site}`
+                : `And ${more} more ${more === 1 ? 'name' : 'names'} of ${names[0]!.site}`}
+            </Button>
+          </li>
+        {/if}
       {/each}
     </ul>
     {#if list.hasNextPage}

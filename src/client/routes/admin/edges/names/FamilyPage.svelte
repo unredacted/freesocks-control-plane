@@ -154,7 +154,7 @@
   // --- a found name: add it, ignore it, or take it back ---------------------------------------
   async function addOne(name: string) {
     const r = await run(() => addCandidates(slug, [name]));
-    if (r) toast.success(addedWords(r));
+    if (r) toast.success(addedWords(r, (family.data?.bindings.length ?? 0) > 0));
   }
   const findAction = (id: string, action: 'ignore' | 'unignore' | 'recheck') =>
     run(() => actOnCandidates(action, [id], action === 'ignore' ? 'name' : undefined));
@@ -200,7 +200,7 @@
   async function doImport() {
     const r = await run(() => importNames(slug, importText));
     if (!r) return;
-    toast.success(addedWords(r));
+    toast.success(addedWords(r, (family.data?.bindings.length ?? 0) > 0));
     importText = '';
   }
 
@@ -735,7 +735,12 @@
     </Collapsible.Content>
   </Collapsible.Root>
 
-  <AddSuggestionsDialog bind:open={addOpen} family={slug} label={f.label} />
+  <AddSuggestionsDialog
+    bind:open={addOpen}
+    family={slug}
+    label={f.label}
+    onPort={family.data.bindings.length > 0}
+  />
 {/if}
 
 <ConfirmDialog

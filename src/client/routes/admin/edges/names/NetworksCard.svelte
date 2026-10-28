@@ -1,9 +1,9 @@
 <script lang="ts">
   /**
    * Networks (docs/edges.md "Networks"): one or more ASNs and the address
-   * ranges they announce, plus ranges entered by hand. A family on a network
-   * has its target and every name on it; a transport bound to such a family is
-   * fronted only from locations on it. Ranges are counted here, never listed.
+   * ranges they announce, plus ranges entered by hand. A name list on a
+   * network has its cover site and every name on it; a port using such a list
+   * gets addresses only from locations on it. Ranges are counted here, never listed.
    *
    * All wording lives in ./lib/words.ts (pure, unit-tested).
    */
@@ -112,9 +112,9 @@
       <div class="min-w-0 flex-1">
         <h2 class="text-base font-medium">Networks</h2>
         <p class="text-muted-foreground mt-1">
-          Where a family's target and names live, by the ASNs that announce their addresses. A
-          transport bound to a family on a network is fronted only by addresses from that network,
-          so a name and the address it is shown to belong together.
+          Where a name list's cover site and names live, by the ASNs that announce their addresses.
+          A port using a list on a network gets addresses only from that network, so a name and the
+          address it is shown to belong together.
         </p>
       </div>
       <Button size="sm" onclick={startAdd}>Add a network</Button>
@@ -122,7 +122,9 @@
     {#if networks.isError}
       <p class="text-destructive">{sniErrorWords(codeOf(networks.error))}</p>
     {:else if (networks.data?.networks.length ?? 0) === 0}
-      <p class="text-muted-foreground">No network yet. Families without one may use any address.</p>
+      <p class="text-muted-foreground">
+        No network yet. Name lists without one may use any address.
+      </p>
     {:else}
       <ul class="divide-y rounded-md border" aria-label="Networks">
         {#each networks.data?.networks ?? [] as n (n.id)}
@@ -155,7 +157,7 @@
                 variant="ghost"
                 class="text-destructive h-11 sm:h-8"
                 disabled={busy || n.families.length > 0}
-                title={n.families.length > 0 ? 'A family is on this network' : undefined}
+                title={n.families.length > 0 ? 'A name list is on this network' : undefined}
                 onclick={() => {
                   removing = n;
                   removeOpen = true;
@@ -236,7 +238,7 @@
 <ConfirmDialog
   bind:open={removeOpen}
   title={`Remove the network ${removing?.label ?? ''}?`}
-  body="Locations set to it go back to no network. A family or a transport on it must be changed first."
+  body="Locations set to it go back to no network. A name list or a port on it must be changed first."
   confirmLabel="Remove network"
   danger
   onConfirm={async () => {

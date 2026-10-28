@@ -53,16 +53,20 @@ describe('networks', () => {
     ...over,
   });
   test('a network in one line', () => {
-    expect(networkLine(net(), 1_000_000)).toBe('AS64500 · 4 ranges · read today · 1 family on it');
+    expect(networkLine(net(), 1_000_000)).toBe(
+      'AS64500 · 4 ranges · read today · 1 name list on it',
+    );
     expect(
       networkLine(
         net({ refreshError: 'timeout', families: [], ranges: { v4: 0, v6: 0 }, truncated: true }),
         1_000_000,
       ),
-    ).toBe('AS64500 · no ranges yet · the last read failed (no answer in time) · no family on it');
+    ).toBe(
+      'AS64500 · no ranges yet · the last read failed (no answer in time) · no name list on it',
+    );
     expect(
       networkLine(net({ asns: [], manualPrefixes: ['192.0.2.0/24'], refreshedAt: null })),
-    ).toBe('4 ranges · 1 by hand · 1 family on it');
+    ).toBe('4 ranges · 1 by hand · 1 name list on it');
   });
   test('every refresh failure the server records has words', async () => {
     const src = import.meta.glob('../../../../../../../convex/lib/edges/networks.ts', {

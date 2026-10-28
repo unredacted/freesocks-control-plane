@@ -36,7 +36,8 @@
     open = $bindable(false),
     family,
     label,
-  }: { open: boolean; family: string; label: string } = $props();
+    onPort = true,
+  }: { open: boolean; family: string; label: string; onPort?: boolean } = $props();
   const qc = useQueryClient();
   const codeOf = (e: unknown) => (e instanceof ApiCallError ? e.payload.error.code : null);
 
@@ -87,7 +88,7 @@
         lines.push(...r.lines);
       }
       open = false;
-      toast.success(addedWords({ added, lines }));
+      toast.success(addedWords({ added, lines }, onPort));
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
     } finally {
