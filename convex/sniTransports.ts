@@ -73,11 +73,14 @@ const deliveryName = (n: Doc<'sniNames'>): DeliveryName => ({
 
 /** The newest rollout of a binding, and the names a test can prove with it. */
 async function newestRollout(db: QueryCtx['db'], bindingId: Id<'sniInboundBindings'>) {
-  const rollouts = await db
+  // Each rollout of a binding is made after the last (its generation moves
+  // with it), so the newest is the last made: one row read, never the history
+  // (each row carries a whole name list).
+  const r = await db
     .query('sniRollouts')
     .withIndex('by_binding', (q) => q.eq('bindingId', bindingId))
-    .collect();
-  const r = rollouts.sort((x, y) => y.generation - x.generation)[0] ?? null;
+    .order('desc')
+    .first();
   return {
     rollout: r,
     provable: new Set(r?.phase === 'panel_confirmed' ? r.names : []),
