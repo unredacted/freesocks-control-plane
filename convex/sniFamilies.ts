@@ -49,7 +49,12 @@ import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { listenersOfTransport, syncTransportNetwork } from './lib/edges/networkScope';
 import { networkIdOfSlug, networkPrefixes } from './edgeNetworks';
 import { familyUsable, markCandidatesAdded } from './lib/edges/sni/hunt/store';
-import { combineDeliveries, nameDelivery, type DeliveryFacts } from './lib/edges/sni/delivery';
+import {
+  combineDeliveries,
+  countDeliveries,
+  nameDelivery,
+  type DeliveryFacts,
+} from './lib/edges/sni/delivery';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -185,6 +190,58 @@ function summarize(
   };
 }
 
+/**
+ * Where a family's names stand on their way to members, across its transports
+ * (lib/edges/sni/delivery.ts): each transport answers for itself (its own
+ * backend list, newest confirmed rollout and nodes), then the answers combine.
+ * Also the newest rollout of each binding, which the family page follows.
+ */
+async function deliveryFactsOf(ctx: { db: QueryCtx['db'] }, bindings: Doc<'sniInboundBindings'>[]) {
+  const latest = new Map<string, string>();
+  const perBinding: DeliveryFacts[] = [];
+  for (const b of bindings) {
+    const onBackend = new Set<string>();
+    const provable = new Set<string>();
+    const handedOut: Set<string>[] = [];
+    // The newest is the last made (one row read, never the whole history).
+    const newest = await ctx.db
+      .query('sniRollouts')
+      .withIndex('by_binding', (q) => q.eq('bindingId', b._id))
+      .order('desc')
+      .first();
+    if (newest) latest.set(b._id as string, newest._id as string);
+    if (newest?.phase === 'panel_confirmed') for (const n of newest.names) provable.add(n);
+    const profile = await ctx.db
+      .query('panelProfiles')
+      .withIndex('by_server_uuid', (q) =>
+        q.eq('backendServerId', b.backendServerId).eq('profileUuid', b.profileUuid),
+      )
+      .unique();
+    for (const n of profile?.inbounds.find((i) => i.inboundUuid === b.inboundUuid)?.reality
+      ?.serverNames ?? [])
+      onBackend.add(n);
+    for (const l of await listenersOfTransport(ctx.db, b.backendServerId, b.inboundUuid))
+      handedOut.push(
+        new Set((l.tlsNames ?? []).filter((n) => n.status === 'active').map((n) => n.name)),
+      );
+    perBinding.push({ bound: true, onBackend, provable, nodes: handedOut });
+  }
+  const unbound: DeliveryFacts = {
+    bound: false,
+    onBackend: new Set(),
+    provable: new Set(),
+    nodes: [],
+  };
+  const deliveryOf = (n: Doc<'sniNames'>) => {
+    const dn = { name: n.name, status: n.status, qualification: n.qualification.state };
+    return combineDeliveries(
+      perBinding.map((facts) => nameDelivery(dn, facts)),
+      nameDelivery(dn, unbound),
+    );
+  };
+  return { latest, deliveryOf };
+}
+
 export const list = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -195,7 +252,14 @@ export const list = internalQuery({
         .query('sniInboundBindings')
         .withIndex('by_family', (q) => q.eq('familyId', f._id))
         .collect();
-      out.push(summarize(f, await namesOf(ctx, f._id), bindings.length, await networkView(ctx, f)));
+      const names = await namesOf(ctx, f._id);
+      // The same counts as the family page and the node page (one answer per name).
+      const { deliveryOf } = await deliveryFactsOf(ctx, bindings);
+      out.push({
+        ...summarize(f, names, bindings.length, await networkView(ctx, f)),
+        delivery: countDeliveries(names.map((n) => deliveryOf(n).state)),
+        suggestions: await familyUsable(ctx.db, f._id),
+      });
     }
     return { families: out };
   },
@@ -272,50 +336,8 @@ export const detail = internalQuery({
       judged.set(row.name, at);
     }
     // The newest rollout of each binding: what the page follows. And where each
-    // name stands on its way to members across the family's transports
-    // (lib/edges/sni/delivery.ts): on the backend, provable by a test, handed out.
-    const latest = new Map<string, string>();
-    // Each transport answers for itself: its own backend, rollout and nodes.
-    const perBinding: DeliveryFacts[] = [];
-    for (const b of bindings) {
-      const onBackend = new Set<string>();
-      const provable = new Set<string>();
-      const handedOut: Set<string>[] = [];
-      const rollouts = await ctx.db
-        .query('sniRollouts')
-        .withIndex('by_binding', (q) => q.eq('bindingId', b._id))
-        .collect();
-      const newest = rollouts.sort((x, y) => y.generation - x.generation)[0];
-      if (newest) latest.set(b._id as string, newest._id as string);
-      if (newest?.phase === 'panel_confirmed') for (const n of newest.names) provable.add(n);
-      const profile = await ctx.db
-        .query('panelProfiles')
-        .withIndex('by_server_uuid', (q) =>
-          q.eq('backendServerId', b.backendServerId).eq('profileUuid', b.profileUuid),
-        )
-        .unique();
-      for (const n of profile?.inbounds.find((i) => i.inboundUuid === b.inboundUuid)?.reality
-        ?.serverNames ?? [])
-        onBackend.add(n);
-      for (const l of await listenersOfTransport(ctx.db, b.backendServerId, b.inboundUuid))
-        handedOut.push(
-          new Set((l.tlsNames ?? []).filter((n) => n.status === 'active').map((n) => n.name)),
-        );
-      perBinding.push({ bound: true, onBackend, provable, nodes: handedOut });
-    }
-    const unbound: DeliveryFacts = {
-      bound: false,
-      onBackend: new Set(),
-      provable: new Set(),
-      nodes: [],
-    };
-    const deliveryOf = (n: Doc<'sniNames'>) => {
-      const dn = { name: n.name, status: n.status, qualification: n.qualification.state };
-      return combineDeliveries(
-        perBinding.map((facts) => nameDelivery(dn, facts)),
-        nameDelivery(dn, unbound),
-      );
-    };
+    // name stands on its way to members (lib/edges/sni/delivery.ts).
+    const { latest, deliveryOf } = await deliveryFactsOf(ctx, bindings);
     // Where member reports single a name out (a hint; lib/edges/sni/health.ts).
     const sniCfg = await resolveSniConfig(ctx.db);
     const since = dayOf(Date.now() - sniCfg.reportWindowDays * 86_400_000);
@@ -354,7 +376,11 @@ export const detail = internalQuery({
       vantage.set(ev.name, [...(vantage.get(ev.name) ?? []), view]);
     }
     return {
-      family: summarize(f, names, bindings.length, await networkView(ctx, f)),
+      family: {
+        ...summarize(f, names, bindings.length, await networkView(ctx, f)),
+        delivery: countDeliveries(names.map((n) => deliveryOf(n).state)),
+        suggestions: await familyUsable(ctx.db, f._id),
+      },
       curatedCountries: sniCfg.curatedCountries,
       vantage: {
         enabled: sniCfg.enabled && vCfg.enabled,

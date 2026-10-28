@@ -42,6 +42,8 @@ export type NamesStep =
   | { kind: 'test'; node: SniTransportNode }
   /** Names wait for a test here, but no address of this node is proven yet. */
   | { kind: 'test_needs_address'; node: SniTransportNode }
+  /** For every node at once (a name list's page): names wait for a test on these nodes. */
+  | { kind: 'test_nodes'; nodes: number }
   /** Found names the cover site serves, ready to add. */
   | { kind: 'add_suggestions'; count: number }
   /** Names are being checked against the cover site (minutes). */
@@ -77,6 +79,10 @@ export function namesStep(
   const node = nodeOf(t, nodeUuid);
   if (node && node.waitingTest > 0 && t.send?.phase === 'panel_confirmed')
     return node.testable.length > 0 ? { kind: 'test', node } : { kind: 'test_needs_address', node };
+  // Every node at once: the test is per node, listed with each one.
+  const waiting = t.nodes.filter((n) => n.waitingTest > 0).length;
+  if (nodeUuid === null && waiting > 0 && t.send?.phase === 'panel_confirmed')
+    return { kind: 'test_nodes', nodes: waiting };
   if (t.list.suggestions > 0) return { kind: 'add_suggestions', count: t.list.suggestions };
   if (c.checking > 0) return { kind: 'checking', count: c.checking };
   return { kind: 'done' };
@@ -120,6 +126,21 @@ export function namesStatus(t: SniTransport, nodeUuid: string | null): { dot: Do
   return { dot, text: parts.join(' · ') };
 }
 
+/** One node behind a port, on the name list's page. */
+export function nodeLineWords(n: SniTransportNode): { dot: Dot; text: string } {
+  const parts = [`${plural(n.inUse, 'name')} in use`];
+  if (n.waitingTest)
+    parts.push(
+      n.testable.length > 0
+        ? `${n.waitingTest} waiting for a test`
+        : `${n.waitingTest} waiting for a test: try one of its addresses first`,
+    );
+  return {
+    dot: n.waitingTest > 0 ? 'amber' : n.inUse > 0 ? 'green' : 'grey',
+    text: parts.join(' · '),
+  };
+}
+
 /** The sentence under the status line: what holds the next step, or what it does. */
 export function stepWords(step: NamesStep, t: SniTransport): string {
   const nodes = t.profileNodes.length;
@@ -144,6 +165,8 @@ export function stepWords(step: NamesStep, t: SniTransport): string {
         : 'This backend is not set up yet, so these names cannot reach the node.';
     case 'test':
       return 'The node has the new names. Members get them once one test proves the node accepts them.';
+    case 'test_nodes':
+      return `The new names are on the node. Members get them once a test proves the node accepts them: test one on ${step.nodes === 1 ? 'the node' : `each of the ${step.nodes} nodes`} below.`;
     case 'test_needs_address':
       return 'The node has the new names, but none of its addresses has been tried yet. Try one on its Edges first: a name is tested through an address that already works.';
     case 'add_suggestions':
@@ -167,11 +190,13 @@ export function managedWords(done: SniManaged): string {
   ];
   // An existing list already holds the port's names: they are in it, not left out.
   const already = done.imported.lines.filter((l) => l.verdict === 'duplicate').length;
-  const other = done.imported.lines.length - taken - already;
   if (already)
     parts.push(`${plural(already, 'name')} ${already === 1 ? 'was' : 'were'} already in the list.`);
-  if (other)
-    parts.push(`${plural(other, 'name')} left out: in another list, burned, or not a host name.`);
+  const left = leftOutWords({
+    ...done.imported,
+    lines: done.imported.lines.filter((l) => l.verdict !== 'duplicate'),
+  }).trim();
+  if (left) parts.push(left);
   if (done.cert?.ok)
     parts.push(
       `The cover site's certificate lists ${plural(done.cert.listed, 'name')}: new ones show up as suggestions once checked.`,
@@ -252,10 +277,22 @@ export function lookedWords(
 
 /** What adding suggestions did, in one sentence. */
 export function addedWords(r: SniImportResult): string {
-  const left = r.lines.length - r.added;
-  return `${plural(r.added, 'name')} added. Each is checked against the cover site, then goes to the node with the next send.${
-    left ? ` ${plural(left, 'name')} left out: already listed, in another list, or burned.` : ''
-  }`;
+  return `${plural(r.added, 'name')} added. Each is checked against the cover site, then goes to the node with the next send.${leftOutWords(r)}`;
+}
+
+/** Why lines of an import were not added, each reason with its count (empty when none was). */
+export function leftOutWords(r: SniImportResult): string {
+  const count = (v: SniImportResult['lines'][number]['verdict']) =>
+    r.lines.filter((l) => l.verdict === v).length;
+  const why = [
+    [count('duplicate'), 'already listed'],
+    [count('in_other_family'), 'in another list'],
+    [count('burned'), 'burned'],
+    [count('invalid'), 'not a host name'],
+  ]
+    .filter(([n]) => (n as number) > 0)
+    .map(([n, what]) => `${n} ${what}`);
+  return why.length > 0 ? ` Left out: ${why.join(', ')}.` : '';
 }
 
 /**

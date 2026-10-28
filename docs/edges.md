@@ -3259,29 +3259,39 @@ address.
 ### The page
 
 Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/names/{slug}`).
+The admin copy calls a family a **name list** and its target the **cover site** (the real site a
+REALITY port shows anyone without a member's key). A list usually starts from a node's page (§ A
+transport's names).
 
-- The list: each family in one line (how many names are ready, waiting, failing; whether an
-  transport uses it), the switch for `edge.sni.enabled`, and "Add a family" (the target is fixed
-  at creation).
-- A family: bind it to a REALITY transport (the transports come from the Servers observation),
-  add names (the answer says what happened to every kind of line), filter and pick names, then
-  check again, retire (confirmed: it states the name drain, `edge.sniDrainMinutes`), bring
-  back, burn (typed), or record for a curated country that they work
-  or are blocked there.
-- Checks from inside countries (the list page): the switch for `edge.sni.vantage.enabled`, the
-  countries they run from (read only: changed on Settings, Censored countries), the services,
-  "Apply suggestions by themselves", the budget in one
-  line, and the residual risk next to the switch. On a family, every name shows one line per
-  country it was checked from (what the checks saw, then what they suggest against the mark
-  standing today) with **Apply** (or "Use the checks instead" on a conflict); picked names can be
-  checked from an opted-in country now, or have the checks' suggestions applied. A block
-  suggestion or a conflict also puts the name under "Problems".
-- A bound transport: "See what would be written" shows the plan in words, including whether one
-  test per node will prove the whole list (a witness) or each name needs its own; "Write to the
-  backend" starts the rollout; once the backend has it, each node lists how many names it has proven
-  and offers "Test through <address>". The test link is shown once with its name, and "It
-  connected" confirms the receipt. The page says plainly that a check from outside cannot
-  stand in for that test.
+- The Server names page: the switch for `edge.sni.enabled` at the top, its line saying what is
+  true now; then each name list in one line with the same counts as its page and the node page
+  (`GET sni/families` gives every list its `delivery` counts and `suggestions`: names in use,
+  waiting for a test, to send, being checked, checked, failing, suggestions, and how many ports use
+  it); "Add a name list" (the cover site is fixed at creation).
+- A name list's page: first where it is used, one block per port (`names/FamilyPort.svelte`) with
+  the node page's status line and next step for every node at once, then each node behind the
+  port with what its members get and, where names wait for a test there, "Test one name". Then
+  **one list** of its names and the names found for it (`names/lib/listWords.ts`), each with one
+  state on the way to members: Suggested (with Add and Ignore on the row), Being checked, Waiting
+  to be sent, Waiting for a test, In use (on how many nodes), and off the way Failing, Retired,
+  Burned, Ignored (Stop ignoring), Not usable (Check again). Each row says its state and why in one
+  sentence; what was measured (the check, the handshakes, timing, countries, OONI, sources, the
+  score) is under Details. Three filters: Needs you (suggestions, waiting for a test or a send,
+  failing, and any name member reports or the checks from inside a country single out), In use,
+  All. Picked names of the list can be checked again, retired (confirmed: it states the name drain,
+  `edge.sniDrainMinutes`), brought back, burned (typed), or, under "For a country", recorded for a
+  curated country as working or blocked there, checked from an opted-in country now, or have the
+  checks' suggestions applied. "Look for more names" reads the cover site's certificate and its
+  certificate logs. "Add names by hand" (the answer says what happened to every kind of line) and
+  Settings ("Use this list", whose line says what is true now; the network; HTTP/2 only; using the
+  list on another port with the same cover site; removing it) are folded away below.
+- Checks from inside countries (the Server names page): the switch for `edge.sni.vantage.enabled`,
+  the countries they run from (read only: changed on Settings, Censored countries), the services,
+  "Apply suggestions by themselves", the budget in one line, and the residual risk next to the
+  switch. On a list, every name shows under Details one line per country it was checked from (what
+  the checks saw, then what they suggest against the mark standing today) with **Apply** (or "Use
+  the checks instead" on a conflict); a block suggestion or a conflict also puts the name under
+  "Needs you".
 
 - Find names (`/admin/edges/find-names`, "Find names" on the list page; § Finding names): the
   switch, the top-sites sweep (start, stop, how far it got), each network's "Search it" switch and
@@ -3293,9 +3303,8 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   near the node (for a family candidate: the family's target, its own site beside it), what the
   checks from inside countries and OONI say, and the score. Picked candidates can be added to a
   family on the network (its normal path), ignored (the name or the whole site), checked again,
-  measured now, or looked up in certificate logs. A family's page has the same list under "Find
-  more names", with "Read the target's certificate" and "Look up certificate logs". Wording is in
-  `names/lib/huntWords.ts`.
+  measured now, or looked up in certificate logs. On a name list's page its own finds are rows of
+  its one list (above). Wording is in `names/lib/huntWords.ts`.
 - Attention `sni_family_thin` (info, "Find names"): a family on a network, bound to a transport,
   with fewer than three active names that qualify. A name blocked in one country is a last resort
   elsewhere (§ Names for the member's country), so a family that small runs out fast. Counting
@@ -3304,11 +3313,12 @@ Admin -> Edges -> Advanced -> Server names (`/admin/edges/names`, `/admin/edges/
   attention list only reads it. With finding names off, the family card says so and offers no
   lookup.
 
-The three facts stay separate in the copy: the target serves a name (checked), a node accepts
+The three facts stay separate in the copy: the cover site serves a name (checked), a node accepts
 it (tested), it works from a country (judged; the checks from inside a country only ever
-suggest). Wording is in
-`src/client/routes/admin/edges/names/lib/words.ts`; tests pin that every `edge.sni.*` refusal
-and every check code the server can record has its own sentence.
+suggest). "Ready" is never used: a found name is usable or not (`usableCandidate`), a list's name
+has one state on the way to members. Wording is in `src/client/routes/admin/edges/names/lib/`
+(`words.ts`, `listWords.ts`, `transportWords.ts`, `huntWords.ts`); tests pin that every
+`edge.sni.*` refusal and every check code the server can record has its own sentence.
 
 ## Probes and the block detector
 

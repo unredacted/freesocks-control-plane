@@ -32,6 +32,7 @@ import {
 import { __setManageDepsForTests } from './sniTransportOps';
 import {
   SniFamilyDetail,
+  SniFamilyList,
   SniManageDryRun,
   SniManaged,
   SniTransportsView,
@@ -267,6 +268,14 @@ describe('the transports of a backend', () => {
       'c.example': { state: 'waiting_test', inUseOn: 0, nodes: 1 },
     });
     expect(detail.suggestions).toBe(0);
+    // The list of families counts the same way.
+    const list = SniFamilyList.parse(await (await call('GET', 'families')).json());
+    expect(list.families[0]).toMatchObject({
+      slug: 'vless-relay-a',
+      delivery: { inUse: 2, waitingTest: 1, toSend: 0 },
+      suggestions: 0,
+    });
+    expect(detail.family.delivery).toEqual(list.families[0]!.delivery);
     // Never twice.
     expect((await call('POST', 'transports/manage', manageBody)).status).toBe(409);
     const audit = (await t.run((ctx) => ctx.db.query('auditLog').collect())).find(
