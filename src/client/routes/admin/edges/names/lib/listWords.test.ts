@@ -200,6 +200,23 @@ describe('the Server names page', () => {
         }),
       ),
     ).toBe('No names yet · not used by any port');
+    // Every name retired or burned: not an empty list.
+    expect(
+      listLine(
+        summary({
+          suggestions: 0,
+          delivery: {
+            inUse: 0,
+            waitingTest: 0,
+            toSend: 0,
+            idle: 0,
+            checking: 0,
+            failing: 0,
+            off: 3,
+          },
+        }),
+      ),
+    ).toBe('No name in use (3 retired or burned) · used by 1 port');
     expect(listDot(summary())).toBe('amber');
     expect(
       listDot(

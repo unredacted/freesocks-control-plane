@@ -134,6 +134,8 @@ describe('the next step', () => {
     expect(kind(namesStep(t, on, NODE))).toBe('test');
     // Another node's page: nothing to test there.
     expect(kind(namesStep(t, on, 'n-2'))).toBe('done');
+    // A name list's page (every node at once): the test is per node, below.
+    expect(namesStep(t, on, null)).toEqual({ kind: 'test_nodes', nodes: 1 });
     t.nodes[0]!.testable = [];
     expect(kind(namesStep(t, on, NODE))).toBe('test_needs_address');
   });
@@ -161,6 +163,7 @@ describe('the next step', () => {
       { kind: 'send_blocked', why: 'not_set_up' },
       { kind: 'test', node: t.nodes[0]! },
       { kind: 'test_needs_address', node: t.nodes[0]! },
+      { kind: 'test_nodes', nodes: 2 },
       { kind: 'add_suggestions', count: 2 },
       { kind: 'checking', count: 2 },
       { kind: 'done' },
@@ -303,10 +306,22 @@ describe('what each action did, in words', () => {
         },
       }),
     ).toBe(
-      "FCP manages these names now: 2 names taken in, each checked against the cover site first. 1 name left out: already listed, in another list, burned, or not a host name. The cover site's certificate lists 6 names: new ones show up as suggestions once checked.",
+      "FCP manages these names now: 2 names taken in, each checked against the cover site first. Left out: 1 in another list. The cover site's certificate lists 6 names: new ones show up as suggestions once checked.",
     );
     expect(addedWords({ added: 3, lines: lines(3, 'added') })).toBe(
       '3 names added. Each is checked against the cover site, then goes to the node with the next send.',
+    );
+    // Each reason a line was left out, with its count: a typo is never "already listed".
+    expect(
+      addedWords({
+        added: 0,
+        lines: [
+          { input: 'not a name', name: null, verdict: 'invalid' },
+          { input: 'a.example', name: 'a.example', verdict: 'duplicate' },
+        ],
+      }),
+    ).toBe(
+      '0 names added. Each is checked against the cover site, then goes to the node with the next send. Left out: 1 already listed, 1 not a host name.',
     );
     const plan = {
       backendServerId: 's',

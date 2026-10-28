@@ -416,9 +416,16 @@
         </div>
       {/if}
 
+      {#if (filter === 'all' ? everything : suggestions).isError}
+        <p class="text-destructive">
+          The names found for this list could not be read: {sniErrorWords(
+            codeOf((filter === 'all' ? everything : suggestions).error),
+          )}
+        </p>
+      {/if}
       {#if filter === 'all' && everything.isPending}
         <Skeleton class="h-24 w-full" />
-      {:else if shown.length === 0}
+      {:else if shown.length === 0 && !(filter === 'all' ? everything : suggestions).isError}
         <p class="text-muted-foreground">
           {filter === 'needs_you'
             ? 'Nothing needs you here.'
@@ -473,9 +480,10 @@
                     <Collapsible.Content class="text-muted-foreground mt-1 space-y-1 text-xs">
                       <p>
                         {n.qualification === 'ok'
-                          ? `The cover site serves it${n.tlsVersion === 'TLSv1.3' ? ' over TLS 1.3' : ''}${n.alpn === 'h2' ? ' and HTTP/2' : ''}.`
-                          : 'Not served by the cover site at its last check.'}
-                        Checked {ago(n.checkedAt)}.
+                          ? `The cover site serves it${n.tlsVersion === 'TLSv1.3' ? ' over TLS 1.3' : ''}${n.alpn === 'h2' ? ' and HTTP/2' : ''}. Checked ${ago(n.checkedAt)}.`
+                          : n.qualification === 'pending'
+                            ? 'Waiting for its first check against the cover site.'
+                            : `Not served by the cover site at its last check, ${ago(n.checkedAt)}.`}
                       </p>
                       {#if n.probeMarkedIn.length > 0}
                         <p>Marked by the checks from inside {n.probeMarkedIn.join(', ')}.</p>

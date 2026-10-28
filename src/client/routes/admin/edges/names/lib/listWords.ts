@@ -232,7 +232,8 @@ export function listLine(f: SniFamilySummary): string {
   if (d.idle) parts.push(`${d.idle} checked`);
   if (d.failing) parts.push(`${d.failing} failing`);
   if (f.suggestions) parts.push(plural(f.suggestions, 'suggestion'));
-  if (parts.length === 0) parts.push('No names yet');
+  if (parts.length === 0)
+    parts.push(d.off > 0 ? `No name in use (${d.off} retired or burned)` : 'No names yet');
   parts.push(f.bindings === 0 ? 'not used by any port' : `used by ${plural(f.bindings, 'port')}`);
   return parts.join(' · ');
 }

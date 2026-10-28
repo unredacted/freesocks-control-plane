@@ -203,11 +203,12 @@ async function deliveryFactsOf(ctx: { db: QueryCtx['db'] }, bindings: Doc<'sniIn
     const onBackend = new Set<string>();
     const provable = new Set<string>();
     const handedOut: Set<string>[] = [];
-    const rollouts = await ctx.db
+    // The newest is the last made (one row read, never the whole history).
+    const newest = await ctx.db
       .query('sniRollouts')
       .withIndex('by_binding', (q) => q.eq('bindingId', b._id))
-      .collect();
-    const newest = rollouts.sort((x, y) => y.generation - x.generation)[0];
+      .order('desc')
+      .first();
     if (newest) latest.set(b._id as string, newest._id as string);
     if (newest?.phase === 'panel_confirmed') for (const n of newest.names) provable.add(n);
     const profile = await ctx.db
