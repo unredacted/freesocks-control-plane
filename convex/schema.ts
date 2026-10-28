@@ -1539,6 +1539,9 @@ export default defineSchema({
       v.object({
         enabled: v.boolean(),
         place: v.optional(v.object({ country: v.string(), city: v.optional(v.string()) })),
+        // The place was taken from a node's location when one of its transports
+        // was managed (docs/edges.md "A transport's names"); absent: an operator's.
+        placeFrom: v.optional(v.literal('node')),
       }),
     ),
     updatedAt: v.number(),

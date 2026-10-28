@@ -48,7 +48,8 @@ import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { listenersOfTransport, syncTransportNetwork } from './lib/edges/networkScope';
 import { networkIdOfSlug, networkPrefixes } from './edgeNetworks';
-import { markCandidatesAdded } from './lib/edges/sni/hunt/store';
+import { familyUsable, markCandidatesAdded } from './lib/edges/sni/hunt/store';
+import { combineDeliveries, nameDelivery, type DeliveryFacts } from './lib/edges/sni/delivery';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -270,16 +271,51 @@ export const detail = internalQuery({
       at.marks.set(row.country, { state: row.state, source: row.source });
       judged.set(row.name, at);
     }
-    // The newest rollout of each binding: what the page follows.
+    // The newest rollout of each binding: what the page follows. And where each
+    // name stands on its way to members across the family's transports
+    // (lib/edges/sni/delivery.ts): on the backend, provable by a test, handed out.
     const latest = new Map<string, string>();
+    // Each transport answers for itself: its own backend, rollout and nodes.
+    const perBinding: DeliveryFacts[] = [];
     for (const b of bindings) {
+      const onBackend = new Set<string>();
+      const provable = new Set<string>();
+      const handedOut: Set<string>[] = [];
       const rollouts = await ctx.db
         .query('sniRollouts')
         .withIndex('by_binding', (q) => q.eq('bindingId', b._id))
         .collect();
       const newest = rollouts.sort((x, y) => y.generation - x.generation)[0];
       if (newest) latest.set(b._id as string, newest._id as string);
+      if (newest?.phase === 'panel_confirmed') for (const n of newest.names) provable.add(n);
+      const profile = await ctx.db
+        .query('panelProfiles')
+        .withIndex('by_server_uuid', (q) =>
+          q.eq('backendServerId', b.backendServerId).eq('profileUuid', b.profileUuid),
+        )
+        .unique();
+      for (const n of profile?.inbounds.find((i) => i.inboundUuid === b.inboundUuid)?.reality
+        ?.serverNames ?? [])
+        onBackend.add(n);
+      for (const l of await listenersOfTransport(ctx.db, b.backendServerId, b.inboundUuid))
+        handedOut.push(
+          new Set((l.tlsNames ?? []).filter((n) => n.status === 'active').map((n) => n.name)),
+        );
+      perBinding.push({ bound: true, onBackend, provable, nodes: handedOut });
     }
+    const unbound: DeliveryFacts = {
+      bound: false,
+      onBackend: new Set(),
+      provable: new Set(),
+      nodes: [],
+    };
+    const deliveryOf = (n: Doc<'sniNames'>) => {
+      const dn = { name: n.name, status: n.status, qualification: n.qualification.state };
+      return combineDeliveries(
+        perBinding.map((facts) => nameDelivery(dn, facts)),
+        nameDelivery(dn, unbound),
+      );
+    };
     // Where member reports single a name out (a hint; lib/edges/sni/health.ts).
     const sniCfg = await resolveSniConfig(ctx.db);
     const since = dayOf(Date.now() - sniCfg.reportWindowDays * 86_400_000);
@@ -343,7 +379,9 @@ export const detail = internalQuery({
         tlsVersion: n.qualification.tlsVersion ?? null,
         alpn: n.qualification.alpn ?? null,
         checkedAt: n.checkedAt ? new Date(n.checkedAt).toISOString() : null,
+        delivery: deliveryOf(n),
       })),
+      suggestions: await familyUsable(ctx.db, f._id),
       bindings: bindings.map((b) => ({
         id: b._id as string,
         backendSlug: servers.get(b.backendServerId as string) ?? '',
@@ -370,32 +408,49 @@ export const create = internalMutation({
     ...actor,
   },
   handler: async (ctx, a) => {
-    if (!SLUG.test(a.slug)) refuse('validation', 'A slug is lowercase letters, digits and dashes');
-    const exists = await ctx.db
-      .query('sniFamilies')
-      .withIndex('by_slug', (q) => q.eq('slug', a.slug))
-      .unique();
-    if (exists) refuse('conflict', 'A family with that slug exists');
-    const target = checkTarget(a.targetAddress, a.targetPort);
-    const networkId = a.network ? await networkIdOfSlug(ctx.db, a.network) : null;
-    const id = await ctx.db.insert('sniFamilies', {
-      slug: a.slug,
-      label: a.label.trim().slice(0, 80) || a.slug,
-      target,
-      enabled: true,
-      requireH2: a.requireH2 ?? false,
-      ...(networkId ? { networkId } : {}),
-      nextSeq: 1,
-      updatedAt: Date.now(),
-    });
-    await audit(ctx, 'edge.sni.family.create', a.actorAdminId, {
-      slug: a.slug,
-      targetKind: 'static',
-      ...(a.network ? { network: a.network } : {}),
-    });
-    return { id: id as string, slug: a.slug };
+    const f = await insertFamily(ctx, a);
+    return { id: f._id as string, slug: f.slug };
   },
 });
+
+/** A new family (the create route, and managing a transport's names in one call). */
+export async function insertFamily(
+  ctx: MutationCtx,
+  a: {
+    slug: string;
+    label: string;
+    targetAddress: string;
+    targetPort: number;
+    requireH2?: boolean;
+    network?: string;
+    actorAdminId?: Id<'adminUsers'>;
+  },
+): Promise<Doc<'sniFamilies'>> {
+  if (!SLUG.test(a.slug)) refuse('validation', 'A slug is lowercase letters, digits and dashes');
+  const exists = await ctx.db
+    .query('sniFamilies')
+    .withIndex('by_slug', (q) => q.eq('slug', a.slug))
+    .unique();
+  if (exists) refuse('conflict', 'A family with that slug exists');
+  const target = checkTarget(a.targetAddress, a.targetPort);
+  const networkId = a.network ? await networkIdOfSlug(ctx.db, a.network) : null;
+  const id = await ctx.db.insert('sniFamilies', {
+    slug: a.slug,
+    label: a.label.trim().slice(0, 80) || a.slug,
+    target,
+    enabled: true,
+    requireH2: a.requireH2 ?? false,
+    ...(networkId ? { networkId } : {}),
+    nextSeq: 1,
+    updatedAt: Date.now(),
+  });
+  await audit(ctx, 'edge.sni.family.create', a.actorAdminId, {
+    slug: a.slug,
+    targetKind: 'static',
+    ...(a.network ? { network: a.network } : {}),
+  });
+  return (await ctx.db.get(id))!;
+}
 
 /**
  * Label, the enabled switch, the HTTP/2 requirement and the network. The
@@ -902,111 +957,133 @@ export const bind = internalMutation({
     ...actor,
   },
   handler: async (ctx, a) => {
-    const cfg = await resolveSniConfig(ctx.db);
-    if (!cfg.enabled) refuse('edge.sni.disabled', 'Server-name families are switched off');
+    if (!(await resolveSniConfig(ctx.db)).enabled)
+      refuse('edge.sni.disabled', 'Server-name families are switched off');
     const f = await familyBySlug(ctx, a.slug);
-    if (!f.enabled) refuse('edge.sni.disabled', 'This family is switched off');
     const server = await ctx.db
       .query('backendServers')
       .withIndex('by_slug', (q) => q.eq('slug', a.backendSlug))
       .unique();
     if (!server) return refuse('not_found', 'Backend server not found');
-    const profiles = await ctx.db
-      .query('panelProfiles')
-      .withIndex('by_server', (q) => q.eq('backendServerId', server._id))
-      .collect();
-    const hits = profiles.flatMap((p) =>
-      p.inbounds
-        .filter((i) => (a.inboundUuid ? i.inboundUuid === a.inboundUuid : i.tag === a.inboundTag))
-        .map((i) => ({ p, i })),
-    );
-    if (hits.length !== 1)
-      return refuse(
-        'servers.unknown_inbound',
-        'That transport is not on this backend. Refresh Servers',
-      );
-    const { p, i } = hits[0];
-    if (i.security !== 'reality' || !i.reality)
-      return refuse('servers.not_reality', 'Only a REALITY transport takes a server-name family');
-    // An allowlist is only safe for the target it was qualified against.
-    if (!sameTarget(parseRealityTarget(i.reality.target), f.target))
-      refuse(
-        'edge.sni.target_mismatch',
-        'The transport forwards to a different target than this family was checked against',
-      );
-    const taken = await ctx.db
-      .query('sniInboundBindings')
-      .withIndex('by_server_inbound', (q) =>
-        q.eq('backendServerId', server._id).eq('inboundUuid', i.inboundUuid),
-      )
-      .unique();
-    if (taken) refuse('conflict', 'This transport already has a family');
-    // A family on a network scopes the transport to it: every address already
-    // in use on the transport must lie on it (docs/edges.md "Networks").
-    if (f.networkId) {
-      const prefixes = await networkPrefixes(ctx.db, f.networkId);
-      if (!prefixes)
-        refuse(
-          'edge.sni.network_unknown',
-          'The family’s network has no address ranges yet. Refresh it, or add ranges by hand',
-        );
-      let off = 0;
-      for (const l of await listenersOfTransport(ctx.db, server._id, i.inboundUuid))
-        for (const e of await ctx.db
-          .query('edges')
-          .withIndex('by_relay_publication', (q) =>
-            q.eq('relayId', l.relayId).eq('publication', 'published'),
-          )
-          .collect())
-          if (e.listenerId === l._id && edgeNetworkVerdict(e.addresses, prefixes) !== 'on') off++;
-      if (off > 0)
-        refuse(
-          'edge.sni.network_edges_off',
-          `${off} address${off === 1 ? '' : 'es'} in use on this transport ${off === 1 ? 'is' : 'are'} not on the family’s network`,
-        );
-    }
-    const imported = a.importNames ? await addFamilyNames(ctx, f, i.reality.serverNames) : null;
-    // Everything the transport lists today has been accepted before: none of it
-    // can ever serve as a witness that a NEW generation was applied.
-    for (const name of i.reality.serverNames) {
-      const norm = normalizeName(name);
-      if (!norm) continue;
-      const seen = await ctx.db
-        .query('sniInboundNameHistory')
-        .withIndex('by_inbound_name', (q) =>
-          q.eq('backendServerId', server._id).eq('inboundUuid', i.inboundUuid).eq('name', norm),
-        )
-        .unique();
-      if (!seen)
-        await ctx.db.insert('sniInboundNameHistory', {
-          backendServerId: server._id,
-          inboundUuid: i.inboundUuid,
-          name: norm,
-          firstSeenGeneration: 0,
-        });
-    }
-    const id = await ctx.db.insert('sniInboundBindings', {
-      backendServerId: server._id,
-      profileUuid: p.profileUuid,
-      inboundTag: i.tag,
-      inboundUuid: i.inboundUuid,
-      familyId: f._id,
-      generation: 0,
-      panelConfirmedGeneration: 0,
-      updatedAt: Date.now(),
-    });
-    if (f.networkId) await syncTransportNetwork(ctx, server._id, i.inboundUuid, f.networkId);
-    await audit(ctx, 'edge.sni.inbound.bind', a.actorAdminId, {
-      slug: f.slug,
-      backendSlug: server.slug,
-      inboundTag: i.tag,
-      ...(imported
-        ? { imported: imported.added, notImported: imported.lines.length - imported.added }
-        : {}),
-    });
-    return { id: id as string, ...(imported ? { imported } : {}) };
+    return bindFamily(ctx, f, server, a);
   },
 });
+
+/**
+ * Bind a family to one backend transport (the bind route, and managing a
+ * transport's names in one call): the checks, the names it lists recorded as
+ * seen (and taken into the family on asking), the transport scoped to the
+ * family's network.
+ */
+export async function bindFamily(
+  ctx: MutationCtx,
+  f: Doc<'sniFamilies'>,
+  server: Doc<'backendServers'>,
+  a: {
+    inboundTag: string;
+    inboundUuid?: string;
+    importNames?: boolean;
+    actorAdminId?: Id<'adminUsers'>;
+  },
+) {
+  const cfg = await resolveSniConfig(ctx.db);
+  if (!cfg.enabled) refuse('edge.sni.disabled', 'Server-name families are switched off');
+  if (!f.enabled) refuse('edge.sni.disabled', 'This family is switched off');
+  const profiles = await ctx.db
+    .query('panelProfiles')
+    .withIndex('by_server', (q) => q.eq('backendServerId', server._id))
+    .collect();
+  const hits = profiles.flatMap((p) =>
+    p.inbounds
+      .filter((i) => (a.inboundUuid ? i.inboundUuid === a.inboundUuid : i.tag === a.inboundTag))
+      .map((i) => ({ p, i })),
+  );
+  if (hits.length !== 1)
+    return refuse(
+      'servers.unknown_inbound',
+      'That transport is not on this backend. Refresh Servers',
+    );
+  const { p, i } = hits[0]!;
+  if (i.security !== 'reality' || !i.reality)
+    return refuse('servers.not_reality', 'Only a REALITY transport takes a server-name family');
+  // An allowlist is only safe for the target it was qualified against.
+  if (!sameTarget(parseRealityTarget(i.reality.target), f.target))
+    refuse(
+      'edge.sni.target_mismatch',
+      'The transport forwards to a different target than this family was checked against',
+    );
+  const taken = await ctx.db
+    .query('sniInboundBindings')
+    .withIndex('by_server_inbound', (q) =>
+      q.eq('backendServerId', server._id).eq('inboundUuid', i.inboundUuid),
+    )
+    .unique();
+  if (taken) refuse('conflict', 'This transport already has a family');
+  // A family on a network scopes the transport to it: every address already
+  // in use on the transport must lie on it (docs/edges.md "Networks").
+  if (f.networkId) {
+    const prefixes = await networkPrefixes(ctx.db, f.networkId);
+    if (!prefixes)
+      refuse(
+        'edge.sni.network_unknown',
+        'The family’s network has no address ranges yet. Refresh it, or add ranges by hand',
+      );
+    let off = 0;
+    for (const l of await listenersOfTransport(ctx.db, server._id, i.inboundUuid))
+      for (const e of await ctx.db
+        .query('edges')
+        .withIndex('by_relay_publication', (q) =>
+          q.eq('relayId', l.relayId).eq('publication', 'published'),
+        )
+        .collect())
+        if (e.listenerId === l._id && edgeNetworkVerdict(e.addresses, prefixes) !== 'on') off++;
+    if (off > 0)
+      refuse(
+        'edge.sni.network_edges_off',
+        `${off} address${off === 1 ? '' : 'es'} in use on this transport ${off === 1 ? 'is' : 'are'} not on the family’s network`,
+      );
+  }
+  const imported = a.importNames ? await addFamilyNames(ctx, f, i.reality.serverNames) : null;
+  // Everything the transport lists today has been accepted before: none of it
+  // can ever serve as a witness that a NEW generation was applied.
+  for (const name of i.reality.serverNames) {
+    const norm = normalizeName(name);
+    if (!norm) continue;
+    const seen = await ctx.db
+      .query('sniInboundNameHistory')
+      .withIndex('by_inbound_name', (q) =>
+        q.eq('backendServerId', server._id).eq('inboundUuid', i.inboundUuid).eq('name', norm),
+      )
+      .unique();
+    if (!seen)
+      await ctx.db.insert('sniInboundNameHistory', {
+        backendServerId: server._id,
+        inboundUuid: i.inboundUuid,
+        name: norm,
+        firstSeenGeneration: 0,
+      });
+  }
+  const id = await ctx.db.insert('sniInboundBindings', {
+    backendServerId: server._id,
+    profileUuid: p.profileUuid,
+    inboundTag: i.tag,
+    inboundUuid: i.inboundUuid,
+    familyId: f._id,
+    generation: 0,
+    panelConfirmedGeneration: 0,
+    updatedAt: Date.now(),
+  });
+  if (f.networkId) await syncTransportNetwork(ctx, server._id, i.inboundUuid, f.networkId);
+  await audit(ctx, 'edge.sni.inbound.bind', a.actorAdminId, {
+    slug: f.slug,
+    backendSlug: server.slug,
+    inboundTag: i.tag,
+    ...(imported
+      ? { imported: imported.added, notImported: imported.lines.length - imported.added }
+      : {}),
+  });
+  return { id: id as string, ...(imported ? { imported } : {}) };
+}
 
 /** Unbind: the names stay on the backend and on the origins; only the management link goes. */
 export const unbind = internalMutation({

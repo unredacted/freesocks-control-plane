@@ -127,6 +127,25 @@ export const SniFamilySummary = z.object({
 export type SniFamilySummary = z.infer<typeof SniFamilySummary>;
 export const SniFamilyList = z.object({ families: z.array(SniFamilySummary) });
 
+/** Where a name stands on its way to members (`convex/lib/edges/sni/delivery.ts`). */
+export const SNI_DELIVERY = [
+  'in_use',
+  'waiting_test',
+  'to_send',
+  'idle',
+  'checking',
+  'failing',
+  'off',
+] as const;
+export const SniNameDelivery = z.object({
+  state: z.enum(SNI_DELIVERY),
+  /** On how many nodes members are handed it. */
+  inUseOn: z.number(),
+  /** How many protected nodes its transports have. */
+  nodes: z.number(),
+});
+export type SniNameDelivery = z.infer<typeof SniNameDelivery>;
+
 export const SniNameRow = z.object({
   name: z.string(),
   seq: z.number(),
@@ -144,6 +163,8 @@ export const SniNameRow = z.object({
   probeMarkedIn: z.array(z.string()),
   /** What the checks from inside each country say. */
   vantage: z.array(SniVantageRow),
+  /** Where it stands on its way to members, across the family's transports. */
+  delivery: SniNameDelivery.default({ state: 'idle', inUseOn: 0, nodes: 0 }),
 });
 export type SniNameRow = z.infer<typeof SniNameRow>;
 
@@ -184,6 +205,8 @@ export const SniFamilyDetail = z.object({
   }),
   names: z.array(SniNameRow),
   bindings: z.array(SniBinding),
+  /** Found names it may add (usable, `usableCandidate`): the overview's number. */
+  suggestions: z.number().default(0),
 });
 export type SniFamilyDetail = z.infer<typeof SniFamilyDetail>;
 
@@ -371,7 +394,12 @@ export const SniHuntOverview = z.object({
     z.object({
       slug: z.string(),
       label: z.string(),
-      hunt: z.object({ enabled: z.boolean(), place: HuntPlace.nullable() }),
+      hunt: z.object({
+        enabled: z.boolean(),
+        place: HuntPlace.nullable(),
+        /** `node`: taken from a node's location when one of its transports was managed. */
+        placeFrom: z.literal('node').nullable().default(null),
+      }),
       ranges: z.object({ v4: z.number(), v6: z.number() }),
       candidates: HuntCounts,
     }),
@@ -557,3 +585,128 @@ export type SniHuntCertRead = z.infer<typeof SniHuntCertRead>;
 
 export const SniHuntCtQueued = z.object({ queued: z.number(), cached: z.number() });
 export const SniHuntChanged = z.object({ changed: z.number() });
+
+// --- a transport's names (docs/edges.md "A transport's names") ---------------------------------------
+
+export const SniDeliveryCounts = z.object({
+  inUse: z.number(),
+  waitingTest: z.number(),
+  toSend: z.number(),
+  idle: z.number(),
+  checking: z.number(),
+  failing: z.number(),
+  off: z.number(),
+});
+export type SniDeliveryCounts = z.infer<typeof SniDeliveryCounts>;
+
+export const SniTransportNode = z.object({
+  relaySlug: z.string(),
+  nodeUuid: z.string().nullable(),
+  nodeName: z.string(),
+  /** Usable names its members are handed. */
+  inUse: z.number(),
+  /** Usable names on the backend in the newest confirmed rollout, not handed out here yet. */
+  waitingTest: z.number(),
+  /** Those names (the first 50): any of them can be the one a test presents. */
+  pending: z.array(z.string()).default([]),
+  /** Addresses a test link can go through (a current endpoint confirmation). */
+  testable: z.array(z.object({ edgeId: z.string(), name: z.string() })),
+});
+export type SniTransportNode = z.infer<typeof SniTransportNode>;
+
+export const SniTransport = z.object({
+  transportUuid: z.string(),
+  tag: z.string(),
+  profileUuid: z.string(),
+  profileName: z.string(),
+  port: z.number().nullable(),
+  /** The transport's REALITY target, `host:port`, as Servers last read it. */
+  coverSite: z.string().nullable(),
+  /** How many names the transport lists on the backend. */
+  listed: z.number(),
+  /** The backend nodes running its profile (they share its names). */
+  profileNodes: z.array(z.object({ nodeUuid: z.string(), name: z.string() })),
+  /** The family FCP manages its names with; null: set by hand. */
+  list: z
+    .object({
+      slug: z.string(),
+      label: z.string(),
+      enabled: z.boolean(),
+      bindingId: z.string(),
+      counts: SniDeliveryCounts,
+      /** Found names it may add: checked against its target, not added or ignored. */
+      suggestions: z.number(),
+    })
+    .nullable(),
+  /** The newest rollout to the backend. */
+  send: z
+    .object({
+      rolloutId: z.string(),
+      generation: z.number(),
+      phase: z.enum(['writing', 'panel_confirmed', 'failed', 'superseded']),
+      /** A name the port never listed before: one test of it proves the whole send on a node. */
+      witness: z.string().nullable().default(null),
+    })
+    .nullable(),
+  /** Each protected node behind it (one per listener). */
+  nodes: z.array(SniTransportNode),
+  /** Families with the same target that no transport uses (not managed only). */
+  sameCoverSite: z.array(z.object({ slug: z.string(), label: z.string(), names: z.number() })),
+});
+export type SniTransport = z.infer<typeof SniTransport>;
+
+/** `GET sni/transports?backend=<slug>`. */
+export const SniTransportsView = z.object({
+  switches: z.object({
+    /** `edge.sni.enabled` */
+    names: z.boolean(),
+    /** `edge.sni.hunt.enabled` */
+    findNames: z.boolean(),
+    /** `servers.manage.enabled`: a rollout writes the backend through it. */
+    backendChanges: z.boolean(),
+    /** The backend is set up (or adopted): writes to it are accepted. */
+    backendSetUp: z.boolean(),
+  }),
+  transports: z.array(SniTransport),
+});
+export type SniTransportsView = z.infer<typeof SniTransportsView>;
+
+/** `POST sni/transports/manage`. */
+export const SniManageRequest = z.object({
+  backendSlug: z.string().min(1),
+  transportUuid: z.string().min(1),
+  /** Only work out the suggestions (the network); nothing is written. */
+  dryRun: z.boolean().optional(),
+  /** An existing family with the same target, instead of a new one. */
+  family: z.string().min(1).optional(),
+  network: z.string().min(1).nullable().optional(),
+  label: z.string().max(80).optional(),
+  requireH2: z.boolean().optional(),
+  /** The node whose page asked: its place becomes an unplaced network's. */
+  nodeUuid: z.string().min(1).optional(),
+});
+export type SniManageRequest = z.infer<typeof SniManageRequest>;
+
+export const SniManageDryRun = z.object({
+  dryRun: z.literal(true),
+  coverSite: z.string(),
+  /** The target resolved to public addresses (a network can only be suggested then). */
+  resolved: z.boolean(),
+  /** The one network holding the target and every address in use on the transport. */
+  network: z.object({ slug: z.string(), label: z.string() }).nullable(),
+  label: z.string(),
+});
+export type SniManageDryRun = z.infer<typeof SniManageDryRun>;
+
+export const SniManaged = z.object({
+  dryRun: z.literal(false),
+  family: z.string(),
+  created: z.boolean(),
+  bindingId: z.string(),
+  imported: SniImportResult,
+  /** The network's place for timing checks was taken from the node. */
+  placeSet: z.boolean(),
+  /** With finding names on: the target's certificate was read for suggestions. */
+  cert: SniHuntCertRead.nullable(),
+});
+export type SniManaged = z.infer<typeof SniManaged>;

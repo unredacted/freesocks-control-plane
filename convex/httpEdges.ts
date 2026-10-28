@@ -23,7 +23,7 @@ import type { RateLimitPolicyKey } from './lib/rateLimitPolicy';
 import type { InspectResult, Inventory } from './lib/edges/providers/types';
 import { parseTargetKey } from './probes';
 import { findLegacyField, LEGACY } from './lib/legacyFields';
-import { SniBindRequest } from '../src/shared/contracts/sni';
+import { SniBindRequest, SniManageRequest } from '../src/shared/contracts/sni';
 
 const PREFIX = '/api/v1/admin/edges/';
 
@@ -164,6 +164,8 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
     return 'admin.edges.provider-call';
   if (a === 'sni' && b === 'hunt' && (c === 'ct' || c === 'sweep') && !d)
     return 'admin.edges.provider-call';
+  // Managing a transport's names resolves its target, and may read its certificate.
+  if (a === 'sni' && b === 'transports' && c === 'manage' && !d) return 'admin.edges.provider-call';
   // Reading a network's announced ranges calls a third-party service.
   if (a === 'networks' && b && c === 'refresh' && !d) return 'admin.edges.provider-call';
   // Checking names from inside a country spends third-party measurements.
@@ -313,6 +315,12 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       return json(
         await ctx.runQuery(internal.sniRollouts.status, { rolloutId: id<'sniRollouts'>(c) }),
       );
+    // A backend's REALITY transports and their names (docs/edges.md "A transport's names").
+    if (b === 'transports' && !c) {
+      const backend = query.get('backend');
+      if (!backend) return errorJson('validation', 'backend is required', 400);
+      return json(await ctx.runQuery(internal.sniTransports.status, { backendSlug: backend }));
+    }
     // Finding names (docs/edges.md "Finding names").
     if (b === 'hunt' && !c) return json(await ctx.runQuery(internal.sniHunt.overview, {}));
     if (b === 'hunt' && (c === 'networks' || c === 'families') && d && !parts[4])
@@ -735,6 +743,26 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           inboundTag: parsed.data.transportTag,
           ...(parsed.data.transportUuid ? { inboundUuid: parsed.data.transportUuid } : {}),
           ...(parsed.data.takeNames ? { importNames: true } : {}),
+          ...act,
+        }),
+      );
+    }
+    // Manage a transport's names with FCP: a family with its own target, bound,
+    // its names taken in (`dryRun`: only the network it would suggest).
+    if (b === 'transports' && c === 'manage' && !d) {
+      const parsed = SniManageRequest.safeParse(body);
+      if (!parsed.success) return errorJson('validation', 'The manage body is not usable', 400);
+      const m = parsed.data;
+      return json(
+        await ctx.runAction(internal.sniTransportOps.manage, {
+          backendSlug: m.backendSlug,
+          transportUuid: m.transportUuid,
+          ...(m.dryRun ? { dryRun: true } : {}),
+          ...(m.family ? { family: m.family } : {}),
+          ...(m.network !== undefined ? { network: m.network } : {}),
+          ...(m.label !== undefined ? { label: m.label } : {}),
+          ...(m.requireH2 !== undefined ? { requireH2: m.requireH2 } : {}),
+          ...(m.nodeUuid ? { nodeUuid: m.nodeUuid } : {}),
           ...act,
         }),
       );

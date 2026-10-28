@@ -179,6 +179,8 @@ import type * as sniHuntOps from "../sniHuntOps.js";
 import type * as sniQualifyOps from "../sniQualifyOps.js";
 import type * as sniReports from "../sniReports.js";
 import type * as sniRollouts from "../sniRollouts.js";
+import type * as sniTransportOps from "../sniTransportOps.js";
+import type * as sniTransports from "../sniTransports.js";
 import type * as sniVantage from "../sniVantage.js";
 import type * as sniVantageOps from "../sniVantageOps.js";
 import type * as statusPage from "../statusPage.js";
@@ -369,6 +371,8 @@ declare const fullApi: ApiFromModules<{
   sniQualifyOps: typeof sniQualifyOps;
   sniReports: typeof sniReports;
   sniRollouts: typeof sniRollouts;
+  sniTransportOps: typeof sniTransportOps;
+  sniTransports: typeof sniTransports;
   sniVantage: typeof sniVantage;
   sniVantageOps: typeof sniVantageOps;
   statusPage: typeof statusPage;

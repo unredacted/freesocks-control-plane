@@ -29,6 +29,20 @@ export function scopeRow(db: DatabaseReader, s: HuntScope) {
 }
 
 /**
+ * How many found names a family may add: the usable ones of every scope of
+ * it (`sniHuntScopes`, the rows the overview sums), so every page shows the
+ * overview's number.
+ */
+export async function familyUsable(db: DatabaseReader, familyId: Id<'sniFamilies'>) {
+  let ready = 0;
+  for await (const r of db
+    .query('sniHuntScopes')
+    .withIndex('by_family', (q) => q.eq('familyId', familyId)))
+    ready += r.ready;
+  return ready;
+}
+
+/**
  * A scope's candidates changed: its counts move by what the caller knows
  * changed (`total` for an insert or a delete, `ready` for a candidate that
  * became usable or stopped being so), so the overview is exact at once, with
