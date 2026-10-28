@@ -17,6 +17,7 @@ import {
   namesNeedsYou,
   namesStatus,
   namesStep,
+  nodeLineWords,
   provenWords,
   testNameChoice,
   sendPlanWords,
@@ -362,5 +363,19 @@ describe('which name a test presents', () => {
       kind: 'pick',
       names: ['a.example', 'b.example'],
     });
+  });
+});
+
+describe('a node on the list page', () => {
+  test('what its members get, and a test it waits for', () => {
+    const n = transport().nodes[0]!;
+    expect(nodeLineWords(n)).toEqual({ dot: 'green', text: '4 names in use' });
+    expect(nodeLineWords({ ...n, waitingTest: 2 })).toEqual({
+      dot: 'amber',
+      text: '4 names in use · 2 waiting for a test',
+    });
+    expect(nodeLineWords({ ...n, waitingTest: 1, testable: [] }).text).toBe(
+      '4 names in use · 1 waiting for a test: try one of its addresses first',
+    );
   });
 });

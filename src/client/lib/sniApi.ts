@@ -253,6 +253,21 @@ export const huntFamilyQuery = (slug: () => string) =>
     refetchInterval: 60_000,
   }));
 
+/** A name list's finds of one state, best first (its page: suggestions, or everything). */
+export const familyFindsQuery = (
+  slug: () => string,
+  state: () => HuntViewState,
+  enabled: () => boolean = () => true,
+) =>
+  createQuery(() => ({
+    queryKey: [...sniKeys.hunt, 'finds', slug(), state()] as const,
+    queryFn: () => fetchHuntScope('family', slug(), state()),
+    enabled: enabled(),
+    // Names waiting for their check move within minutes: read them again sooner.
+    refetchInterval: (q: { state: { data?: SniHuntScopeView } }) =>
+      (q.state.data?.candidates ?? []).some((c) => !c.check) ? 15_000 : 60_000,
+  }));
+
 /** A scope's candidates of one state, page after page ("Show more"). */
 export const huntCandidatesQuery = (
   kind: () => 'network' | 'family',

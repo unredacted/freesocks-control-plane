@@ -1,10 +1,13 @@
 <script lang="ts">
   /**
-   * Admin -> Edges -> Server names (`/admin/edges/names`): the families. A family
-   * is one target site plus the names that site really serves; bound to a
-   * REALITY transport, its names are what members are spread across.
+   * Admin -> Edges -> Server names (`/admin/edges/names`): the switch (its line
+   * says what is true now), then the name lists. A name list is one cover site
+   * (the real site a REALITY port shows anyone without a member's key) plus the
+   * names that site really serves; on a port, its names are what members are
+   * spread across. Each list's line has the same counts as its page and the
+   * node page (lib/listWords.ts). A list usually starts from a node's page.
    *
-   * All wording lives in ./lib/words.ts (pure, unit-tested).
+   * Wording lives in ./lib/listWords.ts and ./lib/words.ts (pure, unit-tested).
    */
   import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { useQueryClient } from '@tanstack/svelte-query';
@@ -30,7 +33,8 @@
   import { router } from '@client/stores/router.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
   import { edgesPaths } from '../lib/routes';
-  import { familyDot, familyLine, sniErrorWords, vantageState, type Dot } from './lib/words';
+  import { listDot, listLine, namesSwitchLine } from './lib/listWords';
+  import { sniErrorWords, vantageState, type Dot } from './lib/words';
   import type { SniConfigPatch } from '../../../../../shared/contracts/sni';
 
   const qc = useQueryClient();
@@ -52,7 +56,7 @@
     saving = true;
     try {
       await patchSniConfig({ enabled: v });
-      toast.success(v ? 'Server name families are on.' : 'Server name families are off.');
+      toast.success(v ? 'Server names are on.' : 'Server names are off.');
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
     } finally {
@@ -117,15 +121,30 @@
 
 <SectionHeader
   title="Server names"
-  description="Names a REALITY node answers to, in families: one target site and the names it really serves."
+  description="The names a REALITY port answers to, in name lists: one cover site, the real site the port shows anyone without a member's key, and the names it really serves."
 >
   {#snippet actions()}
     <Button size="sm" variant="outline" onclick={() => router.navigate(edgesPaths.findNames())}>
       Find names
     </Button>
-    <Button size="sm" onclick={() => (open = true)}>Add a family</Button>
+    <Button size="sm" variant="outline" onclick={() => (open = true)}>Add a name list</Button>
   {/snippet}
 </SectionHeader>
+
+<div class="mb-6 flex items-start gap-3 text-sm">
+  <Switch
+    id={`${uid}-on`}
+    class="mt-0.5"
+    checked={on}
+    disabled={saving || config.isPending}
+    aria-describedby={`${uid}-on-help`}
+    onCheckedChange={(v) => void setOn(v)}
+  />
+  <div>
+    <Label for={`${uid}-on`} class="font-medium">Server names</Label>
+    <p id={`${uid}-on-help`} class="text-muted-foreground">{namesSwitchLine(on)}</p>
+  </div>
+</div>
 
 {#if families.isPending}
   <p class="text-muted-foreground text-sm">Loading…</p>
@@ -133,10 +152,16 @@
   <p class="text-destructive text-sm">{sniErrorWords(codeOf(families.error))}</p>
 {:else if (families.data?.families.length ?? 0) === 0}
   <Card>
-    <CardContent class="text-muted-foreground py-8 text-center text-sm">No family yet.</CardContent>
+    <CardContent class="text-muted-foreground space-y-1 py-8 text-center text-sm">
+      <p>No name list yet.</p>
+      <p>
+        Open a node under Servers and choose "Manage these names with FCP" on its REALITY transport:
+        its names become a list here.
+      </p>
+    </CardContent>
   </Card>
 {:else}
-  <ul class="space-y-3" aria-label="Families">
+  <ul class="space-y-3" aria-label="Name lists">
     {#each families.data?.families ?? [] as f (f.id)}
       <li>
         <Link
@@ -144,12 +169,12 @@
           class="hover:bg-accent/40 focus-visible:ring-ring/50 flex min-h-14 items-center gap-3 rounded-lg border px-4 py-3 outline-none focus-visible:ring-3"
         >
           <span
-            class={`inline-block size-2.5 shrink-0 rounded-full ${DOT[familyDot(f)]}`}
+            class={`inline-block size-2.5 shrink-0 rounded-full ${DOT[listDot(f)]}`}
             aria-hidden="true"
           ></span>
           <span class="min-w-0 flex-1">
             <span class="block truncate font-medium">{f.label}</span>
-            <span class="text-muted-foreground block text-sm">{familyLine(f)}</span>
+            <span class="text-muted-foreground block text-sm">{listLine(f)}</span>
           </span>
           <span class="text-muted-foreground hidden text-sm break-all sm:block">
             {f.target.address}:{f.target.port}{f.network ? ` · ${f.network.label}` : ''}
@@ -169,8 +194,8 @@
         <h2 class="text-base font-medium">Checks from inside countries</h2>
         <p class="text-muted-foreground mt-1">
           Measurement services try each name against one of your published addresses from inside the
-          countries you turn on, alongside the address's other names. The family pages then suggest
-          where a name works or is blocked. You decide what is applied.
+          countries you turn on, alongside the address's other names. The name list pages then
+          suggest where a name works or is blocked. You decide what is applied.
         </p>
       </div>
       <p class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
@@ -277,21 +302,13 @@
   </Card>
 {/if}
 
-<footer class="text-muted-foreground mt-8 flex items-center gap-3 border-t pt-4 text-sm">
-  <Switch
-    id={`${uid}-on`}
-    checked={on}
-    disabled={saving || config.isPending}
-    onCheckedChange={(v) => void setOn(v)}
-  />
-  <Label for={`${uid}-on`} class="font-normal">Server name families are {on ? 'on' : 'off'}</Label>
-</footer>
-
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-md`}>
     <Dialog.Header>
-      <Dialog.Title>Add a family</Dialog.Title>
-      <Dialog.Description>The target site cannot be changed later.</Dialog.Description>
+      <Dialog.Title>Add a name list</Dialog.Title>
+      <Dialog.Description>
+        Usually a list starts from a node's page. Its cover site cannot be changed later.
+      </Dialog.Description>
     </Dialog.Header>
     <form
       class="space-y-3"
@@ -320,7 +337,7 @@
       </div>
       <div class="grid grid-cols-3 gap-3">
         <div class="col-span-2 space-y-1.5">
-          <Label for={`${uid}-target`}>Target site</Label>
+          <Label for={`${uid}-target`}>Cover site</Label>
           <Input
             id={`${uid}-target`}
             bind:value={target}
@@ -338,7 +355,7 @@
       <div class="flex items-start gap-2">
         <Checkbox id={`${uid}-h2`} bind:checked={requireH2} />
         <Label for={`${uid}-h2`} class="leading-snug font-normal">
-          Only accept names the target serves over HTTP/2
+          Only use names the cover site serves over HTTP/2
         </Label>
       </div>
       <div class="space-y-1.5">
@@ -355,8 +372,8 @@
           {/each}
         </select>
         <p id={`${uid}-network-help`} class="text-muted-foreground text-sm">
-          On a network, the target and every name must resolve inside it, and a transport bound to
-          the family is fronted only by addresses from it.
+          On a network, the cover site and every name must live inside it, and a port using the list
+          gets addresses from it only.
         </p>
       </div>
       <Dialog.Footer class={STICKY_FOOTER}>

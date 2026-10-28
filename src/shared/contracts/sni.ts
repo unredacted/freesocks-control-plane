@@ -101,6 +101,17 @@ export const SniVantageRow = z.object({
 });
 export type SniVantageRow = z.infer<typeof SniVantageRow>;
 
+export const SniDeliveryCounts = z.object({
+  inUse: z.number(),
+  waitingTest: z.number(),
+  toSend: z.number(),
+  idle: z.number(),
+  checking: z.number(),
+  failing: z.number(),
+  off: z.number(),
+});
+export type SniDeliveryCounts = z.infer<typeof SniDeliveryCounts>;
+
 export const SniFamilySummary = z.object({
   id: z.string(),
   slug: z.string(),
@@ -123,6 +134,18 @@ export const SniFamilySummary = z.object({
     retired: z.number(),
     burned: z.number(),
   }),
+  /** Where its names stand on their way to members (the family page's and node page's counts). */
+  delivery: SniDeliveryCounts.default({
+    inUse: 0,
+    waitingTest: 0,
+    toSend: 0,
+    idle: 0,
+    checking: 0,
+    failing: 0,
+    off: 0,
+  }),
+  /** Found names it may add (usable, the overview's number). */
+  suggestions: z.number().default(0),
 });
 export type SniFamilySummary = z.infer<typeof SniFamilySummary>;
 export const SniFamilyList = z.object({ families: z.array(SniFamilySummary) });
@@ -587,17 +610,6 @@ export const SniHuntCtQueued = z.object({ queued: z.number(), cached: z.number()
 export const SniHuntChanged = z.object({ changed: z.number() });
 
 // --- a transport's names (docs/edges.md "A transport's names") ---------------------------------------
-
-export const SniDeliveryCounts = z.object({
-  inUse: z.number(),
-  waitingTest: z.number(),
-  toSend: z.number(),
-  idle: z.number(),
-  checking: z.number(),
-  failing: z.number(),
-  off: z.number(),
-});
-export type SniDeliveryCounts = z.infer<typeof SniDeliveryCounts>;
 
 export const SniTransportNode = z.object({
   relaySlug: z.string(),

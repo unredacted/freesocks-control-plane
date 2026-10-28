@@ -6,11 +6,8 @@
  */
 import type {
   EdgeNetworkView,
-  SniFamilySummary,
   SniImportResult,
   SniNameRow,
-  SniRolloutPlan,
-  SniRolloutStatus,
   SniVantageApplied,
   SniVantageRequested,
   SniVantageRow,
@@ -20,19 +17,6 @@ import { SNI_VANTAGE_REASONS } from '../../../../../../shared/contracts/sni';
 export type Dot = 'green' | 'amber' | 'red' | 'grey';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-
-/** One line under a family's name in the list. */
-export function familyLine(f: SniFamilySummary): string {
-  const c = f.counts;
-  const parts = [`${plural(c.ready, 'name')} ready`];
-  if (c.waiting) parts.push(`${c.waiting} waiting for a check`);
-  if (c.failing) parts.push(`${c.failing} failing`);
-  if (c.suspended) parts.push(`${c.suspended} suspended`);
-  parts.push(
-    f.bindings === 0 ? 'not used by any transport' : `used by ${plural(f.bindings, 'transport')}`,
-  );
-  return parts.join(' · ');
-}
 
 // --- networks (docs/edges.md "Networks") ---------------------------------------------------
 
@@ -93,69 +77,23 @@ export function parseRanges(text: string): string[] | null {
   return out;
 }
 
-export function familyDot(f: SniFamilySummary): Dot {
-  if (!f.enabled) return 'grey';
-  if (f.counts.ready === 0) return f.counts.total === 0 ? 'grey' : 'red';
-  return f.counts.failing + f.counts.suspended > 0 ? 'amber' : 'green';
-}
-
 /** Why a name failed its check (`judgeHandshake` in convex/lib/edges/sni/family.ts). */
 export const CHECK_WORDS: Record<string, string> = {
-  q_timeout: 'The target site did not answer in time.',
-  q_private_target: 'The target site resolves to a private address.',
-  q_resolve: 'The target site could not be resolved.',
-  q_cert: 'The target site has no valid certificate for this name.',
-  q_unreachable: 'The target site could not be reached.',
-  q_tls12: 'The target site does not offer TLS 1.3 for this name.',
-  q_no_h2: 'The target site does not offer HTTP/2 for this name.',
+  q_timeout: 'The cover site did not answer in time.',
+  q_private_target: 'The cover site resolves to a private address.',
+  q_resolve: 'The cover site could not be looked up.',
+  q_cert: 'The cover site has no valid certificate for this name.',
+  q_unreachable: 'The cover site could not be reached.',
+  q_tls12: 'The cover site does not offer TLS 1.3 for this name.',
+  q_no_h2: 'The cover site does not offer HTTP/2 for this name.',
   q_off_network:
-    'This name resolves outside the family’s network, or not at all: someone looking it up would see another network than the address it is shown to.',
-  q_target_off_network: 'The target site resolves outside the family’s network.',
+    'This name resolves outside the list’s network, or not at all: someone looking it up would see another network than the address it is shown to.',
+  q_target_off_network: 'The cover site resolves outside the list’s network.',
 };
-
-/** One name's state in words. */
-export function nameWords(n: SniNameRow): { dot: Dot; sentence: string } {
-  if (n.status === 'burned')
-    return { dot: 'red', sentence: 'Burned. It is never used again, here or in any other family.' };
-  if (n.status === 'retired') return { dot: 'grey', sentence: 'Retired by an operator.' };
-  if (n.status === 'suspended')
-    return {
-      dot: 'amber',
-      sentence:
-        `Suspended: it kept failing its check. ${(n.code && CHECK_WORDS[n.code]) ?? ''}`.trim(),
-    };
-  if (n.qualification === 'pending')
-    return { dot: 'grey', sentence: 'Waiting for its first check against the target site.' };
-  if (n.qualification === 'failed')
-    return {
-      dot: 'amber',
-      sentence: (n.code && CHECK_WORDS[n.code]) ?? 'Its last check against the target site failed.',
-    };
-  return { dot: 'green', sentence: 'The target site serves this name.' };
-}
 
 /** The report hint under a name. It suggests; the operator judges. */
 export function suspectWords(countries: readonly string[]): string {
   return `Members in ${countries.join(', ')} report this name more than the others. It may be blocked there.`;
-}
-
-export const NAME_FILTERS = ['all', 'ready', 'problems', 'off'] as const;
-export type NameFilter = (typeof NAME_FILTERS)[number];
-export const FILTER_LABEL: Record<NameFilter, string> = {
-  all: 'All',
-  ready: 'Ready',
-  problems: 'Problems',
-  off: 'Retired or burned',
-};
-export function matchesFilter(n: SniNameRow, f: NameFilter): boolean {
-  const off = n.status === 'retired' || n.status === 'burned';
-  if (f === 'all') return true;
-  if (f === 'off') return off;
-  const ready = n.status === 'active' && n.qualification === 'ok';
-  // A suspected name is a problem to look at even though it is still ready.
-  if (f === 'problems')
-    return (!ready && !off) || (!off && (n.suspectIn.length > 0 || vantageWantsLook(n)));
-  return ready;
 }
 
 // --- checks from inside a country ---------------------------------------------------------------
@@ -190,7 +128,7 @@ export function vantageState(
   checksOn: boolean,
   countries: readonly string[],
 ): string {
-  if (!familiesOn) return 'Server name families are off, so nothing runs either way.';
+  if (!familiesOn) return 'Server names are off, so nothing runs either way.';
   if (countries.length === 0) return 'Nothing runs until at least one country below is turned on.';
   if (!checksOn) return `Off. Turned on, it checks from ${countries.join(', ')}.`;
   return `Checking from ${countries.join(', ')}.`;
@@ -255,7 +193,7 @@ export function vantageAppliedWords(r: SniVantageApplied): string {
 export function importWords(r: SniImportResult): string[] {
   const count = (v: SniImportResult['lines'][number]['verdict']) =>
     r.lines.filter((l) => l.verdict === v).length;
-  const out = [`${plural(r.added, 'name')} added. Each is checked against the target site first.`];
+  const out = [`${plural(r.added, 'name')} added. Each is checked against the cover site first.`];
   const dup = count('duplicate');
   if (dup) out.push(`${plural(dup, 'line')} skipped: already in this family, or repeated.`);
   const other = count('in_other_family');
@@ -265,57 +203,6 @@ export function importWords(r: SniImportResult): string[] {
   const invalid = count('invalid');
   if (invalid) out.push(`${plural(invalid, 'line')} skipped: not a plain host name.`);
   return out;
-}
-
-/** What pressing "Write to the backend" would do. */
-export function planWords(p: SniRolloutPlan): string[] {
-  if (!p.changed) return ['The backend already lists exactly the names this family wants there.'];
-  const out: string[] = [];
-  if (p.added.length) out.push(`${plural(p.added.length, 'name')} will be added to the transport.`);
-  if (p.removed.length)
-    out.push(
-      `${plural(p.removed.length, 'name')} will be removed. None of them is still given to members.`,
-    );
-  if (p.overflow)
-    out.push(
-      `${plural(p.overflow, 'ready name')} will wait: the transport's list is full for now.`,
-    );
-  if (p.added.length)
-    out.push(
-      p.witness
-        ? 'One test per node will prove all of the new names at once.'
-        : 'Each new name has to be tested by itself on each node, because each has been on this transport before.',
-    );
-  out.push(
-    'The backend pushes this to every node on the profile. People connected there are cut off for a few seconds.',
-  );
-  return out;
-}
-
-export function rolloutWords(s: SniRolloutStatus): { dot: Dot; sentence: string } {
-  switch (s.phase) {
-    case 'writing':
-      return { dot: 'amber', sentence: 'Being written to the backend.' };
-    case 'failed':
-      return { dot: 'red', sentence: 'The write did not go through. See Servers, Recent changes.' };
-    case 'superseded':
-      return { dot: 'grey', sentence: 'Replaced by a newer write.' };
-    case 'panel_confirmed': {
-      const pending = s.nodes.reduce((n, x) => n + x.pending, 0);
-      if (s.added === 0) return { dot: 'green', sentence: 'On the backend. Nothing new to prove.' };
-      return pending === 0
-        ? { dot: 'green', sentence: 'On the backend, and every node has proven the new names.' }
-        : {
-            dot: 'amber',
-            sentence: 'On the backend. A node hands out a new name once it has proven it.',
-          };
-    }
-  }
-}
-
-export function nodeLine(n: SniRolloutStatus['nodes'][number]): string {
-  if (n.pending === 0) return `${plural(n.proven, 'name')} proven`;
-  return `${n.proven} proven, ${n.pending} waiting for a test`;
 }
 
 /** Refusals of this section, in words. */

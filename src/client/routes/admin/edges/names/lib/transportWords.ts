@@ -120,6 +120,21 @@ export function namesStatus(t: SniTransport, nodeUuid: string | null): { dot: Do
   return { dot, text: parts.join(' · ') };
 }
 
+/** One node behind a port, on the name list's page. */
+export function nodeLineWords(n: SniTransportNode): { dot: Dot; text: string } {
+  const parts = [`${plural(n.inUse, 'name')} in use`];
+  if (n.waitingTest)
+    parts.push(
+      n.testable.length > 0
+        ? `${n.waitingTest} waiting for a test`
+        : `${n.waitingTest} waiting for a test: try one of its addresses first`,
+    );
+  return {
+    dot: n.waitingTest > 0 ? 'amber' : n.inUse > 0 ? 'green' : 'grey',
+    text: parts.join(' · '),
+  };
+}
+
 /** The sentence under the status line: what holds the next step, or what it does. */
 export function stepWords(step: NamesStep, t: SniTransport): string {
   const nodes = t.profileNodes.length;
