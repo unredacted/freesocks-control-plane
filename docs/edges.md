@@ -2541,6 +2541,28 @@ counts, whether a family was created, whether the place was set). `GET sni/famil
 gives every name its `delivery` (state, on how many nodes it is in use, of how many) and the
 family's `suggestions`.
 
+**On a node's page** (Servers -> a node -> Transports; `names/TransportNames.svelte`, wording in
+`names/lib/transportWords.ts`), each REALITY transport shows its names the way the node's edges
+show theirs: one status line (how many names this node's members are handed, then what waits:
+waiting for a test here, to send, being checked, failing, suggestions) and one next step at a
+time, in this order: server names off (a link to the switch); **Manage these names with FCP** (the
+call above; the dialog shows the cover site, the suggested network and an unused list with the
+same cover site); a send running; **Send to the node** (the plan read first, then the rollout; it
+says every node on the profile restarts Xray once, and that members get nothing new until a test),
+or why it cannot run (changes to the backend off, the backend not set up, each with a link), or
+**Send again** after a failed one; **Test one name** (a test link through one of this node's
+addresses whose endpoint is confirmed, a QR code, "It connected" is the receipt), or, with no such
+address, a line saying to try one of the node's addresses first; **Add suggestions** (the found
+names the cover site serves, best first, grouped by site, a one-line reason each and the rest under
+Details); names being checked; done. A send comes before a test: one test after it proves
+everything new. "More" holds the name list, looking for more names (the cover site's certificate
+and certificate logs), and Stop managing (an unbind: the names stay); a transport FCP does not
+manage offers editing its names by hand there instead.
+
+Servers -> Nodes, "Needs you", adds one line per transport that waits for someone: checked names
+a switch keeps from the backend (which switch), checked names to send, a node whose names wait for
+a test, suggestions to add, names the cover site no longer serves.
+
 ### When a name leaves
 
 A family name that is **burned**, **retired**, or that **stops qualifying** (suspended) leaves

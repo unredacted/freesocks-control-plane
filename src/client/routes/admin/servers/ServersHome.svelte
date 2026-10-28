@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * Servers -> Nodes (`/admin/servers[?instance=<slug>]`, the leaf's default
-   * tab): one status sentence, what needs you, one row per node, the quiet
+   * tab): one status sentence, what needs you (server names that wait for a
+   * send or a test, or have suggestions: names/lib/transportWords.ts), one row per node, the quiet
    * leftovers, how the backend is set up (with Change setup), mode groups,
    * recent changes, and the two switches in the footer. "Add a node" adds one by hand (the node role is the normal way). A
    * node's details and every action on it live on its own page (NodePage).
@@ -22,6 +23,9 @@
   import Link from '@client/components/Link.svelte';
   import { EDGE_PROVIDER_META } from '@client/lib/edgeProviderMeta';
   import { providersQuery } from '@client/lib/edgesApi';
+  import { invalidateSni, transportsQuery } from '@client/lib/sniApi';
+  import { edgesPaths } from '../edges/lib/routes';
+  import { namesNeedsYou } from '../edges/names/lib/transportWords';
   import {
     acknowledgeForeignEdit,
     intentsQuery,
@@ -69,6 +73,9 @@
   // The bootstrap contract: the backend's setup and its enrolled nodes.
   const setup = setupQuery(() => slug);
   const intents = intentsQuery(() => slug);
+  // Server names that wait for someone: a send held back, a test, suggestions.
+  const sniTransports = transportsQuery(() => slug);
+  let namesRows = $derived(sniTransports.data ? namesNeedsYou(sniTransports.data) : []);
   const providers = providersQuery();
   let setupOpen = $state(false);
   let nodeQuery = $state('');
@@ -179,6 +186,8 @@
     } finally {
       saving = false;
       invalidateServers(qc);
+      // A send to the backend is held back by this switch: say so at once.
+      invalidateSni(qc);
     }
   }
 
@@ -270,7 +279,7 @@
       </p>
     </div>
 
-    {#if attention.length > 0 || holds.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.setUp && !setupRow)}
+    {#if attention.length > 0 || namesRows.length > 0 || holds.length > 0 || (manageOn && setupRow) || (manageOn && instance && !instance.setUp && !setupRow)}
       <section aria-labelledby="needs-you">
         <h2 id="needs-you" class="mb-3 text-base font-semibold">Needs you</h2>
         <ul class="space-y-2">
@@ -317,6 +326,28 @@
                   class="text-primary text-sm underline underline-offset-4"
                 >
                   Open
+                </Link>
+              {/if}
+            </li>
+          {/each}
+          {#each namesRows as row (row.key)}
+            <li
+              class="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm"
+            >
+              <span class="min-w-0 flex-1">{row.text}</span>
+              {#if row.nodeUuid && slug}
+                <Link
+                  href={serversPaths.node(row.nodeUuid, { instance: slug })}
+                  class="text-primary text-sm underline underline-offset-4"
+                >
+                  Open
+                </Link>
+              {:else if row.family}
+                <Link
+                  href={edgesPaths.family(row.family)}
+                  class="text-primary text-sm underline underline-offset-4"
+                >
+                  Open the name list
                 </Link>
               {/if}
             </li>
