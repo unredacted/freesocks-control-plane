@@ -165,10 +165,13 @@ export function managedWords(done: SniManaged): string {
       ? `FCP manages these names now: ${plural(taken, 'name')} taken in, each checked against the cover site first.`
       : 'FCP manages these names now.',
   ];
-  if (done.imported.lines.length > taken)
-    parts.push(
-      `${plural(done.imported.lines.length - taken, 'name')} left out: already listed, in another list, burned, or not a host name.`,
-    );
+  // An existing list already holds the port's names: they are in it, not left out.
+  const already = done.imported.lines.filter((l) => l.verdict === 'duplicate').length;
+  const other = done.imported.lines.length - taken - already;
+  if (already)
+    parts.push(`${plural(already, 'name')} ${already === 1 ? 'was' : 'were'} already in the list.`);
+  if (other)
+    parts.push(`${plural(other, 'name')} left out: in another list, burned, or not a host name.`);
   if (done.cert?.ok)
     parts.push(
       `The cover site's certificate lists ${plural(done.cert.listed, 'name')}: new ones show up as suggestions once checked.`,
