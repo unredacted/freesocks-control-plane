@@ -2,9 +2,9 @@
   /**
    * Names found on one network (`/admin/edges/find-names/:slug`; docs/edges.md
    * "Finding names"): the sites grouped by the address they live on (each a
-   * possible target with the names it serves), and every candidate. A family
-   * made from a group starts with the target only; its names are added from
-   * the list below, through the family's normal path.
+   * possible cover site with the names it serves), and every found name. A
+   * name list made from a group starts with the cover site only; its names
+   * are added from the list below, through the list's normal path.
    *
    * All wording lives in ./lib/huntWords.ts (pure, unit-tested).
    */
@@ -68,7 +68,7 @@
         network: slug,
       });
       open = false;
-      toast.success('Family made. Add its names from the list: each is checked against it.');
+      toast.success('Name list made. Add its names from the list below: each is checked first.');
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
     } finally {
@@ -92,17 +92,17 @@
   {@const v = view.data}
   <SectionHeader
     title={`Names on ${v.scope.label}`}
-    description="Real sites whose every address is on this network. Each one is checked the way a family would check it; adding one to a family checks it again there before it can be used."
+    description="Real sites whose every address is on this network. Each one is checked the way a name list would check it; adding one to a list checks it again there before it can be used."
   />
 
   <Card>
     <CardHeader>
-      <CardTitle class="text-base">Sites by address</CardTitle>
+      <CardTitle class="text-base">Possible cover sites, by address</CardTitle>
     </CardHeader>
     <CardContent class="space-y-3 text-sm">
       <p class="text-muted-foreground">
-        Names that live on one address can share a target: make a family with one of them as its
-        target, then add the others.
+        Names that live on one address can share a cover site: make a name list with one of them as
+        its cover site, then add the others.
       </p>
       {#if v.groups.length === 0}
         <p class="text-muted-foreground">No site of this network has been found and checked yet.</p>
@@ -114,7 +114,7 @@
                 <p class="font-mono break-all">{g.address}</p>
                 <p class="text-muted-foreground">
                   {g.passing} of {g.names}
-                  {g.names === 1 ? 'name' : 'names'} would qualify, such as
+                  {g.names === 1 ? 'name' : 'names'} usable, such as
                   <span class="font-mono">{g.best}</span>.
                 </p>
               </div>
@@ -125,7 +125,7 @@
                 disabled={g.passing === 0}
                 onclick={() => startFamily(g.best)}
               >
-                Make a family with this target
+                Make a name list with this cover site
               </Button>
             </li>
           {/each}
@@ -138,16 +138,16 @@
       {/if}
       {#if v.families.length > 0}
         <div class="space-y-1">
-          <p class="font-medium">Found for the families on this network</p>
+          <p class="font-medium">Found for the name lists on this network</p>
           <p class="text-muted-foreground">
-            Each was checked against its family's target, so they are listed on the family's page.
+            Each was checked against its list's cover site, so they are listed on the list's page.
           </p>
           <ul>
             {#each v.families as f (f.slug)}
               <li>
                 <Link href={edgesPaths.family(f.slug)} class="underline underline-offset-4">
                   {f.label}
-                </Link>: {f.candidates.total} found, {f.candidates.ready} would qualify.
+                </Link>: {f.candidates.total} found, {f.candidates.ready} usable.
               </li>
             {/each}
           </ul>
@@ -173,7 +173,7 @@
     <CardContent class="text-sm">
       {#if onNetwork.length === 0}
         <p class="text-muted-foreground mb-3">
-          No family is on this network yet: make one above to add names to it.
+          No name list is on this network yet: make one above to add names to it.
         </p>
       {/if}
       <HuntTable kind="network" {slug} families={onNetwork} />
@@ -184,10 +184,10 @@
 <Dialog.Root bind:open>
   <Dialog.Content class={`${DIALOG_FIT} sm:max-w-md`}>
     <Dialog.Header>
-      <Dialog.Title>Make a family with this target</Dialog.Title>
+      <Dialog.Title>Make a name list with this cover site</Dialog.Title>
       <Dialog.Description>
-        Its target is <span class="font-mono">{target}</span> on port 443, over HTTP/2, on this network.
-        A family's target never changes.
+        Its cover site is <span class="font-mono">{target}</span> on port 443, over HTTP/2, on this network.
+        A list's cover site never changes.
       </Dialog.Description>
     </Dialog.Header>
     <form

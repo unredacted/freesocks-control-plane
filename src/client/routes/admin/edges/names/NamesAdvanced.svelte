@@ -1,12 +1,15 @@
 <script lang="ts">
   /**
-   * Find names (`/admin/edges/find-names`; docs/edges.md "Finding names"): the
-   * switch, the top-sites sweep, which networks are searched and where their
-   * nodes are, imports (a pasted list or a seed file), and where candidates
-   * were found. Sources are passive only: no address range is ever scanned.
+   * Server names, Advanced (`/admin/edges/find-names`; docs/edges.md "The
+   * page"): what most setups never need, in one place. Finding names (its
+   * switch, its line saying what is true now; each network's "Search it" and
+   * where its nodes are, taken from a node when one of its ports was managed),
+   * the top-sites search (a secondary button that says its cost first), the
+   * networks, imports (a pasted list or a seed file), and checks from inside
+   * countries. Sources are passive only: no address range is ever scanned.
    * Nothing found is added by itself.
    *
-   * All wording lives in ./lib/huntWords.ts (pure, unit-tested).
+   * Wording lives in ./lib/huntWords.ts and ./lib/words.ts (pure, unit-tested).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -30,9 +33,19 @@
     startSweep,
   } from '@client/lib/sniApi';
   import type { SniHuntImported, SniHuntOverview } from '../../../../../shared/contracts/sni';
+  import ConfirmDialog from '../components/ConfirmDialog.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
+  import CountryChecksCard from './CountryChecksCard.svelte';
+  import NetworksCard from './NetworksCard.svelte';
   import { edgesPaths } from '../lib/routes';
-  import { huntImportWords, parsePlace, sweepWords } from './lib/huntWords';
+  import {
+    huntImportWords,
+    huntSwitchLine,
+    parsePlace,
+    placeLine,
+    sweepCostWords,
+    sweepWords,
+  } from './lib/huntWords';
   import { sniErrorWords } from './lib/words';
 
   const qc = useQueryClient();
@@ -61,6 +74,9 @@
 
   // --- where a network's nodes are ------------------------------------------------------------
   let places = $state<Record<string, { country: string; city: string }>>({});
+  // Networks whose place is being changed (else it is shown in one line).
+  let changing = $state<string[]>([]);
+  let sweepOpen = $state(false);
   const placeOf = (n: SniHuntOverview['networks'][number]) =>
     places[n.slug] ?? { country: n.hunt.place?.country ?? '', city: n.hunt.place?.city ?? '' };
   async function saveHunt(n: SniHuntOverview['networks'][number], enabled: boolean) {
@@ -71,7 +87,10 @@
       return;
     }
     const done = await run(() => setNetworkHunt(n.slug, { enabled, ...(place ? { place } : {}) }));
-    if (done !== null) toast.success('Saved.');
+    if (done !== null) {
+      toast.success('Saved.');
+      changing = changing.filter((s) => s !== n.slug);
+    }
   }
 
   // --- imports -------------------------------------------------------------------------------
@@ -113,8 +132,8 @@
 </p>
 
 <SectionHeader
-  title="Find names"
-  description="Real sites that live on one of your networks, near your nodes, to use as server names. They come from public sources only: a top-sites list looked up in DNS, the certificate a family's target shows, certificate logs, and lists you paste. No address range is ever scanned, and nothing found is used until you add it to a family."
+  title="Server names: advanced"
+  description="Most setups need none of this: a node's page finds names on its cover site's certificate. Here: finding names across your networks, the networks themselves, imports, and checks from inside countries. Names come from public sources only (a top-sites list looked up in DNS, certificates, certificate logs, lists you paste); no address range is ever scanned, and nothing found is used until you add it to a name list."
 />
 
 {#if hunt.isPending}
@@ -134,48 +153,20 @@
       }
     />
     <div>
-      <label for={`${uid}-enabled`} class="font-medium">Find names</label>
+      <label for={`${uid}-enabled`} class="font-medium">Finding names</label>
       <p id={`${uid}-enabled-help`} class="text-muted-foreground">
-        Off, nothing is looked up, checked or measured. Names found before stay here.
+        {huntSwitchLine(h.config.enabled, h.config.sweepEveryDays)}
       </p>
     </div>
   </div>
 
-  <Card>
-    <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-2">
-      <CardTitle class="text-base">The top-sites sweep</CardTitle>
-      {#if sweeping(h.sweep)}
-        <Button variant="outline" size="sm" disabled={busy} onclick={() => run(cancelSweep)}>
-          Stop the sweep
-        </Button>
-      {:else}
-        <Button size="sm" disabled={busy || !h.config.enabled} onclick={() => run(startSweep)}>
-          Start a sweep now
-        </Button>
-      {/if}
-    </CardHeader>
-    <CardContent class="space-y-1 text-sm">
-      <p>{sweepWords(h.sweep)}</p>
-      <p class="text-muted-foreground">
-        The {h.config.depth.toLocaleString('en-US')} most visited sites are looked up in DNS, about
-        {h.config.lookupsPerSecond} a second, every {h.config.sweepEveryDays} days. A name is kept when
-        an address of it is on a network you search below.
-      </p>
-    </CardContent>
-  </Card>
-
   <Card class="mt-6">
     <CardHeader>
-      <CardTitle class="text-base">Networks</CardTitle>
+      <CardTitle class="text-base">Finding names on each network</CardTitle>
     </CardHeader>
     <CardContent class="space-y-3 text-sm">
       {#if h.networks.length === 0}
-        <p class="text-muted-foreground">
-          No network yet. Add one under <Link
-            href={edgesPaths.names()}
-            class="underline underline-offset-4">Server names</Link
-          >.
-        </p>
+        <p class="text-muted-foreground">No network yet. Add one under Networks below.</p>
       {:else}
         <ul class="divide-y rounded-md border" aria-label="Networks">
           {#each h.networks as n (n.slug)}
@@ -186,7 +177,7 @@
                   <p class="font-medium">{n.label}</p>
                   <p class="text-muted-foreground">
                     {n.candidates.total}
-                    {n.candidates.total === 1 ? 'name' : 'names'} found, {n.candidates.ready} would qualify.
+                    {n.candidates.total === 1 ? 'name' : 'names'} found on it, {n.candidates.ready} usable.
                     {n.ranges.v4 + n.ranges.v6 === 0 ? ' It has no address ranges yet.' : ''}
                   </p>
                 </div>
@@ -195,65 +186,110 @@
                     disabled={busy}
                     bind:checked={() => n.hunt.enabled, (v) => void saveHunt(n, v)}
                   />
-                  <span>Search it</span>
+                  <span>Include it in the top-sites search</span>
                 </label>
                 <Link href={edgesPaths.findNetwork(n.slug)} class="underline underline-offset-4">
                   Open
                 </Link>
               </div>
-              <div class="flex flex-wrap items-end gap-2">
-                <div class="space-y-1">
-                  <Label for={`${uid}-${n.slug}-cc`}>Its nodes are in (country code)</Label>
-                  <Input
-                    id={`${uid}-${n.slug}-cc`}
-                    class="w-24"
-                    value={p.country}
-                    placeholder="US"
-                    oninput={(e) =>
-                      (places = { ...places, [n.slug]: { ...p, country: e.currentTarget.value } })}
-                  />
+              {#if n.hunt.place && !changing.includes(n.slug)}
+                <p class="flex flex-wrap items-center gap-2">
+                  <span class="text-muted-foreground">
+                    {placeLine(n.hunt.place, n.hunt.placeFrom)}
+                  </span>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    class="h-auto p-0"
+                    onclick={() => (changing = [...changing, n.slug])}
+                  >
+                    Change
+                  </Button>
+                </p>
+              {:else}
+                <div class="flex flex-wrap items-end gap-2">
+                  <div class="space-y-1">
+                    <Label for={`${uid}-${n.slug}-cc`}>Its nodes are in (country code)</Label>
+                    <Input
+                      id={`${uid}-${n.slug}-cc`}
+                      class="w-24"
+                      value={p.country}
+                      placeholder="US"
+                      oninput={(e) =>
+                        (places = {
+                          ...places,
+                          [n.slug]: { ...p, country: e.currentTarget.value },
+                        })}
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <Label for={`${uid}-${n.slug}-city`}>City (optional)</Label>
+                    <Input
+                      id={`${uid}-${n.slug}-city`}
+                      class="w-48"
+                      value={p.city}
+                      oninput={(e) =>
+                        (places = { ...places, [n.slug]: { ...p, city: e.currentTarget.value } })}
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onclick={() => saveHunt(n, n.hunt.enabled)}
+                  >
+                    Save the place
+                  </Button>
                 </div>
-                <div class="space-y-1">
-                  <Label for={`${uid}-${n.slug}-city`}>City (optional)</Label>
-                  <Input
-                    id={`${uid}-${n.slug}-city`}
-                    class="w-48"
-                    value={p.city}
-                    oninput={(e) =>
-                      (places = { ...places, [n.slug]: { ...p, city: e.currentTarget.value } })}
-                  />
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onclick={() => saveHunt(n, n.hunt.enabled)}
-                >
-                  Save the place
-                </Button>
-              </div>
-              <p class="text-muted-foreground">
-                Timing is measured from probes there to each site: the node relays every check of a
-                name to its family's target, so a target near the node is less visible.
-              </p>
+                <p class="text-muted-foreground">
+                  Found names are timed from probes there: a node relays every check of a name to
+                  its cover site, so a cover site near the node is less visible.
+                </p>
+              {/if}
             </li>
           {/each}
         </ul>
       {/if}
       {#if h.families.length > 0}
-        <p class="font-medium">Found for a family</p>
+        <p class="font-medium">Found for name lists</p>
         <ul class="space-y-1">
           {#each h.families as f (f.slug)}
             <li>
               <Link href={edgesPaths.family(f.slug)} class="underline underline-offset-4">
                 {f.label}
-              </Link>: {f.candidates.total} found, {f.candidates.ready} would qualify.
+              </Link>: {f.candidates.total} found, {f.candidates.ready} usable.
             </li>
           {/each}
         </ul>
       {/if}
     </CardContent>
   </Card>
+
+  <Card class="mt-6">
+    <CardHeader class="flex flex-row flex-wrap items-center justify-between gap-2">
+      <CardTitle class="text-base">The top-sites search</CardTitle>
+      {#if sweeping(h.sweep)}
+        <Button variant="outline" size="sm" disabled={busy} onclick={() => run(cancelSweep)}>
+          Stop the search
+        </Button>
+      {:else}
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy || !h.config.enabled}
+          onclick={() => (sweepOpen = true)}
+        >
+          Search the top sites
+        </Button>
+      {/if}
+    </CardHeader>
+    <CardContent class="space-y-1 text-sm">
+      <p>{sweepWords(h.sweep)}</p>
+      <p class="text-muted-foreground">{sweepCostWords(h.config)}</p>
+    </CardContent>
+  </Card>
+
+  <NetworksCard />
 
   <Card class="mt-6">
     <CardHeader>
@@ -268,12 +304,12 @@
         <label class="flex flex-wrap items-center gap-2">
           <span>Into</span>
           <select bind:value={importScope} class={SELECT} aria-label="Where the names go">
-            <option value="" disabled>a network or a family</option>
+            <option value="" disabled>a network or a name list</option>
             {#each h.networks as n (n.slug)}
               <option value={`network:${n.slug}`}>Network {n.label}</option>
             {/each}
             {#each families.data?.families ?? [] as f (f.slug)}
-              <option value={`family:${f.slug}`}>Family {f.label}</option>
+              <option value={`family:${f.slug}`}>Name list {f.label}</option>
             {/each}
           </select>
         </label>
@@ -288,7 +324,7 @@
         class="border-input focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-3 py-2 font-mono text-sm outline-none focus-visible:ring-3"
       ></textarea>
       <p class="text-muted-foreground">
-        Names are only candidates: each is checked here, and again by its family when you add it.
+        Names are only found names: each is checked here, and again by its list when you add it.
       </p>
       <Button
         size="sm"
@@ -317,7 +353,7 @@
           {#each result.proposals.families as f (f.slug)}
             <div class="flex flex-wrap items-center justify-between gap-2">
               <span>
-                Family {f.label}, target <span class="font-mono">{f.targetAddress}</span>, on
+                Name list {f.label}, cover site <span class="font-mono">{f.targetAddress}</span>, on
                 {f.network}
               </span>
               <Button
@@ -341,10 +377,23 @@
             </div>
           {/each}
           <p class="text-muted-foreground">
-            Then import the seed again: its names go to the families that exist by then.
+            Then import the seed again: its names go to the name lists that exist by then.
           </p>
         </div>
       {/if}
     </CardContent>
   </Card>
+
+  <CountryChecksCard />
+
+  <ConfirmDialog
+    bind:open={sweepOpen}
+    title="Search the top sites?"
+    body={`${sweepCostWords(h.config)} Lookups go to ordinary DNS; nothing is sent to the sites themselves.`}
+    confirmLabel="Start the search"
+    onConfirm={() => {
+      sweepOpen = false;
+      void run(startSweep);
+    }}
+  />
 {/if}

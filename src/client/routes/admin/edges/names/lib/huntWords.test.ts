@@ -14,6 +14,9 @@ import {
   candidateWords,
   countryWords,
   extraWords,
+  huntSwitchLine,
+  placeLine,
+  sweepCostWords,
   familySlugFor,
   huntImportWords,
   matchesHuntFilter,
@@ -119,7 +122,7 @@ describe('find names words', () => {
       },
     };
     expect(nearWords(timed, true)).toBe(
-      'About 120 ms from Springfield (US) to the family’s target. Its own site answers there in about 5 ms.',
+      'About 120 ms from Springfield (US) to the cover site. Its own site answers there in about 5 ms.',
     );
     expect(nearWords(timed, false)).toBe('About 120 ms from Springfield (US) to its own address.');
   });
@@ -154,16 +157,30 @@ describe('find names words', () => {
     expect(scoreWords(c)).toBe('Score 65 of 100 (40 before measurements).');
   });
 
-  test('filters split ready, unmeasured and the rest', () => {
-    expect(matchesHuntFilter(base, 'ready')).toBe(true);
-    expect(matchesHuntFilter(base, 'unmeasured')).toBe(true);
-    expect(matchesHuntFilter({ ...base, check: null }, 'unchecked')).toBe(true);
+  test('three filters: usable, not usable, all', () => {
+    expect(matchesHuntFilter(base, 'usable')).toBe(true);
+    expect(matchesHuntFilter(base, 'not_usable')).toBe(false);
+    expect(matchesHuntFilter({ ...base, state: 'gone' }, 'not_usable')).toBe(true);
+    expect(matchesHuntFilter({ ...base, check: null }, 'not_usable')).toBe(false);
+    expect(matchesHuntFilter({ ...base, state: 'ignored' }, 'all')).toBe(true);
     // Not checked yet is not "would not qualify".
     expect(scoreWords({ ...base, check: null })).toBe('No score until it is checked.');
     expect(scoreWords({ ...base, check: { ...base.check!, code: 'q_unreachable' } })).toBe(
       'No score: it would not qualify.',
     );
-    expect(matchesHuntFilter({ ...base, state: 'gone' }, 'ready')).toBe(false);
+  });
+
+  test('the Advanced page: switch, sweep cost, place', () => {
+    expect(huntSwitchLine(true, 30)).toMatch(/^On\. .*every 30 days/);
+    expect(huntSwitchLine(false, 30)).toMatch(/^Off\./);
+    expect(sweepCostWords({ depth: 300_000, wwwDepth: 100_000, lookupsPerSecond: 20 })).toBe(
+      "It looks up the 300,000 most visited sites in DNS: up to 800,000 lookups over about 12 hours. Most setups do not need it: a cover site's certificate and certificate logs come first.",
+    );
+    expect(placeLine({ country: 'US', city: 'Example City' }, 'node')).toBe(
+      'Timed from Example City (US), taken from a node on it.',
+    );
+    expect(placeLine({ country: 'DE' }, null)).toBe('Timed from DE.');
+    expect(placeLine(null, null)).toMatch(/^Not set/);
   });
 
   test('"ready" and "would qualify" follow the one rule every count uses', () => {
@@ -171,7 +188,7 @@ describe('find names words', () => {
       for (const code of [null, 'q_cert'])
         for (const check of [null, { ...base.check!, code }]) {
           const c = { ...base, state, check };
-          expect(matchesHuntFilter(c, 'ready')).toBe(usableCandidate(c));
+          expect(matchesHuntFilter(c, 'usable')).toBe(usableCandidate(c));
           // Green "it would qualify" only for a usable candidate (an added one says its family).
           if (state !== 'added')
             expect(candidateWords(c).sentence.startsWith('It would qualify')).toBe(
@@ -181,7 +198,7 @@ describe('find names words', () => {
   });
 
   test('the sweep, an import, a place and a family id in words', () => {
-    expect(sweepWords(null)).toBe('No sweep has run yet.');
+    expect(sweepWords(null)).toBe('No search has run yet.');
     expect(
       sweepWords({
         state: 'running',

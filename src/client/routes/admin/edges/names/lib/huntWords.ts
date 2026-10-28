@@ -24,25 +24,11 @@ export const HUNT_SOURCE_WORDS: Record<SniCandidateRow['sources'][number], strin
   ct: 'certificate logs',
 };
 
-export const HUNT_FILTERS = [
-  'ready',
-  'failing',
-  'unchecked',
-  'unmeasured',
-  'gone',
-  'ignored',
-  'added',
-  'all',
-] as const;
+export const HUNT_FILTERS = ['usable', 'not_usable', 'all'] as const;
 export type HuntFilter = (typeof HUNT_FILTERS)[number];
 export const HUNT_FILTER_LABEL: Record<HuntFilter, string> = {
-  ready: 'Ready',
-  failing: 'Failing',
-  unchecked: 'Not checked yet',
-  unmeasured: 'Not measured',
-  gone: 'Left its network',
-  ignored: 'Ignored',
-  added: 'In a family',
+  usable: 'Usable',
+  not_usable: 'Not usable',
   all: 'All',
 };
 
@@ -50,36 +36,20 @@ export const HUNT_FILTER_LABEL: Record<HuntFilter, string> = {
 const ready = (c: SniCandidateRow) => usableCandidate(c);
 
 /** Which state's pages a filter reads (the rest is narrowed on the page). */
-export const HUNT_FILTER_STATE: Record<
-  HuntFilter,
-  'new' | 'failing' | 'gone' | 'ignored' | 'added' | 'all'
-> = {
-  ready: 'new',
-  failing: 'failing',
-  unchecked: 'new',
-  unmeasured: 'new',
-  gone: 'gone',
-  ignored: 'ignored',
-  added: 'added',
+export const HUNT_FILTER_STATE: Record<HuntFilter, 'new' | 'all'> = {
+  usable: 'new',
+  not_usable: 'all',
   all: 'all',
 };
 
 export function matchesHuntFilter(c: SniCandidateRow, f: HuntFilter): boolean {
   switch (f) {
-    case 'ready':
+    case 'usable':
       return ready(c);
-    case 'failing':
-      return c.state === 'failing';
-    case 'unchecked':
-      return c.state === 'new' && !c.check;
-    case 'unmeasured':
-      return ready(c) && !c.timing && !c.ooni && c.countries.length === 0;
-    case 'gone':
-      return c.state === 'gone';
-    case 'ignored':
-      return c.state === 'ignored';
-    case 'added':
-      return c.state === 'added';
+    case 'not_usable':
+      return (
+        c.state === 'failing' || c.state === 'gone' || (c.state === 'new' && !!c.check && !ready(c))
+      );
     case 'all':
       return true;
   }
@@ -94,7 +64,7 @@ export function candidateWords(c: SniCandidateRow): { dot: Dot; sentence: string
     };
   if (c.state === 'ignored') return { dot: 'grey', sentence: 'Ignored.' };
   if (c.state === 'gone')
-    return { dot: 'grey', sentence: 'It left its network: it now resolves outside it.' };
+    return { dot: 'grey', sentence: 'It moved off its network: it now resolves outside it.' };
   if (!c.check) return { dot: 'grey', sentence: 'Not checked yet.' };
   if (!ready(c))
     return {
@@ -132,7 +102,7 @@ export function extraWords(c: SniCandidateRow): string | null {
 /** Near the node: the leg REALITY relays to, from the network's place. */
 export function nearWords(c: SniCandidateRow, family: boolean): string {
   if (!c.timing) return 'Not measured from the node’s place yet.';
-  const to = family ? 'the family’s target' : 'its own address';
+  const to = family ? 'the cover site' : 'its own address';
   const own = family && c.own ? ` Its own site answers there in about ${c.own.connectMs} ms.` : '';
   return `About ${c.timing.connectMs} ms from ${placeWords(c.timing.place)} to ${to}.${own}`;
 }
@@ -192,7 +162,7 @@ export function sourcesWords(c: SniCandidateRow): string {
 // --- the sweep and certificate logs ---------------------------------------------------------------
 
 export function sweepWords(s: SniHuntOverview['sweep']): string {
-  if (!s) return 'No sweep has run yet.';
+  if (!s) return 'No search has run yet.';
   const found = plural(s.hits, 'name');
   switch (s.state) {
     case 'downloading':
@@ -200,11 +170,11 @@ export function sweepWords(s: SniHuntOverview['sweep']): string {
     case 'running':
       return `Looking up the top-sites list: ${num(s.cursor)} of ${num(s.total)} names, ${found} found on a network.`;
     case 'done':
-      return `The last sweep looked up ${num(s.total)} names and found ${found} on a network.`;
+      return `The last search looked up ${num(s.total)} names and found ${found} on a network.`;
     case 'cancelled':
-      return `The last sweep was cancelled after ${num(s.cursor)} names.`;
+      return `The last search was stopped after ${num(s.cursor)} names.`;
     case 'failed':
-      return `The last sweep failed (${SWEEP_ERROR_WORDS[s.error ?? ''] ?? 'an error'}).`;
+      return `The last search failed (${SWEEP_ERROR_WORDS[s.error ?? ''] ?? 'an error'}).`;
   }
 }
 
@@ -260,4 +230,35 @@ export function familySlugFor(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
+}
+
+// --- the Advanced page ----------------------------------------------------------------------------
+
+/** Under the finding-names switch: what is true now. */
+export function huntSwitchLine(on: boolean, sweepEveryDays: number): string {
+  return on
+    ? `On. FCP reads certificates and certificate logs when asked and checks what it finds. The top-sites search runs only when started, or every ${sweepEveryDays} days while a network is searched.`
+    : 'Off. Nothing is looked up, checked or measured. Names found before stay listed.';
+}
+
+/** What the top-sites search costs, said before it starts (AAAA lookups counted: the worst case). */
+export function sweepCostWords(c: {
+  depth: number;
+  wwwDepth: number;
+  lookupsPerSecond: number;
+}): string {
+  const lookups = (c.depth + Math.min(c.wwwDepth, c.depth)) * 2;
+  // The pauses between steps add about a tenth.
+  const hours = Math.max(1, Math.round((lookups / Math.max(1, c.lookupsPerSecond) / 3600) * 1.1));
+  return `It looks up the ${num(c.depth)} most visited sites in DNS: up to ${num(lookups)} lookups over about ${plural(hours, 'hour')}. Most setups do not need it: a cover site's certificate and certificate logs come first.`;
+}
+
+/** Where a network's nodes are, for timing names from there. */
+export function placeLine(
+  place: { country: string; city?: string } | null,
+  placeFrom: 'node' | null,
+): string {
+  if (!place) return 'Not set: names on it are not timed from near its nodes.';
+  const where = place.city ? `${place.city} (${place.country})` : place.country;
+  return `Timed from ${where}${placeFrom === 'node' ? ', taken from a node on it' : ''}.`;
 }

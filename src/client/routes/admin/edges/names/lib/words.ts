@@ -1,7 +1,7 @@
 /**
  * Wording and small decisions for Admin -> Edges -> Server names (pure;
  * unit-tested). A name goes through three separate facts and the page never
- * blurs them: the target site serves it (checked), a node accepts it (proven
+ * blurs them: the cover site serves it (checked), a node accepts it (proven
  * by a test link), and it works from a country (the operator's judgement).
  */
 import type {
@@ -37,8 +37,8 @@ export function networkLine(n: EdgeNetworkView, now = Date.now()): string {
   else if (n.asns.length > 0) parts.push('not read yet');
   parts.push(
     n.families.length === 0
-      ? 'no family on it'
-      : `${plural(n.families.length, 'family', 'families')} on it`,
+      ? 'no name list on it'
+      : `${plural(n.families.length, 'name list')} on it`,
   );
   if (n.locations.length > 0) parts.push(`${plural(n.locations.length, 'location')} on it`);
   return parts.join(' · ');
@@ -195,9 +195,9 @@ export function importWords(r: SniImportResult): string[] {
     r.lines.filter((l) => l.verdict === v).length;
   const out = [`${plural(r.added, 'name')} added. Each is checked against the cover site first.`];
   const dup = count('duplicate');
-  if (dup) out.push(`${plural(dup, 'line')} skipped: already in this family, or repeated.`);
+  if (dup) out.push(`${plural(dup, 'line')} skipped: already in this list, or repeated.`);
   const other = count('in_other_family');
-  if (other) out.push(`${plural(other, 'name')} skipped: already in another family.`);
+  if (other) out.push(`${plural(other, 'name')} skipped: already in another list.`);
   const burned = count('burned');
   if (burned) out.push(`${plural(burned, 'name')} skipped: burned names are never used again.`);
   const invalid = count('invalid');
@@ -207,14 +207,13 @@ export function importWords(r: SniImportResult): string[] {
 
 /** Refusals of this section, in words. */
 const ERROR_WORDS: Record<string, string> = {
-  'edge.sni.bad_target': 'The target has to be a public host name and a port.',
-  'edge.sni.cap': 'This family is full.',
-  'edge.sni.disabled': 'Server name families are turned off. Turn them on first.',
-  'edge.sni.family_in_use': 'A transport still uses this family. Unbind it first.',
+  'edge.sni.bad_target': 'The cover site has to be a public host name and a port.',
+  'edge.sni.cap': 'This name list is full.',
+  'edge.sni.disabled': 'Server names are turned off. Turn them on first.',
+  'edge.sni.family_in_use': 'A port still uses this name list. Stop managing it there first.',
   'edge.sni.target_mismatch':
-    "The transport's target site is not this family's target. Every name must be one the target really serves.",
-  'edge.sni.binding_changed':
-    'This transport changed since the page loaded. Reload and look again.',
+    "The port's cover site is not this list's cover site. Every name must be one the cover site really serves.",
+  'edge.sni.binding_changed': 'This port changed since the page loaded. Reload and look again.',
   'edge.sni.profile_moved':
     'The profile changed on the backend since this was written. Write the names again before testing.',
   'edge.sni.rollout_not_confirmed': 'The names are not on the backend yet.',
@@ -231,19 +230,19 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.sni.vantage_budget': 'The hourly budget for checks is spent. Try again later.',
   // Networks (docs/edges.md "Networks").
   'edge.sni.network_bound':
-    'A transport is bound to this family. Unbind it before changing its network.',
+    'A port uses this name list. Stop managing it there before changing its network.',
   'edge.sni.network_unknown':
-    "The family's network has no address ranges yet. Refresh it, or add ranges by hand.",
+    "The list's network has no address ranges yet. Read them again, or add ranges by hand.",
   'edge.sni.network_edges_off':
-    "Some addresses in use on this transport are not on the family's network. Replace them first.",
+    "Some addresses in use on this port are not on the list's network. Replace them first.",
   'edge.network.bad_asn': 'Each ASN is a number, at most eight of them.',
   'edge.network.bad_prefix': 'Each range is an address and a length, like 192.0.2.0/24.',
   'edge.network.empty': 'A network needs an ASN or a range.',
-  'edge.network.in_use': 'A family or a transport is on this network. Change them first.',
+  'edge.network.in_use': 'A name list or a port is on this network. Change them first.',
   'edge.network.bad_place': 'A place is a two-letter country code and, if you like, a city.',
   // Finding names (docs/edges.md "Finding names").
   'edge.sni.hunt.off': 'Finding names is turned off. Turn it on first.',
-  'edge.sni.hunt.no_scope': 'Pick a network or a family first.',
+  'edge.sni.hunt.no_scope': 'Pick a network or a name list first.',
   'edge.sni.hunt.bad_seed': 'That is not a seed file. Paste the whole file as it was written.',
   'edge.sni.hunt.too_many': 'That is too many at once. Split it up.',
   'edge.sni.hunt.sweep_running': 'A sweep is already running.',
@@ -251,7 +250,7 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.sni.hunt.no_network':
     'No network is being searched yet. Turn on finding names for a network that has address ranges.',
   'edge.sni.hunt.no_servername':
-    'The target is an address and the family has no name yet. Add one name first.',
+    'The cover site is an address and the list has no name yet. Add one name first.',
   'edge.sni.hunt.ct_off': 'Certificate log reads are set to none an hour.',
   'edge.maintenance': 'Edges are in maintenance. Nothing new starts until it ends.',
   'servers.manage_disabled': 'Changing backends is turned off under Servers.',
@@ -262,8 +261,8 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.name_in_use': 'Members are still given one of the names being removed.',
   // Binding to a transport reads the Servers cache.
   'servers.unknown_inbound':
-    'That transport is not on this backend as last read. Refresh under Servers, then pick again.',
-  'servers.not_reality': 'Only a REALITY transport takes a family.',
+    'That port is not on this backend as last read. Refresh under Servers, then pick again.',
+  'servers.not_reality': 'Only a REALITY port takes a name list.',
   'edge.panel_op_running': 'A server change is still running on this origin.',
   conflict: 'That already exists, or it is already settled. Reload and look again.',
   not_found: 'That no longer exists. Reload and look again.',
