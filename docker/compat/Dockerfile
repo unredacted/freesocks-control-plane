@@ -1,4 +1,4 @@
-FROM debian:13-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
+FROM debian:trixie-20261020-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl openssl python3 procps && rm -rf /var/lib/apt/lists/*
 COPY .cache/compat/bin/sing-box /usr/local/bin/sing-box
 COPY .cache/compat/bin/mihomo /usr/local/bin/mihomo

@@ -12,14 +12,45 @@
 # Everything here opens a PR; nothing auto-merges. Review before deploying, and
 # note that a deploy is `up -d --build --force-recreate` (docs/beta-deploy.md §6).
 #
-# CROSS-UPDATER HAZARD: three pins live in more than one file, and the compose
-# and docker updaters below are independent — one upstream release arrives as
-# TWO PRs that can each pass CI and merge alone. Dependabot cannot group across
-# ecosystems, so `convex/deployPins.test.ts` is the guard: it fails the moment
-# the halves disagree, forcing them into a single PR. The one that bites is
-# postgres — the server pin is in the compose file, the sidecar's `pg_dump` is
-# `FROM postgres:…` in docker/backup.Dockerfile, and an older pg_dump refuses to
-# dump a newer-major server, so a compose-only bump silently breaks backups.
+# ONE PR PER UPSTREAM RELEASE: some images are pinned in a compose file AND a
+# Dockerfile, and each Dependabot ecosystem only sees its own files, so until
+# Oct 2026 one release arrived as two PRs that each failed CI alone (or worse,
+# passed and merged alone). The compose entry and the /docker entry below are
+# now one multi-ecosystem group, `stack-images`: one PR carries every file.
+# The pins that move together, and why:
+#  - postgres: the server in docker-compose.stack.yml and the backup sidecar's
+#    `FROM` in docker/backup.Dockerfile. An older pg_dump refuses to dump a
+#    newer-major server, so a compose-only bump silently breaks backups.
+#  - caddy: docker/web.Dockerfile (the deployed SPA server) and the test compose
+#    files. CI's `caddyfile` job reads the image from web.Dockerfile rather than
+#    holding a copy (a copy is a `docker run` ref no ecosystem updates).
+#  - oven/bun: the three /docker Dockerfiles must equal `packageManager` in
+#    package.json, which Dependabot does NOT touch (the bun ecosystem below only
+#    allows the convex packages): a Bun PR fails until packageManager is bumped
+#    in it by hand.
+# Not coupled, on purpose: the Node in docker/convex-node/ follows Convex's
+# .nvmrc (22) while the test images follow the clients (24); the sidecar's
+# Xray is a client and moves alone, while docker-compose.compat.yml's Xray pins
+# follow the fleet and are ignored below. convex/deployPins.test.ts fails the
+# build the moment a coupled pair disagrees, whatever produced the change.
+#
+# MULTI-ECOSYSTEM RULES (docs: "Configuring multi-ecosystem updates"). Get one
+# wrong and the file is invalid, which stops EVERY entry here, the daily Node
+# security one included; convex/deployPins.test.ts checks them:
+#  - `schedule`, `labels` and `commit-message` sit on the group. commit-message,
+#    target-branch, milestone and pull-request-branch-name are group-only: on a
+#    member entry they are a configuration error.
+#  - Each member entry needs `patterns` (it replaces `groups`); `ignore` and
+#    `cooldown` stay per entry.
+#
+# EXACT VERSION TAGS: every pin names a full upstream version (`caddy:2.11.7-
+# alpine`, `postgres:18.6-trixie`, a dated `debian:trixie-YYYYMMDD-slim`), never
+# a floating `2-alpine` / `18` / `13-slim`. With a floating tag Dependabot only
+# sees the digest move, so every PR read "bump caddy from 2-alpine to 2-alpine".
+# Now a release reads "2.11.7-alpine to 2.11.8-alpine" and a same-version
+# rebuild (an Alpine/Debian base refresh, or one architecture re-pushed) reads
+# "2.11.7-alpine to 2.11.7-alpine". Re-pin by hand the same way: the exact tag,
+# and its digest from `docker buildx imagetools inspect <image>:<exact tag>`.
 #
 # SCHEDULE: the images production runs are checked every day. Dependabot does
 # not know about vulnerabilities inside an image: no security update ever fires
@@ -28,8 +59,8 @@
 # a head in Oct 2026: the Bun and Cap releases fixing three high Bun advisories
 # shipped on a Thursday and would have waited for the next Monday. `cron`, not
 # `interval: daily`, because daily skips weekends (same as the convex-node entry
-# below). The compose entry covers the test compose files too (one grouped PR
-# either way); the test-only Dockerfiles stay weekly.
+# below). The compose entry covers the test compose files too (same PR either
+# way); the test-only Dockerfiles stay weekly.
 #
 # COOLDOWN: GitHub holds every version update back 3 days by default (since Jul
 # 2026, with no `cooldown` key at all), so a malicious release has time to be
@@ -39,10 +70,21 @@
 # when an image fix can't wait a day.
 
 version: 2
+
+multi-ecosystem-groups:
+  stack-images:
+    schedule:
+      interval: cron
+      cronjob: '0 9 * * *'
+      timezone: Etc/UTC
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker)
+
 updates:
-  # --- compose image pins ---------------------------------------------------
-  # Matches docker-compose.yml, docker-compose.stack.yml and
-  # docker-compose.remnawave-test.yml: Dependabot's compose matcher is
+  # --- compose image pins (stack-images) -----------------------------------
+  # Matches docker-compose.yml, docker-compose.stack.yml and the test compose
+  # files: Dependabot's compose matcher is
   # /(docker-)?compose(-[\w]+)?(\.[\w-]+)?\.ya?ml/i, so the `.stack` /
   # `.remnawave-test` infixes are covered.
   #
@@ -81,67 +123,36 @@ updates:
   # Xray blocks private targets in `freedom` unless a `finalRules` entry
   # allows them (docker/compat/frontcheck-xray.json). The REALITY key share
   # test's second pin (a release from v26.9.8 on) moves by hand too.
+  #
+  # `patterns: ['*']` with NO `update-types` filter, deliberately. A filter looks
+  # like a way to keep majors out, but it silently drops DIGEST-ONLY updates
+  # (dependabot-core's `semver_rules_allow_grouping?` bails when either side
+  # fails `Version.correct?` or major/minor/patch are all equal); the first run
+  # with one produced zero grouped PRs. So majors ride in the PR. That is the
+  # accepted trade: a major here fails LOUDLY at deploy (PG19 refuses a PG18
+  # data dir) rather than silently, the PR body names every bump, and the
+  # cross-file locks in convex/deployPins.test.ts still fail CI on a half-
+  # applied one.
   - package-ecosystem: docker-compose
     directory: /
-    schedule:
-      interval: cron
-      cronjob: '0 9 * * *'
-      timezone: Etc/UTC
+    multi-ecosystem-group: stack-images
+    patterns: ['*']
     cooldown:
       default-days: 1
-    open-pull-requests-limit: 10
-    labels: [dependencies, docker]
-    commit-message:
-      prefix: chore(docker)
     ignore:
       - dependency-name: xtls/xray-core
-    groups:
-      compose-images:
-        # NO `update-types` filter, deliberately. It looks like a way to keep
-        # majors out of the group, but it silently drops DIGEST-ONLY updates too
-        # — which is nearly everything here, because every image is digest-
-        # pinned. dependabot-core's `semver_rules_allow_grouping?` bails with
-        # `return false` when either side fails `Version.correct?` (`latest`,
-        # `9-alpine`) and again when major/minor/patch are all equal (`18` ->
-        # `18`), commented there as "some ecosystems don't do semver exactly, so
-        # anything lower gets individual for now". The first run proved it: the
-        # two filtered groups produced ZERO grouped PRs and five individual ones,
-        # while the unfiltered github-actions group below grouped correctly.
-        #
-        # So majors now ride in the group. That is the accepted trade: a major
-        # here fails LOUDLY at deploy (PG19 refuses a PG18 data dir) rather than
-        # silently, the PR body names every bump, and the cross-file locks in
-        # convex/deployPins.test.ts still fail CI on a half-applied one.
-        patterns: ['*']
 
-  # --- Dockerfile base images ----------------------------------------------
-  # docker/{web,deploy,backup}.Dockerfile. Two of these are half of a cross-file
-  # pin (see CROSS-UPDATER HAZARD above): `postgres` must equal the compose
-  # server pin, and `oven/bun` must equal `packageManager` in package.json —
-  # which Dependabot does NOT touch, since the bun ecosystem is not enrolled.
-  # Both are enforced by convex/deployPins.test.ts. The Convex images' Node
+  # --- Dockerfile base images (stack-images) --------------------------------
+  # docker/{web,deploy,backup}.Dockerfile and docker/edge-client-check/ (FCP's
+  # own client check: its sing-box, Xray and Mihomo pins are the clients it
+  # checks with, production runtime, so daily too). The Convex images' Node
   # (docker/convex-node/) has its own entry below, and the test images theirs.
-  #
-  # docker/edge-client-check/ (FCP's own client check) rides in the same group:
-  # its `oven/bun` must move with the two above in ONE PR, and its sing-box,
-  # Xray and Mihomo pins are the clients it checks with (production runtime, so
-  # daily too).
   - package-ecosystem: docker
     directories: [/docker, /docker/edge-client-check]
-    schedule:
-      interval: cron
-      cronjob: '0 9 * * *'
-      timezone: Etc/UTC
+    multi-ecosystem-group: stack-images
+    patterns: ['*']
     cooldown:
       default-days: 1
-    open-pull-requests-limit: 10
-    labels: [dependencies, docker]
-    commit-message:
-      prefix: chore(docker)
-    groups:
-      base-images:
-        # Unfiltered for the same reason as the compose group above.
-        patterns: ['*']
 
   # --- test-only Dockerfile base images --------------------------------------
   - package-ecosystem: docker

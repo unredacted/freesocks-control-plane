@@ -2,18 +2,22 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
+import YAML from 'yaml';
 
 /**
  * Drift lock for image pins that are duplicated across files (sibling of
  * `envExample.test.ts`).
  *
- * Every image in the stack is digest-pinned, and three of those pins appear in
- * MORE THAN ONE file. Dependabot owns them through two independent updaters —
- * `docker-compose` at the repo root and `docker` at `/docker` (see
- * `.github/dependabot.yml`) — so a single upstream release arrives as two
- * separate PRs that can each pass CI and merge alone. Nothing in Dependabot can
- * group across ecosystems, so the guard has to live here: whichever PR lands
- * first fails this test until the other side is folded into it.
+ * Every image in the stack is pinned to an exact version and its digest, and
+ * some of those pins appear in MORE THAN ONE file. Dependabot sees them through
+ * two ecosystems, `docker-compose` at the repo root and `docker` at `/docker`,
+ * which `.github/dependabot.yml` joins in one multi-ecosystem group so that a
+ * release lands as ONE PR (until Oct 2026 it arrived as two, each failing or,
+ * worse, passing alone). This file is the guard behind that group: it fails the
+ * moment the halves disagree, whatever made the change (a hand re-pin, the group
+ * split apart again, a file no ecosystem updates), and it checks the
+ * multi-ecosystem rules whose breach would make the config invalid and stop
+ * every update.
  *
  * The failures these prevent are not subtle:
  *
@@ -27,12 +31,10 @@ import { describe, expect, test } from 'vitest';
  *    of the duplication entirely — `.github/workflows/ci.yml` uses
  *    `bun-version-file: package.json`, and the last test here stops a literal
  *    `bun-version:` creeping back in.
- *
- * Precedent: ci.yml already carries an inline shell guard holding its Caddy
- * digest equal to docker/web.Dockerfile's, added after the two drifted and CI
- * validated a different Caddy than the one deployed for weeks. Same failure
- * shape, same fix; that one stays where it is because it guards a step in its
- * own job.
+ *  - caddy in docker/web.Dockerfile vs. the one CI validates the Caddyfile
+ *    with: they drifted once and CI validated a different Caddy than the one
+ *    deployed for weeks. CI now reads the image from web.Dockerfile, the way it
+ *    reads Bun from package.json, and a test here stops a copy coming back.
  */
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -47,6 +49,7 @@ const clientCheckDockerfile = read('../docker/edge-client-check/Dockerfile');
 const convexNodeDockerfile = read('../docker/convex-node/Dockerfile');
 const packageJson = read('../package.json');
 const ciWorkflow = read('../.github/workflows/ci.yml');
+const dependabotYml = read('../.github/dependabot.yml');
 const dockerignore = read('../.dockerignore');
 const gitignore = read('../.gitignore');
 
@@ -133,6 +136,41 @@ const RUST_LOG_CASES = {
 /** Every `FROM <ref>` in a Dockerfile, stage aliases stripped. */
 function fromRefs(dockerfile: string): string[] {
   return [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map((m) => m[1]);
+}
+
+/** The compose files at the root and every Dockerfile under docker/: where image pins live. */
+function imagePinFiles(): string[] {
+  const out = readdirSync(repoRoot).filter((name) => /^docker-compose[\w.-]*\.ya?ml$/.test(name));
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(path.join(repoRoot, rel), { withFileTypes: true })) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (/(^|\.)Dockerfile$/.test(entry.name)) out.push(child);
+    }
+  };
+  walk('docker');
+  return out;
+}
+
+/**
+ * A tag that names one upstream release: at least `major.minor` (Postgres's own
+ * versions have two parts), a build date (`debian:trixie-YYYYMMDD-slim`), or a
+ * Convex release git sha. A floating `2-alpine`, `18` or `13-slim` fails.
+ */
+const EXACT_TAG = /^(?:v?\d+\.\d+[\w.-]*|[a-z]+-\d{8}(?:-[a-z]+)?|[0-9a-f]{40})$/;
+
+/** The parts of .github/dependabot.yml the checks below read. */
+interface DependabotUpdate {
+  'package-ecosystem': string;
+  directory?: string;
+  directories?: string[];
+  schedule?: unknown;
+  patterns?: string[];
+  'multi-ecosystem-group'?: string;
+}
+interface DependabotConfig {
+  'multi-ecosystem-groups'?: Record<string, { schedule?: unknown }>;
+  updates: DependabotUpdate[];
 }
 
 /**
@@ -230,8 +268,8 @@ describe('cross-file image pins', () => {
       sidecarBase,
       'docker/backup.Dockerfile must pin the SAME postgres image (tag AND digest) as the ' +
         'postgres service in docker-compose.stack.yml, or pg_dump can end up older than the ' +
-        'server it dumps. Dependabot updates these through two separate updaters — fold both ' +
-        'PRs into one before merging.',
+        'server it dumps. Dependabot moves both in one PR (the `stack-images` group in ' +
+        '.github/dependabot.yml); a hand re-pin must change both too.',
     ).toBe(serverImage);
   });
 
@@ -420,6 +458,95 @@ describe('cross-file image pins', () => {
       nodeBase,
       'docker/convex-node/Dockerfile must pin node:<x.y.z>-<variant>@sha256:<digest>',
     ).toMatch(/^node:\d+\.\d+\.\d+-[a-z0-9.-]+@sha256:[0-9a-f]{64}$/);
+  });
+
+  test('CI validates the Caddyfile with the Caddy docker/web.Dockerfile deploys', () => {
+    // ci.yml's `caddyfile` job reads its image from this FROM line. A copy in
+    // the workflow is a `docker run` ref that no Dependabot ecosystem updates:
+    // it drifted once, and the shell guard added then failed every Caddy bump.
+    const caddyBases = fromRefs(webDockerfile).filter((ref) => ref.startsWith('caddy:'));
+    expect(caddyBases, 'docker/web.Dockerfile must have exactly one `FROM caddy:…`').toHaveLength(
+      1,
+    );
+    expect(caddyBases[0]).toMatch(/^caddy:\S+@sha256:[0-9a-f]{64}$/);
+    expect(ciWorkflow, 'ci.yml must read the Caddy image from docker/web.Dockerfile').toMatch(
+      /FROM caddy:.*docker\/web\.Dockerfile/,
+    );
+    expect(
+      ciWorkflow,
+      'ci.yml pins a Caddy image of its own. Read it from docker/web.Dockerfile instead, or ' +
+        'every Caddy bump leaves CI validating the old one.',
+    ).not.toMatch(/\bcaddy:[\w.-]+@sha256:/);
+  });
+
+  test('every digest pin names an exact upstream version', () => {
+    // With a floating tag (`caddy:2-alpine`, `postgres:18`) Dependabot only sees
+    // the digest move, so every PR read "bump caddy from 2-alpine to 2-alpine".
+    // An exact tag makes it name the versions, and a rebuild of the same
+    // version shows as one ("2.11.7-alpine to 2.11.7-alpine").
+    const floating: string[] = [];
+    let pins = 0;
+    for (const file of imagePinFiles()) {
+      for (const [ref, tag] of read(`../${file}`).matchAll(
+        /[\w./-]+:([\w.-]+)@sha256:[0-9a-f]{64}/g,
+      )) {
+        pins++;
+        if (!EXACT_TAG.test(tag)) floating.push(`${file}: ${ref}`);
+      }
+    }
+    expect(pins, 'found no digest pins at all, so the scan itself is broken').toBeGreaterThan(10);
+    expect(
+      floating,
+      'these pins float on a major-only tag. Pin the exact version tag and its digest ' +
+        '(`docker buildx imagetools inspect <image>:<exact tag>`).',
+    ).toEqual([]);
+  });
+});
+
+describe('the Dependabot config', () => {
+  const config = YAML.parse(dependabotYml) as DependabotConfig;
+  const label = (u: DependabotUpdate) =>
+    `${u['package-ecosystem']} ${u.directory ?? u.directories?.join(',')}`;
+
+  test('the compose files and the /docker Dockerfiles update in one PR', () => {
+    // The postgres and caddy pairs are one image in two ecosystems; only a
+    // multi-ecosystem group puts both halves in the same PR.
+    const compose = config.updates.find(
+      (u) => u['package-ecosystem'] === 'docker-compose' && u.directory === '/',
+    );
+    const dockerfiles = config.updates.find(
+      (u) =>
+        u['package-ecosystem'] === 'docker' && (u.directories ?? [u.directory]).includes('/docker'),
+    );
+    const group = compose?.['multi-ecosystem-group'];
+    expect(group, 'the root docker-compose entry must be in a multi-ecosystem group').toBeTruthy();
+    expect(dockerfiles?.['multi-ecosystem-group'], 'the /docker entry must share it').toBe(group);
+  });
+
+  test('every grouped entry follows the multi-ecosystem rules', () => {
+    // A breach makes the whole file invalid, and an invalid file stops EVERY
+    // entry, the daily Node security one included. GitHub's rules: these keys
+    // are group-only, each member needs `patterns`, and the group has the
+    // schedule (`groups` has no meaning on a member, `patterns` replaces it).
+    const groupOnly = ['commit-message', 'target-branch', 'milestone', 'pull-request-branch-name'];
+    const groups = config['multi-ecosystem-groups'] ?? {};
+    for (const [name, group] of Object.entries(groups)) {
+      expect(group.schedule, `multi-ecosystem group ${name} needs a schedule`).toBeTruthy();
+    }
+    for (const u of config.updates) {
+      const group = u['multi-ecosystem-group'];
+      if (!group) {
+        expect(u.schedule, `${label(u)} needs a schedule`).toBeTruthy();
+        continue;
+      }
+      expect(groups[group], `${label(u)} names an undefined group ${group}`).toBeTruthy();
+      expect(u.patterns?.length, `${label(u)} needs \`patterns\``).toBeGreaterThan(0);
+      for (const key of [...groupOnly, 'schedule', 'groups']) {
+        expect(u, `${label(u)}: \`${key}\` goes on the group, not a member`).not.toHaveProperty(
+          key,
+        );
+      }
+    }
   });
 });
 
