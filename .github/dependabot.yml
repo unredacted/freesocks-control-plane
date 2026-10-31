@@ -123,8 +123,9 @@ updates:
   # (docker/convex-node/) has its own entry below, and the test images theirs.
   #
   # docker/edge-client-check/ (FCP's own client check) rides in the same group:
-  # its `oven/bun` must move with the two above in ONE PR, and its sing-box and
-  # Xray pins are the clients it checks with (production runtime, so daily too).
+  # its `oven/bun` must move with the two above in ONE PR, and its sing-box,
+  # Xray and Mihomo pins are the clients it checks with (production runtime, so
+  # daily too).
   - package-ecosystem: docker
     directories: [/docker, /docker/edge-client-check]
     schedule:

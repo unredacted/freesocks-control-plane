@@ -18,8 +18,10 @@ import {
   type SniTransport,
   type SniTransportNode,
   type SniTransportsView,
+  type SniAutoTest,
 } from '../../../../../../shared/contracts/sni';
 import type { Dot } from './words';
+import { CLIENT_CHECK_COPY, CLIENT_CHECK_ENGINE_LABELS } from '../../../../../lib/edgeCodes';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -145,6 +147,8 @@ export function nodeLineWords(n: SniTransportNode): { dot: Dot; text: string } {
         ? `${n.waitingTest} waiting for a test`
         : `${n.waitingTest} waiting for a test: try one of its addresses first`,
     );
+  const auto = n.waitingTest > 0 && n.autoTest ? AUTO_SHORT[n.autoTest.state] : null;
+  if (auto) parts.push(auto);
   return {
     dot: n.waitingTest > 0 ? 'amber' : n.inUse > 0 ? 'green' : 'grey',
     text: parts.join(' · '),
@@ -260,6 +264,86 @@ export function testNameChoice(
 ): { kind: 'witness' } | { kind: 'pick'; names: string[] } {
   if (send.witness && node.pending.includes(send.witness)) return { kind: 'witness' };
   return { kind: 'pick', names: [...node.pending] };
+}
+
+// --- FCP's own test of a send (docs/edges.md "FCP's own test of a send") ---------------------------
+
+/** The node's line on the name list's page, in a few words. */
+const AUTO_SHORT: Partial<Record<SniAutoTest['state'], string>> = {
+  testing: 'FCP is testing one now',
+  failed: "FCP's test did not pass",
+  could_not_check: 'FCP could not test it',
+  stopped: 'FCP stopped testing: test one yourself',
+};
+
+/** Why FCP set a test aside (`check.code` of a voided receipt). */
+const VOID_WORDS: Record<string, string> = {
+  'edge.sni.binding_changed': 'the address changed while it ran',
+  'edge.sni.profile_moved': 'the profile changed on the backend',
+  'edge.sni.superseded': 'a newer send replaced this one',
+  'edge.sni.receipt_expired': 'it ran too long',
+  already_proven: 'a test by hand proved the names first',
+  switched_off: 'testing by FCP was switched off while it ran',
+  list_off: 'its name list was switched off while it ran',
+};
+
+/** The clients that did not get in with the name: `sing-box: Refused by REALITY; Xray: Timed out`. */
+function refusedWords(t: SniAutoTest): string {
+  return t.engines
+    .filter((e) => e.code !== 'ok')
+    .map(
+      (e) =>
+        `${CLIENT_CHECK_ENGINE_LABELS[e.engine]}: ${(CLIENT_CHECK_COPY as Record<string, { label: string }>)[e.code]?.label ?? e.code}`,
+    )
+    .join('; ');
+}
+
+/** Why a test learned nothing, in a few words. */
+function couldNotWords(t: SniAutoTest): string {
+  if (t.verdict === 'node_unreachable') return 'no client got through with any name';
+  if (t.code === 'lapsed') return 'the test did not finish';
+  const code = (t.code ?? '').split(':')[0]!;
+  const copy = (CLIENT_CHECK_COPY as Record<string, { label: string }>)[code];
+  return copy ? copy.label.toLowerCase() : 'it could not run';
+}
+
+const AGAIN = 'It tries again in about 10 minutes. You can test one now.';
+
+/**
+ * The line about FCP's own test under a node's "Test one name" step, or null
+ * when testing by FCP is off. A person's "Test one name" stays the button
+ * whatever FCP's test says.
+ */
+export function autoTestWords(
+  step: NamesStep,
+  service: SniTransportsView['switches']['autoTest'],
+): string | null {
+  if (service === 'off') return null;
+  if (step.kind === 'test_needs_address')
+    return 'FCP tests names by itself only through an address that already works, so its test waits for one too.';
+  if (step.kind !== 'test') return null;
+  const t = step.node.autoTest;
+  if (t?.state === 'testing')
+    return `FCP is testing ${t.sni} on this node now with its own clients.`;
+  if (service === 'not_configured')
+    return "Testing by FCP is on, but FCP's client check is not set up here, so it tests nothing.";
+  if (service === 'unhealthy')
+    return "Testing by FCP is on, but FCP's client check is not answering, so it is not testing now.";
+  if (!t) return 'FCP tests one name here by itself within a few minutes. You can test one now.';
+  switch (t.state) {
+    case 'passed':
+      return `FCP's test proved ${t.sni}. It tests the next name shortly.`;
+    case 'failed':
+      return t.verdict === 'egress_mismatch'
+        ? `FCP's test with ${t.sni} came out of another node, not this one. Nothing changed for members. ${AGAIN}`
+        : `FCP's test did not pass: the node did not accept ${t.sni}${refusedWords(t) ? ` (${refusedWords(t)})` : ''}. Nothing changed for members. ${AGAIN}`;
+    case 'could_not_check':
+      return `FCP could not test a name here: ${couldNotWords(t)}. ${AGAIN}`;
+    case 'voided':
+      return `FCP set its last test aside: ${VOID_WORDS[t.code ?? ''] ?? 'something it was bound to changed'}. ${AGAIN}`;
+    case 'stopped':
+      return `FCP's test did not pass ${plural(t.failures, 'time')}, so it stopped trying for this send. Test one name yourself.`;
+  }
 }
 
 /** After "It connected". */
@@ -380,7 +464,7 @@ export function namesNeedsYou(view: SniTransportsView): NamesAttention[] {
         if (n.waitingTest > 0)
           out.push({
             key: `names-test:${t.transportUuid}:${n.relaySlug}`,
-            text: `${t.tag} on ${n.nodeName}: ${plural(n.waitingTest, 'name')} ${n.waitingTest === 1 ? 'waits' : 'wait'} for a test.`,
+            text: `${t.tag} on ${n.nodeName}: ${plural(n.waitingTest, 'name')} ${n.waitingTest === 1 ? 'waits' : 'wait'} for a test.${n.autoTest?.state === 'testing' ? ' FCP is testing one now.' : ''}`,
             ...(n.nodeUuid ? { nodeUuid: n.nodeUuid } : {}),
           });
     if (t.list.suggestions > 0)

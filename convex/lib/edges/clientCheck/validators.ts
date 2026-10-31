@@ -40,3 +40,24 @@ export const edgeClientCheckV = v.object({
   listenerRevision: v.number(),
   configHash: v.string(),
 });
+
+/**
+ * What FCP's own test of a send's name found on one node
+ * (`sniAcceptanceReceipts.check`, sniAutoConfirm.ts): the verdict, or the code
+ * saying why none was reached or why the receipt was voided. Codes and engine
+ * versions only.
+ */
+export const sniAutoTestCheckV = v.object({
+  at: v.number(),
+  verdict: v.union(clientCheckVerdictV, v.null()),
+  code: v.union(v.string(), v.null()),
+  engines: v.array(
+    v.object({
+      engine: clientCheckEngineV,
+      code: clientCheckSessionCodeV,
+      engineVersion: v.union(v.string(), v.null()),
+    }),
+  ),
+  /** The same address with the name members get now was checked too. */
+  control: v.boolean(),
+});

@@ -4,7 +4,7 @@ import { backendIdValidator } from './lib/backendIds';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { listenerProtoFields } from './lib/edgeProtocolIds';
 import { realityClientRefusalFields, realityClientRefusalV } from './lib/realityClients';
-import { edgeClientCheckV } from './lib/edges/clientCheck/validators';
+import { edgeClientCheckV, sniAutoTestCheckV } from './lib/edges/clientCheck/validators';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target. Ported from
@@ -3064,8 +3064,10 @@ export default defineSchema({
 
   // The proof that ONE node accepts a name: an authenticated REALITY session,
   // made by an operator with an isolated test link through one of that node's
-  // verified edges. Bound to everything it proves; a change to any of it, an
-  // expiry, or a newer generation voids it. A TLS probe never creates one.
+  // verified edges, or by FCP's own client check with the same link
+  // (`client_check`, sniAutoConfirm.ts). Bound to everything it proves; a change
+  // to any of it, an expiry, or a newer generation voids it. A TLS probe never
+  // creates one.
   sniAcceptanceReceipts: defineTable({
     rolloutId: v.id('sniRollouts'),
     generation: v.number(),
@@ -3083,17 +3085,22 @@ export default defineSchema({
       v.literal('operator_test_link'),
       v.literal('auth_probe'),
       v.literal('adopted'),
+      v.literal('client_check'),
     ),
     state: v.union(
       v.literal('issued'),
       v.literal('confirmed'),
       v.literal('expired'),
       v.literal('superseded'),
+      // FCP's own test did not pass (`check` says why). Never an operator's.
+      v.literal('failed'),
     ),
     issuedAt: v.number(),
     expiresAt: v.number(),
     confirmedAt: v.optional(v.number()),
     actorAdminId: v.optional(v.id('adminUsers')),
+    // `client_check` only: what FCP's test found (codes and versions only).
+    check: v.optional(sniAutoTestCheckV),
   })
     .index('by_rollout', ['rolloutId'])
     .index('by_listener', ['listenerId']),

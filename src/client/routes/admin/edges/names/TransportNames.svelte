@@ -8,6 +8,10 @@
    *   Manage these names with FCP -> (checked) -> Add suggestions -> Send to
    *   the node -> Test one name -> members get them.
    *
+   * With testing by FCP on (`edge.sni.autoConfirm`), a line under the test step
+   * says what FCP's own test of the send found on this node; "Test one name"
+   * stays the button.
+   *
    * A step a switch holds back says which switch, with a link to it. The rest
    * (the name list, looking for more names, stopping, editing by hand when FCP
    * does not manage them) sits in "More". The names the port lists now are one
@@ -40,6 +44,7 @@
   import SendNamesDialog from './SendNamesDialog.svelte';
   import TestNameDialog from './TestNameDialog.svelte';
   import {
+    autoTestWords,
     lookedWords,
     namesStatus,
     namesStep,
@@ -72,6 +77,8 @@
   let step = $derived(transport && switches ? namesStep(transport, switches, nodeUuid) : null);
   let status = $derived(transport ? namesStatus(transport, nodeUuid) : null);
   let button = $derived(step ? (STEP_BUTTON[step.kind] ?? null) : null);
+  // FCP's own test of the send on this node (switch `edge.sni.autoConfirm`).
+  let autoLine = $derived(step && switches ? autoTestWords(step, switches.autoTest) : null);
 
   // Once the backend is seen to hold a send, the port's names as Servers reads
   // them change too: read them again, so this card never shows two lists.
@@ -163,6 +170,9 @@
             </Link>
           {/if}
         </p>
+        {#if autoLine}
+          <p class="text-muted-foreground" aria-live="polite">{autoLine}</p>
+        {/if}
         {#if transport.coverSite}
           <p class="text-muted-foreground">
             Cover site <span class="font-mono break-all">{transport.coverSite}</span>

@@ -20,6 +20,7 @@ import {
   matchesListFilter,
   nameActionWords,
   namesSwitchLine,
+  autoTestSwitchLine,
 } from './listWords';
 
 function name(n: string, o: Partial<SniNameRow> = {}): SniNameRow {
@@ -240,6 +241,12 @@ describe('the Server names page', () => {
   test('switch lines say what is true now', () => {
     expect(namesSwitchLine(true)).toMatch(/^On\./);
     expect(namesSwitchLine(false)).toMatch(/^Off\./);
+    expect(autoTestSwitchLine(false, 'ready')).toMatch(/^Off\. After a send, a person tests/);
+    expect(autoTestSwitchLine(true, 'ready')).toMatch(
+      /^On\. After a send, FCP's own sing-box, Xray and Mihomo/,
+    );
+    expect(autoTestSwitchLine(true, 'not_configured')).toMatch(/not set up here/);
+    expect(autoTestSwitchLine(true, 'unhealthy')).toMatch(/did not answer/);
     expect(listSwitchLine(true)).toMatch(/^On\./);
     expect(listSwitchLine(false)).toMatch(/^Off\./);
   });

@@ -11,7 +11,13 @@ import {
   fetchHealth,
   runEngineCheck,
 } from './client';
-import { engineConfig, parseEngineVersion, sessionCodeOf } from './engine';
+import {
+  engineConfig,
+  engineRunArgs,
+  engineVersionArgs,
+  parseEngineVersion,
+  sessionCodeOf,
+} from './engine';
 import { outboundsForLink } from './outbound';
 import {
   CLIENT_CHECK_SIGNATURE_HEADER,
@@ -184,6 +190,58 @@ describe('sanitizeOutbound', () => {
   });
 });
 
+describe('sanitizeOutbound: Mihomo', () => {
+  const proxy = {
+    type: 'vless',
+    server: '203.0.113.10',
+    port: 443,
+    uuid: UUID,
+    flow: 'xtls-rprx-vision',
+    udp: false,
+    network: 'tcp',
+    tls: true,
+    servername: 'www.example.com',
+    'client-fingerprint': 'chrome',
+    'reality-opts': { 'public-key': PBK, 'short-id': 'ab', 'support-x25519mlkem768': true },
+  };
+
+  test('rebuilds a Mihomo proxy from the allowlist and drops chaining, binding and its name', () => {
+    const r = sanitizeOutbound('mihomo', {
+      ...proxy,
+      name: 'anything',
+      'dialer-proxy': 'other',
+      'interface-name': 'eth0',
+      'routing-mark': 1,
+      'reality-opts': { ...proxy['reality-opts'], 'extra-field': 'x' },
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.outbound).toEqual(proxy);
+    expect(r.destination).toEqual({ address: '203.0.113.10', port: 443 });
+  });
+
+  test('VLESS and Trojan only, over tcp, ws or grpc, to a public IP literal', () => {
+    for (const type of ['ss', 'hysteria2', 'direct', 'socks5'])
+      expect(sanitizeOutbound('mihomo', { ...proxy, type })).toEqual({
+        ok: false,
+        code: 'unsupported_type',
+      });
+    expect(sanitizeOutbound('mihomo', { ...proxy, network: 'xhttp' })).toEqual({
+      ok: false,
+      code: 'unsupported_type',
+    });
+    for (const server of ['10.0.0.1', 'node.example'])
+      expect(sanitizeOutbound('mihomo', { ...proxy, server })).toEqual({
+        ok: false,
+        code: 'destination_not_public',
+      });
+    expect(sanitizeOutbound('mihomo', { ...proxy, port: '443' })).toEqual({
+      ok: false,
+      code: 'invalid_outbound',
+    });
+  });
+});
+
 describe('engine', () => {
   test('the configuration has one loopback inbound and the outbound as the only route', () => {
     const sb = engineConfig('sing-box', { type: 'vless' }, 41000) as {
@@ -202,6 +260,31 @@ describe('engine', () => {
     };
     expect(xr.inbounds[0]).toMatchObject({ listen: '127.0.0.1', protocol: 'http' });
     expect(xr.outbounds).toHaveLength(1);
+    // Mihomo: a loopback mixed port, the one proxy, everything to it, no DNS, no geodata.
+    const mh = engineConfig('mihomo', { type: 'vless', name: 'other' }, 41002) as Record<
+      string,
+      unknown
+    >;
+    expect(mh).toMatchObject({
+      'mixed-port': 41002,
+      'bind-address': '127.0.0.1',
+      'allow-lan': false,
+      mode: 'rule',
+      dns: { enable: false },
+      'geo-auto-update': false,
+      proxies: [{ type: 'vless', name: 'check' }],
+      rules: ['MATCH,check'],
+    });
+    expect(Object.keys(mh)).not.toContain('external-controller');
+    expect(Object.keys(mh)).not.toContain('tun');
+  });
+
+  test('command lines', () => {
+    expect(engineRunArgs('sing-box', '/t/c.json', '/t')).toEqual(['run', '-c', '/t/c.json']);
+    expect(engineRunArgs('xray', '/t/c.json', '/t')).toEqual(['run', '-c', '/t/c.json']);
+    expect(engineRunArgs('mihomo', '/t/c.json', '/t')).toEqual(['-f', '/t/c.json', '-d', '/t']);
+    expect(engineVersionArgs('mihomo')).toEqual(['-v']);
+    expect(engineVersionArgs('xray')).toEqual(['version']);
   });
 
   test('versions', () => {
@@ -212,11 +295,19 @@ describe('engine', () => {
       '26.10.21',
     );
     expect(parseEngineVersion('xray', 'nothing')).toBeNull();
+    expect(
+      parseEngineVersion('mihomo', 'Mihomo Meta v1.19.33 linux amd64 with go1.26.10 Wed Oct 21'),
+    ).toBe('1.19.33');
+    expect(parseEngineVersion('mihomo', 'nothing')).toBeNull();
   });
 
   test('a failed session reads as the reason the engine logged', () => {
     const started = { reality: true, started: true };
     expect(sessionCodeOf('ERROR ... reality verification failed', started)).toBe('reality_refused');
+    // Mihomo's own words for a REALITY server that handed it to the target.
+    expect(sessionCodeOf('dial check error: REALITY authentication failed', started)).toBe(
+      'reality_refused',
+    );
     expect(sessionCodeOf('REALITY: received real certificate', started)).toBe('reality_refused');
     // A REALITY server hands a refused client to its target: a CA error is a refusal.
     expect(sessionCodeOf('x509: certificate signed by unknown authority', started)).toBe(
@@ -285,8 +376,22 @@ describe('outboundsForLink', () => {
         },
       },
     });
+    // Mihomo: the members' Clash proxy, with the ML-KEM key share FCP's bodies ask for.
+    expect(r?.outbounds.mihomo).toEqual({
+      type: 'vless',
+      server: '203.0.113.10',
+      port: 443,
+      uuid: UUID,
+      flow: 'xtls-rprx-vision',
+      udp: false,
+      network: 'tcp',
+      tls: true,
+      servername: 'www.example.com',
+      'client-fingerprint': 'firefox',
+      'reality-opts': { 'public-key': PBK, 'short-id': 'ab', 'support-x25519mlkem768': true },
+    });
     // Every converted outbound passes the service's allowlist unchanged.
-    for (const e of ['sing-box', 'xray'] as const) {
+    for (const e of ['sing-box', 'xray', 'mihomo'] as const) {
       const s = sanitizeOutbound(e, r!.outbounds[e]);
       expect(s.ok && s.outbound).toEqual(r!.outbounds[e]);
     }
@@ -298,6 +403,7 @@ describe('outboundsForLink', () => {
     );
     expect(r?.skipped['sing-box']).toBe('no_xhttp');
     expect(r?.outbounds['sing-box']).toBeUndefined();
+    expect(r?.skipped.mihomo).toBe('no_xhttp');
     expect(r?.outbounds.xray?.streamSettings).toMatchObject({
       network: 'xhttp',
       xhttpSettings: { path: '/x', mode: 'auto' },
@@ -310,6 +416,7 @@ describe('outboundsForLink', () => {
       `vless://${UUID}@203.0.113.10:443?security=reality&type=tcp&encryption=mlkem768x25519plus.native.0rtt.abc&sni=a.example&pbk=${PBK}#t`,
     );
     expect(r?.skipped['sing-box']).toBe('vless_encryption');
+    expect(r?.skipped.mihomo).toBe('vless_encryption');
     expect(r?.outbounds.xray).toBeDefined();
   });
 
@@ -332,6 +439,19 @@ describe('outboundsForLink', () => {
       security: 'tls',
       wsSettings: { path: '/ws?ed=2048', host: 'cdn.example' },
     });
+    expect(r?.outbounds.mihomo).toMatchObject({
+      network: 'ws',
+      tls: true,
+      servername: 'cdn.example',
+      alpn: ['h2', 'http/1.1'],
+      'ws-opts': {
+        path: '/ws',
+        headers: { Host: 'cdn.example' },
+        'max-early-data': 2048,
+        'early-data-header-name': 'Sec-WebSocket-Protocol',
+      },
+    });
+    expect(sanitizeOutbound('mihomo', r!.outbounds.mihomo).ok).toBe(true);
   });
 
   test('Trojan over gRPC', () => {
@@ -348,6 +468,18 @@ describe('outboundsForLink', () => {
       settings: { servers: [{ address: '203.0.113.10', port: 443, password: 'p@ss' }] },
       streamSettings: { network: 'grpc', grpcSettings: { serviceName: 'svc' } },
     });
+    expect(r?.outbounds.mihomo).toEqual({
+      type: 'trojan',
+      server: '203.0.113.10',
+      port: 443,
+      password: 'p@ss',
+      udp: false,
+      network: 'grpc',
+      'grpc-opts': { 'grpc-service-name': 'svc' },
+      tls: true,
+      sni: 'node.example',
+    });
+    expect(sanitizeOutbound('mihomo', r!.outbounds.mihomo).ok).toBe(true);
   });
 
   test('Shadowsocks (an Outline key, base64 and plain userinfo)', () => {
@@ -514,6 +646,40 @@ describe('judge', () => {
         expectedRefusals: [],
       }).verdict,
     ).toBe('passed');
+  });
+});
+
+describe('judge: a control that is the same address', () => {
+  test('its egress vouches for nothing: a session must come out of the node', () => {
+    // A misrouted address: both sessions reach another node that knows the credential.
+    const elsewhere = (engine: EngineRun['engine'], ok = true): EngineRun => ({
+      engine,
+      ok,
+      code: ok ? 'ok' : 'reality_refused',
+      egressIp: ok ? '198.51.100.99' : null,
+      engineVersion: null,
+    });
+    const candidate = [elsewhere('sing-box'), elsewhere('xray')];
+    const control = [elsewhere('sing-box'), elsewhere('xray')];
+    const input = { candidate, control, expectedEgress: ['203.0.113.10'], expectedRefusals: [] };
+    // Another address as control: the node leaves through a second address, recognised.
+    expect(judge(input).verdict).toBe('passed');
+    // The same address as control: the egress is not the node's.
+    expect(judge({ ...input, controlEgress: false }).verdict).toBe('egress_mismatch');
+    // A refusal is still excused by the same-address control.
+    const node = (engine: EngineRun['engine'], ok = true): EngineRun => ({
+      ...elsewhere(engine, ok),
+      egressIp: ok ? '203.0.113.10' : null,
+    });
+    expect(
+      judge({
+        candidate: [node('sing-box', false), node('xray')],
+        control: [node('sing-box', false), node('xray')],
+        expectedEgress: ['203.0.113.10'],
+        expectedRefusals: [],
+        controlEgress: false,
+      }).verdict,
+    ).toBe('passed_with_refusals');
   });
 });
 

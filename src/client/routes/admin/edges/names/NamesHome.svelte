@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * Admin -> Edges -> Server names (`/admin/edges/names`): the switch (its line
-   * says what is true now), then the name lists. A name list is one cover site
+   * says what is true now), testing new names with FCP's client check (shown
+   * while server names are on), then the name lists. A name list is one cover site
    * (the real site a REALITY port shows anyone without a member's key) plus the
    * names that site really serves; on a port, its names are what members are
    * spread across. Each list's line has the same counts as its page and the
@@ -32,7 +33,7 @@
   import { router } from '@client/stores/router.svelte';
   import SectionHeader from '../components/SectionHeader.svelte';
   import { edgesPaths } from '../lib/routes';
-  import { listDot, listLine, namesSwitchLine } from './lib/listWords';
+  import { autoTestSwitchLine, listDot, listLine, namesSwitchLine } from './lib/listWords';
   import { sniErrorWords, type Dot } from './lib/words';
 
   const qc = useQueryClient();
@@ -49,12 +50,27 @@
   };
 
   let on = $derived(config.data?.config.enabled ?? false);
+  let autoOn = $derived(config.data?.config.autoConfirm ?? false);
   let saving = $state(false);
   async function setOn(v: boolean) {
     saving = true;
     try {
       await patchSniConfig({ enabled: v });
       toast.success(v ? 'Server names are on.' : 'Server names are off.');
+    } catch (e) {
+      toast.error(sniErrorWords(codeOf(e)));
+    } finally {
+      saving = false;
+      invalidateSni(qc);
+    }
+  }
+  async function setAutoOn(v: boolean) {
+    saving = true;
+    try {
+      await patchSniConfig({ autoConfirm: v });
+      toast.success(
+        v ? 'FCP tests new names on each node by itself.' : 'Only a person tests new names now.',
+      );
     } catch (e) {
       toast.error(sniErrorWords(codeOf(e)));
     } finally {
@@ -126,6 +142,24 @@
     <p id={`${uid}-on-help`} class="text-muted-foreground">{namesSwitchLine(on)}</p>
   </div>
 </div>
+{#if on}
+  <div class="mb-6 flex items-start gap-3 text-sm">
+    <Switch
+      id={`${uid}-auto`}
+      class="mt-0.5"
+      checked={autoOn}
+      disabled={saving || config.isPending}
+      aria-describedby={`${uid}-auto-help`}
+      onCheckedChange={(v) => void setAutoOn(v)}
+    />
+    <div>
+      <Label for={`${uid}-auto`} class="font-medium">Test new names with FCP's client check</Label>
+      <p id={`${uid}-auto-help`} class="text-muted-foreground">
+        {autoTestSwitchLine(autoOn, config.data?.clientCheck)}
+      </p>
+    </div>
+  </div>
+{/if}
 
 {#if families.isPending}
   <p class="text-muted-foreground text-sm">Loading…</p>

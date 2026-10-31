@@ -132,7 +132,8 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
   {
     name: 'sni-qualify',
     everyMs: 5 * MIN,
-    description: 'Server-name families: check due names against their target',
+    description:
+      "Server-name families: check due names against their target; start FCP's test of waiting sends",
   },
   {
     name: 'sni-report-sweep',

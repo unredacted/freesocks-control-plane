@@ -161,6 +161,7 @@ describe('the transports of a backend', () => {
       findNames: false,
       backendChanges: false,
       backendSetUp: false,
+      autoTest: 'off',
     });
     expect(v.transports).toHaveLength(1);
     expect(v.transports[0]).toMatchObject({

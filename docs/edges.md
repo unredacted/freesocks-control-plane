@@ -744,8 +744,8 @@ check** proves an address with real clients itself: FCP's check account, through
 with sing-box and with Xray, out of the node.
 
 **What it runs.** The `edge-client-check` service (`docker/edge-client-check/`, a service of
-`docker-compose.stack.yml`) holds the official sing-box and Xray binaries (digest-pinned images,
-Dependabot daily) and a small Bun server (`server.ts`). For one check it takes ONE outbound,
+`docker-compose.stack.yml`) holds the official sing-box, Xray and Mihomo binaries (digest-pinned
+images, Dependabot daily) and a small Bun server (`server.ts`). For one check it takes ONE outbound,
 starts the engine with a loopback HTTP proxy inbound and that outbound as its only outbound (no
 direct outbound, no DNS server: nothing can leave any other way, and the egress page's name is
 resolved at the node), fetches the egress-IP page through it, kills the engine and answers
@@ -759,7 +759,7 @@ self-hosted action's limit: a session that would not fit is not started (`out_of
 and the body's SHA-256, `convex/lib/edges/clientCheck/signing.ts`) with `EDGE_CLIENT_CHECK_SECRET`;
 a time more than 60 s off or a signature already seen is refused, and with no secret every call
 is refused. The outbound is rebuilt from a per-engine allowlist (`sanitize.ts`): an allowlisted
-type (VLESS, Trojan, Shadowsocks, Hysteria2, TUIC), one server, and nothing that chains another
+type (VLESS, Trojan, Shadowsocks, Hysteria2, TUIC; VLESS and Trojan for Mihomo), one server, and nothing that chains another
 outbound, binds an interface, sets a mark, reads a file or opens a second destination; the one
 destination must be a public IP literal. The egress page is the service's own setting
 (`EDGE_CLIENT_CHECK_EGRESS_URL`, a public plain-text IPv4 echo by default), never the caller's,
@@ -775,7 +775,19 @@ dropped; its answer carries a code (`reality_refused`, `tls_failed`, `timeout`, 
 outbound. sing-box runs for every combination it speaks; it reports 1.8.1 to a REALITY server
 and offers no ML-KEM key share, so it is the client that catches the refusals in
 `docs/client-compatibility.md` § "REALITY client versions". Xray runs too, and alone for XHTTP and for VLESS with its own encryption (sing-box
-speaks neither); Hysteria2 and TUIC are sing-box only.
+speaks neither); Hysteria2 and TUIC are sing-box only. The service also holds **Mihomo** (the
+Clash family's engine, the official `metacubex/mihomo` image, digest pinned like the others),
+given VLESS and Trojan over TCP, WebSocket, HTTPUpgrade or gRPC as a Clash proxy with the
+`support-x25519mlkem768` key every Clash body FCP serves asks for (lib/realityKeyShares.ts); it
+runs from a JSON configuration with a loopback mixed port, the one proxy, one `MATCH` rule, DNS
+off and no geodata, and a session waits half a second after its port opens (Mihomo takes
+connections a moment after it listens). A check of an **address** runs sing-box and Xray only
+(`ADDRESS_CHECK_ENGINES`): its 90 s hold both through the address and through the control even
+when every session times out, so a dead node stays `node_unreachable`; a third engine would turn
+that into `out_of_time`. The **test of a send's names** (§ "FCP's own test of a send") runs all
+three: it goes through an address already confirmed, where sessions answer within seconds. FCP
+asks only for the engines the service listed in its last health answer (the two before any), so
+a deployment whose service has not been rebuilt yet is never asked for Mihomo.
 
 **The verdict** (`verdict.ts`) judges each engine against a **control**: the same engine through
 another published, confirmed address of the same transport (an operator's tick first), from the
@@ -2477,10 +2489,97 @@ A rollout follows its ledger op from **whichever** look settles it (the run's ow
 `backend-reconcile` cron's, an operator's "look again"), so a backend read that fails right after
 the write leaves the rollout `writing` only until the next successful look, never for good.
 
+With **`edge.sni.autoConfirm`** on, FCP's own client check makes the test and the receipt
+itself (next section); an operator's test link stays available either way.
+
 **Removal is the reverse.** A name leaves the origins first, with its drain. The plan **retains**
 on the backend every name an origin still hands out or that is still draining, whoever it belongs to
 and whatever its family says, and a later rollout drops it once nothing holds it. A burn is
 immediate on the origins and restarts nothing.
+
+### FCP's own test of a send
+
+A receipt made by hand proves a send with whichever app the operator imported the test link into,
+one client family at most. **`edge.sni.autoConfirm`** (off by default; the Server names page, "Test
+new names with FCP's client check") lets FCP's own client check (§ "FCP's own client check") make
+that test with real engines and confirm the receipt itself (`convex/sniAutoConfirm.ts`). Off,
+nothing below runs and a receipt comes only from a person. It is a switch of its own, not
+`edge.clientCheck.enabled`: that one lets a passing check stand in for an operator's tick on an
+**address** (publication, replacing without a spare), this one lets it stand in for an operator's
+test of **names** on a node whose address is already confirmed; an operator may want either
+without the other.
+
+**When.** A minute after the backend is seen to hold a send (`panel_confirmed`; the nodes restart
+Xray to take it), then on every `sni-qualify` pass (5 minutes) while a node of the newest send
+still waits for a test. Only while server names are on, the switch is on, the send's name list is
+on, and the client-check service is set up and answered its last health check (under 30 minutes
+old). A sweep walks every send still confirmed on its backend, 25 a page, the next page scheduled,
+until it has started its tests; a node it started is not due again for minutes, so the next sweep
+reaches the ones after it. One sweep starts at most three tests, 100 s apart (the service runs one session at a time and a test holds it for at
+most its 90 s); a test that did not pass is tried again no sooner than 10 minutes later, and after
+**4** that did not pass on one node FCP leaves that send there to a person.
+
+**What it tests.** The same receipt an operator's test link makes (`receiptContextOf`, every
+check of it): the binding's newest send, confirmed on the backend, through an **L4 address of
+that node in use whose endpoint confirmation is current**, an operator's tick first (a check's own
+confirmation counts only while it stands for publication: § "Replacing a blocked address without
+a spare"), presenting the send's **witness** while it waits there (one test proves the whole send),
+else one waiting name (each proves only itself: after each pass the next one is tested). The
+receipt is `evidenceKind: client_check` and lapses after 8 minutes (a run that died). The run
+builds the address's test link with that name (`edgeTestLinks.build` with `candidateSni`, the
+check's own credential) and runs it with **every engine the service holds** (sing-box, Xray,
+Mihomo), judged against a **control that tells the name from the node**: the same address with a
+name members get now. So:
+
+- every engine connects with the name: `passed`;
+- an engine is refused with the name and with the name members have (sing-box against an Xray
+  that wants an ML-KEM key share): the node's doing, not the name's, `passed_with_refusals`;
+- an engine that gets in with the members' name does not with the new one (a node that has not
+  taken the send hands it to the cover site): `address_failed`, the node did not accept the name;
+- a session comes out of another node: `egress_mismatch`. The same-address control says nothing
+  about where the address leads (a misrouted address takes both sessions to the same wrong node),
+  so here, unlike a check of an address, its egress vouches for nothing: a session must come out
+  of one of the node's own addresses (`controlEgress: false`);
+- nothing gets in with either name: `node_unreachable`, nothing learned.
+
+Proved in CI with the real engines (`clientCheck.integration.test.ts`): a name the core does not
+list is refused by sing-box, Xray and Mihomo while the listed one connects, judged
+`address_failed`.
+
+**A pass** confirms the receipt through `acceptReceipt`, the function an operator's "It connected"
+uses (`POST sni/receipts/{id}/confirm`), so every guard is derived again from the live rows: the
+send is still the newest and confirmed, the profile still has its token, the address's endpoint
+confirmation is current and unchanged, and the sessions proved exactly the configuration the
+receipt is bound to; and only while both switches and the send's name list are still on. Then the names reach that node's
+members, as the system: audit `edge.sni.names.accepted` with actor `system`, `by: client_check`
+and the engines' codes (`sing-box:ok xray:ok mihomo:ok`). An operator's confirm route refuses a
+receipt FCP's test holds.
+
+**Anything else hands nothing out.** The receipt is `failed` (with `check`: the verdict, or the
+code saying why none was reached) or `superseded` when something it was bound to changed while it
+ran (`edge.sni.binding_changed`, `edge.sni.profile_moved`, `switched_off`, `list_off`); audit
+`edge.sni.names.tested` (`outcome` failed / could_not_check / voided, the verdict or code, the
+engines). "Test one name" stays where it was.
+
+**An operator and FCP on the same send.** Proven once is enough: when another receipt already
+proved the name (or the generation) on that node and a confirmation would change nothing, nothing
+is written. FCP's pass after an operator's tick is set aside (`already_proven`); an operator's
+tick after FCP's pass is recorded and moves nothing (no names revision, no epoch, no second
+audit).
+
+**A node with no such address stays manual.** A transport members reach at a node's own address
+has no edge, so no receipt at all (names reach members only through a protected node's addresses).
+A protected node whose addresses have no current confirmation waits for one, as an operator's test
+does. The check never dials a node's own address: the test link refuses one, it carries no
+endpoint confirmation (a failure there could be the path, not the name), and FCP keeps check
+traffic off the address Edges protect.
+
+**Where it shows.** On the node's names block, under "Test one name": FCP is testing a name now,
+its test did not pass and why (the clients refused, in words), it could not test and why, it set
+its test aside, or it stopped after four tries; on a name list's page, each node's line; in
+Servers' "Needs you", "FCP is testing one now". `GET sni/transports` carries `autoTest` per node
+(state, the name, how many did not pass, verdict or code, engines) and `switches.autoTest`
+(`ready`, `off`, `not_configured`, `unhealthy`).
 
 ### A transport's names
 
@@ -2502,7 +2601,7 @@ and a name shows the step still needed somewhere (a test, then a send), else in 
 nodes of every transport counted together.
 
 **`GET sni/transports?backend=<slug>`**: every REALITY transport of the backend as Servers last
-read it: its tag, port, target (`coverSite`, `host:port`, an IPv6 host in brackets), how many names
+read it (with FCP's own test of the newest send per node, § "FCP's own test of a send"): its tag, port, target (`coverSite`, `host:port`, an IPv6 host in brackets), how many names
 it lists, the backend nodes running its profile, its family (with the counts above and how many
 found names it may add: the usable ones of every scope of the family, the overview's number), its
 newest rollout (with its witness, the name whose one test proves the whole rollout on a node), and
@@ -3266,7 +3365,9 @@ REALITY port shows anyone without a member's key). A list usually starts from a 
 transport's names).
 
 - The Server names page: the switch for `edge.sni.enabled` at the top, its line saying what is
-  true now; then each name list in one line with the same counts as its page and the node page
+  true now, and under it, while it is on, "Test new names with FCP's client check"
+  (`edge.sni.autoConfirm`; its line says when the client-check service is not set up or not
+  answering); then each name list in one line with the same counts as its page and the node page
   (`GET sni/families` gives every list its `delivery` counts and `suggestions`: names in use,
   waiting for a test, to send, being checked, checked, failing, suggestions, and how many ports use
   it); "Add a name list" (the cover site is fixed at creation).
@@ -3860,7 +3961,9 @@ service is set up) and sets `standbyPerListener` to 1 when turning on unless tha
 its health check; `render.enabled` and `l7.autoSelect` stay manual.
 
 Server-name settings are `edge.sni.*` (`GET/PATCH /api/v1/admin/edges/sni/config`, defaults and
-bounds in `convex/lib/sniConfig.ts`). The checks from inside a country are a nested `vantage`
+bounds in `convex/lib/sniConfig.ts`). `edge.sni.autoConfirm` (default `false`) lets FCP's own
+client check test a send on each node and confirm it (§ "FCP's own test of a send"); the config
+read says whether the client-check service could run one now (`clientCheck`). The checks from inside a country are a nested `vantage`
 block in that body, read by their own resolver so the render path never reads them:
 
 | Key (`edge.sni.vantage.*`)                | Default         | Bounds       | Meaning                                                                                   |
@@ -5670,6 +5773,15 @@ it in Edges, Settings, to stop paying for spares). To roll back, turn the switch
 rotations finish, then run `edgeClientCheck:clearForRollback` with no arguments before deploying
 the older build (it clears the new fields and keeps an address FCP's check confirmed serving as a
 `named_connection`; run it again if the push is refused).
+
+**FCP's own test of a send** adds one setting (`edge.sni.autoConfirm`, off), a receipt kind
+(`client_check`), a receipt state (`failed`) and one optional receipt field (`check`); the
+client-check service gains Mihomo. One deploy, no migration, nothing changes until the switch is
+on. Rebuild the service (`up -d --build edge-client-check`) to get Mihomo; FCP asks only for the
+engines the service lists, so either order is safe. To roll back, turn the switch off, then run
+`sniAutoConfirm:clearForRollback` with no arguments before deploying the older build (it deletes
+FCP's receipts, a page per run; what they activated stays on the listeners and an operator's
+receipts are untouched).
 
 **FCP's own client check** adds a service (`edge-client-check`, built from
 `docker/edge-client-check/`), one optional field (`edges.clientCheck`), a test-credential purpose
