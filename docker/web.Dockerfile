@@ -36,7 +36,7 @@ RUN bun run build
 # the digest-pinning of the Convex backend/dashboard images. Multi-arch manifest
 # digest for caddy:2-alpine. Re-pin on upgrade:
 #   docker buildx imagetools inspect caddy:2-alpine
-FROM caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+FROM caddy:2-alpine@sha256:e70b164da81ef698b3ad19af799ea6086ce6d9e48ed4079eb9fe26f6fbf14ee5
 COPY --from=build /app/dist /srv/dist
 # A default Caddyfile so the image runs standalone; compose bind-mounts the repo
 # copy over it so header tweaks reload without rebuilding the SPA image.
