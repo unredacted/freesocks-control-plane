@@ -28,6 +28,7 @@ const node: SniTransportNode = {
     { edgeId: 'e1', name: 'Address one' },
     { edgeId: 'e2', name: 'Address two' },
   ],
+  autoTest: null,
 };
 
 let client: QueryClient;
