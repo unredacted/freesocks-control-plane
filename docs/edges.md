@@ -613,7 +613,8 @@ confirmation echoes keeps its shape; every builder and checker resolves it the s
 enrolled node's L4 endpoints to "needs a test" (no client has proven the new key through them;
 attention `retest_needed` with code `reality_key_changed`, the Try it card and the approval card
 say so). Unmanaged nodes, whole-server, manual and Outline origins carry no auth component and
-behave as before; L7 proofs and the probe `partial` rung are not bound to it. Refusal code
+behave as before (so adopting an unmanaged node whose addresses were confirmed that way is
+refused, `servers.adopt_edges_retest`: docs/servers.md § "Adopting a backend"); L7 proofs and the probe `partial` rung are not bound to it. Refusal code
 `edge.unverified_endpoint`. The record proves nothing by itself:
 `verificationCurrent` compares revision and hash, so a listener revision bump or a
 re-addressing returns the endpoint to "needs a test" (attention `retest_needed`) without

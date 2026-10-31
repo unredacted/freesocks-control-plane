@@ -426,6 +426,8 @@ const ERROR_WORDS: Record<string, string> = {
     "No address on this node's transport carries its name or address. Tick the addresses members use for it.",
   'servers.adopt_address_unknown':
     'An address you ticked is turned off, not on that transport any more, or another node has it. Refresh and pick again.',
+  'servers.adopt_edges_retest':
+    'Edges protect this node. Adopting it would keep its tested addresses from members until each is tested again, so it stays as it is. Its server names and edges work without adopting it.',
   'servers.mode_change_needs_admin':
     'A node keeps its mode. Change it from here, then run the role again.',
   'servers.node_exists_unowned':
