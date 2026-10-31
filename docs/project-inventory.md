@@ -420,13 +420,13 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   location-scoped, public for 30 days post-resolution). All data reuses the existing
   healthcheck cron signals (`lastHealthOkAt`, `fleetStats`, `remnawaveNodeStats`,
   `keyCount`/`maxKeys`); nothing new is probed. Public + per-IP rate-limited
-  (`status.fetch` policy). The member surfaces link in: the Home `NetworkStatus` strip
-  links to `/status`, and the Access Pass shows the key's **node label + load band** and
+  (`status.fetch` policy). The member surfaces link in: the site header and footer
+  link to `/status`, and the Access Pass shows the key's **node label + load band** and
   deep-links to `/status#loc-<code>` (`account.getNodeStatus` gained `load`); the
   location picker shows per-location load hints (`LocationEntry.load` on
   `publicConfig.locations`). **Live.**
 - **Account-page location globe** (`KeyLocationGlobe.svelte`, beside the Access Pass):
-  a small cobe globe (same dynamically-imported chunk as the Home globe) showing every
+  a small cobe globe (`cobe`, a dynamically-imported chunk) showing every
   location that carries **map coordinates** as a dot, with the member's own key as the
   bright marker facing the camera; a server/location switch animates the rotation over
   to the new point. Coordinates are operator-entered per instance

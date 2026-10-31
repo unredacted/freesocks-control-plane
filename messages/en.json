@@ -2,7 +2,6 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "faq": {
     "title": "Frequently asked questions",
-    "subtitle": "Answers to common questions.",
     "tabGeneral": "General",
     "tabThreat": "What we protect you from",
     "contactPrefix": "For anything else, email",
@@ -112,10 +111,7 @@
     "signIn": "Sign in",
     "account": "My account",
     "menu": "Menu",
-    "theme": "Theme",
-    "home": "FreeSocks home",
-    "source": "Source",
-    "sourceTitle": "FreeSocks is open source. Read the code for yourself."
+    "home": "FreeSocks home"
   },
   "captcha": {
     "initial": "I'm human",
@@ -222,12 +218,6 @@
     "refreshMembership": "Already paid? Check for my membership",
     "memberActiveTitle": "Membership active",
     "memberActiveExpiry": "Active until {date}",
-    "membershipNudge": {
-      "title": "Go unlimited with a membership",
-      "body": "Unlimited bandwidth and devices.",
-      "bodyNoDevices": "Unlimited bandwidth.",
-      "cta": "View membership"
-    },
     "map": {
       "title": "Where your key lives",
       "network": "One of {count} FreeSocks locations",
@@ -256,10 +246,6 @@
     "disabledBody": "New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID.",
     "rotateHint": "Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately.",
     "section": {
-      "connection": {
-        "title": "Your connection",
-        "desc": "Your VPN key, setup help, and connected devices."
-      },
       "membership": {
         "title": "Membership",
         "desc": "Your plan - upgrade, extend, or redeem a membership code."
@@ -831,39 +817,16 @@
     "detailsToggle": "More details"
   },
   "home": {
-    "trust": {
-      "nonprofit": "Run by a US 501(c)(3) nonprofit",
-      "openSource": "Open source",
-      "noLogs": "No traffic logs"
-    },
-    "network": {
-      "title": "Network status",
-      "offline": "offline",
-      "srOnline": "online",
-      "srOffline": "offline",
-      "note": "Checked every 10 minutes",
-      "link": "Live status"
-    },
     "sections": {
-      "privacy": "Privacy",
-      "how": "Getting started",
-      "membership": "Membership",
       "faq": "FAQ",
-      "about": "About",
-      "globe": "The network"
-    },
-    "globe": {
-      "title": "A real network, shown live",
-      "body": "The green markers are FreeSocks server locations, taken straight from the live network status. The amber marks are some of the regions where the internet is heavily censored and where FreeSocks is built to reach.",
-      "aria": "A rotating globe showing FreeSocks server locations and censored regions",
-      "legendServers": "Server location",
-      "legendRegions": "Censored region"
+      "about": "About"
     },
     "impact": {
       "title": "Donations at work",
-      "body": "Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too.",
       "cta": "Make a donation",
-      "chartAria": "Bandwidth added to every free user by donations, day by day this month"
+      "allowanceTitle": "What every free account gets this month",
+      "allowanceDonations": "Added by donations",
+      "bonusGb": "+{gb} GB"
     },
     "hero": {
       "variants": {
@@ -880,14 +843,7 @@
       "getMembership": "Get a membership"
     },
     "freeCard": {
-      "title": "Free tier",
-      "badge": "What you get",
-      "urlTitle": "Xray subscription URL",
-      "urlBody": "Xray-powered VLESS. Paste into any compatible client.",
-      "membershipLine": "A FreeSocks membership gives you {limits}.",
-      "noAuthTitle": "No email or password",
-      "noAuthBody": "One human-check. Save your account number to sign in. No email collected.",
-      "footnote": "Numbers reflect the current free-tier configuration. Solve the check to get yours."
+      "title": "Free tier"
     },
     "privacy": {
       "title": "What we store",
@@ -919,14 +875,6 @@
       "descriptionFallback": "A FreeSocks membership lifts every limit.",
       "payNote": "Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal."
     },
-    "about": {
-      "title": "About FreeSocks",
-      "bodyPrefix": "FreeSocks is operated by",
-      "bodySuffix": ", a US 501(c)(3) nonprofit.",
-      "body2": "Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it.",
-      "siteLink": "unredacted.org",
-      "viewSourceCta": "View the source"
-    },
     "limits": {
       "unlimitedBoth": "unlimited bandwidth and devices",
       "unlimitedBandwidth": "unlimited bandwidth",
@@ -948,22 +896,8 @@
         }
       ]
     },
-    "flow": {
-      "title": "Who sees what",
-      "subtitle": "Here is the path your traffic takes, and what each stop on the way can actually learn.",
-      "youName": "Your device",
-      "youSees": "Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere.",
-      "ispName": "Your ISP",
-      "ispSees": "Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send.",
-      "cdnName": "The CDN",
-      "cdnBadge": "Freedom Mode only",
-      "cdnSees": "Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it.",
-      "nodeName": "FreeSocks server",
-      "nodeSees": "Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it.",
-      "webName": "Websites you visit",
-      "webSees": "See the FreeSocks server's address instead of yours.",
-      "captionFreedom": "Routes through a large CDN, so your connection looks like ordinary web traffic.",
-      "captionPrivacy": "Skips the CDN and connects you straight to the server."
+    "donate": {
+      "title": "Donations buy bandwidth for free users"
     }
   },
   "hpke": {

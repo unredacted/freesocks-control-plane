@@ -15,7 +15,7 @@
   <Globe class="size-4" aria-hidden="true" />
   <span class="sr-only">{t('common.language')}</span>
   <select
-    class="max-w-[8rem] truncate cursor-pointer rounded-md border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+    class="max-w-[8rem] min-h-10 truncate cursor-pointer rounded-sm border-0 bg-transparent px-1 text-sm hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     value={current}
     onchange={(e) => setLocale((e.currentTarget as HTMLSelectElement).value as LocaleCode)}
   >

@@ -56,7 +56,7 @@
 </script>
 
 {#if shown && view}
-  <div class="rounded-lg border p-4">
+  <div class="panel">
     <label for="connection-region" class="block font-medium">{t('region.title')}</label>
     {#if view.source === 'guess' && view.guess}
       <p class="mt-1 text-sm">

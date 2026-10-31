@@ -5,6 +5,7 @@
   import SiteBanner from './components/SiteBanner.svelte';
   import FooterRepoLink from './components/FooterRepoLink.svelte';
   import FooterDonateLink from './components/FooterDonateLink.svelte';
+  import SiteFooter from './components/SiteFooter.svelte';
   import HpkeVerifyModal from './components/HpkeVerifyModal.svelte';
   import { hpkeSession } from './lib/hpke-status.svelte';
   import PopWarm from './components/PopWarm.svelte';
@@ -31,6 +32,9 @@
   import { fade } from 'svelte/transition';
 
   let onAdminRoute = $derived(router.pathname.startsWith('/admin'));
+  // The home page lays out its own full-width bands, so <main> drops the
+  // padding there; the other member pages share the site-wrap column.
+  const isHome = $derived(router.pathname === '/');
 
   // Referral-link capture (?ref=FSR-… on any route → localStorage, then strip
   // the param). Runs once on mount; GetAccount submits it at account creation.
@@ -127,7 +131,11 @@
         bind:this={mainEl}
         id="main"
         tabindex="-1"
-        class="flex-1 container mx-auto px-4 py-8 outline-none"
+        class={isHome
+          ? 'flex-1 outline-none'
+          : onAdminRoute
+            ? 'flex-1 container mx-auto px-4 py-8 outline-none'
+            : 'flex-1 site-wrap py-10 outline-none md:py-12'}
       >
         <!--
           Keying the wrapper by pathname forces a remount when the route
@@ -180,29 +188,35 @@
         {/key}
       </main>
 
-      <footer class="border-t border-border mt-12">
-        <div
-          class="container mx-auto px-4 py-8 flex flex-col md:flex-row gap-4 items-center justify-between text-sm text-muted-foreground"
-        >
-          <p>
-            {t('footer.operatedPrefix')}{' '}
-            <a
-              class="underline hover:text-foreground"
-              href="https://unredacted.org"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Unredacted
-            </a>{t('footer.operatedSuffix')}
-          </p>
-          <nav class="flex flex-wrap items-center gap-4 text-xs">
-            <!-- In-app donate route (never the external nonprofit donate page -
-                 in-app gifts are the ones that fund the bandwidth pool). -->
-            <FooterDonateLink />
-            <FooterRepoLink />
-          </nav>
-        </div>
-      </footer>
+      {#if onAdminRoute}
+        <footer class="border-t border-border mt-12">
+          <div
+            class="container mx-auto px-4 py-8 flex flex-col md:flex-row gap-4 items-center justify-between text-sm text-muted-foreground"
+          >
+            <p>
+              {t('footer.operatedPrefix')}{' '}
+              <a
+                class="underline hover:text-foreground"
+                href="https://unredacted.org"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Unredacted
+              </a>{t('footer.operatedSuffix')}
+            </p>
+            <nav class="flex flex-wrap items-center gap-4 text-xs">
+              <!-- In-app donate route (never the external nonprofit donate page -
+                   in-app gifts are the ones that fund the bandwidth pool). -->
+              <FooterDonateLink />
+              <FooterRepoLink />
+            </nav>
+          </div>
+        </footer>
+      {:else}
+        <!-- The home page ends on its own full-width section, so only the other
+             pages need a gap above the footer. -->
+        <SiteFooter class={isHome ? '' : 'mt-12'} />
+      {/if}
     </div>
   </ErrorBoundary>
 

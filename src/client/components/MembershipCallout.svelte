@@ -27,15 +27,15 @@
   };
 </script>
 
-<div class="rounded-md border {TONE_CLASSES[tone]} px-3 py-3 text-sm space-y-2">
-  <p class="font-semibold">{title}</p>
-  <p class="text-muted-foreground">{body}</p>
+<div class="space-y-2 rounded-sm border {TONE_CLASSES[tone]} px-4 py-3.5 text-[15px]">
+  <p class="font-bold text-foreground">{title}</p>
+  <p class="text-body">{body}</p>
   <div class="flex flex-wrap items-center gap-3 pt-1">
     {#if onCta && ctaLabel}
-      <Button size="sm" class="min-h-11" onclick={onCta}>{ctaLabel}</Button>
+      <Button size="lg" class="text-[15px]" onclick={onCta}>{ctaLabel}</Button>
     {:else if ctaUrl && ctaLabel}
       <a href={ctaUrl} target="_blank" rel="noopener noreferrer">
-        <Button size="sm" class="min-h-11">{ctaLabel}</Button>
+        <Button size="lg" class="text-[15px]">{ctaLabel}</Button>
       </a>
     {/if}
     {#if secondaryAction}{@render secondaryAction()}{/if}

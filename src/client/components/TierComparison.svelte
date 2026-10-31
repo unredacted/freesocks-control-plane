@@ -24,12 +24,15 @@
     /** Per-surface header copy (the RedeemCode pattern); defaults keep Home unchanged. */
     titleKey?: MessageKey;
     subtitleKey?: MessageKey;
+    /** Leave the header out when the surrounding section already titles it. */
+    hideHeader?: boolean;
   }
   let {
     currentTierSlug,
     onUpgrade,
     titleKey = 'tiers.title',
     subtitleKey = 'tiers.subtitle',
+    hideHeader = false,
   }: Props = $props();
 
   const config = configQuery();
@@ -59,10 +62,12 @@
 </script>
 
 <section class="space-y-4">
-  <div>
-    <h2 class="font-display text-xl font-bold tracking-tight">{t(titleKey)}</h2>
-    <p class="text-sm text-muted-foreground">{t(subtitleKey)}</p>
-  </div>
+  {#if !hideHeader}
+    <div>
+      <h2 class="font-display text-xl font-bold tracking-tight">{t(titleKey)}</h2>
+      <p class="text-sm text-muted-foreground">{t(subtitleKey)}</p>
+    </div>
+  {/if}
 
   {#if config.isPending}
     <div class="grid gap-3 sm:grid-cols-2">

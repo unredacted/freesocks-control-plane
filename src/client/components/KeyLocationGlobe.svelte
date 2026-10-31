@@ -11,7 +11,7 @@
    * eases its rotation over to the new point - the visible payoff of the
    * switch - and resumes spinning from there.
    *
-   * Shares the dynamically-imported `cobe` chunk with the Home globe. One rAF
+   * `cobe` loads as its own dynamically-imported chunk. One rAF
    * loop drives everything (spin, the travel ease, drag momentum); browsers
    * park rAF in hidden tabs, so a background account tab costs nothing.
    * Reduced motion: no loop at all - a static globe facing the key, updated
@@ -99,7 +99,7 @@
     let last = performance.now();
     const step = (now: number) => {
       if (!globe) return;
-      // Time-based, like the Home globe: identical speed at 60Hz and 120Hz.
+      // Time-based: identical speed at 60Hz and 120Hz.
       const dtn = Math.min(100, now - last) / 16.667;
       last = now;
       if (!dragging) {
@@ -195,8 +195,7 @@
     // which computed styles can hand back verbatim (the brand-preset tokens
     // do exactly that), so use the repo's oklch resolver rather than probing
     // for an rgb() serialization - the old probe silently left the marker on
-    // the hardcoded emerald under a non-default brand preset (the same
-    // NetworkGlobe review finding, fixed there in e93c182). Falls back to the
+    // the hardcoded emerald under a non-default brand preset. Falls back to the
     // hardcoded triple when the token is unavailable or unparseable.
     const rgb = resolvePrimaryRgb();
     if (rgb) ACTIVE = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255];
@@ -257,8 +256,8 @@
   });
 </script>
 
-<div class="flex h-full flex-col rounded-xl border border-border bg-card p-4">
-  <h3 class="text-sm font-semibold">{t('account.map.title')}</h3>
+<div class="panel flex h-full flex-col">
+  <h2 class="text-xl font-bold leading-tight">{t('account.map.title')}</h2>
   <div class="flex flex-1 items-center justify-center py-3">
     <canvas
       bind:this={canvas}
@@ -276,9 +275,7 @@
   <div class="space-y-0.5 text-center">
     {#if currentLabel}
       <p class="text-sm font-medium">
-        <span
-          class="me-1.5 inline-block size-2 rounded-full bg-primary align-middle"
-          aria-hidden="true"
+        <span class="me-2 inline-block size-[9px] bg-primary align-middle" aria-hidden="true"
         ></span>{currentLabel}
       </p>
     {/if}

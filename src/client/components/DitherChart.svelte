@@ -10,7 +10,8 @@
    *
    * `color` must be a #rrggbb hex: oklch() theme tokens silently fail in
    * canvas on older engines (the documented QrCode.svelte gotcha), and this
-   * audience realistically runs them. Default approximates --donation-gold.
+   * audience realistically runs them. The default is the dark theme's brand
+   * green (#5aba6a).
    *
    * Static by design - no entrance animation, so the global reduced-motion
    * clamp has nothing to neutralize. Decorative: the numeric stats beside it
@@ -49,7 +50,7 @@
     step = false,
     width = 320,
     height = 96,
-    color = '#e3b34d',
+    color = '#5aba6a',
     max,
     marks = [],
     ariaLabel,
@@ -74,7 +75,7 @@
 
   function hexToRgb(hex: string): [number, number, number] {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex);
-    const n = m?.[1] ? parseInt(m[1], 16) : 0xe3b34d;
+    const n = m?.[1] ? parseInt(m[1], 16) : 0x5aba6a;
     return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
   }
 

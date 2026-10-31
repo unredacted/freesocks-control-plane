@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**153 of 794 strings are missing** (the app currently shows English for
+**144 of 751 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -29,7 +29,6 @@ review.
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `faq.title` | Frequently asked questions | الأسئلة الشائعة |
-| `faq.subtitle` | Answers to common questions. | تمت الإجابة على الأسئلة الأساسية. هل ما زلت تواجه مشكلة؟ تواصل معنا عبر رقم تعريف الدعم الخاص بك. |
 | `faq.tabGeneral` | General | عام |
 | `faq.tabThreat` | What we protect you from | ممَّ نحميك |
 | `faq.contactPrefix` | For anything else, email | لأي استفسار آخر، راسلنا على |
@@ -93,7 +92,7 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | جهاز واحد |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} أجهزة |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls. *(2 missing)*
+## `nav` — The site header: navigation buttons, menu, language/theme controls.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -101,10 +100,7 @@ review.
 | `nav.signIn` | Sign in | تسجيل الدخول |
 | `nav.account` | My account | حسابي |
 | `nav.menu` | Menu | القائمة |
-| `nav.theme` | Theme | المظهر |
 | `nav.home` | FreeSocks home | الصفحة الرئيسية لـ FreeSocks |
-| `nav.source` | Source | ⚠️ **MISSING** |
-| `nav.sourceTitle` | FreeSocks is open source. Read the code for yourself. | ⚠️ **MISSING** |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -229,10 +225,6 @@ review.
 | `account.refreshMembership` | Already paid? Check for my membership | دفعت بالفعل؟ تحقّق من عضويتي |
 | `account.memberActiveTitle` | Membership active | العضوية نشطة |
 | `account.memberActiveExpiry` | Active until {date} | نشطة حتى {date} |
-| `account.membershipNudge.title` | Go unlimited with a membership | احصل على اشتراك غير محدود |
-| `account.membershipNudge.body` | Unlimited bandwidth and devices. | نطاق ترددي وأجهزة غير محدودة. |
-| `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | نطاق ترددي غير محدود. |
-| `account.membershipNudge.cta` | View membership | عرض العضوية |
 | `account.map.title` | Where your key lives | ⚠️ **MISSING** |
 | `account.map.network` | One of {count} FreeSocks locations | ⚠️ **MISSING** |
 | `account.map.aria` | Globe of FreeSocks server locations, highlighting yours | ⚠️ **MISSING** |
@@ -256,8 +248,6 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | حسابك معطّل حاليًا |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | المفاتيح الجديدة والتغييرات متوقفة على هذا الحساب. استخدم رمز عضوية بالأسفل لإعادة تفعيله، أو تواصل مع الدعم وشارك معرّف الدعم الخاص بك. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | استبدل رقم حسابك المكون من 32 رقماً إذا كان قد تم تسريبه. سيتوقف الرقم القديم عن العمل فوراً. |
-| `account.section.connection.title` | Your connection | اتصالك |
-| `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | مفتاح البروكسي الخاص بك، ومساعدة الإعداد، والأجهزة المتصلة. |
 | `account.section.membership.title` | Membership | عضوية |
 | `account.section.membership.desc` | Your plan - upgrade, extend, or redeem a membership code. | خطتك — ترقية أو تمديد أو استبدال رمز عضوية. |
 | `account.section.gifts.title` | Gifts & referrals | الهدايا والإحالات |
@@ -449,7 +439,7 @@ review.
 | `impact.giftsTitle` | Recent donations | ⚠️ **MISSING** |
 | `impact.giftActiveUntil` | Boosting free users until {date} | ⚠️ **MISSING** |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(13 missing)*
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(14 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -482,6 +472,7 @@ review.
 | `donate.paidTitle` | Thank you! | ⚠️ **MISSING** |
 | `donate.paidBody` | Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it. | ⚠️ **MISSING** |
 | `donate.orderFailedBody` | The payment did not complete - nothing was charged, or the payment page expired. You can try again below. | ⚠️ **MISSING** |
+| `donate.orderUnderpaidBody` | Your payment arrived, but short of the amount, often because an exchange took its withdrawal fee out of it. We will review it by hand. Thank you for giving. | ⚠️ **MISSING** |
 | `donate.unavailable` | Donations are not available right now. Please check back later. | ⚠️ **MISSING** |
 
 ## `referral` — Miscellaneous strings.
@@ -545,7 +536,7 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | أنت الآن على الباقة المجانية. جدِّد من الأسفل لاستعادة عضويتك. |
 | `renew.renewCta` | Renew membership | تجديد العضوية |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(1 missing)*
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(4 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -570,6 +561,7 @@ review.
 | `upgrade.payNowpaymentsHint` | Bitcoin, Monero, Zcash & more | البيتكوين ومونيرو والمزيد |
 | `upgrade.payNowpaymentsBadge` | Private | خاص |
 | `upgrade.cryptoPrivacyNote` | No account, email, or card needed - pay privately. Monero and Zcash offer the most privacy. | لا حاجة لحساب أو بريد إلكتروني أو بطاقة ائتمان - ادفع بسرية تامة. يوفر كل من مونيرو وزيكاش أعلى مستويات الخصوصية. |
+| `upgrade.exchangeFeeNote` | Paying from an exchange? Many take their withdrawal fee out of the amount they send. Add the fee so the full amount shown arrives. | ⚠️ **MISSING** |
 | `upgrade.payBtcpay` | Bitcoin | بيتكوين |
 | `upgrade.payBtcpayHint` | On-chain or Lightning | على السلسلة أو لايتنينغ |
 | `upgrade.payBtcpayBadge` | No intermediary | بدون وسيط |
@@ -588,6 +580,8 @@ review.
 | `upgrade.paidBody` | Thank you! Your membership is now active. | شكرًا لك! عضويتك مفعّلة الآن. |
 | `upgrade.failedTitle` | Payment not completed | لم يكتمل الدفع |
 | `upgrade.failedBody` | Your payment did not go through, or the checkout expired. You can try again. | لم تتم عملية الدفع، أو انتهت صلاحية الجلسة. يمكنك المحاولة مرة أخرى. |
+| `upgrade.underpaidTitle` | Your payment arrived short | ⚠️ **MISSING** |
+| `upgrade.underpaidBody` | We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out. | ⚠️ **MISSING** |
 
 ## `gift` — Gift membership codes: buying, revealing (show-once), and redeeming.
 
@@ -612,13 +606,14 @@ review.
 | `gift.reveal.saved` | I've saved them | لقد احتفظت بها |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | لا تزال رموزك معروضة على الشاشة. إذا غادرت الآن دون حفظها، فلن تتمكن من رؤيتها مرة أخرى. |
 
-## `error` — API error messages shown to members. *(2 missing)*
+## `error` — API error messages shown to members. *(3 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `error.offline` | You appear to be offline. Check your connection and try again. | يبدو أنك غير متصل. تحقق من اتصالك وأعد المحاولة. |
 | `error.rateLimited` | Too many attempts. Please wait a minute and try again. | محاولات كثيرة جدًا. انتظر دقيقة وأعد المحاولة. |
 | `error.backendUnavailable` | No VPN server is available right now. Your account is safe - try creating your key again in a few minutes. | لا يوجد خادم وكيل متاح حاليًا. حسابك آمن - حاول إنشاء مفتاحك مرة أخرى بعد دقائق. |
+| `error.configUnavailable` | Your configuration cannot be shown right now. Your app keeps the one it has; try again in a few minutes. | ⚠️ **MISSING** |
 | `error.generic` | Something went wrong. Please try again. | حدث خطأ ما. يرجى المحاولة مرة أخرى. |
 | `error.captchaFailed` | The human check failed. Please complete it and try again. | فشل التحقق البشري. أكمله وأعد المحاولة. |
 | `error.captchaUnconfigured` | The service is temporarily unavailable. Please try again in a few minutes. | الخدمة غير متاحة مؤقتًا. يرجى المحاولة مرة أخرى بعد بضع دقائق. |
@@ -724,13 +719,19 @@ review.
 | `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
 | `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |
 
-## `region` — Miscellaneous strings. *(5 missing)*
+## `region` — Miscellaneous strings. *(11 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `region.title` | Where are you connecting from? | ⚠️ **MISSING** |
-| `region.help` | Leave this on Automatic unless connecting is unreliable. In a few countries some of the website names a key uses are blocked. Choosing yours makes your key use names known to work there. Your choice is saved with your account and is never used for anything else. | ⚠️ **MISSING** |
+| `region.help` | Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses and the connection mode we suggest. It is kept with your key, deleted with it, and never shared. | ⚠️ **MISSING** |
+| `region.helpDetect` | On Automatic we guess it from your connection, keep the guess only for the countries listed here, and forget it {days} days after we last see you there. | ⚠️ **MISSING** |
 | `region.automatic` | Automatic | ⚠️ **MISSING** |
+| `region.elsewhere` | Somewhere else | ⚠️ **MISSING** |
+| `region.guessed` | We think you're connecting from {country}. | ⚠️ **MISSING** |
+| `region.chosen` | You told us you're connecting from {country}. | ⚠️ **MISSING** |
+| `region.chosenElsewhere` | You told us you're connecting from somewhere not listed here. | ⚠️ **MISSING** |
+| `region.change` | Change | ⚠️ **MISSING** |
 | `region.saved` | Saved. Refresh your app to pick up the change. | ⚠️ **MISSING** |
 | `region.failed` | That did not save. Try again. | ⚠️ **MISSING** |
 
@@ -773,34 +774,17 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(24 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(6 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
-| `home.trust.nonprofit` | Run by a US 501(c)(3) nonprofit | تديره منظمة أمريكية غير ربحية 501(c)(3) |
-| `home.trust.openSource` | Open source | مفتوح المصدر |
-| `home.trust.noLogs` | No traffic logs | لا سجلات لحركة المرور |
-| `home.network.title` | Network status | حالة الشبكة |
-| `home.network.offline` | offline | غير متصل |
-| `home.network.srOnline` | online | متصل |
-| `home.network.srOffline` | offline | غير متصل |
-| `home.network.note` | Checked every 10 minutes | يُفحص كل 10 دقائق |
-| `home.network.link` | Live status | الحالة المباشرة |
-| `home.sections.privacy` | Privacy | الخصوصية |
-| `home.sections.how` | Getting started | البداية |
-| `home.sections.membership` | Membership | العضوية |
 | `home.sections.faq` | FAQ | الأسئلة الشائعة |
 | `home.sections.about` | About | حول |
-| `home.sections.globe` | The network | ⚠️ **MISSING** |
-| `home.globe.title` | A real network, shown live | ⚠️ **MISSING** |
-| `home.globe.body` | The green markers are FreeSocks server locations, taken straight from the live network status. The amber marks are some of the regions where the internet is heavily censored and where FreeSocks is built to reach. | ⚠️ **MISSING** |
-| `home.globe.aria` | A rotating globe showing FreeSocks server locations and censored regions | ⚠️ **MISSING** |
-| `home.globe.legendServers` | Server location | ⚠️ **MISSING** |
-| `home.globe.legendRegions` | Censored region | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | التبرعات تُحدث فرقًا |
-| `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | كل تبرع عبر FreeSocks يرفع النطاق الترددي الشهري لكل حساب مجاني في ذلك الشهر. هذا ما أضافه المتبرعون حتى الآن - ويمكنك الإضافة إليه أيضًا. |
 | `home.impact.cta` | Make a donation | قدّم تبرعًا |
-| `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
+| `home.impact.allowanceTitle` | What every free account gets this month | ⚠️ **MISSING** |
+| `home.impact.allowanceDonations` | Added by donations | ⚠️ **MISSING** |
+| `home.impact.bonusGb` | +{gb} GB | ⚠️ **MISSING** |
 | `home.hero.variants.freedom` | A VPN for freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | شبكة VPN للمعارضين |
 | `home.hero.variants.privacy` | A VPN for privacy | شبكة VPN للخصوصية |
@@ -810,13 +794,6 @@ review.
 | `home.hero.impactLink` | See the impact | اطّلع على الأثر |
 | `home.cta.getMembership` | Get a membership | احصل على عضوية |
 | `home.freeCard.title` | Free tier | المستوى المجاني |
-| `home.freeCard.badge` | What you get | ما ستحصل عليه |
-| `home.freeCard.urlTitle` | Xray subscription URL | رابط الاشتراك في خدمة الأشعة السينية |
-| `home.freeCard.urlBody` | Xray-powered VLESS. Paste into any compatible client. | Xray-powered VLESS. Paste into any compatible client. |
-| `home.freeCard.membershipLine` | A FreeSocks membership gives you {limits}. | تمنحك عضوية FreeSocks {limits} . |
-| `home.freeCard.noAuthTitle` | No email or password | لا حاجة إلى بريد إلكتروني أو كلمة مرور |
-| `home.freeCard.noAuthBody` | One human-check. Save your account number to sign in. No email collected. | عملية تحقق بشرية واحدة. احفظ رقم حسابك لتسجيل الدخول. لم يتم جمع أي بريد إلكتروني. |
-| `home.freeCard.footnote` | Numbers reflect the current free-tier configuration. Solve the check to get yours. | الأرقام تعكس إعدادات المستوى المجاني الحالية. حلّ الاختبار للحصول على إعداداتك. |
 | `home.privacy.title` | What we store | ما نخزنه |
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | تم تصميم FreeSocks بحيث لا يعرف عنك إلا أقل قدر ممكن. |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | نحن نخزن فقط نسخة مشفرة من رقم حسابك - وليس الرقم نفسه أبدًا. |
@@ -835,33 +812,13 @@ review.
 | `home.membership.lead` | Free covers the basics. | يغطي البرنامج المجاني الأساسيات. |
 | `home.membership.descriptionFallback` | A FreeSocks membership lifts every limit. | عضوية FreeSocks ترفع كل الحدود. |
 | `home.membership.payNote` | Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal. | ادفع باستخدام العملات المشفرة (بيتكوين ومونيرو وغيرها)، أو البطاقة، أو باي بال. |
-| `home.about.title` | About FreeSocks | حول FreeSocks |
-| `home.about.bodyPrefix` | FreeSocks is operated by | يتم تشغيل FreeSocks بواسطة |
-| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ، منظمة أمريكية غير ربحية 501(c)(3). |
-| `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | معظم خدمات VPN تفترض أنك تستطيع الدفع مقابل اشتراك وتسليم بريدك الإلكتروني بأمان. في معظم أنحاء العالم لا يصحّ أيٌّ منهما، لذلك لا يطلب FreeSocks أيًّا منهما. يمكن لأي شخص الحصول على مفتاح يعمل في نحو دقيقة والاحتفاظ به ما دام يستخدمه. |
-| `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.viewSourceCta` | View the source | اطّلع على المصدر |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | نطاق ترددي وأجهزة غير محدودة |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | نطاق ترددي غير محدود |
 | `home.limits.unlimitedDevices` | unlimited devices | أجهزة غير محدودة |
 | `home.limits.bandwidthAndDevices` | {bandwidth} and {devices} | {bandwidth} و {devices} |
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | جهاز واحد كحد أقصى |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | يصل عدد الأجهزة إلى {count} جهازًا |
-| `home.flow.title` | Who sees what | ⚠️ **MISSING** |
-| `home.flow.subtitle` | Here is the path your traffic takes, and what each stop on the way can actually learn. | ⚠️ **MISSING** |
-| `home.flow.youName` | Your device | ⚠️ **MISSING** |
-| `home.flow.youSees` | Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere. | ⚠️ **MISSING** |
-| `home.flow.ispName` | Your ISP | ⚠️ **MISSING** |
-| `home.flow.ispSees` | Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send. | ⚠️ **MISSING** |
-| `home.flow.cdnName` | The CDN | ⚠️ **MISSING** |
-| `home.flow.cdnBadge` | Freedom Mode only | ⚠️ **MISSING** |
-| `home.flow.cdnSees` | Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it. | ⚠️ **MISSING** |
-| `home.flow.nodeName` | FreeSocks server | ⚠️ **MISSING** |
-| `home.flow.nodeSees` | Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it. | ⚠️ **MISSING** |
-| `home.flow.webName` | Websites you visit | ⚠️ **MISSING** |
-| `home.flow.webSees` | See the FreeSocks server's address instead of yours. | ⚠️ **MISSING** |
-| `home.flow.captionFreedom` | Routes through a large CDN, so your connection looks like ordinary web traffic. | ⚠️ **MISSING** |
-| `home.flow.captionPrivacy` | Skips the CDN and connects you straight to the server. | ⚠️ **MISSING** |
+| `home.donate.title` | Donations buy bandwidth for free users | ⚠️ **MISSING** |
 
 ## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 

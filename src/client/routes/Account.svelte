@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import { z } from 'zod';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import * as Tabs from '@client/components/ui/tabs';
@@ -47,10 +48,6 @@
   import Loader2 from '@lucide/svelte/icons/loader-2';
   import KeyRound from '@lucide/svelte/icons/key-round';
   import Hash from '@lucide/svelte/icons/hash';
-  import Sparkles from '@lucide/svelte/icons/sparkles';
-  import Gift from '@lucide/svelte/icons/gift';
-  import Share2 from '@lucide/svelte/icons/share-2';
-  import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import { copyText, subscriptionDisplayUrl } from '../lib/utils';
@@ -88,6 +85,8 @@
 
   const account = accountQuery();
   const config = configQuery();
+  // The connection tab's two-column breakpoint (Tailwind lg).
+  const wideLayout = new MediaQuery('min-width: 64rem');
   const qc = useQueryClient();
 
   // Usage trend: eager (fetched whenever there's a subscription) so it renders by
@@ -729,7 +728,7 @@
     </Card>
   </div>
 {:else}
-  <div class="max-w-4xl mx-auto py-8 space-y-10">
+  <div class="space-y-8">
     <div class="sr-only" role="status" aria-live="polite">{liveMessage}</div>
 
     <!-- Always-available overlays (portal out when closed - order-independent). -->
@@ -761,43 +760,61 @@
       busy={rotateAccountId.isPending}
     />
 
-    <!-- Welcome strip, slim, not a card. Identity controls (support ID, rotate)
-         live in the Account & security section below; this keeps the header to the
-         title, plan, lifecycle status, and sign-out. -->
-    <header class="flex items-start justify-between gap-4 flex-wrap">
+    <!-- Page head: the title, then plan, support ID and lifecycle status on
+         one quiet line; the membership upsell and sign-out sit opposite. -->
+    <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 class="text-3xl font-display font-bold tracking-tight">{t('account.title')}</h1>
-        <p class="text-sm text-muted-foreground mt-1 flex flex-wrap items-center gap-2">
+        <h1
+          class="text-[clamp(34px,4vw,46px)] font-bold leading-[1.05] tracking-[-0.03em] rtl:tracking-normal"
+        >
+          {t('account.title')}
+        </h1>
+        <p
+          class="mt-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[15px] text-muted-foreground"
+        >
           <span>
             {t('account.tierLabel')}:
-            <strong class="text-foreground">{data.user.tier.name}</strong>
+            <strong class="font-bold text-foreground">{data.user.tier.name}</strong>
           </span>
+          {#if data.user.supportId}
+            <span aria-hidden="true">·</span>
+            <span>
+              {t('support.label')}:
+              <code dir="ltr" class="font-mono text-foreground">{data.user.supportId}</code>
+            </span>
+          {/if}
           {#if userStatus === 'grace'}
-            <span
-              class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400"
-            >
+            <span aria-hidden="true">·</span>
+            <span class="font-bold text-amber-700 dark:text-amber-400">
               {t('account.statusGrace')}
             </span>
           {:else if userStatus === 'disabled'}
-            <span class="rounded-full bg-destructive/15 px-2 py-0.5 text-xs text-destructive">
-              {t('account.statusDisabled')}
-            </span>
+            <span aria-hidden="true">·</span>
+            <span class="font-bold text-destructive">{t('account.statusDisabled')}</span>
           {/if}
           {#if data.user.donorSince}
+            <span aria-hidden="true">·</span>
             <span
-              class="relative inline-flex items-center gap-1 overflow-hidden rounded-full border border-amber-500/40 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-500/20 dark:text-amber-300"
+              class="inline-flex items-center gap-1.5 text-foreground"
               title={t('donate.badgeTooltip')}
             >
-              <Heart class="size-3" aria-hidden="true" />
+              <Heart class="size-3.5 text-primary" aria-hidden="true" />
               {t('donate.badge')}
             </span>
           {/if}
         </p>
       </div>
-      <Button onclick={logout} variant="ghost" size="sm" class="min-h-11 shrink-0">
-        <LogOut class="size-4" />
-        {t('account.signOut')}
-      </Button>
+      <div class="flex flex-wrap items-center gap-3">
+        {#if membershipState === 'no-membership'}
+          <Button size="lg" class="text-[15px]" onclick={() => (activeTab = 'membership')}>
+            {t('home.cta.getMembership')}
+          </Button>
+        {/if}
+        <Button onclick={logout} variant="outline" size="lg" class="text-[15px]">
+          <LogOut class="size-4" />
+          {t('account.signOut')}
+        </Button>
+      </div>
     </header>
 
     <!-- PINNED STATUS BAND: payment-return + lifecycle + membership-expiry
@@ -939,63 +956,27 @@
 
     <!-- Tabbed sections (in-page strip, ?tab= synced). Page-global chrome - the
          header, pinned status band, and confirm modals - stays OUTSIDE the tabs. -->
-    <Tabs.Root bind:value={activeTab} class="gap-6">
-      <!-- 44px-tall tabs on touch widths (WCAG target size); compact from sm up. -->
-      <div class="overflow-x-auto -mx-1 px-1">
-        <Tabs.List class="w-full min-w-max sm:w-fit h-12 sm:h-9">
-          <Tabs.Trigger value="connection" class="h-11 sm:h-7">
-            <KeyRound class="size-4" />{t('account.tab.connection')}
-          </Tabs.Trigger>
-          <Tabs.Trigger value="membership" class="h-11 sm:h-7">
-            <Sparkles class="size-4" />{t('account.tab.membership')}
-          </Tabs.Trigger>
-          <Tabs.Trigger value="gifts" class="h-11 sm:h-7">
-            <Gift class="size-4" />{t('account.tab.gifts')}
-          </Tabs.Trigger>
-          <Tabs.Trigger value="security" class="h-11 sm:h-7">
-            <ShieldCheck class="size-4" />{t('account.tab.security')}
-          </Tabs.Trigger>
+    <Tabs.Root bind:value={activeTab} class="gap-8">
+      <div class="overflow-x-auto">
+        <Tabs.List variant="line" class="min-w-max flex-nowrap">
+          <Tabs.Trigger variant="line" value="connection"
+            >{t('account.tab.connection')}</Tabs.Trigger
+          >
+          <Tabs.Trigger variant="line" value="membership"
+            >{t('account.tab.membership')}</Tabs.Trigger
+          >
+          <Tabs.Trigger variant="line" value="gifts">{t('account.tab.gifts')}</Tabs.Trigger>
+          <Tabs.Trigger variant="line" value="security">{t('account.tab.security')}</Tabs.Trigger>
         </Tabs.List>
       </div>
 
-      <!-- TAB: Your connection - the pass is the focal object. Delivery focus
-           first (it shapes presentation), then the pass WITH its key actions,
-           setup, trouble-connecting disclosures, and devices. -->
+      <!-- TAB: Your connection. Two columns from lg up: the key itself (the pass
+           with its actions, usage, app setup, the trouble-connecting
+           disclosures and devices) on the left; how it connects (mode, region)
+           and where (the location globe) on the right. Below lg, one column with
+           the mode and region first, since the mode shapes what the pass shows. -->
       <Tabs.Content value="connection">
-        <section class="space-y-6">
-          <SectionHead
-            icon={KeyRound}
-            title={t('account.section.connection.title')}
-            description={t('account.section.connection.desc')}
-          />
-
-          <!-- Free members: a flat pointer to the Membership tab. Hidden once
-               they have a membership. -->
-          {#if membershipState === 'no-membership'}
-            <button
-              type="button"
-              onclick={() => (activeTab = 'membership')}
-              class="w-full rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-start transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <span class="flex items-center gap-3">
-                <Sparkles class="size-4 shrink-0 text-primary" aria-hidden="true" />
-                <span class="min-w-0 flex-1">
-                  <span class="block text-sm font-semibold"
-                    >{t('account.membershipNudge.title')}</span
-                  >
-                  <span class="block text-sm text-muted-foreground">
-                    {deviceLimitsShown(config.data)
-                      ? t('account.membershipNudge.body')
-                      : t('account.membershipNudge.bodyNoDevices')}
-                  </span>
-                </span>
-                <span class="shrink-0 text-sm font-medium text-primary"
-                  >{t('account.membershipNudge.cta')}</span
-                >
-              </span>
-            </button>
-          {/if}
-
+        <section>
           {#if data.subscription}
             {@const subUrl = subscriptionDisplayUrl(
               data.subscription.subToken,
@@ -1007,249 +988,259 @@
                     .accessKeyOnly === true,
               },
             )}
-            <!-- Connection mode ABOVE the pass (it shapes what the pass shows);
-                 compact cards - the longer copy sits behind each card's
-                 "More details" disclosure. -->
-            <ConnectionModeSwitcher
-              modes={memberModes}
-              families={connectionModeFamilies}
-              currentMode={data.user.currentMode ?? null}
-              selected={effectiveModeId}
-              suggested={data.suggestedModeId ?? null}
-              serverBacked={profileServerBacked}
-              deviceCount={data.subscription.devices.length}
-              disabled={actionsDisabled}
-            />
-            <!-- Where the member is, for server names known to work there. Renders
-                 nothing unless the deployment curates any country. -->
-            <ConnectionRegion disabled={actionsDisabled} />
-
             {@const keyLocCode =
               nodeStatus.data?.node?.location?.code ?? data.subscription.location?.code ?? null}
             {@const keyLocLabel =
               nodeStatus.data?.node?.location?.label ?? data.subscription.location?.label ?? null}
             {@const mapLocations = config.data?.locations ?? []}
-            <!-- The pass, with the location globe beside it on wide screens
-                 (below it on mobile). The globe only renders once at least one
-                 location carries map coordinates - a deployment that never set
-                 them keeps the old single-column layout. -->
-            <div
-              class="grid gap-4 {mapLocations.some((l) => l.coords != null)
-                ? 'lg:grid-cols-[minmax(0,1fr)_280px] lg:items-stretch'
-                : ''}"
-            >
-              <SubscriptionHero
-                backendLabel={backendEntry(config.data?.backends, data.subscription.backend)?.label}
-                accessKeyOnly={backendEntry(config.data?.backends, data.subscription.backend)
-                  ?.capabilities.accessKeyOnly}
-                subscriptionUrl={subUrl}
-                status={data.subscription.status}
-                tierName={data.user.tier.name}
-                backend={data.subscription.backend}
-                hideUrl={rawConfigFirst}
-                nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
-                nodeLocationLabel={keyLocLabel}
-                nodeLocationCode={keyLocCode}
-                nodeLabel={nodeStatus.data?.node?.label ?? null}
-                nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
-                nodeRelay={nodeStatus.data?.node?.relay ?? null}
-              >
-                {#snippet actions()}
-                  <!-- Key actions live on the pass: switch server (gentlest first -
-                     the URL survives), regenerate, and switch backend when
-                     eligible. No explainer text here: each action's modal
-                     carries its own when-to-use-this description. -->
-                  <div class="flex flex-wrap items-center gap-2">
-                    {#if canSwitchServer}
-                      <Button
-                        onclick={() => {
-                          switchServerReason = null;
-                          switchServerOpen = true;
-                        }}
-                        disabled={regenerate.isPending ||
-                          switchServer.isPending ||
-                          switchBackend.isPending ||
-                          actionsDisabled}
-                        variant="outline"
-                        size="sm"
-                        class="min-h-11"
-                      >
-                        <RefreshCw class="size-4" />
-                        {switchServer.isPending
-                          ? t('switchServer.working')
-                          : t('switchServer.action')}
-                      </Button>
-                    {/if}
-                    <Button
-                      onclick={() => (regenerateOpen = true)}
-                      disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
-                      variant="outline"
-                      size="sm"
-                      class="min-h-11"
-                    >
-                      <RotateCcw class="size-4" />
-                      {regenerate.isPending ? t('common.working') : t('account.regenerate')}
-                    </Button>
-                    <!-- Report issue: red-tinted outline (a flag, not a bomb - it
-                       sits beside two neutral actions and changes nothing). -->
-                    <Button
-                      onclick={() => {
-                        reportIssueReason = null;
-                        reportIssueConnection = null;
-                        reportIssueOpen = true;
-                      }}
-                      disabled={reportIssue.isPending || actionsDisabled}
-                      variant="outline"
-                      size="sm"
-                      class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    >
-                      <Flag class="size-4" />
-                      {reportIssue.isPending ? t('report.working') : t('report.action')}
-                    </Button>
-                    {#if canSwitchBackend}
-                      {#each switchTargets as target (target.id)}
+            {@const showGlobe = mapLocations.some((l) => l.coords != null)}
+            <div class="grid items-start gap-7 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+              <div class="min-w-0 space-y-7">
+                <SubscriptionHero
+                  backendLabel={backendEntry(config.data?.backends, data.subscription.backend)
+                    ?.label}
+                  accessKeyOnly={backendEntry(config.data?.backends, data.subscription.backend)
+                    ?.capabilities.accessKeyOnly}
+                  subscriptionUrl={subUrl}
+                  status={data.subscription.status}
+                  tierName={data.user.tier.name}
+                  backend={data.subscription.backend}
+                  hideUrl={rawConfigFirst}
+                  nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
+                  nodeLocationLabel={keyLocLabel}
+                  nodeLocationCode={keyLocCode}
+                  nodeLabel={nodeStatus.data?.node?.label ?? null}
+                  nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
+                  nodeRelay={nodeStatus.data?.node?.relay ?? null}
+                >
+                  {#snippet actions()}
+                    <!-- Key actions live on the pass: switch server (gentlest first -
+                       the URL survives), regenerate, and switch backend when
+                       eligible. No explainer text here: each action's modal
+                       carries its own when-to-use-this description. -->
+                    <div class="flex flex-wrap items-center gap-2">
+                      {#if canSwitchServer}
                         <Button
                           onclick={() => {
-                            pendingSwitchTarget = target.id;
-                            switchBackendOpen = true;
+                            switchServerReason = null;
+                            switchServerOpen = true;
                           }}
                           disabled={regenerate.isPending ||
+                            switchServer.isPending ||
                             switchBackend.isPending ||
                             actionsDisabled}
                           variant="outline"
                           size="sm"
                           class="min-h-11"
                         >
-                          <ArrowLeftRight class="size-4" />
-                          {switchBackend.isPending
-                            ? t('switch.working')
-                            : t('account.switchTo', { label: target.label })}
+                          <RefreshCw class="size-4" />
+                          {switchServer.isPending
+                            ? t('switchServer.working')
+                            : t('switchServer.action')}
                         </Button>
-                      {/each}
-                    {/if}
-                  </div>
-                {/snippet}
-              </SubscriptionHero>
-              {#if mapLocations.some((l) => l.coords != null)}
-                <KeyLocationGlobe
-                  locations={mapLocations}
-                  currentCode={keyLocCode}
-                  currentLabel={keyLocLabel}
+                      {/if}
+                      <Button
+                        onclick={() => (regenerateOpen = true)}
+                        disabled={regenerate.isPending ||
+                          switchBackend.isPending ||
+                          actionsDisabled}
+                        variant="outline"
+                        size="sm"
+                        class="min-h-11"
+                      >
+                        <RotateCcw class="size-4" />
+                        {regenerate.isPending ? t('common.working') : t('account.regenerate')}
+                      </Button>
+                      <!-- Report issue: red-tinted outline (a flag, not a bomb - it
+                         sits beside two neutral actions and changes nothing). -->
+                      <Button
+                        onclick={() => {
+                          reportIssueReason = null;
+                          reportIssueConnection = null;
+                          reportIssueOpen = true;
+                        }}
+                        disabled={reportIssue.isPending || actionsDisabled}
+                        variant="outline"
+                        size="sm"
+                        class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        <Flag class="size-4" />
+                        {reportIssue.isPending ? t('report.working') : t('report.action')}
+                      </Button>
+                      {#if canSwitchBackend}
+                        {#each switchTargets as target (target.id)}
+                          <Button
+                            onclick={() => {
+                              pendingSwitchTarget = target.id;
+                              switchBackendOpen = true;
+                            }}
+                            disabled={regenerate.isPending ||
+                              switchBackend.isPending ||
+                              actionsDisabled}
+                            variant="outline"
+                            size="sm"
+                            class="min-h-11"
+                          >
+                            <ArrowLeftRight class="size-4" />
+                            {switchBackend.isPending
+                              ? t('switch.working')
+                              : t('account.switchTo', { label: target.label })}
+                          </Button>
+                        {/each}
+                      {/if}
+                    </div>
+                  {/snippet}
+                </SubscriptionHero>
+                <!-- Below lg the globe follows the pass (one instance at a time: it
+                     runs its own animation loop). -->
+                {#if showGlobe && !wideLayout.current}
+                  <KeyLocationGlobe
+                    locations={mapLocations}
+                    currentCode={keyLocCode}
+                    currentLabel={keyLocLabel}
+                  />
+                {/if}
+                <!-- Usage & validity: its own card (extracted from the pass so the
+                     pass carries only the key itself). -->
+                <UsagePanel
+                  trafficLimitBytes={data.subscription.trafficLimitBytes}
+                  trafficUsedBytes={data.subscription.trafficUsedBytes}
+                  expiresAt={data.subscription.expiresAt}
+                  freeTier={!(data.user.membership?.isCurrent ?? false)}
+                  idleDays={config.data?.freeTierDays ?? 90}
+                  resetStrategy={data.subscription.resetStrategy}
+                  lastResetAt={data.subscription.lastResetAt}
+                  usagePoints={usage.data?.usage?.points}
+                  usageTotal={usage.data?.usage?.total}
                 />
-              {/if}
-            </div>
+                {#if rawConfigFirst}
+                  <!-- rawConfig mode: the raw config IS the deliverable (the
+                       CDN-fetched link is hidden above), so it comes before the
+                       app list. No public mirrors - they'd expose the config to
+                       third parties. -->
+                  <RawConfig prominent />
+                  <ConnectClient
+                    backend={data.subscription.backend}
+                    rawConfigFirst
+                    deviceLimited={data.user.tier.deviceLimited ?? false}
+                  />
+                {:else}
+                  <ConnectClient
+                    backend={data.subscription.backend}
+                    subscriptionUrl={subUrl}
+                    deviceLimited={data.user.tier.deviceLimited ?? false}
+                  />
 
-            <!-- Usage & validity: its own card (extracted from the pass so the
-                 pass carries only the key itself). -->
-            <UsagePanel
-              trafficLimitBytes={data.subscription.trafficLimitBytes}
-              trafficUsedBytes={data.subscription.trafficUsedBytes}
-              expiresAt={data.subscription.expiresAt}
-              freeTier={!(data.user.membership?.isCurrent ?? false)}
-              idleDays={config.data?.freeTierDays ?? 90}
-              resetStrategy={data.subscription.resetStrategy}
-              lastResetAt={data.subscription.lastResetAt}
-              usagePoints={usage.data?.usage?.points}
-              usageTotal={usage.data?.usage?.total}
-            />
-
-            {#if rawConfigFirst}
-              <!-- rawConfig mode: the raw config IS the deliverable (the CDN-fetched link
-               is hidden above). No public mirrors - they'd expose the config to third parties. -->
-              <RawConfig prominent />
-              <ConnectClient
-                backend={data.subscription.backend}
-                rawConfigFirst
-                deviceLimited={data.user.tier.deviceLimited ?? false}
-              />
-            {:else}
-              <!-- url mode: the subscription link is the star; mirrors next, raw config secondary. -->
-              <ConnectClient
-                backend={data.subscription.backend}
-                subscriptionUrl={subUrl}
-                deviceLimited={data.user.tier.deviceLimited ?? false}
-              />
-              <!-- Always rendered: mirror AVAILABILITY is member-visible state
-                   (the component shows a "not available here" note when the
-                   deployment has no mirror provider). -->
-              <MirrorHelp
-                mirrors={data.subscription.mirrors}
-                geoCountry={data.geoCountry}
-                subscriptionUrl={subUrl}
-                available={config.data?.mirrorsEnabled ?? false}
-                onSwitchServer={actionsDisabled || !canSwitchServer
-                  ? undefined
-                  : () => {
-                      switchServerReason = null;
-                      switchServerOpen = true;
-                    }}
-                onPickLocation={actionsDisabled || locations.length < 2
-                  ? undefined
-                  : () => (regenerateOpen = true)}
-                onReportIssue={actionsDisabled
-                  ? undefined
-                  : () => {
-                      reportIssueReason = null;
-                      reportIssueConnection = null;
-                      reportIssueOpen = true;
-                    }}
-              />
-              <RawConfig />
-            {/if}
-
-            {#if deviceLimitsShown(config.data) && data.subscription.devices.length > 0}
-              <div class="space-y-3 border-t border-border pt-6">
-                <div class="flex items-baseline justify-between">
-                  <h3 class="text-sm font-semibold flex items-center gap-2">
-                    <Smartphone class="size-4 text-muted-foreground" />
-                    {t('account.devicesTitle')}
-                  </h3>
-                  <span class="text-xs text-muted-foreground tabular-nums">
-                    {t('common.deviceCount', { count: data.subscription.devices.length })}
-                  </span>
-                </div>
-                <ul class="rounded-lg border border-border divide-y divide-border">
-                  {#each data.subscription.devices as d (d.hwid)}
-                    {@const label = [d.platform, d.deviceModel].filter(Boolean).join(' · ')}
-                    {@const hwidText = d.hwid.length > 24 ? `${d.hwid.slice(0, 24)}…` : d.hwid}
-                    <li class="flex items-center justify-between gap-3 px-4 py-3">
-                      <div class="flex items-center gap-3 min-w-0">
-                        <Smartphone class="size-4 text-muted-foreground shrink-0" />
-                        <div class="min-w-0">
-                          {#if label}
-                            <p class="text-sm font-medium truncate">{label}</p>
-                            <code class="font-mono text-xs text-muted-foreground truncate block">
-                              {hwidText}
-                            </code>
-                          {:else}
-                            <code class="font-mono text-xs truncate block">{hwidText}</code>
-                          {/if}
-                        </div>
-                      </div>
-                      <div class="flex items-center gap-3 shrink-0">
-                        <span class="text-muted-foreground text-xs tabular-nums">
-                          {d.lastSeenAt
-                            ? t('account.lastSeen', { date: formatDate(d.lastSeenAt) })
-                            : '-'}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          class="min-h-9 text-destructive hover:text-destructive"
-                          disabled={revokeDevice.isPending || actionsDisabled}
-                          onclick={() => {
-                            revokeTargetHwid = d.hwid;
-                            revokeDeviceOpen = true;
-                          }}
-                        >
-                          {t('account.deviceRevoke')}
-                        </Button>
-                      </div>
-                    </li>
-                  {/each}
-                </ul>
+                  <!-- Always rendered: mirror AVAILABILITY is member-visible state
+                     (the component shows a "not available here" note when the
+                     deployment has no mirror provider). -->
+                  <MirrorHelp
+                    mirrors={data.subscription.mirrors}
+                    geoCountry={data.geoCountry}
+                    subscriptionUrl={subUrl}
+                    available={config.data?.mirrorsEnabled ?? false}
+                    onSwitchServer={actionsDisabled || !canSwitchServer
+                      ? undefined
+                      : () => {
+                          switchServerReason = null;
+                          switchServerOpen = true;
+                        }}
+                    onPickLocation={actionsDisabled || locations.length < 2
+                      ? undefined
+                      : () => (regenerateOpen = true)}
+                    onReportIssue={actionsDisabled
+                      ? undefined
+                      : () => {
+                          reportIssueReason = null;
+                          reportIssueConnection = null;
+                          reportIssueOpen = true;
+                        }}
+                  />
+                  <RawConfig />
+                {/if}
+                {#if deviceLimitsShown(config.data) && data.subscription.devices.length > 0}
+                  <div class="space-y-3 border-t border-border pt-6">
+                    <div class="flex items-baseline justify-between">
+                      <h3 class="text-sm font-semibold flex items-center gap-2">
+                        <Smartphone class="size-4 text-muted-foreground" />
+                        {t('account.devicesTitle')}
+                      </h3>
+                      <span class="text-xs text-muted-foreground tabular-nums">
+                        {t('common.deviceCount', { count: data.subscription.devices.length })}
+                      </span>
+                    </div>
+                    <ul class="rounded-lg border border-border divide-y divide-border">
+                      {#each data.subscription.devices as d (d.hwid)}
+                        {@const label = [d.platform, d.deviceModel].filter(Boolean).join(' · ')}
+                        {@const hwidText = d.hwid.length > 24 ? `${d.hwid.slice(0, 24)}…` : d.hwid}
+                        <li class="flex items-center justify-between gap-3 px-4 py-3">
+                          <div class="flex items-center gap-3 min-w-0">
+                            <Smartphone class="size-4 text-muted-foreground shrink-0" />
+                            <div class="min-w-0">
+                              {#if label}
+                                <p class="text-sm font-medium truncate">{label}</p>
+                                <code
+                                  class="font-mono text-xs text-muted-foreground truncate block"
+                                >
+                                  {hwidText}
+                                </code>
+                              {:else}
+                                <code class="font-mono text-xs truncate block">{hwidText}</code>
+                              {/if}
+                            </div>
+                          </div>
+                          <div class="flex items-center gap-3 shrink-0">
+                            <span class="text-muted-foreground text-xs tabular-nums">
+                              {d.lastSeenAt
+                                ? t('account.lastSeen', { date: formatDate(d.lastSeenAt) })
+                                : '-'}
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              class="min-h-9 text-destructive hover:text-destructive"
+                              disabled={revokeDevice.isPending || actionsDisabled}
+                              onclick={() => {
+                                revokeTargetHwid = d.hwid;
+                                revokeDeviceOpen = true;
+                              }}
+                            >
+                              {t('account.deviceRevoke')}
+                            </Button>
+                          </div>
+                        </li>
+                      {/each}
+                    </ul>
+                  </div>
+                {/if}
               </div>
-            {/if}
+
+              <div class="order-first min-w-0 space-y-7 lg:order-none">
+                <!-- Connection mode first in this column (it shapes what the
+                     pass shows); compact cards - the longer copy sits behind
+                     each card's "More details" disclosure. -->
+                <ConnectionModeSwitcher
+                  modes={memberModes}
+                  families={connectionModeFamilies}
+                  currentMode={data.user.currentMode ?? null}
+                  selected={effectiveModeId}
+                  suggested={data.suggestedModeId ?? null}
+                  serverBacked={profileServerBacked}
+                  deviceCount={data.subscription.devices.length}
+                  disabled={actionsDisabled}
+                />
+                <!-- Where the member is, for server names known to work there. Renders
+                     nothing unless the deployment curates any country. -->
+                <ConnectionRegion disabled={actionsDisabled} />
+                {#if showGlobe && wideLayout.current}
+                  <KeyLocationGlobe
+                    locations={mapLocations}
+                    currentCode={keyLocCode}
+                    currentLabel={keyLocLabel}
+                  />
+                {/if}
+              </div>
+            </div>
           {:else}
             <!-- No key yet: the mode pick shapes the FIRST key, so the picker
                  stays above the create button here. -->
@@ -1302,9 +1293,8 @@
            member sees a compact status + refresh instead of the upsell. Codes,
            gifts, and referrals live on their own tab now. -->
       <Tabs.Content value="membership">
-        <section class="space-y-6">
+        <section class="max-w-4xl space-y-6">
           <SectionHead
-            icon={Sparkles}
             title={t('account.section.membership.title')}
             description={t('account.section.membership.desc')}
           />
@@ -1386,9 +1376,8 @@
 
       <!-- TAB: Gifts & referrals - buy codes to share, invite. -->
       <Tabs.Content value="gifts">
-        <section class="space-y-6">
+        <section class="max-w-4xl space-y-6">
           <SectionHead
-            icon={Gift}
             title={t('account.section.gifts.title')}
             description={t('account.section.gifts.desc')}
           />
@@ -1400,7 +1389,7 @@
           <!-- Referrals (self-gates on the program being enabled): the member's
                share link + invite stats. -->
           <div class="border-t border-border pt-6 space-y-4">
-            <SectionHead icon={Share2} title={t('referral.cardTitle')} />
+            <SectionHead title={t('referral.cardTitle')} />
             <ReferralsCard />
           </div>
         </section>
@@ -1408,9 +1397,8 @@
 
       <!-- TAB: Account & security - support ID + account-number rotation + passkeys. -->
       <Tabs.Content value="security">
-        <section class="space-y-6">
+        <section class="max-w-4xl space-y-6">
           <SectionHead
-            icon={ShieldCheck}
             title={t('account.section.security.title')}
             description={t('account.section.security.desc')}
           />

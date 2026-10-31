@@ -14,7 +14,7 @@
    *
    * App names are proper nouns (not translated); the structural copy is i18n'd.
    */
-  import { t, type MessageKey } from '../lib/i18n/index.svelte';
+  import { getLocale, t, type MessageKey } from '../lib/i18n/index.svelte';
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import ExternalLink from '@lucide/svelte/icons/external-link';
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
@@ -133,16 +133,17 @@
       ?.querySelector<HTMLElement>('[aria-selected="true"]')
       ?.focus();
   }
+
+  // Step numbers in the member's own digits (Persian and Arabic included).
+  const stepNumber = $derived(new Intl.NumberFormat(getLocale()));
 </script>
 
-<section class="rounded-xl border border-border bg-card p-5 sm:p-6">
-  <h2 class="flex items-center gap-2 text-lg font-display font-semibold">
-    <Smartphone class="size-4 text-muted-foreground" aria-hidden="true" />
-    {t('setup.title')}
-  </h2>
-  <p class="mt-1 text-sm text-muted-foreground">{t('setup.intro')}</p>
+<section class="@container panel">
+  <h2 class="text-xl font-bold leading-tight">{t('setup.title')}</h2>
+  <p class="mt-1.5 text-[15px] text-muted-foreground">{t('setup.intro')}</p>
 
-  <div class="mt-4 flex flex-wrap gap-1.5" role="tablist" aria-label={t('setup.title')}>
+  <!-- Platform picker: one segmented row (the active platform inverted). -->
+  <div class="mt-4 flex flex-wrap" role="tablist" aria-label={t('setup.title')}>
     {#each PLATFORMS as p (p.key)}
       <button
         type="button"
@@ -156,10 +157,10 @@
           qrFor = null;
         }}
         onkeydown={tabKeydown}
-        class="min-h-11 sm:min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {active ===
+        class="relative -ms-px min-h-11 border px-3.5 text-[15px] transition-colors first:ms-0 first:rounded-s-sm last:rounded-e-sm focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {active ===
         p.key
-          ? 'bg-primary text-primary-foreground'
-          : 'bg-muted text-muted-foreground hover:text-foreground'}"
+          ? 'z-[1] border-foreground bg-foreground font-bold text-background'
+          : 'border-border text-body hover:text-foreground'}"
       >
         {t(p.labelKey)}
       </button>
@@ -175,75 +176,45 @@
     {#snippet clientCard(c: (typeof currentClients)[number], recommended = false)}
       {@const link = importLink(c.schemeId)}
       {@const desc = clientDesc(c)}
-      <li class="rounded-lg border border-border bg-background/40 p-3">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="min-w-0">
-            <span class="text-sm font-semibold">{c.name}</span>
-            {#if recommended}
-              <span
-                class="ms-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-              >
-                {t('setup.recommended')}
-              </span>
-            {/if}
-            {#if c.openSource}
-              <span
-                class="ms-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-              >
-                {t('setup.openSource')}
-              </span>
-            {:else}
-              <span
-                class="ms-2 inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-              >
-                {t('setup.proprietary')}
-              </span>
-            {/if}
-            <!-- Ease-of-use badge: only the poles ('moderate' would just be noise). -->
-            {#if c.easeOfUse === 'easy'}
-              <span
-                class="ms-2 inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400"
-              >
-                {t('setup.easeEasy')}
-              </span>
-            {:else if c.easeOfUse === 'advanced'}
-              <span
-                class="ms-2 inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-              >
-                {t('setup.easeAdvanced')}
-              </span>
-            {/if}
-            <!-- IPv6 badge: only VERIFIED states (true/false); untested apps show nothing. -->
-            {#if c.ipv6 === true}
-              <span
-                class="ms-2 inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400"
-              >
-                {t('setup.ipv6Works')}
-              </span>
-            {:else if c.ipv6 === false}
-              <span
-                class="ms-2 inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-              >
-                {t('setup.ipv4Only')}
-              </span>
-            {/if}
-            {#if c.sourceUrl}
-              <a
-                href={c.sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="ms-2 text-xs text-muted-foreground underline hover:text-foreground"
-              >
-                {t('setup.viewSource')}
-              </a>
-            {/if}
+      <!-- Facts as one quiet line, not a row of badges: recommended (the first
+           entry, already sorted OSS-first then easiest), license, the two
+           poles of ease-of-use ('moderate' would be noise), VERIFIED IPv6
+           support only, and the source link. -->
+      {@const facts = [
+        c.openSource ? t('setup.openSource') : t('setup.proprietary'),
+        c.easeOfUse === 'easy'
+          ? t('setup.easeEasy')
+          : c.easeOfUse === 'advanced'
+            ? t('setup.easeAdvanced')
+            : null,
+        c.ipv6 === true ? t('setup.ipv6Works') : c.ipv6 === false ? t('setup.ipv4Only') : null,
+      ].filter(Boolean)}
+      <li class="border-t border-border/70 py-4 first:border-t-0 first:pt-1">
+        <!-- Buttons beside the name once the panel is wide enough, below it otherwise. -->
+        <div class="flex flex-col gap-2 @xl:flex-row @xl:items-start @xl:justify-between @xl:gap-4">
+          <div class="min-w-0 flex-1">
+            <p class="font-bold text-foreground">{c.name}</p>
+            <p class="text-sm text-muted-foreground">
+              {#if recommended}
+                <span class="font-bold text-primary">{t('setup.recommended')}</span>
+                <span aria-hidden="true">{' · '}</span>
+              {/if}{facts.join(' · ')}{#if c.sourceUrl}
+                <span aria-hidden="true">{' · '}</span>
+                <a
+                  href={c.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="link-brand text-muted-foreground">{t('setup.viewSource')}</a
+                >
+              {/if}
+            </p>
           </div>
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="flex shrink-0 flex-wrap items-center gap-2">
             <a
               href={c.homepageUrl}
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 rounded-md border border-border px-3 py-1 text-sm font-medium transition-colors hover:bg-muted"
+              class="inline-flex min-h-10 items-center gap-1.5 rounded-sm border-2 border-border px-3 text-sm font-semibold transition-colors hover:bg-muted"
             >
               <ExternalLink class="size-3.5" />
               {t('setup.install')}
@@ -254,7 +225,7 @@
             {#if link}
               <a
                 href={link}
-                class="inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                class="inline-flex min-h-10 items-center gap-1.5 rounded-sm border-2 border-transparent bg-primary px-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
               >
                 <Smartphone class="size-3.5" />
                 {t('hero.importOpen', { app: c.name })}
@@ -264,7 +235,7 @@
                 onclick={() => (qrFor = qrFor === c.name ? null : c.name)}
                 aria-expanded={qrFor === c.name}
                 aria-label={t('hero.importScan', { app: c.name })}
-                class="inline-flex min-h-11 sm:min-h-9 items-center rounded-md border border-border px-2 py-1 hover:bg-muted"
+                class="inline-flex min-h-10 items-center rounded-sm border-2 border-border px-2 hover:bg-muted"
               >
                 <QrCodeIcon class="size-4" />
               </button>
@@ -272,12 +243,12 @@
           </div>
         </div>
         {#if desc}
-          <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>
+          <p class="mt-1.5 text-[15px] leading-relaxed text-body">{desc}</p>
         {/if}
         {#if link && qrFor === c.name}
           <div class="mt-3 flex flex-col items-center">
             <QrCode text={link} size={168} />
-            <p class="mt-2 text-xs text-muted-foreground">
+            <p class="mt-2 text-sm text-muted-foreground">
               {t('hero.importScan', { app: c.name })}
             </p>
           </div>
@@ -289,18 +260,18 @@
          device-limited plan, split by HWID support so members pick an app that
          actually honors the limit; otherwise a single flat list. -->
     {#if gateDevices}
-      <p class="text-xs font-medium text-muted-foreground">{t('setup.deviceCompatibleTitle')}</p>
-      <ul class="mt-2 space-y-2">
+      <p class="text-sm font-bold text-foreground">{t('setup.deviceCompatibleTitle')}</p>
+      <ul class="mt-2">
         {#each compatClients as c (c.name)}
           {@render clientCard(c)}
         {/each}
       </ul>
       {#if incompatClients.length > 0}
-        <p class="mt-4 text-xs font-medium text-muted-foreground">
+        <p class="mt-4 text-sm font-bold text-foreground">
           {t('setup.deviceIncompatibleTitle')}
         </p>
-        <p class="mt-1 text-xs text-muted-foreground">{t('setup.deviceIncompatibleNote')}</p>
-        <ul class="mt-2 space-y-2 opacity-75">
+        <p class="mt-1 text-sm text-muted-foreground">{t('setup.deviceIncompatibleNote')}</p>
+        <ul class="mt-2 opacity-75">
           {#each incompatClients as c (c.name)}
             {@render clientCard(c)}
           {/each}
@@ -310,7 +281,7 @@
       <!-- The full catalog, all visible: the first entry (already sorted
            OSS-first-then-easiest server-side) carries the Recommended badge,
            so the choice is guided without hiding the alternatives. -->
-      <ul class="space-y-2">
+      <ul>
         {#each currentClients as c, i (c.name)}
           {@render clientCard(c, i === 0)}
         {/each}
@@ -321,38 +292,25 @@
          backend) should say so, not render a silent gap above the steps. -->
     {#if currentClients.length === 0}
       <p
-        class="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
+        class="rounded-sm border border-dashed border-border px-3 py-2 text-sm text-muted-foreground"
       >
         {t('setup.noApps')}
       </p>
     {/if}
 
     <!-- The same three steps as before (install → import → connect). -->
-    <ol class="mt-4 space-y-3 text-sm">
-      <li class="flex gap-3">
-        <span
-          class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
-          >1</span
-        >
-        <span>{t('setup.step.install')}</span>
-      </li>
-      <li class="flex gap-3">
-        <span
-          class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
-          >2</span
-        >
-        <span>{rawConfigFirst ? t('setup.step.importConfig') : t('setup.step.import')}</span>
-      </li>
-      <li class="flex gap-3">
-        <span
-          class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
-          >3</span
-        >
-        <span>{t('setup.step.connect')}</span>
-      </li>
+    <ol class="mt-5 grid gap-3 border-t border-border/70 pt-5">
+      {#each [t('setup.step.install'), rawConfigFirst ? t('setup.step.importConfig') : t('setup.step.import'), t('setup.step.connect')] as step, i (i)}
+        <li class="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-2">
+          <span class="font-display font-bold text-primary tabular-nums"
+            >{stepNumber.format(i + 1)}</span
+          >
+          <span class="text-foreground">{step}</span>
+        </li>
+      {/each}
     </ol>
     {#if gateDevices}
-      <p class="mt-3 text-xs text-muted-foreground">{t('setup.hwidNote')}</p>
+      <p class="mt-3 text-sm text-muted-foreground">{t('setup.hwidNote')}</p>
     {/if}
   </div>
 </section>

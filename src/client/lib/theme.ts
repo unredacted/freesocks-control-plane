@@ -33,12 +33,12 @@ export const THEME_PRESETS: ThemePreset[] = [
   {
     id: 'emerald',
     label: 'Emerald',
-    swatch: 'oklch(0.6 0.13 158)',
-    hue: 158,
+    swatch: 'oklch(0.6 0.13 147)',
+    hue: 147,
     chroma: 0.13,
-    ringChroma: 0.1,
-    primaryL: { light: 0.52, dark: 0.72 },
-    ringL: { light: 0.58, dark: 0.64 },
+    ringChroma: 0.11,
+    primaryL: { light: 0.481, dark: 0.711 },
+    ringL: { light: 0.55, dark: 0.777 },
     hueAdjustable: true,
   },
   {

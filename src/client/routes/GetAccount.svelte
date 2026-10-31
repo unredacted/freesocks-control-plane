@@ -22,7 +22,7 @@
   import TierComparison from '../components/TierComparison.svelte';
   import { tick } from 'svelte';
   import Link from '../components/Link.svelte';
-  import { t } from '../lib/i18n/index.svelte';
+  import { getLocale, t } from '../lib/i18n/index.svelte';
   import LocationPicker from '../components/LocationPicker.svelte';
   import { readStoredReferralCode, clearStoredReferralCode } from '../lib/referral';
   import {
@@ -45,7 +45,6 @@
   } from '../../shared/contracts/account';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import StarIcon from '../components/StarIcon.svelte';
   import Check from '@lucide/svelte/icons/check';
   import KeyRound from '@lucide/svelte/icons/key-round';
 
@@ -318,6 +317,8 @@
     subscription ? subscriptionDisplayUrl(subscription.subToken, subscription.url) : '',
   );
 
+  // Step numbers in the visitor's own digits (Persian and Arabic included).
+  const stepNumber = $derived(new Intl.NumberFormat(getLocale()));
   const STEP_LABELS = $derived([
     t('get.progress.step1'),
     t('get.progress.step2'),
@@ -325,9 +326,11 @@
   ]);
 </script>
 
-<div class="max-w-3xl mx-auto py-8 md:py-12 space-y-8">
-  <header class="text-center">
-    <h1 class="text-3xl md:text-4xl font-display font-bold tracking-tight">
+<div class="mx-auto max-w-3xl space-y-8">
+  <header>
+    <h1
+      class="text-[clamp(34px,4vw,46px)] font-bold leading-[1.05] tracking-[-0.03em] rtl:tracking-normal"
+    >
       {t('get.title')}
     </h1>
   </header>
@@ -335,36 +338,27 @@
   <!-- Guided-flow progress: ① Create account → ② Save your number → ③ Get
        connected. Always visible - it IS the page's map. -->
   <nav aria-label={t('get.progressAria')}>
-    <ol class="flex items-start justify-center">
+    <!-- Three ruled steps: the rule turns green once a step is reached. -->
+    <ol class="grid grid-cols-3 gap-3 sm:gap-6">
       {#each STEP_LABELS as label, i (label)}
         {@const n = i + 1}
         {@const done = currentStep > n}
         {@const current = currentStep === n}
-        <li class="flex items-start" aria-current={current ? 'step' : undefined}>
-          <div class="flex w-20 sm:w-24 flex-col items-center gap-1.5 text-center">
-            <span
-              class="flex size-7 items-center justify-center rounded-full border text-xs font-semibold transition-colors {done
-                ? 'border-primary bg-primary text-primary-foreground'
-                : current
-                  ? 'border-primary text-primary'
-                  : 'border-border text-muted-foreground'}"
-            >
-              {#if done}<Check class="size-3.5" aria-hidden="true" />{:else}{n}{/if}
-            </span>
-            <span
-              class="text-xs leading-tight {current
-                ? 'font-medium text-foreground'
-                : 'text-muted-foreground'}"
-            >
-              {label}
-            </span>
-          </div>
-          {#if n < STEP_LABELS.length}
-            <span
-              class="mt-3.5 h-px w-8 sm:w-14 {done ? 'bg-primary' : 'bg-border'}"
-              aria-hidden="true"
-            ></span>
-          {/if}
+        <li
+          class="border-t-2 pt-3 {done || current ? 'border-primary' : 'border-border'}"
+          aria-current={current ? 'step' : undefined}
+        >
+          <span class="flex items-center gap-1.5 font-display font-bold text-primary tabular-nums">
+            {stepNumber.format(n)}
+            {#if done}<Check class="size-4" aria-hidden="true" />{/if}
+          </span>
+          <span
+            class="mt-0.5 block text-sm leading-snug sm:text-[15px] {current
+              ? 'font-bold text-foreground'
+              : 'text-muted-foreground'}"
+          >
+            {label}
+          </span>
         </li>
       {/each}
     </ol>
@@ -373,7 +367,7 @@
   {#if me.isPending && !created}
     <!-- Mirrors the step-1 panel so a signed-in visitor never sees the
          create-account form flash before their key/setup view. -->
-    <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
+    <div class="panel space-y-5">
       <Skeleton class="h-6 w-40" />
       <Skeleton class="h-16 w-full rounded-lg" />
       <Skeleton class="h-11 w-full rounded-md" />
@@ -381,26 +375,19 @@
     </div>
   {:else if currentStep === 1}
     <!-- STEP 1: create account (no proxy server required). -->
-    <div
-      class="max-w-xl mx-auto w-full rounded-xl border border-border bg-card p-6 md:p-8 space-y-5"
-    >
-      <h2 class="text-lg font-display font-semibold">{t('get.step1Title')}</h2>
+    <div class="panel max-w-xl space-y-5">
+      <h2 class="text-xl font-bold leading-tight">{t('get.step1Title')}</h2>
 
       {#if showChooser && config.data}
         <div class="space-y-2">
-          <p class="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
-            {t('get.chooseBackend')}
-          </p>
+          <p class="text-sm text-muted-foreground">{t('get.chooseBackend')}</p>
           <!-- One radio per ENABLED backend (N-backend, no hardcoded pair). The
                built-in blurbs cover the shipped ids; an unknown id simply has
                no sub-caption. -->
           <div
             role="radiogroup"
             aria-label={t('get.backendAria')}
-            class="grid grid-cols-1 gap-2 rounded-lg border border-border p-1 {chooserBackends.length >
-            1
-              ? 'sm:grid-cols-2'
-              : ''}"
+            class="grid grid-cols-1 gap-2.5 {chooserBackends.length > 1 ? 'sm:grid-cols-2' : ''}"
           >
             {#each chooserBackends as b (b.id)}
               {@const active = chosenBackend === b.id}
@@ -417,19 +404,13 @@
                 tabindex={active ? 0 : -1}
                 onclick={() => (chosenBackend = b.id)}
                 onkeydown={chooserKeydown}
-                class="rounded-md px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {active
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-muted'}"
+                class="rounded-sm border-2 p-4 text-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {active
+                  ? 'border-primary bg-background'
+                  : 'border-border/70 hover:border-primary/50'}"
               >
-                <div class="font-semibold">{b.label}</div>
+                <div class="font-bold text-foreground">{b.label}</div>
                 {#if blurb}
-                  <div
-                    class="text-[11px] leading-tight mt-0.5 {active
-                      ? 'text-primary-foreground/80'
-                      : 'text-muted-foreground/80'}"
-                  >
-                    {blurb}
-                  </div>
+                  <div class="mt-0.5 text-sm text-muted-foreground">{blurb}</div>
                 {/if}
               </button>
             {/each}
@@ -449,7 +430,7 @@
         </div>
       {:else if !config.data}
         <div
-          class="flex min-h-11 items-center rounded-md border border-border px-3 text-sm text-muted-foreground"
+          class="flex min-h-11 items-center rounded-sm border border-border px-3 text-sm text-muted-foreground"
           role="status"
         >
           {t('common.loading')}
@@ -471,7 +452,7 @@
         <div class="space-y-1.5">
           <label
             for="referral-code"
-            class="text-xs text-muted-foreground flex items-center justify-between"
+            class="flex items-center justify-between text-sm text-muted-foreground"
           >
             <span>{t('referral.fieldLabel')}</span>
           </label>
@@ -482,9 +463,9 @@
             placeholder={t('referral.fieldPlaceholder')}
             autocomplete="off"
             spellcheck="false"
-            class="w-full min-h-11 rounded-md border border-border bg-background px-3 py-2 font-mono text-sm uppercase focus:outline-none focus:ring-2 focus:ring-primary"
+            class="w-full min-h-11 rounded-sm border border-border bg-well px-3 py-2 font-mono text-sm uppercase focus:outline-none focus:ring-2 focus:ring-primary"
           />
-          <p class="text-[11px] text-muted-foreground">{t('referral.fieldHint')}</p>
+          <p class="text-sm text-muted-foreground">{t('referral.fieldHint')}</p>
         </div>
       {/if}
 
@@ -492,13 +473,12 @@
         onclick={() => createAccount.mutate()}
         disabled={createAccount.isPending || !token}
         size="lg"
-        class="w-full min-h-11"
+        class="w-full"
       >
-        <StarIcon class="size-4" />
         {createAccount.isPending ? t('common.working') : t('get.createAccount')}
       </Button>
 
-      <p class="text-xs text-muted-foreground text-center">
+      <p class="text-sm text-muted-foreground">
         {#if deviceLimitsShown(config.data)}
           {t('get.freeAccountNote', { days: freeDays, devices: freeDevicesLabel })}
         {:else}
@@ -506,9 +486,9 @@
         {/if}
       </p>
 
-      <p class="text-xs text-muted-foreground text-center">
+      <p class="text-sm text-muted-foreground">
         {t('get.haveAccountPrefix')}
-        <Link href="/login" class="text-primary underline">{t('nav.signIn')}</Link>.
+        <Link href="/login" class="link-brand text-foreground">{t('nav.signIn')}</Link>.
       </p>
     </div>
   {:else if currentStep === 2}
@@ -516,11 +496,11 @@
          work; once it closes, the (skippable) passkey offer completes the
          "secure your account" step. -->
     {#if showPasskeyPrompt && !revealOpen && passkeySupported}
-      <div class="max-w-xl mx-auto w-full space-y-2">
+      <div class="max-w-xl space-y-2">
         <PasskeyManager showList={false} onEnrolled={() => (showPasskeyPrompt = false)} />
         <Button
           variant="outline"
-          class="mx-auto flex min-h-11 w-full max-w-xs"
+          class="flex w-full max-w-xs"
           onclick={() => (showPasskeyPrompt = false)}
         >
           {t('passkey.notNow')}
@@ -530,7 +510,7 @@
   {:else if account.isPending && !subscription}
     <!-- STEP 3 loading: mirror the panel so the create-key UI doesn't flash
          for a signed-in member whose key is still loading. -->
-    <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
+    <div class="panel space-y-5">
       <Skeleton class="h-6 w-40" />
       <Skeleton class="h-24 w-full rounded-lg" />
       <Skeleton class="h-11 w-full rounded-md" />
@@ -539,20 +519,19 @@
     <!-- STEP 3 (pre-key): the key panel holds ONLY the free action; the
          optional membership section is a separate block below it. -->
     <div class="space-y-6">
-      <div
-        id="step-3"
-        class="scroll-mt-24 rounded-xl border border-border bg-card p-6 md:p-8 space-y-5"
-      >
-        <div class="space-y-1">
-          <h2 class="text-lg font-display font-semibold">{t('get.step3Title')}</h2>
-          <p class="text-sm text-muted-foreground">{t('get.step3Intro')}</p>
+      <div id="step-3" class="panel scroll-mt-24 space-y-5">
+        <div class="space-y-1.5">
+          <h2 class="text-xl font-bold leading-tight">{t('get.step3Title')}</h2>
+          <p class="text-[15px] text-muted-foreground">{t('get.step3Intro')}</p>
           {#if created}
             <!-- Recovery pointer for fresh sign-ups: the reveal-once number is
                volatile, so if it wasn't saved the only recourse is rotating to
                a fresh (re-revealed) number on /account. -->
-            <p class="text-xs text-muted-foreground">
+            <p class="text-sm text-muted-foreground">
               {t('get.lostNumberHint')}
-              <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
+              <Link href="/account" class="link-brand text-foreground"
+                >{t('get.lostNumberLinkLabel')}</Link
+              >.
             </p>
           {/if}
         </div>
@@ -584,13 +563,15 @@
 
         {#if createSubscription.error}
           <div
-            class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive space-y-1"
+            class="space-y-1 rounded-sm border border-destructive/40 bg-destructive/10 px-3 py-2 text-[15px] text-destructive"
           >
             <p>{apiErrorMessage(createSubscription.error)}</p>
             {#if subErrorIsUnavailable}
-              <p class="text-xs text-muted-foreground">
+              <p class="text-sm text-muted-foreground">
                 {t('get.subErrorSafePrefix')}
-                <Link href="/account" class="underline">{t('get.manageLinkLabel')}</Link>
+                <Link href="/account" class="link-brand text-foreground"
+                  >{t('get.manageLinkLabel')}</Link
+                >
                 {t('get.subErrorSafeSuffix')}
               </p>
             {/if}
@@ -601,7 +582,7 @@
           onclick={() => createSubscription.mutate()}
           disabled={createSubscription.isPending}
           size="lg"
-          class="w-full min-h-11"
+          class="w-full"
         >
           <KeyRound class="size-4" />
           {createSubscription.isPending
@@ -620,7 +601,7 @@
              successful redeem flips isCurrentMember and hides this whole
              section. Paid checkout returns to /account?order=…, which also
              offers first-key create. -->
-        <div class="rounded-xl border border-border/60 p-6 md:p-8 space-y-5">
+        <div class="panel space-y-5">
           <TierComparison
             currentTierSlug={account.data?.user.tier.slug ?? 'free'}
             titleKey="get.plansTitle"
@@ -634,7 +615,7 @@
             </div>
           {/if}
 
-          <div class="border-t border-border/60 pt-4">
+          <div class="border-t border-border/70 pt-4">
             <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" flat />
           </div>
         </div>
@@ -698,9 +679,9 @@
         />
         <RawConfig />
       {/if}
-      <p class="text-xs text-muted-foreground text-center">
+      <p class="text-sm text-muted-foreground">
         {t('get.manageHintPrefix')}
-        <Link href="/account" class="text-primary underline">{t('get.manageLinkLabel')}</Link>.
+        <Link href="/account" class="link-brand text-foreground">{t('get.manageLinkLabel')}</Link>.
       </p>
     </div>
   {/if}
@@ -723,9 +704,9 @@
   {/if}
 
   {#if config.data?.site?.supportEmail}
-    <p class="text-xs text-muted-foreground text-center max-w-sm mx-auto">
+    <p class="text-sm text-muted-foreground">
       {t('support.getAccountLine')}
-      <a class="text-primary underline" href="mailto:{config.data.site.supportEmail}">
+      <a class="link-brand text-foreground" href="mailto:{config.data.site.supportEmail}">
         {config.data.site.supportEmail}
       </a>
     </p>

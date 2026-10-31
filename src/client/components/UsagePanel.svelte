@@ -1,7 +1,4 @@
 <script lang="ts">
-  import Activity from '@lucide/svelte/icons/activity';
-  import Calendar from '@lucide/svelte/icons/calendar';
-  import Gauge from '@lucide/svelte/icons/gauge';
   import Sparkline from './Sparkline.svelte';
   import StatBlock from './StatBlock.svelte';
   import { formatBytes, daysUntil } from '../lib/utils';
@@ -68,50 +65,50 @@
   // Expiry: convert + classify (so we can hint when it's close).
   let expiryDate = $derived(expiresAt ? new Date(expiresAt) : null);
   let daysLeft = $derived(daysUntil(expiresAt));
+  // Amber inside the last week; '' otherwise (each line picks its own calm color).
   let expiryUrgency = $derived(
-    daysLeft !== null && daysLeft <= 7
-      ? 'text-amber-700 dark:text-amber-400'
-      : 'text-muted-foreground',
+    daysLeft !== null && daysLeft <= 7 ? 'text-amber-700 dark:text-amber-400' : '',
   );
 </script>
 
-<section class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-4">
-  <h3 class="font-display text-base font-semibold">{t('usage.panelTitle')}</h3>
-  <div class="grid gap-4 sm:grid-cols-2">
-    <StatBlock icon={Gauge} label={t('hero.traffic')}>
+<section class="panel space-y-5">
+  <h2 class="text-xl font-bold leading-tight">{t('usage.panelTitle')}</h2>
+  <div class="grid gap-7 sm:grid-cols-2">
+    <StatBlock label={t('hero.traffic')}>
       {#if trafficLimitBytes !== null}
-        <p class="text-sm tabular-nums">
-          {formatBytes(trafficUsedBytes)} / {formatBytes(trafficLimitBytes)}
+        <p
+          class="font-display text-[30px] font-bold leading-tight tracking-[-0.02em] text-foreground tabular-nums rtl:tracking-normal"
+        >
+          <bdi>{formatBytes(trafficUsedBytes)}</bdi>
+          <span class="font-sans text-[17px] font-normal tracking-normal text-muted-foreground"
+            >/ <bdi>{formatBytes(trafficLimitBytes)}</bdi></span
+          >
         </p>
-        <div class="h-1.5 rounded-full bg-muted overflow-hidden">
+        <div class="h-2.5 overflow-hidden border border-border/70 bg-well" aria-hidden="true">
           <div
             class="h-full {usageColor} transition-all duration-500"
             style="width: {usagePct}%"
           ></div>
         </div>
-        {#if usagePct >= 70}
-          <p class="text-[11px] text-muted-foreground tabular-nums">
-            {usagePct >= 90
-              ? t('hero.nearlyOut', {
-                  amount: formatBytes(Math.max(0, trafficLimitBytes - trafficUsedBytes)),
-                })
-              : t('hero.leftThisPeriod', {
-                  amount: formatBytes(Math.max(0, trafficLimitBytes - trafficUsedBytes)),
-                })}
-          </p>
-        {/if}
-        {#if nextResetDays !== null && nextResetDays >= 0}
-          <p class="text-[11px] text-muted-foreground tabular-nums">
+        <p class="text-[15px] tabular-nums">
+          {usagePct >= 90
+            ? t('hero.nearlyOut', {
+                amount: formatBytes(Math.max(0, trafficLimitBytes - trafficUsedBytes)),
+              })
+            : t('hero.leftThisPeriod', {
+                amount: formatBytes(Math.max(0, trafficLimitBytes - trafficUsedBytes)),
+              })}
+          {#if nextResetDays !== null && nextResetDays >= 0}
             {t('hero.resetsInDays', { count: nextResetDays })}
-          </p>
-        {/if}
-      {:else}
-        <p>
-          <span class="rounded-full bg-primary/10 text-primary text-[11px] font-medium px-2 py-0.5">
-            {t('hero.unlimited')}
-          </span>
+          {/if}
         </p>
-        <p class="text-[11px] text-muted-foreground tabular-nums">
+      {:else}
+        <p
+          class="font-display text-[30px] font-bold leading-tight tracking-[-0.02em] text-foreground rtl:tracking-normal"
+        >
+          {t('hero.unlimited')}
+        </p>
+        <p class="text-[15px] tabular-nums">
           {t('hero.usedSoFar', { amount: formatBytes(trafficUsedBytes) })}
         </p>
       {/if}
@@ -119,12 +116,12 @@
       <!-- Usage trend, shown by default. A quiet/new key draws a flat baseline
            (not hidden). Absent only when there's no usage data at all. -->
       {#if usagePoints && usagePoints.length > 0}
-        <div class="pt-2 space-y-1">
+        <div class="space-y-1 pt-2">
           <div class="text-primary">
-            <Sparkline points={usagePoints} class="w-full h-10" />
+            <Sparkline points={usagePoints} class="h-10 w-full" />
           </div>
           {#if usageTotal !== undefined}
-            <p class="text-[11px] text-muted-foreground tabular-nums">
+            <p class="text-sm text-muted-foreground tabular-nums">
               {t('usage.total', { amount: formatBytes(usageTotal) })}
             </p>
           {/if}
@@ -136,23 +133,30 @@
       <!-- Free keys have no calendar expiry (the panel carries the no-expiry
            sentinel; the usage-based idle sweep governs) — frame the stat
            around activity instead of a date. -->
-      <StatBlock icon={Activity} label={t('hero.validityLabel')}>
-        <p class="text-sm">{t('hero.staysActive')}</p>
-        <p class="text-[11px] text-muted-foreground">
+      <StatBlock label={t('hero.validityLabel')}>
+        <p class="font-display text-[22px] font-bold leading-snug text-foreground">
+          {t('hero.staysActive')}
+        </p>
+        <p class="text-[15px] text-muted-foreground">
           {t('hero.idleNote', { days: idleDays })}
         </p>
       </StatBlock>
     {:else}
-      <StatBlock icon={Calendar} label={t('hero.expires')}>
+      <StatBlock label={t('hero.expires')}>
         {#if expiryDate}
-          <p class="text-sm tabular-nums {expiryUrgency}">
+          <p
+            class="font-display text-[22px] font-bold leading-snug tabular-nums {expiryUrgency ||
+              'text-foreground'}"
+          >
             {formatDate(expiryDate)}
           </p>
         {:else}
-          <p class="text-sm text-muted-foreground">{t('hero.noExpiry')}</p>
+          <p class="font-display text-[22px] font-bold leading-snug text-foreground">
+            {t('hero.noExpiry')}
+          </p>
         {/if}
         {#if daysLeft !== null}
-          <p class="text-[11px] tabular-nums {expiryUrgency}">
+          <p class="text-[15px] tabular-nums {expiryUrgency || 'text-muted-foreground'}">
             {daysLeft < 0
               ? t('hero.expiredDaysAgo', { count: -daysLeft })
               : daysLeft === 0
