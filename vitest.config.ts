@@ -60,6 +60,9 @@ export default defineConfig({
           name: 'components',
           environment: 'jsdom',
           include: ['src/**/*.svelte.test.ts'],
+          // After the shared vitest.setup.ts: a dialog's scroll lock is undone
+          // before the DOM goes.
+          setupFiles: ['./src/client/testing/components.setup.ts'],
         },
       },
     ],
