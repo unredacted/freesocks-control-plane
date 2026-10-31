@@ -17,6 +17,7 @@
    * Props: open (bindable), send (the newest rollout), node (this node behind the port).
    */
   import { useQueryClient } from '@tanstack/svelte-query';
+  import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
@@ -80,7 +81,10 @@
     }
     edgeId = node.testable[0]?.edgeId ?? '';
     sni = choice.kind === 'pick' ? (choice.names[0] ?? null) : null;
-    void build();
+    // Untracked: build reads the address and the name just set, and tracking
+    // them would run this again (a second request), and again on every pick,
+    // putting the first address and name back.
+    void untrack(build);
   });
 
   async function connected() {
