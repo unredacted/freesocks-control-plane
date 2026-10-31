@@ -698,11 +698,13 @@ machine, which is also why its retirement is closed by an admin rather than by a
 name is refused (`servers.node_adopted`).
 
 A node Edges already protect while FCP does not manage it (docs/edges.md § "Protecting a node
-FCP does not manage") is refused while its origin has an active L4 address whose confirmation is
-current and would not be once the node is enrolled (`servers.adopt_edges_retest`): such a
-confirmation was taken with no REALITY authentication component, enrolling the node adds one
+FCP does not manage") is refused while an L4 address its members are handed now (published and
+active, on a switched-on origin and listener) holds a confirmation that is current and would not
+be once the node is enrolled (`servers.adopt_edges_retest`): such a confirmation was taken with
+no REALITY authentication component, enrolling the node adds one
 (`panelNodeIntents.authRevision`), and the render gate would withhold each of those addresses
-from the node's members until it is tested again. Nothing needs the adoption: the node's server
+from the node's members until it is tested again. A spare no member holds does not refuse it; it
+needs its test again before a rotation uses it. Nothing needs the adoption: the node's server
 names are sent and proven, and its edges rotate, as they are.
 
 An adopted node is **reconciled as it was adopted**, so the reconciles a rename, a settled port

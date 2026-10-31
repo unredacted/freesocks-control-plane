@@ -515,12 +515,14 @@ const NO_COUNTRY = 'XX';
 const MAX_ADOPT_ADDRESSES = 64;
 
 /**
- * How many L4 addresses of an origin Edges built for this node, while FCP did
- * not manage it, are confirmed now and would not be once it is enrolled. Such
- * a confirmation carries no REALITY authentication component (the node had no
- * intent); enrolling it with `authRevision` adds one, so the render gate would
- * withhold each of those addresses from members until it is tested again
- * (docs/edges.md, "An L4 edge needs the operator's own confirmation").
+ * How many L4 addresses members are handed now, of an origin Edges built for
+ * this node while FCP did not manage it, are confirmed now and would not be
+ * once it is enrolled. Such a confirmation carries no REALITY authentication
+ * component (the node had no intent); enrolling it with `authRevision` adds
+ * one, so the render gate would withhold each of those addresses from members
+ * until it is tested again (docs/edges.md, "An L4 edge needs the operator's
+ * own confirmation"). An address members are not handed (a spare, one on a
+ * switched-off origin or listener) only needs its test before it is used.
  */
 async function testedAddressesAdoptionStales(
   db: QueryCtx['db'],
@@ -533,16 +535,18 @@ async function testedAddressesAdoptionStales(
     .query('relays')
     .withIndex('by_node', (q) => q.eq('backendServerId', sid).eq('nodeName', nodeName))
     .unique();
-  if (!relay) return 0;
+  if (!relay || !relay.enabled) return 0;
   const edges = await db
     .query('edges')
-    .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id).eq('status', 'active'))
+    .withIndex('by_relay_publication', (q) =>
+      q.eq('relayId', relay._id).eq('publication', 'published'),
+    )
     .collect();
   let stale = 0;
   for (const edge of edges) {
-    if (!needsEndpointVerification(edge)) continue;
+    if (edge.status !== 'active' || !needsEndpointVerification(edge)) continue;
     const listener = await db.get(edge.listenerId);
-    if (!listener || listener.retired) continue;
+    if (!listener || listener.retired || !listener.deployed || !listener.enabled) continue;
     if (
       verificationCurrent(edge, { ...listener, authRevision: null }) &&
       !verificationCurrent(edge, { ...listener, authRevision })
