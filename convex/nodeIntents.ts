@@ -43,6 +43,7 @@ import { resolveServerConfig } from './lib/serverConfig';
 import { observeInstance } from './backendObserve';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { sameAddress } from './lib/edges/hosts';
+import { needsEndpointVerification, verificationCurrent } from './lib/edges/verification';
 import { bumpGateVersion, modeOf, setupReady, type Setup, type SetupMode } from './backendSetup';
 import { confirmFromRole, firewallPortsFor } from './lib/backend/portRequirements';
 import { currentNodeName, formerNamesByName, runningRenameOf } from './lib/backend/nodeAliases';
@@ -514,6 +515,44 @@ const NO_COUNTRY = 'XX';
 const MAX_ADOPT_ADDRESSES = 64;
 
 /**
+ * How many L4 addresses of an origin Edges built for this node, while FCP did
+ * not manage it, are confirmed now and would not be once it is enrolled. Such
+ * a confirmation carries no REALITY authentication component (the node had no
+ * intent); enrolling it with `authRevision` adds one, so the render gate would
+ * withhold each of those addresses from members until it is tested again
+ * (docs/edges.md, "An L4 edge needs the operator's own confirmation").
+ */
+async function testedAddressesAdoptionStales(
+  db: QueryCtx['db'],
+  sid: Id<'backendServers'>,
+  nodeName: string,
+  authRevision: string | undefined,
+): Promise<number> {
+  if (!authRevision) return 0;
+  const relay = await db
+    .query('relays')
+    .withIndex('by_node', (q) => q.eq('backendServerId', sid).eq('nodeName', nodeName))
+    .unique();
+  if (!relay) return 0;
+  const edges = await db
+    .query('edges')
+    .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id).eq('status', 'active'))
+    .collect();
+  let stale = 0;
+  for (const edge of edges) {
+    if (!needsEndpointVerification(edge)) continue;
+    const listener = await db.get(edge.listenerId);
+    if (!listener || listener.retired) continue;
+    if (
+      verificationCurrent(edge, { ...listener, authRevision: null }) &&
+      !verificationCurrent(edge, { ...listener, authRevision })
+    )
+      stale++;
+  }
+  return stale;
+}
+
+/**
  * Adopt an existing backend node as a LIVE enrolled node (docs/servers.md
  * "Adopting a backend"): it already serves members, so nothing changes for
  * them. The node row must already run the mode's transport; a direct node's
@@ -614,6 +653,15 @@ export const adoptNode = internalMutation({
     const inbound = profile?.inbounds.find((i) => i.inboundUuid === t.uuid);
     const configRevision = `${profile?.changeToken ?? ''}:${t.uuid}`;
     const authRevision = inbound?.realityAuth?.digest ?? undefined;
+    // Members of a node Edges already protect hold its tested addresses: an
+    // adoption that would take them away until a new test is not "nothing
+    // changes for them".
+    const stale = await testedAddressesAdoptionStales(ctx.db, sid, node.name, authRevision);
+    if (stale > 0)
+      refuse(
+        'servers.adopt_edges_retest',
+        `Edges protect this node. Adopting it would keep its ${stale} tested address${stale === 1 ? '' : 'es'} from members until each is tested again`,
+      );
     const now = Date.now();
     const settings = defaultSettings(setup!, a.mode);
     if (isWs(mode.shape)) settings.originHostnameSource = 'explicit';

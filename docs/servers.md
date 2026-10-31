@@ -697,6 +697,14 @@ machine, which is also why its retirement is closed by an admin rather than by a
 (below): a role `PUT`, `bootstrap` (the node secret is never read for it) or `applied` under its
 name is refused (`servers.node_adopted`).
 
+A node Edges already protect while FCP does not manage it (docs/edges.md § "Protecting a node
+FCP does not manage") is refused while its origin has an active L4 address whose confirmation is
+current and would not be once the node is enrolled (`servers.adopt_edges_retest`): such a
+confirmation was taken with no REALITY authentication component, enrolling the node adds one
+(`panelNodeIntents.authRevision`), and the render gate would withhold each of those addresses
+from the node's members until it is tested again. Nothing needs the adoption: the node's server
+names are sent and proven, and its edges rotate, as they are.
+
 An adopted node is **reconciled as it was adopted**, so the reconciles a rename, a settled port
 change, Finish maintenance or a settings change schedule leave what members hold alone: its row
 keeps the port it talks to the backend on and every transport it served when adopted

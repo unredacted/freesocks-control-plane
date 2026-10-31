@@ -795,6 +795,48 @@ describe('an adopted node whose edge FCP does not run', () => {
   });
 });
 
+describe('a node Edges already protect', () => {
+  /** The node, and an origin Edges built for it while FCP did not manage it, with one L4 address. */
+  async function protectedLegacy(s: Seeded, opts: { verified: boolean }) {
+    const { nodeUuid } = await legacyDirect(s);
+    const { relayId, listenerId } = await registerRelay(s.t, { nodeName: 'legacy-a' });
+    const { edgeId } = await adoptL4Edge(s.t, relayId, listenerId, { verified: opts.verified });
+    return { nodeUuid, edgeId };
+  }
+  const retestItems = async (t: T, edgeId: Id<'edges'>) =>
+    (await t.query(internal.edgeOperator.attention, {})).items.filter(
+      (i) => i.id === `retest_needed:${edgeId}`,
+    );
+
+  test('is refused while a tested address of its origin would need a new test', async () => {
+    const s = await seed();
+    const { nodeUuid, edgeId } = await protectedLegacy(s, { verified: true });
+    // Its confirmation was taken with no REALITY authentication component (the
+    // node was not enrolled); enrolling it adds one, so the render gate would
+    // withhold the address from members until it is tested again.
+    await expect(
+      s.t.mutation(internal.nodeIntents.adoptNode, {
+        backendServerId: s.serverId,
+        nodeUuid,
+        mode: 'privacy-reality',
+      }),
+    ).rejects.toThrow(/servers\.adopt_edges_retest/);
+    expect(await s.t.run((ctx) => ctx.db.query('panelNodeIntents').collect())).toEqual([]);
+    expect(await retestItems(s.t, edgeId)).toEqual([]);
+  });
+
+  test('goes ahead when no address of its origin holds a confirmation adoption would undo', async () => {
+    const s = await seed();
+    const { nodeUuid } = await protectedLegacy(s, { verified: false });
+    const r = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    expect(r.addresses).toBe(1);
+  });
+});
+
 describe("the node role's routes never act for an adopted machine", () => {
   test('bootstrap (the node secret) and the applied report are refused', async () => {
     const s = await seed();
