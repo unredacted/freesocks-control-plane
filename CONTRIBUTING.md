@@ -30,6 +30,11 @@ proxy-server and payment adapters are tested with a fake `fetch`. The fast suite
 the network: until a test stubs `fetch` (`convex/lib/edges/testing/mockFetch.ts`), a call fails
 the test running at the time (`vitest.setup.ts`), a call from work the test scheduled included.
 
+A Svelte component can be mounted for real in a `*.svelte.test.ts` file (jsdom, the `components`
+project in `vitest.config.ts`): `mountWithQuery` (`src/client/testing/`) mounts it under a query
+client, and a `$state` props object lets the test change a prop. An effect that never settles
+fails such a test, so mount any component whose effects write state they read.
+
 If you change how FCP talks to proxy servers or how keys reach apps, also run the Docker suites
 (`bun run test:integration:remnawave`, `bun run test:compat`).
 
