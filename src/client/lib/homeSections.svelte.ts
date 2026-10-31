@@ -14,6 +14,7 @@ export type FaqTab = 'general' | 'threat';
 export const homeFaq = $state<{ tab: FaqTab }>({ tab: 'general' });
 
 export const THREAT_MODEL_ID = 'threat-model';
+export const FAQ_ID = 'faq';
 
 function scrollToSection(id: string) {
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -25,7 +26,10 @@ function scrollToSection(id: string) {
 export async function goToSection(e: MouseEvent, id: string): Promise<void> {
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
   e.preventDefault();
+  // The threat-model link opens that tab; a plain FAQ link opens the general
+  // one, so it never lands on whichever tab an earlier link left open.
   if (id === THREAT_MODEL_ID) homeFaq.tab = 'threat';
+  else if (id === FAQ_ID) homeFaq.tab = 'general';
   if (router.pathname === '/') {
     scrollToSection(id);
     return;

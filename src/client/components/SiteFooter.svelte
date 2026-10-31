@@ -4,7 +4,7 @@
   import SocialLinks from './SocialLinks.svelte';
   import { configQuery, meQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
-  import { goToSection, THREAT_MODEL_ID } from '../lib/homeSections.svelte';
+  import { FAQ_ID, goToSection, THREAT_MODEL_ID } from '../lib/homeSections.svelte';
 
   /**
    * The member-facing footer: the brand, three link columns, and who
@@ -72,7 +72,7 @@
     <div>
       <h2 class="mb-3 text-[15px] font-bold">{t('footer.support')}</h2>
       <ul class="grid gap-1.5 text-[15px]">
-        {@render section('faq', t('home.sections.faq'))}
+        {@render section(FAQ_ID, t('home.sections.faq'))}
         {@render section(THREAT_MODEL_ID, t('faq.tabThreat'))}
         {#if site?.supportEmail}
           <li><a class={linkCls} href="mailto:{site.supportEmail}">{site.supportEmail}</a></li>

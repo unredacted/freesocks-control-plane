@@ -8,7 +8,7 @@
   import { Button } from '@client/components/ui/button';
   import { configQuery, meQuery } from '../lib/queries';
   import { t, type MessageKey } from '../lib/i18n/index.svelte';
-  import { goToSection } from '../lib/homeSections.svelte';
+  import { FAQ_ID, goToSection } from '../lib/homeSections.svelte';
   import { router } from '../stores/router.svelte';
   import { slide } from 'svelte/transition';
   import Menu from '@lucide/svelte/icons/menu';
@@ -27,7 +27,7 @@
     ...(config.data?.billing?.enabled
       ? [{ label: 'home.membership.title', section: 'membership' } as const]
       : []),
-    { label: 'home.sections.faq', section: 'faq' },
+    { label: 'home.sections.faq', section: FAQ_ID },
   ]);
 
   // Below lg the section links and sign-in fold into a labeled panel under the
