@@ -33,6 +33,8 @@ import { bindFamily, insertFamily } from './sniFamilies';
 import { fcpWrites } from './backendSetup';
 import { familyUsable } from './lib/edges/sni/hunt/store';
 import { hostPort } from './lib/edges/ip';
+import { autoTestOf } from './lib/edges/sni/autoTest';
+import { clientCheckReadiness } from './edgeClientCheck';
 
 const refuse = (code: string, message: string): never => {
   throw new ConvexError({ code, message });
@@ -70,6 +72,12 @@ const deliveryName = (n: Doc<'sniNames'>): DeliveryName => ({
   status: n.status,
   qualification: n.qualification.state,
 });
+
+/** A node's `client_check` receipts of one send, as its page shows them (dates as ISO text). */
+function autoTestView(rows: Doc<'sniAcceptanceReceipts'>[], now: number) {
+  const t = autoTestOf(rows, now);
+  return t ? { ...t, at: new Date(t.at).toISOString() } : null;
+}
 
 /** The newest rollout of a binding, and the names a test can prove with it. */
 async function newestRollout(db: QueryCtx['db'], bindingId: Id<'sniInboundBindings'>) {
@@ -116,6 +124,7 @@ export const status = internalQuery({
       .withIndex('by_server_inbound', (q) => q.eq('backendServerId', server._id))
       .collect();
     const byTransport = await listenersByTransport(ctx.db, server._id);
+    const now = Date.now();
     // Families no transport uses, for "use the existing list" (few: one per target).
     let unbound: { f: Doc<'sniFamilies'>; names: number }[] | null = null;
     const unboundFamilies = async () => {
@@ -162,6 +171,15 @@ export const status = internalQuery({
         const { rollout, provable } = binding
           ? await newestRollout(ctx.db, binding._id)
           : { rollout: null, provable: new Set<string>() };
+        // FCP's own tests of the newest send, per node (sniAutoConfirm.ts).
+        const autoReceipts = rollout
+          ? (
+              await ctx.db
+                .query('sniAcceptanceReceipts')
+                .withIndex('by_rollout', (q) => q.eq('rolloutId', rollout._id))
+                .collect()
+            ).filter((x) => x.evidenceKind === 'client_check')
+          : [];
         const facts = {
           bound: !!binding,
           onBackend: new Set(i.reality.serverNames),
@@ -198,6 +216,10 @@ export const status = internalQuery({
                   verificationCurrent(e, verifiable!),
               )
               .map((e) => ({ edgeId: e._id as string, name: e.name })),
+            autoTest: autoTestView(
+              autoReceipts.filter((x) => x.listenerId === listener._id),
+              now,
+            ),
           });
         }
         const sameCoverSite = family
@@ -248,6 +270,9 @@ export const status = internalQuery({
         backendChanges: servers.manage.enabled,
         // Established once (or adopted): what the backend ledger writes against.
         backendSetUp: fcpWrites(setup),
+        autoTest: sni.autoConfirm
+          ? await clientCheckReadiness(ctx.db, { clientCheck: { enabled: true } })
+          : ('off' as const),
       },
       transports,
     };

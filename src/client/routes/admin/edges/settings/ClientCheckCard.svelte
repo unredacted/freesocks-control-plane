@@ -47,7 +47,8 @@
     <h2 id="settings-client-check-title" class="font-medium">FCP's own client check</h2>
     <p class="text-muted-foreground mt-0.5 text-sm">
       Real sing-box and Xray clients connect through an address with FCP's check account and read
-      the address they come out of, which must be the node's.
+      the address they come out of, which must be the node's. A test of new server names on a node
+      runs Mihomo too.
     </p>
   </header>
   <div class="space-y-4 border-t px-4 py-4">

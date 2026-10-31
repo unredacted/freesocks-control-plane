@@ -252,6 +252,23 @@ export function namesSwitchLine(on: boolean): string {
     : 'Off. Nothing is checked or sent. Members keep the names they have.';
 }
 
+/**
+ * Under "Test new names with FCP's client check" (`edge.sni.autoConfirm`):
+ * what is true now, and what holds it back.
+ */
+export function autoTestSwitchLine(
+  on: boolean,
+  service: 'ready' | 'not_configured' | 'unhealthy' | undefined,
+): string {
+  if (!on)
+    return 'Off. After a send, a person tests one name on each node, and that test hands the names to its members.';
+  if (service === 'not_configured')
+    return "On, but FCP's client check is not set up here, so nothing is tested. See Edges, Settings.";
+  if (service === 'unhealthy')
+    return "On, but FCP's client check did not answer its last health check, so nothing is tested until it does.";
+  return "On. After a send, FCP's own sing-box, Xray and Mihomo connect with one new name through each node's tested address. A pass hands the names to that node's members; anything else waits for a person.";
+}
+
 /** Under a list's "Use this list" switch: what is true now. */
 export function listSwitchLine(on: boolean): string {
   return on

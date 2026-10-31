@@ -109,7 +109,33 @@ export type ClientCheckOutcome =
       confirmed: boolean;
     };
 
-const REALITY_FAMILY_ENGINE: Record<string, ClientCheckEngine> = { singbox: 'sing-box' };
+const REALITY_FAMILY_ENGINE: Record<string, ClientCheckEngine> = {
+  singbox: 'sing-box',
+  mihomo: 'mihomo',
+};
+
+/**
+ * The engines a check of an ADDRESS runs. Its 90 s hold both through the
+ * address and through the control even when every session times out (a dead
+ * node is then `node_unreachable`, not `out_of_time`); a third would not fit.
+ * A test of a send's names (sniAutoConfirm.ts) runs through an address already
+ * confirmed, where sessions answer within seconds, and runs every engine.
+ */
+export const ADDRESS_CHECK_ENGINES: readonly ClientCheckEngine[] = ['sing-box', 'xray'];
+/** What every release of the service has held (before its first health answer). */
+const BASELINE_ENGINES: readonly ClientCheckEngine[] = ['sing-box', 'xray'];
+
+/**
+ * The engines the service listed in its last health answer, so a deployment
+ * whose service predates an engine never asks it for one; the baseline before
+ * an answer that lists any.
+ */
+async function serviceEngines(db: DatabaseReader): Promise<ClientCheckEngine[]> {
+  const h = await readStateJson<ClientCheckHealthRecord>(db, CLIENT_CHECK_HEALTH_KEY);
+  const held = new Set(h?.ok ? h.engines.map((e) => e.engine) : []);
+  if (held.size === 0) return [...BASELINE_ENGINES];
+  return CLIENT_CHECK_ENGINES.filter((e) => held.has(e));
+}
 
 /**
  * What a check of `edgeId` needs to know besides the link: the layer, what the
@@ -165,6 +191,7 @@ export const context = internalQuery({
       expectedEgress,
       expectedRefusals,
       controlEdgeId: controls[0]?._id ?? (named && named.relayId === relay._id ? named._id : null),
+      engines: await serviceEngines(ctx.db),
     };
   },
 });
@@ -381,7 +408,9 @@ type Link =
   | { ok: false; detail: string };
 
 export type ClientCheckLink = Link;
-type LinkBuilder = (ctx: ActionCtx, edgeId: Id<'edges'>) => Promise<Link>;
+/** `candidateSni`: the link presents this name instead of the listener's (a send's test). */
+type LinkOptions = { candidateSni?: string };
+type LinkBuilder = (ctx: ActionCtx, edgeId: Id<'edges'>, opts?: LinkOptions) => Promise<Link>;
 let linkBuilder: LinkBuilder = buildLink;
 
 /**
@@ -392,13 +421,17 @@ export function __setClientCheckLinks(f: LinkBuilder | null): void {
   linkBuilder = f ?? buildLink;
 }
 
-function linkFor(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<Link> {
-  return linkBuilder(ctx, edgeId);
+export function linkFor(ctx: ActionCtx, edgeId: Id<'edges'>, opts?: LinkOptions): Promise<Link> {
+  return linkBuilder(ctx, edgeId, opts);
 }
 
-async function buildLink(ctx: ActionCtx, edgeId: Id<'edges'>): Promise<Link> {
+async function buildLink(ctx: ActionCtx, edgeId: Id<'edges'>, opts?: LinkOptions): Promise<Link> {
   try {
-    const r = await ctx.runAction(internal.edgeTestLinks.build, { edgeId, clientCheck: true });
+    const r = await ctx.runAction(internal.edgeTestLinks.build, {
+      edgeId,
+      clientCheck: true,
+      ...(opts?.candidateSni ? { candidateSni: opts.candidateSni } : {}),
+    });
     return { ok: true, link: r.link, binding: r.binding, credentialId: r.credentialId };
   } catch (err) {
     // A link that cannot be built (no entry, the account used up) means "could
@@ -455,6 +488,98 @@ async function runEngines(
   return { ok: true, value: runs };
 }
 
+/** What the sessions found, judged; or why nothing was learned. Recorded nowhere. */
+export type ClientCheckJudged =
+  | { checked: false; code: ClientCheckUncheckedCode; detail?: string }
+  | {
+      checked: true;
+      verdict: ClientCheckVerdict;
+      ok: boolean;
+      engines: EngineVerdict[];
+      control: boolean;
+      binding: Extract<Link, { ok: true }>['binding'];
+    };
+
+/**
+ * The engines through a candidate link, then, when the runs need it
+ * (`needsControl`), the same engines through a control link, judged
+ * (`judge`). Shared by the check of an address (the control is another address
+ * of the transport) and the test of a send's name (the control is the same
+ * address with the name members get now). Every temporary key it was handed
+ * is released before it returns. Within `deadline`: a session that would not
+ * fit is not started (`out_of_time`).
+ */
+export async function checkWithControl(
+  ctx: ActionCtx,
+  a: {
+    svc: ClientCheckService;
+    deadline: number;
+    engines: readonly ClientCheckEngine[];
+    expectedEgress: string[];
+    expectedRefusals: ClientCheckEngine[];
+    candidate: { edgeId: Id<'edges'>; opts?: LinkOptions };
+    control: { edgeId: Id<'edges'>; opts?: LinkOptions } | null;
+  },
+): Promise<ClientCheckJudged> {
+  const issued: Array<{ edgeId: Id<'edges'>; credentialId: string }> = [];
+  try {
+    const link = await linkFor(ctx, a.candidate.edgeId, a.candidate.opts);
+    if (!link.ok) return { checked: false, code: 'link_unavailable', detail: link.detail };
+    if (link.credentialId)
+      issued.push({ edgeId: a.candidate.edgeId, credentialId: link.credentialId });
+    const conv = outboundsForLink(link.link);
+    const engines = a.engines.filter((e) => !!conv?.outbounds[e]);
+    if (!conv || engines.length === 0) return { checked: false, code: 'no_engine' };
+    const runs = await runEngines(a.svc, conv, engines, a.deadline);
+    if (!runs.ok) return { checked: false, code: runs.code };
+    let control: EngineRun[] | null = null;
+    if (needsControl(runs.value, a.expectedEgress) && a.control) {
+      const cl = await linkFor(ctx, a.control.edgeId, a.control.opts);
+      if (cl.ok) {
+        if (cl.credentialId)
+          issued.push({ edgeId: a.control.edgeId, credentialId: cl.credentialId });
+        const cc = outboundsForLink(cl.link);
+        if (cc) {
+          const r = await runEngines(a.svc, cc, engines, a.deadline);
+          if (!r.ok) return { checked: false, code: r.code };
+          control = r.value;
+        }
+      }
+    }
+    const j = judge({
+      candidate: runs.value,
+      control,
+      expectedEgress: a.expectedEgress,
+      expectedRefusals: a.expectedRefusals,
+    });
+    return {
+      checked: true,
+      verdict: j.verdict,
+      ok: j.ok,
+      engines: j.engines,
+      control: control !== null,
+      binding: {
+        endpoint: link.binding.endpoint,
+        listenerKey: link.binding.listenerKey,
+        listenerRevision: link.binding.listenerRevision,
+        configHash: link.binding.configHash,
+      },
+    };
+  } finally {
+    // A temporary Outline key lives only for the check.
+    for (const k of issued) {
+      try {
+        await ctx.runMutation(internal.edgeTestCredentials.releaseForEdge, {
+          edgeId: k.edgeId,
+          credentialId: k.credentialId as Id<'edgeTestCredentials'>,
+        });
+      } catch {
+        // The sweep removes it at its TTL anyway.
+      }
+    }
+  }
+}
+
 /**
  * One check of an L4 address, recorded on the edge. `by` says who asked (the
  * operator's button, or FCP's own work); `controlEdgeId` is the control to fall
@@ -478,81 +603,42 @@ export async function runClientCheck(
   });
   if (!c) throw new ConvexError({ code: 'not_found', message: 'Edge not found' });
   if (c.layer === 'l7') return { checked: false, code: 'not_l4' };
-  const issued: Array<{ edgeId: Id<'edges'>; credentialId: string }> = [];
-  try {
-    const link = await linkFor(ctx, a.edgeId);
-    if (!link.ok) return { checked: false, code: 'link_unavailable', detail: link.detail };
-    if (link.credentialId) issued.push({ edgeId: a.edgeId, credentialId: link.credentialId });
-    const conv = outboundsForLink(link.link);
-    const engines = CLIENT_CHECK_ENGINES.filter((e) => !!conv?.outbounds[e]);
-    if (!conv || engines.length === 0) return { checked: false, code: 'no_engine' };
-    const runs = await runEngines(svc, conv, engines, deadline);
-    if (!runs.ok) return { checked: false, code: runs.code };
-    let control: EngineRun[] | null = null;
-    if (needsControl(runs.value, c.expectedEgress) && c.controlEdgeId) {
-      const cl = await linkFor(ctx, c.controlEdgeId);
-      if (cl.ok) {
-        if (cl.credentialId)
-          issued.push({ edgeId: c.controlEdgeId, credentialId: cl.credentialId });
-        const cc = outboundsForLink(cl.link);
-        if (cc) {
-          const r = await runEngines(svc, cc, engines, deadline);
-          if (!r.ok) return { checked: false, code: r.code };
-          control = r.value;
-        }
-      }
-    }
-    const j = judge({
-      candidate: runs.value,
-      control,
-      expectedEgress: c.expectedEgress,
-      expectedRefusals: c.expectedRefusals,
-    });
-    const at = Date.now();
-    const binding = {
-      endpoint: link.binding.endpoint,
-      listenerKey: link.binding.listenerKey,
-      listenerRevision: link.binding.listenerRevision,
-      configHash: link.binding.configHash,
-    };
-    const recorded = await ctx.runMutation(internal.edgeClientCheck.record, {
-      edgeId: a.edgeId,
-      binding,
-      ...(a.actorAdminId ? { actorAdminId: a.actorAdminId } : {}),
-      result: {
-        at,
-        verdict: j.verdict,
-        ok: j.ok,
-        engines: j.engines,
-        control: control !== null,
-        by: a.by,
-        listenerRevision: link.binding.listenerRevision,
-        configHash: link.binding.configHash,
-      },
-    });
-    return {
-      checked: true,
+  const j = await checkWithControl(ctx, {
+    svc,
+    deadline,
+    engines: ADDRESS_CHECK_ENGINES.filter((e) => c.engines.includes(e)),
+    expectedEgress: c.expectedEgress,
+    expectedRefusals: c.expectedRefusals,
+    candidate: { edgeId: a.edgeId },
+    control: c.controlEdgeId ? { edgeId: c.controlEdgeId } : null,
+  });
+  if (!j.checked) return j;
+  const at = Date.now();
+  const recorded = await ctx.runMutation(internal.edgeClientCheck.record, {
+    edgeId: a.edgeId,
+    binding: j.binding,
+    ...(a.actorAdminId ? { actorAdminId: a.actorAdminId } : {}),
+    result: {
       at,
       verdict: j.verdict,
       ok: j.ok,
       engines: j.engines,
-      control: control !== null,
-      binding,
-      confirmed: recorded.confirmed,
-    };
-  } finally {
-    // A temporary Outline key lives only for the check.
-    for (const k of issued) {
-      try {
-        await ctx.runMutation(internal.edgeTestCredentials.releaseForEdge, {
-          edgeId: k.edgeId,
-          credentialId: k.credentialId as Id<'edgeTestCredentials'>,
-        });
-      } catch {
-        // The sweep removes it at its TTL anyway.
-      }
-    }
-  }
+      control: j.control,
+      by: a.by,
+      listenerRevision: j.binding.listenerRevision,
+      configHash: j.binding.configHash,
+    },
+  });
+  return {
+    checked: true,
+    at,
+    verdict: j.verdict,
+    ok: j.ok,
+    engines: j.engines,
+    control: j.control,
+    binding: j.binding,
+    confirmed: recorded.confirmed,
+  };
 }
 
 /**

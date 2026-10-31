@@ -207,7 +207,10 @@ export const transportsQuery = (backendSlug: () => string | null) =>
     enabled: !!backendSlug(),
     refetchInterval: (q: { state: { data?: SniTransportsView } }) =>
       (q.state.data?.transports ?? []).some(
-        (t) => t.send?.phase === 'writing' || (t.list?.counts.checking ?? 0) > 0,
+        (t) =>
+          t.send?.phase === 'writing' ||
+          (t.list?.counts.checking ?? 0) > 0 ||
+          t.nodes.some((n) => n.autoTest?.state === 'testing'),
       )
         ? 10_000
         : 30_000,

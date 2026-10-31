@@ -9,7 +9,10 @@
  * unset, which that release turns into a minimum of 26.3.27, refusing sing-box
  * (it reports 1.8.1) while an Xray client gets in. The check must pass the first
  * with both engines and name sing-box refused on the second: exactly the
- * transport a human tick with an Xray client passed on 2026-10-25.
+ * transport a human tick with an Xray client passed on 2026-10-25. Mihomo (the
+ * engine a test of a send's names adds) is refused there like sing-box, and
+ * every engine is refused a name the core does not list: the failure FCP's
+ * test of a send reads as "the node has not taken the name".
  *
  * Runs only under scripts/compat/client-check.sh (the `client-check` job in
  * .github/workflows/client-compatibility.yml); without FCP_CLIENT_CHECK_IT the
@@ -29,6 +32,7 @@ import {
   type ClientCheckResponse,
 } from './protocol';
 import { signRequest } from './signing';
+import { judge, type EngineRun } from './verdict';
 
 const ENABLED = process.env.FCP_CLIENT_CHECK_IT === '1';
 const WORK = '.cache/compat/client-check';
@@ -111,12 +115,12 @@ function xrayConfig(minClientVer: string | null): unknown {
   };
 }
 
-/** The share link a test link carries for a core's transport. */
-function link(core: keyof typeof CORES, transport: keyof typeof PORTS): string {
+/** The share link a test link carries for a core's transport (presenting `sni`). */
+function link(core: keyof typeof CORES, transport: keyof typeof PORTS, sni = SERVER_NAME): string {
   const q = new URLSearchParams({
     security: 'reality',
     type: transport === 'raw' ? 'tcp' : 'xhttp',
-    sni: SERVER_NAME,
+    sni,
     fp: 'chrome',
     pbk: KEYS.public,
     sid: SHORT_ID,
@@ -141,8 +145,9 @@ async function check(
   core: keyof typeof CORES,
   transport: keyof typeof PORTS,
   engine: ClientCheckEngine,
+  sni?: string,
 ): Promise<ClientCheckResponse> {
-  const conv = outboundsForLink(link(core, transport));
+  const conv = outboundsForLink(link(core, transport, sni));
   const outbound = conv?.outbounds[engine];
   if (!conv || !outbound) throw new Error(`no ${engine} outbound for ${transport}`);
   const res = await signed(
@@ -161,10 +166,11 @@ async function checkSettled(
   core: keyof typeof CORES,
   transport: keyof typeof PORTS,
   engine: ClientCheckEngine,
+  sni?: string,
 ): Promise<ClientCheckResponse> {
   let last: ClientCheckResponse | null = null;
   for (let i = 0; i < 6; i++) {
-    last = await check(core, transport, engine);
+    last = await check(core, transport, engine, sni);
     if (last.ok || last.code === 'reality_refused') return last;
     await sleep(5_000);
   }
@@ -192,11 +198,11 @@ describe.skipIf(!ENABLED)('FCP client check against real Xray-cores', () => {
     throw new Error('the client check service never answered');
   }, 300_000);
 
-  test('health names both engines; unsigned and replayed requests are refused', async () => {
+  test('health names every engine; unsigned and replayed requests are refused', async () => {
     const h = await signed('GET', CLIENT_CHECK_PATHS.health, '');
     expect(h.status).toBe(200);
     const body = (await h.json()) as { engines: Array<{ engine: string; version: string | null }> };
-    expect(body.engines.map((e) => e.engine)).toEqual(['sing-box', 'xray']);
+    expect(body.engines.map((e) => e.engine)).toEqual(['sing-box', 'xray', 'mihomo']);
     expect(body.engines.every((e) => !!e.version)).toBe(true);
     expect((await fetch(`${SERVICE}${CLIENT_CHECK_PATHS.health}`)).status).toBe(401);
     const time = String(Date.now());
@@ -227,8 +233,8 @@ describe.skipIf(!ENABLED)('FCP client check against real Xray-cores', () => {
     expect(res.status).toBe(413);
   });
 
-  test('minClientVer 1.8.1: both engines connect and come out of the core', async () => {
-    for (const engine of ['sing-box', 'xray'] as const) {
+  test('minClientVer 1.8.1: every engine connects and comes out of the core', async () => {
+    for (const engine of ['sing-box', 'xray', 'mihomo'] as const) {
       const r = await checkSettled('min', 'raw', engine);
       expect({ engine, code: r.code }).toEqual({ engine, code: 'ok' });
       expect(r.egressIp).toBe(CORES.min.origin);
@@ -243,6 +249,34 @@ describe.skipIf(!ENABLED)('FCP client check against real Xray-cores', () => {
     const singbox = await checkSettled('nomin', 'raw', 'sing-box');
     expect(singbox.code).toBe('reality_refused');
     expect(singbox.egressIp).toBeNull();
+    // Mihomo reports no Xray version either: refused the same way.
+    expect((await checkSettled('nomin', 'raw', 'mihomo')).code).toBe('reality_refused');
+  }, 240_000);
+
+  test('a name the core does not list: no engine gets in, the listed name does: address_failed', async () => {
+    // What FCP's test of a send sees on a node that has not taken the new
+    // names: the name (candidate) against a name the node lists (control).
+    const engines = ['sing-box', 'xray', 'mihomo'] as const;
+    const run = async (sni?: string): Promise<EngineRun[]> => {
+      const out: EngineRun[] = [];
+      for (const engine of engines) {
+        const r = await checkSettled('min', 'raw', engine, sni);
+        out.push({ engine, ok: r.ok, code: r.code, egressIp: r.egressIp, engineVersion: null });
+      }
+      return out;
+    };
+    const candidate = await run('not-listed.example');
+    // How each engine words it depends on the target (here one that serves any name).
+    expect(candidate.map((r) => [r.engine, r.ok])).toEqual(engines.map((e) => [e, false]));
+    const control = await run();
+    expect(control.map((r) => [r.engine, r.code])).toEqual(engines.map((e) => [e, 'ok']));
+    const j = judge({
+      candidate,
+      control,
+      expectedEgress: [CORES.min.origin],
+      expectedRefusals: [],
+    });
+    expect(j.verdict).toBe('address_failed');
   }, 240_000);
 
   test('XHTTP under REALITY: Xray only (sing-box has no XHTTP)', async () => {

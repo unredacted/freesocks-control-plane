@@ -633,7 +633,27 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'placeSet',
   ],
   'edge.sni.names.country': ['slug', 'country', 'state', 'count'],
-  'edge.sni.names.accepted': ['relaySlug', 'listenerKey', 'generation', 'count', 'witness'],
+  // `by: client_check` (actor system) when FCP's own test proved it; `engines` = `sing-box:ok xray:ok`.
+  'edge.sni.names.accepted': [
+    'relaySlug',
+    'listenerKey',
+    'generation',
+    'count',
+    'witness',
+    'by',
+    'engines',
+  ],
+  // FCP's own test of a send that did not hand anything out (sniAutoConfirm.ts):
+  // `outcome` failed / could_not_check / voided, a verdict or code, engine codes.
+  'edge.sni.names.tested': [
+    'relaySlug',
+    'listenerKey',
+    'generation',
+    'outcome',
+    'verdict',
+    'code',
+    'engines',
+  ],
   // Checks from inside a country: slugs, the country, the source and counts, never a name or an address.
   'edge.sni.vantage.batch': ['country', 'source', 'targetKind', 'count', 'trigger'],
   'edge.sni.vantage.request': ['slug', 'country', 'count', 'batches'],

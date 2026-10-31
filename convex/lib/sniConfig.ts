@@ -9,6 +9,13 @@ import { sanitizeBool, sanitizeInt } from './edgeConfig';
 export interface SniConfig {
   /** Families may be bound to transports, and the qualify cron runs. */
   enabled: boolean;
+  /**
+   * FCP's own client check tests a send's names on each node, through an
+   * address whose endpoint is confirmed, and a pass hands them to that node's
+   * members as a person's "It connected" does (docs/edges.md "FCP's own test of
+   * a send"). Off: only a person's test does. Ships off.
+   */
+  autoConfirm: boolean;
   /** Names checked per cron tick (every 5 min). */
   qualifyPerTick: number;
   /** A qualified name is checked again after this long. */
@@ -31,6 +38,7 @@ export interface SniConfig {
 
 export const SNI_DEFAULTS: SniConfig = {
   enabled: false,
+  autoConfirm: false,
   qualifyPerTick: 40,
   requalifyHours: 24,
   suspendAfterFails: 2,
@@ -47,6 +55,7 @@ export const SNI_BOUNDS = {
 
 export const SNI_KEYS = {
   enabled: 'edge.sni.enabled',
+  autoConfirm: 'edge.sni.autoConfirm',
   qualifyPerTick: 'edge.sni.qualifyPerTick',
   requalifyHours: 'edge.sni.requalifyHours',
   suspendAfterFails: 'edge.sni.suspendAfterFails',
@@ -78,6 +87,7 @@ export async function resolveSniConfig(db: DatabaseReader): Promise<SniConfig> {
   const B = SNI_BOUNDS;
   return {
     enabled: sanitizeBool(raw.enabled, D.enabled),
+    autoConfirm: sanitizeBool(raw.autoConfirm, D.autoConfirm),
     qualifyPerTick: sanitizeInt(
       raw.qualifyPerTick,
       B.qualifyPerTick.min,
@@ -116,7 +126,7 @@ export function sniConfigWrites(patch: Record<string, unknown>): {
   for (const p of Object.keys(SNI_KEYS) as Path[]) {
     const v = patch[p];
     let value: unknown;
-    if (p === 'enabled') {
+    if (p === 'enabled' || p === 'autoConfirm') {
       if (typeof v !== 'boolean') continue;
       value = v;
     } else {

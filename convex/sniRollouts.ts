@@ -15,8 +15,9 @@
  * (measured: with a node held off the backend, the backend lists the name, a plain
  * TLS handshake with it completes, and no member can connect). So acceptance is
  * a RECEIPT: an operator connects through one of the node's verified edges with
- * an isolated test link that presents the name. One receipt proves that name on
- * that node. If the name is a WITNESS (this transport has never listed it
+ * an isolated test link that presents the name (or, with `edge.sni.autoConfirm`
+ * on, FCP's own client check does, with the same link: sniAutoConfirm.ts). One
+ * receipt proves that name on that node. If the name is a WITNESS (this transport has never listed it
  * before), a node that authenticates it must be running the generation that
  * introduced it, so the same receipt proves the whole generation there.
  *
@@ -31,11 +32,13 @@ import {
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { bumpEpochAndRefresh } from './lib/edges/relayGuards';
+import { AUTO_FIRST_DELAY_MS } from './lib/edges/sni/autoTest';
 import { planAllowlist } from './lib/edges/sni/family';
 import { countryMarks } from './sniFamilies';
 import { verificationBinding, verificationCurrent } from './lib/edges/verification';
@@ -48,7 +51,7 @@ const actor = { actorAdminId: v.optional(v.id('adminUsers')) };
 const RECEIPT_TTL_MS = 60 * 60_000;
 
 /** Non-retired listeners bound to this transport, with their origin. */
-async function boundListeners(ctx: { db: MutationCtx['db'] }, b: Doc<'sniInboundBindings'>) {
+export async function boundListeners(ctx: { db: MutationCtx['db'] }, b: Doc<'sniInboundBindings'>) {
   const relays = await ctx.db
     .query('relays')
     .withIndex('by_backend_server', (q) => q.eq('backendServerId', b.backendServerId))
@@ -253,6 +256,14 @@ async function syncRollout(ctx: MutationCtx, rolloutId: Id<'sniRollouts'>) {
         });
     }
     await ctx.db.patch(r._id, { phase: 'panel_confirmed', updatedAt: now });
+    // FCP's own test of the send (switch `edge.sni.autoConfirm`), once the
+    // nodes have had time to restart Xray with it. The sweep checks the
+    // switches again when it runs.
+    const sniCfg = await resolveSniConfig(ctx.db);
+    if (sniCfg.enabled && sniCfg.autoConfirm)
+      await ctx.scheduler.runAfter(AUTO_FIRST_DELAY_MS, internal.sniAutoConfirm.sweep, {
+        rolloutId: r._id,
+      });
     return 'panel_confirmed';
   }
 }
@@ -337,48 +348,54 @@ export const start = internalAction({
 
 // --- acceptance ------------------------------------------------------------------------------------------
 
-/** Validate a receipt request and answer what the test link must present. */
+/**
+ * Validate a receipt request and answer what the test link must present. Shared
+ * by an operator's test link (`issueReceipt`) and FCP's own test
+ * (sniAutoConfirm.ts), so both ride the same guards.
+ */
+export async function receiptContextOf(
+  db: QueryCtx['db'],
+  { rolloutId, edgeId, sni }: { rolloutId: Id<'sniRollouts'>; edgeId: Id<'edges'>; sni?: string },
+) {
+  const r = await db.get(rolloutId);
+  if (!r) return refuse('not_found', 'No such rollout');
+  if (r.phase !== 'panel_confirmed')
+    refuse(
+      'edge.sni.rollout_not_confirmed',
+      'The backend has not been seen to hold these names yet',
+    );
+  const b = await db.get(r.bindingId);
+  if (!b || b.generation !== r.generation)
+    return refuse('edge.sni.superseded', 'A newer rollout replaced this one');
+  const edge = await db.get(edgeId);
+  const raw = edge ? await db.get(edge.listenerId) : null;
+  if (!edge || !raw) return refuse('not_found', 'Edge not found');
+  // With the enrolled node's auth revision: the endpoint tick binds to it.
+  const listener = await verificationListenerOf(db, raw);
+  if (listener.panelBinding?.configProfileInboundUuid !== b.inboundUuid)
+    refuse('validation', 'That edge does not front this transport');
+  // The proof rides on an endpoint an operator already confirmed: an
+  // untested edge would make a failure ambiguous (the name, or the path?).
+  if (!verificationCurrent(edge, listener))
+    refuse('edge.unverified_endpoint', 'Test this address first, then prove the names through it');
+  const name = sni ?? r.witness ?? r.added[0];
+  if (!name || !r.names.includes(name))
+    return refuse('validation', 'That name is not part of this rollout');
+  const binding = verificationBinding(edge, listener)!;
+  return {
+    sni: name,
+    isWitness: name === r.witness,
+    generation: r.generation,
+    expectedToken: r.expectedToken,
+    relayId: edge.relayId,
+    listenerId: listener._id,
+    binding,
+  };
+}
+
 export const receiptContext = internalQuery({
   args: { rolloutId: v.id('sniRollouts'), edgeId: v.id('edges'), sni: v.optional(v.string()) },
-  handler: async (ctx, { rolloutId, edgeId, sni }) => {
-    const r = await ctx.db.get(rolloutId);
-    if (!r) return refuse('not_found', 'No such rollout');
-    if (r.phase !== 'panel_confirmed')
-      refuse(
-        'edge.sni.rollout_not_confirmed',
-        'The backend has not been seen to hold these names yet',
-      );
-    const b = await ctx.db.get(r.bindingId);
-    if (!b || b.generation !== r.generation)
-      return refuse('edge.sni.superseded', 'A newer rollout replaced this one');
-    const edge = await ctx.db.get(edgeId);
-    const raw = edge ? await ctx.db.get(edge.listenerId) : null;
-    if (!edge || !raw) return refuse('not_found', 'Edge not found');
-    // With the enrolled node's auth revision: the endpoint tick binds to it.
-    const listener = await verificationListenerOf(ctx.db, raw);
-    if (listener.panelBinding?.configProfileInboundUuid !== b.inboundUuid)
-      refuse('validation', 'That edge does not front this transport');
-    // The proof rides on an endpoint an operator already confirmed: an
-    // untested edge would make a failure ambiguous (the name, or the path?).
-    if (!verificationCurrent(edge, listener))
-      refuse(
-        'edge.unverified_endpoint',
-        'Test this address first, then prove the names through it',
-      );
-    const name = sni ?? r.witness ?? r.added[0];
-    if (!name || !r.names.includes(name))
-      return refuse('validation', 'That name is not part of this rollout');
-    const binding = verificationBinding(edge, listener)!;
-    return {
-      sni: name,
-      isWitness: name === r.witness,
-      generation: r.generation,
-      expectedToken: r.expectedToken,
-      relayId: edge.relayId,
-      listenerId: listener._id,
-      binding,
-    };
-  },
+  handler: (ctx, a) => receiptContextOf(ctx.db, a),
 });
 
 export const recordReceipt = internalMutation({
@@ -452,130 +469,192 @@ export const issueReceipt = internalAction({
   },
 });
 
+/** Who proved a receipt: an operator's "It connected", or FCP's own client check. */
+export type ReceiptProver =
+  | { kind: 'admin'; actorAdminId?: Id<'adminUsers'> }
+  | { kind: 'client_check'; engines: string };
+
+export type Acceptance =
+  | { ok: true; activated: number; witness: boolean; already: boolean }
+  | {
+      ok: false;
+      /** What the receipt is now (null: it stays as it is). */
+      state: 'expired' | 'superseded' | null;
+      code: string;
+      message: string;
+    };
+
 /**
- * The operator connected with the test link. Everything the receipt is bound to
- * is derived again from the live rows; any difference voids it. Then the name
- * (or, for a witness, every name of the generation) is handed to THIS node's
- * members, and only this node's.
+ * A test link connected. Everything the receipt is bound to is derived again
+ * from the live rows; any difference voids it. Then the name (or, for a
+ * witness, every name of the generation) is handed to THIS node's members, and
+ * only this node's. One function for an operator's tick and FCP's own test, so
+ * neither skips a guard.
+ *
+ * Proven once is enough: when another receipt already proved this name (or the
+ * generation) on the node and this one would change nothing, nothing is
+ * written (`already`). So an operator's tick and FCP's test of the same send
+ * never both confirm, whichever comes second.
+ */
+export async function acceptReceipt(
+  ctx: MutationCtx,
+  rc: Doc<'sniAcceptanceReceipts'>,
+  by: ReceiptProver,
+): Promise<Acceptance> {
+  const no = (state: 'expired' | 'superseded' | null, code: string, message: string) =>
+    ({ ok: false, state, code, message }) as const;
+  if (rc.state !== 'issued')
+    return no(null, 'conflict', 'This test link was already used or has lapsed');
+  const now = Date.now();
+  if (now > rc.expiresAt)
+    return no('expired', 'edge.sni.receipt_expired', 'This test link lapsed. Get a new one');
+  const r = await ctx.db.get(rc.rolloutId);
+  const b = r ? await ctx.db.get(r.bindingId) : null;
+  if (!r || !b || r.phase !== 'panel_confirmed' || b.generation !== rc.generation)
+    return no('superseded', 'edge.sni.superseded', 'A newer rollout replaced this one');
+  // The backend must still hold exactly the config this generation wrote.
+  const profile = await ctx.db
+    .query('panelProfiles')
+    .withIndex('by_server_uuid', (q) =>
+      q.eq('backendServerId', b.backendServerId).eq('profileUuid', b.profileUuid),
+    )
+    .unique();
+  if (!profile || profile.changeToken !== rc.expectedToken)
+    return no(
+      'superseded',
+      'edge.sni.profile_moved',
+      'The profile changed since this rollout. Roll out again',
+    );
+  const edge = await ctx.db.get(rc.edgeId);
+  const raw = await ctx.db.get(rc.listenerId);
+  const relay = await ctx.db.get(rc.relayId);
+  if (!edge || !raw || !relay || raw.retired)
+    return no('superseded', 'edge.sni.binding_changed', 'The edge or its listener changed');
+  const listener = await verificationListenerOf(ctx.db, raw);
+  const live = verificationBinding(edge, listener);
+  if (
+    !live ||
+    !verificationCurrent(edge, listener) ||
+    live.endpoint !== rc.endpoint ||
+    live.listenerRevision !== rc.listenerRevision ||
+    live.configHash !== rc.configHash
+  )
+    return no(
+      'superseded',
+      'edge.sni.binding_changed',
+      'The address changed since the link was made',
+    );
+
+  // What this proof covers: the one name, or for a witness the generation.
+  const family = await ctx.db
+    .query('sniNames')
+    .withIndex('by_family_seq', (q) => q.eq('familyId', b.familyId))
+    .collect();
+  const usable = new Set(
+    family
+      .filter((n) => n.status === 'active' && n.qualification.state === 'ok')
+      .map((n) => n.name),
+  );
+  const proven = (rc.isWitness ? r.names : [rc.sni]).filter((n) => usable.has(n));
+  const existing = listener.tlsNames ?? [];
+  const wasActive = new Set(existing.filter((n) => n.status === 'active').map((n) => n.name));
+  const activated = proven.filter((n) => !wasActive.has(n)).length;
+  // A growing list needs the growth-stable selection. Moving a listener onto
+  // it changes every member's name at their next refresh, so it is a
+  // publication epoch bump and an audited change of its own (the same entry
+  // `relayListeners.setSniPick` writes), whether or not a name was activated.
+  const pickChanged = listener.sniPick !== 'hrw1';
+  if (activated === 0 && !pickChanged) {
+    const others = await ctx.db
+      .query('sniAcceptanceReceipts')
+      .withIndex('by_rollout', (q) => q.eq('rolloutId', rc.rolloutId))
+      .collect();
+    if (
+      others.some(
+        (x) =>
+          x._id !== rc._id &&
+          x.listenerId === rc.listenerId &&
+          x.state === 'confirmed' &&
+          (x.isWitness || x.sni === rc.sni),
+      )
+    )
+      return { ok: true, activated: 0, witness: rc.isWitness, already: true };
+  }
+  const marks = new Map<string, Awaited<ReturnType<typeof countryMarks>>>();
+  for (const name of proven) marks.set(name, await countryMarks(ctx, name));
+  const next = existing.map((n) =>
+    proven.includes(n.name) && n.status !== 'active'
+      ? {
+          name: n.name,
+          status: 'active' as const,
+          origin: 'family' as const,
+          ...marks.get(n.name),
+        }
+      : n,
+  );
+  const have = new Set(existing.map((n) => n.name));
+  // Appended in the rollout's own order, never re-sorted.
+  for (const name of proven)
+    if (!have.has(name))
+      next.push({ name, status: 'active', origin: 'family', ...marks.get(name) });
+  await ctx.db.patch(listener._id, {
+    tlsNames: next,
+    ...(pickChanged ? { sniPick: 'hrw1' as const } : {}),
+    namesRevision: (listener.namesRevision ?? 0) + 1,
+    updatedAt: now,
+  });
+  const actorAdminId = by.kind === 'admin' ? by.actorAdminId : undefined;
+  await ctx.db.patch(rc._id, { state: 'confirmed', confirmedAt: now, actorAdminId });
+  if (activated > 0 || pickChanged) await bumpEpochAndRefresh(ctx, relay);
+  // FCP's own test is the system's act, never an admin's.
+  const who =
+    by.kind === 'admin'
+      ? { actorType: 'admin' as const, actorId: actorAdminId ?? undefined }
+      : { actorType: 'system' as const };
+  if (pickChanged)
+    await writeAuditLog(ctx, {
+      ...who,
+      action: 'relay.listener.sni_pick',
+      targetType: 'relay_listener',
+      targetId: listener._id,
+      payload: { relaySlug: relay.slug, listenerKey: listener.listenerKey, version: 'hrw1' },
+    });
+  await writeAuditLog(ctx, {
+    ...who,
+    action: 'edge.sni.names.accepted',
+    targetType: 'relay_listener',
+    targetId: listener._id,
+    payload: {
+      relaySlug: relay.slug,
+      listenerKey: listener.listenerKey,
+      generation: rc.generation,
+      count: activated,
+      witness: rc.isWitness,
+      // `sing-box:ok xray:ok mihomo:ok`: codes only.
+      ...(by.kind === 'client_check' ? { by: 'client_check', engines: by.engines } : {}),
+    },
+  });
+  return { ok: true, activated, witness: rc.isWitness, already: false };
+}
+
+/**
+ * The operator connected with the test link (`POST sni/receipts/{id}/confirm`):
+ * `acceptReceipt`, refused with its code when it does not hold. A receipt FCP's
+ * own test holds is never an operator's to confirm.
  */
 export const confirmReceipt = internalMutation({
   args: { receiptId: v.id('sniAcceptanceReceipts'), ...actor },
   handler: async (ctx, { receiptId, actorAdminId }) => {
     const rc = await ctx.db.get(receiptId);
     if (!rc) return refuse('not_found', 'No such receipt');
-    if (rc.state !== 'issued') refuse('conflict', 'This test link was already used or has lapsed');
-    const now = Date.now();
-    const voidAs = async (state: 'expired' | 'superseded', code: string, message: string) => {
-      await ctx.db.patch(rc._id, { state });
-      return refuse(code, message);
-    };
-    if (now > rc.expiresAt)
-      return voidAs('expired', 'edge.sni.receipt_expired', 'This test link lapsed. Get a new one');
-    const r = await ctx.db.get(rc.rolloutId);
-    const b = r ? await ctx.db.get(r.bindingId) : null;
-    if (!r || !b || r.phase !== 'panel_confirmed' || b.generation !== rc.generation)
-      return voidAs('superseded', 'edge.sni.superseded', 'A newer rollout replaced this one');
-    // The backend must still hold exactly the config this generation wrote.
-    const profile = await ctx.db
-      .query('panelProfiles')
-      .withIndex('by_server_uuid', (q) =>
-        q.eq('backendServerId', b.backendServerId).eq('profileUuid', b.profileUuid),
-      )
-      .unique();
-    if (!profile || profile.changeToken !== rc.expectedToken)
-      return voidAs(
-        'superseded',
-        'edge.sni.profile_moved',
-        'The profile changed since this rollout. Roll out again',
-      );
-    const edge = await ctx.db.get(rc.edgeId);
-    const raw = await ctx.db.get(rc.listenerId);
-    const relay = await ctx.db.get(rc.relayId);
-    if (!edge || !raw || !relay || raw.retired)
-      return voidAs('superseded', 'edge.sni.binding_changed', 'The edge or its listener changed');
-    const listener = await verificationListenerOf(ctx.db, raw);
-    const live = verificationBinding(edge, listener);
-    if (
-      !live ||
-      !verificationCurrent(edge, listener) ||
-      live.endpoint !== rc.endpoint ||
-      live.listenerRevision !== rc.listenerRevision ||
-      live.configHash !== rc.configHash
-    )
-      return voidAs(
-        'superseded',
-        'edge.sni.binding_changed',
-        'The address changed since the link was made',
-      );
-
-    // What this proof covers: the one name, or for a witness the generation.
-    const family = await ctx.db
-      .query('sniNames')
-      .withIndex('by_family_seq', (q) => q.eq('familyId', b.familyId))
-      .collect();
-    const usable = new Set(
-      family
-        .filter((n) => n.status === 'active' && n.qualification.state === 'ok')
-        .map((n) => n.name),
-    );
-    const proven = (rc.isWitness ? r.names : [rc.sni]).filter((n) => usable.has(n));
-    const existing = listener.tlsNames ?? [];
-    const marks = new Map<string, Awaited<ReturnType<typeof countryMarks>>>();
-    for (const name of proven) marks.set(name, await countryMarks(ctx, name));
-    const next = existing.map((n) =>
-      proven.includes(n.name) && n.status !== 'active'
-        ? {
-            name: n.name,
-            status: 'active' as const,
-            origin: 'family' as const,
-            ...marks.get(n.name),
-          }
-        : n,
-    );
-    const have = new Set(existing.map((n) => n.name));
-    // Appended in the rollout's own order, never re-sorted.
-    for (const name of proven)
-      if (!have.has(name))
-        next.push({ name, status: 'active', origin: 'family', ...marks.get(name) });
-    const wasActive = new Set(existing.filter((n) => n.status === 'active').map((n) => n.name));
-    const activated = proven.filter((n) => !wasActive.has(n)).length;
-    // A growing list needs the growth-stable selection. Moving a listener onto
-    // it changes every member's name at their next refresh, so it is a
-    // publication epoch bump and an audited change of its own (the same entry
-    // `relayListeners.setSniPick` writes), whether or not a name was activated.
-    const pickChanged = listener.sniPick !== 'hrw1';
-    await ctx.db.patch(listener._id, {
-      tlsNames: next,
-      ...(pickChanged ? { sniPick: 'hrw1' as const } : {}),
-      namesRevision: (listener.namesRevision ?? 0) + 1,
-      updatedAt: now,
-    });
-    await ctx.db.patch(rc._id, { state: 'confirmed', confirmedAt: now, actorAdminId });
-    if (activated > 0 || pickChanged) await bumpEpochAndRefresh(ctx, relay);
-    if (pickChanged)
-      await writeAuditLog(ctx, {
-        actorType: 'admin',
-        actorId: actorAdminId ?? undefined,
-        action: 'relay.listener.sni_pick',
-        targetType: 'relay_listener',
-        targetId: listener._id,
-        payload: { relaySlug: relay.slug, listenerKey: listener.listenerKey, version: 'hrw1' },
-      });
-    await writeAuditLog(ctx, {
-      actorType: 'admin',
-      actorId: actorAdminId ?? undefined,
-      action: 'edge.sni.names.accepted',
-      targetType: 'relay_listener',
-      targetId: listener._id,
-      payload: {
-        relaySlug: relay.slug,
-        listenerKey: listener.listenerKey,
-        generation: rc.generation,
-        count: activated,
-        witness: rc.isWitness,
-      },
-    });
-    return { ok: true as const, activated, witness: rc.isWitness };
+    if (rc.evidenceKind === 'client_check')
+      return refuse('conflict', "This receipt belongs to FCP's own test");
+    const out = await acceptReceipt(ctx, rc, { kind: 'admin', actorAdminId });
+    if (!out.ok) return refuse(out.code, out.message);
+    // Proven already (FCP's test, or an earlier tick): this tick is recorded, nothing moves.
+    if (out.already)
+      await ctx.db.patch(rc._id, { state: 'confirmed', confirmedAt: Date.now(), actorAdminId });
+    return { ok: true as const, activated: out.activated, witness: out.witness };
   },
 });
 

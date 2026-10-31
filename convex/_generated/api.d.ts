@@ -173,6 +173,7 @@ import type * as seed from "../seed.js";
 import type * as seedEdgesReset from "../seedEdgesReset.js";
 import type * as serverAdmin from "../serverAdmin.js";
 import type * as sessions from "../sessions.js";
+import type * as sniAutoConfirm from "../sniAutoConfirm.js";
 import type * as sniFamilies from "../sniFamilies.js";
 import type * as sniHunt from "../sniHunt.js";
 import type * as sniHuntOps from "../sniHuntOps.js";
@@ -365,6 +366,7 @@ declare const fullApi: ApiFromModules<{
   seedEdgesReset: typeof seedEdgesReset;
   serverAdmin: typeof serverAdmin;
   sessions: typeof sessions;
+  sniAutoConfirm: typeof sniAutoConfirm;
   sniFamilies: typeof sniFamilies;
   sniHunt: typeof sniHunt;
   sniHuntOps: typeof sniHuntOps;

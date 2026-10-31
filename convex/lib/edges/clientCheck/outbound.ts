@@ -3,16 +3,20 @@
  * check"). FCP's client check uses exactly the artifact a human test uses: the
  * one-entry share link `edgeTestLinks.build` renders for an address. This turns
  * it into the outbound each engine needs, or says why an engine cannot speak
- * it (sing-box has no XHTTP and no VLESS encryption). Pure; unit tested per
+ * it (sing-box has no XHTTP and no VLESS encryption; Mihomo is given VLESS and
+ * Trojan only, the protocols whose names a send proves). Pure; unit tested per
  * combination.
  *
  * Only what the link carries is used: nothing is invented except the uTLS
  * fingerprint REALITY requires (`chrome`, what the panel writes when it names
- * none). The client check service rebuilds the result from its own allowlist
+ * none), and, for Mihomo, the ML-KEM key share every Clash body FCP serves asks
+ * for (lib/realityKeyShares.ts), so the check offers what members' Mihomo
+ * offers. The client check service rebuilds the result from its own allowlist
  * (sanitize.ts) before an engine sees it.
  */
 import type { ClientCheckEngine } from '../../../../src/shared/contracts/edgeCodes';
 import type { ListenerProto } from '../protocols';
+import { MLKEM_KEY_SHARE_OPTION } from '../../realityKeyShares';
 import { parseProxyUri, type ParsedUri } from '../render/uri';
 
 type Obj = Record<string, unknown>;
@@ -135,6 +139,42 @@ function singboxTransport(c: Common): Obj | undefined | null {
   }
 }
 
+/** Mihomo's proxy fields for the link's security and transport; null: it has none for them. */
+function mihomoStream(c: Common, scheme: 'vless' | 'trojan'): Obj | null {
+  const p = c.u.params;
+  const out: Obj = { udp: false };
+  if (c.stream === 'raw') out.network = 'tcp';
+  else if (c.stream === 'ws' || c.stream === 'httpupgrade') {
+    const { path, earlyData } =
+      c.stream === 'ws' ? wsPath(c.path || '/') : { path: c.path || '/', earlyData: null };
+    out.network = 'ws';
+    out['ws-opts'] = compact({
+      path,
+      headers: c.host ? { Host: c.host } : undefined,
+      'max-early-data': earlyData ?? undefined,
+      'early-data-header-name': earlyData !== null ? 'Sec-WebSocket-Protocol' : undefined,
+      'v2ray-http-upgrade': c.stream === 'httpupgrade' || undefined,
+    });
+  } else if (c.stream === 'grpc') {
+    out.network = 'grpc';
+    out['grpc-opts'] = compact({ 'grpc-service-name': decode(p.get('serviceName') ?? '') });
+  } else return null;
+  if (c.security === 'none') return out;
+  out.tls = true;
+  out[scheme === 'vless' ? 'servername' : 'sni'] = c.sni || undefined;
+  if (c.alpn) out.alpn = c.alpn;
+  if (c.insecure) out['skip-cert-verify'] = true;
+  if (c.security === 'reality') {
+    out['client-fingerprint'] = c.fp || 'chrome';
+    out['reality-opts'] = compact({
+      'public-key': p.get('pbk') ?? '',
+      'short-id': p.get('sid') ?? '',
+      [MLKEM_KEY_SHARE_OPTION]: true,
+    });
+  } else if (c.fp) out['client-fingerprint'] = c.fp;
+  return compact(out);
+}
+
 function xrayStream(c: Common): Obj {
   const p = c.u.params;
   const network = c.stream === 'raw' ? 'raw' : c.stream;
@@ -237,6 +277,20 @@ export function outboundsForLink(link: string): LinkOutbounds | null {
         transport,
       });
 
+    // Mihomo
+    const mh = mihomoStream(c, scheme);
+    if (stream === 'xhttp') skipped.mihomo = 'no_xhttp';
+    else if (scheme === 'vless' && encryption !== 'none') skipped.mihomo = 'vless_encryption';
+    else if (!mh) skipped.mihomo = 'unsupported_transport';
+    else
+      outbounds.mihomo = compact({
+        type: scheme,
+        server: u.host,
+        port: u.port,
+        ...(scheme === 'vless' ? { uuid: secret, flow } : { password: secret }),
+        ...mh,
+      });
+
     // Xray
     outbounds.xray = {
       protocol: scheme,
@@ -283,7 +337,7 @@ export function outboundsForLink(link: string): LinkOutbounds | null {
           },
         },
       },
-      skipped: {},
+      skipped: { mihomo: 'no_codec' },
     };
   }
 
@@ -323,7 +377,7 @@ export function outboundsForLink(link: string): LinkOutbounds | null {
       reality: false,
       ...base,
       outbounds: { 'sing-box': outbound },
-      skipped: { xray: 'no_codec' },
+      skipped: { xray: 'no_codec', mihomo: 'no_codec' },
     };
   }
   return null;

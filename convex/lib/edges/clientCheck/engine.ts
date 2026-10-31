@@ -6,7 +6,9 @@
  * The configuration has a loopback HTTP proxy inbound and the outbound as its
  * ONLY outbound: there is no direct outbound and no DNS server, so nothing the
  * fetch does can leave any other way, and the egress page's name is resolved at
- * the node (the proxy hands the name through CONNECT).
+ * the node (the proxy hands the name through CONNECT). Mihomo's equivalent: a
+ * loopback mixed port, the one proxy, one rule sending everything to it, DNS
+ * off and no geodata (a `MATCH` rule never needs any, so none is downloaded).
  */
 import type {
   ClientCheckEngine,
@@ -20,6 +22,21 @@ export function engineConfig(
   outbound: Record<string, unknown>,
   listenPort: number,
 ): Record<string, unknown> {
+  if (engine === 'mihomo') {
+    return {
+      'mixed-port': listenPort,
+      'bind-address': '127.0.0.1',
+      'allow-lan': false,
+      mode: 'rule',
+      'log-level': 'warning',
+      ipv6: true,
+      dns: { enable: false },
+      'geo-auto-update': false,
+      profile: { 'store-selected': false, 'store-fake-ip': false },
+      proxies: [{ ...outbound, name: CHECK_OUTBOUND_TAG }],
+      rules: [`MATCH,${CHECK_OUTBOUND_TAG}`],
+    };
+  }
   if (engine === 'sing-box') {
     return {
       log: { level: 'warn', timestamp: false },
@@ -38,17 +55,43 @@ export function engineConfig(
   };
 }
 
-/** Both engines take the same command line. */
-export function engineRunArgs(configPath: string): string[] {
-  return ['run', '-c', configPath];
+/**
+ * The command line that runs one session. sing-box and Xray take the same;
+ * Mihomo reads a JSON configuration as YAML and keeps its state in `homeDir`
+ * (the session's own temporary directory).
+ */
+export function engineRunArgs(
+  engine: ClientCheckEngine,
+  configPath: string,
+  homeDir: string,
+): string[] {
+  return engine === 'mihomo' ? ['-f', configPath, '-d', homeDir] : ['run', '-c', configPath];
 }
 
-/** `sing-box version` / `xray version` output -> the version, or null. */
+/** The command line that prints the engine's version. */
+export function engineVersionArgs(engine: ClientCheckEngine): string[] {
+  return engine === 'mihomo' ? ['-v'] : ['version'];
+}
+
+/**
+ * Mihomo opens its port before its tunnel takes connections (a connection in
+ * between is closed after the proxy handshake), so a session waits this long
+ * after the port answers. The others take connections once they listen.
+ */
+export const ENGINE_SETTLE_MS: Record<ClientCheckEngine, number> = {
+  'sing-box': 0,
+  xray: 0,
+  mihomo: 500,
+};
+
+/** `sing-box version` / `xray version` / `mihomo -v` output -> the version, or null. */
 export function parseEngineVersion(engine: ClientCheckEngine, text: string): string | null {
   const m =
     engine === 'sing-box'
       ? /sing-box version (\S+)/.exec(text)
-      : /^Xray (\d[^\s]*)/m.exec(text.trim());
+      : engine === 'mihomo'
+        ? /Mihomo(?: Meta)? v?(\d[^\s]*)/.exec(text)
+        : /^Xray (\d[^\s]*)/m.exec(text.trim());
   return m?.[1] ?? null;
 }
 

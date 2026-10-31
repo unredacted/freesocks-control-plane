@@ -12,6 +12,7 @@ import type {
 import {
   STEP_BUTTON,
   addedWords,
+  autoTestWords,
   lookedWords,
   managedWords,
   namesNeedsYou,
@@ -32,6 +33,7 @@ const on: SniTransportsView['switches'] = {
   findNames: true,
   backendChanges: true,
   backendSetUp: true,
+  autoTest: 'off',
 };
 const counts = {
   inUse: 4,
@@ -71,6 +73,7 @@ function transport(o: Partial<SniTransport> = {}, c: Partial<typeof counts> = {}
         waitingTest: 0,
         pending: [],
         testable: [{ edgeId: 'e-1', name: 'edge-a' }],
+        autoTest: null,
       },
     ],
     sameCoverSite: [],
@@ -429,6 +432,103 @@ describe('a node on the list page', () => {
     });
     expect(nodeLineWords({ ...n, waitingTest: 1, testable: [] }).text).toBe(
       '4 names in use · 1 waiting for a test: try one of its addresses first',
+    );
+  });
+});
+
+describe("FCP's own test of a send", () => {
+  const waiting = (autoTest: SniTransport['nodes'][number]['autoTest'], testable = true) =>
+    transport({
+      nodes: [
+        {
+          relaySlug: 'node-one',
+          nodeUuid: NODE,
+          nodeName: 'node-one',
+          inUse: 4,
+          waitingTest: 2,
+          pending: ['new-1.example', 'new-2.example'],
+          testable: testable ? [{ edgeId: 'e-1', name: 'edge-a' }] : [],
+          autoTest,
+        },
+      ],
+    });
+  const test1 = (o: Partial<NonNullable<SniTransport['nodes'][number]['autoTest']>>) => ({
+    state: 'failed' as const,
+    at: '2026-10-31T10:00:00.000Z',
+    sni: 'new-1.example',
+    failures: 1,
+    verdict: 'address_failed' as const,
+    code: null,
+    engines: [
+      { engine: 'sing-box' as const, code: 'reality_refused' },
+      { engine: 'xray' as const, code: 'reality_refused' },
+      { engine: 'mihomo' as const, code: 'ok' },
+    ],
+    ...o,
+  });
+  const stepOf = (t: SniTransport) => namesStep(t, on, NODE);
+
+  test('switch off: no line, and "Test one name" stays the button', () => {
+    const t = waiting(null);
+    expect(stepOf(t).kind).toBe('test');
+    expect(STEP_BUTTON.test).toBe('Test one name');
+    expect(autoTestWords(stepOf(t), 'off')).toBeNull();
+  });
+
+  test('on: what the newest test found, in words, never a code', () => {
+    const s = (a: Parameters<typeof test1>[0]) => autoTestWords(stepOf(waiting(test1(a))), 'ready');
+    expect(autoTestWords(stepOf(waiting(null)), 'ready')).toBe(
+      'FCP tests one name here by itself within a few minutes. You can test one now.',
+    );
+    expect(s({ state: 'testing', verdict: null, engines: [] })).toBe(
+      'FCP is testing new-1.example on this node now with its own clients.',
+    );
+    expect(s({})).toBe(
+      "FCP's test did not pass: the node did not accept new-1.example (sing-box: Refused by REALITY; Xray: Refused by REALITY). Nothing changed for members. It tries again in about 10 minutes. You can test one now.",
+    );
+    expect(s({ verdict: 'egress_mismatch' })).toMatch(/came out of another node/);
+    expect(s({ state: 'could_not_check', verdict: null, code: 'unavailable', engines: [] })).toBe(
+      'FCP could not test a name here: check client not answering. It tries again in about 10 minutes. You can test one now.',
+    );
+    expect(s({ state: 'could_not_check', verdict: null, code: 'lapsed', engines: [] })).toMatch(
+      /the test did not finish/,
+    );
+    expect(s({ state: 'voided', code: 'edge.sni.binding_changed' })).toMatch(
+      /set its last test aside: the address changed while it ran/,
+    );
+    expect(s({ state: 'stopped', failures: 4 })).toBe(
+      "FCP's test did not pass 4 times, so it stopped trying for this send. Test one name yourself.",
+    );
+    for (const line of [s({}), s({ state: 'stopped' }), s({ state: 'voided', code: 'x' })])
+      expect(line).not.toMatch(/\u2014|address_failed|reality_refused/);
+  });
+
+  test('on, but the service is not there or not answering', () => {
+    expect(autoTestWords(stepOf(waiting(null)), 'not_configured')).toMatch(/not set up here/);
+    expect(autoTestWords(stepOf(waiting(null)), 'unhealthy')).toMatch(/not answering/);
+    // A test already running is still said.
+    expect(autoTestWords(stepOf(waiting(test1({ state: 'testing' }))), 'unhealthy')).toMatch(
+      /is testing/,
+    );
+  });
+
+  test('no address that works: FCP waits for one too', () => {
+    const t = waiting(null, false);
+    expect(stepOf(t).kind).toBe('test_needs_address');
+    expect(autoTestWords(stepOf(t), 'ready')).toMatch(/only through an address that already works/);
+  });
+
+  test('the node line and Needs you say when FCP is testing', () => {
+    const t = waiting(test1({ state: 'testing' }));
+    expect(nodeLineWords(t.nodes[0]!).text).toBe(
+      '4 names in use · 2 waiting for a test · FCP is testing one now',
+    );
+    expect(nodeLineWords(waiting(test1({ state: 'stopped' })).nodes[0]!).text).toMatch(
+      /FCP stopped testing: test one yourself$/,
+    );
+    const lines = namesNeedsYou({ switches: { ...on, autoTest: 'ready' }, transports: [t] });
+    expect(lines.find((l) => l.key.startsWith('names-test'))?.text).toBe(
+      'VLESS_REALITY on node-one: 2 names wait for a test. FCP is testing one now.',
     );
   });
 });
