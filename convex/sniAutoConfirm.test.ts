@@ -382,6 +382,37 @@ describe('a pass', () => {
   });
 });
 
+describe('the sweep', () => {
+  test('reaches a waiting send past its first page', async () => {
+    const { t, bindingId, listenerId } = await seed();
+    const { rolloutId } = await t.action(internal.sniRollouts.start, { bindingId });
+    // Thirty older confirmed sends a page sees first (each of a superseded generation).
+    await t.run(async (ctx) => {
+      const r = (await ctx.db.get(rolloutId!))!;
+      const { _id, _creationTime, ...row } = r;
+      void _id;
+      void _creationTime;
+      for (let i = 0; i < 30; i++)
+        await ctx.db.insert('sniRollouts', { ...row, generation: 0, updatedAt: i });
+    });
+    expect(await t.mutation(internal.sniAutoConfirm.sweep, {})).toEqual({
+      started: 0,
+      why: null,
+    });
+    // The next page was scheduled with where the sweep got to; it finds the send.
+    const next = await t.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).find(
+        (j) => j.name === 'sniAutoConfirm:sweep' && j.state.kind === 'pending' && j.args[0]?.cursor,
+      ),
+    );
+    expect(next?.args[0]).toMatchObject({ started: 0 });
+    expect((await t.mutation(internal.sniAutoConfirm.sweep, next!.args[0])).started).toBe(1);
+    const [issued] = await receipts(t);
+    await t.action(internal.sniAutoConfirm.run, { receiptId: issued!._id });
+    expect(await activeNames(t, listenerId)).toContain('fresh-1.example');
+  });
+});
+
 describe('names that prove only themselves', () => {
   test('no witness: one name per test, the next one after each pass', async () => {
     const { t, bindingId, listenerId } = await seed();
@@ -541,6 +572,43 @@ describe('guards', () => {
     await expect(
       t.mutation(internal.sniRollouts.confirmReceipt, { receiptId: issued!._id }),
     ).rejects.toThrow(/FCP's own test/);
+  });
+
+  test('a misrouted address: both names come out of another node, nothing handed out', async () => {
+    // The address reaches another node that knows the credential and took the
+    // names: the same-address control goes there too, so it vouches for nothing.
+    const { t, bindingId, listenerId } = await seed({
+      auto: true,
+      script: (engine) =>
+        engine === 'sing-box'
+          ? { code: 'reality_refused' }
+          : { code: 'ok', egressIp: '198.51.100.99' },
+    });
+    await t.action(internal.sniRollouts.start, { bindingId });
+    await sweepAndRun(t);
+    expect(await activeNames(t, listenerId)).toEqual(['a.example', 'b.example']);
+    expect((await receipts(t))[0]).toMatchObject({
+      state: 'failed',
+      check: { verdict: 'egress_mismatch', control: true },
+    });
+  });
+
+  test('a name list switched off: nothing is tested; switched off mid-test, nothing handed out', async () => {
+    const { t, bindingId, listenerId } = await seed();
+    await t.action(internal.sniRollouts.start, { bindingId });
+    await t.mutation(internal.sniFamilies.update, { slug: 'fam', enabled: false });
+    expect((await t.mutation(internal.sniAutoConfirm.sweep, {})).started).toBe(0);
+    expect(await receipts(t)).toEqual([]);
+    await t.mutation(internal.sniFamilies.update, { slug: 'fam', enabled: true });
+    await t.mutation(internal.sniAutoConfirm.sweep, {});
+    const [issued] = await receipts(t);
+    await t.mutation(internal.sniFamilies.update, { slug: 'fam', enabled: false });
+    await t.action(internal.sniAutoConfirm.run, { receiptId: issued!._id });
+    expect(await activeNames(t, listenerId)).toEqual(['a.example', 'b.example']);
+    expect((await receipts(t))[0]).toMatchObject({
+      state: 'superseded',
+      check: { verdict: 'passed', code: 'list_off' },
+    });
   });
 
   test('a node with no confirmed address is left to a person', async () => {

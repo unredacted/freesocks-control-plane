@@ -649,6 +649,40 @@ describe('judge', () => {
   });
 });
 
+describe('judge: a control that is the same address', () => {
+  test('its egress vouches for nothing: a session must come out of the node', () => {
+    // A misrouted address: both sessions reach another node that knows the credential.
+    const elsewhere = (engine: EngineRun['engine'], ok = true): EngineRun => ({
+      engine,
+      ok,
+      code: ok ? 'ok' : 'reality_refused',
+      egressIp: ok ? '198.51.100.99' : null,
+      engineVersion: null,
+    });
+    const candidate = [elsewhere('sing-box'), elsewhere('xray')];
+    const control = [elsewhere('sing-box'), elsewhere('xray')];
+    const input = { candidate, control, expectedEgress: ['203.0.113.10'], expectedRefusals: [] };
+    // Another address as control: the node leaves through a second address, recognised.
+    expect(judge(input).verdict).toBe('passed');
+    // The same address as control: the egress is not the node's.
+    expect(judge({ ...input, controlEgress: false }).verdict).toBe('egress_mismatch');
+    // A refusal is still excused by the same-address control.
+    const node = (engine: EngineRun['engine'], ok = true): EngineRun => ({
+      ...elsewhere(engine, ok),
+      egressIp: ok ? '203.0.113.10' : null,
+    });
+    expect(
+      judge({
+        candidate: [node('sing-box', false), node('xray')],
+        control: [node('sing-box', false), node('xray')],
+        expectedEgress: ['203.0.113.10'],
+        expectedRefusals: [],
+        controlEgress: false,
+      }).verdict,
+    ).toBe('passed_with_refusals');
+  });
+});
+
 describe('service client', () => {
   test('configured only with a secret; the compose name by default', () => {
     expect(clientCheckService({})).toBeNull();

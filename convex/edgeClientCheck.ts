@@ -519,6 +519,12 @@ export async function checkWithControl(
     expectedRefusals: ClientCheckEngine[];
     candidate: { edgeId: Id<'edges'>; opts?: LinkOptions };
     control: { edgeId: Id<'edges'>; opts?: LinkOptions } | null;
+    /**
+     * Whether the control's egress vouches for the candidate's (default true:
+     * another address that comes out of the node somewhere else). False when
+     * the control is the same address, which leads wherever the candidate does.
+     */
+    controlEgress?: boolean;
   },
 ): Promise<ClientCheckJudged> {
   const issued: Array<{ edgeId: Id<'edges'>; credentialId: string }> = [];
@@ -551,6 +557,7 @@ export async function checkWithControl(
       control,
       expectedEgress: a.expectedEgress,
       expectedRefusals: a.expectedRefusals,
+      ...(a.controlEgress === false ? { controlEgress: false } : {}),
     });
     return {
       checked: true,

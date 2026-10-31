@@ -284,6 +284,7 @@ const VOID_WORDS: Record<string, string> = {
   'edge.sni.receipt_expired': 'it ran too long',
   already_proven: 'a test by hand proved the names first',
   switched_off: 'testing by FCP was switched off while it ran',
+  list_off: 'its name list was switched off while it ran',
 };
 
 /** The clients that did not get in with the name: `sing-box: Refused by REALITY; Xray: Timed out`. */

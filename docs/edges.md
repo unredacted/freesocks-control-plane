@@ -2511,9 +2511,11 @@ without the other.
 
 **When.** A minute after the backend is seen to hold a send (`panel_confirmed`; the nodes restart
 Xray to take it), then on every `sni-qualify` pass (5 minutes) while a node of the newest send
-still waits for a test. Only while server names are on, the switch is on, and the client-check
-service is set up and answered its last health check (under 30 minutes old). One sweep starts at
-most three tests, 100 s apart (the service runs one session at a time and a test holds it for at
+still waits for a test. Only while server names are on, the switch is on, the send's name list is
+on, and the client-check service is set up and answered its last health check (under 30 minutes
+old). A sweep walks every send still confirmed on its backend, 25 a page, the next page scheduled,
+until it has started its tests; a node it started is not due again for minutes, so the next sweep
+reaches the ones after it. One sweep starts at most three tests, 100 s apart (the service runs one session at a time and a test holds it for at
 most its 90 s); a test that did not pass is tried again no sooner than 10 minutes later, and after
 **4** that did not pass on one node FCP leaves that send there to a person.
 
@@ -2534,7 +2536,10 @@ name members get now. So:
   that wants an ML-KEM key share): the node's doing, not the name's, `passed_with_refusals`;
 - an engine that gets in with the members' name does not with the new one (a node that has not
   taken the send hands it to the cover site): `address_failed`, the node did not accept the name;
-- a session comes out of another node: `egress_mismatch`;
+- a session comes out of another node: `egress_mismatch`. The same-address control says nothing
+  about where the address leads (a misrouted address takes both sessions to the same wrong node),
+  so here, unlike a check of an address, its egress vouches for nothing: a session must come out
+  of one of the node's own addresses (`controlEgress: false`);
 - nothing gets in with either name: `node_unreachable`, nothing learned.
 
 Proved in CI with the real engines (`clientCheck.integration.test.ts`): a name the core does not
@@ -2545,14 +2550,14 @@ list is refused by sing-box, Xray and Mihomo while the listed one connects, judg
 uses (`POST sni/receipts/{id}/confirm`), so every guard is derived again from the live rows: the
 send is still the newest and confirmed, the profile still has its token, the address's endpoint
 confirmation is current and unchanged, and the sessions proved exactly the configuration the
-receipt is bound to; and only while both switches are still on. Then the names reach that node's
+receipt is bound to; and only while both switches and the send's name list are still on. Then the names reach that node's
 members, as the system: audit `edge.sni.names.accepted` with actor `system`, `by: client_check`
 and the engines' codes (`sing-box:ok xray:ok mihomo:ok`). An operator's confirm route refuses a
 receipt FCP's test holds.
 
 **Anything else hands nothing out.** The receipt is `failed` (with `check`: the verdict, or the
 code saying why none was reached) or `superseded` when something it was bound to changed while it
-ran (`edge.sni.binding_changed`, `edge.sni.profile_moved`, `switched_off`); audit
+ran (`edge.sni.binding_changed`, `edge.sni.profile_moved`, `switched_off`, `list_off`); audit
 `edge.sni.names.tested` (`outcome` failed / could_not_check / voided, the verdict or code, the
 engines). "Test one name" stays where it was.
 

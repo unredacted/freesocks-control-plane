@@ -24,7 +24,9 @@
  * Egress: a connected engine's egress must equal the control's egress for that
  * engine, or one of the node's known addresses (its origin address and the
  * names it was found under). A node that leaves through a second address is
- * still recognised through the control.
+ * still recognised through the control. Not when the control is the same
+ * address (a test of a send's names, `controlEgress: false`): it leads
+ * wherever the candidate does, so only the node's known addresses count.
  */
 import type {
   ClientCheckEngine,
@@ -82,8 +84,11 @@ export function judge(input: {
   expectedEgress: string[];
   /** Engines the REALITY verdict says this transport refuses (`relays.realityClients`). */
   expectedRefusals: ClientCheckEngine[];
+  /** Whether the control's egress vouches for the candidate's (default true). */
+  controlEgress?: boolean;
 }): ClientCheckJudgement {
   const control = input.control;
+  const vouches = input.controlEgress !== false;
   const controlUsable = !!control && control.some((r) => r.ok);
   const controlOf = (e: ClientCheckEngine) => control?.find((r) => r.engine === e);
   const engines: EngineVerdict[] = input.candidate.map((r) => {
@@ -92,7 +97,11 @@ export function judge(input: {
       engine: r.engine,
       code: r.code,
       engineVersion: r.engineVersion,
-      egress: r.ok ? (egressMatches(r, k, input.expectedEgress) ? 'matched' : 'mismatch') : null,
+      egress: r.ok
+        ? egressMatches(r, vouches ? k : undefined, input.expectedEgress)
+          ? 'matched'
+          : 'mismatch'
+        : null,
       excused: !r.ok && (controlUsable ? !!k && !k.ok : input.expectedRefusals.includes(r.engine)),
     };
   });

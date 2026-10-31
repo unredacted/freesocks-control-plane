@@ -18,7 +18,9 @@
  *   - judged against a control that tells the name from the node: the same
  *     address with a name members get now (`edgeClientCheck.checkWithControl`).
  *     An engine the node refuses whatever the name (sing-box against an Xray
- *     that wants an ML-KEM key share) is not the name's doing;
+ *     that wants an ML-KEM key share) is not the name's doing. The control's
+ *     egress proves nothing here (it went the same way): a session must come
+ *     out of one of the node's own addresses;
  *   - confirmed by the same function as an operator's tick
  *     (`sniRollouts.acceptReceipt`, every guard again from the live rows), as
  *     the system: audit `edge.sni.names.accepted` with `by: client_check`.
@@ -61,8 +63,13 @@ import { verificationListenerOf } from './lib/edges/verificationContext';
 import { resolveSniConfig } from './lib/sniConfig';
 import { acceptReceipt, boundListeners, receiptContextOf } from './sniRollouts';
 
-/** Rollouts one sweep looks at (each binding's newest is the only one that waits). */
-const SWEEP_ROLLOUTS = 50;
+/**
+ * Rollouts one page of a sweep looks at. A sweep walks every send still
+ * confirmed on its backend (one per binding at most: a newer send supersedes
+ * the last) a page at a time, the next page scheduled, until it has started
+ * its tests or seen them all.
+ */
+const SWEEP_PAGE = 25;
 
 /**
  * The address a test goes through: an L4 address of the listener that is in
@@ -100,30 +107,43 @@ async function testAddress(
  * and once per send a minute after the backend is seen to hold it): one
  * receipt per node that is due (`autoTestDue`), then its run, the runs
  * `AUTO_STAGGER_MS` apart (the service runs one session at a time), at most
- * `AUTO_PER_SWEEP` per sweep. Nothing while either switch is off or the
- * service is not set up and answering.
+ * `AUTO_PER_SWEEP` per sweep. A node it started is not due again for minutes,
+ * so the next sweep reaches the ones after it. Nothing while either switch is
+ * off, the send's name list is off, or the service is not set up and answering.
  */
 export const sweep = internalMutation({
-  args: { rolloutId: v.optional(v.id('sniRollouts')) },
-  handler: async (ctx, { rolloutId }) => {
+  args: {
+    rolloutId: v.optional(v.id('sniRollouts')),
+    // The next page of a sweep, and the tests it has started so far.
+    cursor: v.optional(v.string()),
+    started: v.optional(v.number()),
+  },
+  handler: async (ctx, { rolloutId, cursor, started: before }) => {
     const cfg = await resolveSniConfig(ctx.db);
     if (!cfg.enabled || !cfg.autoConfirm) return { started: 0, why: 'off' as const };
     if (!clientCheckService(process.env)) return { started: 0, why: 'not_configured' as const };
     if (!(await clientCheckServiceReady(ctx.db))) return { started: 0, why: 'unhealthy' as const };
     const now = Date.now();
-    const rollouts = rolloutId
-      ? [await ctx.db.get(rolloutId)].filter((r): r is Doc<'sniRollouts'> => !!r)
-      : await ctx.db
-          .query('sniRollouts')
-          .withIndex('by_phase_updated', (q) => q.eq('phase', 'panel_confirmed'))
-          .order('desc')
-          .take(SWEEP_ROLLOUTS);
-    let started = 0;
+    let next: string | null = null;
+    let rollouts: Doc<'sniRollouts'>[];
+    if (rolloutId)
+      rollouts = [await ctx.db.get(rolloutId)].filter((r): r is Doc<'sniRollouts'> => !!r);
+    else {
+      const page = await ctx.db
+        .query('sniRollouts')
+        .withIndex('by_phase_updated', (q) => q.eq('phase', 'panel_confirmed'))
+        .paginate({ cursor: cursor ?? null, numItems: SWEEP_PAGE });
+      rollouts = page.page;
+      if (!page.isDone) next = page.continueCursor;
+    }
+    let started = before ?? 0;
     for (const r of rollouts) {
       if (started >= AUTO_PER_SWEEP) break;
       if (r.phase !== 'panel_confirmed') continue;
       const b = await ctx.db.get(r.bindingId);
       if (!b || b.generation !== r.generation) continue;
+      // A name list switched off sends nothing new: no test either.
+      if (!(await ctx.db.get(b.familyId))?.enabled) continue;
       // The family's usable names of the send: a receipt activates nothing else.
       const usable = new Set(
         (
@@ -190,7 +210,9 @@ export const sweep = internalMutation({
         started++;
       }
     }
-    return { started, why: null };
+    if (next !== null && started < AUTO_PER_SWEEP)
+      await ctx.scheduler.runAfter(0, internal.sniAutoConfirm.sweep, { cursor: next, started });
+    return { started: started - (before ?? 0), why: null };
   },
 });
 
@@ -249,7 +271,11 @@ export const run = internalAction({
       expectedEgress: c.expectedEgress,
       expectedRefusals: c.expectedRefusals,
       candidate: { edgeId: rc.edgeId, opts: { candidateSni: rc.sni } },
+      // The same address: it tells the name from the node's own refusals, and
+      // says nothing about where the address leads (a misrouted address takes
+      // both sessions to the same wrong node), so the egress must be the node's.
       control: { edgeId: rc.edgeId },
+      controlEgress: false,
     });
     return settle(
       j.checked
@@ -341,6 +367,11 @@ export const settle = internalMutation({
       return noted('superseded', 'voided', 'edge.sni.binding_changed');
     const cfg = await resolveSniConfig(ctx.db);
     if (!cfg.enabled || !cfg.autoConfirm) return noted('superseded', 'voided', 'switched_off');
+    // The name list switched off while the test ran: it sends nothing new.
+    const rollout = await ctx.db.get(rc.rolloutId);
+    const binding = rollout ? await ctx.db.get(rollout.bindingId) : null;
+    const family = binding ? await ctx.db.get(binding.familyId) : null;
+    if (binding && !family?.enabled) return noted('superseded', 'voided', 'list_off');
     const out = await acceptReceipt(ctx, rc, { kind: 'client_check', engines });
     if (!out.ok) return noted(out.state ?? 'superseded', 'voided', out.code);
     // A person proved it first: theirs stands, this one writes nothing.
