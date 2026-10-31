@@ -8,24 +8,37 @@
 
     Drawn on a canvas with the bundled brand fonts so the output carries the
     site's real typography without any screenshot tooling. Colors are the dark
-    theme's tokens resolved to sRGB at draw time (see resolve()); the copy is
-    the hero title + the meta description - keep those three in sync with
-    index.html / Home.svelte when they change.
+    theme's values from globals.css (.dark), and the poster on the right is the
+    same pixel scene as components/PixelPoster.svelte. The copy is the hero
+    title + the meta description - keep those in sync with index.html /
+    Home.svelte when they change.
   -->
   <head>
     <meta charset="UTF-8" />
     <title>og.png source</title>
     <style>
       @font-face {
-        font-family: 'Inter Tight';
+        font-family: 'Schibsted Grotesk';
         font-weight: 700;
-        src: url('../node_modules/@fontsource/inter-tight/files/inter-tight-latin-700-normal.woff2')
+        src: url('../node_modules/@fontsource/schibsted-grotesk/files/schibsted-grotesk-latin-700-normal.woff2')
           format('woff2');
       }
       @font-face {
-        font-family: 'Inter';
+        font-family: 'Schibsted Grotesk';
+        font-weight: 800;
+        src: url('../node_modules/@fontsource/schibsted-grotesk/files/schibsted-grotesk-latin-800-normal.woff2')
+          format('woff2');
+      }
+      @font-face {
+        font-family: 'Atkinson Hyperlegible Next';
         font-weight: 400;
-        src: url('../node_modules/@fontsource/inter/files/inter-latin-400-normal.woff2')
+        src: url('../node_modules/@fontsource/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-400-normal.woff2')
+          format('woff2');
+      }
+      @font-face {
+        font-family: 'Silkscreen';
+        font-weight: 400;
+        src: url('../node_modules/@fontsource/silkscreen/files/silkscreen-latin-400-normal.woff2')
           format('woff2');
       }
       body {
@@ -45,69 +58,172 @@
     <p><button id="save">Save PNG</button> then move the download to <code>public/og.png</code></p>
     <canvas id="card" width="1200" height="630"></canvas>
     <script>
-      // Resolve a CSS color (the site's oklch tokens) to device sRGB via the
-      // browser instead of hand-converting.
-      function resolve(css) {
-        const el = document.createElement('span');
-        el.style.color = css;
-        document.body.append(el);
-        const out = getComputedStyle(el).color;
-        el.remove();
-        return out;
-      }
+      // Dark-theme values (globals.css .dark) and the fixed logo green.
+      const BG = '#333333';
+      const BAND = '#2a2a2a';
+      const LINE = '#414141';
+      const INK = '#f5f4ef';
+      const BODY = '#dcdbd5';
+      const MUTED = '#b0afa9';
+      const BRAND = '#5aba6a';
+      const LOGO_GREEN = '#007e4b';
+      // Poster colors (components/PixelPoster.svelte).
+      const PLATE = '#c9cbd6';
+      const NIGHT = '#262a3a';
 
-      // The 8-point star from StarIcon.svelte / favicon.svg (24x24 box).
+      // The 8-point star on a 24x24 box (the logo mark, BrandMark.svelte).
       const STAR =
         'M12 2l1.53 6.3 5.54-3.37-3.37 5.54L22 12l-6.3 1.53 3.37 5.54-5.54-3.37L12 22l-1.53-6.3-5.54 3.37 3.37-5.54L2 12l6.3-1.53L4.93 4.93l5.54 3.37L12 2Z';
+      // The same star as pixel art on a 17x17 grid (PixelPoster.svelte).
+      const PIXEL_STAR =
+        'M8 0h1v17h-1zM0 8h17v1h-17zM2 2h1v1h-1zM14 2h1v1h-1zM3 3h1v1h-1zM13 3h1v1h-1zM4 4h2v1h-2zM7 4h3v1h-3zM11 4h2v1h-2zM4 5h9v1h-9zM5 6h7v1h-7zM4 7h9v1h-9zM4 9h9v1h-9zM5 10h7v1h-7zM4 11h9v1h-9zM4 12h2v1h-2zM7 12h3v1h-3zM11 12h2v1h-2zM3 13h1v1h-1zM13 13h1v1h-1zM2 14h1v1h-1zM14 14h1v1h-1z';
+      const BAYER = [
+        [0, 8, 2, 10],
+        [12, 4, 14, 6],
+        [3, 11, 1, 9],
+        [15, 7, 13, 5],
+      ].map((row) => row.map((v) => (v + 0.5) / 16));
+      const SPARKLES = [
+        [4, 4],
+        [26, 3],
+        [34, 7],
+        [3, 19],
+        [37, 17],
+        [7, 34],
+        [35, 31],
+        [15, 39],
+        [30, 39],
+      ];
+
+      function logo(ctx, x, y, size) {
+        ctx.fillStyle = LOGO_GREEN;
+        ctx.beginPath();
+        ctx.roundRect(x, y, size, size, size * 0.239);
+        ctx.fill();
+        // The mark's own transform: translate(174.08) scale(28.16) in 1024 units.
+        ctx.save();
+        ctx.translate(x + size * 0.17, y + size * 0.17);
+        ctx.scale(size * 0.0275, size * 0.0275);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill(new Path2D(STAR));
+        ctx.restore();
+      }
+
+      // The poster: a lettered plate over a 40x43 pixel scene (star, dithered
+      // glow, sparkles), framed like PixelPoster.svelte.
+      const POSTER = { pad: 7, border: 3, plateH: 92 };
+      function posterHeight(width) {
+        const { pad, border, plateH } = POSTER;
+        const sceneH = ((width - 2 * (pad + border)) / 40) * 43;
+        return 2 * pad + border + plateH + border + sceneH + border;
+      }
+      function poster(ctx, x, y, width) {
+        const { pad, border, plateH } = POSTER;
+        const inner = width - 2 * (pad + border);
+        const cell = inner / 40;
+        const sceneH = cell * 43;
+        const outerH = posterHeight(width);
+        // Outer navy rule, plate-colored frame.
+        ctx.fillStyle = NIGHT;
+        ctx.fillRect(x - 3, y - 3, width + 6, outerH + 6);
+        ctx.fillStyle = PLATE;
+        ctx.fillRect(x, y, width, outerH);
+        // Plate.
+        const px = x + pad;
+        const py = y + pad;
+        ctx.fillStyle = NIGHT;
+        ctx.fillRect(px, py, width - 2 * pad, border);
+        ctx.fillRect(px, py, border, plateH + border);
+        ctx.fillRect(px + width - 2 * pad - border, py, border, plateH + border);
+        ctx.font = '400 30px "Silkscreen"';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText('INTERNET', x + width / 2, py + border + 40);
+        ctx.fillText('FREEDOM', x + width / 2, py + border + 74);
+        ctx.textAlign = 'start';
+        // Scene.
+        const sx = px + border;
+        const sy = py + border + plateH;
+        ctx.fillStyle = NIGHT;
+        ctx.fillRect(px, sy - border, width - 2 * pad, sceneH + 2 * border);
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.scale(cell, cell);
+        const cx = 12 + 8.5;
+        const cy = 11 + 8.5;
+        ctx.fillStyle = 'rgba(90, 186, 106, 0.22)';
+        for (let gy = 0; gy < 43; gy++) {
+          for (let gx = 0; gx < 40; gx++) {
+            const tt = Math.min(1, Math.hypot(gx + 0.5 - cx, gy + 0.5 - cy) / 16);
+            const f = (1 - tt * tt * (3 - 2 * tt)) * 0.9;
+            if (f > BAYER[gy & 3][gx & 3]) ctx.fillRect(gx, gy, 1, 1);
+          }
+        }
+        ctx.fillStyle = 'rgba(201, 203, 214, 0.75)';
+        for (const [gx, gy] of SPARKLES) ctx.fillRect(gx, gy, 1, 1);
+        ctx.translate(12, 11);
+        ctx.fillStyle = BRAND;
+        ctx.fill(new Path2D(PIXEL_STAR));
+        ctx.restore();
+      }
 
       async function draw() {
         await Promise.all([
-          document.fonts.load('700 100px "Inter Tight"'),
-          document.fonts.load('400 34px "Inter"'),
+          document.fonts.load('700 100px "Schibsted Grotesk"'),
+          document.fonts.load('800 50px "Schibsted Grotesk"'),
+          document.fonts.load('400 34px "Atkinson Hyperlegible Next"'),
+          document.fonts.load('400 30px "Silkscreen"'),
         ]);
         const c = document.getElementById('card');
         const ctx = c.getContext('2d');
-        // Dark-theme tokens (globals.css .dark): background + primary + inks.
-        const bg = resolve('oklch(0.268 0 0)');
-        const primary = resolve('oklch(0.72 0.13 158)');
-        const ink = resolve('oklch(0.985 0 0)');
-        const muted = resolve('oklch(0.78 0 0)');
+        ctx.imageSmoothingEnabled = false;
 
-        ctx.fillStyle = bg;
+        ctx.fillStyle = BG;
         ctx.fillRect(0, 0, 1200, 630);
 
-        // Brand row: green rounded square + white star, wordmark beside it.
-        const M = 96; // page margin
-        const LOGO = 92;
-        ctx.fillStyle = primary;
-        ctx.beginPath();
-        ctx.roundRect(M, M, LOGO, LOGO, 22);
-        ctx.fill();
-        ctx.save();
-        // Center the 24x24 star path in the logo box.
-        const starScale = (LOGO * 0.66) / 24;
-        ctx.translate(M + LOGO / 2 - 12 * starScale, M + LOGO / 2 - 12 * starScale);
-        ctx.scale(starScale, starScale);
-        ctx.fillStyle = ink;
-        ctx.fill(new Path2D(STAR));
-        ctx.restore();
-        ctx.fillStyle = ink;
-        ctx.font = '700 58px "Inter Tight"';
+        // Footer band: the address and who runs it.
+        const BAND_Y = 548;
+        ctx.fillStyle = BAND;
+        ctx.fillRect(0, BAND_Y, 1200, 630 - BAND_Y);
+        ctx.fillStyle = LINE;
+        ctx.fillRect(0, BAND_Y, 1200, 1);
+        ctx.font = '400 26px "Atkinson Hyperlegible Next"';
         ctx.textBaseline = 'middle';
-        ctx.fillText('FreeSocks', M + LOGO + 32, M + LOGO / 2 + 4);
+        ctx.fillStyle = INK;
+        ctx.fillText('freesocks.org', 80, BAND_Y + 41);
+        ctx.fillStyle = MUTED;
+        ctx.textAlign = 'end';
+        ctx.fillText('Operated by Unredacted, a US 501(c)(3) nonprofit', 1120, BAND_Y + 41);
+        ctx.textAlign = 'start';
 
-        // Headline = the hero title; accent bar under it (flat, no gradients).
-        ctx.font = '700 96px "Inter Tight"';
+        // Brand row.
+        const M = 80;
+        const LOGO = 60;
+        logo(ctx, M, 72, LOGO);
+        ctx.fillStyle = INK;
+        ctx.font = '800 44px "Schibsted Grotesk"';
+        ctx.letterSpacing = '-0.9px';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('FreeSocks', M + LOGO + 18, 72 + LOGO / 2 + 2);
+
+        // Headline = the hero title, set like the home page's h1.
+        ctx.font = '700 98px "Schibsted Grotesk"';
+        ctx.letterSpacing = '-2.9px';
         ctx.textBaseline = 'alphabetic';
-        ctx.fillText('A VPN for freedom', M, 400);
-        ctx.fillStyle = primary;
-        ctx.fillRect(M, 430, 120, 8);
+        ctx.fillText('A VPN for', M, 288);
+        ctx.fillText('freedom', M, 384);
 
         // Subline = the meta description.
-        ctx.fillStyle = muted;
-        ctx.font = '400 33px "Inter"';
-        ctx.fillText('Free, open & uncensored proxies for users', M, 502);
-        ctx.fillText('in heavily-censored regions.', M, 548);
+        ctx.letterSpacing = '0px';
+        ctx.fillStyle = BODY;
+        ctx.font = '400 31px "Atkinson Hyperlegible Next"';
+        ctx.fillText('Free, open & uncensored proxies for users', M, 452);
+        ctx.fillText('in heavily-censored regions.', M, 494);
+
+        // The poster, right-aligned to the same margin.
+        // Vertically centered in the space above the band.
+        const W = 300;
+        poster(ctx, 1200 - M - W, Math.round((BAND_Y - posterHeight(W)) / 2), W);
       }
 
       document.getElementById('save').addEventListener('click', () => {
@@ -118,7 +234,7 @@
           a.click();
         });
       });
-      draw();
+      window.ogReady = draw();
     </script>
   </body>
 </html>

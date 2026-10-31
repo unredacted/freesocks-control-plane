@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**153 of 794 strings are missing** (the app currently shows English for
+**144 of 751 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -29,7 +29,6 @@ review.
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `faq.title` | Frequently asked questions | سوالات متداول |
-| `faq.subtitle` | Answers to common questions. | به سوالات اولیه پاسخ داده شد. هنوز گیر کرده‌اید؟ با شناسه پشتیبانی خود تماس بگیرید. |
 | `faq.tabGeneral` | General | عمومی |
 | `faq.tabThreat` | What we protect you from | از چه چیزی از شما محافظت می‌کنیم |
 | `faq.contactPrefix` | For anything else, email | برای هر مورد دیگر، ایمیل بزنید به |
@@ -93,7 +92,7 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | 1 دستگاه |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} دستگاه |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls. *(2 missing)*
+## `nav` — The site header: navigation buttons, menu, language/theme controls.
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -101,10 +100,7 @@ review.
 | `nav.signIn` | Sign in | ورود |
 | `nav.account` | My account | حساب من |
 | `nav.menu` | Menu | منو |
-| `nav.theme` | Theme | پوسته |
 | `nav.home` | FreeSocks home | خانهٔ فری‌ساکس |
-| `nav.source` | Source | ⚠️ **MISSING** |
-| `nav.sourceTitle` | FreeSocks is open source. Read the code for yourself. | ⚠️ **MISSING** |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -229,10 +225,6 @@ review.
 | `account.refreshMembership` | Already paid? Check for my membership | قبلاً پرداخت کرده‌اید؟ عضویتم را بررسی کن |
 | `account.memberActiveTitle` | Membership active | عضویت فعال |
 | `account.memberActiveExpiry` | Active until {date} | فعال تا {date} |
-| `account.membershipNudge.title` | Go unlimited with a membership | با عضویت نامحدود شوید |
-| `account.membershipNudge.body` | Unlimited bandwidth and devices. | پهنای باند و دستگاه‌های نامحدود. |
-| `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | پهنای باند نامحدود. |
-| `account.membershipNudge.cta` | View membership | مشاهده عضویت |
 | `account.map.title` | Where your key lives | ⚠️ **MISSING** |
 | `account.map.network` | One of {count} FreeSocks locations | ⚠️ **MISSING** |
 | `account.map.aria` | Globe of FreeSocks server locations, highlighting yours | ⚠️ **MISSING** |
@@ -256,8 +248,6 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | حساب شما در حال حاضر غیرفعال است |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | ساخت کلید جدید و تغییرات در این حساب متوقف شده است. برای فعال‌سازی دوباره، کد عضویت را در پایین وارد کنید یا با پشتیبانی تماس بگیرید و شناسهٔ پشتیبانی خود را اعلام کنید. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | اگر شماره حساب ۳۲ رقمی شما لو رفته باشد، آن را تغییر دهید. شماره قبلی فوراً از کار می‌افتد. |
-| `account.section.connection.title` | Your connection | ارتباط شما |
-| `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | کلید پروکسی شما، راهنمای راه‌اندازی و دستگاه‌های متصل. |
 | `account.section.membership.title` | Membership | عضویت |
 | `account.section.membership.desc` | Your plan - upgrade, extend, or redeem a membership code. | طرح شما — ارتقا، تمدید، یا بازخرید کد عضویت. |
 | `account.section.gifts.title` | Gifts & referrals | هدیه و معرفی |
@@ -449,7 +439,7 @@ review.
 | `impact.giftsTitle` | Recent donations | ⚠️ **MISSING** |
 | `impact.giftActiveUntil` | Boosting free users until {date} | ⚠️ **MISSING** |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(13 missing)*
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(14 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -482,6 +472,7 @@ review.
 | `donate.paidTitle` | Thank you! | ⚠️ **MISSING** |
 | `donate.paidBody` | Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it. | ⚠️ **MISSING** |
 | `donate.orderFailedBody` | The payment did not complete - nothing was charged, or the payment page expired. You can try again below. | ⚠️ **MISSING** |
+| `donate.orderUnderpaidBody` | Your payment arrived, but short of the amount, often because an exchange took its withdrawal fee out of it. We will review it by hand. Thank you for giving. | ⚠️ **MISSING** |
 | `donate.unavailable` | Donations are not available right now. Please check back later. | ⚠️ **MISSING** |
 
 ## `referral` — Miscellaneous strings.
@@ -545,7 +536,7 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | اکنون در طرح رایگان هستید. برای بازگرداندن عضویت خود، از پایین تمدید کنید. |
 | `renew.renewCta` | Renew membership | تمدید عضویت |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(1 missing)*
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(4 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -570,6 +561,7 @@ review.
 | `upgrade.payNowpaymentsHint` | Bitcoin, Monero, Zcash & more | بیت‌کوین، مونرو و بیشتر |
 | `upgrade.payNowpaymentsBadge` | Private | خصوصی |
 | `upgrade.cryptoPrivacyNote` | No account, email, or card needed - pay privately. Monero and Zcash offer the most privacy. | بدون نیاز به حساب، ایمیل یا کارت - پرداخت خصوصی. مونرو و زی‌کش بیشترین حریم خصوصی را ارائه می‌دهند. |
+| `upgrade.exchangeFeeNote` | Paying from an exchange? Many take their withdrawal fee out of the amount they send. Add the fee so the full amount shown arrives. | ⚠️ **MISSING** |
 | `upgrade.payBtcpay` | Bitcoin | بیت‌کوین |
 | `upgrade.payBtcpayHint` | On-chain or Lightning | روی زنجیره یا لایتنینگ |
 | `upgrade.payBtcpayBadge` | No intermediary | بدون واسطه |
@@ -588,6 +580,8 @@ review.
 | `upgrade.paidBody` | Thank you! Your membership is now active. | متشکریم! عضویت شما اکنون فعال است. |
 | `upgrade.failedTitle` | Payment not completed | پرداخت کامل نشد |
 | `upgrade.failedBody` | Your payment did not go through, or the checkout expired. You can try again. | پرداخت شما انجام نشد یا مهلت پرداخت به پایان رسید. می‌توانید دوباره تلاش کنید. |
+| `upgrade.underpaidTitle` | Your payment arrived short | ⚠️ **MISSING** |
+| `upgrade.underpaidBody` | We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out. | ⚠️ **MISSING** |
 
 ## `gift` — Gift membership codes: buying, revealing (show-once), and redeeming.
 
@@ -612,13 +606,14 @@ review.
 | `gift.reveal.saved` | I've saved them | من آنها را ذخیره کرده‌ام |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | کدهای شما هنوز روی صفحه هستند. اگر بدون ذخیره کردن آنها از صفحه خارج شوید، دیگر نمی‌توانید آنها را ببینید. |
 
-## `error` — API error messages shown to members. *(2 missing)*
+## `error` — API error messages shown to members. *(3 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `error.offline` | You appear to be offline. Check your connection and try again. | به نظر می‌رسد آفلاین هستید. اتصال خود را بررسی و دوباره تلاش کنید. |
 | `error.rateLimited` | Too many attempts. Please wait a minute and try again. | تلاش‌های زیاد. لطفاً یک دقیقه صبر کنید و دوباره تلاش کنید. |
 | `error.backendUnavailable` | No VPN server is available right now. Your account is safe - try creating your key again in a few minutes. | در حال حاضر هیچ سرور پروکسی در دسترس نیست. حساب شما امن است - چند دقیقه دیگر دوباره کلید بسازید. |
+| `error.configUnavailable` | Your configuration cannot be shown right now. Your app keeps the one it has; try again in a few minutes. | ⚠️ **MISSING** |
 | `error.generic` | Something went wrong. Please try again. | مشکلی پیش آمد. لطفاً دوباره تلاش کنید. |
 | `error.captchaFailed` | The human check failed. Please complete it and try again. | بررسی انسانی ناموفق بود. لطفاً آن را کامل کنید و دوباره تلاش کنید. |
 | `error.captchaUnconfigured` | The service is temporarily unavailable. Please try again in a few minutes. | سرویس موقتاً در دسترس نیست. لطفاً چند دقیقه دیگر دوباره تلاش کنید. |
@@ -724,13 +719,19 @@ review.
 | `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
 | `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |
 
-## `region` — Miscellaneous strings. *(5 missing)*
+## `region` — Miscellaneous strings. *(11 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `region.title` | Where are you connecting from? | ⚠️ **MISSING** |
-| `region.help` | Leave this on Automatic unless connecting is unreliable. In a few countries some of the website names a key uses are blocked. Choosing yours makes your key use names known to work there. Your choice is saved with your account and is never used for anything else. | ⚠️ **MISSING** |
+| `region.help` | Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses and the connection mode we suggest. It is kept with your key, deleted with it, and never shared. | ⚠️ **MISSING** |
+| `region.helpDetect` | On Automatic we guess it from your connection, keep the guess only for the countries listed here, and forget it {days} days after we last see you there. | ⚠️ **MISSING** |
 | `region.automatic` | Automatic | ⚠️ **MISSING** |
+| `region.elsewhere` | Somewhere else | ⚠️ **MISSING** |
+| `region.guessed` | We think you're connecting from {country}. | ⚠️ **MISSING** |
+| `region.chosen` | You told us you're connecting from {country}. | ⚠️ **MISSING** |
+| `region.chosenElsewhere` | You told us you're connecting from somewhere not listed here. | ⚠️ **MISSING** |
+| `region.change` | Change | ⚠️ **MISSING** |
 | `region.saved` | Saved. Refresh your app to pick up the change. | ⚠️ **MISSING** |
 | `region.failed` | That did not save. Try again. | ⚠️ **MISSING** |
 
@@ -773,34 +774,17 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(24 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(6 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
-| `home.trust.nonprofit` | Run by a US 501(c)(3) nonprofit | اداره‌شده توسط یک سازمان غیرانتفاعی 501(c)(3) آمریکایی |
-| `home.trust.openSource` | Open source | متن‌باز |
-| `home.trust.noLogs` | No traffic logs | بدون گزارش ترافیک |
-| `home.network.title` | Network status | وضعیت شبکه |
-| `home.network.offline` | offline | آفلاین |
-| `home.network.srOnline` | online | آنلاین |
-| `home.network.srOffline` | offline | آفلاین |
-| `home.network.note` | Checked every 10 minutes | هر ۱۰ دقیقه بررسی می‌شود |
-| `home.network.link` | Live status | وضعیت زنده |
-| `home.sections.privacy` | Privacy | حریم خصوصی |
-| `home.sections.how` | Getting started | شروع به کار |
-| `home.sections.membership` | Membership | عضویت |
 | `home.sections.faq` | FAQ | سوالات متداول |
 | `home.sections.about` | About | درباره |
-| `home.sections.globe` | The network | ⚠️ **MISSING** |
-| `home.globe.title` | A real network, shown live | ⚠️ **MISSING** |
-| `home.globe.body` | The green markers are FreeSocks server locations, taken straight from the live network status. The amber marks are some of the regions where the internet is heavily censored and where FreeSocks is built to reach. | ⚠️ **MISSING** |
-| `home.globe.aria` | A rotating globe showing FreeSocks server locations and censored regions | ⚠️ **MISSING** |
-| `home.globe.legendServers` | Server location | ⚠️ **MISSING** |
-| `home.globe.legendRegions` | Censored region | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | کمک‌های مالی در حال کار |
-| `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | هر کمک مالی که از طریق فری‌ساکس انجام شود، پهنای باند ماهانهٔ هر حساب رایگان را برای همان ماه افزایش می‌دهد. این چیزی است که اهداکنندگان تا الان اضافه کرده‌اند - شما هم می‌توانید به آن اضافه کنید. |
 | `home.impact.cta` | Make a donation | کمک مالی کنید |
-| `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
+| `home.impact.allowanceTitle` | What every free account gets this month | ⚠️ **MISSING** |
+| `home.impact.allowanceDonations` | Added by donations | ⚠️ **MISSING** |
+| `home.impact.bonusGb` | +{gb} GB | ⚠️ **MISSING** |
 | `home.hero.variants.freedom` | A VPN for freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | یک VPN برای مخالفان |
 | `home.hero.variants.privacy` | A VPN for privacy | یک VPN برای حریم خصوصی |
@@ -810,13 +794,6 @@ review.
 | `home.hero.impactLink` | See the impact | اثرش را ببینید |
 | `home.cta.getMembership` | Get a membership | عضویت بگیرید |
 | `home.freeCard.title` | Free tier | سطح رایگان |
-| `home.freeCard.badge` | What you get | آنچه به دست می‌آورید |
-| `home.freeCard.urlTitle` | Xray subscription URL | آدرس اشتراک Xray |
-| `home.freeCard.urlBody` | Xray-powered VLESS. Paste into any compatible client. | Xray-powered VLESS. Paste into any compatible client. |
-| `home.freeCard.membershipLine` | A FreeSocks membership gives you {limits}. | عضویت در FreeSocks به شما {limits} می‌دهد. |
-| `home.freeCard.noAuthTitle` | No email or password | بدون ایمیل یا رمز عبور |
-| `home.freeCard.noAuthBody` | One human-check. Save your account number to sign in. No email collected. | یک بررسی انسانی. شماره حساب خود را برای ورود ذخیره کنید. هیچ ایمیلی جمع‌آوری نمی‌شود. |
-| `home.freeCard.footnote` | Numbers reflect the current free-tier configuration. Solve the check to get yours. | اعداد نشان‌دهنده‌ی پیکربندی فعلیِ ردیف آزاد هستند. برای دریافت چک، آن را حل کنید. |
 | `home.privacy.title` | What we store | آنچه ما ذخیره می‌کنیم |
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | FreeSocks طوری ساخته شده که تا حد امکان اطلاعات کمی در مورد شما داشته باشد. |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | ما فقط یک نسخه هش شده از شماره حساب شما را ذخیره می‌کنیم - هرگز خود شماره را ذخیره نمی‌کنیم. |
@@ -835,33 +812,13 @@ review.
 | `home.membership.lead` | Free covers the basics. | رایگان اصول اولیه را پوشش می‌دهد. |
 | `home.membership.descriptionFallback` | A FreeSocks membership lifts every limit. | عضویت در FreeSocks هر محدودیتی را از بین می‌برد. |
 | `home.membership.payNote` | Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal. | با ارز دیجیتال (بیت‌کوین، مونرو و موارد دیگر)، کارت یا پی‌پال پرداخت کنید. |
-| `home.about.title` | About FreeSocks | دربارهٔ فری‌ساکس |
-| `home.about.bodyPrefix` | FreeSocks is operated by | FreeSocks توسط ... اداره می‌شود. |
-| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ، یک سازمان غیرانتفاعی 501(c)(3) آمریکایی. |
-| `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | بیشتر VPNها فرض می‌کنند می‌توانید برای اشتراک پول بدهید و بی‌خطر یک آدرس ایمیل تحویل دهید. در بیشتر جهان هیچ‌کدام درست نیست، پس فری‌ساکس هیچ‌کدام را نمی‌خواهد. هر کسی می‌تواند در حدود یک دقیقه یک کلید کارکرده بگیرد و تا وقتی از آن استفاده می‌کند نگهش دارد. |
-| `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.viewSourceCta` | View the source | مشاهدهٔ کد منبع |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | پهنای باند و دستگاه‌های نامحدود |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | پهنای باند نامحدود |
 | `home.limits.unlimitedDevices` | unlimited devices | دستگاه‌های نامحدود |
 | `home.limits.bandwidthAndDevices` | {bandwidth} and {devices} | {bandwidth} و {devices} |
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | تا ۱ دستگاه |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | تا {count} دستگاه |
-| `home.flow.title` | Who sees what | ⚠️ **MISSING** |
-| `home.flow.subtitle` | Here is the path your traffic takes, and what each stop on the way can actually learn. | ⚠️ **MISSING** |
-| `home.flow.youName` | Your device | ⚠️ **MISSING** |
-| `home.flow.youSees` | Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere. | ⚠️ **MISSING** |
-| `home.flow.ispName` | Your ISP | ⚠️ **MISSING** |
-| `home.flow.ispSees` | Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send. | ⚠️ **MISSING** |
-| `home.flow.cdnName` | The CDN | ⚠️ **MISSING** |
-| `home.flow.cdnBadge` | Freedom Mode only | ⚠️ **MISSING** |
-| `home.flow.cdnSees` | Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it. | ⚠️ **MISSING** |
-| `home.flow.nodeName` | FreeSocks server | ⚠️ **MISSING** |
-| `home.flow.nodeSees` | Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it. | ⚠️ **MISSING** |
-| `home.flow.webName` | Websites you visit | ⚠️ **MISSING** |
-| `home.flow.webSees` | See the FreeSocks server's address instead of yours. | ⚠️ **MISSING** |
-| `home.flow.captionFreedom` | Routes through a large CDN, so your connection looks like ordinary web traffic. | ⚠️ **MISSING** |
-| `home.flow.captionPrivacy` | Skips the CDN and connects you straight to the server. | ⚠️ **MISSING** |
+| `home.donate.title` | Donations buy bandwidth for free users | ⚠️ **MISSING** |
 
 ## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 

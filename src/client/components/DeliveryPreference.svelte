@@ -146,12 +146,12 @@
   }
 </script>
 
-<section
-  class={flat ? 'space-y-3' : 'space-y-3 rounded-xl border border-border bg-card p-4 sm:p-5'}
->
+<!-- @container: the cards sit side by side only when the panel itself is wide
+     (a narrow column stacks them, whatever the viewport). -->
+<section class={flat ? '@container space-y-4' : '@container panel space-y-4'}>
   <div>
-    <h2 class="font-display text-base font-semibold">{t('delivery.title')}</h2>
-    <p class="text-sm text-muted-foreground">
+    <h2 class="text-xl font-bold leading-tight">{t('delivery.title')}</h2>
+    <p class="mt-1.5 text-[15px] text-muted-foreground">
       {signup
         ? t('delivery.subtitleSignup')
         : serverBacked
@@ -162,7 +162,7 @@
 
   <!-- items-start: an expanded "More details" on one card must not stretch its
        sibling into an empty-bottomed box. -->
-  <div class="grid items-start gap-3 {groups.length === 1 ? '' : 'sm:grid-cols-2'}">
+  <div class="grid items-start gap-2.5 {groups.length === 1 ? '' : '@lg:grid-cols-2'}">
     {#each groups as g, gi (g.family?.id ?? g.children[0]!.id)}
       {@const isSelectedGroup = gi === selectedGroupIndex}
       {@const Icon = g.family ? familyIcon(g.family) : undefined}
@@ -182,34 +182,30 @@
       <div
         role="presentation"
         onclick={() => chooseGroup(g)}
-        class="rounded-lg border transition {allDisabled ? '' : 'cursor-pointer'} {isSelectedGroup
-          ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-          : 'border-border hover:border-primary/40'}"
+        class="rounded-sm border-2 transition {allDisabled ? '' : 'cursor-pointer'} {isSelectedGroup
+          ? 'border-primary bg-background'
+          : 'border-border/70 hover:border-primary/50'}"
       >
         <button
           type="button"
           disabled={allDisabled}
           aria-pressed={isSelectedGroup}
-          class="w-full rounded-lg p-4 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
+          class="w-full rounded-sm p-4 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
         >
           <div class="flex items-center justify-between gap-2">
-            <span class="flex items-center gap-2 text-sm font-semibold">
+            <span class="flex items-center gap-2 font-bold text-foreground">
               {#if Icon}<Icon class="size-4 shrink-0 text-primary" />{/if}
               {title}
             </span>
             {#if groupSuggested}
-              <span
-                class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
-              >
+              <span class="text-sm font-bold text-primary">
                 {t('delivery.recommended')}
               </span>
             {:else if isSelectedGroup && g.children.some((m) => m.id === selected && !m.available)}
               <!-- The member's CURRENT mode was disabled/unbound under them:
                    still highlighted (it is where they are), but flagged so the
                    muted styling reads as "unavailable", not "broken". -->
-              <span
-                class="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
-              >
+              <span class="text-sm font-bold text-amber-700 dark:text-amber-400">
                 {t('delivery.currentUnavailable')}
               </span>
             {:else if isSelectedGroup}
@@ -218,7 +214,7 @@
           </div>
           {#if g.family && familyAudience(g.family)}
             <!-- The one always-visible line: who this mode is for. -->
-            <p class="mt-1 text-xs font-medium text-muted-foreground">
+            <p class="mt-1 text-[15px] text-muted-foreground">
               {familyAudience(g.family)}
             </p>
           {/if}
@@ -231,7 +227,7 @@
         {#if body || g.family}
           {@const key = g.family?.id ?? g.children[0]!.id}
           {@const expanded = !!detailsOpen[key]}
-          <div class="border-t border-border/60 px-4 pb-3 pt-1.5">
+          <div class="border-t border-border/70 px-4 pb-3 pt-1.5">
             <button
               type="button"
               aria-expanded={expanded}
@@ -239,7 +235,7 @@
                 e.stopPropagation();
                 detailsOpen[key] = !expanded;
               }}
-              class="flex min-h-9 w-full items-center justify-between gap-2 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              class="flex min-h-10 w-full items-center justify-between gap-2 rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {t('delivery.detailsToggle')}
               <ChevronDown
@@ -251,7 +247,7 @@
             {#if expanded}
               <div class="space-y-3 pb-1 pt-1.5" transition:slide={{ duration: 150 }}>
                 {#if body}
-                  <p class="text-xs text-muted-foreground">{body}</p>
+                  <p class="text-sm text-muted-foreground">{body}</p>
                 {/if}
 
                 <!-- Transport row. Shown for every family, including one-transport
@@ -272,9 +268,7 @@
                     ? (g.children.find((c) => c.id === selected) ?? familyTargetMode(g.children))
                     : g.children[0]}
                   <div>
-                    <p
-                      class="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
-                    >
+                    <p class="mb-2 text-sm text-muted-foreground">
                       {t('delivery.transportLabel')}
                     </p>
                     {#if interactive}
@@ -300,7 +294,7 @@
                               choose(child);
                             }}
                             title={disabled && !active ? t('delivery.unavailable') : undefined}
-                            class="rounded-md border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {active
+                            class="rounded-sm border px-2.5 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {active
                               ? 'border-primary bg-primary/10 text-primary'
                               : 'border-border text-muted-foreground hover:border-primary/40'}"
                           >
@@ -319,7 +313,7 @@
                       </p>
                     {/if}
                     {#if described && modeBody(described)}
-                      <p class="mt-2 text-xs text-muted-foreground">{modeBody(described)}</p>
+                      <p class="mt-2 text-sm text-muted-foreground">{modeBody(described)}</p>
                     {/if}
                   </div>
                 {/if}

@@ -25,10 +25,11 @@ const HOST = '{{placeholder "http.request.host"}}';
 // as pathname literals in the route switch and are asserted on robots directly.
 const NON_INDEXABLE = ['/account', '/login'];
 
-// The actual route switch: every `router.pathname === '/x'` literal.
-const routerRoutes = [...appSvelte.matchAll(/router\.pathname === '([^']+)'/g)].map(
-  (m) => m[1] ?? '',
-);
+// The actual route switch: every `router.pathname === '/x'` literal, once each
+// (App also tests for '/' outside the switch, to lay the home page out).
+const routerRoutes = [
+  ...new Set([...appSvelte.matchAll(/router\.pathname === '([^']+)'/g)].map((m) => m[1] ?? '')),
+];
 const indexableRoutes = routerRoutes.filter((route) => !NON_INDEXABLE.includes(route));
 
 describe('sitemap.xml', () => {

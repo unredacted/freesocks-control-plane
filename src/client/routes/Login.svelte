@@ -14,7 +14,6 @@
   import { router } from '../stores/router.svelte';
   import { createMutation } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import LogIn from '@lucide/svelte/icons/log-in';
   import Eye from '@lucide/svelte/icons/eye';
   import EyeOff from '@lucide/svelte/icons/eye-off';
   import KeyRound from '@lucide/svelte/icons/key-round';
@@ -143,25 +142,21 @@
   }
 </script>
 
-<div class="max-w-md mx-auto py-10 md:py-16 space-y-8">
-  <header class="text-center space-y-3">
-    <div
-      class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 text-primary px-3 py-1 text-xs font-semibold uppercase tracking-wider"
+<div class="mx-auto max-w-md space-y-8 md:pt-6">
+  <header class="space-y-3">
+    <h1
+      class="text-[clamp(34px,4vw,46px)] font-bold leading-[1.05] tracking-[-0.03em] rtl:tracking-normal"
     >
-      <LogIn class="size-3.5" />
-      {t('nav.signIn')}
-    </div>
-    <h1 class="text-3xl md:text-4xl font-display font-bold tracking-tight">
       {t('login.title')}
     </h1>
-    <p class="text-sm text-muted-foreground">
+    <p class="text-lg text-body">
       {t('login.subtitle')}
     </p>
   </header>
 
   {#if sessionExpired}
     <div
-      class="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-muted-foreground"
+      class="rounded-sm border border-primary/40 bg-primary/10 px-4 py-3 text-[15px] text-foreground"
       role="status"
     >
       {t('login.sessionExpired')}
@@ -171,19 +166,16 @@
     <!-- A PoP-broken browser (Workers blocked) 401-loops into this page under
          POP_REQUIRED; say WHY instead of a misleading session-expired bounce. -->
     <div
-      class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-foreground"
+      class="rounded-sm border border-destructive/40 bg-destructive/10 px-4 py-3 text-[15px] text-foreground"
       role="alert"
     >
       {t('login.popBroken')}
     </div>
   {/if}
 
-  <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
+  <div class="panel space-y-5">
     <div class="space-y-2">
-      <label
-        for="account-number"
-        class="text-xs uppercase tracking-wider text-muted-foreground font-semibold"
-      >
+      <label for="account-number" class="block font-bold text-foreground">
         {t('login.label')}
       </label>
       <!-- A hidden, stable "username" so password managers index this credential
@@ -213,7 +205,7 @@
           onkeydown={(e) => {
             if (e.key === 'Enter' && canSubmit) login.mutate();
           }}
-          class="min-h-11 w-full rounded-md border border-border bg-background px-3 py-2.5 pe-10 font-mono text-base tracking-wider tabular-nums focus:outline-none focus:ring-2 focus:ring-primary"
+          class="min-h-12 w-full rounded-sm border border-border bg-well px-3 py-2.5 pe-11 font-mono text-base tracking-wider tabular-nums focus:outline-none focus:ring-2 focus:ring-primary"
         />
         <button
           type="button"
@@ -228,7 +220,7 @@
            a dead submit button with no explanation. aria-live so screen readers
            hear the progress without polling. -->
       {#if digitsOnly.length > 0 && digitsOnly.length < ACCOUNT_ID_LEN}
-        <p class="text-xs text-muted-foreground tabular-nums" aria-live="polite">
+        <p class="text-sm text-muted-foreground tabular-nums" aria-live="polite">
           {t('login.digitProgress', { count: digitsOnly.length, total: ACCOUNT_ID_LEN })}
         </p>
       {/if}
@@ -245,15 +237,14 @@
       <InlineError message={apiErrorMessage(login.error)} />
     {/if}
 
-    <Button onclick={() => login.mutate()} disabled={!canSubmit} size="lg" class="w-full min-h-11">
-      <LogIn class="size-4" />
+    <Button onclick={() => login.mutate()} disabled={!canSubmit} size="lg" class="w-full">
       {login.isPending ? t('login.submitting') : t('login.submit')}
     </Button>
   </div>
 
   {#if passkeySupported}
     <div class="space-y-3">
-      <div class="flex items-center gap-3 text-xs text-muted-foreground">
+      <div class="flex items-center gap-3 text-sm text-muted-foreground">
         <span class="h-px flex-1 bg-border"></span>
         {t('login.or')}
         <span class="h-px flex-1 bg-border"></span>
@@ -261,7 +252,7 @@
       <Button
         variant="outline"
         size="lg"
-        class="w-full min-h-11"
+        class="w-full"
         disabled={passkeyBusy}
         onclick={signInPasskey}
       >
@@ -274,8 +265,8 @@
     </div>
   {/if}
 
-  <p class="text-xs text-muted-foreground text-center">
+  <p class="text-[15px] text-muted-foreground">
     {t('login.noAccount')}{' '}
-    <Link href="/get-account" class="text-primary underline">{t('login.getOne')}</Link>
+    <Link href="/get-account" class="link-brand text-foreground">{t('login.getOne')}</Link>
   </p>
 </div>

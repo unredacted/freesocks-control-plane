@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**153 of 794 strings are missing** (the app currently shows English for
+**144 of 751 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -28,7 +28,6 @@ review.
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `faq.title` | Frequently asked questions | Часто задаваемые вопросы |
-| `faq.subtitle` | Answers to common questions. | Основные вопросы решены. Остались вопросы? Свяжитесь со службой поддержки, указав свой идентификатор. |
 | `faq.tabGeneral` | General | Общие |
 | `faq.tabThreat` | What we protect you from | От чего мы вас защищаем |
 | `faq.contactPrefix` | For anything else, email | По всем остальным вопросам пишите на |
@@ -92,7 +91,7 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | 1 устройство |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} устройств |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls. *(2 missing)*
+## `nav` — The site header: navigation buttons, menu, language/theme controls.
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -100,10 +99,7 @@ review.
 | `nav.signIn` | Sign in | Войти |
 | `nav.account` | My account | Мой аккаунт |
 | `nav.menu` | Menu | Меню |
-| `nav.theme` | Theme | Тема |
 | `nav.home` | FreeSocks home | Главная FreeSocks |
-| `nav.source` | Source | ⚠️ **MISSING** |
-| `nav.sourceTitle` | FreeSocks is open source. Read the code for yourself. | ⚠️ **MISSING** |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -228,10 +224,6 @@ review.
 | `account.refreshMembership` | Already paid? Check for my membership | Уже оплатили? Проверить членство |
 | `account.memberActiveTitle` | Membership active | Членство активно |
 | `account.memberActiveExpiry` | Active until {date} | Активно до {date} |
-| `account.membershipNudge.title` | Go unlimited with a membership | Безлимит с подпиской |
-| `account.membershipNudge.body` | Unlimited bandwidth and devices. | Безлимитный трафик и устройства. |
-| `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | Безлимитный трафик. |
-| `account.membershipNudge.cta` | View membership | Открыть подписку |
 | `account.map.title` | Where your key lives | ⚠️ **MISSING** |
 | `account.map.network` | One of {count} FreeSocks locations | ⚠️ **MISSING** |
 | `account.map.aria` | Globe of FreeSocks server locations, highlighting yours | ⚠️ **MISSING** |
@@ -255,8 +247,6 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | Аккаунт сейчас отключён |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | Новые ключи и изменения для этого аккаунта приостановлены. Активируйте код членства ниже, чтобы вернуть доступ, или напишите в поддержку, указав свой ID для поддержки. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | Замените свой 32-значный номер счета, если произошла утечка данных. Старый номер перестанет работать немедленно. |
-| `account.section.connection.title` | Your connection | Ваше соединение |
-| `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | Ваш прокси-ключ, справка по настройке и подключенные устройства. |
 | `account.section.membership.title` | Membership | Членство |
 | `account.section.membership.desc` | Your plan - upgrade, extend, or redeem a membership code. | Ваш план — обновление, продление или погашение кода участника. |
 | `account.section.gifts.title` | Gifts & referrals | Подарки и приглашения |
@@ -448,7 +438,7 @@ review.
 | `impact.giftsTitle` | Recent donations | ⚠️ **MISSING** |
 | `impact.giftActiveUntil` | Boosting free users until {date} | ⚠️ **MISSING** |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(13 missing)*
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(14 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -481,6 +471,7 @@ review.
 | `donate.paidTitle` | Thank you! | ⚠️ **MISSING** |
 | `donate.paidBody` | Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it. | ⚠️ **MISSING** |
 | `donate.orderFailedBody` | The payment did not complete - nothing was charged, or the payment page expired. You can try again below. | ⚠️ **MISSING** |
+| `donate.orderUnderpaidBody` | Your payment arrived, but short of the amount, often because an exchange took its withdrawal fee out of it. We will review it by hand. Thank you for giving. | ⚠️ **MISSING** |
 | `donate.unavailable` | Donations are not available right now. Please check back later. | ⚠️ **MISSING** |
 
 ## `referral` — Miscellaneous strings.
@@ -544,7 +535,7 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | Сейчас вы на бесплатном тарифе. Продлите ниже, чтобы восстановить членство. |
 | `renew.renewCta` | Renew membership | Продлить членство |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(1 missing)*
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(4 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -569,6 +560,7 @@ review.
 | `upgrade.payNowpaymentsHint` | Bitcoin, Monero, Zcash & more | Bitcoin, Monero и другие |
 | `upgrade.payNowpaymentsBadge` | Private | Частный |
 | `upgrade.cryptoPrivacyNote` | No account, email, or card needed - pay privately. Monero and Zcash offer the most privacy. | Не требуется регистрация, электронная почта или банковская карта - оплата производится конфиденциально. Monero и Zcash обеспечивают максимальную конфиденциальность. |
+| `upgrade.exchangeFeeNote` | Paying from an exchange? Many take their withdrawal fee out of the amount they send. Add the fee so the full amount shown arrives. | ⚠️ **MISSING** |
 | `upgrade.payBtcpay` | Bitcoin | Bitcoin |
 | `upgrade.payBtcpayHint` | On-chain or Lightning | Ончейн или Lightning |
 | `upgrade.payBtcpayBadge` | No intermediary | Без посредников |
@@ -587,6 +579,8 @@ review.
 | `upgrade.paidBody` | Thank you! Your membership is now active. | Спасибо! Ваше членство теперь активно. |
 | `upgrade.failedTitle` | Payment not completed | Оплата не завершена |
 | `upgrade.failedBody` | Your payment did not go through, or the checkout expired. You can try again. | Платёж не прошёл или срок оплаты истёк. Вы можете попробовать снова. |
+| `upgrade.underpaidTitle` | Your payment arrived short | ⚠️ **MISSING** |
+| `upgrade.underpaidBody` | We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out. | ⚠️ **MISSING** |
 
 ## `gift` — Gift membership codes: buying, revealing (show-once), and redeeming.
 
@@ -611,13 +605,14 @@ review.
 | `gift.reveal.saved` | I've saved them | Я их сохранил. |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | Ваши коды по-прежнему отображаются на экране. Если вы сейчас уйдете, не сохранив их, вы больше не сможете их увидеть. |
 
-## `error` — API error messages shown to members. *(2 missing)*
+## `error` — API error messages shown to members. *(3 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `error.offline` | You appear to be offline. Check your connection and try again. | Похоже, вы офлайн. Проверьте подключение и повторите попытку. |
 | `error.rateLimited` | Too many attempts. Please wait a minute and try again. | Слишком много попыток. Подождите минуту и повторите. |
 | `error.backendUnavailable` | No VPN server is available right now. Your account is safe - try creating your key again in a few minutes. | Сейчас нет доступного прокси-сервера. Ваш аккаунт в безопасности - попробуйте создать ключ через несколько минут. |
+| `error.configUnavailable` | Your configuration cannot be shown right now. Your app keeps the one it has; try again in a few minutes. | ⚠️ **MISSING** |
 | `error.generic` | Something went wrong. Please try again. | Что-то пошло не так. Повторите попытку. |
 | `error.captchaFailed` | The human check failed. Please complete it and try again. | Проверка не пройдена. Завершите её и повторите попытку. |
 | `error.captchaUnconfigured` | The service is temporarily unavailable. Please try again in a few minutes. | Сервис временно недоступен. Пожалуйста, повторите попытку через несколько минут. |
@@ -723,13 +718,19 @@ review.
 | `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
 | `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |
 
-## `region` — Miscellaneous strings. *(5 missing)*
+## `region` — Miscellaneous strings. *(11 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `region.title` | Where are you connecting from? | ⚠️ **MISSING** |
-| `region.help` | Leave this on Automatic unless connecting is unreliable. In a few countries some of the website names a key uses are blocked. Choosing yours makes your key use names known to work there. Your choice is saved with your account and is never used for anything else. | ⚠️ **MISSING** |
+| `region.help` | Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses and the connection mode we suggest. It is kept with your key, deleted with it, and never shared. | ⚠️ **MISSING** |
+| `region.helpDetect` | On Automatic we guess it from your connection, keep the guess only for the countries listed here, and forget it {days} days after we last see you there. | ⚠️ **MISSING** |
 | `region.automatic` | Automatic | ⚠️ **MISSING** |
+| `region.elsewhere` | Somewhere else | ⚠️ **MISSING** |
+| `region.guessed` | We think you're connecting from {country}. | ⚠️ **MISSING** |
+| `region.chosen` | You told us you're connecting from {country}. | ⚠️ **MISSING** |
+| `region.chosenElsewhere` | You told us you're connecting from somewhere not listed here. | ⚠️ **MISSING** |
+| `region.change` | Change | ⚠️ **MISSING** |
 | `region.saved` | Saved. Refresh your app to pick up the change. | ⚠️ **MISSING** |
 | `region.failed` | That did not save. Try again. | ⚠️ **MISSING** |
 
@@ -772,34 +773,17 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(24 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(6 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
-| `home.trust.nonprofit` | Run by a US 501(c)(3) nonprofit | Управляется некоммерческой организацией США 501(c)(3) |
-| `home.trust.openSource` | Open source | Открытый код |
-| `home.trust.noLogs` | No traffic logs | Без журналов трафика |
-| `home.network.title` | Network status | Состояние сети |
-| `home.network.offline` | offline | не в сети |
-| `home.network.srOnline` | online | в сети |
-| `home.network.srOffline` | offline | не в сети |
-| `home.network.note` | Checked every 10 minutes | Проверяется каждые 10 минут |
-| `home.network.link` | Live status | Статус в реальном времени |
-| `home.sections.privacy` | Privacy | Приватность |
-| `home.sections.how` | Getting started | С чего начать |
-| `home.sections.membership` | Membership | Членство |
 | `home.sections.faq` | FAQ | ЧаВо |
 | `home.sections.about` | About | О нас |
-| `home.sections.globe` | The network | ⚠️ **MISSING** |
-| `home.globe.title` | A real network, shown live | ⚠️ **MISSING** |
-| `home.globe.body` | The green markers are FreeSocks server locations, taken straight from the live network status. The amber marks are some of the regions where the internet is heavily censored and where FreeSocks is built to reach. | ⚠️ **MISSING** |
-| `home.globe.aria` | A rotating globe showing FreeSocks server locations and censored regions | ⚠️ **MISSING** |
-| `home.globe.legendServers` | Server location | ⚠️ **MISSING** |
-| `home.globe.legendRegions` | Censored region | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | Пожертвования в деле |
-| `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | Каждое пожертвование через FreeSocks увеличивает месячный трафик каждого бесплатного аккаунта в том месяце. Вот что уже добавили доноры - и вы тоже можете внести вклад. |
 | `home.impact.cta` | Make a donation | Сделать пожертвование |
-| `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
+| `home.impact.allowanceTitle` | What every free account gets this month | ⚠️ **MISSING** |
+| `home.impact.allowanceDonations` | Added by donations | ⚠️ **MISSING** |
+| `home.impact.bonusGb` | +{gb} GB | ⚠️ **MISSING** |
 | `home.hero.variants.freedom` | A VPN for freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | VPN для инакомыслящих |
 | `home.hero.variants.privacy` | A VPN for privacy | VPN для приватности |
@@ -809,13 +793,6 @@ review.
 | `home.hero.impactLink` | See the impact | Посмотреть вклад |
 | `home.cta.getMembership` | Get a membership | Оформите членство |
 | `home.freeCard.title` | Free tier | Бесплатный уровень |
-| `home.freeCard.badge` | What you get | Что вы получите |
-| `home.freeCard.urlTitle` | Xray subscription URL | URL-адрес подписки на рентгеновский снимок |
-| `home.freeCard.urlBody` | Xray-powered VLESS. Paste into any compatible client. | Xray-powered VLESS. Paste into any compatible client. |
-| `home.freeCard.membershipLine` | A FreeSocks membership gives you {limits}. | Подписка на FreeSocks предоставляет вам {limits} . |
-| `home.freeCard.noAuthTitle` | No email or password | Электронная почта и пароль не требуются. |
-| `home.freeCard.noAuthBody` | One human-check. Save your account number to sign in. No email collected. | Одна проверка человеком. Сохраните номер своего счета для входа. Адрес электронной почты не собирается. |
-| `home.freeCard.footnote` | Numbers reflect the current free-tier configuration. Solve the check to get yours. | Цифры отражают текущую конфигурацию бесплатного тарифа. Пройдите проверку, чтобы получить свой. |
 | `home.privacy.title` | What we store | Что мы храним |
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | FreeSocks создан для того, чтобы знать о вас как можно меньше. |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | Мы храним только хешированную версию номера вашего счета - сам номер никогда не сохраняется. |
@@ -834,33 +811,13 @@ review.
 | `home.membership.lead` | Free covers the basics. | Бесплатная версия охватывает основные моменты. |
 | `home.membership.descriptionFallback` | A FreeSocks membership lifts every limit. | Членство в FreeSocks снимает все ограничения. |
 | `home.membership.payNote` | Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal. | Оплачивайте криптовалютой (Bitcoin, Monero и другие), картой или PayPal. |
-| `home.about.title` | About FreeSocks | О FreeSocks |
-| `home.about.bodyPrefix` | FreeSocks is operated by | FreeSocks управляется компанией |
-| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | , американской некоммерческой организацией 501(c)(3). |
-| `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | Большинство VPN исходят из того, что вы можете оплатить подписку и безопасно сообщить адрес почты. Во многих странах ни то, ни другое невозможно, поэтому FreeSocks не просит ни того, ни другого. Любой может получить рабочий ключ примерно за минуту и пользоваться им, пока он нужен. |
-| `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.viewSourceCta` | View the source | Посмотреть исходный код |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | неограниченная пропускная способность и устройства |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | неограниченная пропускная способность |
 | `home.limits.unlimitedDevices` | unlimited devices | неограниченное количество устройств |
 | `home.limits.bandwidthAndDevices` | {bandwidth} and {devices} | {bandwidth} и {devices} |
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | до 1 устройства |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | до {count} устройств |
-| `home.flow.title` | Who sees what | ⚠️ **MISSING** |
-| `home.flow.subtitle` | Here is the path your traffic takes, and what each stop on the way can actually learn. | ⚠️ **MISSING** |
-| `home.flow.youName` | Your device | ⚠️ **MISSING** |
-| `home.flow.youSees` | Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere. | ⚠️ **MISSING** |
-| `home.flow.ispName` | Your ISP | ⚠️ **MISSING** |
-| `home.flow.ispSees` | Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send. | ⚠️ **MISSING** |
-| `home.flow.cdnName` | The CDN | ⚠️ **MISSING** |
-| `home.flow.cdnBadge` | Freedom Mode only | ⚠️ **MISSING** |
-| `home.flow.cdnSees` | Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it. | ⚠️ **MISSING** |
-| `home.flow.nodeName` | FreeSocks server | ⚠️ **MISSING** |
-| `home.flow.nodeSees` | Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it. | ⚠️ **MISSING** |
-| `home.flow.webName` | Websites you visit | ⚠️ **MISSING** |
-| `home.flow.webSees` | See the FreeSocks server's address instead of yours. | ⚠️ **MISSING** |
-| `home.flow.captionFreedom` | Routes through a large CDN, so your connection looks like ordinary web traffic. | ⚠️ **MISSING** |
-| `home.flow.captionPrivacy` | Skips the CDN and connects you straight to the server. | ⚠️ **MISSING** |
+| `home.donate.title` | Donations buy bandwidth for free users | ⚠️ **MISSING** |
 
 ## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 

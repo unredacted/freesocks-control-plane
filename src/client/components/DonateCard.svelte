@@ -182,14 +182,12 @@
   {#if collapsible}
     <!-- Condensed accordion: the trigger keeps the amber donate framing; expanding
          reveals the method/amount form. Same pattern as UpgradeMembership. -->
-    <section
-      class="relative overflow-hidden rounded-xl border border-amber-500/40 bg-card ring-1 ring-amber-500/20"
-    >
+    <section class="relative overflow-hidden rounded-lg border border-border/70 bg-card">
       <Collapsible.Root bind:open>
         <Collapsible.Trigger
-          class="group flex w-full items-center gap-3 p-4 text-start transition hover:bg-amber-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-5"
+          class="group flex w-full items-center gap-3 p-4 text-start transition hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-5"
         >
-          <Heart class="size-5 shrink-0 text-amber-500" aria-hidden="true" />
+          <Heart class="size-5 shrink-0 text-primary" aria-hidden="true" />
           <div class="min-w-0 flex-1">
             <div class="font-display text-base font-semibold">
               {t('donate.standaloneTitle')}
@@ -213,12 +211,10 @@
       </Collapsible.Root>
     </section>
   {:else}
-    <section
-      class="relative space-y-4 overflow-hidden rounded-xl border border-amber-500/40 bg-card p-4 ring-1 ring-amber-500/20 sm:p-5"
-    >
+    <section class="panel relative space-y-4 overflow-hidden">
       <div>
         <h2 class="flex items-center gap-2 font-display text-base font-semibold">
-          <Heart class="size-4 shrink-0 text-amber-500" aria-hidden="true" />
+          <Heart class="size-4 shrink-0 text-primary" aria-hidden="true" />
           {t('donate.standaloneTitle')}
         </h2>
         <p class="text-sm text-muted-foreground">

@@ -149,10 +149,10 @@
   const exhausted = $derived(status === 'capped' || status === 'exhausted');
 </script>
 
-<div class="rounded-xl border border-border/60 bg-muted/30">
+<div class="rounded-lg border border-border/70 bg-card">
   <button
     type="button"
-    class="flex w-full items-center justify-between gap-2 rounded-xl px-4 py-3 text-start text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+    class="flex min-h-14 w-full items-center justify-between gap-2 rounded-lg px-5 py-3 text-start font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     onclick={() => (open = !open)}
     aria-expanded={open}
   >
@@ -164,13 +164,13 @@
   </button>
 
   {#if open}
-    <div class="space-y-4 px-4 pb-4 text-sm" transition:slide={{ duration: 180 }}>
+    <div class="space-y-4 px-5 pb-5 text-sm" transition:slide={{ duration: 180 }}>
       <!-- Quick fixes first: a blocked/overloaded server is the most common
            cause, and moving the key (same handlers as the pass) fixes it
            without any new URLs to import. Mirrors follow as the deeper tool. -->
       {#if onSwitchServer || onPickLocation || onReportIssue}
         <div class="space-y-2">
-          <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <p class="text-sm font-bold text-foreground">
             {t('mirror.quickLabel')}
           </p>
           <p class="text-muted-foreground">{t('mirror.quickHint')}</p>
@@ -208,17 +208,17 @@
       {#if !available}
         <!-- Availability is member-visible: no mirror provider is configured on
              this deployment, so the fallback simply doesn't exist here. -->
-        <p class="text-muted-foreground/80 text-xs">{t('mirror.unavailable')}</p>
+        <p class="text-muted-foreground/80 text-sm">{t('mirror.unavailable')}</p>
       {:else}
         {#if added.length > 0}
           <div class="space-y-2">
-            <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <p class="text-sm font-bold text-foreground">
               {t('mirror.addedLabel')}
             </p>
             {#each added as m (m.publicUrl)}
               <div class="flex gap-2">
                 <code
-                  class="min-w-0 flex-1 select-all break-all rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground"
+                  class="min-w-0 flex-1 select-all break-all rounded-sm border border-border bg-well px-3 py-2 font-mono text-sm text-foreground"
                 >
                   {m.publicUrl}
                 </code>
@@ -236,13 +236,13 @@
                 </Button>
               </div>
             {/each}
-            <p class="text-xs text-muted-foreground/80">{t('mirror.addToAppHint')}</p>
+            <p class="text-sm text-muted-foreground/80">{t('mirror.addToAppHint')}</p>
           </div>
         {/if}
 
         {#if !exhausted}
           <div class="space-y-2">
-            <label class="block text-xs text-muted-foreground" for="mirror-region">
+            <label class="block text-sm text-muted-foreground" for="mirror-region">
               {t('mirror.regionLabel')}
             </label>
             <Select.Root type="single" value={selected} onValueChange={(v) => (selected = v ?? '')}>
@@ -256,7 +256,7 @@
                 {/each}
               </Select.Content>
             </Select.Root>
-            <p class="text-xs text-muted-foreground/80">{t('mirror.regionNotStored')}</p>
+            <p class="text-sm text-muted-foreground/80">{t('mirror.regionNotStored')}</p>
           </div>
 
           <Button onclick={() => request.mutate()} disabled={request.isPending} class="min-h-11">
@@ -269,15 +269,15 @@
         {/if}
 
         {#if status === 'capped'}
-          <p class="text-xs text-amber-600" transition:fade={{ duration: 150 }}>
+          <p class="text-sm text-amber-600" transition:fade={{ duration: 150 }}>
             {t('mirror.capped')}
           </p>
         {:else if status === 'exhausted'}
-          <p class="text-xs text-amber-600" transition:fade={{ duration: 150 }}>
+          <p class="text-sm text-amber-600" transition:fade={{ duration: 150 }}>
             {t('mirror.exhausted')}
           </p>
         {:else if status === 'no_subscription'}
-          <p class="text-xs text-muted-foreground" transition:fade={{ duration: 150 }}>
+          <p class="text-sm text-muted-foreground" transition:fade={{ duration: 150 }}>
             {t('mirror.noSubscription')}
           </p>
         {/if}
@@ -285,7 +285,7 @@
         {#if added.length > 0}
           <button
             type="button"
-            class="rounded-sm text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            class="rounded-sm text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onclick={() => clear.mutate()}
             disabled={clear.isPending}
           >

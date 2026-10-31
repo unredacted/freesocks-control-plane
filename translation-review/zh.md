@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**153 of 794 strings are missing** (the app currently shows English for
+**144 of 751 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -28,7 +28,6 @@ review.
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `faq.title` | Frequently asked questions | 常见问题解答 |
-| `faq.subtitle` | Answers to common questions. | 基本问题已解答。还有疑问？请使用您的支持 ID 联系我们。 |
 | `faq.tabGeneral` | General | 常规 |
 | `faq.tabThreat` | What we protect you from | 我们为你防范什么 |
 | `faq.contactPrefix` | For anything else, email | 如有其他问题，请发送邮件至 |
@@ -92,7 +91,7 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | 1 台设备 |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} 台设备 |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls. *(2 missing)*
+## `nav` — The site header: navigation buttons, menu, language/theme controls.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -100,10 +99,7 @@ review.
 | `nav.signIn` | Sign in | 登录 |
 | `nav.account` | My account | 我的账户 |
 | `nav.menu` | Menu | 菜单 |
-| `nav.theme` | Theme | 主题 |
 | `nav.home` | FreeSocks home | FreeSocks 首页 |
-| `nav.source` | Source | ⚠️ **MISSING** |
-| `nav.sourceTitle` | FreeSocks is open source. Read the code for yourself. | ⚠️ **MISSING** |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -228,10 +224,6 @@ review.
 | `account.refreshMembership` | Already paid? Check for my membership | 已付款？查询我的会员状态 |
 | `account.memberActiveTitle` | Membership active | 会员有效 |
 | `account.memberActiveExpiry` | Active until {date} | 有效期至 {date} |
-| `account.membershipNudge.title` | Go unlimited with a membership | 升级会员，畅享无限 |
-| `account.membershipNudge.body` | Unlimited bandwidth and devices. | 无限流量与设备。 |
-| `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | 无限带宽。 |
-| `account.membershipNudge.cta` | View membership | 查看会员 |
 | `account.map.title` | Where your key lives | ⚠️ **MISSING** |
 | `account.map.network` | One of {count} FreeSocks locations | ⚠️ **MISSING** |
 | `account.map.aria` | Globe of FreeSocks server locations, highlighting yours | ⚠️ **MISSING** |
@@ -255,8 +247,6 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | 你的账户当前已停用 |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | 此账户的新密钥与更改已暂停。请在下方兑换会员码以重新激活，或联系支持并提供你的支持 ID。 |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | 如果您的32位账号可能已泄露，请立即更换。旧账号将立即失效。 |
-| `account.section.connection.title` | Your connection | 您的连接 |
-| `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | 您的代理密钥、设置帮助和已连接的设备。 |
 | `account.section.membership.title` | Membership | 会员资格 |
 | `account.section.membership.desc` | Your plan - upgrade, extend, or redeem a membership code. | 您的计划——升级、续期或兑换会员码。 |
 | `account.section.gifts.title` | Gifts & referrals | 礼品与推荐 |
@@ -448,7 +438,7 @@ review.
 | `impact.giftsTitle` | Recent donations | ⚠️ **MISSING** |
 | `impact.giftActiveUntil` | Boosting free users until {date} | ⚠️ **MISSING** |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(13 missing)*
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(14 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -481,6 +471,7 @@ review.
 | `donate.paidTitle` | Thank you! | ⚠️ **MISSING** |
 | `donate.paidBody` | Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it. | ⚠️ **MISSING** |
 | `donate.orderFailedBody` | The payment did not complete - nothing was charged, or the payment page expired. You can try again below. | ⚠️ **MISSING** |
+| `donate.orderUnderpaidBody` | Your payment arrived, but short of the amount, often because an exchange took its withdrawal fee out of it. We will review it by hand. Thank you for giving. | ⚠️ **MISSING** |
 | `donate.unavailable` | Donations are not available right now. Please check back later. | ⚠️ **MISSING** |
 
 ## `referral` — Miscellaneous strings.
@@ -544,7 +535,7 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | 您当前使用的是免费套餐。在下方续订以恢复您的会员资格。 |
 | `renew.renewCta` | Renew membership | 续订会员 |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(1 missing)*
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(4 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -569,6 +560,7 @@ review.
 | `upgrade.payNowpaymentsHint` | Bitcoin, Monero, Zcash & more | 比特币、门罗币等 |
 | `upgrade.payNowpaymentsBadge` | Private | 私人的 |
 | `upgrade.cryptoPrivacyNote` | No account, email, or card needed - pay privately. Monero and Zcash offer the most privacy. | 无需账户、邮箱或银行卡--私密支付。门罗币和Zcash提供最高的隐私保护。 |
+| `upgrade.exchangeFeeNote` | Paying from an exchange? Many take their withdrawal fee out of the amount they send. Add the fee so the full amount shown arrives. | ⚠️ **MISSING** |
 | `upgrade.payBtcpay` | Bitcoin | 比特币 |
 | `upgrade.payBtcpayHint` | On-chain or Lightning | 链上或闪电网络 |
 | `upgrade.payBtcpayBadge` | No intermediary | 无中介 |
@@ -587,6 +579,8 @@ review.
 | `upgrade.paidBody` | Thank you! Your membership is now active. | 谢谢！你的会员现已激活。 |
 | `upgrade.failedTitle` | Payment not completed | 付款未完成 |
 | `upgrade.failedBody` | Your payment did not go through, or the checkout expired. You can try again. | 你的付款未成功，或结账已过期。你可以重试。 |
+| `upgrade.underpaidTitle` | Your payment arrived short | ⚠️ **MISSING** |
+| `upgrade.underpaidBody` | We received less than the price, often because an exchange took its withdrawal fee out of the amount it sent. Your money is not lost: contact support and share your Support ID, and we will sort it out. | ⚠️ **MISSING** |
 
 ## `gift` — Gift membership codes: buying, revealing (show-once), and redeeming.
 
@@ -611,13 +605,14 @@ review.
 | `gift.reveal.saved` | I've saved them | 我把它们保存下来了。 |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | 您的代码仍然显示在屏幕上。如果您现在不保存就离开，您将无法再次看到它们。 |
 
-## `error` — API error messages shown to members. *(2 missing)*
+## `error` — API error messages shown to members. *(3 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `error.offline` | You appear to be offline. Check your connection and try again. | 你似乎已离线。请检查网络连接后重试。 |
 | `error.rateLimited` | Too many attempts. Please wait a minute and try again. | 尝试次数过多。请等待一分钟后重试。 |
 | `error.backendUnavailable` | No VPN server is available right now. Your account is safe - try creating your key again in a few minutes. | 当前没有可用的代理服务器。你的账户是安全的--请几分钟后再创建密钥。 |
+| `error.configUnavailable` | Your configuration cannot be shown right now. Your app keeps the one it has; try again in a few minutes. | ⚠️ **MISSING** |
 | `error.generic` | Something went wrong. Please try again. | 出错了，请重试。 |
 | `error.captchaFailed` | The human check failed. Please complete it and try again. | 真人验证失败。请完成验证后重试。 |
 | `error.captchaUnconfigured` | The service is temporarily unavailable. Please try again in a few minutes. | 服务暂时不可用，请几分钟后重试。 |
@@ -723,13 +718,19 @@ review.
 | `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
 | `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |
 
-## `region` — Miscellaneous strings. *(5 missing)*
+## `region` — Miscellaneous strings. *(11 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `region.title` | Where are you connecting from? | ⚠️ **MISSING** |
-| `region.help` | Leave this on Automatic unless connecting is unreliable. In a few countries some of the website names a key uses are blocked. Choosing yours makes your key use names known to work there. Your choice is saved with your account and is never used for anything else. | ⚠️ **MISSING** |
+| `region.help` | Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses and the connection mode we suggest. It is kept with your key, deleted with it, and never shared. | ⚠️ **MISSING** |
+| `region.helpDetect` | On Automatic we guess it from your connection, keep the guess only for the countries listed here, and forget it {days} days after we last see you there. | ⚠️ **MISSING** |
 | `region.automatic` | Automatic | ⚠️ **MISSING** |
+| `region.elsewhere` | Somewhere else | ⚠️ **MISSING** |
+| `region.guessed` | We think you're connecting from {country}. | ⚠️ **MISSING** |
+| `region.chosen` | You told us you're connecting from {country}. | ⚠️ **MISSING** |
+| `region.chosenElsewhere` | You told us you're connecting from somewhere not listed here. | ⚠️ **MISSING** |
+| `region.change` | Change | ⚠️ **MISSING** |
 | `region.saved` | Saved. Refresh your app to pick up the change. | ⚠️ **MISSING** |
 | `region.failed` | That did not save. Try again. | ⚠️ **MISSING** |
 
@@ -772,34 +773,17 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(24 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(6 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `home.trust.nonprofit` | Run by a US 501(c)(3) nonprofit | 由美国 501(c)(3) 非营利组织运营 |
-| `home.trust.openSource` | Open source | 开源 |
-| `home.trust.noLogs` | No traffic logs | 不记录流量日志 |
-| `home.network.title` | Network status | 网络状态 |
-| `home.network.offline` | offline | 离线 |
-| `home.network.srOnline` | online | 在线 |
-| `home.network.srOffline` | offline | 离线 |
-| `home.network.note` | Checked every 10 minutes | 每 10 分钟检查一次 |
-| `home.network.link` | Live status | 实时状态 |
-| `home.sections.privacy` | Privacy | 隐私 |
-| `home.sections.how` | Getting started | 快速上手 |
-| `home.sections.membership` | Membership | 会员 |
 | `home.sections.faq` | FAQ | 常见问题 |
 | `home.sections.about` | About | 关于 |
-| `home.sections.globe` | The network | ⚠️ **MISSING** |
-| `home.globe.title` | A real network, shown live | ⚠️ **MISSING** |
-| `home.globe.body` | The green markers are FreeSocks server locations, taken straight from the live network status. The amber marks are some of the regions where the internet is heavily censored and where FreeSocks is built to reach. | ⚠️ **MISSING** |
-| `home.globe.aria` | A rotating globe showing FreeSocks server locations and censored regions | ⚠️ **MISSING** |
-| `home.globe.legendServers` | Server location | ⚠️ **MISSING** |
-| `home.globe.legendRegions` | Censored region | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | 捐款在行动 |
-| `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | 通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。 |
 | `home.impact.cta` | Make a donation | 立即捐款 |
-| `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
+| `home.impact.allowanceTitle` | What every free account gets this month | ⚠️ **MISSING** |
+| `home.impact.allowanceDonations` | Added by donations | ⚠️ **MISSING** |
+| `home.impact.bonusGb` | +{gb} GB | ⚠️ **MISSING** |
 | `home.hero.variants.freedom` | A VPN for freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | 为异见人士打造的 VPN |
 | `home.hero.variants.privacy` | A VPN for privacy | 为隐私打造的 VPN |
@@ -809,13 +793,6 @@ review.
 | `home.hero.impactLink` | See the impact | 查看成效 |
 | `home.cta.getMembership` | Get a membership | 加入会员 |
 | `home.freeCard.title` | Free tier | 免费套餐 |
-| `home.freeCard.badge` | What you get | 你将获得什么 |
-| `home.freeCard.urlTitle` | Xray subscription URL | X射线订阅网址 |
-| `home.freeCard.urlBody` | Xray-powered VLESS. Paste into any compatible client. | Xray-powered VLESS. Paste into any compatible client. |
-| `home.freeCard.membershipLine` | A FreeSocks membership gives you {limits}. | FreeSocks 会员资格为您提供{limits} 。 |
-| `home.freeCard.noAuthTitle` | No email or password | 无需电子邮件或密码 |
-| `home.freeCard.noAuthBody` | One human-check. Save your account number to sign in. No email collected. | 一次人工验证。保存您的账号即可登录。不收集邮箱地址。 |
-| `home.freeCard.footnote` | Numbers reflect the current free-tier configuration. Solve the check to get yours. | 此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。 |
 | `home.privacy.title` | What we store | 我们储存 |
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | FreeSocks 的设计理念是尽可能少地了解你的信息。 |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | 我们只存储您账号的哈希版本，绝不会存储账号本身。 |
@@ -834,33 +811,13 @@ review.
 | `home.membership.lead` | Free covers the basics. | 免费版涵盖基本内容。 |
 | `home.membership.descriptionFallback` | A FreeSocks membership lifts every limit. | FreeSocks 会员资格可解除所有限制。 |
 | `home.membership.payNote` | Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal. | 可使用加密货币（比特币、门罗币等）、银行卡或PayPal支付。 |
-| `home.about.title` | About FreeSocks | 关于 FreeSocks |
-| `home.about.bodyPrefix` | FreeSocks is operated by | FreeSocks 由 |
-| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ，一家美国 501(c)(3) 非营利组织。 |
-| `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | 大多数 VPN 默认你能付费订阅、并能放心交出邮箱地址。但在世界上许多地方，这两点都不成立，所以 FreeSocks 两者都不要求。任何人都能在一分钟左右拿到可用的密钥，并一直使用下去。 |
-| `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.viewSourceCta` | View the source | 查看源码 |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | 无限带宽和设备 |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | 无限带宽 |
 | `home.limits.unlimitedDevices` | unlimited devices | 无限设备 |
 | `home.limits.bandwidthAndDevices` | {bandwidth} and {devices} | {bandwidth}和{devices} |
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | 最多 1 台设备 |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | 最多{count}设备 |
-| `home.flow.title` | Who sees what | ⚠️ **MISSING** |
-| `home.flow.subtitle` | Here is the path your traffic takes, and what each stop on the way can actually learn. | ⚠️ **MISSING** |
-| `home.flow.youName` | Your device | ⚠️ **MISSING** |
-| `home.flow.youSees` | Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere. | ⚠️ **MISSING** |
-| `home.flow.ispName` | Your ISP | ⚠️ **MISSING** |
-| `home.flow.ispSees` | Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send. | ⚠️ **MISSING** |
-| `home.flow.cdnName` | The CDN | ⚠️ **MISSING** |
-| `home.flow.cdnBadge` | Freedom Mode only | ⚠️ **MISSING** |
-| `home.flow.cdnSees` | Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it. | ⚠️ **MISSING** |
-| `home.flow.nodeName` | FreeSocks server | ⚠️ **MISSING** |
-| `home.flow.nodeSees` | Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it. | ⚠️ **MISSING** |
-| `home.flow.webName` | Websites you visit | ⚠️ **MISSING** |
-| `home.flow.webSees` | See the FreeSocks server's address instead of yours. | ⚠️ **MISSING** |
-| `home.flow.captionFreedom` | Routes through a large CDN, so your connection looks like ordinary web traffic. | ⚠️ **MISSING** |
-| `home.flow.captionPrivacy` | Skips the CDN and connects you straight to the server. | ⚠️ **MISSING** |
+| `home.donate.title` | Donations buy bandwidth for free users | ⚠️ **MISSING** |
 
 ## `hpke` — The HPKE "encrypted to this server" badge + verification panel. *(1 missing)*
 

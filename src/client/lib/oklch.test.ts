@@ -19,11 +19,11 @@ describe('oklchToRgb', () => {
     expect(oklchToRgb(0, 0, 0)).toEqual([0, 0, 0]);
   });
   test('the emerald brand hue lands in the green range (both theme steps)', () => {
-    for (const l of [0.52, 0.72]) {
-      const [r, g, b] = oklchToRgb(l, 0.13, 158);
+    for (const l of [0.481, 0.711]) {
+      const [r, g, b] = oklchToRgb(l, 0.13, 147);
       expect(g).toBeGreaterThan(r);
       expect(g).toBeGreaterThan(b);
-      expect(b).toBeGreaterThan(r); // emerald leans teal, not lime
+      expect(b).toBeGreaterThan(r); // a cool green, not lime
     }
   });
   test('achromatic stays neutral', () => {

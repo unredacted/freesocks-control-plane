@@ -9,7 +9,7 @@
    * shadcn `default`/`secondary`/`outline`/`destructive` names.
    */
   export const badgeVariants = tv({
-    base: 'inline-flex items-center justify-center gap-1 rounded-md border px-1.5 py-0.5 text-xs font-medium whitespace-nowrap shrink-0 [&>svg]:size-3 [&>svg]:pointer-events-none transition-colors',
+    base: 'inline-flex items-center justify-center gap-1 rounded-sm border px-1.5 py-0.5 text-xs font-medium whitespace-nowrap shrink-0 [&>svg]:size-3 [&>svg]:pointer-events-none transition-colors',
     variants: {
       variant: {
         default: 'border-transparent bg-primary text-primary-foreground',

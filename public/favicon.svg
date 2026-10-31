@@ -1,11 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-label="FreeSocks">
-  <rect x="1" y="1" width="30" height="30" rx="7" fill="#18181b" stroke="#3f3f46" stroke-width="1" />
-  <!-- Eight-pointed star = FreeSocks: alternating long cardinal + short diagonal
-       points. Filled + centered. Monochrome zinc theme. -->
-  <g transform="translate(16 16) scale(1.15) translate(-12 -12)">
-    <path
-      d="M12 2l1.53 6.3 5.54-3.37-3.37 5.54L22 12l-6.3 1.53 3.37 5.54-5.54-3.37L12 22l-1.53-6.3-5.54 3.37 3.37-5.54L2 12l6.3-1.53L4.93 4.93l5.54 3.37L12 2Z"
-      fill="#fafafa"
-    />
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 1024 1024" role="img" aria-label="FreeSocks">
+  <!-- The FreeSocks mark: the white eight-point star on the logo-green rounded
+       square (the same artwork as components/BrandMark.svelte). -->
+  <rect width="1024" height="1024" rx="245" fill="#007e4b" />
+  <path
+    transform="translate(174.08 174.08) scale(28.16)"
+    d="M12 2l1.53 6.3 5.54-3.37-3.37 5.54L22 12l-6.3 1.53 3.37 5.54-5.54-3.37L12 22l-1.53-6.3-5.54 3.37 3.37-5.54L2 12l6.3-1.53L4.93 4.93l5.54 3.37L12 2Z"
+    fill="#ffffff"
+  />
 </svg>

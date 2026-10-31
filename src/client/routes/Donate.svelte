@@ -1,10 +1,6 @@
 <script lang="ts">
   import { Button } from '@client/components/ui/button';
-  import Heart from '@lucide/svelte/icons/heart';
-  import UserRound from '@lucide/svelte/icons/user-round';
-  import EyeOff from '@lucide/svelte/icons/eye-off';
   import Loader2 from '@lucide/svelte/icons/loader-2';
-  import CircleCheck from '@lucide/svelte/icons/circle-check';
   import Link from '../components/Link.svelte';
   import DonateCard from '../components/DonateCard.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
@@ -52,15 +48,14 @@
   let anonChosen = $state(false);
 </script>
 
-<div class="max-w-2xl mx-auto py-8 md:py-12 space-y-8">
-  <header class="space-y-2 text-center">
+<div class="mx-auto max-w-2xl space-y-8">
+  <header class="space-y-3">
     <h1
-      class="flex items-center justify-center gap-2.5 text-3xl md:text-4xl font-display font-bold tracking-tight"
+      class="text-[clamp(34px,4vw,46px)] font-bold leading-[1.05] tracking-[-0.03em] rtl:tracking-normal"
     >
-      <Heart class="size-7 text-amber-500" aria-hidden="true" />
       {t('donate.pageTitle')}
     </h1>
-    <p class="mx-auto max-w-xl text-muted-foreground">
+    <p class="text-lg text-body">
       {t('donate.pageIntro', { days: windowDays })}
     </p>
   </header>
@@ -68,12 +63,9 @@
   {#if orderRef}
     <!-- RETURN STATE: the processor sent the donor back here. -->
     {#if order.data?.status === 'paid'}
-      <section
-        class="space-y-3 rounded-xl border border-primary/40 bg-primary/5 p-6 text-center md:p-8"
-      >
-        <CircleCheck class="mx-auto size-8 text-primary" aria-hidden="true" />
-        <h2 class="font-display text-xl font-semibold">{t('donate.paidTitle')}</h2>
-        <p class="text-sm text-muted-foreground">
+      <section class="space-y-3 rounded-lg border border-primary/50 bg-primary/10 p-6 md:p-8">
+        <h2 class="text-xl font-bold">{t('donate.paidTitle')}</h2>
+        <p class="text-body">
           {t('donate.paidBody', { days: windowDays })}
         </p>
         <Button variant="outline" class="min-h-11" onclick={clearOrder}>
@@ -81,44 +73,42 @@
         </Button>
       </section>
     {:else if order.data?.status === 'underpaid'}
-      <section
-        class="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-6 text-center md:p-8"
-      >
-        <h2 class="font-display text-xl font-semibold">{t('upgrade.underpaidTitle')}</h2>
-        <p class="text-sm text-muted-foreground">{t('donate.orderUnderpaidBody')}</p>
+      <section class="space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-6 md:p-8">
+        <h2 class="text-xl font-bold">{t('upgrade.underpaidTitle')}</h2>
+        <p class="text-body">{t('donate.orderUnderpaidBody')}</p>
         <Button variant="outline" class="min-h-11" onclick={clearOrder}>
           {t('common.close')}
         </Button>
       </section>
     {:else if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
       <section
-        class="space-y-3 rounded-xl border border-destructive/40 bg-destructive/10 p-6 text-center md:p-8"
+        class="space-y-3 rounded-lg border border-destructive/40 bg-destructive/10 p-6 md:p-8"
       >
-        <h2 class="font-display text-xl font-semibold">{t('upgrade.failedTitle')}</h2>
-        <p class="text-sm text-muted-foreground">{t('donate.orderFailedBody')}</p>
+        <h2 class="text-xl font-bold">{t('upgrade.failedTitle')}</h2>
+        <p class="text-body">{t('donate.orderFailedBody')}</p>
         <Button variant="outline" class="min-h-11" onclick={clearOrder}>
           {t('common.retry')}
         </Button>
       </section>
     {:else}
-      <section class="rounded-xl border border-primary/30 bg-primary/5 p-6 md:p-8">
-        <p class="flex items-center gap-2 text-sm font-semibold">
+      <section class="panel">
+        <p class="flex items-center gap-2 font-bold text-foreground">
           <Loader2 class="size-4 animate-spin text-primary" aria-hidden="true" />
           {t('upgrade.confirmingTitle')}
         </p>
-        <p class="mt-1 text-sm text-muted-foreground">{t('upgrade.confirmingBody')}</p>
+        <p class="mt-1 text-body">{t('upgrade.confirmingBody')}</p>
       </section>
     {/if}
   {:else if config.data && !donationsLive}
     <!-- Donations disabled on this deployment: an honest note, not a dead form. -->
-    <p class="text-center text-sm text-muted-foreground">{t('donate.unavailable')}</p>
+    <p class="text-body">{t('donate.unavailable')}</p>
   {:else if authed}
     <DonateCard />
   {:else if anonChosen}
     <div class="space-y-3">
       <DonateCard anonymous />
-      <p class="text-center text-xs text-muted-foreground">
-        <Link href="/login?returnTo=/donate" class="underline hover:text-foreground">
+      <p class="text-[15px]">
+        <Link href="/login?returnTo=/donate" class="link-brand text-foreground">
           {t('donate.signInInstead')}
         </Link>
       </p>
@@ -128,26 +118,20 @@
     <section class="grid gap-3 sm:grid-cols-2">
       <Link
         href="/login?returnTo=/donate"
-        class="group rounded-xl border border-border bg-card p-5 text-start transition hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        class="rounded-sm border-2 border-border/70 bg-card p-5 text-start transition hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <span class="flex items-center gap-2 text-sm font-semibold">
-          <UserRound class="size-4 shrink-0 text-primary" aria-hidden="true" />
-          {t('donate.signInTitle')}
-        </span>
-        <span class="mt-1.5 block text-xs text-muted-foreground">
+        <span class="block font-bold text-foreground">{t('donate.signInTitle')}</span>
+        <span class="mt-1.5 block text-[15px] text-muted-foreground">
           {t('donate.signInBody')}
         </span>
       </Link>
       <button
         type="button"
         onclick={() => (anonChosen = true)}
-        class="rounded-xl border border-border bg-card p-5 text-start transition hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        class="rounded-sm border-2 border-border/70 bg-card p-5 text-start transition hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <span class="flex items-center gap-2 text-sm font-semibold">
-          <EyeOff class="size-4 shrink-0 text-primary" aria-hidden="true" />
-          {t('donate.anonTitle')}
-        </span>
-        <span class="mt-1.5 block text-xs text-muted-foreground">
+        <span class="block font-bold text-foreground">{t('donate.anonTitle')}</span>
+        <span class="mt-1.5 block text-[15px] text-muted-foreground">
           {t('donate.anonBody')}
         </span>
       </button>

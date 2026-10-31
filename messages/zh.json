@@ -33,7 +33,6 @@
     "signIn": "登录",
     "account": "我的账户",
     "menu": "菜单",
-    "theme": "主题",
     "home": "FreeSocks 首页"
   },
   "captcha": {
@@ -140,12 +139,6 @@
     "refreshMembership": "已付款？查询我的会员状态",
     "memberActiveTitle": "会员有效",
     "memberActiveExpiry": "有效期至 {date}",
-    "membershipNudge": {
-      "title": "升级会员，畅享无限",
-      "body": "无限流量与设备。",
-      "bodyNoDevices": "无限带宽。",
-      "cta": "查看会员"
-    },
     "tab": {
       "connection": "连接",
       "membership": "会员",
@@ -169,10 +162,6 @@
     "redeemPlaceholder": "FSM-XXXX-XXXX-XXXX",
     "rotateHint": "如果您的32位账号可能已泄露，请立即更换。旧账号将立即失效。",
     "section": {
-      "connection": {
-        "title": "您的连接",
-        "desc": "您的代理密钥、设置帮助和已连接的设备。"
-      },
       "membership": {
         "title": "会员资格",
         "desc": "您的计划——升级、续期或兑换会员码。"
@@ -624,7 +613,6 @@
   },
   "faq": {
     "title": "常见问题解答",
-    "subtitle": "基本问题已解答。还有疑问？请使用您的支持 ID 联系我们。",
     "tabGeneral": "常规",
     "tabThreat": "我们为你防范什么",
     "contactPrefix": "如有其他问题，请发送邮件至",
@@ -724,29 +712,12 @@
     }
   },
   "home": {
-    "trust": {
-      "nonprofit": "由美国 501(c)(3) 非营利组织运营",
-      "openSource": "开源",
-      "noLogs": "不记录流量日志"
-    },
-    "network": {
-      "title": "网络状态",
-      "offline": "离线",
-      "srOnline": "在线",
-      "srOffline": "离线",
-      "note": "每 10 分钟检查一次",
-      "link": "实时状态"
-    },
     "sections": {
-      "privacy": "隐私",
-      "how": "快速上手",
-      "membership": "会员",
       "faq": "常见问题",
       "about": "关于"
     },
     "impact": {
       "title": "捐款在行动",
-      "body": "通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。",
       "cta": "立即捐款"
     },
     "hero": {
@@ -762,14 +733,7 @@
       "getMembership": "加入会员"
     },
     "freeCard": {
-      "title": "免费套餐",
-      "badge": "你将获得什么",
-      "urlTitle": "X射线订阅网址",
-      "urlBody": "Xray-powered VLESS. Paste into any compatible client.",
-      "membershipLine": "FreeSocks 会员资格为您提供{limits} 。",
-      "noAuthTitle": "无需电子邮件或密码",
-      "noAuthBody": "一次人工验证。保存您的账号即可登录。不收集邮箱地址。",
-      "footnote": "此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。"
+      "title": "免费套餐"
     },
     "privacy": {
       "title": "我们储存",
@@ -800,14 +764,6 @@
       "lead": "免费版涵盖基本内容。",
       "descriptionFallback": "FreeSocks 会员资格可解除所有限制。",
       "payNote": "可使用加密货币（比特币、门罗币等）、银行卡或PayPal支付。"
-    },
-    "about": {
-      "title": "关于 FreeSocks",
-      "bodyPrefix": "FreeSocks 由",
-      "bodySuffix": "，一家美国 501(c)(3) 非营利组织。",
-      "body2": "大多数 VPN 默认你能付费订阅、并能放心交出邮箱地址。但在世界上许多地方，这两点都不成立，所以 FreeSocks 两者都不要求。任何人都能在一分钟左右拿到可用的密钥，并一直使用下去。",
-      "siteLink": "unredacted.org",
-      "viewSourceCta": "查看源码"
     },
     "limits": {
       "unlimitedBoth": "无限带宽和设备",

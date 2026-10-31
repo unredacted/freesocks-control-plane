@@ -7,9 +7,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import Download from '@lucide/svelte/icons/download';
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
-  import Link2 from '@lucide/svelte/icons/link-2';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
-  import MapPin from '@lucide/svelte/icons/map-pin';
   import { copyText } from '../lib/utils';
   import { t } from '../lib/i18n/index.svelte';
   import Link from './Link.svelte';
@@ -187,29 +185,29 @@
   );
 </script>
 
-<section class="rounded-xl border border-border bg-card text-card-foreground overflow-hidden">
+<section class="overflow-hidden rounded-lg border border-border/70 bg-card text-card-foreground">
   {#if banner}
     <div
-      class="bg-amber-500/10 border-b border-amber-500/30 px-5 py-2.5 text-sm text-amber-700 dark:text-amber-300"
+      class="border-b border-amber-500/30 bg-amber-500/10 px-[clamp(20px,2.4vw,28px)] py-2.5 text-[15px] text-amber-700 dark:text-amber-300"
     >
       {banner}
     </div>
   {/if}
 
-  <div class="p-6 md:p-8 space-y-6">
-    <!-- Pass header: title + plain-text status line. -->
+  <div class="space-y-6 p-[clamp(20px,2.4vw,28px)]">
+    <!-- Pass header: title + plain-text status lines. -->
     <div class="space-y-1.5">
-      <h2 class="text-xl md:text-2xl font-display font-bold tracking-tight">
+      <h2 class="text-2xl font-bold leading-tight tracking-[-0.01em] rtl:tracking-normal">
         {resolvedTitle}
       </h2>
-      <p class="text-sm text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span class="font-medium text-foreground">{t('hero.tierLine', { tier: tierName })}</span>
-        <span class="text-muted-foreground/60">·</span>
+      <p class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[15px] text-muted-foreground">
+        <span class="text-foreground">{t('hero.tierLine', { tier: tierName })}</span>
+        <span aria-hidden="true">·</span>
         <span>{t('hero.viaLine', { backend: resolvedBackendLabel })}</span>
       </p>
-      <!-- Node status, ONE compact line: the live dot (tooltip carries the node
-           label + load band + state) + location + the status deep link. Offline
-           is the only state spelled out (it's the actionable one). -->
+      <!-- Node status, ONE compact line: a square status mark and the state in
+           words (the tooltip adds the node label), the location and load band,
+           and the status deep link. -->
       {#if nodeLocationLabel || nodeOnline !== undefined || nodeLocationCode}
         {@const nodeStateText =
           nodeOnline === true
@@ -226,59 +224,59 @@
                 ? t('status.loadCrowded')
                 : null}
         {@const dotLabel = [nodeLabel, nodeStateText, loadText].filter(Boolean).join(' · ')}
-        <p class="text-sm text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
+        <p class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[15px] text-muted-foreground">
           {#if nodeOnline !== undefined}
             <span
-              class="inline-flex size-2 rounded-full shrink-0 {nodeOnline === true
-                ? 'bg-emerald-500'
+              class="inline-flex items-center gap-2 {nodeOnline === true
+                ? 'text-foreground'
                 : nodeOnline === false
-                  ? 'bg-destructive'
-                  : 'bg-muted-foreground/50'}"
+                  ? 'text-destructive'
+                  : ''}"
               role="status"
               title={dotLabel}
-              aria-label={dotLabel}
-            ></span>
-          {/if}
-          {#if nodeOnline === false}
-            <span class="text-destructive">{t('hero.nodeOffline')}</span>
-            <span class="text-muted-foreground/60">·</span>
-          {/if}
-          {#if nodeLocationLabel}
-            <span class="inline-flex items-center gap-1">
-              <MapPin class="size-3.5" aria-hidden="true" />
-              {nodeLocationLabel}
+            >
+              <span
+                class="size-[9px] shrink-0 {nodeOnline === true
+                  ? 'bg-primary'
+                  : nodeOnline === false
+                    ? 'bg-destructive'
+                    : 'bg-muted-foreground/50'}"
+                aria-hidden="true"
+              ></span>
+              {nodeStateText}
             </span>
           {/if}
+          {#if nodeLocationLabel}
+            {#if nodeOnline !== undefined}<span aria-hidden="true">·</span>{/if}
+            <span>{nodeLocationLabel}{loadText ? ` · ${loadText}` : ''}</span>
+          {/if}
           {#if nodeLocationCode}
-            <span class="text-muted-foreground/60">·</span>
-            <Link
-              href="/status#loc-{nodeLocationCode}"
-              class="inline-flex items-center gap-1 underline underline-offset-2 hover:text-foreground"
-            >
-              {t('hero.nodeStatusLink')} →
+            <span aria-hidden="true">·</span>
+            <Link href="/status#loc-{nodeLocationCode}" class="link-brand text-foreground">
+              {t('hero.nodeStatusLink')}
             </Link>
           {/if}
         </p>
       {/if}
       {#if nodeRelay?.refreshSuggested}
         <p
-          class="mt-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200"
+          class="mt-1 rounded-sm border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[15px] text-amber-800 dark:text-amber-200"
           role="status"
         >
           {t('hero.relayRefreshSuggested')}
         </p>
       {/if}
       {#if nodeRelay && nodeRelay.connections.length > 0}
-        <p class="text-xs text-muted-foreground flex flex-wrap items-center gap-1.5">
-          <span>{t('hero.relayConnections')}</span>
-          {#each nodeRelay.connections as c, i (i)}
-            <span class="rounded-full border px-2 py-0.5">{c.label}</span>
-          {/each}
+        <p class="text-sm text-muted-foreground">
+          {t('hero.relayConnections')}
+          <span class="text-foreground"
+            >{nodeRelay.connections.map((c) => c.label).join(' · ')}</span
+          >
         </p>
         <!-- An app that imports a plain link list (Anywhere, v2rayNG...) shows the
              main and backup entries side by side and never switches on its own. -->
         {#if relayBackup}
-          <p class="text-xs text-muted-foreground">
+          <p class="text-sm text-muted-foreground">
             {t('hero.relayBackupHint', relayBackup)}
           </p>
         {/if}
@@ -289,17 +287,14 @@
       <!-- Main zone: URL + actions on the left, QR on the perforated stub. -->
       <div class="grid gap-6 md:grid-cols-[1fr_auto] md:items-start">
         <div class="space-y-3 min-w-0">
-          <label
-            for="primary-url"
-            class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
-          >
-            <Link2 class="size-3.5" />
+          <label for="primary-url" class="block text-sm text-muted-foreground">
             {urlLabel}
           </label>
-          <div class="relative rounded-lg border border-border bg-muted/40 p-3 group">
+          <div class="rounded-sm border border-border bg-well px-4 py-3.5">
             <code
               id="primary-url"
-              class="block select-all font-mono text-xs md:text-sm break-all pe-2 leading-relaxed text-foreground/90"
+              dir="ltr"
+              class="block select-all break-all font-mono text-[15px] leading-relaxed text-foreground"
             >
               {subscriptionUrl}
             </code>
@@ -343,7 +338,7 @@
 
         {#if showQr}
           <!-- The stub: QR on the far side of the dashed "perforation". -->
-          <div class="hidden md:block border-s border-dashed border-border ps-6 ms-2">
+          <div class="ms-2 hidden border-s border-border/70 ps-6 md:block">
             <QrCode text={subscriptionUrl} size={144} />
             <p class="mt-2 text-xs text-muted-foreground text-center max-w-[144px]">
               {t('hero.scanPhone')}
@@ -361,18 +356,18 @@
       <!-- Fallback URL: behind a disclosure - most members never need it, and
            always-open it made the pass read as two competing links. -->
       {#if fallbackUrl && fallbackUrl !== subscriptionUrl}
-        <div class="space-y-2 pt-4 border-t border-border/60">
+        <div class="space-y-2 border-t border-border/70 pt-4">
           <button
             type="button"
             onclick={() => (fallbackOpen = !fallbackOpen)}
             aria-expanded={fallbackOpen}
             class="flex w-full min-h-11 items-center justify-between gap-2 rounded-sm text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span class="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
-              {t('hero.fallbackLabel')}
+            <span class="text-[15px]">
+              <strong class="font-bold text-foreground">{t('hero.fallbackLabel')}</strong>
+              <span class="text-muted-foreground">{t('hero.fallbackHint')}</span>
             </span>
-            <span class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              {t('hero.fallbackHint')}
+            <span class="flex items-center text-muted-foreground">
               <ChevronDown
                 class="size-3.5 shrink-0 transition-transform {fallbackOpen ? 'rotate-180' : ''}"
                 aria-hidden="true"
@@ -382,7 +377,8 @@
           {#if fallbackOpen}
             <div class="flex gap-2" in:fade={{ duration: 150 }}>
               <code
-                class="flex-1 select-all px-3 py-2 rounded-md bg-muted text-xs font-mono break-all min-w-0 text-muted-foreground"
+                dir="ltr"
+                class="min-w-0 flex-1 select-all break-all rounded-sm border border-border bg-well px-3 py-2 font-mono text-sm text-foreground"
               >
                 {fallbackUrl}
               </code>
@@ -435,7 +431,7 @@
           <!-- The disclaimer is not dismissible-separately-from-the-URL on
                purpose: as long as the link is visible, so is the warning. -->
           <div
-            class="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+            class="flex items-start gap-2 rounded-sm border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300"
             role="note"
           >
             <TriangleAlert class="size-4 shrink-0 mt-0.5" aria-hidden="true" />
@@ -443,7 +439,8 @@
           </div>
           <div class="flex gap-2">
             <code
-              class="flex-1 select-all px-3 py-2 rounded-md bg-muted text-xs font-mono break-all min-w-0 text-muted-foreground"
+              dir="ltr"
+              class="min-w-0 flex-1 select-all break-all rounded-sm border border-border bg-well px-3 py-2 font-mono text-sm text-foreground"
             >
               {subscriptionUrl}
             </code>
@@ -487,7 +484,7 @@
          (The green/online state needs no callout - the badge + tooltip carry it.) -->
     {#if nodeOnline === false}
       <div
-        class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        class="rounded-sm border border-destructive/40 bg-destructive/10 px-3 py-2 text-[15px] text-destructive"
       >
         {t('hero.nodeOfflineBody')}
       </div>
@@ -497,7 +494,7 @@
          expired). Silent when the key is active or the backend was unreachable. -->
     {#if keyIssue}
       <div
-        class="rounded-lg border px-3 py-2 text-sm {keyIssue === 'limited'
+        class="rounded-sm border px-3 py-2 text-[15px] {keyIssue === 'limited'
           ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
           : 'border-destructive/40 bg-destructive/10 text-destructive'}"
       >
@@ -514,7 +511,7 @@
 
     <!-- Pass footer: the key-management actions live ON the pass. -->
     {#if actions}
-      <div class="pt-4 border-t border-border/60">
+      <div class="border-t border-border/70 pt-5">
         {@render actions()}
       </div>
     {/if}

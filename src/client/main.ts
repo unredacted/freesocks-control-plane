@@ -17,26 +17,39 @@ import { initI18n } from './lib/i18n/index.svelte';
  *      about. The SPA must render with our brand typography even if the
  *      visitor can't reach any Google domain.
  *
- * Weights mirror what the previous Google-Fonts URL requested. If new
- * weights are needed, add them here, not via an external stylesheet.
- *   - Inter (body, UI):       400, 500, 600, 700
- *   - Inter Tight (display):  600, 700, 800
- *   - JetBrains Mono (code):  400, 500
+ * If new weights are needed, add them here, not via an external stylesheet.
+ *   - Schibsted Grotesk (display headings):       600, 700, 800
+ *   - Atkinson Hyperlegible Next (body, UI):      400, 500, 600, 700
+ *   - Atkinson Hyperlegible Mono (URLs, config):  400, 500
+ *   - Silkscreen (the pixel lettering on the home page poster):  400
+ *
+ * Those three are Latin-only, so the font stacks (globals.css) fall back per
+ * script: Vazirmatn for Persian and Arabic (400-800), Inter for Cyrillic
+ * (400-700), then the system CJK face. Latin text never reaches those two
+ * fallbacks, so only their Arabic/Cyrillic files are ever downloaded.
  *
  * The fontsource packages ship per-subset @font-face declarations with
- * unicode-range, so the browser only downloads the subset(s) it actually
- * needs, so adding cyrillic/greek/vietnamese support costs nothing on a
- * latin-only page.
+ * unicode-range, so the browser only downloads the subset(s) a page uses.
  */
+import '@fontsource/schibsted-grotesk/600.css';
+import '@fontsource/schibsted-grotesk/700.css';
+import '@fontsource/schibsted-grotesk/800.css';
+import '@fontsource/atkinson-hyperlegible-next/400.css';
+import '@fontsource/atkinson-hyperlegible-next/500.css';
+import '@fontsource/atkinson-hyperlegible-next/600.css';
+import '@fontsource/atkinson-hyperlegible-next/700.css';
+import '@fontsource/atkinson-hyperlegible-mono/400.css';
+import '@fontsource/atkinson-hyperlegible-mono/500.css';
+import '@fontsource/silkscreen/400.css';
+import '@fontsource/vazirmatn/400.css';
+import '@fontsource/vazirmatn/500.css';
+import '@fontsource/vazirmatn/600.css';
+import '@fontsource/vazirmatn/700.css';
+import '@fontsource/vazirmatn/800.css';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
 import '@fontsource/inter/700.css';
-import '@fontsource/inter-tight/600.css';
-import '@fontsource/inter-tight/700.css';
-import '@fontsource/inter-tight/800.css';
-import '@fontsource/jetbrains-mono/400.css';
-import '@fontsource/jetbrains-mono/500.css';
 
 // Hand the per-request CSP nonce to the Cap widget. Caddy puts the same UUID in
 // the response's `script-src 'nonce-…'` header and in the <meta name="csp-nonce">

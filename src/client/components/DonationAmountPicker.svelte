@@ -48,8 +48,8 @@
 
   const chipBase =
     'rounded-lg border px-3 py-1.5 text-sm font-medium tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
-  const chipOn = 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-300';
-  const chipOff = 'border-border hover:border-amber-500/50';
+  const chipOn = 'border-primary bg-primary/10 font-bold text-foreground';
+  const chipOff = 'border-border hover:border-primary/50';
 </script>
 
 {#if donation?.enabled}
@@ -81,7 +81,7 @@
           type="number"
           min={0}
           step="0.01"
-          class="min-h-9 w-24 {isCustom ? 'border-amber-500' : ''}"
+          class="min-h-9 w-24 {isCustom ? 'border-primary' : ''}"
           placeholder={t('donate.customPlaceholder')}
           value={customText}
           oninput={(e) => onCustom((e.currentTarget as HTMLInputElement).value)}

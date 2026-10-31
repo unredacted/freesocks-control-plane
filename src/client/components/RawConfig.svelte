@@ -99,16 +99,16 @@
   }
 </script>
 
-<div class="rounded-xl border {prominent ? 'border-primary/30' : 'border-border/60'} bg-muted/30">
+<div class="rounded-lg border {prominent ? 'border-primary/50' : 'border-border/70'} bg-card">
   {#if prominent}
-    <div class="flex items-center gap-2 px-4 py-3 text-sm font-semibold text-foreground">
+    <div class="flex items-center gap-2 px-5 py-3 font-bold text-foreground">
       <FileCode class="size-4 shrink-0 text-primary" />
       {t('rawconfig.title')}
     </div>
   {:else}
     <button
       type="button"
-      class="flex w-full items-center justify-between gap-2 rounded-xl px-4 py-3 text-start text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      class="flex min-h-14 w-full items-center justify-between gap-2 rounded-lg px-5 py-3 text-start font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       onclick={toggle}
       aria-expanded={open}
     >
@@ -121,13 +121,13 @@
   {/if}
 
   {#if open}
-    <div class="space-y-3 px-4 pb-4 text-sm" transition:slide={{ duration: 180 }}>
+    <div class="space-y-3 px-5 pb-5 text-sm" transition:slide={{ duration: 180 }}>
       <p class="text-muted-foreground">{t('rawconfig.explainer')}</p>
 
       {#if content.isPending}
-        <p class="text-xs text-muted-foreground">{t('common.loading')}</p>
+        <p class="text-sm text-muted-foreground">{t('common.loading')}</p>
       {:else if content.isError}
-        <p class="text-xs text-destructive">{apiErrorMessage(content.error)}</p>
+        <p class="text-sm text-destructive">{apiErrorMessage(content.error)}</p>
       {:else if content.data}
         {@const text = prettify(content.data.content)}
         <!-- Config text sits NEXT TO the copy button (mirrors SubscriptionHero's
@@ -135,7 +135,7 @@
              pinned beside it, top-aligned. -->
         <div class="flex items-start gap-2">
           <pre
-            class="max-h-72 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs leading-relaxed text-foreground">{text}</pre>
+            class="max-h-72 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-sm border border-border bg-well p-3 font-mono text-sm leading-relaxed text-foreground">{text}</pre>
           <Button variant="outline" size="sm" class="min-h-11 shrink-0" onclick={() => copy(text)}>
             {#if copied}
               <Check class="size-3.5" />
@@ -145,7 +145,7 @@
             <span class="ms-1">{t('common.copy')}</span>
           </Button>
         </div>
-        <p class="text-xs text-muted-foreground/80">{t('rawconfig.addHint')}</p>
+        <p class="text-sm text-muted-foreground/80">{t('rawconfig.addHint')}</p>
       {/if}
     </div>
   {/if}

@@ -4,67 +4,72 @@
 @custom-variant dark (&:is(.dark *));
 
 @layer base {
-  /* Light theme. The neutral ladder is stepped like the .dark block, inverted:
-     an off-white page with pure-white cards/popovers a step above it, fills
-     (secondary/muted/accent) clearly below white so badges/skeletons read as
-     surfaces, and border/input dark enough to draw a visible hairline on BOTH
-     the page and the cards. muted-foreground is tuned for AA on white AND on
-     the muted fill (~5.9:1 / ~5.3:1). */
+  /* Light theme: warm paper (#f5f4ef). Cards and alternating sections sit on
+     a slightly darker band (#ebe9e2), with white wells for inset fields (links,
+     codes). Body text has a softer reading tone (text-body). The deep green
+     works both as a button fill (white text) and as link text on the paper
+     (~5.6:1). muted-foreground clears AA on the page, the band and the muted
+     fill. */
   :root {
-    --background: oklch(0.985 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    /* Brand accent — FreeSocks "Emerald" (oklch hue ~158). Mid-lightness so it
-       reads as both a button background (with the near-white --primary-foreground)
-       and as text/links (`text-primary`) at ~AA contrast in light mode; the .dark
-       block lightens it for dark surfaces. Hue/chroma are the single brand knob,
-       so an admin-configurable theme picker (presets + hue override) can later
-       swap them per deployment by overriding --primary/--ring at runtime. */
-    --primary: oklch(0.52 0.13 158);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.94 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.94 0 0);
-    --muted-foreground: oklch(0.44 0 0);
-    --accent: oklch(0.94 0 0);
-    --accent-foreground: oklch(0.205 0 0);
+    --background: #f5f4ef;
+    --foreground: #1f1f1d;
+    --body-foreground: #333333;
+    --card: #ebe9e2;
+    --card-foreground: #1f1f1d;
+    --popover: #ffffff;
+    --popover-foreground: #1f1f1d;
+    /* Brand green (oklch hue ~147). Kept in oklch() because DitherField and
+       the globes parse it (src/client/lib/oklch.ts). THEME_PRESETS' `emerald`
+       in src/client/lib/theme.ts mirrors these two steps, and the runtime theme
+       overrides --primary/--ring with it. */
+    --primary: oklch(0.481 0.13 147);
+    --primary-foreground: #ffffff;
+    --secondary: #ebe9e2;
+    --secondary-foreground: #1f1f1d;
+    --muted: #ebe9e2;
+    --muted-foreground: #5f5e59;
+    --accent: #ebe9e2;
+    --accent-foreground: #1f1f1d;
     --destructive: oklch(0.577 0.245 27.325);
     --destructive-foreground: oklch(0.985 0 0);
-    --border: oklch(0.86 0 0);
-    --input: oklch(0.86 0 0);
-    --ring: oklch(0.58 0.11 158);
-    --radius: 0.625rem;
+    --border: #cfcdc5;
+    --input: #cfcdc5;
+    --ring: oklch(0.55 0.11 147);
+    --band: #ebe9e2;
+    --well: #ffffff;
+    /* 4px on controls (radius-sm), 8px on panels (radius-lg). */
+    --radius: 0.5rem;
   }
 
-  /* Dark theme. Background is a lighter charcoal (#333 ≈ oklch(0.268)) rather
-     than near-black, so the neutral surface ladder is shifted up to keep
-     contrast: card/popover sit a step above the background, secondary/muted/
-     accent above that, and border/input lightest so hairlines + field edges
-     read on both the background and the cards. */
+  /* Dark theme (the default): charcoal #333. Cards and alternating sections
+     sit on a darker band (#2a2a2a), with a darker well (#222) for inset
+     fields; popovers sit a step up (#3b3b3b). Off-white text, a softer
+     text-body tone for long prose, and the bright green (#5aba6a) carrying
+     near-black text. muted-foreground is a touch lighter than a pure match so
+     it still clears AA on the muted fill. */
   .dark {
-    --background: oklch(0.268 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.325 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.325 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    /* Brand accent, lightened for dark surfaces (dark --primary-foreground sits on it). */
-    --primary: oklch(0.72 0.13 158);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.355 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.355 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.355 0 0);
-    --accent-foreground: oklch(0.985 0 0);
+    --background: #333333;
+    --foreground: #f5f4ef;
+    --body-foreground: #dcdbd5;
+    --card: #2a2a2a;
+    --card-foreground: #f5f4ef;
+    --popover: #3b3b3b;
+    --popover-foreground: #f5f4ef;
+    --primary: oklch(0.711 0.13 147);
+    --primary-foreground: #10180f;
+    --secondary: #424242;
+    --secondary-foreground: #f5f4ef;
+    --muted: #424242;
+    --muted-foreground: #b0afa9;
+    --accent: #424242;
+    --accent-foreground: #f5f4ef;
     --destructive: oklch(0.704 0.191 22.216);
     --destructive-foreground: oklch(0.985 0 0);
-    --border: oklch(0.385 0 0);
-    --input: oklch(0.385 0 0);
-    --ring: oklch(0.64 0.1 158);
+    --border: #4c4c4c;
+    --input: #4c4c4c;
+    --ring: oklch(0.777 0.11 147);
+    --band: #2a2a2a;
+    --well: #222222;
   }
 }
 
@@ -88,22 +93,61 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-body: var(--body-foreground);
+  --color-band: var(--band);
+  --color-well: var(--well);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
-  /* Font families. Display is for h1/h2 (more confident, tighter); Sans for
-     body and UI; Mono for URLs and config snippets. All three are self-hosted
-     via @fontsource (no third-party host can be reached from a censored region). */
+  /* Font families. Display is for h1/h2, Sans for body and UI, Mono for URLs
+     and config snippets. All self-hosted via @fontsource (no third-party host
+     can be reached from a censored region). The first face in each stack is
+     Latin-only, so the next ones cover the other scripts we ship: Vazirmatn
+     for Persian and Arabic, Inter for Cyrillic, then the system face (CJK). */
   --font-sans:
-    'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
+    'Atkinson Hyperlegible Next', 'Vazirmatn', 'Inter', ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-display:
-    'Inter Tight', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    'Schibsted Grotesk', 'Vazirmatn', 'Inter', ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, sans-serif;
   --font-mono:
-    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+    'Atkinson Hyperlegible Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+  --font-pixel: 'Silkscreen', ui-monospace, monospace;
+}
+
+/* The site's content column: 1200px wide, with a gutter that grows from 18px
+   on a phone to 44px on a wide screen. Used by the header, the footer and the
+   home page's full-bleed bands. */
+@utility site-wrap {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 1200px;
+  padding-inline: clamp(18px, 4vw, 44px);
+}
+
+/* A member-page panel: the band surface, a soft hairline and 8px corners,
+   with padding that grows from 20px on a phone to 28px on a wide screen. */
+@utility panel {
+  background-color: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  border-radius: var(--radius-lg);
+  padding: clamp(20px, 2.4vw, 28px);
+}
+
+/* A text link: the text keeps its color, a 2px brand-green underline marks
+   it, and the text turns green on hover. */
+@utility link-brand {
+  text-decoration-line: underline;
+  text-decoration-color: var(--primary);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+  &:hover {
+    color: var(--primary);
+  }
 }
 
 @layer base {
@@ -111,18 +155,9 @@
     @apply border-border;
   }
   body {
-    /* 15px on phones (readability without density), the 16px standard from md
-       up. Elements setting an explicit text-* class are unaffected. */
-    @apply bg-background text-foreground font-sans antialiased text-[15px] md:text-base;
-    /* Inter feature flags: cv11=single-storey 'a', ss01=alt forms, cv02=open
-       4 (better for code), and the standard ligature/contextual-alt pair.
-       Tabular nums applied per-element where it matters (counters, timers). */
-    font-feature-settings:
-      'rlig' 1,
-      'calt' 1,
-      'cv11' 1,
-      'ss01' 1,
-      'cv02' 1;
+    /* 16px on phones, 17px from md up. Elements setting an explicit text-*
+       class are unaffected. */
+    @apply bg-background text-foreground font-sans antialiased text-base md:text-[17px];
   }
   h1,
   h2 {
@@ -166,8 +201,8 @@
 }
 
 /* The brand's ONE signature texture is the Bayer-dithered field rendered by
-   DitherField.svelte on a low-res canvas (the Home hero backdrop + the
-   empty-state disc) - no CSS equivalent lives here; the canvas resolves the
+   DitherField.svelte on a low-res canvas (the empty-state disc; the home
+   poster draws it in SVG) - no CSS equivalent lives here; the canvas resolves the
    --primary token to sRGB itself (older engines can't take oklch() in
    fillStyle). */
 

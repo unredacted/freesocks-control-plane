@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Heart from '@lucide/svelte/icons/heart';
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney, formatDate } from '../lib/i18n/format';
   import { configQuery, accountQuery, meQuery } from '../lib/queries';
@@ -55,42 +54,41 @@
   const fmtGb = (gb: number) => (Number.isInteger(gb) ? String(gb) : gb.toFixed(1));
 </script>
 
-<section class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
-  <div class="flex items-start gap-3">
-    <Heart class="size-5 text-muted-foreground shrink-0 mt-0.5" aria-hidden="true" />
-    <div>
-      <h2 class="text-xl font-display font-bold tracking-tight">
-        {showImpact ? t('impact.collectiveTitle') : t('impact.title')}
-      </h2>
-      <p class="text-sm text-muted-foreground mt-1 max-w-xl leading-relaxed">
-        {showImpact ? t('impact.collectiveBody', { days: windowDays }) : t('impact.body')}
-      </p>
-    </div>
+<section class="panel space-y-6">
+  <div>
+    <h2 class="text-xl font-bold leading-tight">
+      {showImpact ? t('impact.collectiveTitle') : t('impact.title')}
+    </h2>
+    <p class="mt-1.5 max-w-xl text-body">
+      {showImpact ? t('impact.collectiveBody', { days: windowDays }) : t('impact.body')}
+    </p>
   </div>
 
   {#if showImpact && donation}
     <!-- Collective stats: the accessible signal for the decorative chart. -->
-    <div class="grid grid-cols-2 gap-3">
-      <div class="rounded-lg border border-border bg-background/60 p-4">
+    <div class="grid gap-6 sm:grid-cols-2">
+      <div class="border-t-2 border-border pt-3">
         <div
-          class="text-2xl font-display font-bold tabular-nums text-amber-600 dark:text-amber-300"
+          class="font-display text-[34px] font-bold leading-none tracking-[-0.02em] text-primary tabular-nums rtl:tracking-normal"
         >
           +{fmtGb(donation.currentBonusGb)}
         </div>
-        <div class="text-xs font-medium mt-0.5">{t('impact.bonusThisMonth')}</div>
-        <div class="text-xs text-muted-foreground mt-0.5">{t('impact.bonusThisMonthDetail')}</div>
+        <div class="mt-2 font-bold text-foreground">{t('impact.bonusThisMonth')}</div>
+        <div class="text-sm text-muted-foreground">{t('impact.bonusThisMonthDetail')}</div>
       </div>
-      <div class="rounded-lg border border-border bg-background/60 p-4">
-        <div class="text-2xl font-display font-bold tabular-nums">
+      <div class="border-t-2 border-border pt-3">
+        <div
+          class="font-display text-[34px] font-bold leading-none tracking-[-0.02em] text-foreground tabular-nums rtl:tracking-normal"
+        >
           {donation.freeUsersHelped.toLocaleString()}
         </div>
-        <div class="text-xs font-medium mt-0.5">{t('impact.usersHelped')}</div>
-        <div class="text-xs text-muted-foreground mt-0.5">{t('impact.usersHelpedDetail')}</div>
+        <div class="mt-2 font-bold text-foreground">{t('impact.usersHelped')}</div>
+        <div class="text-sm text-muted-foreground">{t('impact.usersHelpedDetail')}</div>
       </div>
     </div>
 
     <div>
-      <div class="text-xs font-medium text-muted-foreground mb-2">
+      <div class="mb-2 text-sm text-muted-foreground">
         {t('impact.dailyTitle')}
       </div>
       <DitherChart
@@ -104,7 +102,7 @@
         ariaLabel={t('impact.dailyChartAria')}
       />
       {#if dailyEmpty}
-        <p class="mt-2 text-xs text-muted-foreground">{t('impact.empty')}</p>
+        <p class="mt-2 text-sm text-muted-foreground">{t('impact.empty')}</p>
       {/if}
     </div>
 
@@ -113,19 +111,19 @@
          donation last?". -->
     {#if gifts.length > 0}
       <div>
-        <div class="text-xs font-medium text-muted-foreground mb-2">
+        <div class="mb-1 text-sm text-muted-foreground">
           {t('impact.giftsTitle')}
         </div>
-        <ul class="rounded-lg border border-border divide-y divide-border/60">
+        <ul class="divide-y divide-border/70 border-y border-border/70">
           {#each gifts.slice().reverse() as g (g.day + ':' + g.expiresAt)}
             <li
-              class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-3 py-2 text-sm"
+              class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 py-2.5 text-[15px]"
             >
               <span class="tabular-nums">{dayLabel(new Date(`${g.day}T00:00:00Z`))}</span>
-              <span class="font-medium tabular-nums text-amber-600 dark:text-amber-300">
-                +{fmtGb(Math.round(g.gb * 10) / 10)} GB
+              <span class="font-bold tabular-nums text-primary">
+                <bdi>+{fmtGb(Math.round(g.gb * 10) / 10)} GB</bdi>
               </span>
-              <span class="text-xs text-muted-foreground tabular-nums">
+              <span class="text-sm text-muted-foreground tabular-nums">
                 {t('impact.giftActiveUntil', { date: giftUntil(g.expiresAt) })}
               </span>
             </li>
@@ -135,8 +133,8 @@
     {/if}
 
     {#if isDonor && user}
-      <div class="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
-        <div class="text-xs font-medium text-amber-700 dark:text-amber-300">
+      <div class="rounded-sm border border-border/70 bg-well p-4">
+        <div class="text-sm font-bold text-foreground">
           {t('impact.yourContribution')}
         </div>
         <div class="text-sm mt-1">
@@ -148,27 +146,26 @@
           >
         </div>
         {#if personalGb > 0}
-          <div class="text-xs text-muted-foreground mt-0.5">
+          <div class="mt-0.5 text-sm text-muted-foreground">
             {t('impact.yourGb', { gb: fmtGb(personalGb) })}
           </div>
         {/if}
       </div>
     {/if}
     <!-- Only in-app donations feed the counter; direct nonprofit gifts don't. -->
-    <p class="text-xs text-muted-foreground leading-relaxed">
+    <p class="text-sm text-muted-foreground">
       {t('impact.externalNote')}
     </p>
   {/if}
 
   <!-- No external donate link here: giving happens in-app (the donate card
        right below this panel) so gifts actually feed the bandwidth pool. -->
-  <div class="pt-1">
-    <a href="https://unredacted.org" target="_blank" rel="noopener noreferrer">
-      <span
-        class="inline-flex items-center gap-1.5 text-sm underline hover:text-foreground text-muted-foreground"
-      >
-        {t('impact.aboutUnredacted')}
-      </span>
-    </a>
-  </div>
+  <p class="text-[15px]">
+    <a
+      class="link-brand text-foreground"
+      href="https://unredacted.org"
+      target="_blank"
+      rel="noopener noreferrer">{t('impact.aboutUnredacted')}</a
+    >
+  </p>
 </section>

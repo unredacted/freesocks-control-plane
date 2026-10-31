@@ -9,8 +9,8 @@
    * background shows through), so the mass dissolves outward like light
    * falling off, rendered in chunky ordered-dither pixels.
    *
-   * Used sparingly by design: the Home hero backdrop, and the dithered
-   * empty-state disc. Static - no animation, so the reduced-motion clamp has
+   * Used sparingly by design: the dithered empty-state disc (the home page's
+   * poster draws the same ordered dither in SVG). Static - no animation, so the reduced-motion clamp has
    * nothing to neutralize. Decorative: aria-hidden.
    *
    * The root element IS the <canvas> - callers position it via `class`

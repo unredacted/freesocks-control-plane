@@ -4,25 +4,34 @@
   import ThemeToggle from './ThemeToggle.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
   import HpkeBadge from './HpkeBadge.svelte';
-  import SourceBadge from './SourceBadge.svelte';
+  import BrandMark from './BrandMark.svelte';
   import { Button } from '@client/components/ui/button';
-  import { meQuery } from '../lib/queries';
-  import { t } from '../lib/i18n/index.svelte';
+  import { configQuery, meQuery } from '../lib/queries';
+  import { t, type MessageKey } from '../lib/i18n/index.svelte';
+  import { goToSection } from '../lib/homeSections.svelte';
   import { router } from '../stores/router.svelte';
   import { slide } from 'svelte/transition';
-  import StarIcon from './StarIcon.svelte';
-  import User from '@lucide/svelte/icons/user-round';
-  import LogIn from '@lucide/svelte/icons/log-in';
   import Menu from '@lucide/svelte/icons/menu';
   import X from '@lucide/svelte/icons/x';
 
-  // TanStack query, fetched once on first render, cached across the SPA.
+  // TanStack queries, fetched once on first render, cached across the SPA.
   const me = meQuery();
+  const config = configQuery();
 
-  // Mobile accordion: on narrow viewports the bar keeps only the logo + the
-  // HPKE badge + a menu toggle; everything else lives in a full-width,
-  // fully-LABELED backend below. The old icon-only row was too condensed to tell
-  // the controls apart. Desktop (sm+) keeps the inline nav.
+  // Section links: home-page anchors plus the status page. Membership only
+  // while billing is on (its section is hidden otherwise).
+  type NavItem = { label: MessageKey } & ({ section: string } | { href: string });
+  const items = $derived.by((): NavItem[] => [
+    { label: 'home.how.title', section: 'how' },
+    { label: 'status.title', href: '/status' },
+    ...(config.data?.billing?.enabled
+      ? [{ label: 'home.membership.title', section: 'membership' } as const]
+      : []),
+    { label: 'home.sections.faq', section: 'faq' },
+  ]);
+
+  // Below lg the section links and sign-in fold into a labeled panel under the
+  // bar; the primary button stays in the bar from sm up.
   let menuOpen = $state(false);
   const closeMenu = () => (menuOpen = false);
   // Close on any route change too (covers back/forward, not just link taps).
@@ -32,68 +41,87 @@
   });
 </script>
 
-<header class="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-10">
-  <div class="container mx-auto px-4 py-3 flex items-center justify-between gap-2">
+{#snippet navLink(item: NavItem, cls: string)}
+  {#if 'section' in item}
+    <a
+      href="/#{item.section}"
+      class={cls}
+      onclick={(e) => {
+        closeMenu();
+        void goToSection(e, item.section);
+      }}>{t(item.label)}</a
+    >
+  {:else}
+    <Link href={item.href} class={cls} onclick={closeMenu}>{t(item.label)}</Link>
+  {/if}
+{/snippet}
+
+{#snippet primaryAction(cls: string)}
+  {#if me.isPending}
+    <!-- Neutral placeholder while the auth check resolves, so signed-in
+         members never see "Get a free account" flash on a hard load. -->
+    <Skeleton class="h-11 w-44 rounded-sm" />
+  {:else if me.data?.authenticated}
+    <Link href="/account" onclick={closeMenu}>
+      <Button size="lg" class="text-[15px] {cls}">{t('nav.account')}</Button>
+    </Link>
+  {:else}
+    <Link href="/get-account" onclick={closeMenu}>
+      <Button size="lg" class="text-[15px] {cls}">{t('nav.getAccount')}</Button>
+    </Link>
+  {/if}
+{/snippet}
+
+<!-- The family strip: who runs this, plus the page-wide controls. -->
+<div class="border-b border-border/70 bg-band text-sm">
+  <div class="site-wrap flex min-h-10 flex-wrap items-center justify-between gap-x-4 gap-y-1">
+    <p class="text-muted-foreground">
+      {t('footer.operatedPrefix')}
+      <a
+        class="link-brand text-foreground"
+        href="https://unredacted.org"
+        target="_blank"
+        rel="noopener noreferrer">Unredacted</a
+      >
+    </p>
+    <div class="flex items-center gap-2">
+      <HpkeBadge />
+      <LanguageSwitcher />
+      <ThemeToggle />
+    </div>
+  </div>
+</div>
+
+<header class="border-b border-border/70">
+  <div class="site-wrap flex min-h-[76px] items-center justify-between gap-6">
     <Link
       href="/"
-      class="group font-display text-xl font-bold tracking-tight flex items-center gap-2"
+      class="flex shrink-0 items-center gap-2.5"
       aria-label={t('nav.home')}
       onclick={closeMenu}
     >
-      <span
-        class="inline-flex items-center justify-center size-7 rounded-md bg-primary text-primary-foreground transition-transform group-hover:scale-105"
-        aria-hidden="true"
-      >
-        <StarIcon class="size-4" />
+      <BrandMark class="size-[34px]" />
+      <span class="font-display text-[23px] font-extrabold tracking-[-0.02em] text-foreground">
+        FreeSocks
       </span>
-      FreeSocks
     </Link>
 
-    <!-- Desktop: the inline nav, unchanged. -->
-    <nav class="hidden sm:flex items-center gap-2">
-      <HpkeBadge />
-      <SourceBadge />
-      {#if me.isPending}
-        <!-- Neutral placeholder while the auth check resolves: rendering the
-             signed-out CTAs here flashed "Sign in" at authenticated users on
-             every hard load. -->
-        <Skeleton class="h-9 w-40 rounded-md" />
-      {:else if me.data?.authenticated}
-        <!-- Signed in: a single account CTA. The account page itself leads with
-             the membership upsell for free-tier members, so a separate
-             "Membership" button here would just be a second link to /account. -->
-        <Link href="/account">
-          <Button variant="default" size="sm" aria-label={t('nav.account')}>
-            <User class="size-4" />
-            {t('nav.account')}
-          </Button>
-        </Link>
-      {:else}
-        <Link href="/get-account">
-          <Button variant="ghost" size="sm" aria-label={t('nav.getAccount')}>
-            <StarIcon class="size-4" />
-            {t('nav.getAccount')}
-          </Button>
-        </Link>
-        <Link href="/login">
-          <Button variant="outline" size="sm" aria-label={t('nav.signIn')}>
-            <LogIn class="size-4" />
-            {t('nav.signIn')}
-          </Button>
-        </Link>
+    <nav class="hidden items-center gap-7 text-[15.5px] lg:flex">
+      {#each items as item (item.label)}
+        {@render navLink(item, 'hover:text-primary')}
+      {/each}
+      {#if !me.isPending && !me.data?.authenticated}
+        <Link href="/login" class="hover:text-primary">{t('nav.signIn')}</Link>
       {/if}
-      <LanguageSwitcher />
-      <ThemeToggle />
+      {@render primaryAction('')}
     </nav>
 
-    <!-- Mobile: keep the HPKE + Source badges visible; the rest folds into the panel. -->
-    <div class="flex sm:hidden items-center gap-2">
-      <HpkeBadge />
-      <SourceBadge />
+    <div class="flex items-center gap-3 lg:hidden">
+      <div class="hidden sm:block">{@render primaryAction('')}</div>
       <Button
         variant="outline"
-        size="sm"
-        class="min-h-11"
+        size="lg"
+        class="text-[15px]"
         aria-label={t('nav.menu')}
         aria-expanded={menuOpen}
         aria-controls="mobile-nav"
@@ -112,40 +140,21 @@
   {#if menuOpen}
     <nav
       id="mobile-nav"
-      class="sm:hidden border-t border-border bg-background/95 backdrop-blur"
+      class="border-t border-border/70 lg:hidden"
       transition:slide={{ duration: 180 }}
     >
-      <div class="container mx-auto px-4 py-3 flex flex-col gap-1.5">
-        {#if me.isPending}
-          <Skeleton class="h-11 w-full rounded-md" />
-        {:else if me.data?.authenticated}
-          <Link href="/account" onclick={closeMenu}>
-            <Button variant="default" size="sm" class="w-full min-h-11 justify-start">
-              <User class="size-4" />
-              {t('nav.account')}
-            </Button>
-          </Link>
-        {:else}
-          <Link href="/get-account" onclick={closeMenu}>
-            <Button variant="ghost" size="sm" class="w-full min-h-11 justify-start">
-              <StarIcon class="size-4" />
-              {t('nav.getAccount')}
-            </Button>
-          </Link>
-          <Link href="/login" onclick={closeMenu}>
-            <Button variant="outline" size="sm" class="w-full min-h-11 justify-start">
-              <LogIn class="size-4" />
-              {t('nav.signIn')}
-            </Button>
-          </Link>
+      <div class="site-wrap flex flex-col py-2 text-base">
+        {#each items as item (item.label)}
+          {@render navLink(item, 'flex min-h-11 items-center hover:text-primary')}
+        {/each}
+        {#if !me.isPending && !me.data?.authenticated}
+          <Link
+            href="/login"
+            class="flex min-h-11 items-center hover:text-primary"
+            onclick={closeMenu}>{t('nav.signIn')}</Link
+          >
         {/if}
-        <div class="mt-1 pt-2 border-t border-border flex items-center justify-between gap-2">
-          <LanguageSwitcher />
-          <div class="flex items-center gap-1">
-            <span class="text-sm text-muted-foreground">{t('nav.theme')}</span>
-            <ThemeToggle />
-          </div>
-        </div>
+        <div class="pt-2 pb-2 sm:hidden">{@render primaryAction('w-full')}</div>
       </div>
     </nav>
   {/if}

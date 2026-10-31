@@ -20,7 +20,7 @@
   let { icon: Icon, dither = false, title, body, children }: Props = $props();
 </script>
 
-<div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">
+<div class="panel space-y-3 text-center">
   {#if dither}
     <div class="relative mx-auto size-14 overflow-hidden rounded-full border border-border">
       <DitherField
