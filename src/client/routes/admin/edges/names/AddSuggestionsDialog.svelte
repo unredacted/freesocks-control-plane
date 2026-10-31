@@ -11,6 +11,7 @@
    * Props: open (bindable), family (the list's short id), label.
    */
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+  import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { Button } from '@client/components/ui/button';
@@ -57,7 +58,9 @@
 
   // Everything offered starts picked; unpick what you do not want. Each answer
   // (a refetch included) is reconciled: a name offered for the first time is
-  // picked, one no longer offered drops out, an unpick is kept.
+  // picked, one no longer offered drops out, an unpick is kept. `picked` is
+  // read untracked: the effect writes it, so tracking it would re-run the
+  // effect forever.
   let picked = $state<string[]>([]);
   let offered = new Set<string>();
   $effect(() => {
@@ -68,7 +71,7 @@
     }
     if (!found.data) return;
     const ids = rows.map((r) => r.id);
-    const kept = new Set(picked);
+    const kept = new Set(untrack(() => picked));
     picked = ids.filter((id) => kept.has(id) || !offered.has(id));
     offered = new Set([...offered, ...ids]);
   });
