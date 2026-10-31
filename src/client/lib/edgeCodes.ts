@@ -1612,6 +1612,7 @@ export const INBOUND_UNSUPPORTED_COPY: Record<InboundUnsupportedCode, CodeCopy> 
 export const CLIENT_CHECK_ENGINE_LABELS: Record<ClientCheckEngine, string> = {
   'sing-box': 'sing-box',
   xray: 'Xray',
+  mihomo: 'Mihomo',
 };
 
 export const CLIENT_CHECK_COPY: Record<
@@ -2670,6 +2671,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'relay.listener.name.retire': 'Server name retired',
   'relay.listener.name.reactivate': 'Server name reactivated',
   'relay.listener.sni_pick': 'Server name selection changed',
+  'edge.sni.names.accepted': 'New server names proven on the node',
+  'edge.sni.names.tested': "New server names tested by FCP's client check",
   'relay.edge_pick': 'Address selection changed',
   'relay.lanes': 'Address lanes changed',
   'edge.lane_retired': 'Old open address retired',
@@ -2946,6 +2949,8 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.destroyed': 'Address destroyed',
   'edge.verified': 'Address tested with a real session',
   'edge.client_check': "Address checked with FCP's client",
+  'edge.sni.names.accepted': 'New server names given to members',
+  'edge.sni.names.tested': "FCP's client check tested new server names",
   'edge.auto_replace_held': 'Automatic replacement held',
   'edge.auto_replace_resumed': 'Automatic replacement resumed',
   'edge.block_suspected': 'Address looks blocked',

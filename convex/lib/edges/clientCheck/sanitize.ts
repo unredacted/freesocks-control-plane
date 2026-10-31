@@ -198,6 +198,41 @@ const XR_TYPES: Record<string, Spec> = {
   },
 };
 
+// --- Mihomo ----------------------------------------------------------------------------------
+
+const MH_BASE: Spec = {
+  type: 'string',
+  server: 'string',
+  port: 'number',
+  udp: 'boolean',
+  network: 'string',
+  tls: 'boolean',
+  alpn: 'strings',
+  'skip-cert-verify': 'boolean',
+  'client-fingerprint': 'string',
+  'reality-opts': {
+    'public-key': 'string',
+    'short-id': 'string',
+    'support-x25519mlkem768': 'boolean',
+  },
+  'ws-opts': {
+    path: 'string',
+    headers: 'headers',
+    'max-early-data': 'number',
+    'early-data-header-name': 'string',
+    'v2ray-http-upgrade': 'boolean',
+  },
+  'grpc-opts': { 'grpc-service-name': 'string' },
+};
+// VLESS and Trojan only: the protocols whose names a send proves. Nothing that
+// chains (`dialer-proxy`), binds (`interface-name`, `routing-mark`) or opens a
+// second destination is listed, so none of it reaches the engine.
+const MH_TYPES: Record<string, Spec> = {
+  vless: { ...MH_BASE, uuid: 'string', flow: 'string', servername: 'string' },
+  trojan: { ...MH_BASE, password: 'string', sni: 'string' },
+};
+const MH_NETWORKS = new Set(['tcp', 'ws', 'grpc']);
+
 export type SanitizeResult =
   | { ok: true; outbound: Obj; destination: { address: string; port: number } }
   | { ok: false; code: 'unsupported_type' | 'invalid_outbound' | 'destination_not_public' };
@@ -215,6 +250,21 @@ export function sanitizeOutbound(
 ): SanitizeResult {
   const allowPrivate = opts.allowPrivate === true;
   if (!isObj(raw)) return { ok: false, code: 'invalid_outbound' };
+  if (engine === 'mihomo') {
+    const spec = typeof raw.type === 'string' ? MH_TYPES[raw.type] : undefined;
+    if (!spec) return { ok: false, code: 'unsupported_type' };
+    const out = pick(raw, spec);
+    if (!out) return { ok: false, code: 'invalid_outbound' };
+    if (out.network !== undefined && !MH_NETWORKS.has(String(out.network)))
+      return { ok: false, code: 'unsupported_type' };
+    if (!destinationOk(out.server, out.port, allowPrivate))
+      return { ok: false, code: 'destination_not_public' };
+    return {
+      ok: true,
+      outbound: out,
+      destination: { address: out.server as string, port: out.port as number },
+    };
+  }
   if (engine === 'sing-box') {
     const spec = typeof raw.type === 'string' ? SB_TYPES[raw.type] : undefined;
     if (!spec) return { ok: false, code: 'unsupported_type' };

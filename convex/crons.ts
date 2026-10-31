@@ -184,7 +184,8 @@ crons.daily(
 // published pool / standbys up (config-gated), and finish origin deletes.
 // Server management: release ops that never sent, mark interrupted ones as
 // unknown, and look again at every open op. It never sends anything.
-// Server-name families: check due names against their family's target (rate-limited).
+// Server-name families: check due names against their family's target (rate-limited),
+// and start FCP's own test of sends that wait on a node (`edge.sni.autoConfirm`, off by default).
 crons.interval('sni-qualify', { minutes: 5 }, internal.sniQualifyOps.run, {});
 // Attributed report counts are a short-lived hint: delete what left the window.
 crons.interval('sni-report-sweep', { hours: 24 }, internal.sniReports.sweep, {});

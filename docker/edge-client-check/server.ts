@@ -1,8 +1,8 @@
 /**
  * FCP's client-check service (docs/edges.md § "FCP's own client check").
  *
- * FCP asks it to connect through one address with a REAL client engine (sing-box
- * or Xray), using FCP's own check credential, and to fetch an egress-IP page
+ * FCP asks it to connect through one address with a REAL client engine (sing-box,
+ * Xray or Mihomo), using FCP's own check credential, and to fetch an egress-IP page
  * through that tunnel. It answers whether the session worked, the address the
  * page saw and a short code; FCP judges the rest.
  *
@@ -41,8 +41,10 @@ import {
 import { ReplayGuard, verifyRequest } from '../../convex/lib/edges/clientCheck/signing';
 import { sanitizeOutbound } from '../../convex/lib/edges/clientCheck/sanitize';
 import {
+  ENGINE_SETTLE_MS,
   engineConfig,
   engineRunArgs,
+  engineVersionArgs,
   parseEngineVersion,
   sessionCodeOf,
 } from '../../convex/lib/edges/clientCheck/engine';
@@ -55,6 +57,7 @@ const PORT = Number(process.env.PORT || 8080);
 const BINARIES: Record<ClientCheckEngine, string> = {
   'sing-box': process.env.EDGE_CLIENT_CHECK_SINGBOX || '/usr/local/bin/sing-box',
   xray: process.env.EDGE_CLIENT_CHECK_XRAY || '/usr/local/bin/xray',
+  mihomo: process.env.EDGE_CLIENT_CHECK_MIHOMO || '/usr/local/bin/mihomo',
 };
 /** Engine output kept for the failure code (it is read, never echoed). */
 const OUTPUT_CAP = 64 * 1024;
@@ -75,7 +78,10 @@ function refuse(code: ClientCheckRefusal, status: number, message: string): Resp
 
 async function versionOf(engine: ClientCheckEngine): Promise<string | null> {
   try {
-    const p = Bun.spawn([BINARIES[engine], 'version'], { stdout: 'pipe', stderr: 'pipe' });
+    const p = Bun.spawn([BINARIES[engine], ...engineVersionArgs(engine)], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
     const text = await new Response(p.stdout).text();
     await p.exited;
     return parseEngineVersion(engine, text);
@@ -84,7 +90,11 @@ async function versionOf(engine: ClientCheckEngine): Promise<string | null> {
   }
 }
 
-const versions: Record<ClientCheckEngine, string | null> = { 'sing-box': null, xray: null };
+const versions: Record<ClientCheckEngine, string | null> = {
+  'sing-box': null,
+  xray: null,
+  mihomo: null,
+};
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -135,7 +145,7 @@ async function runCheck(
   const configPath = join(dir, 'config.json');
   writeFileSync(configPath, JSON.stringify(engineConfig(engine, outbound, port)), { mode: 0o600 });
   const output = { text: '' };
-  const proc = Bun.spawn([BINARIES[engine], ...engineRunArgs(configPath)], {
+  const proc = Bun.spawn([BINARIES[engine], ...engineRunArgs(engine, configPath, dir)], {
     stdout: 'pipe',
     stderr: 'pipe',
     env: {},
@@ -151,6 +161,7 @@ async function runCheck(
       await Bun.sleep(100);
     }
     if (!listening) return done(sessionCodeOf(output.text, { reality, started: false }));
+    if (ENGINE_SETTLE_MS[engine] > 0) await Bun.sleep(ENGINE_SETTLE_MS[engine]);
     let res: Response;
     try {
       res = await fetch(EGRESS_URL, {

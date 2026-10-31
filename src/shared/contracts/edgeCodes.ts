@@ -846,9 +846,12 @@ export type ProbeFailureClass = (typeof PROBE_FAILURE_CLASSES)[number];
 /**
  * FCP's own client check (docs/edges.md § "FCP's own client check"): a real
  * client engine connects through an address with FCP's check credential and
- * fetches an egress-IP page. The engines it runs, in the order it runs them.
+ * fetches an egress-IP page. The engines the service holds, in the order a
+ * check runs them. A check of an address runs the first two
+ * (`ADDRESS_CHECK_ENGINES`, convex/edgeClientCheck.ts); a test of a send's
+ * names runs every one the service reports.
  */
-export const CLIENT_CHECK_ENGINES = ['sing-box', 'xray'] as const;
+export const CLIENT_CHECK_ENGINES = ['sing-box', 'xray', 'mihomo'] as const;
 export type ClientCheckEngine = (typeof CLIENT_CHECK_ENGINES)[number];
 
 /** What one engine's session through an address answered (`ok`, else why not). */

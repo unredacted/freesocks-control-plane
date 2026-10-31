@@ -43,6 +43,7 @@ import {
   vantageCountries,
 } from './lib/sniConfig';
 import { resolveEdgeSecrets } from './lib/edgeConfig';
+import { clientCheckReadiness } from './edgeClientCheck';
 import { decide, suggest, type Mark } from './lib/edges/sni/vantage';
 import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/sni/marks';
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
@@ -113,6 +114,8 @@ export const configView = internalQuery({
       config: await resolveSniConfig(ctx.db),
       vantage,
       hunt: await resolveSniHuntConfig(ctx.db),
+      // Whether FCP's client check could run a test of a send now (the switch aside).
+      clientCheck: await clientCheckReadiness(ctx.db, { clientCheck: { enabled: true } }),
       // Which sources can run now (RIPE Atlas needs its key, set under Edges, Settings).
       vantageSources: {
         globalping: usable.includes('globalping'),

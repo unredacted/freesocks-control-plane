@@ -119,6 +119,9 @@ export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<{ checked: number; ok: number }> =>
     runWithCronOutcome(ctx, 'sni-qualify', async () => {
+      // FCP's own test of sends still waiting on a node, on this cron's cadence
+      // (sniAutoConfirm.ts; nothing while `edge.sni.autoConfirm` is off).
+      await ctx.scheduler.runAfter(0, internal.sniAutoConfirm.sweep, {});
       const { names, networks, defer } = await ctx.runQuery(
         internal.sniFamilies.dueForQualification,
         {},

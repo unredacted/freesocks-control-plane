@@ -4,9 +4,12 @@
  * and handed to members only after a node proves it accepts them (docs/edges.md).
  */
 import { z } from 'zod';
+import { CLIENT_CHECK_ENGINES, CLIENT_CHECK_VERDICTS } from './edgeCodes';
 
 export const SniConfig = z.object({
   enabled: z.boolean(),
+  /** `edge.sni.autoConfirm`: FCP's own client check tests a send's names on each node. */
+  autoConfirm: z.boolean().default(false),
   qualifyPerTick: z.number(),
   requalifyHours: z.number(),
   suspendAfterFails: z.number(),
@@ -57,6 +60,8 @@ export const SniConfigView = z.object({
   hunt: SniHuntConfig.optional(),
   /** Which sources can run now (RIPE Atlas needs its key). */
   vantageSources: z.object({ globalping: z.boolean(), ripeatlas: z.boolean() }),
+  /** Whether FCP's client check could test a send now (`autoConfirm` aside). */
+  clientCheck: z.enum(['ready', 'not_configured', 'unhealthy']).optional(),
 });
 export type SniConfigView = z.infer<typeof SniConfigView>;
 
@@ -611,6 +616,31 @@ export const SniHuntChanged = z.object({ changed: z.number() });
 
 // --- a transport's names (docs/edges.md "A transport's names") ---------------------------------------
 
+/**
+ * FCP's own test of a send on one node (docs/edges.md "FCP's own test of a
+ * send"), its newest attempt: `testing` (running now), `passed` (it handed the
+ * names to the node's members), `failed` (the node did not take the name, or
+ * the session came out somewhere else), `could_not_check` (nothing was learned:
+ * the service, the link, the time), `voided` (something it was bound to changed
+ * while it ran, or a person proved it first). `stopped`: it tried as often as it
+ * may for this send; a person's test is next.
+ */
+export const SniAutoTest = z.object({
+  state: z.enum(['testing', 'passed', 'failed', 'could_not_check', 'voided', 'stopped']),
+  at: z.string(),
+  /** The name it presented. */
+  sni: z.string(),
+  /** Tests of this send on this node that did not pass. */
+  failures: z.number(),
+  /** The client check's verdict (null: no verdict was reached). */
+  verdict: z.enum(CLIENT_CHECK_VERDICTS).nullable(),
+  /** Why no verdict, or why it was voided (a short code). */
+  code: z.string().nullable(),
+  /** Each engine's session with the name. */
+  engines: z.array(z.object({ engine: z.enum(CLIENT_CHECK_ENGINES), code: z.string() })),
+});
+export type SniAutoTest = z.infer<typeof SniAutoTest>;
+
 export const SniTransportNode = z.object({
   relaySlug: z.string(),
   nodeUuid: z.string().nullable(),
@@ -623,6 +653,8 @@ export const SniTransportNode = z.object({
   pending: z.array(z.string()).default([]),
   /** Addresses a test link can go through (a current endpoint confirmation). */
   testable: z.array(z.object({ edgeId: z.string(), name: z.string() })),
+  /** FCP's own test of the newest send on this node (`edge.sni.autoConfirm`); null: none. */
+  autoTest: SniAutoTest.nullable().default(null),
 });
 export type SniTransportNode = z.infer<typeof SniTransportNode>;
 
@@ -678,6 +710,11 @@ export const SniTransportsView = z.object({
     backendChanges: z.boolean(),
     /** The backend is set up (or adopted): writes to it are accepted. */
     backendSetUp: z.boolean(),
+    /**
+     * `edge.sni.autoConfirm` and whether FCP's client check can run it now:
+     * `ready`, `off`, `not_configured` (no service), `unhealthy` (it did not answer).
+     */
+    autoTest: z.enum(['ready', 'off', 'not_configured', 'unhealthy']).default('off'),
   }),
   transports: z.array(SniTransport),
 });
