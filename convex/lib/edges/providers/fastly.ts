@@ -960,11 +960,24 @@ const STEP_IDS = {
   dns: 'dns',
 } as const;
 
+/**
+ * Whether the edge's versionless domain waits for the zone's wildcard: Fastly
+ * links a versionless domain to the TLS activation that covers it when the
+ * domain is CREATED. A wildcard activated after the domain exists never
+ * reaches it (`activated` stays false and Fastly answers "unknown domain"
+ * for the name), so such a domain is created once the wildcard is issued. A
+ * per-host certificate is ordered for a domain that exists (its activation
+ * is for the name itself), and a classic domain is part of the version.
+ */
+function domainAfterCertificate(cfg: FastlyConfig): boolean {
+  return certificateScopeOf(cfg) === 'wildcard' && domainModelOf(cfg) === 'versionless';
+}
+
 function planSteps(cfg: FastlyConfig, spec: EdgeSpec): ResourceStep[] {
   const hostname = requireHostname(spec, 'plan');
   // The certificate steps name what they act on: the front, or the zone's wildcard.
   const certName = certificateNameOf(cfg, hostname);
-  return [
+  const service: ResourceStep[] = [
     {
       id: STEP_IDS.service,
       kind: 'create_service',
@@ -983,6 +996,10 @@ function planSteps(cfg: FastlyConfig, spec: EdgeSpec): ResourceStep[] {
       resourceName: SNIPPET_NAME,
       discoverability: 'by_name',
     },
+  ];
+  // The version is activated with the domain already there (a classic one
+  // is part of it).
+  const domain: ResourceStep[] = [
     {
       id: STEP_IDS.domain,
       kind: 'create_domain',
@@ -1001,6 +1018,8 @@ function planSteps(cfg: FastlyConfig, spec: EdgeSpec): ResourceStep[] {
       resourceName: spec.name,
       discoverability: 'by_name',
     },
+  ];
+  const certificate: ResourceStep[] = [
     {
       id: STEP_IDS.tls,
       kind: 'create_tls_subscription',
@@ -1014,13 +1033,16 @@ function planSteps(cfg: FastlyConfig, spec: EdgeSpec): ResourceStep[] {
       discoverability: 'by_name',
     },
     { id: STEP_IDS.await, kind: 'await_tls', resourceName: certName, discoverability: 'by_name' },
-    {
-      id: STEP_IDS.dns,
-      kind: 'create_dns_record',
-      resourceName: hostname,
-      discoverability: 'by_name',
-    },
   ];
+  const traffic: ResourceStep = {
+    id: STEP_IDS.dns,
+    kind: 'create_dns_record',
+    resourceName: hostname,
+    discoverability: 'by_name',
+  };
+  return domainAfterCertificate(cfg)
+    ? [...service, ...certificate, ...domain, traffic]
+    : [...service, ...domain, ...certificate, traffic];
 }
 
 function dnsResource(
@@ -1411,9 +1433,15 @@ async function versionChildState(
 /**
  * DNS readiness of a versionless domain. There is no version to run a domain
  * check on: the front is ready when the domain is still linked to the edge's
- * service and its traffic name points at the provider, which FCP knows from
- * the traffic record it wrote (or, for an import whose record lives
- * elsewhere, from the provider's own `activated` flag).
+ * service, Fastly has activated a certificate for it, and its traffic name
+ * points at the provider, which FCP knows from the traffic record it wrote
+ * (an import whose record lives elsewhere has only the `activated` flag).
+ *
+ * `activated` ("has at least one TLS activation") is what Fastly routes by: a
+ * linked domain without one answers "unknown domain" to every request, so
+ * it is waited for with its own code (`domain_not_activated`) rather than
+ * left to fail the front proof. Only an explicit `false` holds the front; a
+ * response without the flag is not read as one.
  */
 async function versionlessDnsReadiness(
   api: FastlyApi,
@@ -1421,18 +1449,18 @@ async function versionlessDnsReadiness(
   domain: LedgerResource,
   serviceId: string,
   ledger: Ledger,
-): Promise<ReadinessState> {
+): Promise<{ dns: ReadinessState; notActivated?: true }> {
   let d: FastlyVersionlessDomain;
   try {
     d = await api.getVersionlessDomain(domain.resourceId);
   } catch (e) {
-    return isFastlyNotFound(e) ? 'pending' : 'unknown';
+    return { dns: isFastlyNotFound(e) ? 'pending' : 'unknown' };
   }
-  if (d.service_id !== serviceId) return 'pending';
+  if (d.service_id !== serviceId) return { dns: 'pending' };
   const traffic = resourcesOfKind(ledger, 'dns_record').find(
     (r) => metaOf(r).role === 'traffic' && metaOf(r).candidate !== true,
   );
-  if (!traffic) return d.activated === true ? 'ready' : 'pending';
+  if (!traffic) return d.activated === true ? { dns: 'ready' } : { dns: 'pending' };
   // The record as the zone holds it NOW: still there, and still pointing at
   // the CNAME target of the TLS configuration the front uses.
   try {
@@ -1440,15 +1468,16 @@ async function versionlessDnsReadiness(
     const record = await (
       await dnsClientFor(cfg)
     ).getRecord(typeof meta.recordId === 'string' ? meta.recordId : traffic.resourceId);
-    if (!record) return 'pending';
+    if (!record) return { dns: 'pending' };
     const target = parseTrafficCname(
       await api.listTlsConfigurations('dns_records'),
       cfg.tlsConfigurationId,
     );
-    return target && sameDnsName(record.content, target) ? 'ready' : 'pending';
+    if (!target || !sameDnsName(record.content, target)) return { dns: 'pending' };
   } catch {
-    return 'unknown';
+    return { dns: 'unknown' };
   }
+  return d.activated === false ? { dns: 'pending', notActivated: true } : { dns: 'ready' };
 }
 
 // --- the adapter ---------------------------------------------------------------------
@@ -2206,8 +2235,11 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     const versionActive = activeVersionNumber(detail) === svc.version;
     const readiness: EdgeReadiness = { dns: 'unknown', certificate: 'unknown' };
     const versionless = firstResource(ledger, 'versionless_domain');
+    let notActivated = false;
     if (versionless) {
-      readiness.dns = await versionlessDnsReadiness(api, cfg, versionless, svc.id, ledger);
+      const v = await versionlessDnsReadiness(api, cfg, versionless, svc.id, ledger);
+      readiness.dns = v.dns;
+      notActivated = v.notActivated === true;
     } else if (hostname) {
       try {
         const check = parseDomainCheck(await api.checkDomain(svc.id, svc.version, hostname));
@@ -2249,7 +2281,10 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         ? { code: 'tls_failed' }
         : expired
           ? { code: 'certificate_expiring' }
-          : {}),
+          : // The certificate is there, but not activated for the front's name.
+            notActivated && readiness.certificate === 'ready'
+            ? { code: 'domain_not_activated' }
+            : {}),
       readiness,
     };
   },
