@@ -1,0 +1,22 @@
+# A throwaway S3-compatible store for the mirror integration test
+# (scripts/s3-integration.sh, convex/storage.integration.test.ts): SeaweedFS's
+# S3 API with one keyed identity (the provider FCP writes with) and anonymous
+# READ of objects only, like a mirror bucket should be (no anonymous listing).
+# Nothing is published except a loopback port; no volume survives `down -v`.
+services:
+  s3-test:
+    image: chrislusf/seaweedfs:3.97
+    container_name: fcp-s3-test
+    restart: 'no'
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/etc/seaweedfs/s3.json
+      - -volume.max=32
+      - -master.volumeSizeLimitMB=64
+    volumes:
+      - ./docker/s3-test/s3.json:/etc/seaweedfs/s3.json:ro
+    ports:
+      - '127.0.0.1:${FCP_S3_TEST_PORT:-18333}:8333'

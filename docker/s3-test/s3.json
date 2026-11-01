@@ -1,0 +1,12 @@
+{
+  "identities": [
+    {
+      "name": "fcp",
+      "credentials": [
+        { "accessKey": "fcp-test-access", "secretKey": "fcp-test-secret-not-a-real-one" }
+      ],
+      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+    },
+    { "name": "anonymous", "actions": ["Read"] }
+  ]
+}
