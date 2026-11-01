@@ -253,6 +253,22 @@ describe('a requested mirror is tracked', () => {
     expect(summary).toMatchObject({ attention: false, counts: { inSync: 1, total: 1 } });
   });
 
+  test('the per-mirror feed names no member and no key (it is read with the settings scope)', async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    const { page } = await w.t.query(internal.mirrorCopies.listForAdmin, {
+      cursor: null,
+      numItems: 10,
+    });
+    expect(page).toHaveLength(1);
+    const json = JSON.stringify(page);
+    expect(json).not.toContain(userId);
+    expect(json).not.toContain(subId);
+    expect(json).not.toContain('mirrors/');
+    expect(Object.keys(page[0]!)).not.toEqual(expect.arrayContaining(['userId']));
+  });
+
   test('a refresh rewrites only the copies whose object differs', async () => {
     const w = await world();
     const { subId } = await member(w);

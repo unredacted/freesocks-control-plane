@@ -6,7 +6,7 @@
    * attention line from bounded reads of copies that stayed stale, failing or
    * not uploaded past the bound (or in sync but unchecked too long). The table
    * pages the ledger by state. Hash prefixes only, never an object path or a
-   * URL (each is a capability).
+   * URL (each is a capability), and nothing that names a member or a key.
    */
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import { Button } from '@client/components/ui/button';
@@ -212,9 +212,6 @@
                       >unavailable stub</span
                     >
                   {/if}
-                  <span class="text-xs text-muted-foreground font-mono"
-                    >key {r.subscriptionId.slice(-8)}</span
-                  >
                 </div>
                 <Button
                   size="sm"

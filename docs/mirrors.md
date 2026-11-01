@@ -109,7 +109,8 @@ its first check), `fetch_failed`, `upload_failed`, `provider_missing`, `url_unre
 - **Attention.** A copy stale, failing or not uploaded for over an hour, or in sync but not
   checked for over 13 hours, shows on the dashboard (amber "Mirrors" line) and on Admin -> Storage,
   from bounded index reads. Admin -> Storage also lists every copy by state with its detail (hash
-  prefixes only, never the object path or URL, which are capabilities) and a **Re-check** that
+  prefixes only, never the object path or URL, which are capabilities, and no member or key
+  identifier: the feed is read with the settings scope) and a **Re-check** that
   renders and rewrites that copy and reads it back now (also the way out once a bucket is
   fixed).
 - **Seeding.** Mirrors without ledger rows (from before the ledger, or added while older code

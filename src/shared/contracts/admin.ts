@@ -302,11 +302,12 @@ export const MirrorSyncSummary = z.object({
 });
 export type MirrorSyncSummary = z.infer<typeof MirrorSyncSummary>;
 
-/** One copy's sync detail. Hash prefixes only; never the object path or URL. */
+/**
+ * One copy's sync detail. Hash prefixes only; never the object path or URL, and
+ * no member or key identifier (`id` is the copy's, the re-check's handle).
+ */
 export const MirrorCopyAdmin = z.object({
   id: z.string(),
-  subscriptionId: z.string(),
-  userId: z.string().nullable(),
   provider: z.string(),
   state: MirrorCopyState,
   reason: z.string().nullable(),

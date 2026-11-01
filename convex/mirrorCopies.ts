@@ -670,7 +670,10 @@ const hashPrefix = (h: string | undefined) => (h ? h.slice(0, 12) : null);
 /**
  * Per-mirror detail for Admin -> Storage, one page at a time: by state (oldest
  * in that state first), or `attention` (stale, failing and not uploaded, past
- * the bound). Hash prefixes only; never the object path or URL (a capability).
+ * the bound). Hash prefixes only; never the object path or URL (a
+ * capability), and no member or key identifier: the feed is read with the
+ * settings scope, which must not tie a member to their mirror request (or to a
+ * country-scoped provider). The copy id is only the re-check's handle.
  */
 export const listForAdmin = internalQuery({
   args: {
@@ -690,11 +693,8 @@ export const listForAdmin = internalQuery({
           .paginate({ cursor, numItems: Math.min(numItems, 100) });
     const page = [];
     for (const c of res.page) {
-      const sub = await ctx.db.get(c.subscriptionId);
       page.push({
         id: c._id as string,
-        subscriptionId: c.subscriptionId as string,
-        userId: (sub?.userId as string | undefined) ?? null,
         provider: c.provider,
         state: c.state,
         reason: c.reason ?? null,
