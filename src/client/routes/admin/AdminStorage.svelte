@@ -2,6 +2,7 @@
   import type { z } from 'zod';
   import AdminLayout from './AdminLayout.svelte';
   import MirrorProviderEditor from './MirrorProviderEditor.svelte';
+  import MirrorSyncCard from './MirrorSyncCard.svelte';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Button } from '@client/components/ui/button';
@@ -11,10 +12,9 @@
   import AdminListState from './AdminListState.svelte';
   import { adminMirrorProvidersQuery, queryKeys } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { MirrorProviderAdmin } from '../../../shared/contracts/admin';
+  import { MirrorProviderAdmin, MirrorProviderRemoveResult } from '../../../shared/contracts/admin';
   import { toast } from 'svelte-sonner';
   import Plus from '@lucide/svelte/icons/plus';
-  import { z as zod } from 'zod';
 
   type Provider = z.infer<typeof MirrorProviderAdmin>;
   const providers = adminMirrorProvidersQuery();
@@ -24,21 +24,22 @@
   let creating = $state(false);
   let pendingDelete = $state<Provider | null>(null);
 
-  // Mirroring is active iff ≥1 provider is enabled - the same gate the issuance
-  // saga + refresh cron use. Surface it so an operator knows the feature's state.
+  // New mirrors are handed out iff ≥1 provider is enabled (publicConfig's
+  // mirrorsEnabled gate). Existing mirrors stay in sync on inactive ones too.
   const activeCount = $derived((providers.data ?? []).filter((p) => p.isActive).length);
 
   const remove = createMutation(() => ({
-    mutationFn: async (id: string) => {
-      await apiClient.delete(
-        `/api/v1/admin/mirror-providers/${id}`,
-        zod.object({ ok: zod.boolean() }),
-      );
-    },
-    onSuccess: () => {
+    mutationFn: (id: string) =>
+      apiClient.delete(`/api/v1/admin/mirror-providers/${id}`, MirrorProviderRemoveResult),
+    onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: queryKeys.adminMirrorProviders });
+      void qc.invalidateQueries({ queryKey: queryKeys.adminMirrorSync });
       pendingDelete = null;
-      toast.success('Mirror provider removed');
+      if (res.removing)
+        toast.success('Withdrawing its mirrors', {
+          description: 'The provider goes once every mirror on it is deleted from the bucket.',
+        });
+      else toast.success('Mirror provider removed');
     },
     onError: (err) => {
       toast.error('Could not delete provider', { description: apiErrorMessage(err) });
@@ -51,9 +52,9 @@
     <div>
       <h1 class="text-2xl font-bold">Storage mirrors</h1>
       <p class="text-sm text-muted-foreground mt-1">
-        S3-compatible buckets the subscription content is mirrored to - the censorship-resistance
-        hedge, so a client can still fetch its key if the control plane is blocked. Mirroring runs
-        while at least one provider below is enabled.
+        S3-compatible buckets a member's subscription is mirrored to, only when that member asks for
+        a mirror - the censorship-resistance hedge, so they can still fetch their config if the
+        control plane is blocked. New mirrors are handed out while at least one provider is enabled.
       </p>
     </div>
     <Button onclick={() => (creating = true)}>
@@ -61,6 +62,8 @@
       Add provider
     </Button>
   </div>
+
+  <MirrorSyncCard />
 
   {#if providers.isPending}
     <div class="space-y-3">
@@ -89,10 +92,11 @@
         : 'bg-amber-500/10 border border-amber-500/40 text-amber-600'}"
     >
       {#if activeCount > 0}
-        Mirroring is <strong>active</strong> - new and refreshed keys are copied to {activeCount}
+        New mirrors are <strong>handed out</strong> - members who ask get one on {activeCount}
         enabled {activeCount === 1 ? 'provider' : 'providers'}.
       {:else}
-        Mirroring is <strong>paused</strong> - no provider is enabled.
+        New mirrors are <strong>paused</strong> - no provider is enabled. Mirrors members already hold
+        stay in sync.
       {/if}
     </div>
     <div class="space-y-3">
@@ -112,7 +116,11 @@
                 >
                   {p.secretAccessKeySet ? 'Secret set' : 'No secret'}
                 </span>
-                {#if !p.isActive}
+                {#if p.removing}
+                  <span class="text-xs px-2 py-1 rounded bg-amber-500/15 text-amber-600">
+                    Removing - withdrawing {p.mirrors}{p.mirrorsCapped ? '+' : ''} mirrors
+                  </span>
+                {:else if !p.isActive}
                   <span class="text-xs px-2 py-1 rounded bg-muted text-muted-foreground">
                     Disabled
                   </span>
@@ -133,14 +141,30 @@
               <strong class="text-foreground tabular-nums">{p.priority}</strong>
             </div>
             <div class="text-muted-foreground">
+              Member mirrors:
+              <strong class="text-foreground tabular-nums"
+                >{p.mirrors}{p.mirrorsCapped ? '+' : ''}</strong
+              >
+            </div>
+            <div class="text-muted-foreground">
               Regions:
               <strong class="text-foreground">
                 {p.countryCodes.length ? p.countryCodes.join(', ') : 'Global (any country)'}
               </strong>
             </div>
             <div class="flex flex-wrap gap-2 pt-2">
-              <Button size="sm" variant="outline" onclick={() => (editing = p)}>Edit</Button>
-              <Button size="sm" variant="destructive" onclick={() => (pendingDelete = p)}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={p.removing}
+                onclick={() => (editing = p)}>Edit</Button
+              >
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={p.removing}
+                onclick={() => (pendingDelete = p)}
+              >
                 Remove
               </Button>
             </div>
@@ -178,8 +202,14 @@
       <AlertDialog.Header>
         <AlertDialog.Title>Remove "{pendingDelete?.name}"?</AlertDialog.Title>
         <AlertDialog.Description>
-          New keys will no longer be mirrored to this bucket. Existing mirror objects already
-          uploaded there are left in place (delete them from the bucket directly if needed).
+          {#if (pendingDelete?.mirrors ?? 0) > 0}
+            Members hold {pendingDelete?.mirrors}{pendingDelete?.mirrorsCapped ? '+' : ''} mirrors here.
+            Each one is withdrawn first: the object is deleted from the bucket and that member's mirror
+            link stops working (they can ask for another mirror). The provider goes once the last one
+            is deleted.
+          {:else}
+            No member holds a mirror here, so it is removed at once.
+          {/if}
         </AlertDialog.Description>
       </AlertDialog.Header>
       <AlertDialog.Footer>

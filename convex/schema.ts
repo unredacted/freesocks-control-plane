@@ -935,15 +935,88 @@ export default defineSchema({
     // The delivery token (edgeRender.epochFor) the body was rendered under; null = no place token.
     tokenBefore: v.union(v.string(), v.null()),
     // `initial`: the first upload of a new mirror (the row may not reference it yet).
-    kind: v.union(v.literal('initial'), v.literal('refresh'), v.literal('repair')),
+    // `withdraw`: a delete of copies nothing should serve that did not go through
+    // (residue by construction; the repair deletes it until it is gone).
+    kind: v.union(
+      v.literal('initial'),
+      v.literal('refresh'),
+      v.literal('repair'),
+      v.literal('withdraw'),
+    ),
     // A settled obligation is deleted: every row is an open one.
     state: v.literal('open'),
     attempts: v.number(),
     startedAt: v.number(),
     updatedAt: v.number(),
+    // When the repair pass may try it next (backoff after a failed attempt).
+    // Absent = due once `updatedAt` is past the in-flight grace.
+    dueAt: v.optional(v.number()),
   })
     .index('by_state', ['state', 'updatedAt'])
+    .index('by_state_due', ['state', 'dueAt'])
     .index('by_subscription', ['subscriptionId', 'state']),
+
+  // The mirror sync ledger (docs/mirrors.md): one row per
+  // copy of a member's mirror (subscription x provider), kept in step with
+  // `subscriptions.subscriptionMirrors` (which stays the truth for what the
+  // member holds). It records whether the object matches what FCP would serve
+  // now: `objectHash` (what FCP last wrote, or read back) against `servedHash`
+  // (the body the last check rendered), the state that follows, and when.
+  // Counted by the `stats:mirrorCopies` counter (lib/statusCounters.ts). Holds
+  // no content, no country and no address: hashes, a provider name, times.
+  mirrorCopies: defineTable({
+    subscriptionId: v.id('subscriptions'),
+    provider: v.string(),
+    objectPath: v.string(),
+    state: v.union(
+      v.literal('in_sync'),
+      v.literal('stale'),
+      v.literal('failing'),
+      v.literal('never'),
+    ),
+    // Why it is in that state (a short code, lib/mirrorSync.ts `MirrorReason`).
+    reason: v.optional(v.string()),
+    // When the copy entered `state`.
+    since: v.number(),
+    // The last check of this copy (a refresh rendered the body and compared).
+    checkedAt: v.optional(v.number()),
+    // The last time the object was confirmed to hold what FCP serves.
+    syncedAt: v.optional(v.number()),
+    // The last successful write of the object.
+    uploadedAt: v.optional(v.number()),
+    // sha256 of what the object holds, as far as FCP knows; absent = unknown.
+    objectHash: v.optional(v.string()),
+    // sha256 of the body the last check rendered, and its origin epoch.
+    servedHash: v.optional(v.string()),
+    servedEpoch: v.optional(v.union(v.number(), v.null())),
+    // The served body is the unavailable stub (an edge-required place with nothing to render).
+    stub: v.optional(v.boolean()),
+    // Consecutive failed attempts, and the last failure.
+    failures: v.number(),
+    lastError: v.optional(v.string()),
+    lastErrorAt: v.optional(v.number()),
+    // The last read of the member-facing URL and what it found.
+    verifiedAt: v.optional(v.number()),
+    verify: v.optional(
+      v.union(
+        v.literal('match'),
+        v.literal('mismatch'),
+        v.literal('missing'),
+        v.literal('unreachable'),
+      ),
+    ),
+    // A read found a problem and asked for a rewrite: read it again from this
+    // time (its one confirmation). Cleared by the next read, so a URL that
+    // keeps failing goes back to the normal cadence.
+    recheckAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_subscription', ['subscriptionId', 'provider'])
+    .index('by_provider', ['provider'])
+    .index('by_state_since', ['state', 'since'])
+    .index('by_state_checked', ['state', 'checkedAt'])
+    .index('by_verified', ['verifiedAt'])
+    .index('by_recheck', ['recheckAt']),
 
   // Suspicion (docs/edges.md "Address enumeration", docs/privacy.md). An
   // account is named only by its MARK: HMAC(EDGE_MARK_PEPPER, `trust:` + userId)
@@ -4491,6 +4564,9 @@ export default defineSchema({
     countryCodes: v.optional(v.array(v.string())),
     isActive: v.boolean(),
     priority: v.number(),
+    // Being removed: its mirrors are withdrawn (objects deleted, entries
+    // dropped) before the row goes (storage.ts `withdrawProviderMirrors`).
+    removing: v.optional(v.boolean()),
     updatedAt: v.number(),
   })
     .index('by_name', ['name'])

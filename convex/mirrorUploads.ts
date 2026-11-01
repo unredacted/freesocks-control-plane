@@ -20,12 +20,42 @@
  */
 import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
+
+/** How many open records one check reads; past it the answer is "yes" (the safe side). */
+const OPEN_SCAN_CAP = 2000;
+
+/**
+ * Does any open record (an upload or a withdrawal) name this provider? Its
+ * repair needs the provider's credentials, found by name: while one does, the
+ * provider can neither go nor change its name. Open records are few (uploads
+ * in flight and copies that keep failing); past the cap the answer is yes.
+ */
+export async function openRecordsName(db: DatabaseReader, provider: string): Promise<boolean> {
+  const rows = await db
+    .query('mirrorUploads')
+    .withIndex('by_state', (q) => q.eq('state', 'open'))
+    .take(OPEN_SCAN_CAP);
+  return rows.length >= OPEN_SCAN_CAP || rows.some((r) => r.providers.includes(provider));
+}
 
 /** An obligation younger than this may still be an upload in flight: the repair leaves it alone. */
 export const REPAIR_GRACE_MS = 2 * 60_000;
 const REPAIR_BATCH = 25;
+/** The longest wait between two repair attempts of one obligation. */
+const REPAIR_BACKOFF_CAP_MS = 6 * 3_600_000;
+
+/**
+ * When an obligation that has failed `attempts` times is due again: the first
+ * two retries come at the grace, then the wait doubles up to the cap (a
+ * provider that stays down is not re-fetched and re-uploaded every five
+ * minutes forever).
+ */
+export function repairBackoffMs(attempts: number): number {
+  if (attempts <= 2) return REPAIR_GRACE_MS;
+  return Math.min(REPAIR_GRACE_MS * 2 ** (attempts - 2), REPAIR_BACKOFF_CAP_MS);
+}
 
 /**
  * Open an obligation before an upload. It supersedes (drops) every earlier
@@ -45,6 +75,11 @@ export const open = internalMutation({
   handler: async (ctx, a) => {
     const now = Date.now();
     let superseded = 0;
+    // A record this upload replaces hands on its failed attempts and its
+    // backoff: the repair's own upload supersedes the record it repairs, and
+    // a provider that stays down must not start from zero every time.
+    let attempts = 0;
+    let dueAt: number | undefined;
     for (const r of await ctx.db
       .query('mirrorUploads')
       .withIndex('by_subscription', (q) =>
@@ -52,19 +87,84 @@ export const open = internalMutation({
       )
       .collect()) {
       // one subscription's open uploads: a handful at most
-      if (r.objectPath !== a.objectPath || !r.providers.every((p) => a.providers.includes(p)))
+      if (
+        r.kind === 'withdraw' ||
+        r.objectPath !== a.objectPath ||
+        !r.providers.every((p) => a.providers.includes(p))
+      )
         continue;
+      attempts = Math.max(attempts, r.attempts);
+      if (r.dueAt !== undefined) dueAt = Math.max(dueAt ?? 0, r.dueAt);
       await ctx.db.delete(r._id);
       superseded++;
     }
     const id = await ctx.db.insert('mirrorUploads', {
       ...a,
       state: 'open' as const,
-      attempts: 0,
+      attempts,
       startedAt: now,
       updatedAt: now,
+      ...(dueAt !== undefined ? { dueAt } : {}),
     });
     return { id, superseded };
+  },
+});
+
+/**
+ * A delete of copies nothing should serve any more did not go through (a
+ * member cleared their mirrors, a key was torn down, a provider is being
+ * removed): the object still holds a key's config in a third-party bucket, so
+ * it is recorded as residue and the repair pass deletes it until it is gone.
+ */
+export const openWithdrawal = internalMutation({
+  args: {
+    subscriptionId: v.id('subscriptions'),
+    objectPath: v.string(),
+    providers: v.array(v.string()),
+  },
+  handler: async (ctx, a) => recordWithdrawal(ctx, a),
+});
+
+/**
+ * Record copies to delete from `dueAt` (default now). A superseded key's
+ * mirrors are recorded when it is tombstoned, due when its grace ends: the
+ * record names their provider, so the provider (the only credential that can
+ * reach them) is kept until they are gone, even though the ledger no longer
+ * tracks the copies of a key that is not live.
+ */
+export async function recordWithdrawal(
+  ctx: MutationCtx,
+  a: {
+    subscriptionId: Id<'subscriptions'>;
+    objectPath: string;
+    providers: string[];
+    dueAt?: number;
+  },
+): Promise<Id<'mirrorUploads'> | null> {
+  if (a.providers.length === 0) return null;
+  const now = Date.now();
+  return ctx.db.insert('mirrorUploads', {
+    subscriptionId: a.subscriptionId,
+    objectPath: a.objectPath,
+    providers: a.providers,
+    tokenBefore: null,
+    kind: 'withdraw' as const,
+    state: 'open' as const,
+    attempts: 0,
+    startedAt: now,
+    updatedAt: now,
+    dueAt: a.dueAt ?? now,
+  });
+}
+
+/** The repair found the copies held by another row of the same key: the record follows them. */
+export const rehome = internalMutation({
+  args: { id: v.id('mirrorUploads'), subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { id, subscriptionId }) => {
+    const r = await ctx.db.get(id);
+    if (!r || r.subscriptionId === subscriptionId) return null;
+    await ctx.db.patch(id, { subscriptionId, updatedAt: Date.now() });
+    return null;
   },
 });
 
@@ -109,10 +209,13 @@ export const settle = internalMutation({
           .collect() // one subscription's open uploads: a handful at most
       : [own];
     for (const r of rows) {
-      // An earlier record is met only for the copies this upload rewrote.
+      // An earlier record is met only for the copies this upload rewrote (a
+      // withdrawal is met only by its delete).
       if (
         r._id !== own._id &&
-        (r.objectPath !== own.objectPath || !r.providers.every((p) => own.providers.includes(p)))
+        (r.kind === 'withdraw' ||
+          r.objectPath !== own.objectPath ||
+          !r.providers.every((p) => own.providers.includes(p)))
       )
         continue;
       await ctx.db.delete(r._id);
@@ -134,44 +237,74 @@ export const narrow = internalMutation({
   },
 });
 
-/** The repair pass counts its attempts (and moves the row past the in-flight grace again). */
+/**
+ * The repair pass counts its attempts and sets when the record is due again
+ * (`repairBackoffMs`): a success settles the record, so this wait only matters
+ * for one that keeps failing.
+ */
 export const markAttempt = internalMutation({
   args: { id: v.id('mirrorUploads') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
     if (!r) return null;
-    await ctx.db.patch(id, { attempts: r.attempts + 1, updatedAt: Date.now() });
+    const now = Date.now();
+    const attempts = r.attempts + 1;
+    await ctx.db.patch(id, { attempts, updatedAt: now, dueAt: now + repairBackoffMs(attempts) });
     return null;
   },
 });
 
-/** Open obligations past the in-flight grace, oldest first (bounded). */
+/**
+ * Open obligations that are due, oldest first (bounded): past the in-flight
+ * grace since their last write, and past their backoff when they have one.
+ *
+ * Which row holds a copy is asked of every active row of the key's account,
+ * not only the record's own: a re-issue carries the mirrors (and the object
+ * path) to a new row, and a record left on the old row must repair the object
+ * the new row serves, never withdraw it.
+ */
 export const listDue = internalQuery({
   args: { now: v.number() },
   handler: async (ctx, { now }) => {
-    const rows = await ctx.db
+    const candidates = await ctx.db
       .query('mirrorUploads')
-      .withIndex('by_state', (q) => q.eq('state', 'open').lt('updatedAt', now - REPAIR_GRACE_MS))
-      .take(REPAIR_BATCH);
+      .withIndex('by_state_due', (q) => q.eq('state', 'open').lte('dueAt', now))
+      .take(REPAIR_BATCH * 4);
+    // Whatever its backoff says, a record touched within the grace may be an
+    // upload in flight.
+    const rows = candidates
+      .filter((r) => r.updatedAt < now - REPAIR_GRACE_MS)
+      .slice(0, REPAIR_BATCH);
     const out = [];
     for (const r of rows) {
       const sub = await ctx.db.get(r.subscriptionId);
-      const live = (provider: string) =>
-        !!sub &&
-        sub.state === 'active' &&
-        sub.subscriptionMirrors.some(
-          (m) => m.provider === provider && m.objectPath === r.objectPath,
-        );
+      // The key's live rows: normally one, transiently two during a re-issue.
+      const holders = sub
+        ? await ctx.db
+            .query('subscriptions')
+            .withIndex('by_user_state', (q) => q.eq('userId', sub.userId).eq('state', 'active'))
+            .collect()
+        : [];
+      const holderOf = (provider: string) =>
+        holders.find((s) =>
+          s.subscriptionMirrors.some(
+            (m) => m.provider === provider && m.objectPath === r.objectPath,
+          ),
+        ) ?? null;
+      const live = r.kind === 'withdraw' ? [] : r.providers.filter((p) => holderOf(p) !== null);
       out.push({
         id: r._id,
         subscriptionId: r.subscriptionId,
         objectPath: r.objectPath,
         providers: r.providers,
         attempts: r.attempts,
-        // A copy the subscription still serves is repaired in place; a copy
-        // nothing references any more is residue and is withdrawn.
-        referenced: r.providers.some(live),
-        residueProviders: r.providers.filter((p) => !live(p)),
+        kind: r.kind,
+        // A copy a live row still serves is repaired in place, under the row
+        // that holds it now; a copy nothing references any more is residue
+        // and is withdrawn.
+        referenced: live.length > 0,
+        ownerId: live.length > 0 ? holderOf(live[0]!)!._id : null,
+        residueProviders: r.providers.filter((p) => !live.includes(p)),
       });
     }
     return out;

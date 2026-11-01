@@ -153,13 +153,17 @@ crons.interval(
   {},
 );
 
-// Keep the S3 subscription mirrors fresh: re-fetch each active sub's current
-// content and re-upload it (skip-if-unchanged). No-op unless S3 mirroring is
-// configured. The censorship-fallback URL is only useful if it isn't stale.
+// Keep the S3 subscription mirrors fresh: a full pass over every mirrored key
+// re-renders it and rewrites each copy whose object does not hold that body
+// (the sync ledger, convex/mirrorCopies.ts). No-op unless a mirror provider
+// exists. The censorship-fallback URL is only useful if it isn't stale.
 crons.interval('mirror-refresh', { hours: 6 }, internal.storage.refreshActiveMirrors, {});
 // The mirror barrier: an upload whose delivery policy moved while it was in
 // flight is re-rendered under the current one, or the object withdrawn.
 crons.interval('mirror-barrier-repair', { minutes: 5 }, internal.storage.repairMirrorUploads, {});
+// Read mirror copies back through the URL each member holds and compare them
+// with what FCP wrote (a copy every ~6 h; one that found a problem sooner).
+crons.interval('mirror-verify', { minutes: 15 }, internal.storage.verifyMirrorCopies, {});
 
 // Self-heal the maintained user-status counter (statusCounters.ts) that feeds the
 // /status health-gate — recomputes it exactly, correcting any missed transition bump.
@@ -175,6 +179,14 @@ crons.daily(
   'session-counts-reconcile',
   { hourUTC: 4, minuteUTC: 10 },
   internal.userStats.reconcileSessionCounts,
+  {},
+);
+// And for the mirror sync ledger: drop rows a subscription no longer lists,
+// then rebuild the `stats:mirrorCopies` counter exactly.
+crons.daily(
+  'mirror-copies-reconcile',
+  { hourUTC: 4, minuteUTC: 20 },
+  internal.mirrorCopies.reconcile,
   {},
 );
 

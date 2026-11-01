@@ -19,8 +19,11 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
+import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
 import { checkInfraUrl } from './lib/urlSafety';
+import { copiesOnProvider } from './mirrorCopies';
+import { openRecordsName } from './mirrorUploads';
 
 /**
  * Validate a provider's endpoint + public URL (shape + the SSRF denylist):
@@ -74,7 +77,8 @@ function normalizeCountryCodes(raw: string[] | undefined): string[] {
 }
 
 /** Admin-safe view: everything EXCEPT the secret, which becomes a boolean. */
-function mapProviderAdmin(r: Doc<'mirrorProviders'>) {
+async function mapProviderAdmin(db: DatabaseReader, r: Doc<'mirrorProviders'>) {
+  const held = await copiesOnProvider(db, r.name);
   return {
     id: r._id as string,
     name: r.name,
@@ -87,14 +91,41 @@ function mapProviderAdmin(r: Doc<'mirrorProviders'>) {
     countryCodes: r.countryCodes ?? [],
     isActive: r.isActive,
     priority: r.priority,
+    // Members' mirrors on it (exact up to the cap), and whether it is being removed.
+    mirrors: held.count,
+    mirrorsCapped: held.capped,
+    removing: r.removing === true,
     createdAt: new Date(r._creationTime).toISOString(),
     updatedAt: new Date(r.updatedAt).toISOString(),
   };
 }
 
+/**
+ * A provider's name is the match key of every copy on it (refresh, delete,
+ * withdrawal), so it cannot change while it holds any, nor before the ledger
+ * has its legacy rows (it cannot yet tell).
+ */
+async function assertRenamable(db: DatabaseReader, name: string): Promise<void> {
+  const seeded = !!(await db
+    .query('appState')
+    .withIndex('by_key', (q) => q.eq('key', 'mirror-copies:seeded'))
+    .unique());
+  if (
+    seeded &&
+    (await copiesOnProvider(db, name, 1)).count === 0 &&
+    !(await openRecordsName(db, name))
+  )
+    return;
+  throw new ConvexError({
+    code: 'validation',
+    message:
+      'This provider holds member mirrors (or a pending clean-up of one), so its name cannot change (it is how each mirror finds its bucket). Add a new provider instead.',
+  });
+}
+
 // --- consumed by the storage actions (full secrets, internal only) -----------
 
-/** Active providers WITH their secrets, ascending by priority. The upload set. */
+/** Active providers WITH their secrets, ascending by priority. Where new mirrors go. */
 export const listActiveWithSecret = internalQuery({
   args: {},
   handler: async (ctx): Promise<MirrorProvider[]> => {
@@ -102,7 +133,32 @@ export const listActiveWithSecret = internalQuery({
       .query('mirrorProviders')
       .withIndex('by_active', (q) => q.eq('isActive', true))
       .collect();
-    return rows.sort((a, b) => a.priority - b.priority).map(toProvider);
+    return rows
+      .filter((r) => r.removing !== true)
+      .sort((a, b) => a.priority - b.priority)
+      .map(toProvider);
+  },
+});
+
+/**
+ * The providers a refresh writes to WITH their secrets: every provider, active
+ * or not, except one being removed (`removing` names those; their copies are
+ * left to the withdrawal). Deactivating a provider stops handing it to new
+ * mirrors; the mirrors members already hold on it keep being refreshed (a stub,
+ * a rotated address and a held key must reach them too). Removing it withdraws
+ * them.
+ */
+export const refreshSet = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<{ targets: MirrorProvider[]; removing: string[] }> => {
+    const rows = await ctx.db.query('mirrorProviders').collect();
+    return {
+      targets: rows
+        .filter((r) => r.removing !== true)
+        .sort((a, b) => a.priority - b.priority)
+        .map(toProvider),
+      removing: rows.filter((r) => r.removing === true).map((r) => r.name),
+    };
   },
 });
 
@@ -200,38 +256,6 @@ export const noteMirrorPass = internalMutation({
   },
 });
 
-// The mirror-refresh sweep's pagination cursor, persisted between runs: the
-// sweep scans the by_state='active' index in stable creation order, so a
-// per-run `cursor = null` re-scans the SAME oldest window every tick and
-// mirrored subs beyond it NEVER refresh (M3). Persisting the cursor rotates
-// the window through the whole fleet over successive ticks (null = restart).
-const REFRESH_CURSOR_KEY = 'mirror-refresh:cursor';
-
-export const getRefreshCursor = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<string | null> => {
-    const row = await ctx.db
-      .query('appState')
-      .withIndex('by_key', (q) => q.eq('key', REFRESH_CURSOR_KEY))
-      .unique();
-    return row?.value && row.value !== 'null' ? row.value : null;
-  },
-});
-
-export const setRefreshCursor = internalMutation({
-  args: { cursor: v.union(v.string(), v.null()) },
-  handler: async (ctx, { cursor }): Promise<null> => {
-    const value = cursor ?? 'null';
-    const row = await ctx.db
-      .query('appState')
-      .withIndex('by_key', (q) => q.eq('key', REFRESH_CURSOR_KEY))
-      .unique();
-    if (row) await ctx.db.patch(row._id, { value, updatedAt: Date.now() });
-    else await ctx.db.insert('appState', { key: REFRESH_CURSOR_KEY, value, updatedAt: Date.now() });
-    return null;
-  },
-});
-
 /**
  * Pick the next mirror provider to hand a member, given their (transient,
  * never-stored) country and the providers they've already tried. Ordering:
@@ -250,7 +274,7 @@ export const selectNextProvider = internalQuery({
         .query('mirrorProviders')
         .withIndex('by_active', (q) => q.eq('isActive', true))
         .collect()
-    ).filter((p) => !triedSet.has(p.name));
+    ).filter((p) => !triedSet.has(p.name) && p.removing !== true);
     const rank = (p: Doc<'mirrorProviders'>): number => {
       const codes = p.countryCodes ?? [];
       if (cc && codes.includes(cc)) return 0; // preferred for this country
@@ -270,7 +294,8 @@ export const listForAdmin = internalQuery({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query('mirrorProviders').collect();
-    return { providers: rows.sort((a, b) => a.priority - b.priority).map(mapProviderAdmin) };
+    const sorted = rows.sort((a, b) => a.priority - b.priority);
+    return { providers: await Promise.all(sorted.map((r) => mapProviderAdmin(ctx.db, r))) };
   },
 });
 
@@ -330,7 +355,7 @@ export const create = internalMutation({
       targetId: id,
       payload: { name },
     });
-    return mapProviderAdmin((await ctx.db.get(id))!);
+    return mapProviderAdmin(ctx.db, (await ctx.db.get(id))!);
   },
 });
 
@@ -395,10 +420,11 @@ export const upsertByName = internalMutation({
         targetId: id,
         payload: { name, created: true },
       });
-      return { ...mapProviderAdmin((await ctx.db.get(id))!), created: true };
+      return { ...(await mapProviderAdmin(ctx.db, (await ctx.db.get(id))!)), created: true };
     }
 
     // UPDATE — patch provided fields; blank/absent secret keeps the stored one.
+    if (existing.removing) throw removingError();
     const fields: Partial<Doc<'mirrorProviders'>> = { updatedAt: Date.now() };
     if (a.endpoint !== undefined && a.endpoint !== '') fields.endpoint = a.endpoint;
     if (a.bucket !== undefined && a.bucket !== '') fields.bucket = a.bucket;
@@ -423,7 +449,10 @@ export const upsertByName = internalMutation({
       targetId: existing._id,
       payload: { name, created: false },
     });
-    return { ...mapProviderAdmin((await ctx.db.get(existing._id))!), created: false };
+    return {
+      ...(await mapProviderAdmin(ctx.db, (await ctx.db.get(existing._id))!)),
+      created: false,
+    };
   },
 });
 
@@ -448,6 +477,7 @@ export const update = internalMutation({
     const existing = await ctx.db.get(id);
     if (!existing)
       throw new ConvexError({ code: 'not_found', message: 'Mirror provider not found' });
+    if (existing.removing) throw removingError();
 
     const fields: Partial<Doc<'mirrorProviders'>> = { updatedAt: Date.now() };
     if (patch.name !== undefined) {
@@ -455,6 +485,7 @@ export const update = internalMutation({
       if (!name)
         throw new ConvexError({ code: 'validation', message: 'A provider name is required' });
       if (name !== existing.name) {
+        await assertRenamable(ctx.db, existing.name);
         const clash = await ctx.db
           .query('mirrorProviders')
           .withIndex('by_name', (q) => q.eq('name', name))
@@ -499,23 +530,87 @@ export const update = internalMutation({
       targetId: id,
       payload: { name: (fields.name as string | undefined) ?? existing.name },
     });
-    return mapProviderAdmin((await ctx.db.get(id))!);
+    return mapProviderAdmin(ctx.db, (await ctx.db.get(id))!);
   },
 });
 
+const removingError = () =>
+  new ConvexError({
+    code: 'validation',
+    message: 'This provider is being removed: its mirrors are being withdrawn.',
+  });
+
+/**
+ * Remove a provider. One that holds no member mirror goes at once. One that
+ * does is deactivated and marked `removing`, and its mirrors are withdrawn
+ * first (storage.ts `withdrawProviderMirrors`: each object deleted from the
+ * bucket, each member's entry dropped, so the member may ask for another);
+ * the row goes when the last one is. Its objects never stay behind serving a
+ * member's config from a bucket FCP no longer looks after.
+ */
 export const remove = internalMutation({
   args: { id: v.id('mirrorProviders'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
     const row = await ctx.db.get(id);
-    await ctx.db.delete(id);
+    if (!row) return { ok: true as const, removing: false };
+    const seeded = !!(await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', 'mirror-copies:seeded'))
+      .unique());
+    const held = await copiesOnProvider(ctx.db, row.name, 1);
+    // An open record naming it (a failed delete awaiting its retry, an upload
+    // being repaired) needs its credentials too.
+    const withdrawing = !seeded || held.count > 0 || (await openRecordsName(ctx.db, row.name));
+    if (withdrawing) {
+      if (!row.removing) {
+        await ctx.db.patch(id, { removing: true, isActive: false, updatedAt: Date.now() });
+        await ctx.scheduler.runAfter(0, internal.storage.withdrawProviderMirrors, {
+          providerId: id,
+        });
+      }
+    } else {
+      await ctx.db.delete(id);
+    }
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
       action: 'admin.mirror_provider.delete',
       targetType: 'mirror_provider',
       targetId: id,
-      payload: { name: row?.name ?? null },
+      payload: { name: row.name, withdrawing },
     });
-    return { ok: true as const };
+    return { ok: true as const, removing: withdrawing };
+  },
+});
+
+/** The provider row of a withdrawal (with its secret: its objects are deleted with it). */
+export const removalTarget = internalQuery({
+  args: { providerId: v.id('mirrorProviders') },
+  handler: async (ctx, { providerId }): Promise<MirrorProvider | null> => {
+    const row = await ctx.db.get(providerId);
+    return row && row.removing ? toProvider(row) : null;
+  },
+});
+
+/**
+ * The withdrawal is done: the last copy on the provider is gone and no open
+ * record names it any more, so the row goes.
+ */
+export const finishRemoval = internalMutation({
+  args: { providerId: v.id('mirrorProviders'), withdrawn: v.number() },
+  handler: async (ctx, { providerId, withdrawn }) => {
+    const row = await ctx.db.get(providerId);
+    if (!row || !row.removing) return { removed: false };
+    if ((await copiesOnProvider(ctx.db, row.name, 1)).count > 0) return { removed: false };
+    if (await openRecordsName(ctx.db, row.name)) return { removed: false };
+    await ctx.db.delete(providerId);
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'mirror_provider.withdrawn',
+      targetType: 'mirror_provider',
+      targetId: providerId,
+      payload: { name: row.name, mirrors: withdrawn },
+    });
+    return { removed: true };
   },
 });

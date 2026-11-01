@@ -250,8 +250,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // redirects member subscription mirrors — must be traceable). Name only.
   'admin.mirror_provider.create': ['name'],
   'admin.mirror_provider.update': ['name'],
-  'admin.mirror_provider.delete': ['name'],
+  // `withdrawing`: the provider held members' mirrors, which are withdrawn
+  // (objects deleted) before the row goes (`mirror_provider.withdrawn`).
+  'admin.mirror_provider.delete': ['name', 'withdrawing'],
   'admin.mirror_provider.upsert': ['name', 'created'],
+  'mirror_provider.withdrawn': ['name', 'mirrors'],
   // Clients-catalog edits (the member-facing app list — a malicious/broken
   // entry silently changes what members download). Name only.
   'admin.client.create': ['name'],

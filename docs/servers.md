@@ -963,7 +963,13 @@ mirror). FCP never starts a run by itself.
   `mirror-barrier-repair` cron (`storage.repairMirrorUploads`, every 5 min): the subscription's
   mirror is re-rendered and re-uploaded under the current policy (the unavailable stub when its
   place is gated or edge-required with nothing to render), or a copy no subscription references
-  is withdrawn. Rows hold a subscription id, the object path, provider names and the token.
+  is withdrawn. Which row a copy belongs to is asked of every live row of the key's account (a
+  re-issue carries the object path to a new row; a record left on the old one repairs the new
+  row's object, never deletes it). A record that keeps failing backs off (two retries at the
+  grace, then doubling up to six hours), and a superseding upload inherits its attempts. A delete
+  that failed (a cleared mirror, a torn-down key) is a `withdraw` record the pass retries until
+  it goes through. Rows hold a subscription id, the object path, provider names and the token.
+  The rest of the mirror path is `docs/mirrors.md`.
 
 **Authorization decision.** A staged node serves a shared transport: an existing credential could
 authenticate on it if someone learned its address. That is accepted (REALITY keys are per transport

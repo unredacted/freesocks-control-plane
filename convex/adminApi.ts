@@ -23,6 +23,7 @@ import type { DatabaseReader, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { blockSimulatorAllowedIn } from './lib/edges/simulation';
+import { mirrorSyncSummary } from './mirrorCopies';
 import { postureKnob } from './lib/hpke';
 import { resolveRange } from './lib/timeRange';
 import { ConvexError, v } from 'convex/values';
@@ -2151,6 +2152,9 @@ export const statusSummary = internalQuery({
       hpke,
       relays,
       runtime,
+      // Mirror sync (convex/mirrorCopies.ts): maintained counts + bounded
+      // attention reads, never a scan of the ledger or of keys.
+      mirrors: await mirrorSyncSummary(ctx.db, now),
       // Test tools this deployment accepts: every admin page says so while on.
       testTools: { blockSimulator: blockSimulatorAllowedIn(process.env) },
       generatedAt: iso(now),

@@ -162,7 +162,9 @@ the normal subscription URL provisions one (country-tiered, capped by the
 `mirror.maxPerUser` admin setting in CMS → Settings, default 3); nothing is mirrored
 proactively. Country tiering reads `CF-IPCountry` to prefill the picker, so it only
 helps when **`CF_FRONTED=true`** (otherwise the member just selects their region) —
-the code is transient and never stored. See `docs/threat-model-cdn-blinding.md`.
+the code is transient and never stored. A mirror bucket must allow anonymous reads of
+objects and deny anonymous listing (the provider's Test connection checks both). See
+`docs/mirrors.md` and `docs/threat-model-cdn-blinding.md`.
 
 ### Node runtime for `"use node"` actions
 

@@ -522,7 +522,12 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `S3_PROVIDER_*`). A config hits S3 ONLY when a member who can't connect requests a mirror
   (`storage.provisionMirror`, capped by `mirror.maxPerUser`, capability-URL'd, country picked from
   `CF-IPCountry` transiently + never stored) — never proactively. The SPA exposes it via the
-  understated "trouble connecting?" flow (`MirrorHelp.svelte`), gated on `publicConfig.mirrorsEnabled`.
+  understated "trouble connecting?" flow (`MirrorHelp.svelte`), gated on `publicConfig.mirrorsEnabled`
+  (an active provider and `mirror.maxPerUser` > 0). Every requested mirror is tracked in the sync
+  ledger (`convex/mirrorCopies.ts`: per copy, does the object hold what FCP would serve now; counts,
+  attention past an hour, per-copy detail and re-check on Admin -> Storage and the dashboard), read
+  back through its public URL (`mirror-verify`), withdrawn when its provider is removed, and
+  written with `Cache-Control: no-cache`. **`docs/mirrors.md`** is the full description.
   See `docs/threat-model-cdn-blinding.md` for the deliberate availability-vs-confidentiality trade.
   **Dormant** (no providers configured yet).
 - **Automated backups** (A3, `docker/backup.sh` + the `backup` compose service): scheduled
@@ -586,8 +591,15 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `billing-gift-reveal-sweep` (hourly): clear the transient plaintext gift-code reveal from
   paid gift orders the buyer never acknowledged, so plaintext never lingers at rest (the
   codes stay hash-only in `redemptionCodes`).
-- `mirror-refresh` (6h): re-fetch + re-upload active subscription mirrors (no-op unless S3
-  mirroring is configured).
+- `mirror-refresh` (6h): a full pass over every mirrored key (pages the sync ledger, not every
+  active key; continues in new runs); each copy is rewritten only when its object does not hold
+  what FCP serves (no-op unless a mirror provider exists).
+- `mirror-barrier-repair` (5 min): repair an upload a policy move overtook, retry a failed copy,
+  delete a copy nothing should serve (cleared, torn down, withdrawn); backoff per record.
+- `mirror-verify` (15 min): read mirror copies back through their public URL (~6h per copy) and
+  rewrite or flag the ones that do not serve what FCP wrote (`docs/mirrors.md`).
+- `mirror-copies-reconcile` (daily 04:20 UTC): rebuild the `stats:mirrorCopies` counter and drop
+  orphaned ledger rows.
 - `edge-reconcile` (5 min): edges — re-kick stale rotations, settle edges with an
   unknown provider outcome by discovery, refresh provider health, drain → destroy with a
   claimed reverse-order ledger walk, pool upkeep (config-gated), finish origin deletes.
@@ -666,7 +678,7 @@ the companion docs. Sizes: S/M/L.
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
 | `webhooks.ingest` billing seam                         | `convex/webhooks.ts`, `convex/http.ts`                                                                                                                                | The single transport point for the future billing portal; HMAC + dedupe + `setMembership` are all live, but no portal calls it today.                                                                                | **Keep** (seam ready)         |
 | Entire **Outline** subsystem                           | `convex/backends.ts` (outline branches), `convex/lib/backends/outline.ts`, `convex/backendServers.ts` (generic pool; Outline rows live there), admin server routes/UI | Fully wired but unreachable until `outline.enabled=true` + a server is registered. Within it: `prometheusUrl` is reserved. (Pool scoring now uses real `lastHealthRttMs` — the old `latency*0` placeholder is gone.) | **Keep** (dormant)            |
-| S3 mirroring (`storage.ts`)                            | `convex/storage.ts`, `convex/mirrorProviders.ts`, `convex/lib/issuance.ts`                                                                                            | Skipped entirely unless ≥1 active mirror provider is configured (admin CMS → Storage mirrors).                                                                                                                       | **Keep** (dormant)            |
+| S3 mirroring (`storage.ts`)                            | `convex/storage.ts`, `convex/mirrorProviders.ts`, `convex/mirrorCopies.ts`, `convex/lib/issuance.ts`                                                                  | Skipped entirely unless ≥1 active mirror provider is configured (admin CMS → Storage mirrors).                                                                                                                       | **Keep** (dormant)            |
 | `appState` table                                       | `convex/schema.ts`                                                                                                                                                    | Generic singleton key/value (issuance lock, the `stats:userCounts` user-status counter, tier-propagation cursors).                                                                                                   | **Keep** (live + scaffolding) |
 | `components/ui/label/`, other unused shadcn primitives | `src/client/components/ui/`                                                                                                                                           | shadcn primitives are kept as a complete kit even when a given primitive has no current import.                                                                                                                      | **Keep** (kit completeness)   |
 | Dev **mock backend**                                   | `convex/lib/backends/mock.ts`                                                                                                                                         | Short-circuits every dispatch op so the full issuance/account flow works locally with no real instance. Double-gated: `DEV_MOCK_BACKEND=true` AND `ENVIRONMENT=development`.                                         | **Keep** (dev scaffolding)    |
@@ -700,7 +712,9 @@ pruned (probe runs after 14 days, samples after 7 days).
 Patterns that are safe: `take(page)` + drain-chain (the sweeps), `paginate()` (admin lists,
 reconciles), `first()` on a compound index (`assertBackendServerUnused`), or a **maintained
 counter** in `appState` bumped at every transition + a daily paginated reconcile
-(`stats:userCounts`, `stats:sessionCounts` in `convex/lib/statusCounters.ts`). Both reconciles
+(`stats:userCounts`, `stats:sessionCounts`, `stats:mirrorCopies` in
+`convex/lib/statusCounters.ts`). `mirrorCopies` grows with the mirrors members ask for: paged by
+the passes, attention figures from bounded index reads (`take(501)`), never collected. Both reconciles
 share one protocol that is exact under concurrent writes: `begin` pins the scan boundary at
 the newest visible `_creationTime`; each page is read and its `scanPos` recorded in the same
 mutation; a change on a row the scan has already read (or will never read) is journaled,
