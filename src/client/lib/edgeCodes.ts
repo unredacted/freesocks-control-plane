@@ -2546,6 +2546,12 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     explain: 'A CDN passes gRPC only to a node listening on port 443.',
     fix: 'Move the gRPC transport to port 443.',
   },
+  host_header_rejected: {
+    label: 'Node takes only its own name',
+    explain:
+      "The node answers only to its own name as the Host, and this CDN's fronts send their own name instead.",
+    fix: "Pick a CDN that sends the node's name, or let the node answer any Host.",
+  },
   account_capacity_reached: {
     label: 'No room',
     explain: 'The account has fewer free edges than this node needs.',

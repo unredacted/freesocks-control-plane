@@ -2931,6 +2931,8 @@ export const SetupPlanAccount = z.object({
   regions: z
     .array(z.object({ id: z.string(), label: z.string(), project: z.string().optional() }))
     .default([]),
+  /** Its fronts send the node its own name as Host (a carried transport answers only to it). */
+  originHost: z.boolean().default(false),
 });
 
 /** `GET relays/{id}/providers`: the node's provider set as its Providers card shows it. */

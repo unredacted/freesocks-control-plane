@@ -236,6 +236,11 @@ export interface SetupPlanAccount {
    * accounts only; absent on runs from before.
    */
   regions?: Array<{ id: string; label: string; project?: string }>;
+  /**
+   * Its fronts send the node its own name as Host: a transport it carries
+   * answers only for its own names (lib/edges/layers.ts `withOriginHost`).
+   */
+  originHost?: boolean;
 }
 
 /** One pick of a chosen set, as the plan shows it. */

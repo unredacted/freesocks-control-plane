@@ -41,6 +41,7 @@ import { sameAddress, templateHostRemark } from './lib/edges/hosts';
 import { canonicalIp, isPublicIpLiteral, l4OriginProblem } from './lib/edges/ip';
 import { testLinkSourceOf } from './edgeTestLinks';
 import { accountsForSlot } from './lib/edges/rotation';
+import { originHostNeeded } from './lib/edges/layers';
 import {
   edgeLayerOf,
   frontsAllowed,
@@ -413,6 +414,8 @@ function accountCompatibility(
   relay: PlanContext['relay'],
   websocketNode: boolean,
   l4Problem: ReturnType<typeof l4OriginProblem> = null,
+  /** What its fronts dial: a names-only node takes the origin's name only when this is one. */
+  originAddress?: string,
 ): SetupPlanAccount {
   const reasons: string[] = [];
   const layer = edgeLayerOf(a.provider);
@@ -429,6 +432,11 @@ function accountCompatibility(
   let scoped = false;
   // A load balancer for a WebSocket node's transport, however its probe went.
   let barred = false;
+  // A CDN front whose Host the node would refuse: the node answers only for
+  // its own names and this provider sends the front's name (`frontHostAccepted`).
+  let hostRejected = false;
+  // A transport it carries needs the node's own name as Host, which its fronts send.
+  let originHost = false;
   // A transport the account WOULD carry had the origin answered its probe:
   // `retry` when another look may answer, `final` when the address itself
   // rules it out (private or none).
@@ -454,11 +462,25 @@ function accountCompatibility(
       proto,
       originPort: spec.originPort,
       allowL7: true,
+      originTransport: spec.originTransport,
+      originAddress,
     });
     if (eligible.length > 0) {
       carries.push(inb.listenerKey);
+      if (layer === 'l7' && spec.originTransport && originHostNeeded(spec.originTransport))
+        originHost = true;
       continue;
     }
+    if (
+      spec.originTransport &&
+      accountsForSlot([a], {
+        layers: inb.layers,
+        proto,
+        originPort: spec.originPort,
+        allowL7: true,
+      }).length > 0
+    )
+      hostRejected = true;
     if (
       inb.probeFailed &&
       !inb.layers.includes(layer) &&
@@ -485,13 +507,15 @@ function accountCompatibility(
         ? 'provider_mismatch'
         : barred
           ? 'l4_not_for_websocket'
-          : unanswered === 'retry'
-            ? 'origin_unreachable'
-            : unanswered === 'final'
-              ? 'origin_not_public'
-              : portOnly
-                ? 'origin_port_not_carried'
-                : 'layer_mismatch',
+          : hostRejected
+            ? 'host_header_rejected'
+            : unanswered === 'retry'
+              ? 'origin_unreachable'
+              : unanswered === 'final'
+                ? 'origin_not_public'
+                : portOnly
+                  ? 'origin_port_not_carried'
+                  : 'layer_mismatch',
     );
   // A load balancer for a WebSocket node: nothing done to the account or its
   // locations changes that, so it is the one reason given, for each of them.
@@ -544,6 +568,7 @@ function accountCompatibility(
     locations,
     carries,
     regions,
+    ...(originHost ? { originHost } : {}),
   };
 }
 
@@ -981,7 +1006,7 @@ export async function buildPlan(
   const candidates = applyOriginProbes(
     mapped.candidates,
     withVerifiedIngress(outcomes, c.enrolled),
-    { websocketNode: c.websocketNode },
+    { websocketNode: c.websocketNode, originAddress },
   );
   const planInbounds: SetupPlanInbound[] = [];
   for (const cand of candidates) {
@@ -1151,7 +1176,7 @@ export async function buildPlan(
     }
   }
   const accounts = c.accounts.map((acct) =>
-    accountCompatibility(acct, required, c.relay, c.websocketNode, l4Problem),
+    accountCompatibility(acct, required, c.relay, c.websocketNode, l4Problem, originAddress),
   );
   const set =
     args.picks && args.picks.length > 0

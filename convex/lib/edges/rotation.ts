@@ -16,6 +16,7 @@ import {
 } from './providers/capabilities';
 import type { EdgeProviderId } from '../edgeProviderIds';
 import { costTieKeys } from './pricing';
+import { frontHostAccepted, type OriginTransport } from './layers';
 export const ROTATION_PHASES = [
   'select',
   'provisioning',
@@ -324,8 +325,9 @@ export function l7SelectionAllowed(cfg: { l7: { autoSelect: boolean } }): boolea
 /**
  * Filter provider accounts to the ones that can actually front this slot: the
  * layers the complete client-to-origin chain allows (`slotLayers`), the
- * protocol the provider can carry, and (for automatic selection) the L7 gate.
- * Reads capabilities, never provider ids.
+ * protocol the provider can carry, the Host its front would send the origin
+ * (`frontHostAccepted`), and (for automatic selection) the L7 gate. Reads
+ * capabilities, never provider ids.
  */
 export function accountsForSlot<T extends FrontingAccount & { provider: string }>(
   accounts: readonly T[],
@@ -336,6 +338,13 @@ export function accountsForSlot<T extends FrontingAccount & { provider: string }
     originPort?: number;
     /** false = automatic selection with the L7 gate off: L7 accounts are excluded. */
     allowL7: boolean;
+    /**
+     * How the origin is dialled: a node that answers only for its own names
+     * takes an L7 front only from a provider that can send it that name.
+     */
+    originTransport?: OriginTransport | null;
+    /** The address fronts dial (the origin's): see `originNameServes`. */
+    originAddress?: string | null;
   },
 ): T[] {
   return accounts.filter((a) => {
@@ -345,6 +354,12 @@ export function accountsForSlot<T extends FrontingAccount & { provider: string }
     // A DNS provider's account set to DNS only (it holds the records of
     // other fronts) is never a candidate, whoever is choosing.
     if (!frontsAllowed(a)) return false;
+    if (
+      layer === 'l7' &&
+      opts.originTransport &&
+      !frontHostAccepted(a.provider, opts.originTransport, { originAddress: opts.originAddress })
+    )
+      return false;
     return protocolCarriedBy(a.provider as EdgeProviderId, opts.proto, opts.originPort);
   });
 }

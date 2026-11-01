@@ -622,6 +622,9 @@ export const SETUP_ACCOUNT_REASONS = [
   'origin_private',
   'origin_name',
   'origin_port_not_carried',
+  // A CDN whose front sends its own name to a node that answers only for its
+  // own (lib/edges/layers.ts `frontHostAccepted`).
+  'host_header_rejected',
   'account_capacity_reached',
   'account_budget_exhausted',
   'provider_mismatch',

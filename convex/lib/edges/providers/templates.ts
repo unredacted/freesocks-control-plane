@@ -1193,7 +1193,7 @@ export const FASTLY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     label: 'Host sent to the node',
     type: 'select',
     group: 'Backend',
-    help: 'The Host header the front sends: the front name, or the node address when the node answers only to its own name.',
+    help: 'The Host header the front sends: the front name, or the node address. A node that answers only to its own name gets the node address whatever is chosen here.',
     options: [
       { value: 'hostname', label: 'The front name' },
       { value: 'origin', label: 'The node address' },

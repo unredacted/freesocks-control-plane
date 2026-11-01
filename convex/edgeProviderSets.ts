@@ -132,7 +132,12 @@ export const view = internalQuery({
       if (!frontsAllowed(account)) continue;
       const locations = await locationsOfAccount(ctx.db, account._id);
       const carriedHere = state.listeners
-        .filter((l) => carries({ account }, l, { websocketNode: state.websocketNode }))
+        .filter((l) =>
+          carries({ account }, l, {
+            websocketNode: state.websocketNode,
+            originAddress: relay.originAddress,
+          }),
+        )
         .map((l) => l.listenerKey);
       if (carriedHere.length > 0)
         for (const r of await regionOffersOf(
@@ -153,7 +158,12 @@ export const view = internalQuery({
         if (!location.enabled || picks.some((p) => p.locationId === location._id)) continue;
         const row = { account, location };
         const carried = state.listeners
-          .filter((l) => carries(row, l, { websocketNode: state.websocketNode }))
+          .filter((l) =>
+            carries(row, l, {
+              websocketNode: state.websocketNode,
+              originAddress: relay.originAddress,
+            }),
+          )
           .map((l) => l.listenerKey);
         if (carried.length === 0) continue;
         available.push({
@@ -431,7 +441,9 @@ async function removePicks(
     listeners.map((l) => ({
       listenerKey: l.listenerKey,
       carriers: picks
-        .filter((p) => p.usable && carries(p, l, { websocketNode }))
+        .filter(
+          (p) => p.usable && carries(p, l, { websocketNode, originAddress: relay.originAddress }),
+        )
         .map((p) => p.pick.locationId),
     })),
     picks.map((p) => p.pick),
