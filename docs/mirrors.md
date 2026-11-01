@@ -57,11 +57,12 @@ flow), Admin -> Storage (`AdminStorage.svelte`, `MirrorSyncCard.svelte`).
   stay in sync (stub, rotated addresses and held keys reach them too).
 - **Removing** a provider that holds mirrors deactivates it, marks it `removing` and withdraws
   every copy on it (`storage.withdrawProviderMirrors`): the object is deleted, then the member's
-  entry is dropped (they may ask for another mirror). The row goes when the last copy is gone; a
-  delete that fails keeps that copy and is retried with a backoff, because the provider row holds
-  the only credential that can reach its objects. One that holds no mirror goes at once.
+  entry is dropped (they may ask for another mirror). The row goes when the last copy is gone and
+  no open upload or withdrawal record names the provider; a delete that fails keeps that copy and
+  is retried with a backoff, because the provider row holds the only credential that can reach its
+  objects. One that holds no mirror and no pending clean-up goes at once.
 - **The name** is how every copy finds its bucket, so it cannot change while the provider holds
-  any. Add a new provider instead.
+  any (or a pending clean-up names it). Add a new provider instead.
 - **Test connection** writes a health object, reads it back through the public URL with no
   credentials and deletes it, and checks that the public URL does not list the bucket. A bucket
   for mirrors must: allow anonymous reads of objects, deny anonymous listing (the object path is a
@@ -94,10 +95,14 @@ its first check), `fetch_failed`, `upload_failed`, `provider_missing`, `url_unre
   by another.
 - **Read-back** (`mirror-verify`, every 15 min): each copy's member-facing URL is read with a
   plain GET about every six hours (a new copy at the next run) and its sha256 compared with
-  `objectHash`. Another body or nothing at all gets the object rewritten once; if a read after that
-  rewrite finds the same, the URL itself is the problem (not publicly readable, wrong public URL,
-  a cache keeping an old body) and the copy is `failing` (`url_unreadable` / `url_stale`) until a
-  read matches again. A timeout or 5xx decides nothing and is retried.
+  `objectHash`; the read stops at 4 MiB (a larger answer is not the object). Another body or
+  nothing at all gets the object rewritten once and read back right after; if that read finds the
+  same, the URL itself is the problem (not publicly readable, wrong public URL, a cache keeping an
+  old body) and the copy is `failing` (`url_unreadable` / `url_stale`) until a read matches again.
+  Only a copy awaiting that one confirmation is read again soon (`recheckAt`); a URL that keeps
+  failing goes back to the normal cadence, so it never crowds out the others. A timeout or 5xx
+  decides nothing. A refresh never clears a URL failure; the admin Re-check (rewrite, then read)
+  does once the URL serves the object.
 - **Counts** are the `stats:mirrorCopies` counter (`lib/statusCounters.ts`), bumped by every
   state change and rebuilt daily with orphaned rows dropped (`mirror-copies-reconcile`). Never a
   scan of keys or of the ledger on a read path.

@@ -363,13 +363,20 @@ async function deleteWithResidue(
 // --- reading a copy back through its member-facing URL -------------------------------------------
 
 /** A GET of a mirror's public URL: the status and, on 200, the body. */
-export type MirrorFetch = (url: string) => Promise<{ status: number; body: string | null }>;
+export type MirrorFetch = (
+  url: string,
+) => Promise<{ status: number; body: string | null; oversize?: boolean }>;
 
 const VERIFY_TIMEOUT_MS = 8_000;
 /** A mirror body is a few KB; anything far larger is not one. */
 const VERIFY_MAX_BYTES = 4 * 1024 * 1024;
 
-/** The real read (a plain GET, no credentials); exported for the store integration test. */
+/**
+ * The real read (a plain GET, no credentials); exported for the store
+ * integration test. The size bound holds while reading: a declared length past
+ * it is refused before any byte is read, and the stream is cut at the bound, so
+ * a URL that answers with something huge never fills memory.
+ */
 export const realFetch: MirrorFetch = async (url) => {
   const res = await fetch(url, {
     method: 'GET',
@@ -378,12 +385,29 @@ export const realFetch: MirrorFetch = async (url) => {
     redirect: 'manual',
     signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
   });
-  if (res.status !== 200) {
+  const declared = Number(res.headers.get('content-length') ?? NaN);
+  if (res.status !== 200 || !res.body) {
     await res.body?.cancel().catch(() => {});
     return { status: res.status, body: null };
   }
-  const body = await res.text();
-  return { status: 200, body: body.length > VERIFY_MAX_BYTES ? null : body };
+  if (Number.isFinite(declared) && declared > VERIFY_MAX_BYTES) {
+    await res.body.cancel().catch(() => {});
+    return { status: 200, body: null, oversize: true };
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > VERIFY_MAX_BYTES) {
+      await reader.cancel().catch(() => {});
+      return { status: 200, body: null, oversize: true };
+    }
+    chunks.push(value);
+  }
+  return { status: 200, body: Buffer.concat(chunks).toString('utf8') };
 };
 
 let fetchImpl: MirrorFetch | null = null;
@@ -396,8 +420,8 @@ const mirrorFetch: MirrorFetch = (url) => (fetchImpl ?? realFetch)(url);
 /**
  * Read one copy through the URL the member holds and compare it with what FCP
  * wrote: not found or forbidden is `missing` (the member gets nothing), a body
- * with another hash is `mismatch`, anything else (a timeout, a 5xx) is
- * `unreachable` and decides nothing.
+ * with another hash (or one past the size bound) is `mismatch`, anything else
+ * (a timeout, a 5xx) is `unreachable` and decides nothing.
  */
 export async function verifyCopy(
   fetchFn: MirrorFetch,
@@ -407,6 +431,8 @@ export async function verifyCopy(
   try {
     const res = await fetchFn(url);
     if (res.status === 404 || res.status === 403) return { kind: 'missing' };
+    // Far larger than any mirror body: not the object FCP wrote.
+    if (res.oversize) return { kind: 'mismatch', observedHash: 'oversize' };
     if (res.status !== 200 || res.body === null) return { kind: 'unreachable' };
     const observed = await sha256Hex(res.body);
     return observed === objectHash
@@ -1340,20 +1366,17 @@ export const recheckCopy = internalAction({
 });
 
 /**
- * Give every mirror that has no ledger row its rows: pages the active keys and
- * records each listed copy (stale, unchecked; the next pass checks it).
- * Nothing is uploaded. Idempotent. `always`: run even when the ledger says it
- * was seeded (the post-deploy run: a rollback to code without the ledger can
- * have added mirrors since). Continues in a new run past the time budget.
+ * Give every mirror that has no ledger row its rows: pages the active keys from
+ * `cursor` and records each listed copy (stale, unchecked; the next pass checks
+ * it), until the last key or the deadline. Nothing is uploaded; idempotent.
+ * Marks the ledger seeded when it reaches the last key; otherwise returns the
+ * cursor to resume from (the caller schedules its own continuation).
  */
-async function seedLedger(
+async function seedPages(
   ctx: ActionCtx,
-  opts: { always?: boolean; cursor?: string | null } = {},
-): Promise<{ keys: number; done: boolean }> {
-  if (!opts.always && (await ctx.runQuery(internal.mirrorCopies.isSeeded, {})))
-    return { keys: 0, done: true };
-  const deadline = Date.now() + PASS_RUN_BUDGET_MS;
-  let cursor: string | null = opts.cursor ?? null;
+  cursor: string | null,
+  deadline: number,
+): Promise<{ keys: number; done: boolean; cursor: string | null }> {
   let keys = 0;
   for (;;) {
     const res: MirrorPage = await ctx.runMutation(internal.mirrorCopies.seedPage, {
@@ -1361,26 +1384,30 @@ async function seedLedger(
       numItems: SEED_PAGE,
     });
     keys += res.items.length;
-    if (res.isDone) break;
-    cursor = res.continueCursor;
-    if (Date.now() >= deadline) {
-      await ctx.scheduler.runAfter(0, internal.storage.seedMirrorLedger, { cursor });
-      return { keys, done: false };
+    if (res.isDone) {
+      await ctx.runMutation(internal.mirrorCopies.markSeeded, {});
+      return { keys, done: true, cursor: null };
     }
+    cursor = res.continueCursor;
+    if (Date.now() >= deadline) return { keys, done: false, cursor };
   }
-  await ctx.runMutation(internal.mirrorCopies.markSeeded, {});
-  return { keys, done: true };
 }
 
 /**
  * Post-deploy (docker/deploy-entrypoint.sh): make sure the sync ledger knows
  * every mirror, so the passes (which page the ledger) reach them all. Runs on
- * every deploy; `cursor` continues a run that hit its time budget.
+ * every deploy, even when the ledger says it was seeded (a rollback to code
+ * without the ledger can have added mirrors since); past its time budget it
+ * continues in a new run from its cursor.
  */
 export const seedMirrorLedger = internalAction({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
-  handler: async (ctx, { cursor }): Promise<{ keys: number; done: boolean }> =>
-    seedLedger(ctx, { always: true, cursor }),
+  handler: async (ctx, { cursor }): Promise<{ keys: number; done: boolean }> => {
+    const res = await seedPages(ctx, cursor ?? null, Date.now() + PASS_RUN_BUDGET_MS);
+    if (!res.done)
+      await ctx.scheduler.runAfter(0, internal.storage.seedMirrorLedger, { cursor: res.cursor });
+    return { keys: res.keys, done: res.done };
+  },
 });
 
 const WITHDRAW_PAGE = 50;
@@ -1390,27 +1417,63 @@ const WITHDRAW_RETRY_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3_600_000, 6 * 3
  * A provider is being removed (`mirrorProviders.remove`): withdraw every copy on
  * it (delete the object, then drop the member's entry, so they may ask for
  * another mirror), then drop the provider row. A delete that fails keeps that
- * copy (and the provider) until a later run gets it through: the provider row
- * holds the only credential that can reach its objects. Runs in pages, and in
- * new runs when the time budget ends or when nothing could be deleted.
+ * copy (and the provider) until a later run gets it through, and so does any
+ * open upload or withdrawal record that names the provider (the repair pass
+ * deletes those with its credentials): the provider row holds the only
+ * credential that can reach its objects. Runs in pages and in new runs (when
+ * the time budget ends, or with a backoff when nothing could be deleted),
+ * carrying its count; the ledger is seeded first, resumably, so it knows every
+ * copy on the provider.
  */
 export const withdrawProviderMirrors = internalAction({
-  args: { providerId: v.id('mirrorProviders'), attempt: v.optional(v.number()) },
-  handler: async (ctx, { providerId, attempt }): Promise<{ withdrawn: number; done: boolean }> => {
+  args: {
+    providerId: v.id('mirrorProviders'),
+    attempt: v.optional(v.number()),
+    /** Copies withdrawn by the earlier runs of this removal (for its audit). */
+    withdrawn: v.optional(v.number()),
+    /** Where the ledger seed this removal runs first resumes. */
+    seedCursor: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (
+    ctx,
+    { providerId, attempt, withdrawn: before, seedCursor },
+  ): Promise<{ withdrawn: number; done: boolean }> => {
     const provider = await ctx.runQuery(internal.mirrorProviders.removalTarget, { providerId });
-    if (!provider) return { withdrawn: 0, done: true };
-    // The ledger must know every copy on the provider: legacy mirrors get
-    // their rows first (the same one-time pass the mirror passes run).
-    await seedLedger(ctx);
+    if (!provider) return { withdrawn: before ?? 0, done: true };
     const deadline = Date.now() + PASS_RUN_BUDGET_MS;
-    let withdrawn = 0;
+    let withdrawn = before ?? 0;
+    const again = (delayMs: number, extra: { attempt?: number; seedCursor?: string | null } = {}) =>
+      ctx.scheduler.runAfter(delayMs, internal.storage.withdrawProviderMirrors, {
+        providerId,
+        withdrawn,
+        ...extra,
+      });
+    if (seedCursor !== undefined || !(await ctx.runQuery(internal.mirrorCopies.isSeeded, {}))) {
+      const seeded = await seedPages(ctx, seedCursor ?? null, deadline);
+      if (!seeded.done) {
+        await again(0, { seedCursor: seeded.cursor });
+        return { withdrawn, done: false };
+      }
+    }
+    const backoff = async () => {
+      const n = attempt ?? 0;
+      await again(WITHDRAW_RETRY_MS[Math.min(n, WITHDRAW_RETRY_MS.length - 1)]!, {
+        attempt: n + 1,
+      });
+      return { withdrawn, done: false };
+    };
     while (Date.now() < deadline) {
       const page = await ctx.runQuery(internal.mirrorCopies.pageOnProvider, {
         provider: provider.name,
         numItems: WITHDRAW_PAGE,
       });
       if (page.length === 0) {
-        await ctx.runMutation(internal.mirrorProviders.finishRemoval, { providerId, withdrawn });
+        const { removed } = await ctx.runMutation(internal.mirrorProviders.finishRemoval, {
+          providerId,
+          withdrawn,
+        });
+        // An open record still names the provider: wait for the repair pass.
+        if (!removed) return backoff();
         return { withdrawn, done: true };
       }
       let progress = 0;
@@ -1428,17 +1491,9 @@ export const withdrawProviderMirrors = internalAction({
         withdrawn++;
         progress++;
       }
-      if (progress === 0) {
-        const n = attempt ?? 0;
-        await ctx.scheduler.runAfter(
-          WITHDRAW_RETRY_MS[Math.min(n, WITHDRAW_RETRY_MS.length - 1)]!,
-          internal.storage.withdrawProviderMirrors,
-          { providerId, attempt: n + 1 },
-        );
-        return { withdrawn, done: false };
-      }
+      if (progress === 0) return backoff();
     }
-    await ctx.scheduler.runAfter(0, internal.storage.withdrawProviderMirrors, { providerId });
+    await again(0);
     return { withdrawn, done: false };
   },
 });

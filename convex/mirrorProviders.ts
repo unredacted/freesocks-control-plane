@@ -23,6 +23,7 @@ import { internal } from './_generated/api';
 import { writeAuditLog } from './lib/audit';
 import { checkInfraUrl } from './lib/urlSafety';
 import { copiesOnProvider } from './mirrorCopies';
+import { openRecordsName } from './mirrorUploads';
 
 /**
  * Validate a provider's endpoint + public URL (shape + the SSRF denylist):
@@ -109,11 +110,16 @@ async function assertRenamable(db: DatabaseReader, name: string): Promise<void> 
     .query('appState')
     .withIndex('by_key', (q) => q.eq('key', 'mirror-copies:seeded'))
     .unique());
-  if (seeded && (await copiesOnProvider(db, name, 1)).count === 0) return;
+  if (
+    seeded &&
+    (await copiesOnProvider(db, name, 1)).count === 0 &&
+    !(await openRecordsName(db, name))
+  )
+    return;
   throw new ConvexError({
     code: 'validation',
     message:
-      'This provider holds member mirrors, so its name cannot change (it is how each mirror finds its bucket). Add a new provider instead.',
+      'This provider holds member mirrors (or a pending clean-up of one), so its name cannot change (it is how each mirror finds its bucket). Add a new provider instead.',
   });
 }
 
@@ -552,7 +558,9 @@ export const remove = internalMutation({
       .withIndex('by_key', (q) => q.eq('key', 'mirror-copies:seeded'))
       .unique());
     const held = await copiesOnProvider(ctx.db, row.name, 1);
-    const withdrawing = !seeded || held.count > 0;
+    // An open record naming it (a failed delete awaiting its retry, an upload
+    // being repaired) needs its credentials too.
+    const withdrawing = !seeded || held.count > 0 || (await openRecordsName(ctx.db, row.name));
     if (withdrawing) {
       if (!row.removing) {
         await ctx.db.patch(id, { removing: true, isActive: false, updatedAt: Date.now() });
@@ -584,13 +592,17 @@ export const removalTarget = internalQuery({
   },
 });
 
-/** The withdrawal is done: the last copy on the provider is gone, so the row goes. */
+/**
+ * The withdrawal is done: the last copy on the provider is gone and no open
+ * record names it any more, so the row goes.
+ */
 export const finishRemoval = internalMutation({
   args: { providerId: v.id('mirrorProviders'), withdrawn: v.number() },
   handler: async (ctx, { providerId, withdrawn }) => {
     const row = await ctx.db.get(providerId);
     if (!row || !row.removing) return { removed: false };
     if ((await copiesOnProvider(ctx.db, row.name, 1)).count > 0) return { removed: false };
+    if (await openRecordsName(ctx.db, row.name)) return { removed: false };
     await ctx.db.delete(providerId);
     await writeAuditLog(ctx, {
       actorType: 'system',

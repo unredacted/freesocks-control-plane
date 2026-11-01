@@ -218,7 +218,7 @@ describe.skipIf(!ENDPOINT)('S3 mirrors against a real store', () => {
     // The read that found the problem is repeated soon after the rewrite: it matches.
     await t.run(async (ctx) => {
       for (const r of await ctx.db.query('mirrorCopies').collect())
-        await ctx.db.patch(r._id, { verifiedAt: Date.now() - 11 * 60_000 });
+        await ctx.db.patch(r._id, { recheckAt: Date.now() - 1 });
     });
     expect(await t.action(internal.storage.verifyMirrorCopies, {})).toMatchObject({ match: 1 });
 
@@ -254,6 +254,7 @@ describe.skipIf(!ENDPOINT)('S3 mirrors against a real store', () => {
     const t = await world();
     const { userId, subId } = await member(t, 'walkB');
     const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res.status).toBe('ok');
     expect((await memberGet(res.publicUrl!)).status).toBe(200);
     const p1 = (await t.run((ctx) => ctx.db.query('mirrorProviders').collect())).find(
       (p) => p.name === 'p1',

@@ -20,8 +20,25 @@
  */
 import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
+
+/** How many open records one check reads; past it the answer is "yes" (the safe side). */
+const OPEN_SCAN_CAP = 2000;
+
+/**
+ * Does any open record (an upload or a withdrawal) name this provider? Its
+ * repair needs the provider's credentials, found by name: while one does, the
+ * provider can neither go nor change its name. Open records are few (uploads
+ * in flight and copies that keep failing); past the cap the answer is yes.
+ */
+export async function openRecordsName(db: DatabaseReader, provider: string): Promise<boolean> {
+  const rows = await db
+    .query('mirrorUploads')
+    .withIndex('by_state', (q) => q.eq('state', 'open'))
+    .take(OPEN_SCAN_CAP);
+  return rows.length >= OPEN_SCAN_CAP || rows.some((r) => r.providers.includes(provider));
+}
 
 /** An obligation younger than this may still be an upload in flight: the repair leaves it alone. */
 export const REPAIR_GRACE_MS = 2 * 60_000;

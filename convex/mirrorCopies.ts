@@ -487,20 +487,14 @@ export const noteOverwritten = internalMutation({
 export const dueForVerify = internalQuery({
   args: { now: v.number(), limit: v.number() },
   handler: async (ctx, { now, limit }) => {
-    // Problems first (re-read soon after the rewrite they caused), then the
-    // never-read and the oldest reads.
-    const rows: Copy[] = [];
-    for (const verify of ['missing', 'mismatch'] as const) {
-      if (rows.length >= limit) break;
-      rows.push(
-        ...(await ctx.db
-          .query('mirrorCopies')
-          .withIndex('by_verify', (q) =>
-            q.eq('verify', verify).lt('verifiedAt', now - MIRROR_REVERIFY_AFTER_MS),
-          )
-          .take(limit - rows.length)),
-      );
-    }
+    // First the copies awaiting the one confirmation a rewrite asked for
+    // (`recheckAt`), then the never-read and the oldest reads. A URL that keeps
+    // failing has no `recheckAt` (the read that found it again cleared it), so
+    // it is read at the normal cadence and never crowds out the others.
+    const rows: Copy[] = await ctx.db
+      .query('mirrorCopies')
+      .withIndex('by_recheck', (q) => q.gt('recheckAt', 0).lte('recheckAt', now))
+      .take(limit);
     if (rows.length < limit) {
       const seen = new Set(rows.map((r) => r._id as string));
       for (const r of await ctx.db
@@ -562,7 +556,7 @@ export const recordVerify = internalMutation({
     const row = await ctx.db.get(id);
     if (!row) return { needsUpload: false };
     if ((row.objectHash ?? null) !== objectHash) {
-      await ctx.db.patch(id, { verifiedAt: at, updatedAt: Date.now() });
+      await ctx.db.patch(id, { verifiedAt: at, recheckAt: undefined, updatedAt: Date.now() });
       return { needsUpload: false };
     }
     const { next, reupload } = afterVerify(
@@ -577,6 +571,10 @@ export const recordVerify = internalMutation({
     await writeSync(ctx, row, next, {
       verifiedAt: at,
       verify: outcome.kind === 'unreachable' && row.verify ? row.verify : outcome.kind,
+      // A rewrite this read asks for is confirmed by one more read soon;
+      // anything else (a URL that keeps failing included) waits for the
+      // normal cadence.
+      recheckAt: reupload ? at + MIRROR_REVERIFY_AFTER_MS : undefined,
     });
     return { needsUpload: reupload };
   },

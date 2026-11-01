@@ -1005,6 +1005,10 @@ export default defineSchema({
         v.literal('unreachable'),
       ),
     ),
+    // A read found a problem and asked for a rewrite: read it again from this
+    // time (its one confirmation). Cleared by the next read, so a URL that
+    // keeps failing goes back to the normal cadence.
+    recheckAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_subscription', ['subscriptionId', 'provider'])
@@ -1012,8 +1016,7 @@ export default defineSchema({
     .index('by_state_since', ['state', 'since'])
     .index('by_state_checked', ['state', 'checkedAt'])
     .index('by_verified', ['verifiedAt'])
-    // A read that found a problem is repeated sooner (after the rewrite it caused).
-    .index('by_verify', ['verify', 'verifiedAt']),
+    .index('by_recheck', ['recheckAt']),
 
   // Suspicion (docs/edges.md "Address enumeration", docs/privacy.md). An
   // account is named only by its MARK: HMAC(EDGE_MARK_PEPPER, `trust:` + userId)

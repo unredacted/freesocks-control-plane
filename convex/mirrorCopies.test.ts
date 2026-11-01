@@ -631,7 +631,7 @@ describe('the member-facing URL is read back', () => {
     w.urlOverride.status = 403;
     await w.t.run(async (ctx) => {
       for (const c of await ctx.db.query('mirrorCopies').collect())
-        await ctx.db.patch(c._id, { verifiedAt: Date.now() - 11 * 60_000 });
+        await ctx.db.patch(c._id, { recheckAt: Date.now() - 1 });
     });
     out = await w.t.action(internal.storage.verifyMirrorCopies, {});
     expect(out).toMatchObject({ missing: 1 });
@@ -692,6 +692,128 @@ describe('the member-facing URL is read back', () => {
     });
     expect(w.objects.get(`p1:${path}`)).toContain('key-shortA');
     expect((await copies(w.t, subId))[0]!.state).toBe('in_sync');
+  });
+});
+
+describe('review fixes', () => {
+  test('copies whose URL keeps failing never crowd the read-back queue', async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    // Three copies elsewhere whose URL keeps failing, read 20 minutes ago.
+    await w.t.run(async (ctx) => {
+      for (let i = 0; i < 3; i++) {
+        const other = await ctx.db.insert('subscriptions', {
+          userId,
+          backend: 'remnawave',
+          backendUserId: `u-x${i}`,
+          backendShortId: `x${i}`,
+          subscriptionUrl: `https://panel.test/sub/x${i}`,
+          subscriptionMirrors: [],
+          state: 'active',
+          updatedAt: Date.now(),
+        });
+        await ctx.db.insert('mirrorCopies', {
+          subscriptionId: other,
+          provider: 'p1',
+          objectPath: `mirrors/x${i}`,
+          state: 'failing',
+          reason: 'url_unreadable',
+          since: Date.now() - 3_600_000,
+          failures: 3,
+          verify: 'missing',
+          verifiedAt: Date.now() - 20 * 60_000,
+          updatedAt: Date.now(),
+        });
+      }
+    });
+    // The new copy (never read) is still read first.
+    const due = await w.t.query(internal.mirrorCopies.dueForVerify, { now: Date.now(), limit: 1 });
+    expect(due.rows.map((r) => r.subscriptionId)).toEqual([subId]);
+  });
+
+  test('an open withdrawal record naming a provider keeps it until the repair pass has deleted the object', async () => {
+    const w = await world();
+    const { userId, subId } = await member(w);
+    await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    const path = (await sub(w.t, subId))!.subscriptionMirrors[0]!.objectPath!;
+    w.fail.fn = (_p, op) => op.kind === 'delete';
+    await w.t.action(internal.storage.clearMirrorsForUser, { userId });
+    const p1 = (await w.t.run((ctx) => ctx.db.query('mirrorProviders').collect())).find(
+      (p) => p.name === 'p1',
+    )!;
+    // No copy is left on p1, but the failed delete still needs its credentials.
+    expect(await w.t.mutation(internal.mirrorProviders.remove, { id: p1._id })).toEqual({
+      ok: true,
+      removing: true,
+    });
+    await expect(
+      w.t.mutation(internal.mirrorProviders.update, { id: p1._id, name: 'x' }),
+    ).rejects.toThrow();
+    expect(
+      await w.t.action(internal.storage.withdrawProviderMirrors, { providerId: p1._id }),
+    ).toEqual({ withdrawn: 0, done: false });
+    expect(await w.t.run((ctx) => ctx.db.get(p1._id))).not.toBeNull();
+    w.fail.fn = () => false;
+    await makeDue(w.t);
+    await w.t.action(internal.storage.repairMirrorUploads, {});
+    expect(w.objects.has(`p1:${path}`)).toBe(false);
+    expect(
+      await w.t.action(internal.storage.withdrawProviderMirrors, { providerId: p1._id }),
+    ).toEqual({ withdrawn: 0, done: true });
+    expect(await w.t.run((ctx) => ctx.db.get(p1._id))).toBeNull();
+  });
+
+  test('the withdrawal count is carried across runs into the audit', async () => {
+    const w = await world();
+    const a = await member(w, 'shortA');
+    const b = await member(w, 'shortB');
+    await mirrored(w, a.subId, ['p1'], { p1: 'x' }, 'mirrors/a');
+    await mirrored(w, b.subId, ['p1'], { p1: 'x' }, 'mirrors/b');
+    const p1 = (await w.t.run((ctx) => ctx.db.query('mirrorProviders').collect())).find(
+      (p) => p.name === 'p1',
+    )!;
+    await w.t.mutation(internal.mirrorProviders.remove, { id: p1._id });
+    // One earlier run already withdrew 5 (another key, gone before this run).
+    expect(
+      await w.t.action(internal.storage.withdrawProviderMirrors, {
+        providerId: p1._id,
+        withdrawn: 5,
+      }),
+    ).toEqual({ withdrawn: 7, done: true });
+    const audit = await w.t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((r) => r.action === 'mirror_provider.withdrawn')!.payload).toMatchObject({
+      mirrors: 7,
+    });
+  });
+
+  test('a removal resumes its ledger seed from where it stopped', async () => {
+    const w = await world();
+    const { subId } = await member(w);
+    await w.t.run(async (ctx) => {
+      const seeded = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'mirror-copies:seeded'))
+        .unique();
+      await ctx.db.delete(seeded!._id);
+      await ctx.db.patch(subId, {
+        subscriptionMirrors: [
+          { provider: 'p1', publicUrl: `${PROVIDERS.p1}/mirrors/l1`, objectPath: 'mirrors/l1' },
+        ],
+      });
+    });
+    w.objects.set('p1:mirrors/l1', 'legacy');
+    const p1 = (await w.t.run((ctx) => ctx.db.query('mirrorProviders').collect())).find(
+      (p) => p.name === 'p1',
+    )!;
+    expect(await w.t.mutation(internal.mirrorProviders.remove, { id: p1._id })).toMatchObject({
+      removing: true,
+    });
+    expect(
+      await w.t.action(internal.storage.withdrawProviderMirrors, { providerId: p1._id }),
+    ).toEqual({ withdrawn: 1, done: true });
+    expect(w.objects.has('p1:mirrors/l1')).toBe(false);
+    expect(await w.t.query(internal.mirrorCopies.isSeeded, {})).toBe(true);
   });
 });
 
