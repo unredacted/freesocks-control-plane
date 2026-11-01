@@ -1013,6 +1013,12 @@
                             {@const o = optionsOf(a.provider, l.id)}
                             {#if o}
                               <div class="pl-7">
+                                {#if a.originHost}
+                                  <span class="text-muted-foreground block text-xs">
+                                    The node answers only to its own name, so its addresses here
+                                    send it that name.
+                                  </span>
+                                {/if}
                                 <PickOptions
                                   accountId={a.id}
                                   locationId={l.id}

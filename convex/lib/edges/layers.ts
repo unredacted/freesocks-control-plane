@@ -21,7 +21,12 @@
  * and emitted by assignment, so a flip and a render never disagree.
  */
 import type { ListenerLayerExclusion } from '../../../src/shared/contracts/edgeProtocolIds';
-import { EDGE_PROVIDER_CAPABILITIES, type EdgeLayer } from './providers/capabilities';
+import {
+  EDGE_PROVIDER_CAPABILITIES,
+  protocolCarriedBy,
+  type EdgeLayer,
+} from './providers/capabilities';
+import type { EdgeProviderId } from '../edgeProviderIds';
 import {
   protocolIsHttpTransport,
   protocolL7Proof,
@@ -94,14 +99,81 @@ export function isFirstLevelWildcard(pattern: string): boolean {
  * for the names on its certificate, so a front that rewrites the Host to the
  * minted hostname needs that hostname covered; a front that passes the origin's
  * own address through (`'origin'`) is always accepted. When the Host is not
- * known yet (before the hostname is minted) the only safe answer is a
- * certificate name that could cover ANY first-level label of a zone.
+ * known yet (before the hostname is minted) the only safe answer for a front
+ * that sends its own name is a certificate name that could cover ANY
+ * first-level label of a zone.
  */
 export function l7HostAccepted(ot: OriginTransport, l7Host?: L7HostHeader): boolean {
   if (ot.acceptsHostHeader === 'any') return true;
   if (l7Host === 'origin') return true;
   if (l7Host) return certCovers(l7Host, ot.certNames);
   return ot.certNames.some(isFirstLevelWildcard);
+}
+
+/**
+ * How a provider's front can send the origin's own name as Host: `always`
+ * (capability `originHostHeader: 'origin'`), when its template says so
+ * (`option`: Fastly's `overrideHost: 'origin'`), or never (null: it sends the
+ * front name).
+ */
+export function originHostSupport(provider: string | null | undefined): 'always' | 'option' | null {
+  if (!provider || !(provider in EDGE_PROVIDER_CAPABILITIES)) return null;
+  const h =
+    EDGE_PROVIDER_CAPABILITIES[provider as keyof typeof EDGE_PROVIDER_CAPABILITIES]
+      .originHostHeader;
+  return h === 'origin' ? 'always' : h === 'option' ? 'option' : null;
+}
+
+/**
+ * Whether a front needs to send the origin's own name for the node to answer:
+ * the node answers only for its certificate names, and the front name is not
+ * one of them (before the name is minted: no first-level wildcard could cover
+ * it).
+ */
+export function originHostNeeded(ot: OriginTransport, hostname?: string | null): boolean {
+  return !l7HostAccepted(ot, hostname ?? undefined);
+}
+
+/**
+ * The template a NEW front is built with: for a node that needs its own name
+ * as Host (`originHostNeeded`), a provider whose template can send it is set
+ * to (`overrideHost: 'origin'`), whatever the template or the pick chose,
+ * since the front name would be refused. Applied once, when the edge is
+ * planned; its intent freezes the result like every other template value.
+ */
+export function withOriginHost(
+  provider: string | null | undefined,
+  params: Record<string, unknown>,
+  ot: OriginTransport | null | undefined,
+  hostname: string | null | undefined,
+): Record<string, unknown> {
+  if (!ot || originHostSupport(provider) !== 'option' || !originHostNeeded(ot, hostname))
+    return params;
+  return params.overrideHost === 'origin' ? params : { ...params, overrideHost: 'origin' };
+}
+
+/**
+ * Whether a front FCP would build at `provider` gets an answer from the node:
+ * the front name is accepted, or the provider sends the origin's own name
+ * (always, or set by `withOriginHost`).
+ */
+export function frontHostAccepted(
+  provider: string | null | undefined,
+  ot: OriginTransport,
+  hostname?: string | null,
+): boolean {
+  return !originHostNeeded(ot, hostname) || originHostSupport(provider) !== null;
+}
+
+/**
+ * Whether some L7 provider's front can send the origin's own name and carry
+ * the listener: then a node that answers only for its own names can still be
+ * fronted at L7.
+ */
+function originHostCarrierExists(proto: ListenerProto): boolean {
+  return (Object.keys(EDGE_PROVIDER_CAPABILITIES) as EdgeProviderId[]).some(
+    (p) => originHostSupport(p) !== null && protocolCarriedBy(p, proto),
+  );
 }
 
 /** The Host an L7 front would send, from the minted hostname + the template's rule. */
@@ -136,7 +208,11 @@ export function zoneModeCarriesOrigin(mode: string, ot: OriginTransport): boolea
 }
 
 export interface ListenerLayerOpts {
-  /** The Host the front would send the origin (see `l7HostAccepted`). */
+  /**
+   * The Host a decided front sends the origin (see `l7HostAccepted`). Absent =
+   * no front decided yet: L7 stays open while some provider's front would get
+   * an answer (`frontHostAccepted` then judges each provider).
+   */
   l7Host?: L7HostHeader;
   /** Some enabled provider declares `udp` (none does today). */
   udpProviderAvailable?: boolean;
@@ -177,8 +253,16 @@ export function listenerLayers(
   // publication requires a current proof: never L7-frontable.
   else if (protocolL7Proof(listener) === 'unsupported') excluded.l7 = 'l7_proof_unsupported';
   // A front that rewrites the Host to a name the node does not answer for is
-  // not a front: the origin would reject every member connection.
-  else if (!l7HostAccepted(ot, opts.l7Host)) excluded.l7 = 'host_header_rejected';
+  // not a front: the origin would reject every member connection. With no
+  // front decided yet, one that sends the origin's own name will do: FCP
+  // builds a new front that way wherever the node needs it (`withOriginHost`),
+  // and a provider that cannot is not a candidate (`frontHostAccepted`).
+  else if (
+    opts.l7Host !== undefined
+      ? !l7HostAccepted(ot, opts.l7Host)
+      : originHostNeeded(ot) && !originHostCarrierExists(listener)
+  )
+    excluded.l7 = 'host_header_rejected';
   else layers.push('l7');
   if (ot.scheme === 'http') excluded.l4 = 'origin_plaintext';
   else if (websocket) excluded.l4 = 'l4_not_for_websocket';

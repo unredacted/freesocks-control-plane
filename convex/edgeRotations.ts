@@ -119,7 +119,12 @@ import {
   protocolUsesSni,
   type ListenerProto,
 } from './lib/edges/protocols';
-import { hostTargetFor, listenerLayers, zoneModeCarriesOrigin } from './lib/edges/layers';
+import {
+  hostTargetFor,
+  listenerLayers,
+  withOriginHost,
+  zoneModeCarriesOrigin,
+} from './lib/edges/layers';
 import { L4_NOT_FOR_WEBSOCKET, l4BarredFor, websocketNodeOf } from './lib/edges/websocketNode';
 import { SIZE_NOT_MULTICLOUD_WORDS, sizeCheckApplies, sizeProblemOf } from './lib/edges/sizeCheck';
 import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayListeners';
@@ -3515,6 +3520,7 @@ export async function selectionContext(
       proto: protoOf(listener),
       originPort: listener.originPort,
       allowL7,
+      originTransport: listener.originTransport,
     },
   );
   const accounts = eligibleAccounts;
@@ -4245,6 +4251,15 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     })),
     ...(hostname ? { hostname, originTransport } : {}),
   };
+  // A node that answers only for its own names gets a front that sends it
+  // that name wherever the provider's template can (`withOriginHost`): the
+  // front name would be refused, whatever the template or the pick chose.
+  const templateParams = withOriginHost(
+    selection.account.provider,
+    selection.template.params,
+    originTransport,
+    hostname,
+  );
   // The EFFECTIVE params (adapter schema defaults applied, placeholders
   // rendered) are what the intent freezes, so a later step never needs the
   // template row again.
@@ -4254,7 +4269,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       accountId: selection.account.id,
       locationId: selection.account.locationId,
       spec,
-      templateParams: selection.template.params,
+      templateParams,
     });
   } catch (err) {
     const { code, detail } = errCode(err);
@@ -4267,7 +4282,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       accountId: selection.account.id,
       locationId: selection.account.locationId,
       spec,
-      templateParams: selection.template.params,
+      templateParams,
       proto: protoOf(selection.listener),
       ...(zoneSslMode ? { zoneSslMode } : {}),
     });

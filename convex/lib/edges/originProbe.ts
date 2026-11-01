@@ -13,8 +13,12 @@
  *    refuses any other way). `certPublic` = the chain verifies against the
  *    system store; `certNames` = the leaf's names; `acceptsHostHeader` =
  *    `'names'` (conservative) unless one HTTP/1.1 request with a FOREIGN Host
- *    header still answers 2xx (`'any'`; never tried on a gRPC origin, which
- *    speaks no HTTP/1.1).
+ *    header gets the transport's own answer (`'any'`, `hostCheckOf`): for
+ *    WebSocket and HTTP Upgrade an upgrade at the transport's path answering
+ *    101 (a terminator that serves only its own name answers a foreign Host
+ *    with an empty 200 at every path, which says nothing about the
+ *    transport); otherwise a `GET /` answering 2xx; never tried on a gRPC
+ *    origin, which speaks no HTTP/1.1.
  *  - anything else (REALITY has no HTTP origin): not probed.
  *
  * Without a successful probe the listener stays L4-only and the plan says so.
@@ -51,12 +55,19 @@ export interface OriginProbeDeps {
     names: string[];
     error?: string;
   }>;
-  /** One request over a fresh handshake with the given Host header; the status line's code, or null. */
+  /**
+   * One request over a fresh handshake with the given Host header; the status
+   * line's code, or null. `GET <path>` (default `/`); `upgrade` = a WebSocket
+   * upgrade (the RFC 6455 handshake headers, which Xray's HTTP Upgrade
+   * transport accepts too).
+   */
   httpsStatus: (opts: {
     host: string;
     port: number;
     servername: string;
     hostHeader: string;
+    path?: string;
+    upgrade?: boolean;
     timeoutMs: number;
   }) => Promise<{ status: number | null; error?: string }>;
 }
@@ -68,6 +79,8 @@ export interface OriginProbeRequest {
   streamTransport: ListenerStreamTransport;
   security: ListenerSecurity;
   tlsNames: string[];
+  /** The transport's own path (`transportParams.path`), where it has one. */
+  path?: string;
 }
 
 export interface OriginProbeOutcome {
@@ -91,6 +104,31 @@ export function probeAlpn(streamTransport: ListenerStreamTransport): string[] {
 /** A Host header no origin serves for on purpose: does the node answer for ANY name? */
 export const FOREIGN_HOST_HEADER = 'origin-probe.invalid';
 const HTTP_TRANSPORTS: ReadonlySet<string> = new Set(['ws', 'httpupgrade', 'grpc', 'xhttp']);
+
+/**
+ * The request the foreign Host is sent with, and the answer that means the node
+ * took it. WebSocket and HTTP Upgrade: an upgrade at the transport's own path,
+ * which only the transport answers with 101. XHTTP keeps a `GET /` answering
+ * 2xx: its answer and a terminator's empty 200 share the status, and the
+ * headers that would tell them apart are not proven across Xray versions.
+ */
+export function hostCheckOf(
+  streamTransport: ListenerStreamTransport,
+  path?: string,
+): { path: string; upgrade: boolean; accepts: (status: number) => boolean } {
+  if (streamTransport === 'ws' || streamTransport === 'httpupgrade')
+    return { path: requestPath(path), upgrade: true, accepts: (s) => s === 101 };
+  return { path: '/', upgrade: false, accepts: (s) => s >= 200 && s < 300 };
+}
+
+/**
+ * A path fit for a request line: the declared one when it is a plain absolute
+ * path (printable, no spaces), else `/` (Xray's default).
+ */
+export function requestPath(path: string | undefined): string {
+  const p = (path ?? '').trim();
+  return /^\/[\x21-\x7e]*$/.test(p) ? p : '/';
+}
 
 function shortReason(s: string | undefined, fallback: string): string {
   const r = (s ?? '').trim();
@@ -153,15 +191,18 @@ export async function probeOriginTransport(
   let acceptsHostHeader: OriginTransport['acceptsHostHeader'] = 'names';
   if (req.streamTransport === 'grpc')
     return out({ scheme: 'https', certPublic: hs.authorized, certNames, acceptsHostHeader });
+  const check = hostCheckOf(req.streamTransport, req.path);
   try {
     const st = await deps.httpsStatus({
       host: dial.host,
       port: req.originPort,
       servername,
       hostHeader: FOREIGN_HOST_HEADER,
+      path: check.path,
+      upgrade: check.upgrade,
       timeoutMs,
     });
-    if (st.status !== null && st.status >= 200 && st.status < 300) acceptsHostHeader = 'any';
+    if (st.status !== null && check.accepts(st.status)) acceptsHostHeader = 'any';
   } catch {
     // The conservative answer stands.
   }

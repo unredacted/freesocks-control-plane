@@ -263,6 +263,7 @@ async function accountFacts(
           proto: l.proto,
           originPort,
           allowL7: true,
+          originTransport: like.originTransport,
         }).length > 0
       )
         fronts.push(l.key);

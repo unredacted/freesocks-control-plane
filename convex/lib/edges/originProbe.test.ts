@@ -7,7 +7,9 @@ import {
   dnsNamesOfSan,
   leafNames,
   FOREIGN_HOST_HEADER,
+  hostCheckOf,
   probeOriginTransport,
+  requestPath,
   type OriginProbeDeps,
   type OriginProbeRequest,
 } from './originProbe';
@@ -75,14 +77,20 @@ describe('probeOriginTransport', () => {
       alpn: ['http/1.1'],
       timeoutMs: 6000,
     });
-    // The Host-acceptance request carries a name no origin serves on purpose.
+    // The Host-acceptance request carries a name no origin serves on purpose,
+    // as a WebSocket upgrade at the transport's own path (`/` when it declares none).
     expect(d.httpsStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ hostHeader: FOREIGN_HOST_HEADER, servername: 'ws.example' }),
+      expect.objectContaining({
+        hostHeader: FOREIGN_HOST_HEADER,
+        servername: 'ws.example',
+        path: '/',
+        upgrade: true,
+      }),
     );
   });
 
-  test("a foreign Host answered 2xx -> 'any'; a private certificate is recorded as not public", async () => {
-    const any = deps({ httpsStatus: async () => ({ status: 200 }) });
+  test("a foreign Host upgraded (101) at the transport's path -> 'any'; a private certificate is recorded as not public", async () => {
+    const any = deps({ httpsStatus: async () => ({ status: 101 }) });
     expect((await probeOriginTransport(any, ws())).originTransport?.acceptsHostHeader).toBe('any');
     const priv = deps({
       tlsInspect: async () => ({ ok: true, authorized: false, names: ['ws.example'] }),
@@ -102,6 +110,49 @@ describe('probeOriginTransport', () => {
     expect((await probeOriginTransport(boom, ws())).originTransport?.acceptsHostHeader).toBe(
       'names',
     );
+  });
+
+  test("a terminator that serves only its own name answers a foreign Host with an empty 200: 'names'", async () => {
+    // Caddy with a site block for the origin name only: no site matches the
+    // foreign Host, so it answers 200 with an empty body at every path. The
+    // old `GET /` check read that as "any Host"; the upgrade is never 101.
+    for (const streamTransport of ['ws', 'httpupgrade'] as const) {
+      const d = deps({ httpsStatus: vi.fn(async () => ({ status: 200 })) });
+      const out = await probeOriginTransport(d, ws({ streamTransport, path: '/ws' }));
+      expect(out.originTransport?.acceptsHostHeader).toBe('names');
+      expect(d.httpsStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ hostHeader: FOREIGN_HOST_HEADER, path: '/ws', upgrade: true }),
+      );
+    }
+    // Any other refusal of the upgrade is `names` too.
+    for (const status of [400, 403, 404, 426, 502]) {
+      const d = deps({ httpsStatus: async () => ({ status }) });
+      expect(
+        (await probeOriginTransport(d, ws({ path: '/ws' }))).originTransport?.acceptsHostHeader,
+      ).toBe('names');
+    }
+    // XHTTP keeps the `GET /` check: 2xx is `any`, at `/`, no upgrade.
+    const x = deps({ httpsStatus: vi.fn(async () => ({ status: 200 })) });
+    expect(
+      (await probeOriginTransport(x, ws({ streamTransport: 'xhttp', path: '/xh' }))).originTransport
+        ?.acceptsHostHeader,
+    ).toBe('any');
+    expect(x.httpsStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/', upgrade: false }),
+    );
+  });
+
+  test('hostCheckOf / requestPath: the upgrade at a request-line-safe path', () => {
+    const w = hostCheckOf('ws', '/ws?ed=2048');
+    expect(w).toMatchObject({ path: '/ws?ed=2048', upgrade: true });
+    expect([101, 200, 404].map(w.accepts)).toEqual([true, false, false]);
+    expect(hostCheckOf('httpupgrade', '/up')).toMatchObject({ path: '/up', upgrade: true });
+    const x = hostCheckOf('xhttp', '/xh');
+    expect(x).toMatchObject({ path: '/', upgrade: false });
+    expect([101, 200, 204, 404].map(x.accepts)).toEqual([false, true, true, false]);
+    for (const bad of [undefined, '', 'ws', '/a b', '/a\r\nHost: x', '/\u00e9'])
+      expect(requestPath(bad)).toBe('/');
+    expect(requestPath(' /ws ')).toBe('/ws');
   });
 
   test('a failed handshake, a nameless TLS listener, a non-HTTP transport and REALITY are not probed into a transport', async () => {

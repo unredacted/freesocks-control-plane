@@ -107,6 +107,10 @@ export function originProbeTargets(
       streamTransport: cand.listenerSpec.streamTransport,
       security: cand.listenerSpec.security,
       tlsNames: cand.listenerSpec.tlsNames ?? [],
+      // A WebSocket / HTTP Upgrade transport's Host answer is asked at its own path.
+      ...(cand.listenerSpec.transportParams?.path
+        ? { path: cand.listenerSpec.transportParams.path }
+        : {}),
     }));
 }
 

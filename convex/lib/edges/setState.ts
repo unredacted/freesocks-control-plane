@@ -116,6 +116,7 @@ export function carries(
       proto,
       originPort: listener.originPort,
       allowL7: true,
+      originTransport: listener.originTransport,
     }).length > 0
   );
 }

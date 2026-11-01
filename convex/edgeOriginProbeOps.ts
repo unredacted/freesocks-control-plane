@@ -2,7 +2,7 @@
 /**
  * The origin probe's `"use node"` half: real sockets for lib/edges/originProbe.ts
  * (TLS with SNI and chain verification, the peer certificate's names, one
- * request with a foreign Host header). One bounded outbound operation per
+ * request or upgrade with a foreign Host header). One bounded outbound operation per
  * target; the isolate side (edgeOriginProbe.ts) reads and writes everything.
  */
 import { v } from 'convex/values';
@@ -67,8 +67,14 @@ const defaultDeps: OriginProbeDeps = {
       );
     });
   },
-  httpsStatus: async ({ host, port, servername, hostHeader, timeoutMs }) => {
+  httpsStatus: async ({ host, port, servername, hostHeader, path, upgrade, timeoutMs }) => {
     const tls = await import('node:tls');
+    const { randomBytes } = await import('node:crypto');
+    // An upgrade is answered by the transport itself (101) and then closed:
+    // nothing is sent through it.
+    const head = upgrade
+      ? `Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString('base64')}\r\n`
+      : 'Connection: close\r\n';
     return new Promise((resolve) => {
       let settled = false;
       let buffered = '';
@@ -82,7 +88,7 @@ const defaultDeps: OriginProbeDeps = {
         { host, port, servername, rejectUnauthorized: false, ALPNProtocols: ['http/1.1'] },
         () => {
           socket.write(
-            `GET / HTTP/1.1\r\nHost: ${hostHeader}\r\nUser-Agent: fcp-origin-probe/1\r\nConnection: close\r\n\r\n`,
+            `GET ${path ?? '/'} HTTP/1.1\r\nHost: ${hostHeader}\r\nUser-Agent: fcp-origin-probe/1\r\n${head}\r\n`,
           );
         },
       );
@@ -115,6 +121,7 @@ export const probe = internalAction({
         streamTransport: listenerProtoFields.streamTransport,
         security: listenerProtoFields.security,
         tlsNames: v.array(v.string()),
+        path: v.optional(v.string()),
       }),
     ),
     timeoutMs: v.optional(v.number()),

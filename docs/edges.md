@@ -277,8 +277,17 @@ probe succeeded and `layers` recomputed: security `none` -> a TCP answer on the 
 `{scheme: http}` (L7-only); `tls` -> a handshake with SNI = the first name, offering the ALPN a
 front would (`h2` alone for gRPC, which an h2-only origin requires; `h2` and `http/1.1` for
 XHTTP; `http/1.1` otherwise), `certPublic` = the chain verifies against the system store,
-`certNames` = the leaf's names, `acceptsHostHeader: names` unless an HTTP/1.1 request with a
-foreign Host header still answers 2xx (`any`; never sent to a gRPC origin). Like the internal
+`certNames` = the leaf's names, `acceptsHostHeader: names` unless a request with a foreign Host
+header gets the transport's own answer (`any`; `hostCheckOf`): for WebSocket and HTTP Upgrade an
+upgrade (the RFC 6455 handshake, which Xray's HTTP Upgrade transport takes too) at the
+transport's own path (`transportParams.path`, `/` when it declares none) answering `101`, for
+XHTTP a `GET /` answering 2xx, never one to a gRPC origin. A terminator that serves only its own
+name (a Caddy site block for the origin name and no catch-all) answers a foreign Host with an
+empty `200` at every path, so a `GET /` cannot tell it from a node that takes any Host; only the
+transport answers an upgrade. XHTTP keeps the `GET /`: its answer and that empty `200` share
+the status, and the response headers that tell them apart are not proven across Xray versions.
+A node read as `names` is fronted by a CDN whose front sends it its own name (§ "Layers", the
+Host a front sends). Like the internal
 reachability probe it dials public literals only (a name is resolved first, every answer must be
 public, the literal is dialled). Without a successful probe the candidate stays L4-only and
 carries the probe's reason. The setup plan asks a target that got no answer again
@@ -326,6 +335,26 @@ standby), and publication (`checkPublishable` answers `l4_not_for_websocket`). T
 says `websocketNode`, so the node page offers CDN accounts only. An L4 edge or pick such a node
 already has (none is expected) is left as it is: never destroyed, never chosen for new work,
 never published. A WebSocket node's backup at another provider is a second CDN.
+
+**The Host a front sends.** A CDN front sends the node either the front's own name or the
+origin's own name (`l7HostHeaderFor`): CloudFront always sends the origin's (capability
+`originHostHeader: origin`), Fastly what its template's `overrideHost` says (`originHostHeader:
+option`), Cloudflare the front's. A node that takes any Host (`acceptsHostHeader: any`) accepts
+either; one that answers only for its certificate names (`names`) accepts the front's name only
+when a certificate name covers it, and the origin's own name always (`l7HostAccepted`). Before a
+front's name is minted, `listenerLayers` keeps L7 open for such a node while a provider that
+carries the transport can send the origin's name, or a first-level wildcard could cover any
+minted name; otherwise L7 is excluded (`host_header_rejected`). Each provider is then judged on
+its own (`frontHostAccepted`): `accountsForSlot` drops one whose front would send its own name,
+so selection never picks it, named or not (`account_incompatible`), and the protect plan gives
+that account the reason `host_header_rejected` ("Node takes only its own name"). A Fastly front
+FCP builds for such a node sends the origin's name whatever the template or the pick chose
+(`withOriginHost`, applied once when the edge is planned, after its name is minted): its intent
+freezes `overrideHost: origin`, the plan marks the account `originHost`, and the Protect sheet
+says so on its picks. The template row and the pick's choices stay as they were, so the template
+hash and the approval shape do not move. An edge planned before keeps the Host its intent froze,
+and publication judges that one (`layer_mismatch` when the node would refuse it). With a decided
+Host (`l7Host`), `listenerLayers` judges exactly that Host.
 
 `hostTargetFor(edge, proto, selectedSni)` is the single source of the Host tuple the backend
 Host and the renderer share: L7 → `{ hostname, 443, sni: hostname, host: hostname }`; L4 HTTP
@@ -1732,10 +1761,13 @@ mode, `externallyFronted`, and its **origin name**). The plan then reads it from
 offered (a WebSocket node takes no load balancer, § "Layers"). The operator's CDN Hosts dial
 their own hostnames, which resolve to the CDN: they are its operator fronts, listed in the plan
 and left out at go-live (`front_host_unused`), while the CDN service itself stays as it is for
-the apps that still hold it. A node whose Caddy answers only for its own name needs the front
-to send that name: choose "Host sent to the node: The node address" (`overrideHost: origin`)
-under the pick's Options. The origin probe cannot tell this on its own when the Caddy answers
-a foreign Host with an empty 200.
+the apps that still hold it. A node whose Caddy answers only for its own name (a site block for
+the origin name, no catch-all) is read so by the origin probe, which asks for an upgrade at the
+transport's path with a foreign Host: the empty `200` such a Caddy answers is not the transport
+(§ "Listener catalogue"). Its fronts then send the node its own name without being asked (§
+"Layers", the Host a front sends): a Fastly pick needs no "Host sent to the node" choice, the
+Protect sheet says so on the pick, and a CDN whose front can only send its own name reads
+`host_header_rejected` in the plan.
 
 What a protect run writes to such a panel, in order:
 
@@ -4109,7 +4141,8 @@ depend on it:
   certificate covers (`origin_cert_name_uncovered` otherwise; also sent as `ssl_sni_hostname`
   and `ssl_cert_hostname`, on port 443); with `overrideHost: 'origin'` (Host = the origin name too, a public certificate
   naming it) it is supported, with `'hostname'` only when the node's verified ingress accepts
-  any Host header; Cloudflare `full`
+  any Host header (a node that answers only for its own names gets `'origin'` on every new front
+  without being asked, § "Layers"); Cloudflare `full`
   (SNI and Host = the edge hostname, served by Caddy's `fallback_sni` plus a catch-all site) is
   supported. Cloudflare `strict` is admitted only for an origin whose certificate is publicly
   trusted (`certPublic`), and it validates the EDGE hostname, which an enrolled node's
