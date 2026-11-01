@@ -804,6 +804,12 @@ const COPY = {
       'The zone’s certificate for its first-level names is still being issued, so the front waits for it.',
     fix: 'Nothing to do: the front carries on once the provider has issued it.',
   },
+  domain_not_activated: {
+    label: 'Name not activated yet',
+    explain:
+      'The certificate is issued, but the provider has not activated it for the front’s own name, and it routes no traffic for a name without one (it answers “unknown domain”).',
+    fix: 'Usually nothing: the front carries on once the provider activates it. If it times out, replace the front.',
+  },
   tls_caa_conflict: {
     label: 'Certificate blocked by CAA',
     explain:

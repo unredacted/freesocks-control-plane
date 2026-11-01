@@ -426,6 +426,17 @@ intent default, § "Fastly fronts"):
   (`shared_certificate_ambiguous`), before anything is built for the front; the account's other
   zones are not held back. An account switched back to one certificate per front still shows
   each wildcard it left behind, without raising it, until it is removed.
+  A front on the wildcard always gets a CLASSIC domain (below, Domains), whatever the account's
+  `domainModel` says, so the wildcard needs an account that still has classic domains (created
+  before 2025-09-16; elsewhere Fastly refuses the domain step and the front fails with its words:
+  use one certificate per front there). Fastly routes a versionless domain only once that
+  domain has a TLS activation of its own, and the wildcard's activation is for `*.<zone>`, never
+  for a front's name: on beta (2026-11-01) such a domain stayed `activated: false` and its name
+  answered "unknown domain" while the wildcard was served, both when it was created before the
+  wildcard was issued (the proof failed `front_error`, the rotation `front_unqualified`) and
+  when it was created after (held 10 minutes). The same front with a classic domain was routed
+  by its version and passed its proof within two minutes of the version's activation, and the
+  first front of a zone, ordering the wildcard, passed at its first proof once it was issued.
 - `per_host` (an account created before, until it is switched): one subscription per front
   hostname, deleted with the edge.
 
@@ -496,13 +507,22 @@ Management) domain: its own resource, linked to the service by id, created and d
 service version. The account setting `domainModel` (an intent default: `versionless` for a new
 account, and for one that does not name it; `classic` allowed) decides it for new edges and is
 frozen into each intent, so an operator whose provider refuses a versionless domain can switch
-to classic without a code change (`EDGE_INTENT_FACTS`). An edge planned before keeps its
+to classic without a code change (`EDGE_INTENT_FACTS`). A front on the zone's shared wildcard
+gets a classic domain whatever the setting says (Certificates above: the wildcard gives no
+versionless domain the activation Fastly routes by). An edge planned before keeps its
 version-scoped (classic) domain, read, renewed and destroyed as before; the adapter reads which
 one an edge has from its ledger (`versionless_domain` or `domain`). Discovery finds a versionless
 domain by its exact name and owns it only when it is linked to the edge's own service; DNS
-readiness is that link plus the traffic record as the zone holds it now, read back and still
-pointing at the CNAME of the front's TLS configuration (no version holds the domain, so there
-is no domain check to run); destroy deletes it by id after the certificate and before the
+readiness is that link, the traffic record as the zone holds it now (read back and still
+pointing at the CNAME of the front's TLS configuration; no version holds the domain, so there
+is no domain check to run) and the domain's `activated` flag. Fastly routes a versionless
+domain only once it has a TLS activation ("has at least one TLS activation" is what
+`activated` means); without one every request to the name gets "unknown domain", however the
+certificate and the record look. A domain the provider reports `activated: false` keeps the
+front pending with `domain_not_activated` (one of `L7_CERTIFICATE_CODES`: kept on
+`edges.waiting`, raised as `certificate_waiting`, and the code a provision that times out on it
+ends with), instead of letting the front proof fail with a generic `front_error`; a response
+without the flag holds nothing. Destroy deletes it by id after the certificate and before the
 service, on a shared service too (no version workflow). Fastly offers classic domains only to
 accounts created before 2025-09-16; its documentation names no service-type limit for
 versionless ones (the domain page creates a CDN or a Compute service for one), and the WebSockets
@@ -4792,7 +4812,8 @@ certificate authority and `certificateScope` are certificate option defaults, an
 is ten steps: the VCL service, its one origin backend, the WebSocket upgrade snippet, the domain
 (versionless, or classic when the account says so),
 the WebSockets product, the version activation, the certificate (the hostname's own or the
-zone's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME
+zone's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME. A
+front on the zone's wildcard always gets a classic domain
 (§ "L7 edges" for certificates, the CAA preflight, waiting codes and domains).
 
 **The origin backend.** The origin must listen on its scheme's own port (443 over TLS, 80
@@ -4824,7 +4845,8 @@ gone), so a service deleted under a ledger that never recorded it cannot leave t
   change it untrusts the account's locations, and as a certificate default it marks the account
   untested (`retest_required`): test the account again (each zone's CAA preflight then checks
   `issuewild`), and its next proven front trusts it again. Fronts that exist keep their own
-  certificates until they are replaced.
+  certificates until they are replaced. The wildcard's fronts get classic domains, so it works
+  only on an account created before September 2025.
 - **CAA.** Allow the account's CA at the zone (or wherever its CAA records sit, up the tree) with
   `issue`, and with `issuewild` for the wildcard: `0 issue "certainly.com"` and
   `0 issuewild "certainly.com"` for Certainly.

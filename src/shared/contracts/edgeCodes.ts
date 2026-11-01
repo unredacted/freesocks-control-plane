@@ -229,6 +229,8 @@ export const L7_CERTIFICATE_CODES = [
   // a Cloudflare zone's edge certificate (`*.<zone>`) is still being issued, or none is on its way
   'edge_certificate_pending',
   'edge_certificate_missing',
+  // a Fastly front's versionless domain has no TLS activation, so Fastly does not route its name
+  'domain_not_activated',
 ] as const;
 export type L7CertificateCode = (typeof L7_CERTIFICATE_CODES)[number];
 

@@ -1354,7 +1354,7 @@ describe('wire contract: fastly', () => {
     type: 'fastly',
     apiToken: 'SECRET_FASTLY_TOKEN',
     certificateAuthority: 'certainly',
-    // An edge on a version-scoped (classic) domain; `newEdgeLifecycle` drives a versionless one.
+    // An edge on a version-scoped (classic) domain; `newEdgeLifecycle` drives the new kinds.
     domainModel: 'classic',
     dns: {
       apiToken: 'SECRET_CF_TOKEN',
@@ -1510,26 +1510,33 @@ describe('wire contract: fastly', () => {
     return rec;
   }
 
-  /** A NEW edge: a versionless domain and the account's shared wildcard certificate. */
+  /**
+   * NEW edges: a versionless domain with its own certificate, and a front on the
+   * account's shared wildcard (whose domain is classic: Fastly routes a
+   * versionless one only with an activation of its own).
+   */
   async function newEdgeLifecycle(): Promise<void> {
-    const cfgNew: FastlyConfig = {
-      ...cfg,
-      domainModel: 'versionless',
-      certificateScope: 'wildcard',
-    };
-    let ledger: Ledger = { steps: [], resources: [] };
-    const steps = fastlyProvider.planProvision(cfgNew, spec, tpl);
-    for (const step of steps) {
-      const out = await fastlyProvider.runStep(cfgNew, step, spec, tpl, ledger);
-      ledger = apply(ledger, step, out);
+    for (const certificateScope of ['per_host', 'wildcard'] as const) {
+      const cfgNew: FastlyConfig = { ...cfg, domainModel: 'versionless', certificateScope };
+      let ledger: Ledger = { steps: [], resources: [] };
+      const steps = fastlyProvider.planProvision(cfgNew, spec, tpl);
+      for (const step of steps) {
+        const out = await fastlyProvider.runStep(cfgNew, step, spec, tpl, ledger);
+        ledger = apply(ledger, step, out);
+        if (out.status === 'requested') {
+          const polled = await fastlyProvider.pollStep!(cfgNew, step, out.opRef, ledger);
+          ledger = apply(ledger, step, polled);
+        }
+      }
+      const domainKind = certificateScope === 'wildcard' ? 'domain' : 'versionless_domain';
+      expect(ledger.resources.map((r) => r.kind)).toContain(domainKind);
+      for (const step of steps) await fastlyProvider.discover(cfgNew, step, spec, ledger, 1);
+      await fastlyProvider.describe(cfgNew, ledger);
+      if (certificateScope === 'wildcard') await fastlyProvider.sharedCertificate!(cfgNew);
+      expect(await destroyAll(fastlyProvider as never, cfgNew as never, ledger)).toContain(
+        domainKind,
+      );
     }
-    expect(ledger.resources.map((r) => r.kind)).toContain('versionless_domain');
-    for (const step of steps) await fastlyProvider.discover(cfgNew, step, spec, ledger, 1);
-    await fastlyProvider.describe(cfgNew, ledger);
-    await fastlyProvider.sharedCertificate!(cfgNew);
-    expect(await destroyAll(fastlyProvider as never, cfgNew as never, ledger)).toContain(
-      'versionless_domain',
-    );
   }
 
   test('the lifecycle stays inside the contract and exercises all of it', async () => {

@@ -457,6 +457,8 @@ async function loadAdapter(
   locationId?: Id<'edgeLocations'>,
   /** A placement no location holds yet (a location being created is checked with it). */
   rawPlacement?: Record<string, unknown>,
+  /** Planning a new edge: the pick's choices, whose certificate the edge's intent will freeze. */
+  planChoices?: Record<string, unknown> | null,
 ): Promise<{
   provider: EdgeProvider;
   cfg: EdgeProviderConfig;
@@ -516,11 +518,13 @@ async function loadAdapter(
     const into = cfg as unknown as Record<string, unknown>;
     if ((into[key] === undefined || into[key] === '') && observed[fact]) into[key] = observed[fact];
   }
-  // The account's certificate option defaults (planning a NEW edge reads
-  // them; a node's own choices reach a new edge through its intent).
+  // The account's certificate option defaults, under the pick's own choice
+  // when a new edge is planned with one: the same values `commitSelection`
+  // freezes into its intent, so the plan (which steps, in which order, named
+  // for which certificate) is the one the steps then run with.
   Object.assign(
     cfg as unknown as Record<string, unknown>,
-    certificateValuesFor(acct.provider, accountOptionDefaultsOf(acct), null),
+    certificateValuesFor(acct.provider, accountOptionDefaultsOf(acct), planChoices ?? null),
   );
   // Acting on an EXISTING edge: every setting the intent froze wins over the
   // account row and any location: the zone its records live in, the DNS
@@ -1848,6 +1852,8 @@ export const planProvision = internalAction({
     proto: v.optional(v.object(listenerProtoFields)),
     /** The zone's observed encryption mode (L7), checked against the origin transport. */
     zoneSslMode: v.optional(v.string()),
+    /** The pick's choices (its certificate decides the plan, as it decides the intent). */
+    choices: v.optional(v.any()),
   },
   handler: (ctx, a): Promise<ResourceStep[]> => {
     const names: string[] = [];
@@ -1859,6 +1865,8 @@ export const planProvision = internalAction({
         undefined,
         undefined,
         a.locationId,
+        undefined,
+        (a.choices as Record<string, unknown> | undefined) ?? null,
       );
       refusalNames(names, { cfg });
       const tpl = renderedTemplate(provider, a.templateParams, a.spec, a.zoneSslMode);

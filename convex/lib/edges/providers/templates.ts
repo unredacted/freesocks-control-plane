@@ -1618,7 +1618,7 @@ export const FASTLY_CERTIFICATE_FIELDS: TemplateFieldDescriptor[] = [
     prominent: true,
     // What an account from before the choice existed (and its fronts) use.
     default: 'per_host',
-    help: 'A wildcard is issued once for the zone and shared: a new front never waits for a certificate, and its name never appears in public certificate logs before members use it.',
+    help: 'A wildcard is issued once for the zone and shared: a new front never waits for a certificate, and its name never appears in public certificate logs before members use it. Its fronts get classic domains, which exist only on accounts created before September 2025.',
     options: [
       { value: 'wildcard', label: 'One wildcard for every front' },
       { value: 'per_host', label: 'One per front' },
