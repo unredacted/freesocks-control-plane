@@ -310,7 +310,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'servers.setup.group_renamed': ['backendSlug', 'from', 'to'],
   'servers.setup.templates_installed': ['backendSlug', 'templates', 'written'],
   'servers.node.registered': ['backendSlug', 'name', 'mode'],
-  'servers.node.adopted': ['backendSlug', 'name', 'mode', 'addresses'],
+  'servers.node.adopted': ['backendSlug', 'name', 'mode', 'addresses', 'originName'],
   'servers.profile.transition': ['backendSlug', 'closed', 'held', 'acknowledged'],
   'servers.profile.transition_released': ['backendSlug', 'held'],
   'servers.node.settings': ['backendSlug', 'name', 'change'],

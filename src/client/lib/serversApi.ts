@@ -180,7 +180,13 @@ export const fetchRenames = (slug: string) =>
 /** Adopt a node that already serves members, as it is (live at once). */
 export const adoptNode = (
   slug: string,
-  body: { nodeUuid: string; mode: string; externallyFronted?: boolean; hostUuids?: string[] },
+  body: {
+    nodeUuid: string;
+    mode: string;
+    externallyFronted?: boolean;
+    hostUuids?: string[];
+    originHostname?: string;
+  },
 ) => apiClient.post(`${slugPath(slug)}/nodes/adopt`, body, AdoptNodeResult);
 /** Release the hold a shared change put on nodes FCP does not manage. */
 export const releaseHold = (slug: string, holdId: string) =>

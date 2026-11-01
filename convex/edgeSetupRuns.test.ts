@@ -31,6 +31,7 @@ import {
 } from './edgeSetupRuns';
 import type { RealityClientRefusal } from '../src/shared/contracts/realityClients';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
+import { __setNameResolutionForTests } from './nodeIntentOps';
 import { upsertSettingRow } from './appSettings';
 import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 import type { BackendTransport } from './lib/backends/types';
@@ -2730,6 +2731,22 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
         }),
       ),
     ).toBe('edge.origin_not_ip');
+  });
+
+  test('a front the operator built at a name of its own (a CDN hostname) is listed as one once its name resolves elsewhere', async () => {
+    __setNameResolutionForTests(async (name) =>
+      name === 'cdn-front.example.net' ? { v4: ['198.51.100.77'], v6: [] } : { v4: [], v6: [] },
+    );
+    try {
+      const { t, serverId } = await seedFronted({
+        hosts: [frontHost({ remark: 'node-one-ws-6a536a', address: 'cdn-front.example.net' })],
+      });
+      const plan = await planWith(t, serverId, { originAddress: ORIGIN });
+      expect(plan.frontHosts).toEqual([{ uuid: HOST_LB, remark: 'node-one-ws-6a536a' }]);
+      expect(plan.directHosts).toEqual([]);
+    } finally {
+      __setNameResolutionForTests(null);
+    }
   });
 
   test('a load balancer is never created, named or reused for an origin it cannot forward to, whoever asks', async () => {

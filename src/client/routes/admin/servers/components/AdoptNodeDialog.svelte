@@ -5,7 +5,9 @@
    * with its current addresses, nothing a member holds changes. A direct node's
    * addresses are found by its name or address unless the operator ticks them.
    * A fronted node whose edge FCP does not run yet is marked so; Edges takes
-   * over later. A REALITY transport that refuses sing-box or Mihomo clients
+   * over later. A WebSocket node is given its origin name (what its CDN
+   * fronts dial) here, since an adopted machine's settings never change
+   * afterwards and Edges dials that name. A REALITY transport that refuses sing-box or Mihomo clients
    * (no minClientVer on an Xray that then refuses them) is named with its fix.
    *
    * Props: open (bindable), slug, node (name + uuid), modes (the setup's), tree (the backend's)
@@ -15,6 +17,7 @@
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
   import { Checkbox } from '@client/components/ui/checkbox';
+  import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import { Switch } from '@client/components/ui/switch';
   import { adoptNode, invalidateServers } from '@client/lib/serversApi';
@@ -35,6 +38,7 @@
   const uid = $props.id();
   let mode = $state('');
   let externallyFronted = $state(false);
+  let originHostname = $state('');
   let busy = $state(false);
   // Ticked addresses (none: FCP finds them by the node's name or address).
   let hostUuids = $state<string[]>([]);
@@ -47,10 +51,13 @@
     openedFor = target;
     mode = '';
     externallyFronted = false;
+    originHostname = '';
     hostUuids = [];
   });
   let picked = $derived(modes.find((m) => m.slug === mode) ?? null);
   let fronted = $derived(!!picked && picked.shape.fronting !== 'direct');
+  // A WebSocket node is reached through a CDN front that dials its origin name.
+  let websocket = $derived(!!picked && picked.shape.transport === 'ws');
   // The addresses on the picked direct mode's transport, from the last look.
   let candidates = $derived.by(() => {
     if (!picked || fronted || !tree) return [];
@@ -86,6 +93,9 @@
         mode,
         externallyFronted: fronted && externallyFronted,
         ...(!fronted && named.length > 0 ? { hostUuids: named } : {}),
+        ...(websocket && originHostname.trim() !== ''
+          ? { originHostname: originHostname.trim() }
+          : {}),
       });
       toast.success(
         r.addresses > 0
@@ -164,6 +174,22 @@
             {/each}
           </ul>
         </fieldset>
+      {/if}
+      {#if websocket}
+        <div class="space-y-1.5">
+          <Label for={`${uid}-origin`}>Origin name</Label>
+          <Input
+            id={`${uid}-origin`}
+            bind:value={originHostname}
+            placeholder="node.example.org"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="text-muted-foreground text-sm">
+            The name its CDN fronts dial, the one its certificate is for. Fronts FCP builds for it
+            dial the same name. It cannot be changed once the node is adopted.
+          </p>
+        </div>
       {/if}
       {#if fronted}
         <div class="flex items-center gap-3">

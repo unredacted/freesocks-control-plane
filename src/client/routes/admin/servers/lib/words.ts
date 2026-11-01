@@ -448,6 +448,8 @@ const ERROR_WORDS: Record<string, string> = {
   'servers.node_offline': 'The node is not connected to the backend.',
   'servers.origin_hostname_missing':
     'This front node has no origin name yet. Give the backend a zone for origin names (Change setup), or set a hostname under Settings.',
+  'servers.origin_name_in_use':
+    'Another node of this backend already has this origin name. Each node has its own.',
   'servers.origin_name_taken':
     'Something else holds a DNS record at the origin name. Free it in the zone, then try again.',
   'servers.origin_not_resolving': 'The origin name does not resolve to the node yet.',

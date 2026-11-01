@@ -14,7 +14,12 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
-import { MAX_NODE_NAME_LOOKUPS, classifyDirectHosts, listingHash } from './lib/edges/directHosts';
+import {
+  MAX_NODE_NAME_LOOKUPS,
+  classifyDirectHosts,
+  listingHash,
+  namesElsewhere,
+} from './lib/edges/directHosts';
 import { cohortPage, type Cohort, type CohortCursor, type CohortPage } from './lib/edges/cohorts';
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
 import { HOST_OP_TTL_MS, HOST_SETTLE_MS } from './hostOps';
@@ -239,6 +244,36 @@ describe('classifyDirectHosts (pure)', () => {
     );
     expect(a).not.toBe(b);
     expect(c).toBe(a);
+  });
+});
+
+describe('namesElsewhere (pure)', () => {
+  const ctx = { originAddress: 'origin.example.net', alsoAddresses: ['192.0.2.10'] };
+  test('a name whose IPv4 answers are none of the node is elsewhere; the origin and node names never are', () => {
+    expect(
+      namesElsewhere(
+        ctx,
+        {
+          'origin.example.net': ['192.0.2.10', '2001:db8::10'],
+          'cdn.example.net': ['198.51.100.7', '2001:db8:1::7'],
+          'alias.example.net': ['2001:db8::10'],
+        },
+        ['alias.example.net', '2001:db8::10'],
+      ),
+    ).toEqual(['cdn.example.net']);
+  });
+  test('a name with no IPv4 answer (its A lookup failed) or any answer that is the node is not', () => {
+    expect(
+      namesElsewhere(
+        ctx,
+        {
+          'v6only.example.net': ['2001:db8:1::8'],
+          'none.example.net': [],
+          'shares.example.net': ['198.51.100.9', '192.0.2.10'],
+        },
+        [],
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -1142,7 +1177,85 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     expect((await relay()).operatorFronts).toBeUndefined();
   });
 
-  test('a Host at the node itself, or at an edge, is never a front; nor is one by a name (a failed lookup could hide the node)', async () => {
+  test('a front at a name of its own (a CDN hostname) is one once a look resolves the name elsewhere', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const NAMED = 'f5f5f5f5-f5f5-4f5f-8f5f-f5f5f5f5f5f5';
+    const CDN = 'cdn-front.example.net';
+    __setNameResolutionForTests(async (name) =>
+      name === CDN ? { v4: ['198.51.100.77'], v6: ['2001:db8:1::77'] } : { v4: [], v6: [] },
+    );
+    try {
+      const named = { ...front(), uuid: NAMED, remark: `${FIXTURE_NODE}-ws-6a536a`, address: CDN };
+      const { t, relayId, download, relay } = await world({
+        hosts: [...panelHosts().filter((h) => h.uuid === FCP_UUID), named],
+      });
+      await t.action(internal.edgeHostHides.observe, { relayId });
+      expect((await relay()).operatorFronts).toMatchObject({
+        remarks: [named.remark],
+        hostUuids: [NAMED],
+      });
+      // Its name is never kept as one of the node's addresses.
+      expect((await relay()).nodeAddresses ?? []).not.toContain(CDN);
+      const res = await download();
+      expect(res.status).toBe(200);
+      expect(res.body).not.toContain(CDN);
+      expect(res.body).toContain(EDGE_A);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect((await relay()).withheldEntries?.remarks).toEqual([named.remark]);
+      const items = (await t.query(internal.edgeOperator.attention, {})).items;
+      expect(items.find((i) => i.kind === 'direct_host_reappeared')).toBeUndefined();
+      expect(items.find((i) => i.kind === 'front_host_unused')).toMatchObject({
+        severity: 'info',
+        facts: { count: 1, remarks: [named.remark] },
+      });
+      // The reconcile's look keeps it known and raises nothing.
+      await t.action(internal.edgeHostHides.reobserveDirect, {});
+      expect((await relay()).operatorFronts?.hostUuids).toEqual([NAMED]);
+      expect((await relay()).directHostAlert).toBeUndefined();
+    } finally {
+      __setNameResolutionForTests(null);
+    }
+  });
+
+  test('a name that answers no IPv4 address, or answers one of the node, is never a front', async () => {
+    __setNameResolutionForTests(async (name) =>
+      name === 'v6only.example.net'
+        ? { v4: [], v6: ['2001:db8:1::78'] }
+        : name === 'alias.example.net'
+          ? { v4: ['198.51.100.79', FIXTURE_ORIGIN], v6: [] }
+          : { v4: [], v6: [] },
+    );
+    try {
+      const { t, relayId, relay } = await world({
+        hosts: [
+          ...panelHosts().filter((h) => h.uuid === FCP_UUID),
+          {
+            ...front(),
+            uuid: 'f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6',
+            remark: 'by-v6-name',
+            address: 'v6only.example.net',
+          },
+          {
+            ...front(),
+            uuid: 'f7f7f7f7-f7f7-4f7f-8f7f-f7f7f7f7f7f7',
+            remark: 'by-alias',
+            address: 'alias.example.net',
+          },
+        ],
+      });
+      const obs = await t.action(internal.edgeHostHides.observe, { relayId });
+      expect((await relay()).operatorFronts).toBeUndefined();
+      // The one that answers the node is the node: a direct Host.
+      expect(obs.direct.covered.map((h) => h.uuid)).toEqual([
+        'f7f7f7f7-f7f7-4f7f-8f7f-f7f7f7f7f7f7',
+      ]);
+    } finally {
+      __setNameResolutionForTests(null);
+    }
+  });
+
+  test('a Host at the node itself, or at an edge, is never a front; nor is one by a name no lookup answered (it could be the node)', async () => {
     const { t, relayId, relay } = await world({
       hosts: [
         ...panelHosts(),

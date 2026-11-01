@@ -795,6 +795,144 @@ describe('an adopted node whose edge FCP does not run', () => {
   });
 });
 
+describe("an adopted WebSocket node's origin name", () => {
+  /** A front node an earlier tool made: one Host at its CDN front's name. */
+  async function legacyFront(s: Seeded, name: string, n: number) {
+    s.panel.nodes.push({
+      uuid: UUID(n),
+      name,
+      address: '192.0.2.61',
+      port: 2222,
+      countryCode: 'XX',
+      isDisabled: false,
+      lastStatusChange: 't0',
+      configProfile: {
+        activeConfigProfileUuid: s.panel.profiles[0].uuid,
+        activeInbounds: [s.ws],
+      },
+    });
+    s.panel.hosts.push({
+      uuid: UUID(n + 1),
+      remark: `${name}-ws-6a536a`,
+      address: `cdn-${name}.example.net`,
+      port: 443,
+      sni: `cdn-${name}.example.net`,
+      host: `cdn-${name}.example.net`,
+      securityLayer: 'TLS',
+      inbound: {
+        configProfileUuid: s.panel.profiles[0].uuid,
+        configProfileInboundUuid: s.ws.uuid,
+      },
+      isDisabled: false,
+    });
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    return UUID(n);
+  }
+  const codeOf = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (e: unknown) => (e as { data?: { code?: string } }).data?.code ?? String(e),
+    );
+
+  test('is the origin edges dial, with the ingress its fronts reach the transport by', async () => {
+    const s = await seed();
+    const nodeUuid = await legacyFront(s, 'legacy-g', 410);
+    const { intentId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'freedom-ws',
+      externallyFronted: true,
+      originHostname: ' Origin-G.Example.NET. ',
+    });
+    const intent = (await intentOf(s.t, intentId))!;
+    expect(intent.settings).toMatchObject({
+      originHostnameSource: 'explicit',
+      explicitHostname: 'origin-g.example.net',
+    });
+    // Live at once, at the revision it was adopted at: nothing waits for the role.
+    expect(intent).toMatchObject({ machineRevision: 1, delivery: { disposition: 'live' } });
+    const origin = await s.t.run((ctx) => enrolledOriginOf(ctx, s.serverId, 'legacy-g'));
+    expect(origin).toMatchObject({
+      originAddress: 'origin-g.example.net',
+      ingress: {
+        hostname: 'origin-g.example.net',
+        external: { port: 443, tls: 'caddy' },
+        internal: [{ inboundTag: s.ws.tag, path: '/ws', port: 8443 }],
+      },
+      acceptsAnyHost: false,
+      mode: 'freedom-ws',
+    });
+    // The management address stays only how the backend reaches it.
+    expect(origin!.directAddresses).toEqual(['192.0.2.61']);
+  });
+
+  test("is a DNS name, on a WebSocket node only, and never another node's", async () => {
+    const s = await seed();
+    const g = await legacyFront(s, 'legacy-g', 420);
+    const h = await legacyFront(s, 'legacy-h', 430);
+    const { nodeUuid: direct } = await legacyDirect(s, {
+      name: 'legacy-d',
+      uuid: 440,
+      hostUuid: 441,
+    });
+    const adopt = (nodeUuid: string, mode: string, originHostname: string) =>
+      codeOf(
+        s.t.mutation(internal.nodeIntents.adoptNode, {
+          backendServerId: s.serverId,
+          nodeUuid,
+          mode,
+          externallyFronted: mode === 'freedom-ws',
+          originHostname,
+        }),
+      );
+    expect(await adopt(g, 'freedom-ws', '203.0.113.9')).toBe('validation');
+    expect(await adopt(g, 'freedom-ws', 'localhost')).toBe('validation');
+    expect(await adopt(g, 'freedom-ws', 'not a name')).toBe('validation');
+    expect(await adopt(direct, 'privacy-reality', 'legacy-d.example.net')).toBe('validation');
+    expect(await adopt(g, 'freedom-ws', 'origin.example.net')).toBeNull();
+    expect(await adopt(h, 'freedom-ws', 'ORIGIN.example.net')).toBe('servers.origin_name_in_use');
+    // Left blank, the node is adopted without one (as before).
+    expect(await adopt(h, 'freedom-ws', '  ')).toBeNull();
+  });
+
+  test('a machine setting is never changed for an adopted node: the role would never apply it', async () => {
+    const s = await seed();
+    const nodeUuid = await legacyFront(s, 'legacy-g', 450);
+    const { intentId } = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'freedom-ws',
+      externallyFronted: true,
+    });
+    for (const patch of [
+      { explicitHostname: 'origin-g.example.net' },
+      { publishV6: true },
+      { nodePort: 2223 },
+    ])
+      expect(
+        await codeOf(
+          s.t.mutation(internal.nodeIntents.patchSettings, {
+            intentId,
+            patch,
+            maintenance: true,
+          }),
+        ),
+      ).toBe('servers.node_adopted');
+    const still = (await intentOf(s.t, intentId))!;
+    expect(still).toMatchObject({ machineRevision: 1, delivery: { disposition: 'live' } });
+    expect(still.maintenance).toBeUndefined();
+    // A country is the backend row's, not the machine's: still allowed.
+    expect(
+      (
+        await s.t.mutation(internal.nodeIntents.patchSettings, {
+          intentId,
+          patch: { countryCode: 'de' },
+        })
+      ).change,
+    ).toBe('none');
+  });
+});
+
 describe('a node Edges already protect', () => {
   /** The node, and an origin Edges built for it while FCP did not manage it, with one L4 address. */
   async function protectedLegacy(s: Seeded, opts: { verified: boolean; publish: boolean }) {
