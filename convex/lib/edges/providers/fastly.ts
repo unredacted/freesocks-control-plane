@@ -46,7 +46,9 @@
  * it once, records it as `shared` (never deleted by an edge's destroy), and the
  * wait finishes at once when it is already issued. Its ACME record lives at
  * `_acme-challenge.<zone>` with a marker naming the subscription, and is
- * shared the same way.
+ * shared the same way. A wildcard front's versionless domain is created after
+ * the wait (`domainAfterCertificate`), and readiness waits for the domain's
+ * own `activated` flag: Fastly routes nothing to a domain without one.
  */
 import { z } from 'zod';
 import type {

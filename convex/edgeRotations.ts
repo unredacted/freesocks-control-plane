@@ -4270,6 +4270,9 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       templateParams: selection.template.params,
       proto: protoOf(selection.listener),
       ...(zoneSslMode ? { zoneSslMode } : {}),
+      // The certificate the intent will freeze: a pick's wildcard plans a
+      // wildcard edge even where the account's default is one per front.
+      ...(selection.template.choices !== null ? { choices: selection.template.choices } : {}),
     });
   } catch (err) {
     const { code, detail } = errCode(err);

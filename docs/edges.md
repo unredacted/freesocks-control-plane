@@ -391,8 +391,16 @@ intent default, § "Fastly fronts"):
   (`shared_certificate_ambiguous`), before anything is built for the front; the account's other
   zones are not held back. An account switched back to one certificate per front still shows
   each wildcard it left behind, without raising it, until it is removed.
+  A front with a versionless domain (below, Domains) gets that domain only once the wildcard is
+  issued: its steps run the certificate, its ACME record and the wait BEFORE the domain (then
+  the WebSockets product, the version activation and the traffic record). Fastly links a
+  versionless domain to the TLS activation that covers it when the domain is created; one
+  created before the zone's wildcard was activated never got an activation of its own, and
+  Fastly answered "unknown domain" for its name (a beta walk, 2026-11-01: the proof failed
+  `front_error`, the rotation `front_unqualified`), while its certificate served.
 - `per_host` (an account created before, until it is switched): one subscription per front
-  hostname, deleted with the edge.
+  hostname, deleted with the edge. It is ordered for a domain that already exists, so these
+  fronts keep the domain first.
 
 **What discovery cannot prove is ours.** A resource discovery finds by name but cannot prove
 belongs to the edge (a record at the edge's name with another marker, a subscription ordered
@@ -465,9 +473,16 @@ to classic without a code change (`EDGE_INTENT_FACTS`). An edge planned before k
 version-scoped (classic) domain, read, renewed and destroyed as before; the adapter reads which
 one an edge has from its ledger (`versionless_domain` or `domain`). Discovery finds a versionless
 domain by its exact name and owns it only when it is linked to the edge's own service; DNS
-readiness is that link plus the traffic record as the zone holds it now, read back and still
-pointing at the CNAME of the front's TLS configuration (no version holds the domain, so there
-is no domain check to run); destroy deletes it by id after the certificate and before the
+readiness is that link, the traffic record as the zone holds it now (read back and still
+pointing at the CNAME of the front's TLS configuration; no version holds the domain, so there
+is no domain check to run) and the domain's `activated` flag. Fastly routes a versionless
+domain only once it has a TLS activation ("has at least one TLS activation" is what
+`activated` means); without one every request to the name gets "unknown domain", however the
+certificate and the record look. A domain the provider reports `activated: false` keeps the
+front pending with `domain_not_activated` (one of `L7_CERTIFICATE_CODES`: kept on
+`edges.waiting`, raised as `certificate_waiting`, and the code a provision that times out on it
+ends with), instead of letting the front proof fail with a generic `front_error`; a response
+without the flag holds nothing. Destroy deletes it by id after the certificate and before the
 service, on a shared service too (no version workflow). Fastly offers classic domains only to
 accounts created before 2025-09-16; its documentation names no service-type limit for
 versionless ones (the domain page creates a CDN or a Compute service for one), and the WebSockets
@@ -4720,7 +4735,9 @@ certificate authority and `certificateScope` are certificate option defaults, an
 is ten steps: the VCL service, its one origin backend, the WebSocket upgrade snippet, the domain
 (versionless, or classic when the account says so),
 the WebSockets product, the version activation, the certificate (the hostname's own or the
-zone's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME
+zone's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME. A
+front on the zone's wildcard with a versionless domain runs the three certificate steps right
+after the snippet, so its domain is created once the wildcard is issued
 (§ "L7 edges" for certificates, the CAA preflight, waiting codes and domains).
 
 **The origin backend.** The origin must listen on its scheme's own port (443 over TLS, 80
