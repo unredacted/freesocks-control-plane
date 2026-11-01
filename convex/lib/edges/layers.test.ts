@@ -1,11 +1,16 @@
 import { describe, expect, test } from 'vitest';
 import {
   certCovers,
+  frontHostAccepted,
   hostTargetFor,
   l7HostHeaderFor,
   listenerAllowsLayer,
   listenerLayers,
   matchesCertName,
+  originHostNeeded,
+  originHostSupport,
+  originNameServes,
+  withOriginHost,
   zoneModeCarriesOrigin,
   type OriginTransport,
 } from './layers';
@@ -16,6 +21,11 @@ const names = (...list: string[]) => list.map((name) => ({ name, status: 'active
 const REALITY: ListenerProto = { protocol: 'vless', streamTransport: 'raw', security: 'reality' };
 const TLS: ListenerProto = { protocol: 'vless', streamTransport: 'raw', security: 'tls' };
 const WS: ListenerProto = { protocol: 'vless', streamTransport: 'ws', security: 'tls' };
+const UPGRADE: ListenerProto = {
+  protocol: 'vless',
+  streamTransport: 'httpupgrade',
+  security: 'tls',
+};
 const GRPC: ListenerProto = { protocol: 'vless', streamTransport: 'grpc', security: 'tls' };
 const TROJAN_WS: ListenerProto = { protocol: 'trojan', streamTransport: 'ws', security: 'tls' };
 const SS: ListenerProto = { protocol: 'shadowsocks', streamTransport: 'raw', security: 'none' };
@@ -160,30 +170,59 @@ describe('listenerLayers', () => {
     // A covered hostname is accepted.
     expect(listenerLayers(listener, { l7Host: 'a.example.org' }).layers).toEqual(['l4', 'l7']);
   });
-  test('with no Host decided yet, only a first-level wildcard admits L7', () => {
-    const exact = listenerLayers({
+  test('with no front decided yet, a node that answers only for its own names stays L7 where a front can send that name', () => {
+    const own = httpsOrigin({ certNames: ['origin.example.org'], acceptsHostHeader: 'names' });
+    // WebSocket: some provider's front sends the origin's own name (a template
+    // option, or always), so L7 stays open; each provider is judged on its own
+    // (`frontHostAccepted`).
+    const ws = listenerLayers({
       ...WS,
-      originTransport: {
-        scheme: 'http',
-        certPublic: false,
-        certNames: ['a.example.org'],
-        acceptsHostHeader: 'names',
-      },
-      tlsNames: [],
+      originTransport: own,
+      tlsNames: names('origin.example.org'),
     });
-    expect(exact.layers).toEqual([]);
-    expect(exact.excluded.l7).toBe('host_header_rejected');
-    const wildcard = listenerLayers({
-      ...WS,
-      originTransport: {
-        scheme: 'http',
-        certPublic: false,
-        certNames: ['*.example.org'],
-        acceptsHostHeader: 'names',
-      },
-      tlsNames: [],
-    });
-    expect(wildcard.layers).toEqual(['l7']);
+    expect(ws.layers).toEqual(['l4', 'l7']);
+    expect(ws.excluded.l7).toBeUndefined();
+    expect(
+      listenerLayers(
+        { ...WS, originTransport: own, tlsNames: names('origin.example.org') },
+        { websocketNode: true },
+      ).layers,
+    ).toEqual(['l7']);
+    // HTTP Upgrade and gRPC: no provider that carries them can send the
+    // origin's name, so only a first-level wildcard admits L7.
+    for (const proto of [UPGRADE, GRPC]) {
+      const exact = listenerLayers({ ...proto, originTransport: own, tlsNames: [] });
+      expect(exact.layers).toEqual([]);
+      expect(exact.excluded.l7).toBe('host_header_rejected');
+      const wildcard = listenerLayers({
+        ...proto,
+        originTransport: httpsOrigin({ certNames: ['*.example.org'], acceptsHostHeader: 'names' }),
+        tlsNames: [],
+      });
+      expect(wildcard.layers).toEqual(['l7']);
+    }
+    // Known to be dialled at an address that is not one of its names (an IP, another
+    // name): no front could send it a name it serves, so L7 closes.
+    for (const originAddress of ['203.0.113.10', 'elsewhere.example.net'])
+      expect(
+        listenerLayers(
+          { ...WS, originTransport: own, tlsNames: names('origin.example.org') },
+          { originAddress },
+        ).excluded.l7,
+      ).toBe('host_header_rejected');
+    expect(
+      listenerLayers(
+        { ...WS, originTransport: own, tlsNames: names('origin.example.org') },
+        { originAddress: 'origin.example.org' },
+      ).layers,
+    ).toEqual(['l4', 'l7']);
+    // A decided Host is judged as it is.
+    expect(
+      listenerLayers(
+        { ...WS, originTransport: own, tlsNames: names('origin.example.org') },
+        { l7Host: 'front-1.cdn.example' },
+      ).excluded.l7,
+    ).toBe('host_header_rejected');
   });
   test('acceptsHostHeader `any` is unconditional', () => {
     expect(
@@ -296,6 +335,95 @@ describe('l7HostHeaderFor', () => {
     expect(l7HostHeaderFor('a.example', 'hostname')).toBe('a.example');
     expect(l7HostHeaderFor('a.example', 'origin')).toBe('origin');
     expect(l7HostHeaderFor(null, undefined)).toBeUndefined();
+    // A provider that always sends the origin's own name, whatever the template says.
+    expect(l7HostHeaderFor('a.example', 'hostname', 'cloudfront')).toBe('origin');
+    // A template option is read as frozen: a front built to send the front name sends it.
+    expect(l7HostHeaderFor('a.example', 'hostname', 'fastly')).toBe('a.example');
+  });
+});
+
+describe("the origin's own name as Host", () => {
+  const own = httpsOrigin({ certNames: ['origin.example.org'], acceptsHostHeader: 'names' });
+  const anyHost = httpsOrigin({ certNames: ['origin.example.org'], acceptsHostHeader: 'any' });
+  const wildcard = httpsOrigin({ certNames: ['*.cdn.example'], acceptsHostHeader: 'names' });
+
+  test('originHostSupport reads the capability', () => {
+    expect(originHostSupport('cloudfront')).toBe('always');
+    expect(originHostSupport('fastly')).toBe('option');
+    expect(originHostSupport('cloudflare')).toBeNull();
+    expect(originHostSupport('gcore')).toBeNull();
+    expect(originHostSupport(null)).toBeNull();
+    expect(originHostSupport('nope')).toBeNull();
+  });
+
+  test('originHostNeeded: a names-only node and a front name it does not cover', () => {
+    expect(originHostNeeded(anyHost)).toBe(false);
+    expect(originHostNeeded(own)).toBe(true);
+    expect(originHostNeeded(own, 'front-1.cdn.example')).toBe(true);
+    expect(originHostNeeded(own, 'origin.example.org')).toBe(false);
+    // A first-level wildcard: unknown name = could be covered; a known one is checked.
+    expect(originHostNeeded(wildcard)).toBe(false);
+    expect(originHostNeeded(wildcard, 'front-1.cdn.example')).toBe(false);
+    expect(originHostNeeded(wildcard, 'front-1.other.example')).toBe(true);
+  });
+
+  test('withOriginHost sets the template option on a new front only where the node needs it', () => {
+    const tpl = { overrideHost: 'hostname', serviceComment: 'origin edge' };
+    // A names-only node behind a front whose template can send the origin's name.
+    expect(withOriginHost('fastly', tpl, own, 'front-1.cdn.example')).toEqual({
+      overrideHost: 'origin',
+      serviceComment: 'origin edge',
+    });
+    // The template row is never mutated.
+    expect(tpl.overrideHost).toBe('hostname');
+    // The params the front is built with then send the origin's name.
+    expect(
+      l7HostHeaderFor(
+        'front-1.cdn.example',
+        withOriginHost('fastly', tpl, own, 'front-1.cdn.example').overrideHost,
+        'fastly',
+      ),
+    ).toBe('origin');
+    // A node that takes any Host, or a front name it covers, keeps the template.
+    expect(withOriginHost('fastly', tpl, anyHost, 'front-1.cdn.example')).toBe(tpl);
+    expect(withOriginHost('fastly', tpl, wildcard, 'front-1.cdn.example')).toBe(tpl);
+    // A provider without the option (or one that always sends it) is not touched.
+    expect(withOriginHost('cloudflare', tpl, own, 'front-1.cdn.example')).toBe(tpl);
+    expect(withOriginHost('cloudfront', tpl, own, 'front-1.cdn.example')).toBe(tpl);
+    // No origin transport: nothing to decide.
+    expect(withOriginHost('fastly', tpl, null, 'front-1.cdn.example')).toBe(tpl);
+  });
+
+  test('frontHostAccepted judges each provider', () => {
+    expect(frontHostAccepted('fastly', own)).toBe(true);
+    expect(frontHostAccepted('cloudfront', own)).toBe(true);
+    expect(frontHostAccepted('cloudflare', own)).toBe(false);
+    expect(frontHostAccepted('cloudflare', anyHost)).toBe(true);
+    expect(frontHostAccepted('cloudflare', wildcard)).toBe(true);
+    expect(frontHostAccepted('cloudflare', wildcard, { hostname: 'front-1.other.example' })).toBe(
+      false,
+    );
+    // The origin's own name is the address the front dials: it must be a name the node serves.
+    expect(frontHostAccepted('fastly', own, { originAddress: 'origin.example.org' })).toBe(true);
+    expect(frontHostAccepted('cloudfront', own, { originAddress: 'Origin.Example.org.' })).toBe(
+      true,
+    );
+    for (const originAddress of ['203.0.113.10', '2001:db8::10', 'other.example.org'])
+      for (const p of ['fastly', 'cloudfront'])
+        expect(frontHostAccepted(p, own, { originAddress })).toBe(false);
+    // A node that takes any Host does not care what the address is.
+    expect(frontHostAccepted('fastly', anyHost, { originAddress: '203.0.113.10' })).toBe(true);
+  });
+
+  test('originNameServes: a DNS name the certificate covers; unknown = yes', () => {
+    expect(originNameServes(own, 'origin.example.org')).toBe(true);
+    expect(originNameServes(own, ' origin.example.org. ')).toBe(true);
+    expect(originNameServes(own, '203.0.113.10')).toBe(false);
+    expect(originNameServes(own, '[2001:db8::10]')).toBe(false);
+    expect(originNameServes(own, 'other.example.org')).toBe(false);
+    expect(originNameServes(wildcard, 'node.cdn.example')).toBe(true);
+    expect(originNameServes(own, undefined)).toBe(true);
+    expect(originNameServes(own, null)).toBe(true);
   });
 });
 

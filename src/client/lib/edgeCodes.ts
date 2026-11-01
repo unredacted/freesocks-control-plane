@@ -804,6 +804,12 @@ const COPY = {
       'The zone’s certificate for its first-level names is still being issued, so the front waits for it.',
     fix: 'Nothing to do: the front carries on once the provider has issued it.',
   },
+  domain_not_activated: {
+    label: 'Name not activated yet',
+    explain:
+      'The certificate is issued, but the provider has not activated it for the front’s own name, and it routes no traffic for a name without one (it answers “unknown domain”).',
+    fix: 'Usually nothing: the front carries on once the provider activates it. If it times out, replace the front.',
+  },
   tls_caa_conflict: {
     label: 'Certificate blocked by CAA',
     explain:
@@ -2545,6 +2551,12 @@ export const SETUP_ACCOUNT_REASON_COPY: Record<SetupAccountReason, CodeCopy> = {
     label: 'Wrong port for gRPC',
     explain: 'A CDN passes gRPC only to a node listening on port 443.',
     fix: 'Move the gRPC transport to port 443.',
+  },
+  host_header_rejected: {
+    label: 'Node takes only its own name',
+    explain:
+      "The node answers only to its own name as the Host, and this CDN's fronts send their own name instead.",
+    fix: "Pick a CDN that sends the node's name, or let the node answer any Host.",
   },
   account_capacity_reached: {
     label: 'No room',

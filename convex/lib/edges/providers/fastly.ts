@@ -37,8 +37,9 @@
  * its own resource, linked to the service by id, created and deleted without a
  * service version. An edge planned before that (`domainModel: 'classic'`, the
  * intent's absence) keeps its version-scoped domain, which dies with the
- * service. Which one an edge has is read from the ledger (`versionless_domain`
- * vs `domain`) everywhere except the step that creates it.
+ * service; a front on the zone's wildcard gets one too (`domainModelOf`).
+ * Which one an edge has is read from the ledger (`versionless_domain` vs
+ * `domain`) everywhere except the step that creates it.
  *
  * Certificates. `certificateScope: 'per_host'` orders one subscription per
  * front hostname (and deletes it with the edge). `'wildcard'` reuses ONE
@@ -46,7 +47,10 @@
  * it once, records it as `shared` (never deleted by an edge's destroy), and the
  * wait finishes at once when it is already issued. Its ACME record lives at
  * `_acme-challenge.<zone>` with a marker naming the subscription, and is
- * shared the same way.
+ * shared the same way. A wildcard front's domain is always classic
+ * (`domainModelOf`): Fastly routes a versionless domain only with a TLS
+ * activation of its own, which the wildcard never gives it, and readiness
+ * waits for that `activated` flag on every versionless domain.
  */
 import { z } from 'zod';
 import type {
@@ -166,8 +170,20 @@ function certificateScopeOf(cfg: FastlyConfig): 'per_host' | 'wildcard' {
   return cfg.certificateScope === 'wildcard' ? 'wildcard' : 'per_host';
 }
 
-/** `versionless` = a Domain Management domain; absent = a version-scoped (classic) domain. */
+/**
+ * `versionless` = a Domain Management domain; absent = a version-scoped (classic) domain.
+ *
+ * A front on the zone's wildcard gets a classic domain whatever the account
+ * chose. Fastly routes a versionless domain only once it has a TLS activation
+ * of its own (`activated`), and the wildcard's activation is for `*.<zone>`,
+ * never for a front's name: such a domain stayed `activated: false` and its
+ * name answered "unknown domain" while the wildcard was served, whether it
+ * was created before the wildcard was issued or after (beta, 2026-11-01). A
+ * classic domain is routed by the version that holds it, and the wildcard's
+ * activation serves its TLS (proven the same day).
+ */
 function domainModelOf(cfg: FastlyConfig): 'classic' | 'versionless' {
+  if (certificateScopeOf(cfg) === 'wildcard') return 'classic';
   return cfg.domainModel === 'versionless' ? 'versionless' : 'classic';
 }
 
@@ -1047,6 +1063,29 @@ function dnsResource(
   };
 }
 
+/**
+ * The edge's versionless domain found by its exact name, or null when there is
+ * none. A domain name is unique per account, so the exact-name listing is
+ * authoritative. Ours is the one linked to THIS service; the same name
+ * anywhere else is somebody else's and is never taken over.
+ */
+async function versionlessDomainDiscovery(
+  api: FastlyApi,
+  hostname: string,
+  serviceId: string,
+): Promise<Discovery | null> {
+  const named = (await api.findVersionlessDomains(hostname)).filter((d) =>
+    sameDnsName(d.fqdn, hostname),
+  );
+  if (named.length === 0) return null;
+  if (named.length === 1 && named[0]!.service_id === serviceId)
+    return { status: 'found', resources: [versionlessResource(named[0]!, 'adopted')] };
+  return {
+    status: 'ambiguous',
+    candidates: named.map((d) => candidateOf(versionlessResource(d, 'adopted'))),
+  };
+}
+
 /** A versionless domain as the ledger records it (`resourceId` = the domain's own id). */
 function versionlessResource(
   d: FastlyVersionlessDomain,
@@ -1411,9 +1450,15 @@ async function versionChildState(
 /**
  * DNS readiness of a versionless domain. There is no version to run a domain
  * check on: the front is ready when the domain is still linked to the edge's
- * service and its traffic name points at the provider, which FCP knows from
- * the traffic record it wrote (or, for an import whose record lives
- * elsewhere, from the provider's own `activated` flag).
+ * service, Fastly has activated a certificate for it, and its traffic name
+ * points at the provider, which FCP knows from the traffic record it wrote
+ * (an import whose record lives elsewhere has only the `activated` flag).
+ *
+ * `activated` ("has at least one TLS activation") is what Fastly routes by: a
+ * linked domain without one answers "unknown domain" to every request, so
+ * it is waited for with its own code (`domain_not_activated`) rather than
+ * left to fail the front proof. Only an explicit `false` holds the front; a
+ * response without the flag is not read as one.
  */
 async function versionlessDnsReadiness(
   api: FastlyApi,
@@ -1421,18 +1466,23 @@ async function versionlessDnsReadiness(
   domain: LedgerResource,
   serviceId: string,
   ledger: Ledger,
-): Promise<ReadinessState> {
+): Promise<{ dns: ReadinessState; notActivated?: true }> {
   let d: FastlyVersionlessDomain;
   try {
     d = await api.getVersionlessDomain(domain.resourceId);
   } catch (e) {
-    return isFastlyNotFound(e) ? 'pending' : 'unknown';
+    return { dns: isFastlyNotFound(e) ? 'pending' : 'unknown' };
   }
-  if (d.service_id !== serviceId) return 'pending';
+  if (d.service_id !== serviceId) return { dns: 'pending' };
   const traffic = resourcesOfKind(ledger, 'dns_record').find(
     (r) => metaOf(r).role === 'traffic' && metaOf(r).candidate !== true,
   );
-  if (!traffic) return d.activated === true ? 'ready' : 'pending';
+  if (!traffic)
+    return d.activated === true
+      ? { dns: 'ready' }
+      : d.activated === false
+        ? { dns: 'pending', notActivated: true }
+        : { dns: 'pending' };
   // The record as the zone holds it NOW: still there, and still pointing at
   // the CNAME target of the TLS configuration the front uses.
   try {
@@ -1440,15 +1490,16 @@ async function versionlessDnsReadiness(
     const record = await (
       await dnsClientFor(cfg)
     ).getRecord(typeof meta.recordId === 'string' ? meta.recordId : traffic.resourceId);
-    if (!record) return 'pending';
+    if (!record) return { dns: 'pending' };
     const target = parseTrafficCname(
       await api.listTlsConfigurations('dns_records'),
       cfg.tlsConfigurationId,
     );
-    return target && sameDnsName(record.content, target) ? 'ready' : 'pending';
+    if (!target || !sameDnsName(record.content, target)) return { dns: 'pending' };
   } catch {
-    return 'unknown';
+    return { dns: 'unknown' };
   }
+  return d.activated === false ? { dns: 'pending', notActivated: true } : { dns: 'ready' };
 }
 
 // --- the adapter ---------------------------------------------------------------------
@@ -2034,20 +2085,20 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       case 'create_domain': {
         const svc = serviceOf(ledger);
         if (!hostname) return { status: 'confirmed_absent' };
-        if (domainModelOf(cfg) === 'versionless') {
-          // A domain name is unique per account: the exact-name listing is
-          // authoritative. Ours is the one linked to THIS service; the same
-          // name anywhere else is somebody else's and is never taken over.
-          const named = (await api.findVersionlessDomains(hostname)).filter((d) =>
-            sameDnsName(d.fqdn, hostname),
+        if (domainModelOf(cfg) === 'versionless')
+          return (
+            (await versionlessDomainDiscovery(api, hostname, svc.id)) ?? {
+              status: 'confirmed_absent',
+            }
           );
-          if (named.length === 0) return { status: 'confirmed_absent' };
-          if (named.length === 1 && named[0]!.service_id === svc.id)
-            return { status: 'found', resources: [versionlessResource(named[0]!, 'adopted')] };
-          return {
-            status: 'ambiguous',
-            candidates: named.map((d) => candidateOf(versionlessResource(d, 'adopted'))),
-          };
+        // A wildcard edge whose intent names a versionless domain may have
+        // sent that create before wildcard fronts got classic domains (its
+        // response lost across the deploy): what it made is recorded as it
+        // is, so a rollback deletes it instead of a classic create colliding
+        // with it.
+        if (cfg.domainModel === 'versionless') {
+          const earlier = await versionlessDomainDiscovery(api, hostname, svc.id);
+          if (earlier) return earlier;
         }
         try {
           const domain = await api.getDomain(svc.id, svc.version, hostname);
@@ -2206,8 +2257,11 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
     const versionActive = activeVersionNumber(detail) === svc.version;
     const readiness: EdgeReadiness = { dns: 'unknown', certificate: 'unknown' };
     const versionless = firstResource(ledger, 'versionless_domain');
+    let notActivated = false;
     if (versionless) {
-      readiness.dns = await versionlessDnsReadiness(api, cfg, versionless, svc.id, ledger);
+      const v = await versionlessDnsReadiness(api, cfg, versionless, svc.id, ledger);
+      readiness.dns = v.dns;
+      notActivated = v.notActivated === true;
     } else if (hostname) {
       try {
         const check = parseDomainCheck(await api.checkDomain(svc.id, svc.version, hostname));
@@ -2249,7 +2303,10 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         ? { code: 'tls_failed' }
         : expired
           ? { code: 'certificate_expiring' }
-          : {}),
+          : // The certificate is there, but not activated for the front's name.
+            notActivated && readiness.certificate === 'ready'
+            ? { code: 'domain_not_activated' }
+            : {}),
       readiness,
     };
   },

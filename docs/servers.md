@@ -689,10 +689,20 @@ the transport or another node's (`servers.adopt_address_unknown`). Where its mem
 test link, one per address with the endpoint it dials; the review's address tuples; its public
 address, or, for a Host that dials a name, its origin address, which edges dial once Edges
 protects it), never from the row, which may hold a private management address. A fronted node whose edge FCP does not run yet (an earlier
-tool made it) is `externallyFronted`: it needs no standbys and no origin name until Edges
-protects it, one node at a time, through the normal flow; after maintenance its approval
-commits in its own transaction (nothing of FCP's publishes for it, so nothing would wake a run
-waiting at publish), or is refused with nothing changed. The role is never run for an adopted
+tool made it) is `externallyFronted`: it needs no standbys until Edges protects it, one node
+at a time, through the normal flow; after maintenance its approval commits in its own
+transaction (nothing of FCP's publishes for it, so nothing would wake a run waiting at
+publish), or is refused with nothing changed. A WebSocket node is adopted with its **origin
+name** (`originHostname`; the dialog's "Origin name"), required
+(`servers.adopt_origin_name_required`): the name its CDN fronts dial, the one its Caddy's
+certificate is for. Edges dials the same name once it protects the node (the node's origin and
+ingress, `enrolledOriginOf`). It is a DNS name (an address is refused, `validation`), on a
+WebSocket mode only, and no other node's (`servers.origin_name_in_use`, checked as well when a
+node's settings give it an explicit hostname).
+It is taken here because an adopted node's machine settings never change afterwards: a
+change that moves its machine revision (a hostname, an address override, IPv6, the node port)
+is refused (`servers.node_adopted`), since the role never runs there to apply it and the node
+would stay closed for good. Its country, which the backend row carries, still changes. The role is never run for an adopted
 machine, which is also why its retirement is closed by an admin rather than by a report
 (below): a role `PUT`, `bootstrap` (the node secret is never read for it) or `applied` under its
 name is refused (`servers.node_adopted`).
@@ -963,7 +973,13 @@ mirror). FCP never starts a run by itself.
   `mirror-barrier-repair` cron (`storage.repairMirrorUploads`, every 5 min): the subscription's
   mirror is re-rendered and re-uploaded under the current policy (the unavailable stub when its
   place is gated or edge-required with nothing to render), or a copy no subscription references
-  is withdrawn. Rows hold a subscription id, the object path, provider names and the token.
+  is withdrawn. Which row a copy belongs to is asked of every live row of the key's account (a
+  re-issue carries the object path to a new row; a record left on the old one repairs the new
+  row's object, never deletes it). A record that keeps failing backs off (two retries at the
+  grace, then doubling up to six hours), and a superseding upload inherits its attempts. A delete
+  that failed (a cleared mirror, a torn-down key) is a `withdraw` record the pass retries until
+  it goes through. Rows hold a subscription id, the object path, provider names and the token.
+  The rest of the mirror path is `docs/mirrors.md`.
 
 **Authorization decision.** A staged node serves a shared transport: an existing credential could
 authenticate on it if someone learned its address. That is accepted (REALITY keys are per transport

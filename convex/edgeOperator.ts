@@ -264,6 +264,7 @@ async function accountFacts(
           proto: l.proto,
           originPort,
           allowL7: true,
+          originTransport: like.originTransport,
         }).length > 0
       )
         fronts.push(l.key);
@@ -1651,6 +1652,9 @@ export const attention = internalQuery({
             score: relay.suspicion.score,
             hintLevel: relay.suspicion.hintLevel,
             countries: relay.suspicion.countries.map((c) => c.code),
+            // FCP would replace it but for a hold (the detector's judgement):
+            // what makes this warning an operator alert (convex/alerts.ts).
+            heldBack: relay.suspicion.heldBack === true,
           },
           action: suspect ? 'rotate' : 'open_relay',
           since: isoN(relay.suspicion.firstSeenAt),

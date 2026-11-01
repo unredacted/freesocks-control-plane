@@ -548,6 +548,10 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         ...(Array.isArray(body.hostUuids)
           ? { hostUuids: body.hostUuids.map((u) => String(u)) }
           : {}),
+        // A WebSocket node's origin name: what its CDN fronts dial.
+        ...(typeof body.originHostname === 'string' && body.originHostname.trim() !== ''
+          ? { originHostname: body.originHostname }
+          : {}),
         ...actorOf(admin),
       }),
     );

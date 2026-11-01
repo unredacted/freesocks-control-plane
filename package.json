@@ -30,6 +30,7 @@
     "test:integration:edge-connection": "bash scripts/edge-connection-integration.sh",
     "test:integration:reality-keyshare": "bash scripts/compat/reality-keyshare.sh",
     "test:integration:client-check": "bash scripts/compat/client-check.sh",
+    "test:integration:s3": "bash scripts/s3-integration.sh",
     "test:integration:cap": "vitest run --config vitest.integration.config.ts convex/lib/captcha.integration.test.ts",
     "selfhost:up": "docker compose --env-file .env.docker up -d",
     "selfhost:down": "docker compose --env-file .env.docker down",

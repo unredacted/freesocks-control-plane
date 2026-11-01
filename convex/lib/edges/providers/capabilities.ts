@@ -70,13 +70,15 @@ export interface EdgeProviderCapabilities {
    */
   sharedCertificates: boolean;
   /**
-   * The Host header the front always sends the origin, when the provider
-   * decides it rather than a template option (`overrideHost`): `origin` = the
-   * origin's own name. CloudFront: forwarding the member's Host would make the
-   * front check the origin's certificate against the front name, which a
-   * node's certificate never carries. Absent = the template decides.
+   * Whether the front can send the origin its own name as Host. `origin` =
+   * always, the provider decides it rather than a template option. CloudFront:
+   * forwarding the member's Host would make the front check the origin's
+   * certificate against the front name, which a node's certificate never
+   * carries. `option` = when the template's `overrideHost` says `origin`, which
+   * FCP sets on a new front for a node that answers only for its own names
+   * (lib/edges/layers.ts `withOriginHost`). Absent = it sends the front name.
    */
-  originHostHeader?: 'origin';
+  originHostHeader?: 'origin' | 'option';
   /** Typical wall clock from create to active (informational; bounds `discoverySettleMs`). */
   typicalProvisionMs: number;
   /**
@@ -199,6 +201,8 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     needsDnsAccount: true,
     providesDns: false,
     originPortMode: 'fixed',
+    // `overrideHost`: the front name, or the origin's own name.
+    originHostHeader: 'option',
     // One `*.<zone>` subscription for every front of the account (`certificateScope`).
     sharedCertificates: true,
     asyncOps: true,

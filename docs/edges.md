@@ -277,8 +277,18 @@ probe succeeded and `layers` recomputed: security `none` -> a TCP answer on the 
 `{scheme: http}` (L7-only); `tls` -> a handshake with SNI = the first name, offering the ALPN a
 front would (`h2` alone for gRPC, which an h2-only origin requires; `h2` and `http/1.1` for
 XHTTP; `http/1.1` otherwise), `certPublic` = the chain verifies against the system store,
-`certNames` = the leaf's names, `acceptsHostHeader: names` unless an HTTP/1.1 request with a
-foreign Host header still answers 2xx (`any`; never sent to a gRPC origin). Like the internal
+`certNames` = the leaf's names, `acceptsHostHeader: names` unless a request with a foreign Host
+header gets the transport's own answer (`any`; `hostCheckOf`): for WebSocket and HTTP Upgrade an
+upgrade (the RFC 6455 handshake, which Xray's HTTP Upgrade transport takes too, with an HTTP
+Upgrade transport's declared `transportParams.upgradeToken` as the front proof sends it) at the
+transport's own path (`transportParams.path`, `/` when it declares none) answering `101`, for
+XHTTP a `GET /` answering 2xx, never one to a gRPC origin. A terminator that serves only its own
+name (a Caddy site block for the origin name and no catch-all) answers a foreign Host with an
+empty `200` at every path, so a `GET /` cannot tell it from a node that takes any Host; only the
+transport answers an upgrade. XHTTP keeps the `GET /`: its answer and that empty `200` share
+the status, and the response headers that tell them apart are not proven across Xray versions.
+A node read as `names` is fronted by a CDN whose front sends it its own name (§ "Layers", the
+Host a front sends). Like the internal
 reachability probe it dials public literals only (a name is resolved first, every answer must be
 public, the literal is dialled). Without a successful probe the candidate stays L4-only and
 carries the probe's reason. The setup plan asks a target that got no answer again
@@ -326,6 +336,31 @@ standby), and publication (`checkPublishable` answers `l4_not_for_websocket`). T
 says `websocketNode`, so the node page offers CDN accounts only. An L4 edge or pick such a node
 already has (none is expected) is left as it is: never destroyed, never chosen for new work,
 never published. A WebSocket node's backup at another provider is a second CDN.
+
+**The Host a front sends.** A CDN front sends the node either the front's own name or the
+origin's own name (`l7HostHeaderFor`): CloudFront always sends the origin's (capability
+`originHostHeader: origin`), Fastly what its template's `overrideHost` says (`originHostHeader:
+option`), Cloudflare the front's. A node that takes any Host (`acceptsHostHeader: any`) accepts
+either; one that answers only for its certificate names (`names`) accepts the front's name only
+when a certificate name covers it, and the origin's own name when it is one (`l7HostAccepted`).
+"The origin's own name" is the address the front dials, so it serves such a node only when that
+address is a DNS name the certificate covers (`originNameServes`): a node dialled at an IP
+literal or another name refuses it (and the Fastly and CloudFront adapters refuse that shape
+when the edge is planned). Before a front's name is minted, `listenerLayers` keeps L7 open for
+such a node while a provider that carries the transport can send the origin's name and that
+name serves (the origin address passed as `originAddress` where the caller knows it), or a
+first-level wildcard could cover any minted name; otherwise L7 is excluded
+(`host_header_rejected`). Each provider is then judged on its own (`frontHostAccepted`, with the
+origin address): `accountsForSlot` drops one whose front would send a name the node refuses,
+so selection never picks it, named or not (`account_incompatible`), and the protect plan gives
+that account the reason `host_header_rejected` ("Node takes only its own name"). A Fastly front
+FCP builds for such a node sends the origin's name whatever the template or the pick chose
+(`withOriginHost`, applied once when the edge is planned, after its name is minted): its intent
+freezes `overrideHost: origin`, the plan marks the account `originHost`, and the Protect sheet
+says so on its picks. The template row and the pick's choices stay as they were, so the template
+hash and the approval shape do not move. An edge planned before keeps the Host its intent froze,
+and publication judges that one (`layer_mismatch` when the node would refuse it). With a decided
+Host (`l7Host`), `listenerLayers` judges exactly that Host.
 
 `hostTargetFor(edge, proto, selectedSni)` is the single source of the Host tuple the backend
 Host and the renderer share: L7 → `{ hostname, 443, sni: hostname, host: hostname }`; L4 HTTP
@@ -391,6 +426,17 @@ intent default, § "Fastly fronts"):
   (`shared_certificate_ambiguous`), before anything is built for the front; the account's other
   zones are not held back. An account switched back to one certificate per front still shows
   each wildcard it left behind, without raising it, until it is removed.
+  A front on the wildcard always gets a CLASSIC domain (below, Domains), whatever the account's
+  `domainModel` says, so the wildcard needs an account that still has classic domains (created
+  before 2025-09-16; elsewhere Fastly refuses the domain step and the front fails with its words:
+  use one certificate per front there). Fastly routes a versionless domain only once that
+  domain has a TLS activation of its own, and the wildcard's activation is for `*.<zone>`, never
+  for a front's name: on beta (2026-11-01) such a domain stayed `activated: false` and its name
+  answered "unknown domain" while the wildcard was served, both when it was created before the
+  wildcard was issued (the proof failed `front_error`, the rotation `front_unqualified`) and
+  when it was created after (held 10 minutes). The same front with a classic domain was routed
+  by its version and passed its proof within two minutes of the version's activation, and the
+  first front of a zone, ordering the wildcard, passed at its first proof once it was issued.
 - `per_host` (an account created before, until it is switched): one subscription per front
   hostname, deleted with the edge.
 
@@ -461,13 +507,22 @@ Management) domain: its own resource, linked to the service by id, created and d
 service version. The account setting `domainModel` (an intent default: `versionless` for a new
 account, and for one that does not name it; `classic` allowed) decides it for new edges and is
 frozen into each intent, so an operator whose provider refuses a versionless domain can switch
-to classic without a code change (`EDGE_INTENT_FACTS`). An edge planned before keeps its
+to classic without a code change (`EDGE_INTENT_FACTS`). A front on the zone's shared wildcard
+gets a classic domain whatever the setting says (Certificates above: the wildcard gives no
+versionless domain the activation Fastly routes by). An edge planned before keeps its
 version-scoped (classic) domain, read, renewed and destroyed as before; the adapter reads which
 one an edge has from its ledger (`versionless_domain` or `domain`). Discovery finds a versionless
 domain by its exact name and owns it only when it is linked to the edge's own service; DNS
-readiness is that link plus the traffic record as the zone holds it now, read back and still
-pointing at the CNAME of the front's TLS configuration (no version holds the domain, so there
-is no domain check to run); destroy deletes it by id after the certificate and before the
+readiness is that link, the traffic record as the zone holds it now (read back and still
+pointing at the CNAME of the front's TLS configuration; no version holds the domain, so there
+is no domain check to run) and the domain's `activated` flag. Fastly routes a versionless
+domain only once it has a TLS activation ("has at least one TLS activation" is what
+`activated` means); without one every request to the name gets "unknown domain", however the
+certificate and the record look. A domain the provider reports `activated: false` keeps the
+front pending with `domain_not_activated` (one of `L7_CERTIFICATE_CODES`: kept on
+`edges.waiting`, raised as `certificate_waiting`, and the code a provision that times out on it
+ends with), instead of letting the front proof fail with a generic `front_error`; a response
+without the flag holds nothing. Destroy deletes it by id after the certificate and before the
 service, on a shared service too (no version workflow). Fastly offers classic domains only to
 accounts created before 2025-09-16; its documentation names no service-type limit for
 versionless ones (the domain page creates a CDN or a Compute service for one), and the WebSockets
@@ -1714,7 +1769,8 @@ minClientVer, maxClientVer}` in the plan. Each restriction is its own reason wit
   plan says so (`originDeleting`, the sheet's note) and the create is refused with
   `edge.origin_deleting`; a run that meets the delete at prepare waits for it (event
   `origin_deleting`) and then creates its own origin, instead of failing as taken.
-- **The operator's own front after go-live.** Its Host is an operator front
+- **The operator's own front after go-live.** Its Host is an operator front, at an address or
+  at a CDN hostname that resolves elsewhere
   (§ "Direct-Host hides and the restore workflow"): the plan lists it (`frontHosts`, which the
   plan hash covers, so a front added, removed or renamed since is `edge.plan_stale`; the review
   says members reach the node through a front FCP did not build and stop getting it once the
@@ -1725,6 +1781,23 @@ minClientVer, maxClientVer}` in the plan. Each restriction is its own reason wit
   subscription, so the item (and the node page) says how many of the node's keys have not
   fetched since (§ "Direct-Host hides and the restore workflow", the keys that still hold a
   front). Deleting the front while that number is high cuts those apps off.
+
+**A WebSocket node an earlier tool fronted.** Such a node listens on loopback behind its Caddy,
+and the panel lists it by its management address, so neither the panel's address nor a given
+public IP is anything a CDN front could dial: it is protected as an ADOPTED node (docs/servers.md
+§ "Adopting a backend": the backend set up with its WebSocket mode, the node adopted with that
+mode, `externallyFronted`, and its **origin name**). The plan then reads it from its intent
+(the origin name, the ingress at 443 with the transport's path), and only CDN accounts are
+offered (a WebSocket node takes no load balancer, § "Layers"). The operator's CDN Hosts dial
+their own hostnames, which resolve to the CDN: they are its operator fronts, listed in the plan
+and left out at go-live (`front_host_unused`), while the CDN service itself stays as it is for
+the apps that still hold it. A node whose Caddy answers only for its own name (a site block for
+the origin name, no catch-all) is read so by the origin probe, which asks for an upgrade at the
+transport's path with a foreign Host: the empty `200` such a Caddy answers is not the transport
+(§ "Listener catalogue"). Its fronts then send the node its own name without being asked (§
+"Layers", the Host a front sends): a Fastly pick needs no "Host sent to the node" choice, the
+Protect sheet says so on the pick, and a CDN whose front can only send its own name reads
+`host_header_rejected` in the plan.
 
 What a protect run writes to such a panel, in order:
 
@@ -1997,8 +2070,12 @@ pass sees none). Both are suppressed while a restore workflow runs. The same loo
 setup run's rehearsal look, `observe`, before go-live) records the node's **operator fronts**
 (`relays.operatorFronts`, their names and Host uuids, never an address, every one of them; `operatorFrontHosts`): enabled Hosts on a protected
 transport that dial an IP that is neither the node nor an edge of the origin and are not FCP's,
-such as a load balancer the operator built by hand. A Host by a name is never one (a lookup
-that failed would leave the node itself looking like a front), so it keeps the critical alarm. A member render leaves their entries out like any it
+such as a load balancer the operator built by hand, or a name that the same look resolved
+elsewhere, such as a CDN front the operator built (`namesElsewhere`: both its lookups, A and
+AAAA, answered conclusively, a record or "no such record"; at least one address came back; and
+none is an address the node is known by). A name one of whose lookups failed (a timeout, a
+server failure: anything but "no such record") is never one, since the missing family could
+be the node itself, so it keeps the critical alarm. A member render leaves their entries out like any it
 cannot place, but an entry a known front names is not the node: it raises attention
 `front_host_unused` (info: members no longer get it, so it can be deleted at its provider once
 its traffic stops, and its Host in the backend) instead of `direct_host_reappeared`. An entry
@@ -2395,7 +2472,21 @@ JSON:
 
 Alert-worthy: every critical item (quarantine, fleet brake, a provider whose API keeps failing,
 a stuck rotation, dark members, a reappeared direct Host, a blocked node with no tested spare, an
-ambiguous Host) plus `node_ready_to_protect` and `node_awaiting_approval`. An item is sent once
+ambiguous Host); the prompts FCP never acts on by itself: `node_ready_to_protect`,
+`node_awaiting_approval`, `freedom_node_withheld` and `location_refused`; and a **suspected block
+FCP is holding back**: `block_suspected` (a warning) whose `facts.heldBack` is set. The detector
+judges it each pass on the whole decision (`replacementHeldBack`, `lib/edges/scoring.ts`, stored as
+`relays.suspicion.heldBack`): the decision is a veto, and the same decision with the holds lifted
+(automation and the node's Auto rotate on, `detect.allowProbeOnlyAutoRotate` on, no cooldown, no
+daily caps, a manageable Host, the open lane's budget left) would replace the address. Members stay
+on the suspected address until the operator acts or the hold lifts, so a deployment that leaves
+automation off still hears about a block. The veto alone is not enough: a switched-off gate is
+checked before the outage and evidence gates, so an offline node, an address down for everyone, a
+protocol-level block, no address named or probe sources gone quiet behind `edge_disabled` never
+alert from this item, nor do a running rotation, a guided setup's origin, the steering holds
+(`country_scoped`, `country_wide`: members are already routed around) and the holds that alert as
+their own items (`quarantined`, `fleet_brake`). The push reads `block_suspected
+(<veto>): 1`. An item is sent once
 while it stays on the list at any severity (`appState` `alerts:state` holds the sent ids); one
 that clears and comes back alerts again; a failed post records a short code (`network`, `timeout`, the status)
 and is retried next tick. **Alerts carry kinds, short codes and counts only**: never a member,
@@ -4125,7 +4216,8 @@ depend on it:
   certificate covers (`origin_cert_name_uncovered` otherwise; also sent as `ssl_sni_hostname`
   and `ssl_cert_hostname`, on port 443); with `overrideHost: 'origin'` (Host = the origin name too, a public certificate
   naming it) it is supported, with `'hostname'` only when the node's verified ingress accepts
-  any Host header; Cloudflare `full`
+  any Host header (a node that answers only for its own names gets `'origin'` on every new front
+  without being asked, § "Layers"); Cloudflare `full`
   (SNI and Host = the edge hostname, served by Caddy's `fallback_sni` plus a catch-all site) is
   supported. Cloudflare `strict` is admitted only for an origin whose certificate is publicly
   trusted (`certPublic`), and it validates the EDGE hostname, which an enrolled node's
@@ -4755,7 +4847,8 @@ certificate authority and `certificateScope` are certificate option defaults, an
 is ten steps: the VCL service, its one origin backend, the WebSocket upgrade snippet, the domain
 (versionless, or classic when the account says so),
 the WebSockets product, the version activation, the certificate (the hostname's own or the
-zone's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME
+zone's shared wildcard), its ACME record, the wait for issuance and the traffic CNAME. A
+front on the zone's wildcard always gets a classic domain
 (§ "L7 edges" for certificates, the CAA preflight, waiting codes and domains).
 
 **The origin backend.** The origin must listen on its scheme's own port (443 over TLS, 80
@@ -4787,7 +4880,8 @@ gone), so a service deleted under a ledger that never recorded it cannot leave t
   change it untrusts the account's locations, and as a certificate default it marks the account
   untested (`retest_required`): test the account again (each zone's CAA preflight then checks
   `issuewild`), and its next proven front trusts it again. Fronts that exist keep their own
-  certificates until they are replaced.
+  certificates until they are replaced. The wildcard's fronts get classic domains, so it works
+  only on an account created before September 2025.
 - **CAA.** Allow the account's CA at the zone (or wherever its CAA records sit, up the tree) with
   `issue`, and with `issuewild` for the wildcard: `0 issue "certainly.com"` and
   `0 issuewild "certainly.com"` for Certainly.
@@ -5744,6 +5838,13 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**A held block alerts** adds one optional field (`relays.suspicion.heldBack`), written by the
+detector, and one alert-worthy case (§ "Operator alerts"): one deploy, no migration, no env
+change. Nothing is sent unless operator alerts are on. To roll back, run
+`edgeDetector:clearHeldBackForRollback` with no arguments right before deploying the older build
+(its schema refuses the field; the detector writes it again on its next pass while a block is
+held).
 
 **Names blocked somewhere, as the last resort** change what members receive, nothing stored: a
 member with no country (and a mirror) for whom no edge has a name blocked nowhere gets the names

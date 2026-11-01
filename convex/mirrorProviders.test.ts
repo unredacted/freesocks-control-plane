@@ -101,8 +101,9 @@ describe('mirrorProviders CRUD', () => {
     expect(await t.query(internal.mirrorProviders.anyActive, {})).toBe(true);
   });
 
-  test('listForAdmin masks every row + remove deletes', async () => {
+  test('listForAdmin masks every row + remove deletes (a provider holding no mirror)', async () => {
     const t = convexTest(schema, modules);
+    await t.mutation(internal.mirrorCopies.markSeeded, {});
     const row = await t.mutation(internal.mirrorProviders.create, BASE);
     const list = await t.query(internal.mirrorProviders.listForAdmin, {});
     expect(list.providers).toHaveLength(1);

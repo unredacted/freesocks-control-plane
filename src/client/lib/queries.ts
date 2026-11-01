@@ -29,6 +29,8 @@ import {
   BackendServerAdmin,
   ClientAdmin,
   MirrorProviderAdmin,
+  MirrorSyncResponse,
+  type MirrorCopyState,
   AdminConnectionModesResponse,
   RemnawaveNodeStatsResponse,
   AdminAlertsConfig,
@@ -82,6 +84,7 @@ export const queryKeys = {
   adminNodeStats: ['admin', 'remnawave', 'node-stats'] as const,
   adminConnectionModes: ['admin', 'connection-modes'] as const,
   adminMirrorProviders: ['admin', 'mirror-providers'] as const,
+  adminMirrorSync: ['admin', 'mirror-sync'] as const,
   adminClients: ['admin', 'clients'] as const,
   adminRateLimits: ['admin', 'rate-limits'] as const,
   adminMembershipCodes: (status: string) => ['admin', 'membership-codes', status] as const,
@@ -620,6 +623,31 @@ export const adminStatusIncidentsQuery = () =>
     queryFn: () => apiClient.get('/api/v1/admin/status/incidents', AdminStatusIncidentsResponse),
     staleTime: 30_000,
   }));
+
+/**
+ * Mirror sync for Admin -> Storage: the summary plus per-copy detail, paged,
+ * optionally by state. Polls like the dashboard (the summary is maintained
+ * counts + bounded reads).
+ */
+export const adminMirrorSyncQuery = (stateRef: () => MirrorCopyState | null) =>
+  createInfiniteQuery(() => {
+    const state = stateRef();
+    return {
+      queryKey: [...queryKeys.adminMirrorSync, state],
+      initialPageParam: undefined as string | undefined,
+      queryFn: ({ pageParam }: { pageParam: string | undefined }) => {
+        const params = new URLSearchParams();
+        if (state) params.set('state', state);
+        if (pageParam) params.set('cursor', pageParam);
+        const qs = params.toString();
+        return apiClient.get(`/api/v1/admin/mirror-sync${qs ? `?${qs}` : ''}`, MirrorSyncResponse);
+      },
+      getNextPageParam: (last: MirrorSyncResponse) =>
+        last.isDone ? undefined : last.continueCursor,
+      staleTime: 15_000,
+      refetchInterval: 30_000,
+    };
+  });
 
 /** S3 mirror providers (subscription mirrors) for the AdminStorage CMS page. */
 const MirrorProvidersListResponse = z.object({ providers: z.array(MirrorProviderAdmin) });

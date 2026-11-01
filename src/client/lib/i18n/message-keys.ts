@@ -449,6 +449,7 @@ export type MessageKey =
   | "mirror.errorToast"
   | "mirror.exhausted"
   | "mirror.explainer"
+  | "mirror.failed"
   | "mirror.getButton"
   | "mirror.noSubscription"
   | "mirror.pickLocation"

@@ -13,8 +13,12 @@
  *    refuses any other way). `certPublic` = the chain verifies against the
  *    system store; `certNames` = the leaf's names; `acceptsHostHeader` =
  *    `'names'` (conservative) unless one HTTP/1.1 request with a FOREIGN Host
- *    header still answers 2xx (`'any'`; never tried on a gRPC origin, which
- *    speaks no HTTP/1.1).
+ *    header gets the transport's own answer (`'any'`, `hostCheckOf`): for
+ *    WebSocket and HTTP Upgrade an upgrade at the transport's path answering
+ *    101 (a terminator that serves only its own name answers a foreign Host
+ *    with an empty 200 at every path, which says nothing about the
+ *    transport); otherwise a `GET /` answering 2xx; never tried on a gRPC
+ *    origin, which speaks no HTTP/1.1.
  *  - anything else (REALITY has no HTTP origin): not probed.
  *
  * Without a successful probe the listener stays L4-only and the plan says so.
@@ -30,6 +34,7 @@ import type {
 import { isPublicIpLiteral, addressFamily } from './ip';
 import type { OriginTransport } from './layers';
 import { isValidHostname } from './hostname';
+import { DEFAULT_UPGRADE_TOKEN } from './frontCheck/httpupgrade';
 
 export interface OriginProbeDeps {
   lookup: (name: string) => Promise<string[]>;
@@ -51,12 +56,19 @@ export interface OriginProbeDeps {
     names: string[];
     error?: string;
   }>;
-  /** One request over a fresh handshake with the given Host header; the status line's code, or null. */
+  /**
+   * One request over a fresh handshake with the given Host header; the status
+   * line's code, or null. `GET <path>` (default `/`); `upgrade` = the upgrade
+   * token to ask for (`websocket`: the RFC 6455 handshake headers, which Xray's
+   * HTTP Upgrade transport accepts too), absent for a plain request.
+   */
   httpsStatus: (opts: {
     host: string;
     port: number;
     servername: string;
     hostHeader: string;
+    path?: string;
+    upgrade?: string;
     timeoutMs: number;
   }) => Promise<{ status: number | null; error?: string }>;
 }
@@ -68,6 +80,10 @@ export interface OriginProbeRequest {
   streamTransport: ListenerStreamTransport;
   security: ListenerSecurity;
   tlsNames: string[];
+  /** The transport's own path (`transportParams.path`), where it has one. */
+  path?: string;
+  /** An HTTP Upgrade transport's declared token (`transportParams.upgradeToken`). */
+  upgradeToken?: string;
 }
 
 export interface OriginProbeOutcome {
@@ -91,6 +107,43 @@ export function probeAlpn(streamTransport: ListenerStreamTransport): string[] {
 /** A Host header no origin serves for on purpose: does the node answer for ANY name? */
 export const FOREIGN_HOST_HEADER = 'origin-probe.invalid';
 const HTTP_TRANSPORTS: ReadonlySet<string> = new Set(['ws', 'httpupgrade', 'grpc', 'xhttp']);
+
+/**
+ * The request the foreign Host is sent with, and the answer that means the node
+ * took it. WebSocket and HTTP Upgrade: an upgrade at the transport's own path
+ * (an HTTP Upgrade transport with its declared token, as the front proof asks
+ * for it), which only the transport answers with 101. XHTTP keeps a `GET /`
+ * answering 2xx: its answer and a terminator's empty 200 share the status, and
+ * the headers that would tell them apart are not proven across Xray versions.
+ */
+export function hostCheckOf(
+  streamTransport: ListenerStreamTransport,
+  path?: string,
+  upgradeToken?: string,
+): { path: string; upgrade: string | null; accepts: (status: number) => boolean } {
+  if (streamTransport === 'ws')
+    return { path: requestPath(path), upgrade: 'websocket', accepts: (s) => s === 101 };
+  if (streamTransport === 'httpupgrade')
+    return {
+      path: requestPath(path),
+      upgrade:
+        upgradeToken && UPGRADE_TOKEN_RE.test(upgradeToken) ? upgradeToken : DEFAULT_UPGRADE_TOKEN,
+      accepts: (s) => s === 101,
+    };
+  return { path: '/', upgrade: null, accepts: (s) => s >= 200 && s < 300 };
+}
+
+/** An RFC 9110 token: what an `Upgrade` header may carry (anything else is never sent). */
+const UPGRADE_TOKEN_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/;
+
+/**
+ * A path fit for a request line: the declared one when it is a plain absolute
+ * path (printable, no spaces), else `/` (Xray's default).
+ */
+export function requestPath(path: string | undefined): string {
+  const p = (path ?? '').trim();
+  return /^\/[\x21-\x7e]*$/.test(p) ? p : '/';
+}
 
 function shortReason(s: string | undefined, fallback: string): string {
   const r = (s ?? '').trim();
@@ -153,15 +206,18 @@ export async function probeOriginTransport(
   let acceptsHostHeader: OriginTransport['acceptsHostHeader'] = 'names';
   if (req.streamTransport === 'grpc')
     return out({ scheme: 'https', certPublic: hs.authorized, certNames, acceptsHostHeader });
+  const check = hostCheckOf(req.streamTransport, req.path, req.upgradeToken);
   try {
     const st = await deps.httpsStatus({
       host: dial.host,
       port: req.originPort,
       servername,
       hostHeader: FOREIGN_HOST_HEADER,
+      path: check.path,
+      ...(check.upgrade ? { upgrade: check.upgrade } : {}),
       timeoutMs,
     });
-    if (st.status !== null && st.status >= 200 && st.status < 300) acceptsHostHeader = 'any';
+    if (st.status !== null && check.accepts(st.status)) acceptsHostHeader = 'any';
   } catch {
     // The conservative answer stands.
   }

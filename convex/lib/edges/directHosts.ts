@@ -145,6 +145,41 @@ export function nodeNamesOf(
   return out;
 }
 
+/**
+ * The candidate names (`nodeNameCandidates`) that answered with addresses
+ * none of which is the node: both lookups (A and AAAA) answered conclusively
+ * (a record, or "no such record"), at least one address came back, and no
+ * answer is an address the node is known by (the origin and `alsoAddresses`,
+ * the origin's own answers, and every name `nodeNamesOf` found to be the
+ * node, with its answers). A front the operator built at a name of its own (a
+ * CDN hostname) is such a name. A name one of whose lookups failed
+ * (`inconclusive`) is never one: the missing family could be the node.
+ */
+export function namesElsewhere(
+  ctx: Pick<DirectHostContext, 'originAddress' | 'alsoAddresses'>,
+  answers: Readonly<Record<string, readonly string[]>>,
+  nodeNames: readonly string[],
+  inconclusive: readonly string[] = [],
+): string[] {
+  const origin = normalizeAddress(ctx.originAddress);
+  const node = [
+    ctx.originAddress,
+    ...(ctx.alsoAddresses ?? []),
+    ...(answers[origin] ?? []),
+    ...nodeNames,
+  ];
+  return Object.entries(answers)
+    .filter(
+      ([name, ans]) =>
+        name !== origin &&
+        !inconclusive.includes(name) &&
+        !node.some((a) => sameAddress(a, name)) &&
+        ans.some((a) => canonicalIp(a) !== null) &&
+        !ans.some((a) => node.some((n) => sameAddress(n, a))),
+    )
+    .map(([name]) => name);
+}
+
 /** The node's ENABLED direct Hosts, split by whether a frontable listener covers their transport. */
 export function classifyDirectHosts(
   hosts: readonly BackendHost[],
@@ -168,22 +203,28 @@ export function classifyDirectHosts(
  * adopted Host). They are a front the operator built by hand, such as a load
  * balancer at its own public address. Members get them until the node is bound
  * to its edges; from then on a member render leaves them out (`withheld`), so
- * they can be deleted at their provider. A Host by a NAME is never one: a
- * lookup that failed would leave the node itself looking like a front, so it
- * keeps the fail-closed alert. `fcpRemarks` here are the listeners' own: the
+ * they can be deleted at their provider. A Host by a NAME is one only when this
+ * look resolved that name elsewhere, conclusively (`frontNames`, from
+ * `namesElsewhere`), such as a CDN front's hostname: a name a lookup failed for
+ * could be the node itself, so it keeps the fail-closed alert. `fcpRemarks` here are the listeners' own: the
  * origin convention (`relayRemarkRegex`) also matches the bare `<node>-relay`
  * an operator gives such a Host.
  */
 export function operatorFrontHosts(
   hosts: readonly BackendHost[],
-  ctx: DirectHostContext & { edgeAddresses?: readonly string[] },
+  ctx: DirectHostContext & {
+    edgeAddresses?: readonly string[];
+    /** Names this look resolved elsewhere (`namesElsewhere`). */
+    frontNames?: readonly string[];
+  },
 ): BackendHost[] {
   const covered = lower(ctx.coveredInboundUuids);
   const known = [ctx.originAddress, ...(ctx.alsoAddresses ?? []), ...(ctx.edgeAddresses ?? [])];
+  const named = new Set((ctx.frontNames ?? []).map(normalizeAddress));
   return hosts.filter((h) => {
     const inbound = h.inbound?.configProfileInboundUuid?.toLowerCase();
     if (h.isDisabled || !inbound || !covered.has(inbound)) return false;
-    if (canonicalIp(h.address) === null) return false;
+    if (canonicalIp(h.address) === null && !named.has(normalizeAddress(h.address))) return false;
     if (known.some((a) => sameAddress(h.address, a))) return false;
     return !ctx.fcpRemarks.includes(h.remark) && !ctx.legacyHostUuids.includes(h.uuid);
   });

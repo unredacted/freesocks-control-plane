@@ -31,6 +31,7 @@ import {
 } from './edgeSetupRuns';
 import type { RealityClientRefusal } from '../src/shared/contracts/realityClients';
 import { __setPlanOpsForTests } from './edgeSetupPlan';
+import { __setNameResolutionForTests } from './nodeIntentOps';
 import { upsertSettingRow } from './appSettings';
 import { CENSORED_COUNTRIES_KEY } from './lib/censoredCountries';
 import type { BackendTransport } from './lib/backends/types';
@@ -616,6 +617,111 @@ describe('edgeSetupPlan', () => {
     await expect(planFor(t, serverId)).rejects.toMatchObject({
       data: { code: 'backend.panel_read_failed' },
     });
+  });
+
+  test('a WebSocket origin that answers only for its own name: a CDN that sends that name is offered and says so; one that sends its own name is not', async () => {
+    const ORIGIN_NAME = 'node-one.origin.example';
+    const ws: BackendTransport = {
+      tag: 'VLESS_WS_TLS',
+      configProfileUuid: FIXTURE_CONFIG_PROFILE,
+      configProfileInboundUuid: FIXTURE_INBOUND,
+      protocol: 'vless',
+      port: 443,
+      network: 'ws',
+      security: 'tls',
+      tls: { serverName: 'node-one.origin.example' },
+      ws: { path: '/ws', host: null },
+      active: true,
+    };
+    const { t, serverId } = await seed({ inbounds: [ws], hosts: [] });
+    const asked: Array<{ path?: string }> = [];
+    let accepts: 'any' | 'names' = 'names';
+    __setPlanOpsForTests({
+      listNodeInbounds: async () => [ws],
+      listHosts: async () => [],
+      probeOrigins: async (_ctx, a) =>
+        a.targets.map((tg) => {
+          asked.push({ path: tg.path });
+          return {
+            listenerKey: tg.listenerKey,
+            originTransport: {
+              scheme: 'https' as const,
+              certPublic: true,
+              certNames: ['node-one.origin.example'],
+              acceptsHostHeader: accepts,
+            },
+          };
+        }),
+    });
+    const dns = await createAccount(t, {
+      provider: 'cloudflare',
+      name: 'acct-dns',
+      settings: { zoneId: 'c'.repeat(32), zoneName: 'fronts.example.org' },
+    });
+    const fastly = await createAccount(t, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: {
+        dnsAccountId: dns,
+        zoneId: 'c'.repeat(32),
+        zoneName: 'fronts.example.org',
+        certificateAuthority: 'certainly',
+      },
+    });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, { id: fastly, ok: true });
+    const cf = await createAccount(t, { provider: 'cloudflare', name: 'acct-cf' });
+    await t.mutation(internal.edgeProviderAccounts.recordTest, {
+      id: cf,
+      ok: true,
+      observed: { zoneSslMode: 'full', websockets: 'on' },
+    });
+    await setFrontsTraffic(t, cf, true);
+    // The backend lists the node by its name: that name is what a CDN front dials.
+    const listAt = (address: string) =>
+      t.run(async (ctx) => {
+        const row = (await ctx.db.query('backendNodeInventory').collect()).find(
+          (n) => n.nodeUuid === NODE_UUID,
+        )!;
+        await ctx.db.patch(row._id, { address });
+      });
+    await listAt(ORIGIN_NAME);
+    const plan = await planFor(t, serverId);
+    expect(plan.originAddress).toBe(ORIGIN_NAME);
+    // The probe is asked at the transport's own path.
+    expect(asked).toEqual([{ path: '/ws' }]);
+    const inb = plan.inbounds.find((i) => i.sourceTag === 'VLESS_WS_TLS')!;
+    expect(inb.frontable).toBe(true);
+    expect(inb.layers).toContain('l7');
+    const byId = (id: string) => plan.accounts.find((a) => a.id === id)!;
+    expect(byId(fastly)).toMatchObject({ carries: [inb.listenerKey], originHost: true });
+    expect(byId(fastly).reasons).not.toContain('host_header_rejected');
+    expect(byId(cf)).toMatchObject({
+      compatible: false,
+      carries: [],
+      reasons: expect.arrayContaining(['host_header_rejected']),
+    });
+    expect(byId(cf).originHost).toBeFalsy();
+    // Listed by an IP address: a front that "sends the origin's name" would send the
+    // address, which the node refuses, so no CDN front fits and L7 is closed.
+    await listAt(ORIGIN);
+    const byIp = await planFor(t, serverId);
+    const ipInb = byIp.inbounds.find((i) => i.sourceTag === 'VLESS_WS_TLS')!;
+    expect(ipInb.layers).not.toContain('l7');
+    for (const id of [fastly, cf]) {
+      const a = byIp.accounts.find((x) => x.id === id)!;
+      expect([a.compatible, a.carries, a.originHost ?? false]).toEqual([false, [], false]);
+    }
+    // A node that takes any Host: both carry it, and neither needs the node's name.
+    await listAt(ORIGIN_NAME);
+    accepts = 'any';
+    const open = await planFor(t, serverId);
+    const openInb = open.inbounds.find((i) => i.sourceTag === 'VLESS_WS_TLS')!;
+    for (const id of [fastly, cf]) {
+      const a = open.accounts.find((x) => x.id === id)!;
+      expect(a.carries).toEqual([openInb.listenerKey]);
+      expect(a.reasons).not.toContain('host_header_rejected');
+      expect(a.originHost).toBeFalsy();
+    }
   });
 
   test('a DNS account is not offered as a front until Settings lets DNS accounts front', async () => {
@@ -2730,6 +2836,22 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
         }),
       ),
     ).toBe('edge.origin_not_ip');
+  });
+
+  test('a front the operator built at a name of its own (a CDN hostname) is listed as one once its name resolves elsewhere', async () => {
+    __setNameResolutionForTests(async (name) =>
+      name === 'cdn-front.example.net' ? { v4: ['198.51.100.77'], v6: [] } : { v4: [], v6: [] },
+    );
+    try {
+      const { t, serverId } = await seedFronted({
+        hosts: [frontHost({ remark: 'node-one-ws-6a536a', address: 'cdn-front.example.net' })],
+      });
+      const plan = await planWith(t, serverId, { originAddress: ORIGIN });
+      expect(plan.frontHosts).toEqual([{ uuid: HOST_LB, remark: 'node-one-ws-6a536a' }]);
+      expect(plan.directHosts).toEqual([]);
+    } finally {
+      __setNameResolutionForTests(null);
+    }
   });
 
   test('a load balancer is never created, named or reused for an origin it cannot forward to, whoever asks', async () => {

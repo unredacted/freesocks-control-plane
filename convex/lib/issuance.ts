@@ -199,16 +199,17 @@ export async function deleteSubscriptionEverywhere(
     backendUserId: input.backendUserId,
     backendServerId: sub?.backendServerId,
   });
-  // 2. Backend user is gone. Best-effort drop S3 mirrors, then mark the row.
+  // 2. Backend user is gone. Drop the S3 mirrors (a delete that fails is
+  //    recorded and retried by the mirror repair pass), then mark the row.
   if (sub) {
     const items = sub.subscriptionMirrors
       .filter((m): m is typeof m & { objectPath: string } => typeof m.objectPath === 'string')
       .map((m) => ({ provider: m.provider, objectPath: m.objectPath }));
     if (items.length > 0) {
       try {
-        await ctx.runAction(internal.storage.deleteMirrors, { items });
+        await ctx.runAction(internal.storage.deleteMirrors, { items, subscriptionId: sub._id });
       } catch {
-        /* best-effort: mirrors are a hedge, not the routing key */
+        /* mirrors are a hedge, not the routing key: the teardown goes on */
       }
     }
     await ctx.runMutation(internal.subscriptions.markSubscriptionDeleted, {

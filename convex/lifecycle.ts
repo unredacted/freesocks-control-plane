@@ -16,6 +16,7 @@ import { runWithCronOutcome } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
+import { deleteCopiesOf } from './mirrorCopies';
 import {
   computeExpireAtIso,
   farFutureExpiryIso,
@@ -729,6 +730,9 @@ export const findTombstonedDue = internalQuery({
         backend: s.backend,
         backendUserId: s.backendUserId,
         attempts: s.tombstoneAttempts ?? 0,
+        mirrors: s.subscriptionMirrors
+          .filter((m): m is typeof m & { objectPath: string } => typeof m.objectPath === 'string')
+          .map((m) => ({ provider: m.provider, objectPath: m.objectPath })),
       }));
   },
 });
@@ -771,8 +775,15 @@ export const sweepTombstones = internalAction({
           if (attempts >= TOMBSTONE_MAX_ATTEMPTS) {
             // Give up: the row leaves the disabled set so the sweep (and the
             // deleted-row retention sweep) move on; the backend key may still
-            // exist — loud audit for the operator cleanup queue.
+            // exist — loud audit for the operator cleanup queue. Its mirrors
+            // go now regardless: the key may still route, and its config must
+            // not stay in a third-party bucket (a failed delete is retried).
             try {
+              if (d.mirrors.length > 0)
+                await ctx.runAction(internal.storage.deleteMirrors, {
+                  items: d.mirrors,
+                  subscriptionId: d.subscriptionId,
+                });
               await ctx.runMutation(internal.subscriptions.markSubscriptionDeleted, {
                 subscriptionId: d.subscriptionId,
               });
@@ -1133,6 +1144,14 @@ export const deleteInactiveUser = internalMutation({
         .collect();
       for (const r of rows) await ctx.db.delete(r._id);
     };
+    // The sync ledger's rows about these keys go with them (they are
+    // counted). Their objects went at deactivation; one whose delete failed
+    // is still recorded for withdrawal (convex/mirrorUploads.ts).
+    for (const s of await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect())
+      await deleteCopiesOf(ctx, s._id);
     await deleteByUser('subscriptions');
     await deleteByUser('tierHistory');
     await deleteByUser('billingOrders');

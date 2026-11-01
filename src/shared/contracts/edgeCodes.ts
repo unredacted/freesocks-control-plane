@@ -229,6 +229,8 @@ export const L7_CERTIFICATE_CODES = [
   // a Cloudflare zone's edge certificate (`*.<zone>`) is still being issued, or none is on its way
   'edge_certificate_pending',
   'edge_certificate_missing',
+  // a Fastly front's versionless domain has no TLS activation, so Fastly does not route its name
+  'domain_not_activated',
 ] as const;
 export type L7CertificateCode = (typeof L7_CERTIFICATE_CODES)[number];
 
@@ -622,6 +624,9 @@ export const SETUP_ACCOUNT_REASONS = [
   'origin_private',
   'origin_name',
   'origin_port_not_carried',
+  // A CDN whose front sends its own name to a node that answers only for its
+  // own (lib/edges/layers.ts `frontHostAccepted`).
+  'host_header_rejected',
   'account_capacity_reached',
   'account_budget_exhausted',
   'provider_mismatch',

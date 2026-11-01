@@ -696,23 +696,22 @@ describe('refreshActiveMirrors (S3 mirror-refresh cron)', () => {
     expect(res.refreshed).toBe(0);
   });
 
-  test('the refresh cursor persists between runs (rotation) and a stale one self-heals', async () => {
+  test('the first pass gives legacy mirrors their ledger rows; later passes page the ledger', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', 'true');
     vi.stubEnv('ENVIRONMENT', 'development');
     const t = convexTest(schema, modules);
     await seedProvider(t);
     await seedActiveSub(t, await sha256Hex(MOCK_CONTENT), MIRROR_ON_P1);
-
-    // Roundtrip: a stored cursor is read back; null resets.
-    await t.mutation(internal.mirrorProviders.setRefreshCursor, { cursor: 'cursor-x' });
-    expect(await t.query(internal.mirrorProviders.getRefreshCursor, {})).toBe('cursor-x');
-
-    // A STALE/bogus cursor must not wedge the sweep: it restarts from the
-    // beginning, completes the pass, and clears the cursor for the next tick.
-    await t.mutation(internal.mirrorProviders.setRefreshCursor, { cursor: 'bogus-cursor' });
-    const res = await t.action(internal.storage.refreshActiveMirrors, {});
-    expect(res.scanned).toBe(1);
-    expect(await t.query(internal.mirrorProviders.getRefreshCursor, {})).toBeNull();
+    expect(await t.query(internal.mirrorCopies.isSeeded, {})).toBe(false);
+    const first = await t.action(internal.storage.refreshActiveMirrors, {});
+    expect(first.scanned).toBe(1);
+    expect(await t.query(internal.mirrorCopies.isSeeded, {})).toBe(true);
+    const rows = await t.run((ctx) => ctx.db.query('mirrorCopies').collect());
+    expect(rows.map((r) => [r.provider, r.state])).toEqual([['p1', 'in_sync']]);
+    // Unmirrored active keys are not visited any more: the pass pages the ledger.
+    await seedActiveSub(t, 'irrelevant', []);
+    const second = await t.action(internal.storage.refreshActiveMirrors, {});
+    expect(second.scanned).toBe(1);
   });
 });
 

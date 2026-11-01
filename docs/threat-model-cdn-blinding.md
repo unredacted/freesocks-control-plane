@@ -290,7 +290,12 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   origin), **capped** (`mirror.maxPerUser`), **capability-URL'd** (unguessable random object path, not
   enumerable), **country-tiered** (the DB picks a host likely reachable where they are; the country is
   read transiently from `CF-IPCountry` and **never stored** or bound to the user), and refreshed in
-  place. It does NOT weaken the account-number protection (Layer 1 login leg) or the SPA's sealed
+  place. Residual limits: the bucket must deny anonymous listing (the provider connection test
+  warns when it does not, since listing would hand out every mirror path), a provider that is
+  removed has its objects withdrawn before its row goes, and the sync ledger
+  (`convex/mirrorCopies.ts`, `docs/mirrors.md`) stores hashes and times only, never content, a
+  country or an IP. Its read-back of each copy is a plain GET of the same object path the
+  member's app fetches. It does NOT weaken the account-number protection (Layer 1 login leg) or the SPA's sealed
   delivery of the subscription URL (a different artifact) — it widens only the already-carved-out
   content-fetch gap, for users who opt in. The principled fix for the privacy population is the
   **native app**, which (unlike a dumb proxy client) can fetch the content over the sealed reveal-leg

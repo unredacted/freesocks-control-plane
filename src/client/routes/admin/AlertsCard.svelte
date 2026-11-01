@@ -94,9 +94,10 @@
     <CardTitle class="text-base">Operator alerts</CardTitle>
     <CardDescription>
       FCP posts each new edge problem that needs you (a node paused for safety, members getting
-      nothing, a provider that stopped answering, a node waiting to be protected or approved) once,
-      to a webhook that takes ntfy JSON. Alerts carry kinds and counts only: never a member, an
-      address, a node name, a provider or a region. Off by default.
+      nothing, a provider that stopped answering, a node waiting to be protected or approved, an
+      address that looks blocked while automatic replacement is held back) once, to a webhook that
+      takes ntfy JSON. Alerts carry kinds and counts only: never a member, an address, a node name,
+      a provider or a region. Off by default.
     </CardDescription>
   </CardHeader>
   <CardContent class="space-y-3 text-sm">

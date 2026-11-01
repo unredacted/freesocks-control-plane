@@ -2688,25 +2688,65 @@ describe('fastly: a new edge gets a versionless domain', () => {
     });
   });
 
-  test('its DNS readiness is the link and the traffic record, with no version check', async () => {
+  test('its DNS readiness is the link, the activation and the traffic record, with no version check', async () => {
     let linkedTo = SVC;
+    let activated: boolean | undefined = false;
     const r = await serve((c) =>
       c.path === `/domain-management/v1/domains/${DM}`
         ? {
             status: 200,
-            body: { ...(fixture('dm-domain-create.json') as object), service_id: linkedTo },
+            body: {
+              ...(fixture('dm-domain-create.json') as object),
+              service_id: linkedTo,
+              activated,
+            },
           }
         : defaultReply(c),
     );
     const dns = fakeDns();
     const ledger = await provisionV();
     r.calls.length = 0;
+    // Linked and pointed at, but no TLS activation for the name: Fastly routes
+    // nothing to it ("unknown domain"), so the front waits with that reason.
+    expect(await fastlyProvider.describe(cfgV, ledger)).toEqual(
+      expect.objectContaining({
+        state: 'pending',
+        code: 'domain_not_activated',
+        readiness: { dns: 'pending', certificate: 'ready' },
+      }),
+    );
+    // A response without the flag does not hold the front.
+    activated = undefined;
+    expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({ state: 'active' });
+    activated = true;
     expect(await fastlyProvider.describe(cfgV, ledger)).toMatchObject({
       state: 'active',
       readiness: { dns: 'ready', certificate: 'ready' },
       addresses: { hostname: HOST },
     });
+    expect((await fastlyProvider.describe(cfgV, ledger)).code).toBeUndefined();
     expect(r.calls.some((c) => c.path.endsWith('/check'))).toBe(false);
+    // An import whose traffic record lives elsewhere has only the flag, and
+    // says the same thing when the provider reports it false.
+    const imported: Ledger = {
+      ...ledger,
+      resources: ledger.resources.filter(
+        (x) => !(x.kind === 'dns_record' && JSON.parse(x.meta!).role === 'traffic'),
+      ),
+    };
+    activated = false;
+    expect(await fastlyProvider.describe(cfgV, imported)).toMatchObject({
+      state: 'pending',
+      code: 'domain_not_activated',
+      readiness: { dns: 'pending', certificate: 'ready' },
+    });
+    activated = undefined;
+    expect(await fastlyProvider.describe(cfgV, imported)).toMatchObject({
+      state: 'pending',
+      readiness: { dns: 'pending' },
+    });
+    expect((await fastlyProvider.describe(cfgV, imported)).code).toBeUndefined();
+    activated = true;
     // The traffic record is read back: pointed elsewhere, or gone, is not ready.
     const traffic = dns.rows.find((x) => x.name === HOST)!;
     traffic.content = 'elsewhere.example.net';
@@ -2895,6 +2935,73 @@ describe('fastly: one wildcard certificate per account and zone', () => {
     expect(
       steps.filter((x) => ['tls', 'acme', 'await-tls'].includes(x.id)).map((x) => x.resourceName),
     ).toEqual(['*.example.org', '_acme-challenge.example.org', '*.example.org']);
+  });
+
+  test('a front on the wildcard gets a classic domain, whatever the account chose', async () => {
+    // Fastly routes a versionless domain only with a TLS activation of its own,
+    // which the wildcard (activated for `*.<zone>`) never gives a front's name.
+    const p = wildcardProvider();
+    p.state.issued = true;
+    const r = await serve(p.route);
+    fakeDns();
+    const { ledger } = await provisionW(spec);
+    const kinds = ledger.resources.map((x) => x.kind);
+    expect(kinds).toContain('domain');
+    expect(kinds).not.toContain('versionless_domain');
+    expect(r.calls.some((c) => c.path.startsWith('/domain-management/'))).toBe(false);
+    expect(
+      r.calls.filter((c) => c.method === 'POST' && /\/version\/\d+\/domain$/.test(c.path)),
+    ).toHaveLength(1);
+    // The same account with one certificate per front keeps its versionless domain.
+    r.calls.length = 0;
+    const perHost = { ...cfgW, certificateScope: 'per_host' as const };
+    const step = fastlyProvider
+      .planProvision(perHost, spec2, tpl)
+      .find((x) => x.kind === 'create_domain')!;
+    const out = await fastlyProvider.runStep(
+      perHost,
+      step,
+      spec2,
+      tpl,
+      apply({ steps: [], resources: [] }, step, {
+        status: 'done',
+        resources: [
+          { kind: 'service', resourceId: SVC, ownership: 'created', meta: { version: 1 } },
+        ],
+      }),
+    );
+    expect(out).toMatchObject({ status: 'done', resources: [{ kind: 'versionless_domain' }] });
+  });
+
+  test('a wildcard edge that created a versionless domain before this change finds it', async () => {
+    // Its domain step was sent (versionless) and its answer lost across the
+    // deploy that gave wildcard fronts classic domains: discovery records what
+    // exists, so a rollback deletes it rather than a classic create colliding.
+    const step = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((s) => s.kind === 'create_domain')!;
+    const ledger = apply({ steps: [], resources: [] }, step, {
+      status: 'done',
+      resources: [{ kind: 'service', resourceId: SVC, ownership: 'created', meta: { version: 1 } }],
+    });
+    let listing = 'dm-domains-list.json';
+    const r = await serve((c) =>
+      c.path === '/domain-management/v1/domains' ? ok(listing) : defaultReply(c),
+    );
+    expect(await fastlyProvider.discover(cfgW, step, spec, ledger, 1)).toMatchObject({
+      status: 'found',
+      resources: [{ kind: 'versionless_domain', resourceId: DM }],
+    });
+    // None there: the classic domain on the version is what it looks for.
+    listing = 'dm-domains-empty.json';
+    expect(await fastlyProvider.discover(cfgW, step, spec, ledger, 1)).toMatchObject({
+      status: 'found',
+      resources: [{ kind: 'domain', resourceId: HOST }],
+    });
+    // An edge planned classic never looks at Domain Management.
+    r.calls.length = 0;
+    await fastlyProvider.discover({ ...cfgW, domainModel: 'classic' }, step, spec, ledger, 1);
+    expect(r.calls.some((c) => c.path.startsWith('/domain-management/'))).toBe(false);
   });
 
   test('two edges share ONE subscription and ONE ACME record; the second never waits', async () => {

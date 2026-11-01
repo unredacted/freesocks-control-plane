@@ -4498,7 +4498,9 @@ export async function startReprotect(
       locationKey: locationKeyOf(p.account.provider, p.location.placeKey),
     }));
     const carriersOf = (l: Listener) =>
-      pickRows.filter((p) => carries(p, l, { websocketNode })).map((p) => p.location._id as string);
+      pickRows
+        .filter((p) => carries(p, l, { websocketNode, originAddress: relay.originAddress }))
+        .map((p) => p.location._id as string);
     const req = requirementOf(
       served.map((x) => ({
         listenerKey: x.listener.listenerKey,
@@ -4542,7 +4544,9 @@ export async function startReprotect(
         reasons: [],
         locations: [],
         carries: served
-          .filter((x) => carries(p, x.listener, { websocketNode }))
+          .filter((x) =>
+            carries(p, x.listener, { websocketNode, originAddress: relay.originAddress }),
+          )
           .map((x) => x.listener.listenerKey),
       };
       row.locations = [...(row.locations ?? []), planLocationOf(p.location)];

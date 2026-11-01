@@ -1324,6 +1324,45 @@ describe('edgeProviderOps: how an edge was built is frozen with it (Fastly domai
     expect(seen[0]).toMatchObject({ domainModel: 'versionless', certificateScope: 'wildcard' });
   });
 
+  test("a new edge is planned with its pick's certificate, the one its intent freezes", async () => {
+    const t = newT();
+    const { id: accountId } = await fastlyAccount(t);
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: accountId,
+      optionDefaults: { certificateScope: 'per_host' },
+    });
+    const planned: Array<Record<string, unknown>> = [];
+    standIn({
+      planProvision: (cfg: Record<string, unknown>) => {
+        planned.push({ ...cfg });
+        return [];
+      },
+    });
+    mockFetch(() => jsonRes({}));
+    const plan = (choices?: Record<string, unknown>) =>
+      t.action(internal.edgeProviderOps.planProvision, {
+        accountId,
+        spec: {
+          name: 'fcp-relay-o1-1',
+          hostname: 'front.example.org',
+          listeners: [{ edgePort: 443, members: [{ address: 'origin.example', port: 443 }] }],
+          originTransport: {
+            scheme: 'https' as const,
+            certPublic: true,
+            certNames: ['origin.example'],
+            acceptsHostHeader: 'any' as const,
+          },
+        },
+        templateParams: {},
+        ...(choices ? { choices } : {}),
+      });
+    // The account's default without a choice; a node that chose the wildcard
+    // plans a wildcard edge (its steps and their order follow the certificate).
+    await plan();
+    await plan({ certificateScope: 'wildcard' });
+    expect(planned.map((c) => c.certificateScope)).toEqual(['per_host', 'wildcard']);
+  });
+
   test('the account chooses the domain kind of NEW fronts; an edge keeps the one it froze', async () => {
     const t = newT();
     const { id: accountId, dnsId } = await fastlyAccount(t);

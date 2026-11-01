@@ -10,7 +10,9 @@ import { sha256Hex } from './lib/crypto';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import {
   deleteFromProviders,
+  realFetch,
   uploadToProviders,
+  verifyCopy,
   type S3Op,
   type S3Provider,
   type S3Send,
@@ -111,6 +113,59 @@ describe('uploadToProviders', () => {
         send,
       ),
     ).rejects.toThrow(/All S3 mirror uploads failed/);
+  });
+});
+
+describe('reading a copy back (realFetch + verifyCopy)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const big = 5 * 1024 * 1024;
+
+  test('a declared length past the bound is refused unread, as another body', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('x', { headers: { 'content-length': String(big) } })),
+    );
+    expect(await realFetch('https://cdn.example/m')).toEqual({
+      status: 200,
+      body: null,
+      oversize: true,
+    });
+    expect(await verifyCopy(realFetch, 'https://cdn.example/m', 'h')).toEqual({
+      kind: 'mismatch',
+      observedHash: 'oversize',
+    });
+  });
+
+  test('an undeclared body is cut at the bound while streaming', async () => {
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (sent > 2 * big) return c.close();
+        sent += 1024 * 1024;
+        c.enqueue(new Uint8Array(1024 * 1024));
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(stream)),
+    );
+    expect(await realFetch('https://cdn.example/m')).toMatchObject({ oversize: true });
+    expect(sent).toBeLessThan(2 * big);
+  });
+
+  test('a normal body is read and hashed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('hello')),
+    );
+    expect(await verifyCopy(realFetch, 'https://cdn.example/m', await sha256Hex('hello'))).toEqual({
+      kind: 'match',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('gone', { status: 404 })),
+    );
+    expect(await verifyCopy(realFetch, 'https://cdn.example/m', 'h')).toEqual({ kind: 'missing' });
   });
 });
 

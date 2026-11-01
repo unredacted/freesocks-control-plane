@@ -63,31 +63,48 @@
 
   let open = $state(false);
 
-  // One-time snapshot of the props into local state (the IIFE breaks the
+  // One-time snapshot of the geo prop into local state (the IIFE breaks the
   // compiler's "captures initial value of prop" analysis - same idiom as the
-  // editors). `added` is seeded from props so it updates immediately on provision
-  // without waiting for the parent to re-fetch.
-  const init = ((m: Props['mirrors'], g: Props['geoCountry'], sub: string) => ({
-    added: m.filter((x) => x.publicUrl && x.publicUrl !== sub),
+  // editors).
+  const init = ((g: Props['geoCountry']) => ({
     selected: g && COUNTRY_CODES.includes(g) ? g : '',
-  }))(mirrors, geoCountry, subscriptionUrl);
+  }))(geoCountry);
 
-  let added = $state<{ provider: string; publicUrl: string }[]>(init.added);
   let status = $state<MirrorRequestResponse['status'] | 'idle'>('idle');
   let copiedUrl = $state<string | null>(null);
 
+  // The list follows the server (the `mirrors` prop): a mirror withdrawn with
+  // its provider, or one whose last refresh failed, leaves it at the parent's
+  // next refetch instead of staying on screen until a reload. Two local
+  // overlays bridge the moment before that refetch lands: a mirror just added
+  // (`pending`) and the ones just removed (`removed`). Each entry goes once the
+  // server agrees, so a later withdrawal never brings a pending one back.
+  let pending = $state<{ provider: string; publicUrl: string }[]>([]);
+  let removed = $state<string[]>([]);
+  const fromServer = $derived(
+    mirrors.filter((x) => x.publicUrl && x.publicUrl !== subscriptionUrl),
+  );
+  const added = $derived([
+    ...fromServer.filter((m) => !removed.includes(m.publicUrl)),
+    ...pending.filter((p) => !fromServer.some((m) => m.publicUrl === p.publicUrl)),
+  ]);
+  $effect(() => {
+    const listed = new Set(fromServer.map((m) => m.publicUrl));
+    if (pending.some((p) => listed.has(p.publicUrl)))
+      pending = pending.filter((p) => !listed.has(p.publicUrl));
+    if (removed.some((u) => !listed.has(u))) removed = removed.filter((u) => listed.has(u));
+  });
+
   // A NEW key (regenerate/switch) retires every mirror minted against the old
-  // one: re-sync from props when the subscription URL changes, or the backend
-  // would keep offering the dead key's 404 URLs until remount. (Intentionally
-  // keyed off subscriptionUrl only — a provision's local `added` entry must
-  // survive the parent's subsequent refetch of the SAME key.)
+  // one: the overlays describe the old key, so they go with it.
   // svelte-ignore state_referenced_locally -- intentionally a "last seen" tracker,
   // compared against the live prop in the $effect below.
   let lastSubUrl = $state(subscriptionUrl);
   $effect(() => {
     if (subscriptionUrl !== lastSubUrl) {
       lastSubUrl = subscriptionUrl;
-      added = mirrors.filter((x) => x.publicUrl && x.publicUrl !== subscriptionUrl);
+      pending = [];
+      removed = [];
     }
   });
 
@@ -121,7 +138,7 @@
     onSuccess: (res) => {
       if (res.status === 'ok' && res.publicUrl) {
         if (!added.some((m) => m.publicUrl === res.publicUrl)) {
-          added = [...added, { provider: res.provider ?? '', publicUrl: res.publicUrl }];
+          pending = [...pending, { provider: res.provider ?? '', publicUrl: res.publicUrl }];
         }
         status = res.remaining > 0 ? 'idle' : 'capped';
         void qc.invalidateQueries({ queryKey: queryKeys.account });
@@ -138,7 +155,8 @@
   const clear = createMutation(() => ({
     mutationFn: () => apiClient.delete('/api/v1/mirror', MirrorClearResponse),
     onSuccess: () => {
-      added = [];
+      removed = fromServer.map((m) => m.publicUrl);
+      pending = [];
       status = 'idle';
       void qc.invalidateQueries({ queryKey: queryKeys.account });
       toast.success(t('mirror.removedToast'));
@@ -279,6 +297,13 @@
         {:else if status === 'no_subscription'}
           <p class="text-sm text-muted-foreground" transition:fade={{ duration: 150 }}>
             {t('mirror.noSubscription')}
+          </p>
+        {:else if status === 'error'}
+          <!-- The server answered but could not add one (a transient upload or
+               backend failure, or the key moved meanwhile): say so, or the
+               button looks like it did nothing. -->
+          <p class="text-sm text-amber-600" role="status" transition:fade={{ duration: 150 }}>
+            {t('mirror.failed')}
           </p>
         {/if}
 

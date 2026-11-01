@@ -109,6 +109,7 @@ describe('transport candidates with the origin probe', () => {
   test('HTTP-transport candidates get their originTransport from the probe and become L7-frontable; the rest stay L4-only', async () => {
     const { t, serverId } = await seed();
     const probed: unknown[] = [];
+    const asked: unknown[] = [];
     __setOriginProbeDepsForTests({
       lookup: async () => [],
       tcpConnect: async () => ({ ok: true }),
@@ -116,7 +117,11 @@ describe('transport candidates with the origin probe', () => {
         probed.push(o);
         return { ok: true, authorized: true, names: ['ws.example'] };
       },
-      httpsStatus: async () => ({ status: 200 }),
+      // The transport itself takes the upgrade with the foreign Host.
+      httpsStatus: async (o) => {
+        asked.push({ path: o.path, upgrade: o.upgrade, hostHeader: o.hostHeader });
+        return { status: o.upgrade ? 101 : 200 };
+      },
     });
     const r = await t.action(internal.edgeOriginProbe.inboundCandidates, {
       backendServerId: serverId,
@@ -144,6 +149,10 @@ describe('transport candidates with the origin probe', () => {
     // Only the HTTP-transport transport was dialled, at the node's address and the transport's port.
     expect(probed).toEqual([
       { host: ORIGIN, port: 443, servername: 'ws.example', alpn: ['http/1.1'], timeoutMs: 6000 },
+    ]);
+    // The Host answer is asked as an upgrade at the transport's own path.
+    expect(asked).toEqual([
+      { path: '/ws', upgrade: 'websocket', hostHeader: 'origin-probe.invalid' },
     ]);
     // Nothing was registered or persisted.
     expect(await t.run((ctx) => ctx.db.query('relays').collect())).toEqual([]);

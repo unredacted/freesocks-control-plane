@@ -72,6 +72,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Repair or withdraw mirror uploads a policy move overtook',
   },
   {
+    name: 'mirror-verify',
+    everyMs: 15 * MIN,
+    description: 'Read mirror copies back through their public URL',
+  },
+  {
     name: 'deactivate-idle-free',
     everyMs: DAY,
     description: 'Deactivate + retain idle free users (reclaim key, keep row)',
@@ -85,6 +90,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     name: 'session-counts-reconcile',
     everyMs: DAY,
     description: 'Recompute the session counter behind the PoP tally (self-heal)',
+  },
+  {
+    name: 'mirror-copies-reconcile',
+    everyMs: DAY,
+    description: 'Rebuild the mirror sync counter, drop orphaned ledger rows',
   },
   { name: 'session-sweep', everyMs: DAY, description: 'Drop expired session rows' },
   { name: 'rate-limit-sweep', everyMs: DAY, description: 'Drop expired rate-limit rows' },

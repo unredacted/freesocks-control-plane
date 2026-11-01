@@ -38,6 +38,7 @@ import {
 import { familyOfPlacement, familyReads, memberFamilyOf } from './lib/memberFamily';
 import { EMPTY_OWN_EXITS, type OwnExits } from './lib/ownExits';
 import { OWN_EXITS_STATE_KEY } from './ownExits';
+import { invalidateCopies } from './mirrorCopies';
 import { recordHeartbeat } from './cronHeartbeat';
 
 const DAY = 86_400_000;
@@ -161,6 +162,14 @@ export async function setStoredCountry(
     ...(bump ? { countryRev: (sub.countryRev ?? 0) + 1 } : {}),
   };
   await ctx.db.patch(sub._id, patch);
+  // A mirror's body is rendered for the stored country (convex/storage.ts):
+  // rendered again now, not when the sweep comes round.
+  if (bump && sub.state === 'active' && sub.subscriptionMirrors.length > 0) {
+    await invalidateCopies(ctx, sub._id, 'country_changed');
+    await ctx.scheduler.runAfter(0, internal.storage.refreshMirrorsForSubscription, {
+      subscriptionId: sub._id,
+    });
+  }
   return { ...sub, ...patch } as Doc<'subscriptions'>;
 }
 

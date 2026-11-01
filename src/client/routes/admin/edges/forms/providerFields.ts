@@ -294,7 +294,7 @@ export const PROVIDER_FIELDS: Record<EdgeProviderId, ProviderField[]> = {
       ],
       required: true,
       advanced: true,
-      help: 'How a new front’s name is attached to its service. Classic domains exist only on accounts created before September 2025; pick them if the provider refuses the other kind.',
+      help: 'How a new front’s name is attached to its service. Classic domains exist only on accounts created before September 2025; pick them if the provider refuses the other kind. A front on the shared wildcard certificate always gets a classic domain.',
     },
     {
       key: 'tlsConfigurationId',

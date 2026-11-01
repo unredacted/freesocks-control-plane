@@ -1193,7 +1193,7 @@ export const FASTLY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     label: 'Host sent to the node',
     type: 'select',
     group: 'Backend',
-    help: 'The Host header the front sends: the front name, or the node address when the node answers only to its own name.',
+    help: 'The Host header the front sends: the front name, or the node address. A node that answers only to its own name gets the node address whatever is chosen here.',
     options: [
       { value: 'hostname', label: 'The front name' },
       { value: 'origin', label: 'The node address' },
@@ -1618,7 +1618,7 @@ export const FASTLY_CERTIFICATE_FIELDS: TemplateFieldDescriptor[] = [
     prominent: true,
     // What an account from before the choice existed (and its fronts) use.
     default: 'per_host',
-    help: 'A wildcard is issued once for the zone and shared: a new front never waits for a certificate, and its name never appears in public certificate logs before members use it.',
+    help: 'A wildcard is issued once for the zone and shared: a new front never waits for a certificate, and its name never appears in public certificate logs before members use it. Its fronts get classic domains, which exist only on accounts created before September 2025.',
     options: [
       { value: 'wildcard', label: 'One wildcard for every front' },
       { value: 'per_host', label: 'One per front' },

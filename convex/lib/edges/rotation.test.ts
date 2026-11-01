@@ -213,6 +213,59 @@ describe('accountsForSlot', () => {
     ).toEqual([]);
   });
 
+  test('a node that answers only for its own names: only a provider that can send that name', () => {
+    const own = {
+      scheme: 'https' as const,
+      certPublic: true,
+      certNames: ['origin.example.org'],
+      acceptsHostHeader: 'names' as const,
+    };
+    const withCloudFront = [...accounts, { id: 'cfront', provider: 'cloudfront' }];
+    // Fastly sets its template to send the origin's name (`withOriginHost`),
+    // CloudFront always does; Cloudflare's front would send its own name.
+    expect(
+      accountsForSlot(withCloudFront, {
+        layers: ['l4', 'l7'],
+        proto: WS,
+        allowL7: true,
+        originTransport: own,
+      }).map((a) => a.id),
+    ).toEqual(['l4', 'fastly', 'cfront']);
+    // A node that takes any Host, or a wildcard that could cover the front name, keeps them all.
+    for (const ot of [
+      { ...own, acceptsHostHeader: 'any' as const },
+      { ...own, certNames: ['*.example.org'] },
+    ])
+      expect(
+        accountsForSlot(withCloudFront, {
+          layers: ['l4', 'l7'],
+          proto: WS,
+          allowL7: true,
+          originTransport: ot,
+        }).map((a) => a.id),
+      ).toEqual(['l4', 'cf', 'fastly', 'cfront']);
+    // Dialled at an IP (or a name it does not serve), the origin's "own name" is
+    // that address, which the node refuses: no CDN front fits.
+    expect(
+      accountsForSlot(withCloudFront, {
+        layers: ['l4', 'l7'],
+        proto: WS,
+        allowL7: true,
+        originTransport: own,
+        originAddress: '203.0.113.10',
+      }).map((a) => a.id),
+    ).toEqual(['l4']);
+    expect(
+      accountsForSlot(withCloudFront, {
+        layers: ['l4', 'l7'],
+        proto: WS,
+        allowL7: true,
+        originTransport: own,
+        originAddress: 'origin.example.org',
+      }).map((a) => a.id),
+    ).toEqual(['l4', 'fastly', 'cfront']);
+  });
+
   test('a DNS account set to DNS only fronts nothing, whoever is choosing', () => {
     // The default: the Cloudflare account holds DNS records for other fronts.
     const dnsOnly = accounts.map((a) =>
