@@ -1057,10 +1057,12 @@ export async function buildPlan(
     legacyHostUuids: c.relay?.legacyHostUuids ?? [],
     coveredInboundUuids,
   };
-  // A Host may dial the node by a name: one that resolves to the node is the node.
-  const names = await planStage('resolving the names the Hosts dial', () =>
+  // A Host may dial the node by a name: one that resolves to the node is the
+  // node; one that resolves elsewhere may be a front the operator built.
+  const looked = await planStage('resolving the names the Hosts dial', () =>
     resolveNodeNames(ctx, hosts, dctx),
   );
+  const names = looked.node;
   const classified = classifyDirectHosts(hosts, {
     ...dctx,
     alsoAddresses: [...(dctx.alsoAddresses ?? []), ...names],
@@ -1079,8 +1081,9 @@ export async function buildPlan(
       covered: false,
     })),
   ];
-  // A Host on a protected transport that dials neither the node nor an edge:
-  // a front the operator built by hand, which members stop getting at go-live.
+  // A Host on a protected transport that dials neither the node nor an edge
+  // (an address, or a name that resolved elsewhere): a front the operator
+  // built by hand, which members stop getting at go-live.
   const fronts = operatorFrontHosts(hosts, {
     ...dctx,
     fcpRemarks: [
@@ -1089,6 +1092,7 @@ export async function buildPlan(
     ],
     alsoAddresses: [...(dctx.alsoAddresses ?? []), ...names],
     edgeAddresses: c.relay?.edgeAddresses ?? [],
+    frontNames: looked.elsewhere,
   }).map((h) => ({ uuid: h.uuid, remark: h.remark }));
   // Each transport's test link source: a load balancer address of one with
   // none would stop the run at its test card after the address was bought.

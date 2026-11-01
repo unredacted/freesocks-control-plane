@@ -689,10 +689,20 @@ the transport or another node's (`servers.adopt_address_unknown`). Where its mem
 test link, one per address with the endpoint it dials; the review's address tuples; its public
 address, or, for a Host that dials a name, its origin address, which edges dial once Edges
 protects it), never from the row, which may hold a private management address. A fronted node whose edge FCP does not run yet (an earlier
-tool made it) is `externallyFronted`: it needs no standbys and no origin name until Edges
-protects it, one node at a time, through the normal flow; after maintenance its approval
-commits in its own transaction (nothing of FCP's publishes for it, so nothing would wake a run
-waiting at publish), or is refused with nothing changed. The role is never run for an adopted
+tool made it) is `externallyFronted`: it needs no standbys until Edges protects it, one node
+at a time, through the normal flow; after maintenance its approval commits in its own
+transaction (nothing of FCP's publishes for it, so nothing would wake a run waiting at
+publish), or is refused with nothing changed. A WebSocket node is adopted with its **origin
+name** (`originHostname`; the dialog's "Origin name"), required
+(`servers.adopt_origin_name_required`): the name its CDN fronts dial, the one its Caddy's
+certificate is for. Edges dials the same name once it protects the node (the node's origin and
+ingress, `enrolledOriginOf`). It is a DNS name (an address is refused, `validation`), on a
+WebSocket mode only, and no other node's (`servers.origin_name_in_use`, checked as well when a
+node's settings give it an explicit hostname).
+It is taken here because an adopted node's machine settings never change afterwards: a
+change that moves its machine revision (a hostname, an address override, IPv6, the node port)
+is refused (`servers.node_adopted`), since the role never runs there to apply it and the node
+would stay closed for good. Its country, which the backend row carries, still changes. The role is never run for an adopted
 machine, which is also why its retirement is closed by an admin rather than by a report
 (below): a role `PUT`, `bootstrap` (the node secret is never read for it) or `applied` under its
 name is refused (`servers.node_adopted`).

@@ -361,12 +361,27 @@ export const withdrawOriginDns = internalAction({
   },
 });
 
-async function resolveBoth(name: string): Promise<{ v4: string[]; v6: string[] }> {
+/** A lookup error that is an answer: the name has no such record, or does not exist. */
+const NO_RECORD = new Set(['ENODATA', 'ENOTFOUND']);
+
+/**
+ * A and AAAA for one name. `conclusive` is false when either lookup failed
+ * with anything but "no such record" (a timeout, a server failure, a refusal):
+ * its empty list is then not known to be empty.
+ */
+async function resolveBoth(
+  name: string,
+): Promise<{ v4: string[]; v6: string[]; conclusive: boolean }> {
+  let conclusive = true;
+  const settle = (e: unknown) => {
+    if (!NO_RECORD.has((e as { code?: string })?.code ?? '')) conclusive = false;
+    return [] as string[];
+  };
   const [v4, v6] = await Promise.all([
-    dns.resolve4(name).catch(() => [] as string[]),
-    dns.resolve6(name).catch(() => [] as string[]),
+    dns.resolve4(name).catch(settle),
+    dns.resolve6(name).catch(settle),
   ]);
-  return { v4, v6 };
+  return { v4, v6, conclusive };
 }
 
 /**
@@ -397,12 +412,14 @@ export const checkOriginResolves = internalAction({
   },
   handler: async (_ctx, a): Promise<OriginResolution> => {
     if (originResolver) return originResolver(a);
-    const answers = await resolveBoth(a.hostname);
+    const { v4, v6 } = await resolveBoth(a.hostname);
+    const answers = { v4, v6 };
     return { resolves: verifyResolution(answers, a.expected), answers };
   },
 });
 
-type NameResolver = (name: string) => Promise<{ v4: string[]; v6: string[] }>;
+/** `conclusive: false` = a lookup failed (absent = both answered). */
+type NameResolver = (name: string) => Promise<{ v4: string[]; v6: string[]; conclusive?: boolean }>;
 let nameResolver: NameResolver | null = null;
 /** Test seam: answer `resolveNames` without DNS (null = the real lookup). */
 export function __setNameResolutionForTests(f: NameResolver | null): void {
@@ -411,22 +428,33 @@ export function __setNameResolutionForTests(f: NameResolver | null): void {
 
 /**
  * What public resolvers answer for a few names (A and AAAA): whether a Host
- * dialling a node by a name dials the node (edgeHostHides `nodeNamesAmong`).
- * DNS only; a failed lookup is no answer.
+ * dialling a node by a name dials the node, or a front elsewhere
+ * (edgeHostHides `resolveNodeNames`). DNS only; a failed lookup is no answer,
+ * and the name is listed `inconclusive` (one of its lookups failed with
+ * anything but "no such record"), so nothing is concluded from what is missing.
  */
 export const resolveNames = internalAction({
   args: { names: v.array(v.string()) },
-  handler: async (_ctx, { names }): Promise<Record<string, string[]>> => {
-    const out: Record<string, string[]> = {};
+  handler: async (
+    _ctx,
+    { names },
+  ): Promise<{ answers: Record<string, string[]>; inconclusive: string[] }> => {
+    const answers: Record<string, string[]> = {};
+    const inconclusive: string[] = [];
     // A few at a time: a node's Hosts may dial many names, each one query.
     for (let i = 0; i < names.length; i += 20)
       await Promise.all(
         names.slice(i, i + 20).map(async (name) => {
-          const r = await (nameResolver ?? resolveBoth)(name).catch(() => ({ v4: [], v6: [] }));
-          out[name] = [...r.v4, ...r.v6];
+          const r = await (nameResolver ?? resolveBoth)(name).catch(() => ({
+            v4: [] as string[],
+            v6: [] as string[],
+            conclusive: false,
+          }));
+          answers[name] = [...r.v4, ...r.v6];
+          if (r.conclusive === false) inconclusive.push(name);
         }),
       );
-    return out;
+    return { answers, inconclusive };
   },
 });
 

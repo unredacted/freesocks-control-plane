@@ -37,6 +37,7 @@ import {
   classifyDirectHosts,
   isDirectHost,
   listingHash,
+  namesElsewhere,
   nodeNameCandidates,
   nodeNameHosts,
   nodeNamesOf,
@@ -180,6 +181,8 @@ export interface HideContext {
   bound: boolean;
   /** Every other address that is the node (`nodeIntents.nodeAddressesOf`). */
   alsoAddresses: string[];
+  /** Names among the node's Hosts this look resolved elsewhere (`namesElsewhere`). */
+  frontNames?: string[];
 }
 
 async function hideContext(
@@ -643,6 +646,7 @@ async function recordFronts(
     // the bare `<node>-relay` an operator gives such a Host.
     ...directContextOf(c, inbounds),
     edgeAddresses: c.edgeAddresses,
+    frontNames: c.frontNames,
   });
   await ctx.runMutation(internal.edgeHostHides.noteFronts, {
     relayId: c.relay._id,
@@ -734,23 +738,29 @@ function nodeInbounds(
 /**
  * The names among a node's Hosts that turn out to be the node (they resolve to
  * one of its addresses), with what they resolve to: a direct Host may dial the
- * node by a name. Resolved only when such a name is there (`nodeNameCandidates`),
- * every one of them: more than one look may ask is refused, never cut short.
+ * node by a name (`node`). And the names that resolved elsewhere (`elsewhere`,
+ * `namesElsewhere`): a front the operator built at a name of its own, such as
+ * a CDN hostname. Resolved only when such a name is there
+ * (`nodeNameCandidates`), every one of them: more than one look may ask is
+ * refused, never cut short.
  */
 export async function resolveNodeNames(
   ctx: ActionCtx,
   hosts: readonly BackendHost[],
   dctx: DirectHostContext,
-): Promise<string[]> {
+): Promise<{ node: string[]; elsewhere: string[] }> {
   const names = nodeNameCandidates(hosts, dctx);
-  if (names.length === 0) return [];
+  if (names.length === 0) return { node: [], elsewhere: [] };
   if (names.length > MAX_NODE_NAME_LOOKUPS)
     throw new ConvexError({
       code: TOO_MANY_HOST_NAMES,
       message: `The node's Hosts dial ${names.length} names, more than the ${MAX_NODE_NAME_LOOKUPS} FCP checks at once; remove the ones not in use`,
     });
-  const answers = await ctx.runAction(internal.nodeIntentOps.resolveNames, { names });
-  return nodeNamesOf(dctx, answers);
+  const { answers, inconclusive } = await ctx.runAction(internal.nodeIntentOps.resolveNames, {
+    names,
+  });
+  const node = nodeNamesOf(dctx, answers);
+  return { node, elsewhere: namesElsewhere(dctx, answers, node, inconclusive) };
 }
 
 /**
@@ -764,17 +774,17 @@ async function withNodeNames(
   hosts: readonly BackendHost[],
   inbounds: string[],
 ): Promise<HideContext> {
-  const found = await resolveNodeNames(
+  const { node: found, elsewhere } = await resolveNodeNames(
     ctx,
     hosts,
     directContextOf(c, inbounds, conventionRemarks(hosts, c.nodeName)),
   );
-  if (found.length === 0) return c;
+  if (found.length === 0) return { ...c, frontNames: elsewhere };
   await ctx.runMutation(internal.edgeHostHides.recordNodeAddresses, {
     relayId: c.relay._id,
     addresses: found,
   });
-  return { ...c, alsoAddresses: [...c.alsoAddresses, ...found] };
+  return { ...c, alsoAddresses: [...c.alsoAddresses, ...found], frontNames: elsewhere };
 }
 
 const TOO_MANY_HOST_NAMES = 'edge.too_many_host_names';

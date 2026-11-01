@@ -567,10 +567,14 @@ async function testedAddressesAdoptionStales(
  * refused: nothing would tell members' Hosts from anybody else's. Where
  * members reach it is read from those Hosts, never from the row, which may
  * hold a private management address. A fronted node whose edge FCP does not
- * run yet is `externallyFronted` until Edges protects it. The role is never
- * run for an adopted machine. Its row keeps its port and every transport it
- * serves, and its addresses keep their remarks: a reconcile never narrows it,
- * nor adds or removes an address by FCP's remark scheme.
+ * run yet is `externallyFronted` until Edges protects it. A WebSocket node's
+ * `originHostname` is the name its CDN fronts dial (its Caddy's certificate
+ * name): edges FCP builds for it later dial the same name. It is taken here
+ * because a settings change could never be applied to an adopted machine.
+ * The role is never run for an adopted machine. Its row keeps its port and
+ * every transport it serves, and its addresses keep their remarks: a
+ * reconcile never narrows it, nor adds or removes an address by FCP's remark
+ * scheme.
  */
 export const adoptNode = internalMutation({
   args: {
@@ -579,6 +583,7 @@ export const adoptNode = internalMutation({
     mode: v.string(),
     externallyFronted: v.optional(v.boolean()),
     hostUuids: v.optional(v.array(v.string())),
+    originHostname: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
@@ -604,6 +609,7 @@ export const adoptNode = internalMutation({
       );
     if (!NODE_NAME.test(node.name)) refuse('validation', 'The node name is not usable here');
     const direct = isDirect(mode.shape);
+    const originHostname = await adoptedOriginName(ctx, sid, setup!, mode.shape, a.originHostname);
     const hosts = await ctx.db
       .query('panelHosts')
       .withIndex('by_server', (q) => q.eq('backendServerId', sid))
@@ -669,6 +675,7 @@ export const adoptNode = internalMutation({
     const now = Date.now();
     const settings = defaultSettings(setup!, a.mode);
     if (isWs(mode.shape)) settings.originHostnameSource = 'explicit';
+    if (originHostname) settings.explicitHostname = originHostname;
     // The port it talks to the backend on stays: its row is reconciled as it is.
     if (node.port) settings.nodePort = node.port;
     // Where members reach it is what its Hosts dial; the row's address is
@@ -750,11 +757,69 @@ export const adoptNode = internalMutation({
         name: node.name,
         mode: a.mode,
         addresses: addresses.length,
+        originName: !!originHostname,
       },
     });
     return { intentId: id, addresses: addresses.length };
   },
 });
+
+/**
+ * The origin name an adopted node is given, checked. A WebSocket node needs
+ * one (`servers.adopt_origin_name_required`): its edges dial it, and an
+ * adopted machine's settings never change afterwards, so it could not be
+ * added later. It is a DNS name (never an address: a front's TLS name must be
+ * a name its certificate covers) and no other node's. Any other node takes
+ * none.
+ */
+async function adoptedOriginName(
+  ctx: MutationCtx,
+  sid: Id<'backendServers'>,
+  setup: Setup,
+  shape: ModeShape,
+  given: string | undefined,
+): Promise<string | undefined> {
+  const blank = given === undefined || given.trim() === '';
+  if (!isWs(shape)) {
+    if (!blank)
+      refuse('validation', 'Only a node members reach through a CDN front has an origin name');
+    return undefined;
+  }
+  if (blank)
+    refuse(
+      'servers.adopt_origin_name_required',
+      'A WebSocket node is adopted with its origin name: the name its CDN fronts dial',
+    );
+  const name = given!.trim().toLowerCase().replace(/\.$/, '');
+  if (!HOSTNAME_RE.test(name) || !name.includes('.') || IPV4.test(name))
+    refuse('validation', 'The origin name is a DNS name, such as node.example.org');
+  await assertOriginNameFree(ctx, sid, setup, name);
+  return name;
+}
+
+/**
+ * One node per origin name on a backend: edges of two nodes would dial one
+ * machine, and a DNS change for one would move the other. Checked wherever a
+ * node is given a name (adoption, a settings change).
+ */
+async function assertOriginNameFree(
+  ctx: MutationCtx,
+  sid: Id<'backendServers'>,
+  setup: Pick<Setup, 'originDns'> | null,
+  name: string,
+  except?: Id<'panelNodeIntents'>,
+): Promise<void> {
+  for (const other of await ctx.db
+    .query('panelNodeIntents')
+    .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+    .collect())
+    if (
+      other._id !== except &&
+      other.state !== 'retired' &&
+      originHostnameOf(other, setup)?.toLowerCase() === name
+    )
+      refuse('servers.origin_name_in_use', `${other.name} already has this origin name`);
+}
 
 /**
  * Reconcile a node now, whatever its state (a moved transport re-addresses its
@@ -980,6 +1045,16 @@ export const patchSettings = internalMutation({
       if (s.explicitHostname !== p.explicitHostname) rewritesPath = true;
       next.explicitHostname = p.explicitHostname.toLowerCase();
       next.originHostnameSource = 'explicit';
+      await assertOriginNameFree(
+        ctx,
+        intent.backendServerId,
+        await ctx.db
+          .query('panelSetups')
+          .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+          .unique(),
+        next.explicitHostname,
+        intent._id,
+      );
     }
     if (p.originAddressOverride !== undefined) {
       if ((s.originAddressOverride ?? null) !== p.originAddressOverride) rewritesPath = true;
@@ -1005,6 +1080,13 @@ export const patchSettings = internalMutation({
     }
     const kind = classifyChange({ addsPath, rewritesPath });
     if (kind === 'none' && p.countryCode === undefined) refuse('validation', 'Nothing to change');
+    // A new machine revision waits for the role to apply it, and the role never
+    // runs for an adopted machine: the node would stay closed for good.
+    if (kind !== 'none' && intent.adopted)
+      refuse(
+        'servers.node_adopted',
+        'This node was adopted as it was: the node role never applies machine settings to it',
+      );
     const now = Date.now();
     let patch: Partial<Intent> = { settings: next, updatedAt: now };
     if (kind !== 'none') {

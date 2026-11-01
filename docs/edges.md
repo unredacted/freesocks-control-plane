@@ -1714,13 +1714,28 @@ minClientVer, maxClientVer}` in the plan. Each restriction is its own reason wit
   plan says so (`originDeleting`, the sheet's note) and the create is refused with
   `edge.origin_deleting`; a run that meets the delete at prepare waits for it (event
   `origin_deleting`) and then creates its own origin, instead of failing as taken.
-- **The operator's own front after go-live.** Its Host is an operator front
+- **The operator's own front after go-live.** Its Host is an operator front, at an address or
+  at a CDN hostname that resolves elsewhere
   (§ "Direct-Host hides and the restore workflow"): the plan lists it (`frontHosts`, which the
   plan hash covers, so a front added, removed or renamed since is `edge.plan_stale`; the review
   says members reach the node through a front FCP did not build and stop getting it once the
   node is live), the render leaves it out once the node is bound, and attention
   `front_host_unused` (info) says it can be deleted at its provider, never
   `direct_host_reappeared`.
+
+**A WebSocket node an earlier tool fronted.** Such a node listens on loopback behind its Caddy,
+and the panel lists it by its management address, so neither the panel's address nor a given
+public IP is anything a CDN front could dial: it is protected as an ADOPTED node (docs/servers.md
+§ "Adopting a backend": the backend set up with its WebSocket mode, the node adopted with that
+mode, `externallyFronted`, and its **origin name**). The plan then reads it from its intent
+(the origin name, the ingress at 443 with the transport's path), and only CDN accounts are
+offered (a WebSocket node takes no load balancer, § "Layers"). The operator's CDN Hosts dial
+their own hostnames, which resolve to the CDN: they are its operator fronts, listed in the plan
+and left out at go-live (`front_host_unused`), while the CDN service itself stays as it is for
+the apps that still hold it. A node whose Caddy answers only for its own name needs the front
+to send that name: choose "Host sent to the node: The node address" (`overrideHost: origin`)
+under the pick's Options. The origin probe cannot tell this on its own when the Caddy answers
+a foreign Host with an empty 200.
 
 What a protect run writes to such a panel, in order:
 
@@ -1993,8 +2008,12 @@ pass sees none). Both are suppressed while a restore workflow runs. The same loo
 setup run's rehearsal look, `observe`, before go-live) records the node's **operator fronts**
 (`relays.operatorFronts`, their names and Host uuids, never an address, every one of them; `operatorFrontHosts`): enabled Hosts on a protected
 transport that dial an IP that is neither the node nor an edge of the origin and are not FCP's,
-such as a load balancer the operator built by hand. A Host by a name is never one (a lookup
-that failed would leave the node itself looking like a front), so it keeps the critical alarm. A member render leaves their entries out like any it
+such as a load balancer the operator built by hand, or a name that the same look resolved
+elsewhere, such as a CDN front the operator built (`namesElsewhere`: both its lookups, A and
+AAAA, answered conclusively, a record or "no such record"; at least one address came back; and
+none is an address the node is known by). A name one of whose lookups failed (a timeout, a
+server failure: anything but "no such record") is never one, since the missing family could
+be the node itself, so it keeps the critical alarm. A member render leaves their entries out like any it
 cannot place, but an entry a known front names is not the node: it raises attention
 `front_host_unused` (info: members no longer get it, so it can be deleted at its provider, and
 its Host in the backend) instead of `direct_host_reappeared`. An entry left out that no look
