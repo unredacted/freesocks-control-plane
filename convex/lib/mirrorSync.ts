@@ -217,12 +217,15 @@ export function afterVerify(
   last: { verify?: VerifyResult; verifiedAt?: number },
   outcome: VerifyOutcome,
   at: number,
+  /** The read follows a rewrite of this copy made just now (a re-check, a rewrite a read asked for). */
+  justRewritten = false,
 ): { next: CopySync; reupload: boolean } {
   const rewroteSinceProblem =
-    (last.verify === 'mismatch' || last.verify === 'missing') &&
-    prev.uploadedAt !== undefined &&
-    last.verifiedAt !== undefined &&
-    prev.uploadedAt > last.verifiedAt;
+    justRewritten ||
+    ((last.verify === 'mismatch' || last.verify === 'missing') &&
+      prev.uploadedAt !== undefined &&
+      last.verifiedAt !== undefined &&
+      prev.uploadedAt > last.verifiedAt);
   const urlFailing =
     prev.state === 'failing' && (prev.reason === 'url_unreadable' || prev.reason === 'url_stale');
   const otherFailure = prev.state === 'failing' && !urlFailing;

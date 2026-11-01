@@ -1036,10 +1036,11 @@ export const refreshMirrorsForSubscription = internalAction({
       subscriptionId,
     });
     if (!target) return null;
-    await refreshOneSubMirrors(ctx, set, target, {
+    const rewrote = await refreshOneSubMirrors(ctx, set, target, {
       force: force === true ? 'all' : forceProviders,
     });
-    if (verifyAfter && forceProviders?.length) await readBack(ctx, subscriptionId, forceProviders);
+    if (verifyAfter && forceProviders?.length)
+      await readBack(ctx, subscriptionId, forceProviders, rewrote);
     return null;
   },
 });
@@ -1054,6 +1055,7 @@ async function readBack(
   ctx: ActionCtx,
   subscriptionId: Id<'subscriptions'>,
   providers: string[],
+  justRewritten: boolean,
 ): Promise<void> {
   const targets = await ctx.runQuery(internal.mirrorCopies.verifyTargetsOf, {
     subscriptionId,
@@ -1066,6 +1068,7 @@ async function readBack(
       objectHash: c.objectHash,
       at: Date.now(),
       outcome,
+      justRewritten,
     });
   }
 }
@@ -1314,9 +1317,11 @@ export const verifyMirrorCopies = internalAction({
 });
 
 /**
- * Admin re-check of one copy: render and compare now (rewriting it when it
- * differs), read it back, and when that read asks for a rewrite, rewrite it
- * and read it back again.
+ * Admin re-check of one copy: render it now, rewrite this copy whatever the
+ * ledger says (one write), and read it back through the member's URL. A read
+ * that matches clears any failure; one that still finds nothing, or another
+ * body, right after the rewrite means the URL itself is the problem. This is
+ * also the way out once the operator has fixed a bucket.
  */
 export const recheckCopy = internalAction({
   args: { id: v.id('mirrorCopies') },
@@ -1328,24 +1333,8 @@ export const recheckCopy = internalAction({
       subscriptionId: ref.subscriptionId,
     });
     if (!target) return { ok: false };
-    await refreshOneSubMirrors(ctx, set, target);
-    const row = await ctx.runQuery(internal.mirrorCopies.verifyTarget, { id });
-    if (row) {
-      const outcome = await verifyCopy(mirrorFetch, row.publicUrl, row.objectHash);
-      const { needsUpload: reupload } = await ctx.runMutation(internal.mirrorCopies.recordVerify, {
-        id,
-        objectHash: row.objectHash,
-        at: Date.now(),
-        outcome,
-      });
-      if (reupload) {
-        const again = await ctx.runQuery(internal.subscriptions.mirrorRefreshTarget, {
-          subscriptionId: ref.subscriptionId,
-        });
-        if (again) await refreshOneSubMirrors(ctx, set, again, { force: [ref.provider] });
-        await readBack(ctx, ref.subscriptionId, [ref.provider]);
-      }
-    }
+    const rewrote = await refreshOneSubMirrors(ctx, set, target, { force: [ref.provider] });
+    await readBack(ctx, ref.subscriptionId, [ref.provider], rewrote);
     return { ok: true };
   },
 });

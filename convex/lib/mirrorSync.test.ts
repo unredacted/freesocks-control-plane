@@ -197,6 +197,18 @@ describe('afterVerify', () => {
     expect(next.state).toBe('never');
   });
 
+  test('a problem read right after a fresh rewrite is the URL, not the object', () => {
+    const { next, reupload } = afterVerify(
+      base(),
+      { verify: 'match' },
+      { kind: 'missing' },
+      T0 + 2,
+      true,
+    );
+    expect(reupload).toBe(false);
+    expect(next).toMatchObject({ state: 'failing', reason: 'url_unreadable' });
+  });
+
   test('a copy whose upload keeps failing is left to its retries (no extra rewrite)', () => {
     const { reupload, next } = afterVerify(
       base({ state: 'failing', reason: 'upload_failed', failures: 2 }),

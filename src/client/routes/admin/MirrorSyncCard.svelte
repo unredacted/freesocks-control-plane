@@ -80,7 +80,7 @@
       apiClient.post('/api/v1/admin/mirror-sync/recheck', { id }, z.object({ ok: z.boolean() })),
     onSuccess: () => {
       toast.success('Re-check started', {
-        description: 'The copy is rendered, compared and read back. Refresh in a few seconds.',
+        description: 'The copy is rendered, rewritten and read back. Refresh in a few seconds.',
       });
       setTimeout(() => void qc.invalidateQueries({ queryKey: queryKeys.adminMirrorSync }), 5_000);
     },

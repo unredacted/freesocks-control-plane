@@ -546,6 +546,8 @@ export const recordVerify = internalMutation({
     id: v.id('mirrorCopies'),
     objectHash: v.union(v.string(), v.null()),
     at: v.number(),
+    /** The read follows a rewrite of this copy made just now. */
+    justRewritten: v.optional(v.boolean()),
     outcome: v.union(
       v.object({ kind: v.literal('match') }),
       v.object({ kind: v.literal('mismatch'), observedHash: v.string() }),
@@ -553,7 +555,10 @@ export const recordVerify = internalMutation({
       v.object({ kind: v.literal('unreachable') }),
     ),
   },
-  handler: async (ctx, { id, objectHash, at, outcome }): Promise<{ needsUpload: boolean }> => {
+  handler: async (
+    ctx,
+    { id, objectHash, at, outcome, justRewritten },
+  ): Promise<{ needsUpload: boolean }> => {
     const row = await ctx.db.get(id);
     if (!row) return { needsUpload: false };
     if ((row.objectHash ?? null) !== objectHash) {
@@ -565,6 +570,7 @@ export const recordVerify = internalMutation({
       { verify: row.verify, verifiedAt: row.verifiedAt },
       outcome as VerifyOutcome,
       at,
+      justRewritten === true,
     );
     // An unreachable read keeps what the last real read found (its retry
     // decides): only a read that got an answer replaces it.
@@ -720,20 +726,6 @@ export const copyRef = internalQuery({
   handler: async (ctx, { id }) => {
     const c = await ctx.db.get(id);
     return c ? { subscriptionId: c.subscriptionId, provider: c.provider } : null;
-  },
-});
-
-/** One copy's member-facing URL and what FCP last wrote to it (the admin re-check's read). */
-export const verifyTarget = internalQuery({
-  args: { id: v.id('mirrorCopies') },
-  handler: async (ctx, { id }) => {
-    const c = await ctx.db.get(id);
-    if (!c) return null;
-    const sub = await ctx.db.get(c.subscriptionId);
-    const entry = sub?.subscriptionMirrors.find(
-      (m) => m.provider === c.provider && m.objectPath === c.objectPath,
-    );
-    return entry ? { publicUrl: entry.publicUrl, objectHash: c.objectHash ?? null } : null;
   },
 });
 

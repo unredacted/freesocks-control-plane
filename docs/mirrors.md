@@ -105,7 +105,8 @@ its first check), `fetch_failed`, `upload_failed`, `provider_missing`, `url_unre
   checked for over 13 hours, shows on the dashboard (amber "Mirrors" line) and on Admin -> Storage,
   from bounded index reads. Admin -> Storage also lists every copy by state with its detail (hash
   prefixes only, never the object path or URL, which are capabilities) and a **Re-check** that
-  renders, compares, rewrites when needed and reads it back now.
+  renders and rewrites that copy and reads it back now (also the way out once a bucket is
+  fixed).
 - **Seeding.** Mirrors from before the ledger get their rows once, from a pass over the active
   keys: post-deploy (`storage:seedMirrorLedger`) or by the first mirror pass; nothing is uploaded
   by it.
