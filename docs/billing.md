@@ -334,11 +334,14 @@ bank." The supported pattern for the nonprofit is **two-step**:
 2. Move USDC to a **business account at a US-regulated exchange** (Coinbase
    Business or Kraken) → sell USDC for USD → **ACH** to the org's US bank
    account (the bank account name must match the exchange account name).
-   Neither exchange has a separate nonprofit account type, and the conversion
-   is not free on either: Coinbase Business says USDC to USD conversion is
-   subject to a fee, and Kraken Pro charges 0.20% on stablecoin pairs at the
-   lowest volume tier. Kraken ACH withdrawal is free; Coinbase's Business ACH
-   page states no fee. Read the live fee screen before relying on a number.
+   Neither exchange has a separate nonprofit account type. Conversion cost
+   differs: Coinbase Business says USDC to USD conversion is subject to a fee.
+   Kraken's Convert feature (Buy Crypto widget, app, or the Convert button in
+   Kraken Pro) converts USDC to USD at 1:1 with no spread or fee, up to
+   $100,000 per direction per day, so use it instead of the Pro order book,
+   which charges 0.20% on stablecoin pairs at the lowest volume tier. Kraken ACH
+   withdrawal is free; Coinbase's Business ACH page states no fee. Read the live
+   fee screen before relying on a number.
 
 Pre-launch checklist (see also the launch plan):
 
