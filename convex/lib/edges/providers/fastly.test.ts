@@ -2916,80 +2916,40 @@ describe('fastly: one wildcard certificate per account and zone', () => {
     ).toEqual(['*.example.org', '_acme-challenge.example.org', '*.example.org']);
   });
 
-  test('the versionless domain is created once the wildcard is issued, never before', async () => {
-    // Fastly links a versionless domain to the activation covering it when the
-    // domain is created: one made before the wildcard's activation never routes.
-    expect(fastlyProvider.planProvision(cfgW, spec, tpl).map((x) => x.id)).toEqual([
-      'service',
-      'backend',
-      'snippet',
-      'tls',
-      'acme',
-      'await-tls',
-      'domain',
-      'product',
-      'activate',
-      'dns',
-    ]);
-    // A per-host certificate is ordered for a domain that exists; a classic
-    // domain is part of the version. Both keep the domain first.
-    for (const c of [
-      { ...cfgW, certificateScope: 'per_host' as const },
-      { ...cfgW, domainModel: 'classic' as const },
-    ])
-      expect(fastlyProvider.planProvision(c, spec, tpl).map((x) => x.id)).toEqual([
-        'service',
-        'backend',
-        'snippet',
-        'domain',
-        'product',
-        'activate',
-        'tls',
-        'acme',
-        'await-tls',
-        'dns',
-      ]);
-    const p = wildcardProvider();
-    const r = await serve(p.route);
-    fakeDns();
-    await provisionW(spec, () => (p.state.issued = true));
-    const at = (pred: (c: Call) => boolean) => r.calls.findIndex(pred);
-    const issued = at(
-      (c) =>
-        c.method === 'GET' &&
-        c.path === `/tls/subscriptions/${WILD}` &&
-        c.query.include?.includes('tls_certificates') === true,
-    );
-    const domain = at((c) => c.method === 'POST' && c.path === '/domain-management/v1/domains');
-    expect(issued).toBeGreaterThan(-1);
-    expect(domain).toBeGreaterThan(issued);
-  });
-
-  test('a front whose name Fastly never activates waits with that reason', async () => {
+  test('a front on the wildcard gets a classic domain, whatever the account chose', async () => {
+    // Fastly routes a versionless domain only with a TLS activation of its own,
+    // which the wildcard (activated for `*.<zone>`) never gives a front's name.
     const p = wildcardProvider();
     p.state.issued = true;
-    let activated = false;
-    const r = await serve((c, i) =>
-      c.method === 'GET' && c.path.startsWith('/domain-management/v1/domains/')
-        ? {
-            status: 200,
-            body: { ...(fixture('dm-domain-create.json') as object), fqdn: HOST, activated },
-          }
-        : p.route(c, i),
-    );
+    const r = await serve(p.route);
     fakeDns();
     const { ledger } = await provisionW(spec);
+    const kinds = ledger.resources.map((x) => x.kind);
+    expect(kinds).toContain('domain');
+    expect(kinds).not.toContain('versionless_domain');
+    expect(r.calls.some((c) => c.path.startsWith('/domain-management/'))).toBe(false);
+    expect(
+      r.calls.filter((c) => c.method === 'POST' && /\/version\/\d+\/domain$/.test(c.path)),
+    ).toHaveLength(1);
+    // The same account with one certificate per front keeps its versionless domain.
     r.calls.length = 0;
-    expect(await fastlyProvider.describe(cfgW, ledger)).toMatchObject({
-      state: 'pending',
-      code: 'domain_not_activated',
-      readiness: { dns: 'pending', certificate: 'ready' },
-    });
-    activated = true;
-    expect(await fastlyProvider.describe(cfgW, ledger)).toMatchObject({
-      state: 'active',
-      readiness: { dns: 'ready', certificate: 'ready' },
-    });
+    const perHost = { ...cfgW, certificateScope: 'per_host' as const };
+    const step = fastlyProvider
+      .planProvision(perHost, spec2, tpl)
+      .find((x) => x.kind === 'create_domain')!;
+    const out = await fastlyProvider.runStep(
+      perHost,
+      step,
+      spec2,
+      tpl,
+      apply({ steps: [], resources: [] }, step, {
+        status: 'done',
+        resources: [
+          { kind: 'service', resourceId: SVC, ownership: 'created', meta: { version: 1 } },
+        ],
+      }),
+    );
+    expect(out).toMatchObject({ status: 'done', resources: [{ kind: 'versionless_domain' }] });
   });
 
   test('two edges share ONE subscription and ONE ACME record; the second never waits', async () => {

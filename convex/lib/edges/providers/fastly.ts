@@ -37,8 +37,9 @@
  * its own resource, linked to the service by id, created and deleted without a
  * service version. An edge planned before that (`domainModel: 'classic'`, the
  * intent's absence) keeps its version-scoped domain, which dies with the
- * service. Which one an edge has is read from the ledger (`versionless_domain`
- * vs `domain`) everywhere except the step that creates it.
+ * service; a front on the zone's wildcard gets one too (`domainModelOf`).
+ * Which one an edge has is read from the ledger (`versionless_domain` vs
+ * `domain`) everywhere except the step that creates it.
  *
  * Certificates. `certificateScope: 'per_host'` orders one subscription per
  * front hostname (and deletes it with the edge). `'wildcard'` reuses ONE
@@ -46,9 +47,10 @@
  * it once, records it as `shared` (never deleted by an edge's destroy), and the
  * wait finishes at once when it is already issued. Its ACME record lives at
  * `_acme-challenge.<zone>` with a marker naming the subscription, and is
- * shared the same way. A wildcard front's versionless domain is created after
- * the wait (`domainAfterCertificate`), and readiness waits for the domain's
- * own `activated` flag: Fastly routes nothing to a domain without one.
+ * shared the same way. A wildcard front's domain is always classic
+ * (`domainModelOf`): Fastly routes a versionless domain only with a TLS
+ * activation of its own, which the wildcard never gives it, and readiness
+ * waits for that `activated` flag on every versionless domain.
  */
 import { z } from 'zod';
 import type {
@@ -168,8 +170,20 @@ function certificateScopeOf(cfg: FastlyConfig): 'per_host' | 'wildcard' {
   return cfg.certificateScope === 'wildcard' ? 'wildcard' : 'per_host';
 }
 
-/** `versionless` = a Domain Management domain; absent = a version-scoped (classic) domain. */
+/**
+ * `versionless` = a Domain Management domain; absent = a version-scoped (classic) domain.
+ *
+ * A front on the zone's wildcard gets a classic domain whatever the account
+ * chose. Fastly routes a versionless domain only once it has a TLS activation
+ * of its own (`activated`), and the wildcard's activation is for `*.<zone>`,
+ * never for a front's name: such a domain stayed `activated: false` and its
+ * name answered "unknown domain" while the wildcard was served, whether it
+ * was created before the wildcard was issued or after (beta, 2026-11-01). A
+ * classic domain is routed by the version that holds it, and the wildcard's
+ * activation serves its TLS (proven the same day).
+ */
 function domainModelOf(cfg: FastlyConfig): 'classic' | 'versionless' {
+  if (certificateScopeOf(cfg) === 'wildcard') return 'classic';
   return cfg.domainModel === 'versionless' ? 'versionless' : 'classic';
 }
 
@@ -962,24 +976,11 @@ const STEP_IDS = {
   dns: 'dns',
 } as const;
 
-/**
- * Whether the edge's versionless domain waits for the zone's wildcard: Fastly
- * links a versionless domain to the TLS activation that covers it when the
- * domain is CREATED. A wildcard activated after the domain exists never
- * reaches it (`activated` stays false and Fastly answers "unknown domain"
- * for the name), so such a domain is created once the wildcard is issued. A
- * per-host certificate is ordered for a domain that exists (its activation
- * is for the name itself), and a classic domain is part of the version.
- */
-function domainAfterCertificate(cfg: FastlyConfig): boolean {
-  return certificateScopeOf(cfg) === 'wildcard' && domainModelOf(cfg) === 'versionless';
-}
-
 function planSteps(cfg: FastlyConfig, spec: EdgeSpec): ResourceStep[] {
   const hostname = requireHostname(spec, 'plan');
   // The certificate steps name what they act on: the front, or the zone's wildcard.
   const certName = certificateNameOf(cfg, hostname);
-  const service: ResourceStep[] = [
+  return [
     {
       id: STEP_IDS.service,
       kind: 'create_service',
@@ -998,10 +999,6 @@ function planSteps(cfg: FastlyConfig, spec: EdgeSpec): ResourceStep[] {
       resourceName: SNIPPET_NAME,
       discoverability: 'by_name',
     },
-  ];
-  // The version is activated with the domain already there (a classic one
-  // is part of it).
-  const domain: ResourceStep[] = [
     {
       id: STEP_IDS.domain,
       kind: 'create_domain',
@@ -1020,8 +1017,6 @@ function planSteps(cfg: FastlyConfig, spec: EdgeSpec): ResourceStep[] {
       resourceName: spec.name,
       discoverability: 'by_name',
     },
-  ];
-  const certificate: ResourceStep[] = [
     {
       id: STEP_IDS.tls,
       kind: 'create_tls_subscription',
@@ -1035,16 +1030,13 @@ function planSteps(cfg: FastlyConfig, spec: EdgeSpec): ResourceStep[] {
       discoverability: 'by_name',
     },
     { id: STEP_IDS.await, kind: 'await_tls', resourceName: certName, discoverability: 'by_name' },
+    {
+      id: STEP_IDS.dns,
+      kind: 'create_dns_record',
+      resourceName: hostname,
+      discoverability: 'by_name',
+    },
   ];
-  const traffic: ResourceStep = {
-    id: STEP_IDS.dns,
-    kind: 'create_dns_record',
-    resourceName: hostname,
-    discoverability: 'by_name',
-  };
-  return domainAfterCertificate(cfg)
-    ? [...service, ...certificate, ...domain, traffic]
-    : [...service, ...domain, ...certificate, traffic];
 }
 
 function dnsResource(
