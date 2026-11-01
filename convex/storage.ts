@@ -1340,13 +1340,20 @@ export const recheckCopy = internalAction({
 });
 
 /**
- * Give every legacy mirror (from before the ledger) its ledger rows, once: pages
- * the active keys and records each listed copy (stale, unchecked; the next pass
- * checks it). Nothing is uploaded. Idempotent; a no-op once seeded.
+ * Give every mirror that has no ledger row its rows: pages the active keys and
+ * records each listed copy (stale, unchecked; the next pass checks it).
+ * Nothing is uploaded. Idempotent. `always`: run even when the ledger says it
+ * was seeded (the post-deploy run: a rollback to code without the ledger can
+ * have added mirrors since). Continues in a new run past the time budget.
  */
-async function seedLedger(ctx: ActionCtx): Promise<{ keys: number }> {
-  if (await ctx.runQuery(internal.mirrorCopies.isSeeded, {})) return { keys: 0 };
-  let cursor: string | null = null;
+async function seedLedger(
+  ctx: ActionCtx,
+  opts: { always?: boolean; cursor?: string | null } = {},
+): Promise<{ keys: number; done: boolean }> {
+  if (!opts.always && (await ctx.runQuery(internal.mirrorCopies.isSeeded, {})))
+    return { keys: 0, done: true };
+  const deadline = Date.now() + PASS_RUN_BUDGET_MS;
+  let cursor: string | null = opts.cursor ?? null;
   let keys = 0;
   for (;;) {
     const res: MirrorPage = await ctx.runMutation(internal.mirrorCopies.seedPage, {
@@ -1356,15 +1363,24 @@ async function seedLedger(ctx: ActionCtx): Promise<{ keys: number }> {
     keys += res.items.length;
     if (res.isDone) break;
     cursor = res.continueCursor;
+    if (Date.now() >= deadline) {
+      await ctx.scheduler.runAfter(0, internal.storage.seedMirrorLedger, { cursor });
+      return { keys, done: false };
+    }
   }
   await ctx.runMutation(internal.mirrorCopies.markSeeded, {});
-  return { keys };
+  return { keys, done: true };
 }
 
-/** Post-deploy (docker/deploy-entrypoint.sh): seed the sync ledger so it knows every mirror from the start. */
+/**
+ * Post-deploy (docker/deploy-entrypoint.sh): make sure the sync ledger knows
+ * every mirror, so the passes (which page the ledger) reach them all. Runs on
+ * every deploy; `cursor` continues a run that hit its time budget.
+ */
 export const seedMirrorLedger = internalAction({
-  args: {},
-  handler: async (ctx): Promise<{ keys: number }> => seedLedger(ctx),
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }): Promise<{ keys: number; done: boolean }> =>
+    seedLedger(ctx, { always: true, cursor }),
 });
 
 const WITHDRAW_PAGE = 50;

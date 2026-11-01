@@ -107,9 +107,10 @@ its first check), `fetch_failed`, `upload_failed`, `provider_missing`, `url_unre
   prefixes only, never the object path or URL, which are capabilities) and a **Re-check** that
   renders and rewrites that copy and reads it back now (also the way out once a bucket is
   fixed).
-- **Seeding.** Mirrors from before the ledger get their rows once, from a pass over the active
-  keys: post-deploy (`storage:seedMirrorLedger`) or by the first mirror pass; nothing is uploaded
-  by it.
+- **Seeding.** Mirrors without ledger rows (from before the ledger, or added while older code
+  ran after a rollback) get them from a pass over the active keys: on every deploy
+  (`storage:seedMirrorLedger`, idempotent) and by the first mirror pass; nothing is uploaded by
+  it.
 
 API: `GET /api/v1/admin/mirror-sync[?state=&cursor=]` (summary + one page of copies),
 `POST /api/v1/admin/mirror-sync/recheck {id}`; the dashboard reads `mirrors` from

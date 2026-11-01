@@ -309,6 +309,32 @@ describe('a requested mirror is tracked', () => {
   });
 });
 
+describe('the post-deploy seed', () => {
+  test('gives a mirror without ledger rows its rows even when the ledger says it was seeded', async () => {
+    // A rollback to code without the ledger can add mirrors after the first seed.
+    const w = await world();
+    const { subId } = await member(w);
+    await w.t.run((ctx) =>
+      ctx.db.patch(subId, {
+        subscriptionMirrors: [
+          { provider: 'p1', publicUrl: `${PROVIDERS.p1}/mirrors/r1`, objectPath: 'mirrors/r1' },
+        ],
+      }),
+    );
+    expect(await copies(w.t, subId)).toEqual([]);
+    expect(await w.t.action(internal.storage.seedMirrorLedger, {})).toEqual({
+      keys: 1,
+      done: true,
+    });
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'stale', reason: 'unchecked' });
+    expect(puts(w)).toEqual([]);
+    // The next pass reaches it through the ledger.
+    expect(await w.t.action(internal.storage.refreshActiveMirrors, {})).toMatchObject({
+      scanned: 1,
+    });
+  });
+});
+
 describe('a change to what the member is served reaches the ledger', () => {
   test('an in-place move marks the copies stale and schedules their refresh', async () => {
     const w = await world();
