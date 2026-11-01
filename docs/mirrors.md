@@ -37,7 +37,8 @@ flow), Admin -> Storage (`AdminStorage.svelte`, `MirrorSyncCard.svelte`).
   stub, never the origin body. Every object is written with `Cache-Control: no-cache`, so a cache
   in front of a bucket revalidates instead of serving an old body (a withdrawn address, the stub
   and a re-issued key all depend on that). An upload whose delivery policy moved while it was in
-  flight is repaired by the barrier (`docs/servers.md` "The mirror barrier"); the repair backs off
+  flight (the place's epoch, the key's own revision, the member's country or address lane) is
+  repaired by the barrier (`docs/servers.md` "The mirror barrier"); the repair backs off
   per record (two retries at the grace, then doubling up to six hours).
 - **Re-issue.** A mode or backend switch carries the mirrors (and the URL) to the new key, and
   the targeted refresh rewrites the objects with the new key's body within seconds. An upload of
@@ -45,7 +46,9 @@ flow), Admin -> Storage (`AdminStorage.svelte`, `MirrorSyncCard.svelte`).
   live key's copies overwritten and rewrites them. A record left on the old key is judged by the
   live row that holds the copy now, so it repairs that row's object and never deletes it.
 - **Regenerate.** A new URL by design: the old key's mirrors keep serving it through the 24 h
-  grace and are deleted with it; the member asks again for mirrors of the new key.
+  grace and are deleted with it (and recorded for withdrawal when the grace ends, so a provider
+  removed meanwhile keeps its credentials until they are gone); the member asks again for mirrors
+  of the new key.
 - **Removing.** "Remove all mirrors" (`DELETE /api/v1/mirror`), the tombstone sweep, idle
   deactivation and an abandoned tombstone all delete the objects. A delete that fails is recorded
   (`mirrorUploads` kind `withdraw`) and the repair pass deletes it until it is gone: a member's

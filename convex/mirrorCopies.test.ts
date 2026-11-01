@@ -491,11 +491,43 @@ describe('a superseded key keeps its mirror through the grace', () => {
       });
     };
     await w.t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
-    expect(await openUploads(w.t)).toEqual([]);
-    await makeDue(w.t);
+    // The upload settled; what stays is the withdrawal due when the grace ends.
+    const open = await openUploads(w.t);
+    expect(open.map((o) => o.kind)).toEqual(['withdraw']);
+    expect(open[0]!.dueAt).toBeGreaterThan(Date.now() + 86_000_000);
     await w.t.action(internal.storage.repairMirrorUploads, {});
     expect(deletes(w)).toEqual([]);
     expect(w.objects.has('p1:mirrors/m1')).toBe(true);
+  });
+
+  test('a provider removed during the grace keeps its credentials until those mirrors are gone', async () => {
+    const w = await world();
+    const { subId } = await member(w);
+    await mirrored(w, subId, ['p1'], { p1: 'old' });
+    await w.t.mutation(internal.subscriptions.tombstoneWithGrace, {
+      backendUserId: 'u-shortA',
+      graceMs: 86_400_000,
+    });
+    expect(await copies(w.t)).toEqual([]);
+    const p1 = (await w.t.run((ctx) => ctx.db.query('mirrorProviders').collect())).find(
+      (p) => p.name === 'p1',
+    )!;
+    expect(await w.t.mutation(internal.mirrorProviders.remove, { id: p1._id })).toEqual({
+      ok: true,
+      removing: true,
+    });
+    expect(
+      await w.t.action(internal.storage.withdrawProviderMirrors, { providerId: p1._id }),
+    ).toMatchObject({ done: false });
+    // The grace ends: the repair pass deletes the old key's object with p1's
+    // credentials, and only then does the provider go.
+    await makeDue(w.t);
+    await w.t.action(internal.storage.repairMirrorUploads, {});
+    expect(w.objects.has('p1:mirrors/m1')).toBe(false);
+    expect(
+      await w.t.action(internal.storage.withdrawProviderMirrors, { providerId: p1._id }),
+    ).toMatchObject({ done: true });
+    expect(await w.t.run((ctx) => ctx.db.get(p1._id))).toBeNull();
   });
 });
 
@@ -830,6 +862,46 @@ describe('review fixes', () => {
     ).toEqual({ withdrawn: 1, done: true });
     expect(w.objects.has('p1:mirrors/l1')).toBe(false);
     expect(await w.t.query(internal.mirrorCopies.isSeeded, {})).toBe(true);
+  });
+});
+
+describe('review fixes, round two', () => {
+  test('a country change while an upload is in flight keeps it open, and the repair renders it again', async () => {
+    const w = await world();
+    const { subId } = await member(w);
+    await mirrored(w, subId, ['p1'], { p1: 'old' });
+    w.duringPut.fn = async () => {
+      await w.t.run(async (ctx) => {
+        await setStoredCountry(ctx, (await ctx.db.get(subId))!, { choice: 'ZZ' });
+      });
+    };
+    await w.t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
+    const open = await openUploads(w.t);
+    expect(open.map((o) => o.kind)).toEqual(['refresh']);
+    const puts0 = puts(w).length;
+    await makeDue(w.t);
+    await w.t.action(internal.storage.repairMirrorUploads, {});
+    expect(puts(w).length).toBe(puts0 + 1);
+    expect(await openUploads(w.t)).toEqual([]);
+  });
+
+  test('a read-back after a refresh treats only the copies that refresh wrote as just rewritten', async () => {
+    const w = await world();
+    const { subId } = await member(w);
+    await mirrored(w, subId, ['p1', 'p2'], { p1: 'x', p2: 'old' });
+    // p1 (asked for) fails to upload and its object is gone; p2 is rewritten.
+    w.fail.fn = (p, op) => p === 'p1' && op.kind === 'put';
+    w.objects.delete('p1:mirrors/m1');
+    await w.t.action(internal.storage.refreshMirrorsForSubscription, {
+      subscriptionId: subId,
+      forceProviders: ['p1'],
+      verifyAfter: true,
+    });
+    const byProvider = Object.fromEntries(
+      (await copies(w.t, subId)).map((c) => [c.provider, [c.state, c.reason]]),
+    );
+    expect(byProvider.p1).toEqual(['failing', 'upload_failed']);
+    expect(byProvider.p2).toEqual(['in_sync', undefined]);
   });
 });
 

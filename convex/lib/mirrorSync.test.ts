@@ -79,6 +79,19 @@ describe('afterCheck', () => {
     expect(uploaded).toMatchObject({ state: 'failing', objectHash: 'h2', uploadedAt: T0 + 6 });
   });
 
+  test('a public-URL failure outlasts check failures in between', () => {
+    const failing = base({ state: 'failing', reason: 'url_unreadable', failures: 1 });
+    const then = afterCheck(failing, { kind: 'upload_failed' }, T0 + 5, served('h1'));
+    expect(then).toMatchObject({
+      state: 'failing',
+      reason: 'url_unreadable',
+      failures: 2,
+      lastError: 'upload_failed',
+    });
+    const later = afterCheck(then, { kind: 'confirmed' }, T0 + 9, served('h1'));
+    expect(later).toMatchObject({ state: 'failing', reason: 'url_unreadable' });
+  });
+
   test('a fetch failure says nothing new about the served body', () => {
     const next = afterCheck(base(), { kind: 'fetch_failed' }, T0 + 1, null);
     expect(next).toMatchObject({ state: 'failing', servedHash: 'h1', objectHash: 'h1' });

@@ -122,21 +122,40 @@ export const openWithdrawal = internalMutation({
     objectPath: v.string(),
     providers: v.array(v.string()),
   },
-  handler: async (ctx, a) => {
-    if (a.providers.length === 0) return null;
-    const now = Date.now();
-    return ctx.db.insert('mirrorUploads', {
-      ...a,
-      tokenBefore: null,
-      kind: 'withdraw' as const,
-      state: 'open' as const,
-      attempts: 0,
-      startedAt: now,
-      updatedAt: now,
-      dueAt: now,
-    });
-  },
+  handler: async (ctx, a) => recordWithdrawal(ctx, a),
 });
+
+/**
+ * Record copies to delete from `dueAt` (default now). A superseded key's
+ * mirrors are recorded when it is tombstoned, due when its grace ends: the
+ * record names their provider, so the provider (the only credential that can
+ * reach them) is kept until they are gone, even though the ledger no longer
+ * tracks the copies of a key that is not live.
+ */
+export async function recordWithdrawal(
+  ctx: MutationCtx,
+  a: {
+    subscriptionId: Id<'subscriptions'>;
+    objectPath: string;
+    providers: string[];
+    dueAt?: number;
+  },
+): Promise<Id<'mirrorUploads'> | null> {
+  if (a.providers.length === 0) return null;
+  const now = Date.now();
+  return ctx.db.insert('mirrorUploads', {
+    subscriptionId: a.subscriptionId,
+    objectPath: a.objectPath,
+    providers: a.providers,
+    tokenBefore: null,
+    kind: 'withdraw' as const,
+    state: 'open' as const,
+    attempts: 0,
+    startedAt: now,
+    updatedAt: now,
+    dueAt: a.dueAt ?? now,
+  });
+}
 
 /** The repair found the copies held by another row of the same key: the record follows them. */
 export const rehome = internalMutation({

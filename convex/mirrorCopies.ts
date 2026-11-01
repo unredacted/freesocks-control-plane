@@ -733,14 +733,24 @@ export const verifyTargetsOf = internalQuery({
   handler: async (ctx, { subscriptionId, providers }) => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub || sub.state !== 'active') return [];
-    const out: { id: Id<'mirrorCopies'>; publicUrl: string; objectHash: string | null }[] = [];
+    const out: {
+      id: Id<'mirrorCopies'>;
+      provider: string;
+      publicUrl: string;
+      objectHash: string | null;
+    }[] = [];
     for (const c of await copiesOf(ctx.db, subscriptionId)) {
       if (!providers.includes(c.provider)) continue;
       const entry = sub.subscriptionMirrors.find(
         (m) => m.provider === c.provider && m.objectPath === c.objectPath,
       );
       if (entry)
-        out.push({ id: c._id, publicUrl: entry.publicUrl, objectHash: c.objectHash ?? null });
+        out.push({
+          id: c._id,
+          provider: c.provider,
+          publicUrl: entry.publicUrl,
+          objectHash: c.objectHash ?? null,
+        });
     }
     return out;
   },

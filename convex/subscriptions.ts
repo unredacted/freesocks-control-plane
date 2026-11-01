@@ -8,7 +8,7 @@ import type { DatabaseReader, MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
-import { moveOpenUploads } from './mirrorUploads';
+import { moveOpenUploads, recordWithdrawal } from './mirrorUploads';
 import {
   copiesOf,
   deleteCopiesOf,
@@ -599,6 +599,18 @@ export const rotateNodePin = internalMutation({
   },
 });
 
+/** The revisions a mirror upload is fenced by (storage.ts `mirrorToken`), null when the row is gone. */
+export const mirrorRevsOf = internalQuery({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (
+    ctx,
+    { subscriptionId },
+  ): Promise<{ deliveryRev: number; countryRev: number } | null> => {
+    const sub = await ctx.db.get(subscriptionId);
+    return sub ? { deliveryRev: sub.deliveryRev ?? 0, countryRev: sub.countryRev ?? 0 } : null;
+  },
+});
+
 /** The row's `deliveryRev` (`invalidateDelivery`), null when the row is gone. */
 export const deliveryRevOf = internalQuery({
   args: { subscriptionId: v.id('subscriptions') },
@@ -1149,8 +1161,21 @@ export const tombstoneWithGrace = internalMutation({
     const deletedAt = Date.now() + graceMs;
     await ctx.db.patch(sub._id, { state: 'disabled', deletedAt, updatedAt: Date.now() });
     // The ledger tracks the mirrors of live keys: a superseded key's mirrors
-    // serve it through the grace and are deleted with it.
+    // serve it through the grace and are deleted with it. They are recorded
+    // for withdrawal at the grace's end as well, so a provider removed in the
+    // meantime keeps its credentials until they are gone (and they go even if
+    // the tombstone sweep's own delete fails).
     await deleteCopiesOf(ctx, sub._id);
+    const byPath = new Map<string, string[]>();
+    for (const m of sub.subscriptionMirrors)
+      if (m.objectPath) byPath.set(m.objectPath, [...(byPath.get(m.objectPath) ?? []), m.provider]);
+    for (const [objectPath, providers] of byPath)
+      await recordWithdrawal(ctx, {
+        subscriptionId: sub._id,
+        objectPath,
+        providers,
+        dueAt: deletedAt,
+      });
     return { deletedAt };
   },
 });

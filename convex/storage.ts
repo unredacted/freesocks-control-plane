@@ -52,28 +52,30 @@ export interface MirrorValidation {
  * delivery token of the place the body resolved to (`edgeRender.epochFor`),
  * the key's own `deliveryRev`, so an in-place mode or server switch that
  * lands while the body is fetched or the object written counts as a policy
- * move (subscriptions.ts `invalidateDelivery`), and the account's address lane
- * (convex/edgeLanes.ts), so an upload that straddles a lane change stays open
- * and the repair pass renders it again under the lane the account has now.
- * `readRev`: the revision the caller read BEFORE it fetched the body; the
- * baseline is taken with it, so a switch that lands during the fetch is
- * already a move. Absent, the live one.
+ * move (subscriptions.ts `invalidateDelivery`), its `countryRev`, so a change
+ * of the member's country (the render depends on it) that lands meanwhile
+ * keeps the upload open too (an older body can land after the refresh the
+ * change scheduled), and the account's address lane (convex/edgeLanes.ts), so
+ * an upload that straddles a lane change stays open and the repair pass
+ * renders it again under the lane the account has now. `read`: the revisions
+ * the caller read BEFORE it fetched the body; the baseline is taken with them,
+ * so a move that lands during the fetch is already a move. Absent, the live ones.
  */
 async function mirrorToken(
   ctx: ActionCtx,
   subscriptionId: Id<'subscriptions'>,
   backendServerId: Id<'backendServers'> | null | undefined,
   node: string | undefined,
-  readRev?: number,
+  read?: { deliveryRev: number; countryRev: number },
 ): Promise<string> {
-  const [place, rev, lane] = await Promise.all([
+  const [place, revs, lane] = await Promise.all([
     backendServerId
       ? ctx.runQuery(internal.edgeRender.epochFor, { backendServerId, nodeName: node })
       : Promise.resolve(null),
-    readRev ?? ctx.runQuery(internal.subscriptions.deliveryRevOf, { subscriptionId }),
+    read ?? ctx.runQuery(internal.subscriptions.mirrorRevsOf, { subscriptionId }),
     ctx.runQuery(internal.edgeLanes.laneOf, { subscriptionId }),
   ]);
-  return `r${rev ?? '-'}|${place ?? ''}|l${lane ?? '-'}`;
+  return `r${revs?.deliveryRev ?? '-'}|c${revs?.countryRev ?? '-'}|${place ?? ''}|l${lane ?? '-'}`;
 }
 
 /**
@@ -506,7 +508,7 @@ export const provisionMirror = internalAction({
       context.subscriptionId,
       context.backendServerId,
       fetched.pinnedNode,
-      context.deliveryRev,
+      { deliveryRev: context.deliveryRev, countryRev: context.countryRev },
     );
     // The first upload is rendered like every later refresh: a mirror must
     // never hold the template entries (the origin / index-0 address) until the
@@ -756,15 +758,15 @@ interface RefreshOpts {
  * confirmed, the others are written (the skip-if-unchanged is per copy, from
  * the sync ledger, so a copy that missed a round is never masked by another
  * that took it). Every outcome is recorded (`mirrorCopies.recordCheck`).
- * Returns whether anything was uploaded; never throws (a backend/S3 hiccup
- * must not stall the caller).
+ * Returns the providers whose copy was written (empty: nothing was); never
+ * throws (a backend/S3 hiccup must not stall the caller).
  */
 async function refreshOneSubMirrors(
   ctx: ActionCtx,
   set: RefreshSet,
   sub: MirrorItem,
   opts: RefreshOpts = {},
-): Promise<boolean> {
+): Promise<string[]> {
   const kind = opts.kind ?? 'refresh';
   const forced = (name: string) =>
     opts.force === 'all' || (Array.isArray(opts.force) && opts.force.includes(name));
@@ -785,7 +787,7 @@ async function refreshOneSubMirrors(
           })
           .then(() => {});
   try {
-    if (!sub.objectPath) return false;
+    if (!sub.objectPath) return [];
     // Re-upload only to THIS sub's providers (active or not); a provider being
     // removed is left to its withdrawal, and one whose row is gone cannot be
     // reached at all.
@@ -795,7 +797,7 @@ async function refreshOneSubMirrors(
       null,
       gone.map((provider) => ({ provider, outcome: { kind: 'provider_missing' } })),
     );
-    if (targets.length === 0) return false;
+    if (targets.length === 0) return [];
     let fetched: { content: string; contentType?: string; pinnedNode?: string };
     try {
       fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
@@ -814,7 +816,7 @@ async function refreshOneSubMirrors(
         null,
         targets.map((t) => ({ provider: t.name, outcome: { kind: 'fetch_failed' } })),
       );
-      return false;
+      return [];
     }
     // Record the node this landed on, exactly as the live /sub routes do.
     // For a member who only ever uses the mirror URL this is the ONLY
@@ -850,7 +852,7 @@ async function refreshOneSubMirrors(
       sub.id,
       sub.backendServerId,
       fetched.pinnedNode ?? undefined,
-      sub.deliveryRev,
+      { deliveryRev: sub.deliveryRev, countryRev: sub.countryRev },
     );
     // Origin rendering (docs/edges.md): a mirror serves the same rendered
     // endpoints as the fronted route (link-list family: no User-Agent here).
@@ -873,7 +875,7 @@ async function refreshOneSubMirrors(
         renderedEpoch: rendered.renderedEpoch,
         deliveryRev: sub.deliveryRev,
       });
-    if ((await tokenOf()) !== tokenBefore) return false;
+    if ((await tokenOf()) !== tokenBefore) return [];
     const hash = await sha256Hex(content);
     const served = {
       hash,
@@ -901,7 +903,7 @@ async function refreshOneSubMirrors(
           rawContentHash: hash,
         });
       await record(served, confirmed);
-      return false;
+      return [];
     }
     // The mirror barrier: the obligation is open before the object is
     // written, and settles below only if the token did not move meanwhile.
@@ -938,7 +940,7 @@ async function refreshOneSubMirrors(
           outcome: { kind: 'upload_failed' } as CopyOutcome,
         })),
       ]);
-      return false;
+      return [];
     }
     const mirrors = uploaded.map((m) =>
       rendered.validated ? { ...m, validated: rendered.validated } : m,
@@ -988,7 +990,7 @@ async function refreshOneSubMirrors(
           subscriptionId: merged.currentOwner,
         });
       }
-      return true;
+      return [...succeeded];
     }
     const failedOutcomes = failedProviders.map((provider) => ({
       provider,
@@ -1002,7 +1004,7 @@ async function refreshOneSubMirrors(
         })),
         ...failedOutcomes,
       ]);
-      return true;
+      return [...succeeded];
     }
     await noteMirrorAccepted(ctx, rendered);
     if (allSucceeded)
@@ -1032,10 +1034,10 @@ async function refreshOneSubMirrors(
       })),
       ...failedOutcomes,
     ]);
-    return true;
+    return [...succeeded];
   } catch {
     /* best-effort per sub: one backend/S3 hiccup must not stall the pass */
-    return false;
+    return [];
   }
 }
 
@@ -1081,7 +1083,8 @@ async function readBack(
   ctx: ActionCtx,
   subscriptionId: Id<'subscriptions'>,
   providers: string[],
-  justRewritten: boolean,
+  /** The providers whose copy the refresh before this read actually wrote. */
+  rewrote: readonly string[],
 ): Promise<void> {
   const targets = await ctx.runQuery(internal.mirrorCopies.verifyTargetsOf, {
     subscriptionId,
@@ -1094,7 +1097,7 @@ async function readBack(
       objectHash: c.objectHash,
       at: Date.now(),
       outcome,
-      justRewritten,
+      justRewritten: rewrote.includes(c.provider),
     });
   }
 }
@@ -1156,7 +1159,7 @@ export const repairMirrorUploads = internalAction({
         const live = o.providers.filter((p) => !o.residueProviders.includes(p));
         if (
           target &&
-          (await refreshOneSubMirrors(ctx, set, target, { force: live, kind: 'repair' }))
+          (await refreshOneSubMirrors(ctx, set, target, { force: live, kind: 'repair' })).length > 0
         )
           repaired++;
       }
@@ -1228,7 +1231,7 @@ async function runMirrorPass(
         });
     for (const item of res.items) {
       scanned++;
-      if (await refreshOneSubMirrors(ctx, set, item)) refreshed++;
+      if ((await refreshOneSubMirrors(ctx, set, item)).length > 0) refreshed++;
     }
     after = res.items.at(-1)?.id ?? after;
     if (res.isDone) {
@@ -1288,6 +1291,9 @@ export const refreshActiveMirrors = internalAction({
 });
 
 const VERIFY_BATCH = 100;
+/** Reads in flight at once, and how long one run may spend reading. */
+const VERIFY_CONCURRENCY = 10;
+const VERIFY_RUN_BUDGET_MS = 3 * 60_000;
 
 /**
  * Cron: read copies back through the URL each member holds and compare what it
@@ -1316,21 +1322,31 @@ export const verifyMirrorCopies = internalAction({
         limit: VERIFY_BATCH,
       });
       const rewrite = new Map<Id<'subscriptions'>, string[]>();
-      for (const c of due.rows) {
-        const outcome = await verifyCopy(mirrorFetch, c.publicUrl, c.objectHash);
-        out.read++;
-        out[outcome.kind]++;
-        const { needsUpload: reupload } = await ctx.runMutation(
-          internal.mirrorCopies.recordVerify,
-          {
-            id: c.id,
-            objectHash: c.objectHash,
-            at: Date.now(),
-            outcome,
-          },
+      // A few reads at a time, within a budget: slow or dead URLs (each up to
+      // the read timeout) never run the action past its limit; what is left is
+      // still due at the next run.
+      const deadline = Date.now() + VERIFY_RUN_BUDGET_MS;
+      for (let i = 0; i < due.rows.length && Date.now() < deadline; i += VERIFY_CONCURRENCY) {
+        const chunk = due.rows.slice(i, i + VERIFY_CONCURRENCY);
+        const outcomes = await Promise.all(
+          chunk.map((c) => verifyCopy(mirrorFetch, c.publicUrl, c.objectHash)),
         );
-        if (reupload)
-          rewrite.set(c.subscriptionId, [...(rewrite.get(c.subscriptionId) ?? []), c.provider]);
+        for (const [j, c] of chunk.entries()) {
+          const outcome = outcomes[j]!;
+          out.read++;
+          out[outcome.kind]++;
+          const { needsUpload: reupload } = await ctx.runMutation(
+            internal.mirrorCopies.recordVerify,
+            {
+              id: c.id,
+              objectHash: c.objectHash,
+              at: Date.now(),
+              outcome,
+            },
+          );
+          if (reupload)
+            rewrite.set(c.subscriptionId, [...(rewrite.get(c.subscriptionId) ?? []), c.provider]);
+        }
       }
       for (const [subscriptionId, forceProviders] of rewrite)
         await ctx.scheduler.runAfter(0, internal.storage.refreshMirrorsForSubscription, {

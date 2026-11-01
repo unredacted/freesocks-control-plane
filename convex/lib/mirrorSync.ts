@@ -163,7 +163,9 @@ export function afterCheck(
         ...kept,
         ...seen,
         state: 'failing',
-        reason: outcome.kind,
+        // A public-URL failure outlasts the check failures in between: only a
+        // read that matches clears it (`afterVerify`).
+        reason: urlFailing ? prev.reason : outcome.kind,
         since: enter(prev, 'failing', at),
         checkedAt: at,
         failures: prev.failures + 1,
