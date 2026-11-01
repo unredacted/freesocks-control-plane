@@ -2360,7 +2360,21 @@ JSON:
 
 Alert-worthy: every critical item (quarantine, fleet brake, a provider whose API keeps failing,
 a stuck rotation, dark members, a reappeared direct Host, a blocked node with no tested spare, an
-ambiguous Host) plus `node_ready_to_protect` and `node_awaiting_approval`. An item is sent once
+ambiguous Host); the prompts FCP never acts on by itself: `node_ready_to_protect`,
+`node_awaiting_approval`, `freedom_node_withheld` and `location_refused`; and a **suspected block
+FCP is holding back**: `block_suspected` (a warning) whose `facts.heldBack` is set. The detector
+judges it each pass on the whole decision (`replacementHeldBack`, `lib/edges/scoring.ts`, stored as
+`relays.suspicion.heldBack`): the decision is a veto, and the same decision with the holds lifted
+(automation and the node's Auto rotate on, `detect.allowProbeOnlyAutoRotate` on, no cooldown, no
+daily caps, a manageable Host, the open lane's budget left) would replace the address. Members stay
+on the suspected address until the operator acts or the hold lifts, so a deployment that leaves
+automation off still hears about a block. The veto alone is not enough: a switched-off gate is
+checked before the outage and evidence gates, so an offline node, an address down for everyone, a
+protocol-level block, no address named or probe sources gone quiet behind `edge_disabled` never
+alert from this item, nor do a running rotation, a guided setup's origin, the steering holds
+(`country_scoped`, `country_wide`: members are already routed around) and the holds that alert as
+their own items (`quarantined`, `fleet_brake`). The push reads `block_suspected
+(<veto>): 1`. An item is sent once
 while it stays on the list at any severity (`appState` `alerts:state` holds the sent ids); one
 that clears and comes back alerts again; a failed post records a short code (`network`, `timeout`, the status)
 and is retried next tick. **Alerts carry kinds, short codes and counts only**: never a member,
@@ -5709,6 +5723,13 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**A held block alerts** adds one optional field (`relays.suspicion.heldBack`), written by the
+detector, and one alert-worthy case (§ "Operator alerts"): one deploy, no migration, no env
+change. Nothing is sent unless operator alerts are on. To roll back, run
+`edgeDetector:clearHeldBackForRollback` with no arguments right before deploying the older build
+(its schema refuses the field; the detector writes it again on its next pass while a block is
+held).
 
 **Names blocked somewhere, as the last resort** change what members receive, nothing stored: a
 member with no country (and a mirror) for whom no edge has a name blocked nowhere gets the names

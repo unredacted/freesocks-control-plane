@@ -5,9 +5,9 @@
  * (an ntfy server, or anything that takes the same body).
  *
  * Alert-worthy: every `critical` item (quarantine, a fleet brake, a provider
- * whose API keeps failing, a stuck rotation, dark members, ...) plus the two
- * prompts FCP never acts on by itself: a fronted node ready to protect and a
- * node waiting for approval. An item is sent once while it stays on the list,
+ * whose API keeps failing, a stuck rotation, dark members, ...), the prompts
+ * FCP never acts on by itself (`PROMPT_KINDS`), and a suspected block FCP is
+ * holding back (the detector's `heldBack`). An item is sent once while it stays on the list,
  * at any severity (`alerts:state` holds the ids already sent; an id that
  * leaves the list is forgotten, so a recurrence alerts again). A failed post keeps nothing, and
  * the next tick tries again.
@@ -54,8 +54,25 @@ export interface AlertItem {
   code: string | null;
 }
 
-export function alertWorthy(item: { kind: string; severity: string }): boolean {
-  return item.severity === 'critical' || PROMPT_KINDS.has(item.kind);
+/**
+ * Alert-worthy: a critical item, a prompt, or a suspected block
+ * (`block_suspected`, a warning) that FCP is holding back: the detector judged
+ * that it would replace the address but for a hold (automation or the node's
+ * Auto rotate off, probe evidence alone not allowed, a cooldown or a daily
+ * cap, a Host FCP cannot rewrite, the open lane's budget spent), on the whole
+ * decision (lib/edges/scoring.ts `replacementHeldBack`), never on its veto
+ * alone: a switched-off gate is checked before the outage and evidence gates,
+ * so an offline node or a protocol-level block behind it does not alert.
+ * Members stay on the suspected address until the operator acts or the hold
+ * lifts.
+ */
+export function alertWorthy(item: {
+  kind: string;
+  severity: string;
+  facts?: Record<string, unknown>;
+}): boolean {
+  if (item.severity === 'critical' || PROMPT_KINDS.has(item.kind)) return true;
+  return item.kind === 'block_suspected' && item.facts?.heldBack === true;
 }
 
 interface AlertState {

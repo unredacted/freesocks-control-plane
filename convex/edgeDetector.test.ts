@@ -851,6 +851,8 @@ describe('origin block detector', () => {
     expect(o.suspicion!.edgeEvidence).toEqual([
       { edgeId: s.edgeB, source: 'probes', countries: ['IR', 'RU'] },
     ]);
+    // FCP would replace it with the gates open: held back (the operator alert).
+    expect(o.suspicion!.heldBack).toBe(true);
     // Open the gates: global + per-origin opt-in.
     await s.t.run(async (ctx) => {
       await upsertSettingRow(ctx, 'edge.enabled', 'true');
@@ -879,6 +881,8 @@ describe('origin block detector', () => {
     expect(r3.rotated).toBe(0);
     o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion!.veto).toBe('rotation_active');
+    // FCP is replacing it: nothing held back.
+    expect(o.suspicion!.heldBack).toBeUndefined();
   });
 
   test('an edge that is down for everyone is an outage: no rotation, veto edge_outage', async () => {
@@ -915,6 +919,8 @@ describe('origin block detector', () => {
     expect(o.suspicion!.state).toBe('suspected');
     expect(o.suspicion!.edgeEvidence).toEqual([]);
     expect(o.suspicion!.veto).toBe('no_edge_evidence');
+    // An outage is no replacement held back: no operator alert from it.
+    expect(o.suspicion!.heldBack).toBeUndefined();
   });
 
   /** A fresh summary as the probes write it (lib/edges/probes/verdict.ts). */

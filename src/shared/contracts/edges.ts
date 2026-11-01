@@ -2617,7 +2617,8 @@ export const AttentionItem = z.object({
    * `members_dark` published ·
    * `host_unresolved` op (create|delete|null), attempts · `rotation_failed` kind, phase, spare (a provision not meant
    * for use, no setup run's), answer (the provider's redacted words during that run) ·
-   * `block_suspected` score, hintLevel, countries[] · `edge_unreachable` countries[] ·
+   * `block_suspected` score, hintLevel, countries[], heldBack (FCP would replace it but for a
+   * hold: the operator alert) · `edge_unreachable` countries[] ·
    * `needs_operator` provider, layer · `account_untested` / `account_unqualified` name, provider.
    */
   facts: z.record(z.string(), z.unknown()).default({}),

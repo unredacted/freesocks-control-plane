@@ -546,6 +546,39 @@ export function autoRotateDecision(args: {
 }
 
 /**
+ * FCP is holding back a replacement it would otherwise make (the operator
+ * alert for a suspected block, convex/alerts.ts): the decision is a veto, and
+ * the same decision with the holds lifted (automation and the origin's Auto
+ * rotate on, probe evidence alone allowed, no cooldown and no daily caps, a
+ * manageable Host, the open lane's budget left) picks an edge. Judged on the
+ * whole decision, not the veto: a switched-off gate is checked before the
+ * evidence and outage gates, so `edge_disabled` alone says nothing about an
+ * offline node, a protocol-level block or probe sources that went quiet.
+ */
+export function replacementHeldBack(args: Parameters<typeof autoRotateDecision>[0]): boolean {
+  if (!('veto' in autoRotateDecision(args))) return false;
+  const lifted = autoRotateDecision({
+    ...args,
+    cfg: {
+      ...args.cfg,
+      enabled: true,
+      autoRotate: true,
+      detect: { ...args.cfg.detect, allowProbeOnlyAutoRotate: true },
+    },
+    origin: {
+      ...args.origin,
+      autoRotate: true,
+      cooldownUntil: null,
+      rotationsToday: 0,
+      hostManaged: true,
+    },
+    ...(args.fleet ? { fleet: { ...args.fleet, rotationsToday: 0 } } : {}),
+    ...(args.lanes ? { lanes: { ...args.lanes, openBudgetLeft: true } } : {}),
+  });
+  return !('veto' in lifted);
+}
+
+/**
  * Every published edge (≥2) shows probe evidence with the SAME unreachable
  * country set: the censor is matching the protocol, not an address, and a
  * replacement address would be blocked the same way. With one published edge

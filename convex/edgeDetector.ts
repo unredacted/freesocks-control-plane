@@ -42,6 +42,7 @@ import {
 import {
   autoRotateDecision,
   evaluate,
+  replacementHeldBack,
   type BaselineSample,
   type EdgeProbeState,
   type Evaluation,
@@ -419,6 +420,8 @@ export const recordEvaluation = internalMutation({
     windowIncomplete: v.optional(v.boolean()),
     /** Test block evidence took part (edgeSimulations.ts): kept on the suspicion and in its audit. */
     simulated: v.optional(v.boolean()),
+    /** A replacement FCP would make is held back (`replacementHeldBack`): kept on the suspicion. */
+    heldBack: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const origin = await ctx.db.get(a.relayId);
@@ -465,6 +468,7 @@ export const recordEvaluation = internalMutation({
             ? prev?.lastRotateError
             : (a.lastRotateError ?? undefined),
         ...(a.simulated ? { simulated: true } : {}),
+        ...(a.heldBack && ev.state === 'suspected' ? { heldBack: true } : {}),
       },
       updatedAt: a.now,
     });
@@ -518,6 +522,27 @@ export const recordEvaluation = internalMutation({
       });
     }
     return null;
+  },
+});
+
+/**
+ * Before deploying a build whose schema has no `relays.suspicion.heldBack`
+ * (it refuses the field): strip it from every origin. The detector writes it
+ * again on its next pass while a block is held, so run this right before the
+ * deploy. Origins are few (one per protected node), so one read covers them.
+ */
+export const clearHeldBackForRollback = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let cleared = 0;
+    for (const r of await ctx.db.query('relays').collect()) {
+      if (r.suspicion?.heldBack === undefined) continue;
+      const { heldBack, ...suspicion } = r.suspicion;
+      void heldBack;
+      await ctx.db.patch(r._id, { suspicion });
+      cleared++;
+    }
+    return { cleared };
   },
 });
 
@@ -702,7 +727,7 @@ export const run = internalAction({
       // Pass 2: per origin, the automatic decision, the record and the probes.
       for (const { origin: o, w, ev, sims } of evaluated) {
         try {
-          const decision = autoRotateDecision({
+          const decisionArgs: Parameters<typeof autoRotateDecision>[0] = {
             evaluation: ev,
             cfg: w.cfg,
             origin: {
@@ -727,8 +752,13 @@ export const run = internalAction({
             },
             ...(w.steering ? { steering: w.steering } : {}),
             ...(w.lanes ? { lanes: w.lanes } : {}),
-          });
+          };
+          const decision = autoRotateDecision(decisionArgs);
           const veto = 'veto' in decision ? decision.veto : null;
+          // Held back: FCP would replace the address if the holds were lifted,
+          // so the operator is told (convex/alerts.ts). Judged on the whole
+          // decision, never on the veto alone.
+          const heldBack = veto !== null && replacementHeldBack(decisionArgs);
           let lastRotateError: string | null | undefined = undefined;
           if (!('veto' in decision)) {
             // The countries this start answers to, from THIS evaluation (the
@@ -789,6 +819,7 @@ export const run = internalAction({
             windowDistinctReporters: w.window.distinctReporters,
             windowIncomplete: w.window.incomplete ?? false,
             ...(sims.length > 0 ? { simulated: true } : {}),
+            ...(heldBack ? { heldBack: true } : {}),
             ...(lastRotateError !== undefined ? { lastRotateError } : {}),
           });
           // Suspicion (convex/edgeTrust.ts): a trusted address with edge-level
