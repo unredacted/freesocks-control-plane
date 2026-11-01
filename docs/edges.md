@@ -2360,7 +2360,19 @@ JSON:
 
 Alert-worthy: every critical item (quarantine, fleet brake, a provider whose API keeps failing,
 a stuck rotation, dark members, a reappeared direct Host, a blocked node with no tested spare, an
-ambiguous Host) plus `node_ready_to_protect` and `node_awaiting_approval`. An item is sent once
+ambiguous Host); the prompts FCP never acts on by itself: `node_ready_to_protect`,
+`node_awaiting_approval`, `freedom_node_withheld` and `location_refused`; and a **suspected block
+FCP is holding back**: `block_suspected` (a warning) whose veto keeps a replacement FCP would
+otherwise make from starting: `edge_disabled` or `auto_rotate_off` (automation or the node's Auto
+rotate off), `probe_only_disallowed` (only probes saw it and `detect.allowProbeOnlyAutoRotate` is
+off), `cooldown`, `daily_cap`, `fleet_daily_cap`, `hosts_unmanaged` or `open_lane_budget`. Members
+stay on the suspected address until the operator acts or the hold lifts, so a deployment that
+leaves automation off still hears about a block. A suspicion held for any other reason does not
+alert: a rotation already running, a guided setup's origin, the outage and evidence judgements
+(`node_offline`, `edge_outage`, `protocol_level_block`, `no_edge_evidence`, ...), the steering
+holds (`country_scoped`, `country_wide`: members are already routed around) and the holds that
+alert as their own items (`quarantined`, `fleet_brake`). The push reads `block_suspected
+(<veto>): 1`. An item is sent once
 while it stays on the list at any severity (`appState` `alerts:state` holds the sent ids); one
 that clears and comes back alerts again; a failed post records a short code (`network`, `timeout`, the status)
 and is retried next tick. **Alerts carry kinds, short codes and counts only**: never a member,

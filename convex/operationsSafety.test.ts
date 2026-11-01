@@ -553,6 +553,93 @@ describe('operator alerts', () => {
     expect(r.posts).toHaveLength(0);
   });
 
+  test('a suspected block alerts only while FCP is holding back a replacement', () => {
+    const held = (code: string | null) =>
+      alertWorthy({ kind: 'block_suspected', severity: 'warning', code });
+    for (const code of [
+      'edge_disabled',
+      'auto_rotate_off',
+      'probe_only_disallowed',
+      'cooldown',
+      'daily_cap',
+      'fleet_daily_cap',
+      'hosts_unmanaged',
+      'open_lane_budget',
+    ])
+      expect(held(code)).toBe(true);
+    // FCP is acting, a setup run owns it, an outage or evidence judgement, a
+    // steering hold, or a hold that alerts on its own: no alert from this item.
+    for (const code of [
+      null,
+      'rotation_active',
+      'setup_owned',
+      'not_live',
+      'no_edge_evidence',
+      'node_offline',
+      'edge_outage',
+      'protocol_level_block',
+      'country_scoped',
+      'country_wide',
+      'fleet_brake',
+      'quarantined',
+    ])
+      expect(held(code)).toBe(false);
+    // The veto codes say nothing for any other warning.
+    expect(
+      alertWorthy({ kind: 'spare_untested', severity: 'warning', code: 'edge_disabled' }),
+    ).toBe(false);
+  });
+
+  test('a held block is sent once as its kind and veto, and not again while it stays held', async () => {
+    const t = convexTest(schema, modules);
+    const fx = await seedEdgeFixture(t);
+    await t.mutation(internal.alerts.setConfig, {
+      enabled: true,
+      url: 'https://alerts.example.org',
+    });
+    const r = receiver();
+    // Whatever the fixture raises on its own goes out first.
+    await t.action(internal.alerts.dispatch, {});
+    const before = r.posts.length;
+    const suspect = (veto: string) =>
+      t.run((ctx) =>
+        ctx.db.patch(fx.relayId, {
+          suspicion: {
+            state: 'suspected',
+            hintLevel: 'probes',
+            score: 0.75,
+            reportScore: 0,
+            loadScore: 0.5,
+            probeScore: 1,
+            scope: 'regional',
+            countries: [],
+            edgeEvidence: [],
+            firstSeenAt: Date.now(),
+            lastEvalAt: Date.now(),
+            quietEvals: 0,
+            baselineWarm: true,
+            veto,
+          },
+        }),
+      );
+    // FCP is replacing it: nothing to tell.
+    await suspect('rotation_active');
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 0 });
+    // Automation is off: FCP will not act, so the operator hears it.
+    await suspect('edge_disabled');
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 1, error: null });
+    expect(r.posts).toHaveLength(before + 1);
+    expect(r.posts.at(-1)!.body).toMatchObject({ priority: 4, tags: ['warning'] });
+    expect(String(r.posts.at(-1)!.body.message)).toContain('block_suspected (edge_disabled): 1');
+    const sent = JSON.stringify(r.posts.at(-1)!.body);
+    expect(sent).not.toContain(FIXTURE_NODE);
+    expect(sent).not.toContain(fx.relayId);
+    // Still suspected, now held by the daily cap: the same item, not sent again.
+    await suspect('daily_cap');
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 0 });
+    expect(r.posts).toHaveLength(before + 1);
+  });
+
   test('the message drops a code that is not a short identifier', () => {
     const m = alertMessage(
       [
