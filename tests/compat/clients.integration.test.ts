@@ -441,7 +441,10 @@ test(
     await new Promise<void>((resolve) => server.listen(4179, '0.0.0.0', resolve));
     try {
       const executable = process.env.FCP_COMPAT_SFL_EXECUTABLE;
-      const localUrl = `http://${executable ? '127.0.0.1' : 'host.docker.internal'}:4179/api/v1/sub/${token}`;
+      // A desktop VM's own session runs the driver (scripts/compat/sfl-remote.sh),
+      // with this port forwarded to the VM's loopback.
+      const remote = process.env.FCP_COMPAT_SFL_REMOTE;
+      const localUrl = `http://${executable || remote ? '127.0.0.1' : 'host.docker.internal'}:4179/api/v1/sub/${token}`;
       const containerName = `fcp-compat-sfl-${randomUUID().slice(0, 8)}`;
       const args = executable
         ? ['--no-env-file', 'tests/compat/sfl.ts']
@@ -474,12 +477,12 @@ test(
           ];
       // Asynchronous child: the host event loop must serve the app's real HTTP fetches.
       await new Promise<void>((resolve, reject) => {
-        const child = spawn(executable ? 'bun' : 'docker', args, {
+        const child = spawn(remote ?? (executable ? 'bun' : 'docker'), remote ? [] : args, {
           env: { ...process.env, FCP_COMPAT_SUB_URL: localUrl },
           stdio: ['ignore', 'pipe', 'pipe'],
         });
         const timer = setTimeout(() => {
-          if (!executable) {
+          if (!executable && !remote) {
             try {
               execFileSync('docker', ['rm', '-f', containerName], {
                 stdio: 'ignore',
