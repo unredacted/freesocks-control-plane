@@ -106,6 +106,11 @@ export const AccountResponse = z.object({
         .nullable()
         .optional()
         .default(null),
+      /** "Switch server" would move this key right now: its mode has another
+       *  group, or its group another node and an app has fetched the key since
+       *  it last moved. Absent from an older server: fall back to the backend's
+       *  capability. */
+      canSwitchServer: z.boolean().optional(),
       devices: z.array(
         z.object({
           hwid: z.string(),

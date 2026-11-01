@@ -640,12 +640,16 @@
   let canSwitchBackend = $derived(
     !!data?.subscription && currentBackendEnabled && switchTargets.length > 0,
   );
-  // Only offer "switch server" on a backend that can actually move a key —
-  // Outline has neither placement nor node pinning, so the control could only
-  // ever fail. Server-authoritative too: switchServer refuses `server.unsupported`.
+  // Only offer "switch server" when it can move THIS key: the backend has to
+  // support it (Outline has neither placement nor node pinning), and the server
+  // says whether there is anywhere to go (a mode with one server never has, and
+  // a key no app has fetched since it last moved has no server to leave yet).
+  // Server-authoritative too: switchServer refuses instead of faking a move.
   let canSwitchServer = $derived(
     !!data?.subscription &&
-      !!backendEntry(config.data?.backends, data?.subscription?.backend)?.capabilities.switchServer,
+      !!backendEntry(config.data?.backends, data?.subscription?.backend)?.capabilities
+        .switchServer &&
+      data.subscription.canSwitchServer !== false,
   );
 
   // In-app renew CTA target: point the expiry/lifecycle callouts at the Membership

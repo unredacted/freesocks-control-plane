@@ -133,6 +133,7 @@ import type * as lib_sniConfig from "../lib/sniConfig.js";
 import type * as lib_statusCounters from "../lib/statusCounters.js";
 import type * as lib_statusPage from "../lib/statusPage.js";
 import type * as lib_supportId from "../lib/supportId.js";
+import type * as lib_switchServer from "../lib/switchServer.js";
 import type * as lib_themeConfig from "../lib/themeConfig.js";
 import type * as lib_timeRange from "../lib/timeRange.js";
 import type * as lib_umami from "../lib/umami.js";
@@ -326,6 +327,7 @@ declare const fullApi: ApiFromModules<{
   "lib/statusCounters": typeof lib_statusCounters;
   "lib/statusPage": typeof lib_statusPage;
   "lib/supportId": typeof lib_supportId;
+  "lib/switchServer": typeof lib_switchServer;
   "lib/themeConfig": typeof lib_themeConfig;
   "lib/timeRange": typeof lib_timeRange;
   "lib/umami": typeof lib_umami;

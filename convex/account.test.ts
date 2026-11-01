@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import type { SwitchServerReason } from '../src/shared/contracts/switchServerReasons';
+import { signValue } from './lib/cookies';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -1632,6 +1634,20 @@ describe('account.switchServer', () => {
     });
   }
 
+  /** Runs the switch, asking the account view's read-only check first. The two
+   *  must agree in every scenario below: the SPA offers the button exactly when
+   *  the action can move the key (or answers the retryable placement_unresolved). */
+  async function switchServer(
+    t: ReturnType<typeof convexTest>,
+    userId: Id<'users'>,
+    reason: SwitchServerReason,
+  ) {
+    const offered = await t.query(internal.account.switchServerAvailable, { userId });
+    const res = await t.action(internal.account.switchServer, { userId, reason });
+    expect(offered).toBe(res.ok || res.code === 'backend.placement_unresolved');
+    return res;
+  }
+
   /** Backend stub: answers the mode group PATCH with a plausible user record. */
   function panelStub() {
     return vi.fn(
@@ -1674,7 +1690,7 @@ describe('account.switchServer', () => {
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({
       ok: true,
       inPlace: true,
@@ -1726,7 +1742,7 @@ describe('account.switchServer', () => {
     await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
     vi.stubGlobal('fetch', panelStub());
 
-    await t.action(internal.account.switchServer, { userId, reason: 'blocked' });
+    await switchServer(t, userId, 'blocked');
 
     await t.run(async (ctx) => {
       const audit = (await ctx.db.query('auditLog').collect()).find(
@@ -1764,7 +1780,7 @@ describe('account.switchServer', () => {
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'disconnects' });
+    const res = await switchServer(t, userId, 'disconnects');
     expect(res).toMatchObject({ ok: true, inPlace: true });
     // A single-mode group pool has nowhere to PATCH to — the pin does the work.
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/users'))).toBe(
@@ -1804,7 +1820,7 @@ describe('account.switchServer', () => {
     await seedNodeStats(t, SQUAD_A, 1); // one mode group, ONE node behind it
     vi.stubGlobal('fetch', panelStub());
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: false, code: 'server.no_alternative', status: 409 });
     await t.run(async (ctx) => {
       const sub = (await ctx.db.query('subscriptions').collect())[0]!;
@@ -1846,7 +1862,7 @@ describe('account.switchServer', () => {
     );
     vi.stubGlobal('fetch', panelStub());
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: false, code: 'server.no_alternative' });
     await t.run(async (ctx) => {
       expect((await ctx.db.query('subscriptions').collect())[0]!.pinnedNode).toBe('xray1');
@@ -1873,7 +1889,7 @@ describe('account.switchServer', () => {
     await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
     vi.stubGlobal('fetch', panelStub());
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: false, code: 'server.no_alternative' });
     await t.run(async (ctx) => {
       expect((await ctx.db.query('subscriptions').collect())[0]!.pinnedNode).toBe('xray1');
@@ -1899,7 +1915,7 @@ describe('account.switchServer', () => {
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: false, code: 'server.no_alternative', status: 409 });
     await t.run(async (ctx) => {
       const subs = await ctx.db.query('subscriptions').collect();
@@ -1985,7 +2001,7 @@ describe('account.switchServer', () => {
       ),
     );
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'blocked' });
+    const res = await switchServer(t, userId, 'blocked');
     expect(res).toMatchObject({ ok: true, inPlace: false });
     await t.run(async (ctx) => {
       const fresh = (await ctx.db.query('subscriptions').collect()).find(
@@ -2037,7 +2053,7 @@ describe('account.switchServer', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: true, inPlace: false });
 
     await t.run(async (ctx) => {
@@ -2079,7 +2095,7 @@ describe('account.switchServer', () => {
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: false, code: 'mode.unavailable' });
     await t.run(async (ctx) => {
       const subs = await ctx.db.query('subscriptions').collect();
@@ -2112,7 +2128,7 @@ describe('account.switchServer', () => {
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: true, inPlace: true });
     await t.run(async (ctx) => {
       const sub = (await ctx.db.query('subscriptions').collect())[0]!;
@@ -2142,7 +2158,7 @@ describe('account.switchServer', () => {
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: true, inPlace: true });
     await t.run(async (ctx) => {
       const sub = (await ctx.db.query('subscriptions').collect())[0]!;
@@ -2179,7 +2195,7 @@ describe('account.switchServer', () => {
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: false, code: 'server.no_alternative' });
     await t.run(async (ctx) => {
       const subs = await ctx.db.query('subscriptions').collect();
@@ -2253,7 +2269,7 @@ describe('account.switchServer', () => {
       ),
     );
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: true, inPlace: false });
     await t.run(async (ctx) => {
       const fresh = (await ctx.db.query('subscriptions').collect()).find(
@@ -2299,7 +2315,7 @@ describe('account.switchServer', () => {
       await ctx.db.patch(userId, { currentSubscriptionId: subId });
     });
 
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    const res = await switchServer(t, userId, 'slow');
     expect(res).toMatchObject({ ok: false, code: 'server.unsupported', status: 409 });
   });
 
@@ -2307,7 +2323,118 @@ describe('account.switchServer', () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
     const userId = await seedUser(t, tierId);
-    const res = await t.action(internal.account.switchServer, { userId, reason: 'other' });
+    const res = await switchServer(t, userId, 'other');
     expect(res).toMatchObject({ ok: false, code: 'server.no_subscription', status: 409 });
+  });
+
+  test('is not offered until an app has fetched the key, even on a multi-node group', async () => {
+    // A fresh key (or one that just moved) has no node yet: there is nothing to
+    // leave, so the button stays hidden until the member's app fetches it.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    const { subId } = await seedKey(t, userId, { placement: SQUAD_A });
+    await seedNodeStats(t, SQUAD_A, 3);
+    vi.stubGlobal('fetch', panelStub());
+
+    expect(await switchServer(t, userId, 'slow')).toMatchObject({
+      ok: false,
+      code: 'server.no_alternative',
+    });
+
+    // The app fetches the key and it lands on a node: now there is one to leave.
+    await t.run((ctx) => ctx.db.patch(subId, { pinnedNode: 'xray1' }));
+    expect(await switchServer(t, userId, 'slow')).toMatchObject({ ok: true, inPlace: true });
+    // And right after the move the key has no node again until the next fetch.
+    expect(await t.query(internal.account.switchServerAvailable, { userId })).toBe(false);
+  });
+
+  test('the account view carries the check, so the SPA hides a button that cannot work', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    const pool = await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    await seedNodeStats(t, SQUAD_A, 1); // one group, one node: nowhere to go
+    vi.stubGlobal('fetch', panelStub());
+
+    const view = await t.action(internal.account.getAccountView, { userId });
+    expect(view?.subscription?.canSwitchServer).toBe(false);
+
+    await t.run((ctx) =>
+      ctx.db.patch(pool, { config: JSON.stringify({ squadUuids: [SQUAD_A, SQUAD_B] }) }),
+    );
+    const after = await t.action(internal.account.getAccountView, { userId });
+    expect(after?.subscription?.canSwitchServer).toBe(true);
+  });
+
+  test('a refused switch over HTTP hands back every rate-limit unit it charged', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    await seedNodeStats(t, SQUAD_A, 1);
+    vi.stubGlobal('fetch', panelStub());
+    await t.mutation(internal.sessions.create, {
+      sid: 'sid-switch',
+      kind: 'member',
+      userId,
+      ttlMs: 3_600_000,
+    });
+    const cookie = `fs_session=${await signValue('sid-switch', 'test-sign')}`;
+
+    const post = () =>
+      t.fetch('/api/v1/account/switch-server', {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ reason: 'slow', confirm: true }),
+      });
+    // More refusals than the daily switch-server allowance (4): none is charged.
+    for (let i = 0; i < 6; i++) {
+      const res = await post();
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+        'server.no_alternative',
+      );
+    }
+    await t.run(async (ctx) => {
+      for (const key of ['account.switch-server', 'account.reissue', 'account.reissue.day']) {
+        const row = await ctx.db
+          .query('rateLimits')
+          .withIndex('by_bucket', (q) => q.eq('bucket', `${key}:${userId}`))
+          .unique();
+        expect(row?.count ?? 0).toBe(0);
+      }
+    });
   });
 });

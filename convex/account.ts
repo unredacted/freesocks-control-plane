@@ -11,7 +11,12 @@
  * switch via the default-free peer tier; paid users get 409 until the billing
  * portal defines cross-backend tier linkage (CiviCRM linkage is gone).
  */
-import { internalAction, internalMutation, type ActionCtx } from './_generated/server';
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+  type ActionCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
@@ -27,7 +32,13 @@ import {
 } from './lib/backends/types';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
-import { NODE_STATS_STALE_MS } from './lib/remnawavePlacement';
+import { currentOrActiveSub } from './subscriptions';
+import {
+  crossPanelMoveProven,
+  groupHasOtherNode,
+  inPlaceMoveProven,
+  switchServerAvailable as switchServerAvailableIn,
+} from './lib/switchServer';
 
 /**
  * Whether a key's raw backend URL (and the short id it ends in) is kept from
@@ -381,6 +392,8 @@ interface AccountView {
     // Node location this key is served from (the hosting instance's location
     // code + display label; null when the instance has none set).
     location: { code: string; label: string } | null;
+    /** "Switch server" would move this key right now (`switchServerAvailable`). */
+    canSwitchServer: boolean;
     devices: {
       hwid: string;
       platform?: string;
@@ -515,6 +528,7 @@ export const getAccountView = internalAction({
         location: server?.location
           ? { code: server.location, label: server.locationLabel ?? server.location }
           : null,
+        canSwitchServer: await ctx.runQuery(internal.account.switchServerAvailable, { userId }),
         devices: live.devices.map((d) => ({
           hwid: d.hwid,
           platform: d.platform ?? undefined,
@@ -1229,7 +1243,22 @@ type SwitchServerResult =
  *
  * `reason` is a bounded enum chosen by the member, recorded so an operator can
  * see WHICH nodes people are leaving and why.
+ *
+ * The lever conditions live in lib/switchServer.ts, shared with
+ * `switchServerAvailable` below, which the account view projects so the SPA
+ * only offers the button when one of them can fire.
  */
+export const switchServerAvailable = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<boolean> => {
+    const user = await ctx.db.get(userId);
+    const tier = user ? await ctx.db.get(user.tierId) : null;
+    if (!user || !tier) return false;
+    const sub = await currentOrActiveSub(ctx.db, user);
+    return switchServerAvailableIn(ctx.db, user, tier, sub, Date.now());
+  },
+});
+
 export const switchServer = internalAction({
   args: {
     userId: v.id('users'),
@@ -1465,7 +1494,7 @@ export const switchServer = internalAction({
       // The unknown case still falls through to the pin rotation and the
       // cross-backend re-issue, both of which prove a move on their own terms.
       const sourcePlacement = oldSub.backendPlacement ?? null;
-      if (placement !== null && sourcePlacement !== null && placement !== sourcePlacement) {
+      if (inPlaceMoveProven(sourcePlacement, placement)) {
         // DB before backend, as in switchMode: a concurrent pushTierToBackend
         // re-sends the PERSISTED placement, so this ordering keeps the two
         // convergent. Restore on failure so the DB never claims a move that
@@ -1536,9 +1565,7 @@ export const switchServer = internalAction({
             placement: oldSub.backendPlacement,
           })
         : null;
-    const statsFresh =
-      placementStats != null && Date.now() - placementStats.lastStatsAt < NODE_STATS_STALE_MS;
-    const hasOtherNode = statsFresh && placementStats.nodeCount > 1;
+    const hasOtherNode = groupHasOtherNode(placementStats, Date.now());
     const leftNode = hasOtherNode
       ? await ctx.runMutation(internal.subscriptions.rotateNodePin, {
           subscriptionId: oldSub._id,
@@ -1578,11 +1605,10 @@ export const switchServer = internalAction({
     // move without knowing the mode group: a key created on backend B is by definition
     // not on backend A. (Such a row can also recover a recorded placement via
     // regenerate, after which its switches are provable the normal way.)
-    const provenAlternative =
-      knownSource !== null
-        ? crossPanel.placement !== null && crossPanel.placement !== knownSource
-        : crossPanel.serverId !== null && crossPanel.serverId !== ownPanelId;
-    if (crossPanel.unattributedMultiPanel || provenAlternative) {
+    if (
+      crossPanel.unattributedMultiPanel ||
+      crossPanelMoveProven(knownSource, crossPanel, ownPanelId)
+    ) {
       return reissue(crossPanel);
     }
 
