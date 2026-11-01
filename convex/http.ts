@@ -14,6 +14,7 @@ import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { registerEdgeRoutes } from './httpEdges';
 import { bodyIsCacheable, cacheIsServable } from './lib/edges/sni/country';
+import { checkInfraUrl } from './lib/urlSafety';
 import { suggestionCountry } from './lib/memberCountry';
 import { isOwnExit } from './lib/ownExits';
 import { registerServerRoutes } from './httpServers';
@@ -4578,8 +4579,59 @@ http.route({
       region: body.region,
       accessKeyId: body.accessKeyId,
       secretAccessKey: body.secretAccessKey,
+      // Read back through the public URL when given (an SSRF-checked infra URL).
+      ...(typeof body.publicUrl === 'string' && checkInfraUrl(body.publicUrl).ok
+        ? { publicUrl: body.publicUrl }
+        : {}),
     } as never);
     return json(result);
+  }),
+});
+
+// --- admin: mirror sync (the ledger, convex/mirrorCopies.ts) -----------------
+// Counts, attention figures and per-copy detail. No secrets: states, times,
+// hash prefixes and ids, never an object path or URL (each is a capability).
+
+http.route({
+  path: '/api/v1/admin/mirror-sync',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    const url = new URL(req.url);
+    const raw = url.searchParams.get('state');
+    const state =
+      raw === 'in_sync' || raw === 'stale' || raw === 'failing' || raw === 'never'
+        ? raw
+        : undefined;
+    const cursor = url.searchParams.get('cursor') || null;
+    const [summary, list] = await Promise.all([
+      ctx.runQuery(internal.mirrorCopies.summary, {}),
+      ctx.runQuery(internal.mirrorCopies.listForAdmin, {
+        ...(state ? { state } : {}),
+        cursor,
+        numItems: 50,
+      }),
+    ]);
+    return json({ summary, ...list });
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/mirror-sync/recheck',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const body = await readJson<{ id?: unknown }>(req);
+    if (typeof body.id !== 'string' || !/^[a-z0-9]{10,64}$/.test(body.id))
+      return errorJson('validation', 'A mirror copy id is required', 400);
+    const ref = await ctx
+      .runQuery(internal.mirrorCopies.copyRef, { id: body.id as Id<'mirrorCopies'> })
+      .catch(() => null);
+    if (!ref) return errorJson('not_found', 'Mirror copy not found', 404);
+    await ctx.scheduler.runAfter(0, internal.storage.recheckCopy, {
+      id: body.id as Id<'mirrorCopies'>,
+    });
+    return json({ ok: true });
   }),
 });
 

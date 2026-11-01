@@ -429,3 +429,65 @@ export async function bumpSessionCounts(
     })),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Mirror copies: `stats:mirrorCopies` (the mirror sync ledger, convex/mirrorCopies.ts)
+// ---------------------------------------------------------------------------
+
+export const MIRROR_COPY_COUNTS_KEY = 'stats:mirrorCopies';
+
+export type MirrorCopyState = 'in_sync' | 'stale' | 'failing' | 'never';
+
+/** Copies of members' mirrors by sync state (one copy = one subscription x provider). */
+export type MirrorCopyCounts = {
+  in_sync: number;
+  stale: number;
+  failing: number;
+  never: number;
+};
+
+export const ZERO_MIRROR_COPY_COUNTS: MirrorCopyCounts = {
+  in_sync: 0,
+  stale: 0,
+  failing: 0,
+  never: 0,
+};
+
+export const MIRROR_COPY_COUNTER: CounterSpec<MirrorCopyCounts, 'mirrorCopies'> = {
+  key: MIRROR_COPY_COUNTS_KEY,
+  table: 'mirrorCopies',
+  zero: ZERO_MIRROR_COPY_COUNTS,
+  // The table shipped empty together with the counter, so a missing row is
+  // exactly zero and every write since bumped it.
+  legacyInitialized: true,
+  createOnBump: true,
+};
+
+export async function readMirrorCopyCounts(
+  db: DatabaseReader,
+): Promise<{ counts: MirrorCopyCounts; initialized: boolean }> {
+  return readCounter(db, MIRROR_COPY_COUNTER);
+}
+
+/** A copy row's state moved (`from`/`to` null = inserted/deleted). Every write path must call this. */
+export async function bumpMirrorCopyCounts(
+  ctx: MutationCtx,
+  changes: readonly {
+    from: MirrorCopyState | null;
+    to: MirrorCopyState | null;
+    creationTime: number;
+  }[],
+): Promise<void> {
+  await applyCounterDeltas(
+    ctx,
+    MIRROR_COPY_COUNTER,
+    changes
+      .filter((c) => c.from !== c.to)
+      .map((c) => {
+        const delta: Partial<MirrorCopyCounts> = {};
+        if (c.from) delta[c.from] = (delta[c.from] ?? 0) - 1;
+        if (c.to) delta[c.to] = (delta[c.to] ?? 0) + 1;
+        return { delta, creationTime: c.creationTime };
+      }),
+  );
+}

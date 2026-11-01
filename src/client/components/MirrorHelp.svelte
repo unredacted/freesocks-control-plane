@@ -280,6 +280,13 @@
           <p class="text-sm text-muted-foreground" transition:fade={{ duration: 150 }}>
             {t('mirror.noSubscription')}
           </p>
+        {:else if status === 'error'}
+          <!-- The server answered but could not add one (a transient upload or
+               backend failure, or the key moved meanwhile): say so, or the
+               button looks like it did nothing. -->
+          <p class="text-sm text-amber-600" role="status" transition:fade={{ duration: 150 }}>
+            {t('mirror.failed')}
+          </p>
         {/if}
 
         {#if added.length > 0}

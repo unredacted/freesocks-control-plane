@@ -738,6 +738,7 @@
     "capped": "You've added the maximum number of mirrors.",
     "exhausted": "No more mirrors are available for your region right now.",
     "noSubscription": "Create your key first, then you can add a mirror.",
+    "failed": "Couldn't add a mirror just now. Please try again in a minute.",
     "removeAll": "Remove all mirrors",
     "errorToast": "Couldn't add a mirror",
     "removedToast": "Mirrors removed",

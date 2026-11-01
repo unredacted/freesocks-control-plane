@@ -9,6 +9,17 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
 import { moveOpenUploads } from './mirrorUploads';
+import {
+  copiesOf,
+  deleteCopiesOf,
+  insertCopy,
+  invalidateCopies,
+  invalidateCopiesNotHolding,
+  mirrorItemOf,
+  moveCopies,
+  type MirrorItem,
+  type MirrorPage,
+} from './mirrorCopies';
 import { randomHex } from './lib/crypto';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -248,9 +259,13 @@ export const insertSubscription = internalMutation({
       state: 'active',
       updatedAt: Date.now(),
     });
-    // The carried objects' open upload obligations follow them (the mirror barrier).
-    if (carriedMirrors && a.carrySubTokenFromId)
+    // The carried objects' open upload obligations follow them (the mirror
+    // barrier), and so do their sync records: stale, since each object still
+    // holds the old key until the refresh issuance schedules rewrites it.
+    if (carriedMirrors && a.carrySubTokenFromId) {
       await moveOpenUploads(ctx, a.carrySubTokenFromId, inserted);
+      await moveCopies(ctx, a.carrySubTokenFromId, inserted);
+    }
     return inserted;
   },
 });
@@ -555,6 +570,8 @@ export async function invalidateDelivery(
     deliveryRev: (sub.deliveryRev ?? 0) + 1,
     updatedAt: Date.now(),
   });
+  // What the mirrors hold is the placement the key left: stale until rewritten.
+  await invalidateCopies(ctx, sub._id, 'invalidated');
   if (opts.refreshMirrors && sub.state === 'active' && sub.subscriptionMirrors.length > 0)
     await ctx.scheduler.runAfter(0, internal.storage.refreshMirrorsForSubscription, {
       subscriptionId: sub._id,
@@ -614,29 +631,8 @@ export const placementApplied = internalMutation({
  * that already have ≥1 mirror and reports each sub's OWN providers + the shared
  * object path (re-uploaded in place → a stable mirror URL). It never creates one.
  */
-/** One page of mirrored active subs for the refresh cron (storage.refreshActiveMirrors). */
-export interface ActiveMirrorPage {
-  isDone: boolean;
-  continueCursor: string;
-  items: {
-    id: Id<'subscriptions'>;
-    backend: BackendId;
-    backendServerId: Id<'backendServers'> | null;
-    backendShortId: string;
-    subscriptionUrl: string;
-    rawContentHash: string | null;
-    objectPath: string | null;
-    /** The node this key is moving OFF (switch-server / regenerate). The refresh
-     *  MUST re-pin with the same exclusion the live route uses: node pinning is
-     *  deterministic, so fetching without it regenerates the old node, the hash
-     *  matches, and the mirror stays parked on the server the member just left. */
-    excludeNode: string | null;
-    /** The providers THIS sub was mirrored to (names) — refresh re-uploads to these only. */
-    providers: string[];
-    /** The row's `deliveryRev` at read: an upload that outlives an in-place move stamps nothing. */
-    deliveryRev: number;
-  }[];
-}
+/** One page of mirrored active subs for a mirror pass (mirrorCopies.ts `MirrorPage`). */
+export type ActiveMirrorPage = MirrorPage;
 
 export const pageActiveForMirror = internalQuery({
   args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
@@ -647,25 +643,13 @@ export const pageActiveForMirror = internalQuery({
       .query('subscriptions')
       .withIndex('by_state', (q) => q.eq('state', 'active'))
       .paginate({ cursor, numItems });
-    return {
-      isDone: res.isDone,
-      continueCursor: res.continueCursor,
-      items: res.page
-        // Opt-in only: refresh ONLY subs that already have a mirror; never create.
-        .filter((s) => s.subscriptionMirrors.length > 0)
-        .map((s) => ({
-          id: s._id,
-          backend: s.backend,
-          backendServerId: s.backendServerId ?? null,
-          backendShortId: s.backendShortId,
-          subscriptionUrl: s.subscriptionUrl,
-          rawContentHash: s.rawContentHash ?? null,
-          objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
-          excludeNode: s.excludeNode ?? null,
-          providers: s.subscriptionMirrors.map((m) => m.provider),
-          deliveryRev: s.deliveryRev ?? 0,
-        })),
-    };
+    const items: MirrorItem[] = [];
+    // Opt-in only: refresh ONLY subs that already have a mirror; never create.
+    for (const s of res.page) {
+      const item = await mirrorItemOf(ctx.db, s);
+      if (item) items.push(item);
+    }
+    return { isDone: res.isDone, continueCursor: res.continueCursor, items };
   },
 });
 
@@ -677,21 +661,9 @@ export const pageActiveForMirror = internalQuery({
  */
 export const mirrorRefreshTarget = internalQuery({
   args: { subscriptionId: v.id('subscriptions') },
-  handler: async (ctx, { subscriptionId }): Promise<ActiveMirrorPage['items'][number] | null> => {
+  handler: async (ctx, { subscriptionId }): Promise<MirrorItem | null> => {
     const s = await ctx.db.get(subscriptionId);
-    if (!s || s.state !== 'active' || s.subscriptionMirrors.length === 0) return null;
-    return {
-      id: s._id,
-      backend: s.backend,
-      backendServerId: s.backendServerId ?? null,
-      backendShortId: s.backendShortId,
-      subscriptionUrl: s.subscriptionUrl,
-      rawContentHash: s.rawContentHash ?? null,
-      objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
-      excludeNode: s.excludeNode ?? null,
-      providers: s.subscriptionMirrors.map((m) => m.provider),
-      deliveryRev: s.deliveryRev ?? 0,
-    };
+    return s ? mirrorItemOf(ctx.db, s) : null;
   },
 });
 
@@ -714,6 +686,8 @@ export interface MirrorContext {
   objectPath: string | null;
   /** The row's `deliveryRev` at read (subscriptions.ts `invalidateDelivery`). */
   deliveryRev: number;
+  /** The row's `countryRev` at read (convex/memberCountry.ts). */
+  countryRev: number;
 }
 
 export const mirrorContextForUser = internalQuery({
@@ -733,6 +707,7 @@ export const mirrorContextForUser = internalQuery({
       triedProviders: sub.subscriptionMirrors.map((m) => m.provider),
       objectPath: sub.subscriptionMirrors[0]?.objectPath ?? null,
       deliveryRev: sub.deliveryRev ?? 0,
+      countryRev: sub.countryRev ?? 0,
     };
   },
 });
@@ -808,8 +783,14 @@ export const appendMirror = internalMutation({
     mirror,
     rawContentHash: v.string(),
     cap: v.number(),
+    // What the uploaded body was rendered against (the sync record's served side).
+    renderedEpoch: v.optional(v.union(v.number(), v.null())),
+    stub: v.optional(v.boolean()),
   },
-  handler: async (ctx, { subscriptionId, mirror: entry, rawContentHash, cap }) => {
+  handler: async (
+    ctx,
+    { subscriptionId, mirror: entry, rawContentHash, cap, renderedEpoch, stub },
+  ) => {
     const row = await ctx.db.get(subscriptionId);
     if (!row || row.state !== 'active')
       return { appended: false as const, reason: 'gone' as const };
@@ -845,11 +826,48 @@ export const appendMirror = internalMutation({
       return { appended: false as const, reason: 'capped' as const };
     }
     const others = row.subscriptionMirrors.filter((m) => m.provider !== entry.provider);
+    // The new copy holds the body just rendered, which is what FCP serves now.
+    // A copy on another provider that holds something else is stale: it gets
+    // the same body at once (a refresh), and the subscription-wide hash only
+    // advances when every copy holds it (otherwise the next refresh would take
+    // the unchanged-content short-circuit and never rewrite the older copies).
+    const now = Date.now();
+    const rows = await copiesOf(ctx.db, subscriptionId);
+    let behind = 0;
+    for (const m of others) {
+      const copy = rows.find((r) => r.provider === m.provider);
+      const held = copy ? copy.objectHash : m.status !== 'failed' ? row.rawContentHash : undefined;
+      if (held !== rawContentHash) behind++;
+    }
     await ctx.db.patch(subscriptionId, {
       subscriptionMirrors: [...others, entry],
-      rawContentHash,
-      updatedAt: Date.now(),
+      rawContentHash: behind === 0 ? rawContentHash : undefined,
+      updatedAt: now,
     });
+    await deleteCopiesOf(ctx, subscriptionId, [entry.provider]);
+    await insertCopy(ctx, {
+      subscriptionId,
+      provider: entry.provider,
+      objectPath: entry.objectPath ?? '',
+      sync: {
+        state: 'in_sync',
+        since: now,
+        checkedAt: now,
+        syncedAt: now,
+        uploadedAt: now,
+        objectHash: rawContentHash,
+        servedHash: rawContentHash,
+        servedEpoch: renderedEpoch ?? null,
+        ...(stub ? { stub: true } : {}),
+        failures: 0,
+      },
+    });
+    if (behind > 0) {
+      await invalidateCopiesNotHolding(ctx, subscriptionId, rawContentHash, 'content_changed');
+      await ctx.scheduler.runAfter(0, internal.storage.refreshMirrorsForSubscription, {
+        subscriptionId,
+      });
+    }
     return { appended: true as const, reason: null };
   },
 });
@@ -868,7 +886,27 @@ export const clearMirrors = internalMutation({
       .filter((m): m is typeof m & { objectPath: string } => typeof m.objectPath === 'string')
       .map((m) => ({ provider: m.provider, objectPath: m.objectPath }));
     await ctx.db.patch(subscriptionId, { subscriptionMirrors: [], updatedAt: Date.now() });
+    await deleteCopiesOf(ctx, subscriptionId);
     return { items };
+  },
+});
+
+/**
+ * Drop ONE provider's copy from a key's mirrors (the provider is being removed;
+ * its object was deleted first, or recorded for withdrawal). The member may ask
+ * for another mirror in its place: the cap counts listed copies.
+ */
+export const stripMirror = internalMutation({
+  args: { subscriptionId: v.id('subscriptions'), provider: v.string() },
+  handler: async (ctx, { subscriptionId, provider }) => {
+    const row = await ctx.db.get(subscriptionId);
+    if (row && row.subscriptionMirrors.some((m) => m.provider === provider))
+      await ctx.db.patch(subscriptionId, {
+        subscriptionMirrors: row.subscriptionMirrors.filter((m) => m.provider !== provider),
+        updatedAt: Date.now(),
+      });
+    await deleteCopiesOf(ctx, subscriptionId, [provider]);
+    return null;
   },
 });
 
@@ -895,9 +933,24 @@ export const updateMirrors = internalMutation({
   handler: async (
     ctx,
     { subscriptionId, successes, failedProviders, rawContentHash },
-  ): Promise<{ staleWriter: boolean; currentOwner: Id<'subscriptions'> | null }> => {
+  ): Promise<{
+    staleWriter: boolean;
+    currentOwner: Id<'subscriptions'> | null;
+    /** A row no longer active still lists these copies (a superseded key in its grace). */
+    listedHere: boolean;
+  }> => {
     const row = await ctx.db.get(subscriptionId);
-    if (!row || row.state !== 'active') return { staleWriter: true, currentOwner: null };
+    if (!row) return { staleWriter: true, currentOwner: null, listedHere: false };
+    if (row.state !== 'active')
+      return {
+        staleWriter: true,
+        currentOwner: await ownerOfObject(ctx.db, row, successes),
+        listedHere: successes.some((w) =>
+          row.subscriptionMirrors.some(
+            (m) => m.provider === w.provider && m.objectPath === w.objectPath,
+          ),
+        ),
+      };
     const fresh = new Map(successes.map((m) => [m.provider, m]));
     const failed = new Set(failedProviders);
     const merged = row.subscriptionMirrors.map((m) => {
@@ -926,14 +979,37 @@ export const updateMirrors = internalMutation({
       ...(rawContentHash !== undefined ? { rawContentHash } : {}),
       updatedAt: Date.now(),
     });
-    if (!staleWriter) return { staleWriter: false, currentOwner: null };
-    const owner = await ctx.db.get(row.userId);
+    if (!staleWriter) return { staleWriter: false, currentOwner: null, listedHere: true };
     return {
       staleWriter: true,
-      currentOwner: owner?.currentSubscriptionId ?? null,
+      currentOwner: await ownerOfObject(ctx.db, row, successes),
+      listedHere: false,
     };
   },
 });
+
+/**
+ * The live row of this key's account that holds the object these mirrors were
+ * written to now (a re-issue carried it), or null when none does.
+ */
+async function ownerOfObject(
+  db: DatabaseReader,
+  row: Doc<'subscriptions'>,
+  written: readonly { provider: string; objectPath?: string }[],
+): Promise<Id<'subscriptions'> | null> {
+  const paths = new Set(written.map((m) => m.objectPath).filter((p): p is string => !!p));
+  if (paths.size === 0) return null;
+  const actives = await db
+    .query('subscriptions')
+    .withIndex('by_user_state', (q) => q.eq('userId', row.userId).eq('state', 'active'))
+    .collect();
+  const holder = actives.find(
+    (s) =>
+      s._id !== row._id &&
+      s.subscriptionMirrors.some((m) => !!m.objectPath && paths.has(m.objectPath)),
+  );
+  return holder?._id ?? null;
+}
 
 /** Hard-delete marker: state→deleted (used by cleanup + tombstone sweep). */
 export const markSubscriptionDeleted = internalMutation({
@@ -978,6 +1054,7 @@ export const markSubscriptionDeleted = internalMutation({
         // meanwhile is newer than what this failed saga took.
         const restoreMirrors =
           dying.subscriptionMirrors.length > 0 && source.subscriptionMirrors.length === 0;
+        if (restoreMirrors) await moveCopies(ctx, subscriptionId, source._id);
         if (restoreToken || restoreMirrors) {
           await ctx.db.patch(source._id, {
             ...(restoreToken ? { subToken: dying.subToken } : {}),
@@ -995,6 +1072,9 @@ export const markSubscriptionDeleted = internalMutation({
         }
       }
     }
+    // A deleted key's mirrors are no longer tracked (their objects are deleted
+    // with it; a returned set moved above).
+    await deleteCopiesOf(ctx, subscriptionId);
     return null;
   },
 });
@@ -1068,6 +1148,9 @@ export const tombstoneWithGrace = internalMutation({
     if (sub.state !== 'active') return sub.deletedAt != null ? { deletedAt: sub.deletedAt } : null;
     const deletedAt = Date.now() + graceMs;
     await ctx.db.patch(sub._id, { state: 'disabled', deletedAt, updatedAt: Date.now() });
+    // The ledger tracks the mirrors of live keys: a superseded key's mirrors
+    // serve it through the grace and are deleted with it.
+    await deleteCopiesOf(ctx, sub._id);
     return { deletedAt };
   },
 });

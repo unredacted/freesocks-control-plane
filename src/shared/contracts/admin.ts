@@ -239,10 +239,102 @@ export const MirrorProviderAdmin = z.object({
   countryCodes: z.array(z.string()),
   isActive: z.boolean(),
   priority: z.number().int(),
+  /** Members' mirrors on it (exact up to the cap; `mirrorsCapped` = more). Additive. */
+  mirrors: z.number().int().nonnegative().default(0),
+  mirrorsCapped: z.boolean().default(false),
+  /** Being removed: its mirrors are being withdrawn before the row goes. Additive. */
+  removing: z.boolean().default(false),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
 export type MirrorProviderAdmin = z.infer<typeof MirrorProviderAdmin>;
+
+/** POST /api/v1/admin/mirror-providers/test-connection. */
+export const MirrorProviderTestResult = z.union([
+  z.object({
+    ok: z.literal(true),
+    /** The health object read back through the public URL: null = no public URL given. Additive. */
+    publicRead: z.enum(['ok', 'unreadable', 'mismatch']).nullable().default(null),
+    /** Whether the public URL lists the bucket's objects to anyone (it must not). Additive. */
+    publicList: z.enum(['listable', 'private']).nullable().default(null),
+  }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+export type MirrorProviderTestResult = z.infer<typeof MirrorProviderTestResult>;
+
+/** DELETE /api/v1/admin/mirror-providers/{id}: `removing` = its mirrors are being withdrawn first. */
+export const MirrorProviderRemoveResult = z.object({
+  ok: z.boolean(),
+  removing: z.boolean().default(false),
+});
+
+// --- mirror sync (the ledger: one copy = one member's mirror on one provider) ---
+
+export const MirrorCopyState = z.enum(['in_sync', 'stale', 'failing', 'never']);
+export type MirrorCopyState = z.infer<typeof MirrorCopyState>;
+
+const MirrorAttentionCount = z.object({
+  count: z.number().int().nonnegative(),
+  capped: z.boolean(),
+  oldest: z.number().nullable(),
+});
+
+/** Mirror sync figures (dashboard + Admin -> Storage): counts, attention past the bound, the pass. */
+export const MirrorSyncSummary = z.object({
+  counts: z.object({
+    inSync: z.number().int().nonnegative(),
+    stale: z.number().int().nonnegative(),
+    failing: z.number().int().nonnegative(),
+    never: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+  initialized: z.boolean(),
+  attentionAfterMs: z.number(),
+  checkOverdueMs: z.number(),
+  overdue: z.object({
+    stale: MirrorAttentionCount,
+    failing: MirrorAttentionCount,
+    never: MirrorAttentionCount,
+    unchecked: MirrorAttentionCount,
+  }),
+  attention: z.boolean(),
+  pass: z.object({ running: z.boolean(), at: z.number().nullable() }),
+});
+export type MirrorSyncSummary = z.infer<typeof MirrorSyncSummary>;
+
+/** One copy's sync detail. Hash prefixes only; never the object path or URL. */
+export const MirrorCopyAdmin = z.object({
+  id: z.string(),
+  subscriptionId: z.string(),
+  userId: z.string().nullable(),
+  provider: z.string(),
+  state: MirrorCopyState,
+  reason: z.string().nullable(),
+  since: z.number(),
+  checkedAt: z.number().nullable(),
+  syncedAt: z.number().nullable(),
+  uploadedAt: z.number().nullable(),
+  verifiedAt: z.number().nullable(),
+  verify: z.enum(['match', 'mismatch', 'missing', 'unreachable']).nullable(),
+  failures: z.number().int().nonnegative(),
+  lastError: z.string().nullable(),
+  lastErrorAt: z.number().nullable(),
+  objectHash: z.string().nullable(),
+  servedHash: z.string().nullable(),
+  matches: z.boolean(),
+  servedEpoch: z.number().nullable(),
+  stub: z.boolean(),
+});
+export type MirrorCopyAdmin = z.infer<typeof MirrorCopyAdmin>;
+
+/** GET /api/v1/admin/mirror-sync. */
+export const MirrorSyncResponse = z.object({
+  summary: MirrorSyncSummary,
+  page: z.array(MirrorCopyAdmin),
+  isDone: z.boolean(),
+  continueCursor: z.string(),
+});
+export type MirrorSyncResponse = z.infer<typeof MirrorSyncResponse>;
 
 /**
  * Create/edit input. `secretAccessKey` is required on create, optional on edit
@@ -562,6 +654,8 @@ export const AdminStatusSummary = z.object({
   // Test tools the deployment accepts (never on production): the block
   // simulator (EDGE_SIMULATOR_ALLOW, docs/edges.md). Additive default.
   testTools: z.object({ blockSimulator: z.boolean() }).default({ blockSimulator: false }),
+  // Mirror sync (convex/mirrorCopies.ts). Optional: a pre-deploy backend omits it.
+  mirrors: MirrorSyncSummary.optional(),
   generatedAt: z.string().datetime(),
 });
 export type AdminStatusSummary = z.infer<typeof AdminStatusSummary>;

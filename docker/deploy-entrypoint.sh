@@ -182,6 +182,10 @@ bunx convex run userStats:reconcileUserCounts '{}'
 # row from nothing on the first deploy that ships it, self-heals after.
 echo "[deploy] reconciling the session counter"
 bunx convex run userStats:reconcileSessionCounts '{}'
+# The mirror sync ledger: give mirrors from before it their rows (once; a
+# no-op after), so the mirror passes page only mirrored keys from now on.
+echo "[deploy] seeding the mirror sync ledger"
+bunx convex run storage:seedMirrorLedger '{}'
 
 echo "[deploy] OK"
 # First-run reminder: the first admin registers a passkey at /admin using the

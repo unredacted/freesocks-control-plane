@@ -127,6 +127,30 @@
       </a>
     {/if}
 
+    <!-- Mirror sync (Admin -> Storage): shown once any member holds a mirror,
+         amber while copies stay out of sync past the bound. -->
+    {#if s.mirrors && s.mirrors.counts.total > 0}
+      {@const m = s.mirrors}
+      <a
+        href="/admin/storage"
+        class="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border px-4 py-3 text-sm hover:bg-muted/40 {m.attention
+          ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+          : ''}"
+      >
+        {#if m.attention}
+          <TriangleAlert class="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        {:else}
+          <CheckCircle class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+        {/if}
+        <span class="font-medium">Mirrors</span>
+        <span class="tabular-nums">{m.counts.inSync} in sync</span>
+        {#if m.counts.stale > 0}<span class="tabular-nums">{m.counts.stale} stale</span>{/if}
+        {#if m.counts.failing > 0}<span class="tabular-nums">{m.counts.failing} failing</span>{/if}
+        {#if m.counts.never > 0}<span class="tabular-nums">{m.counts.never} not uploaded</span>{/if}
+        {#if m.attention}<span>Some have been out of sync too long. Review →</span>{/if}
+      </a>
+    {/if}
+
     <!-- Edges (docs/edges.md): a one-line status when any origin exists. -->
     {#if s.relays.total > 0}
       <a

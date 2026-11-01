@@ -114,10 +114,25 @@ export const get = query({
       // Is the opt-in "trouble connecting? try a mirror" affordance available? Only
       // a boolean (≥1 active mirror provider) — no provider details/secrets. Lets the
       // SPA hide the affordance entirely on a dormant deployment.
-      ctx.db
-        .query('mirrorProviders')
-        .withIndex('by_active', (q) => q.eq('isActive', true))
-        .first(),
+      // …and a per-member cap above zero (an operator sets it to 0 to pause new mirrors).
+      Promise.all([
+        ctx.db
+          .query('mirrorProviders')
+          .withIndex('by_active', (q) => q.eq('isActive', true))
+          .first(),
+        ctx.db
+          .query('appSettings')
+          .withIndex('by_key', (q) => q.eq('key', 'mirror.maxPerUser'))
+          .unique(),
+      ]).then(([provider, capRow]) => {
+        let cap = 3;
+        try {
+          if (capRow) cap = Number(JSON.parse(capRow.value));
+        } catch {
+          /* the default applies */
+        }
+        return provider !== null && Number.isFinite(cap) && cap > 0 ? provider : null;
+      }),
       // Resolved once: the family list is derived from it (a family with no visible
       // child is itself hidden), so the two must be computed from the same snapshot.
       resolvePublicModes(ctx.db),

@@ -514,7 +514,7 @@ describe('subscriptions.updateMirrors — a stale writer names the current owner
       rawContentHash: 'stale-hash',
     });
 
-    expect(res).toEqual({ staleWriter: true, currentOwner: newId });
+    expect(res).toEqual({ staleWriter: true, currentOwner: newId, listedHere: false });
     await t.run(async (ctx) => {
       // Ownership did not move back.
       expect((await ctx.db.get(oldId))!.subscriptionMirrors).toEqual([]);
@@ -551,7 +551,7 @@ describe('subscriptions.updateMirrors — a stale writer names the current owner
       rawContentHash: 'h',
     });
 
-    expect(res).toEqual({ staleWriter: false, currentOwner: null });
+    expect(res).toEqual({ staleWriter: false, currentOwner: null, listedHere: true });
   });
 });
 
