@@ -244,6 +244,26 @@ describe('accountsForSlot', () => {
           originTransport: ot,
         }).map((a) => a.id),
       ).toEqual(['l4', 'cf', 'fastly', 'cfront']);
+    // Dialled at an IP (or a name it does not serve), the origin's "own name" is
+    // that address, which the node refuses: no CDN front fits.
+    expect(
+      accountsForSlot(withCloudFront, {
+        layers: ['l4', 'l7'],
+        proto: WS,
+        allowL7: true,
+        originTransport: own,
+        originAddress: '203.0.113.10',
+      }).map((a) => a.id),
+    ).toEqual(['l4']);
+    expect(
+      accountsForSlot(withCloudFront, {
+        layers: ['l4', 'l7'],
+        proto: WS,
+        allowL7: true,
+        originTransport: own,
+        originAddress: 'origin.example.org',
+      }).map((a) => a.id),
+    ).toEqual(['l4', 'fastly', 'cfront']);
   });
 
   test('a DNS account set to DNS only fronts nothing, whoever is choosing', () => {

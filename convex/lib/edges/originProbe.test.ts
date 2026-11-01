@@ -84,7 +84,7 @@ describe('probeOriginTransport', () => {
         hostHeader: FOREIGN_HOST_HEADER,
         servername: 'ws.example',
         path: '/',
-        upgrade: true,
+        upgrade: 'websocket',
       }),
     );
   });
@@ -121,9 +121,26 @@ describe('probeOriginTransport', () => {
       const out = await probeOriginTransport(d, ws({ streamTransport, path: '/ws' }));
       expect(out.originTransport?.acceptsHostHeader).toBe('names');
       expect(d.httpsStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ hostHeader: FOREIGN_HOST_HEADER, path: '/ws', upgrade: true }),
+        expect.objectContaining({
+          hostHeader: FOREIGN_HOST_HEADER,
+          path: '/ws',
+          upgrade: 'websocket',
+        }),
       );
     }
+    // An HTTP Upgrade transport with its own token is asked with it.
+    const tok = deps({ httpsStatus: vi.fn(async () => ({ status: 101 })) });
+    expect(
+      (
+        await probeOriginTransport(
+          tok,
+          ws({ streamTransport: 'httpupgrade', path: '/up', upgradeToken: 'fcp-tunnel' }),
+        )
+      ).originTransport?.acceptsHostHeader,
+    ).toBe('any');
+    expect(tok.httpsStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/up', upgrade: 'fcp-tunnel' }),
+    );
     // Any other refusal of the upgrade is `names` too.
     for (const status of [400, 403, 404, 426, 502]) {
       const d = deps({ httpsStatus: async () => ({ status }) });
@@ -138,17 +155,22 @@ describe('probeOriginTransport', () => {
         ?.acceptsHostHeader,
     ).toBe('any');
     expect(x.httpsStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/', upgrade: false }),
+      expect.not.objectContaining({ upgrade: expect.anything() }),
     );
   });
 
   test('hostCheckOf / requestPath: the upgrade at a request-line-safe path', () => {
     const w = hostCheckOf('ws', '/ws?ed=2048');
-    expect(w).toMatchObject({ path: '/ws?ed=2048', upgrade: true });
+    expect(w).toMatchObject({ path: '/ws?ed=2048', upgrade: 'websocket' });
     expect([101, 200, 404].map(w.accepts)).toEqual([true, false, false]);
-    expect(hostCheckOf('httpupgrade', '/up')).toMatchObject({ path: '/up', upgrade: true });
+    expect(hostCheckOf('httpupgrade', '/up')).toMatchObject({ path: '/up', upgrade: 'websocket' });
+    // An HTTP Upgrade transport is asked with its declared token, as the front proof asks;
+    // a token no header may carry falls back to the default. WebSocket is always `websocket`.
+    expect(hostCheckOf('httpupgrade', '/up', 'fcp-tunnel').upgrade).toBe('fcp-tunnel');
+    expect(hostCheckOf('httpupgrade', '/up', 'bad token\r\nX: y').upgrade).toBe('websocket');
+    expect(hostCheckOf('ws', '/ws', 'fcp-tunnel').upgrade).toBe('websocket');
     const x = hostCheckOf('xhttp', '/xh');
-    expect(x).toMatchObject({ path: '/', upgrade: false });
+    expect(x).toMatchObject({ path: '/', upgrade: null });
     expect([101, 200, 204, 404].map(x.accepts)).toEqual([false, true, true, false]);
     for (const bad of [undefined, '', 'ws', '/a b', '/a\r\nHost: x', '/\u00e9'])
       expect(requestPath(bad)).toBe('/');

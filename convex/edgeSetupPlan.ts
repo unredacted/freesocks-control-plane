@@ -414,6 +414,8 @@ function accountCompatibility(
   relay: PlanContext['relay'],
   websocketNode: boolean,
   l4Problem: ReturnType<typeof l4OriginProblem> = null,
+  /** What its fronts dial: a names-only node takes the origin's name only when this is one. */
+  originAddress?: string,
 ): SetupPlanAccount {
   const reasons: string[] = [];
   const layer = edgeLayerOf(a.provider);
@@ -461,6 +463,7 @@ function accountCompatibility(
       originPort: spec.originPort,
       allowL7: true,
       originTransport: spec.originTransport,
+      originAddress,
     });
     if (eligible.length > 0) {
       carries.push(inb.listenerKey);
@@ -1003,7 +1006,7 @@ export async function buildPlan(
   const candidates = applyOriginProbes(
     mapped.candidates,
     withVerifiedIngress(outcomes, c.enrolled),
-    { websocketNode: c.websocketNode },
+    { websocketNode: c.websocketNode, originAddress },
   );
   const planInbounds: SetupPlanInbound[] = [];
   for (const cand of candidates) {
@@ -1173,7 +1176,7 @@ export async function buildPlan(
     }
   }
   const accounts = c.accounts.map((acct) =>
-    accountCompatibility(acct, required, c.relay, c.websocketNode, l4Problem),
+    accountCompatibility(acct, required, c.relay, c.websocketNode, l4Problem, originAddress),
   );
   const set =
     args.picks && args.picks.length > 0

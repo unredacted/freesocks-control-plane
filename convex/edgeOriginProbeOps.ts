@@ -73,7 +73,7 @@ const defaultDeps: OriginProbeDeps = {
     // An upgrade is answered by the transport itself (101) and then closed:
     // nothing is sent through it.
     const head = upgrade
-      ? `Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString('base64')}\r\n`
+      ? `Connection: Upgrade\r\nUpgrade: ${upgrade}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString('base64')}\r\n`
       : 'Connection: close\r\n';
     return new Promise((resolve) => {
       let settled = false;
@@ -122,6 +122,7 @@ export const probe = internalAction({
         security: listenerProtoFields.security,
         tlsNames: v.array(v.string()),
         path: v.optional(v.string()),
+        upgradeToken: v.optional(v.string()),
       }),
     ),
     timeoutMs: v.optional(v.number()),

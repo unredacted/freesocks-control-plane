@@ -34,6 +34,7 @@ import type {
 import { isPublicIpLiteral, addressFamily } from './ip';
 import type { OriginTransport } from './layers';
 import { isValidHostname } from './hostname';
+import { DEFAULT_UPGRADE_TOKEN } from './frontCheck/httpupgrade';
 
 export interface OriginProbeDeps {
   lookup: (name: string) => Promise<string[]>;
@@ -57,9 +58,9 @@ export interface OriginProbeDeps {
   }>;
   /**
    * One request over a fresh handshake with the given Host header; the status
-   * line's code, or null. `GET <path>` (default `/`); `upgrade` = a WebSocket
-   * upgrade (the RFC 6455 handshake headers, which Xray's HTTP Upgrade
-   * transport accepts too).
+   * line's code, or null. `GET <path>` (default `/`); `upgrade` = the upgrade
+   * token to ask for (`websocket`: the RFC 6455 handshake headers, which Xray's
+   * HTTP Upgrade transport accepts too), absent for a plain request.
    */
   httpsStatus: (opts: {
     host: string;
@@ -67,7 +68,7 @@ export interface OriginProbeDeps {
     servername: string;
     hostHeader: string;
     path?: string;
-    upgrade?: boolean;
+    upgrade?: string;
     timeoutMs: number;
   }) => Promise<{ status: number | null; error?: string }>;
 }
@@ -81,6 +82,8 @@ export interface OriginProbeRequest {
   tlsNames: string[];
   /** The transport's own path (`transportParams.path`), where it has one. */
   path?: string;
+  /** An HTTP Upgrade transport's declared token (`transportParams.upgradeToken`). */
+  upgradeToken?: string;
 }
 
 export interface OriginProbeOutcome {
@@ -107,19 +110,31 @@ const HTTP_TRANSPORTS: ReadonlySet<string> = new Set(['ws', 'httpupgrade', 'grpc
 
 /**
  * The request the foreign Host is sent with, and the answer that means the node
- * took it. WebSocket and HTTP Upgrade: an upgrade at the transport's own path,
- * which only the transport answers with 101. XHTTP keeps a `GET /` answering
- * 2xx: its answer and a terminator's empty 200 share the status, and the
- * headers that would tell them apart are not proven across Xray versions.
+ * took it. WebSocket and HTTP Upgrade: an upgrade at the transport's own path
+ * (an HTTP Upgrade transport with its declared token, as the front proof asks
+ * for it), which only the transport answers with 101. XHTTP keeps a `GET /`
+ * answering 2xx: its answer and a terminator's empty 200 share the status, and
+ * the headers that would tell them apart are not proven across Xray versions.
  */
 export function hostCheckOf(
   streamTransport: ListenerStreamTransport,
   path?: string,
-): { path: string; upgrade: boolean; accepts: (status: number) => boolean } {
-  if (streamTransport === 'ws' || streamTransport === 'httpupgrade')
-    return { path: requestPath(path), upgrade: true, accepts: (s) => s === 101 };
-  return { path: '/', upgrade: false, accepts: (s) => s >= 200 && s < 300 };
+  upgradeToken?: string,
+): { path: string; upgrade: string | null; accepts: (status: number) => boolean } {
+  if (streamTransport === 'ws')
+    return { path: requestPath(path), upgrade: 'websocket', accepts: (s) => s === 101 };
+  if (streamTransport === 'httpupgrade')
+    return {
+      path: requestPath(path),
+      upgrade:
+        upgradeToken && UPGRADE_TOKEN_RE.test(upgradeToken) ? upgradeToken : DEFAULT_UPGRADE_TOKEN,
+      accepts: (s) => s === 101,
+    };
+  return { path: '/', upgrade: null, accepts: (s) => s >= 200 && s < 300 };
 }
+
+/** An RFC 9110 token: what an `Upgrade` header may carry (anything else is never sent). */
+const UPGRADE_TOKEN_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/;
 
 /**
  * A path fit for a request line: the declared one when it is a plain absolute
@@ -191,7 +206,7 @@ export async function probeOriginTransport(
   let acceptsHostHeader: OriginTransport['acceptsHostHeader'] = 'names';
   if (req.streamTransport === 'grpc')
     return out({ scheme: 'https', certPublic: hs.authorized, certNames, acceptsHostHeader });
-  const check = hostCheckOf(req.streamTransport, req.path);
+  const check = hostCheckOf(req.streamTransport, req.path, req.upgradeToken);
   try {
     const st = await deps.httpsStatus({
       host: dial.host,
@@ -199,7 +214,7 @@ export async function probeOriginTransport(
       servername,
       hostHeader: FOREIGN_HOST_HEADER,
       path: check.path,
-      upgrade: check.upgrade,
+      ...(check.upgrade ? { upgrade: check.upgrade } : {}),
       timeoutMs,
     });
     if (st.status !== null && check.accepts(st.status)) acceptsHostHeader = 'any';

@@ -279,7 +279,8 @@ front would (`h2` alone for gRPC, which an h2-only origin requires; `h2` and `ht
 XHTTP; `http/1.1` otherwise), `certPublic` = the chain verifies against the system store,
 `certNames` = the leaf's names, `acceptsHostHeader: names` unless a request with a foreign Host
 header gets the transport's own answer (`any`; `hostCheckOf`): for WebSocket and HTTP Upgrade an
-upgrade (the RFC 6455 handshake, which Xray's HTTP Upgrade transport takes too) at the
+upgrade (the RFC 6455 handshake, which Xray's HTTP Upgrade transport takes too, with an HTTP
+Upgrade transport's declared `transportParams.upgradeToken` as the front proof sends it) at the
 transport's own path (`transportParams.path`, `/` when it declares none) answering `101`, for
 XHTTP a `GET /` answering 2xx, never one to a gRPC origin. A terminator that serves only its own
 name (a Caddy site block for the origin name and no catch-all) answers a foreign Host with an
@@ -341,11 +342,16 @@ origin's own name (`l7HostHeaderFor`): CloudFront always sends the origin's (cap
 `originHostHeader: origin`), Fastly what its template's `overrideHost` says (`originHostHeader:
 option`), Cloudflare the front's. A node that takes any Host (`acceptsHostHeader: any`) accepts
 either; one that answers only for its certificate names (`names`) accepts the front's name only
-when a certificate name covers it, and the origin's own name always (`l7HostAccepted`). Before a
-front's name is minted, `listenerLayers` keeps L7 open for such a node while a provider that
-carries the transport can send the origin's name, or a first-level wildcard could cover any
-minted name; otherwise L7 is excluded (`host_header_rejected`). Each provider is then judged on
-its own (`frontHostAccepted`): `accountsForSlot` drops one whose front would send its own name,
+when a certificate name covers it, and the origin's own name when it is one (`l7HostAccepted`).
+"The origin's own name" is the address the front dials, so it serves such a node only when that
+address is a DNS name the certificate covers (`originNameServes`): a node dialled at an IP
+literal or another name refuses it (and the Fastly and CloudFront adapters refuse that shape
+when the edge is planned). Before a front's name is minted, `listenerLayers` keeps L7 open for
+such a node while a provider that carries the transport can send the origin's name and that
+name serves (the origin address passed as `originAddress` where the caller knows it), or a
+first-level wildcard could cover any minted name; otherwise L7 is excluded
+(`host_header_rejected`). Each provider is then judged on its own (`frontHostAccepted`, with the
+origin address): `accountsForSlot` drops one whose front would send a name the node refuses,
 so selection never picks it, named or not (`account_incompatible`), and the protect plan gives
 that account the reason `host_header_rejected` ("Node takes only its own name"). A Fastly front
 FCP builds for such a node sends the origin's name whatever the template or the pick chose

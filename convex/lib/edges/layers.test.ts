@@ -9,6 +9,7 @@ import {
   matchesCertName,
   originHostNeeded,
   originHostSupport,
+  originNameServes,
   withOriginHost,
   zoneModeCarriesOrigin,
   type OriginTransport,
@@ -200,6 +201,21 @@ describe('listenerLayers', () => {
       });
       expect(wildcard.layers).toEqual(['l7']);
     }
+    // Known to be dialled at an address that is not one of its names (an IP, another
+    // name): no front could send it a name it serves, so L7 closes.
+    for (const originAddress of ['203.0.113.10', 'elsewhere.example.net'])
+      expect(
+        listenerLayers(
+          { ...WS, originTransport: own, tlsNames: names('origin.example.org') },
+          { originAddress },
+        ).excluded.l7,
+      ).toBe('host_header_rejected');
+    expect(
+      listenerLayers(
+        { ...WS, originTransport: own, tlsNames: names('origin.example.org') },
+        { originAddress: 'origin.example.org' },
+      ).layers,
+    ).toEqual(['l4', 'l7']);
     // A decided Host is judged as it is.
     expect(
       listenerLayers(
@@ -384,7 +400,30 @@ describe("the origin's own name as Host", () => {
     expect(frontHostAccepted('cloudflare', own)).toBe(false);
     expect(frontHostAccepted('cloudflare', anyHost)).toBe(true);
     expect(frontHostAccepted('cloudflare', wildcard)).toBe(true);
-    expect(frontHostAccepted('cloudflare', wildcard, 'front-1.other.example')).toBe(false);
+    expect(frontHostAccepted('cloudflare', wildcard, { hostname: 'front-1.other.example' })).toBe(
+      false,
+    );
+    // The origin's own name is the address the front dials: it must be a name the node serves.
+    expect(frontHostAccepted('fastly', own, { originAddress: 'origin.example.org' })).toBe(true);
+    expect(frontHostAccepted('cloudfront', own, { originAddress: 'Origin.Example.org.' })).toBe(
+      true,
+    );
+    for (const originAddress of ['203.0.113.10', '2001:db8::10', 'other.example.org'])
+      for (const p of ['fastly', 'cloudfront'])
+        expect(frontHostAccepted(p, own, { originAddress })).toBe(false);
+    // A node that takes any Host does not care what the address is.
+    expect(frontHostAccepted('fastly', anyHost, { originAddress: '203.0.113.10' })).toBe(true);
+  });
+
+  test('originNameServes: a DNS name the certificate covers; unknown = yes', () => {
+    expect(originNameServes(own, 'origin.example.org')).toBe(true);
+    expect(originNameServes(own, ' origin.example.org. ')).toBe(true);
+    expect(originNameServes(own, '203.0.113.10')).toBe(false);
+    expect(originNameServes(own, '[2001:db8::10]')).toBe(false);
+    expect(originNameServes(own, 'other.example.org')).toBe(false);
+    expect(originNameServes(wildcard, 'node.cdn.example')).toBe(true);
+    expect(originNameServes(own, undefined)).toBe(true);
+    expect(originNameServes(own, null)).toBe(true);
   });
 });
 

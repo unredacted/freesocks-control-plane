@@ -151,7 +151,9 @@ describe('transport candidates with the origin probe', () => {
       { host: ORIGIN, port: 443, servername: 'ws.example', alpn: ['http/1.1'], timeoutMs: 6000 },
     ]);
     // The Host answer is asked as an upgrade at the transport's own path.
-    expect(asked).toEqual([{ path: '/ws', upgrade: true, hostHeader: 'origin-probe.invalid' }]);
+    expect(asked).toEqual([
+      { path: '/ws', upgrade: 'websocket', hostHeader: 'origin-probe.invalid' },
+    ]);
     // Nothing was registered or persisted.
     expect(await t.run((ctx) => ctx.db.query('relays').collect())).toEqual([]);
     expect(await t.run((ctx) => ctx.db.query('relayListeners').collect())).toEqual([]);

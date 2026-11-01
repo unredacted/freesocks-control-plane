@@ -107,9 +107,13 @@ export function originProbeTargets(
       streamTransport: cand.listenerSpec.streamTransport,
       security: cand.listenerSpec.security,
       tlsNames: cand.listenerSpec.tlsNames ?? [],
-      // A WebSocket / HTTP Upgrade transport's Host answer is asked at its own path.
+      // A WebSocket / HTTP Upgrade transport's Host answer is asked at its own
+      // path, with its own upgrade token.
       ...(cand.listenerSpec.transportParams?.path
         ? { path: cand.listenerSpec.transportParams.path }
+        : {}),
+      ...(cand.listenerSpec.transportParams?.upgradeToken
+        ? { upgradeToken: cand.listenerSpec.transportParams.upgradeToken }
         : {}),
     }));
 }
@@ -119,12 +123,14 @@ export function originProbeTargets(
  * spec where the probe succeeded and the layers recomputed from it (pure;
  * shared with the setup plan so a WS / HTTP-upgrade / gRPC origin can be
  * offered an L7 account through the guided flow too). A WebSocket node's
- * HTTP transports are never L4-frontable (lib/edges/websocketNode.ts).
+ * HTTP transports are never L4-frontable (lib/edges/websocketNode.ts), and
+ * `originAddress` (what fronts dial) decides whether a node that answers only
+ * for its own names can be sent that name (lib/edges/layers.ts).
  */
 export function applyOriginProbes(
   candidates: readonly TransportCandidate[],
   outcomes: readonly OriginProbeOutcome[],
-  opts: { websocketNode?: boolean } = {},
+  opts: { websocketNode?: boolean; originAddress?: string } = {},
 ): ProbedInboundCandidate[] {
   const byKey = new Map(outcomes.map((o) => [o.listenerKey, o]));
   return candidates.map((cand) => {
@@ -144,7 +150,7 @@ export function applyOriginProbes(
           tlsNames: (spec.tlsNames ?? []).map((name) => ({ name, status: 'active' as const })),
           originTransport,
         },
-        { websocketNode: opts.websocketNode },
+        { websocketNode: opts.websocketNode, originAddress: opts.originAddress },
       ),
     };
   });
@@ -172,7 +178,7 @@ export const inboundCandidates = internalAction({
     const candidates = applyOriginProbes(
       mapped.candidates,
       withVerifiedIngress(outcomes, c.enrolled),
-      { websocketNode: c.websocketNode },
+      { websocketNode: c.websocketNode, originAddress: c.originAddress },
     );
     return {
       node: c.node,

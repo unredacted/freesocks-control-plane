@@ -27,6 +27,7 @@ import {
   type EdgeLayer,
 } from './providers/capabilities';
 import type { EdgeProviderId } from '../edgeProviderIds';
+import { addressFamily } from './ip';
 import {
   protocolIsHttpTransport,
   protocolL7Proof,
@@ -153,26 +154,51 @@ export function withOriginHost(
 }
 
 /**
+ * Whether the origin's own address works as the Host of a node that answers
+ * only for its own names: a front that sends "the origin's name" sends the
+ * address it dials, so it must be a DNS name the certificate covers (an IP
+ * literal or another name would be refused; the Fastly and CloudFront
+ * adapters refuse that shape when the edge is planned). Not known = yes.
+ */
+export function originNameServes(ot: OriginTransport, originAddress?: string | null): boolean {
+  if (originAddress === undefined || originAddress === null) return true;
+  const a = originAddress
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '');
+  return addressFamily(a) === null && certCovers(a, ot.certNames);
+}
+
+/**
  * Whether a front FCP would build at `provider` gets an answer from the node:
  * the front name is accepted, or the provider sends the origin's own name
- * (always, or set by `withOriginHost`).
+ * (always, or set by `withOriginHost`) and that name is one the node serves.
  */
 export function frontHostAccepted(
   provider: string | null | undefined,
   ot: OriginTransport,
-  hostname?: string | null,
+  opts: { hostname?: string | null; originAddress?: string | null } = {},
 ): boolean {
-  return !originHostNeeded(ot, hostname) || originHostSupport(provider) !== null;
+  if (!originHostNeeded(ot, opts.hostname)) return true;
+  return originHostSupport(provider) !== null && originNameServes(ot, opts.originAddress);
 }
 
 /**
  * Whether some L7 provider's front can send the origin's own name and carry
- * the listener: then a node that answers only for its own names can still be
- * fronted at L7.
+ * the listener, and that name is one the node serves: then a node that answers
+ * only for its own names can still be fronted at L7.
  */
-function originHostCarrierExists(proto: ListenerProto): boolean {
-  return (Object.keys(EDGE_PROVIDER_CAPABILITIES) as EdgeProviderId[]).some(
-    (p) => originHostSupport(p) !== null && protocolCarriedBy(p, proto),
+function originHostCarrierExists(
+  proto: ListenerProto,
+  ot: OriginTransport,
+  originAddress?: string | null,
+): boolean {
+  return (
+    originNameServes(ot, originAddress) &&
+    (Object.keys(EDGE_PROVIDER_CAPABILITIES) as EdgeProviderId[]).some(
+      (p) => originHostSupport(p) !== null && protocolCarriedBy(p, proto),
+    )
   );
 }
 
@@ -214,6 +240,12 @@ export interface ListenerLayerOpts {
    * an answer (`frontHostAccepted` then judges each provider).
    */
   l7Host?: L7HostHeader;
+  /**
+   * The address fronts dial (the origin's): a node that answers only for its
+   * own names takes a front that sends it that name only when this address is
+   * one (`originNameServes`). Absent = not known here.
+   */
+  originAddress?: string | null;
   /** Some enabled provider declares `udp` (none does today). */
   udpProviderAvailable?: boolean;
   /** The listener's node is a WebSocket node (`websocketNodeOf`): no load balancer fronts its HTTP transports. */
@@ -260,7 +292,7 @@ export function listenerLayers(
   else if (
     opts.l7Host !== undefined
       ? !l7HostAccepted(ot, opts.l7Host)
-      : originHostNeeded(ot) && !originHostCarrierExists(listener)
+      : originHostNeeded(ot) && !originHostCarrierExists(listener, ot, opts.originAddress)
   )
     excluded.l7 = 'host_header_rejected';
   else layers.push('l7');

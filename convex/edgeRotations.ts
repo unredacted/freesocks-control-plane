@@ -3499,9 +3499,10 @@ export async function selectionContext(
   // cannot front the slot is not a candidate: picking it would provision an edge
   // that `checkPublishable` would then refuse (`layer_mismatch` /
   // `protocol_not_carried`) after the provider had already been paid.
-  const layers = listenerLayers(listener, { websocketNode }).layers.filter(
-    (l) => l !== 'l4' || !l4Problem,
-  );
+  const layers = listenerLayers(listener, {
+    websocketNode,
+    originAddress: origin.originAddress,
+  }).layers.filter((l) => l !== 'l4' || !l4Problem);
   // Every trigger except an operator's own request is "automatic" for the L7
   // gate: an unproven front must not reach members because a cron or the
   // detector chose it. A guided setup run's account IS the operator's own
@@ -3521,6 +3522,7 @@ export async function selectionContext(
       originPort: listener.originPort,
       allowL7,
       originTransport: listener.originTransport,
+      originAddress: origin.originAddress,
     },
   );
   const accounts = eligibleAccounts;

@@ -96,7 +96,7 @@ export function carries(
     | 'tlsNames'
     | 'networkId'
   >,
-  opts: { websocketNode?: boolean } = {},
+  opts: { websocketNode?: boolean; originAddress?: string } = {},
 ): boolean {
   const scope = listener.providerScope;
   if (scope?.provider && scope.provider !== row.account.provider) return false;
@@ -112,11 +112,15 @@ export function carries(
   return (
     // Whether a DNS account fronts is applied to a pick as `usable` (setPicksOf).
     accountsForSlot([{ provider: row.account.provider, frontsTraffic: true }], {
-      layers: listenerLayers(listener, { websocketNode: opts.websocketNode }).layers,
+      layers: listenerLayers(listener, {
+        websocketNode: opts.websocketNode,
+        originAddress: opts.originAddress,
+      }).layers,
       proto,
       originPort: listener.originPort,
       allowL7: true,
       originTransport: listener.originTransport,
+      originAddress: opts.originAddress,
     }).length > 0
   );
 }
@@ -202,7 +206,9 @@ export async function setStateOf(
   const setListeners: SetListener[] = listeners.map((l) => ({
     listenerKey: l.listenerKey,
     carriers: (picks ?? [])
-      .filter((p) => p.usable && carries(p, l, { websocketNode }))
+      .filter(
+        (p) => p.usable && carries(p, l, { websocketNode, originAddress: relay.originAddress }),
+      )
       .map((p) => p.pick.locationId),
   }));
   const requirement = requirementOf(

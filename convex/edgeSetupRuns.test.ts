@@ -620,6 +620,7 @@ describe('edgeSetupPlan', () => {
   });
 
   test('a WebSocket origin that answers only for its own name: a CDN that sends that name is offered and says so; one that sends its own name is not', async () => {
+    const ORIGIN_NAME = 'node-one.origin.example';
     const ws: BackendTransport = {
       tag: 'VLESS_WS_TLS',
       configProfileUuid: FIXTURE_CONFIG_PROFILE,
@@ -675,7 +676,17 @@ describe('edgeSetupPlan', () => {
       observed: { zoneSslMode: 'full', websockets: 'on' },
     });
     await setFrontsTraffic(t, cf, true);
+    // The backend lists the node by its name: that name is what a CDN front dials.
+    const listAt = (address: string) =>
+      t.run(async (ctx) => {
+        const row = (await ctx.db.query('backendNodeInventory').collect()).find(
+          (n) => n.nodeUuid === NODE_UUID,
+        )!;
+        await ctx.db.patch(row._id, { address });
+      });
+    await listAt(ORIGIN_NAME);
     const plan = await planFor(t, serverId);
+    expect(plan.originAddress).toBe(ORIGIN_NAME);
     // The probe is asked at the transport's own path.
     expect(asked).toEqual([{ path: '/ws' }]);
     const inb = plan.inbounds.find((i) => i.sourceTag === 'VLESS_WS_TLS')!;
@@ -690,7 +701,18 @@ describe('edgeSetupPlan', () => {
       reasons: expect.arrayContaining(['host_header_rejected']),
     });
     expect(byId(cf).originHost).toBeFalsy();
+    // Listed by an IP address: a front that "sends the origin's name" would send the
+    // address, which the node refuses, so no CDN front fits and L7 is closed.
+    await listAt(ORIGIN);
+    const byIp = await planFor(t, serverId);
+    const ipInb = byIp.inbounds.find((i) => i.sourceTag === 'VLESS_WS_TLS')!;
+    expect(ipInb.layers).not.toContain('l7');
+    for (const id of [fastly, cf]) {
+      const a = byIp.accounts.find((x) => x.id === id)!;
+      expect([a.compatible, a.carries, a.originHost ?? false]).toEqual([false, [], false]);
+    }
     // A node that takes any Host: both carry it, and neither needs the node's name.
+    await listAt(ORIGIN_NAME);
     accepts = 'any';
     const open = await planFor(t, serverId);
     const openInb = open.inbounds.find((i) => i.sourceTag === 'VLESS_WS_TLS')!;

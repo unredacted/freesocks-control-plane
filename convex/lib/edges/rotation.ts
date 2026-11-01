@@ -343,6 +343,8 @@ export function accountsForSlot<T extends FrontingAccount & { provider: string }
      * takes an L7 front only from a provider that can send it that name.
      */
     originTransport?: OriginTransport | null;
+    /** The address fronts dial (the origin's): see `originNameServes`. */
+    originAddress?: string | null;
   },
 ): T[] {
   return accounts.filter((a) => {
@@ -355,7 +357,7 @@ export function accountsForSlot<T extends FrontingAccount & { provider: string }
     if (
       layer === 'l7' &&
       opts.originTransport &&
-      !frontHostAccepted(a.provider, opts.originTransport)
+      !frontHostAccepted(a.provider, opts.originTransport, { originAddress: opts.originAddress })
     )
       return false;
     return protocolCarriedBy(a.provider as EdgeProviderId, opts.proto, opts.originPort);
