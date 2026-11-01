@@ -833,6 +833,14 @@ export default defineSchema({
     lastDeliveredAt: v.optional(v.number()),
     lastDeliveredContentAt: v.optional(v.number()),
     lastRenderedEpoch: v.optional(v.number()),
+    // The last successful delivery whose body was an edge render (a body
+    // rendered under a binding, never the raw one), throttled like
+    // `lastDeliveredAt`. A delivery stamp alone cannot say which body was
+    // served (a request may read the cache before a binding claim and stamp
+    // after it); this one is written only with a render's snapshot, so the
+    // count of keys still holding an operator front reads it
+    // (convex/edgeFrontKeys.ts).
+    lastRenderedAt: v.optional(v.number()),
     // The eligibility snapshot of the last render (what this subscriber was
     // handed): member connection labels and report attribution read it and
     // never reconstruct an assignment without the body.
@@ -1899,6 +1907,19 @@ export default defineSchema({
         at: v.number(),
         remarks: v.array(v.string()),
         hostUuids: v.optional(v.array(v.string())),
+      }),
+    ),
+    // While the node has operator fronts: how many of its active keys had not
+    // fetched their subscription since its binding was claimed (`since`, the
+    // binding's `updatedAt`) when last counted (convex/edgeFrontKeys.ts, at
+    // most hourly). Their apps still hold a body with the fronts in it. Counts
+    // only, never a key. Absent = no fronts, or not counted yet.
+    frontKeys: v.optional(
+      v.object({
+        at: v.number(),
+        since: v.number(),
+        stale: v.number(),
+        total: v.number(),
       }),
     ),
     // The node's REALITY transports that refuse sing-box or Mihomo clients, as

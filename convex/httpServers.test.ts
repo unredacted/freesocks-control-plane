@@ -445,6 +445,24 @@ describe('/api/v1/admin/servers', () => {
     expect(frontsOf(tree)).toEqual({ 'h-1': false, 'h-front': true, 'h-twin': false });
     // The backend-wide list has no node to judge by.
     expect(tree.addresses.every((a) => !a.operatorFront)).toBe(true);
+    // How many of the node's keys still hold it, once counted for this claim.
+    expect(tree.nodes[0]!.frontKeys).toBeNull();
+    const claimedAt = (await t.run((ctx) => ctx.db.get(binding._id)))!.updatedAt;
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        frontKeys: { at: Date.now(), since: claimedAt, stale: 40, total: 120 },
+      }),
+    );
+    tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
+    expect(tree.nodes[0]!.frontKeys).toEqual({ stale: 40, total: 120 });
+    // A count made for an earlier claim says nothing about this one.
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        frontKeys: { at: Date.now(), since: claimedAt - 1, stale: 40, total: 120 },
+      }),
+    );
+    tree = ServerTree.parse(await (await call('GET', 'panel-a/tree')).json());
+    expect(tree.nodes[0]!.frontKeys).toBeNull();
 
     // A record from before Host uuids were kept matches by remark, until the
     // next look rewrites it with them.

@@ -110,6 +110,7 @@ import { resolveModeCatalog } from './lib/connectionModes';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { publishedRefOf, setStateOf, slotsOf, takesSlot } from './lib/edges/setState';
 import { withheldFresh } from './lib/edges/withheld';
+import { frontKeysFor } from './lib/edges/frontKeys';
 import { websocketNodeOf } from './lib/edges/websocketNode';
 import { uncoveredListeners } from './lib/edges/pool';
 import { renderPreviewFor } from './edgeAdmin';
@@ -1362,15 +1363,22 @@ export const attention = internalQuery({
       }
       // A front the operator built by hand: members no longer get it (render
       // leaves it out), and it is known not to be the node. Advice, not an alarm.
+      // With the count of the node's keys that have not fetched since the
+      // binding was claimed: their apps still connect through the front.
       const front = frontHostFacts(relay, now);
       if (front) {
+        const keys = frontKeysFor(relay.frontKeys, bindingState.bound ? binding : null);
         items.push({
           ...base(relay),
           id: `front_host_unused:${relay._id}`,
           kind: 'front_host_unused',
           severity: 'info',
           code: null,
-          facts: { count: front.count, remarks: front.remarks },
+          facts: {
+            count: front.count,
+            remarks: front.remarks,
+            ...(keys ? { staleKeys: keys.stale, keys: keys.total } : {}),
+          },
           action: 'open_relay',
           since: iso(front.since),
         });

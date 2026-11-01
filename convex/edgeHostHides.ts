@@ -50,6 +50,7 @@ import {
 } from './lib/edges/directHosts';
 import { relayRemarkRegex, sameAddress } from './lib/edges/hosts';
 import { withheldFresh, withheldNoteDue } from './lib/edges/withheld';
+import { frontKeysDue } from './lib/edges/frontKeys';
 import { deliveryBindingFor } from './relays';
 import { bumpEpochAndRefresh, liveEdgesOfRelay } from './lib/edges/relayGuards';
 import { edgeAddressesOf } from './lib/edges/render';
@@ -179,6 +180,8 @@ export interface HideContext {
   fcpRemarks: string[];
   legacyHostUuids: string[];
   bound: boolean;
+  /** When the binding naming this origin was last claimed (its `updatedAt`); null when not bound. */
+  claimedAt: number | null;
   /** Every other address that is the node (`nodeIntents.nodeAddressesOf`). */
   alsoAddresses: string[];
   /** Names among the node's Hosts this look resolved elsewhere (`namesElsewhere`). */
@@ -209,6 +212,7 @@ async function hideContext(
     fcpRemarks,
     legacyHostUuids,
     bound: !!binding && binding.relaySlug === relay.slug,
+    claimedAt: binding && binding.relaySlug === relay.slug ? binding.updatedAt : null,
     alsoAddresses: await nodeAddressesOf(ctx, relay),
   };
 }
@@ -609,38 +613,38 @@ export const noteFronts = internalMutation({
       ? same(prev.remarks, kept) && !!prev.hostUuids && same(prev.hostUuids, uuids)
       : kept.length === 0 && uuids.length === 0;
     if (unchanged) return null;
+    const none = kept.length === 0 && uuids.length === 0;
     await ctx.db.patch(relayId, {
-      operatorFronts:
-        kept.length > 0 || uuids.length > 0
-          ? { at: Date.now(), remarks: kept, hostUuids: uuids }
-          : undefined,
+      operatorFronts: none ? undefined : { at: Date.now(), remarks: kept, hostUuids: uuids },
+      // No front left: nothing still holds one (convex/edgeFrontKeys.ts).
+      ...(none ? { frontKeys: undefined } : {}),
     });
     return null;
   },
 });
 
-/** Rollback (docs/edges.md "Deploy notes"): the older schema has no `operatorFronts`. */
+/** Rollback (docs/edges.md "Deploy notes"): an older schema has no `operatorFronts`, or no `frontKeys`. */
 export const clearFrontsForRollback = internalMutation({
   args: {},
   handler: async (ctx) => {
     let cleared = 0;
     for (const relay of await ctx.db.query('relays').collect()) {
       // small operator table
-      if (!relay.operatorFronts) continue;
-      await ctx.db.patch(relay._id, { operatorFronts: undefined });
+      if (!relay.operatorFronts && !relay.frontKeys) continue;
+      await ctx.db.patch(relay._id, { operatorFronts: undefined, frontKeys: undefined });
       cleared++;
     }
     return { cleared };
   },
 });
 
-/** Records the node's operator fronts from one listing (names and Host uuids). */
+/** Records the node's operator fronts from one listing (names and Host uuids); returns how many. */
 async function recordFronts(
   ctx: ActionCtx,
   c: HideContext,
   hosts: readonly BackendHost[],
   inbounds: string[],
-): Promise<void> {
+): Promise<number> {
   const fronts = operatorFrontHosts(hosts, {
     // The listeners' own remarks only: the origin convention also matches
     // the bare `<node>-relay` an operator gives such a Host.
@@ -653,6 +657,7 @@ async function recordFronts(
     remarks: fronts.map((h) => h.remark),
     hostUuids: fronts.map((h) => h.uuid),
   });
+  return fronts.length;
 }
 
 /**
@@ -1139,7 +1144,12 @@ async function reobserveOne(
   const mayWrite = c.relay.hostMode === 'fcp' || st.rows.length > 0;
   const known = nodeInbounds(c, hosts, undefined);
   const dctx = directContextOf(c, known, conventionRemarks(hosts, c.nodeName));
-  await recordFronts(ctx, c, hosts, known);
+  // A bound node with fronts: how many of its keys still hold them, counted
+  // apart (it pages every key), at most hourly and at once after a re-claim
+  // (convex/edgeFrontKeys.ts).
+  const fronts = await recordFronts(ctx, c, hosts, known);
+  if (fronts > 0 && frontKeysDue(c.relay.frontKeys, c.claimedAt, Date.now()))
+    await ctx.scheduler.runAfter(0, internal.edgeFrontKeys.refresh, { relayId });
   const enabledDirect = hosts.filter((h) => !h.isDisabled && isDirectHost(h, dctx));
   const covered = new Set(c.listenerInboundUuids.map((u) => u.toLowerCase()));
   const alerts: Array<{ uuid: string; remark: string; inboundUuid: string | null }> = [];
