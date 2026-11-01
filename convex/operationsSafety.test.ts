@@ -553,40 +553,21 @@ describe('operator alerts', () => {
     expect(r.posts).toHaveLength(0);
   });
 
-  test('a suspected block alerts only while FCP is holding back a replacement', () => {
-    const held = (code: string | null) =>
-      alertWorthy({ kind: 'block_suspected', severity: 'warning', code });
-    for (const code of [
-      'edge_disabled',
-      'auto_rotate_off',
-      'probe_only_disallowed',
-      'cooldown',
-      'daily_cap',
-      'fleet_daily_cap',
-      'hosts_unmanaged',
-      'open_lane_budget',
-    ])
-      expect(held(code)).toBe(true);
-    // FCP is acting, a setup run owns it, an outage or evidence judgement, a
-    // steering hold, or a hold that alerts on its own: no alert from this item.
-    for (const code of [
-      null,
-      'rotation_active',
-      'setup_owned',
-      'not_live',
-      'no_edge_evidence',
-      'node_offline',
-      'edge_outage',
-      'protocol_level_block',
-      'country_scoped',
-      'country_wide',
-      'fleet_brake',
-      'quarantined',
-    ])
-      expect(held(code)).toBe(false);
-    // The veto codes say nothing for any other warning.
+  test('a suspected block alerts only when the detector judged a replacement held back', () => {
+    const block = (facts: Record<string, unknown>) =>
+      alertWorthy({ kind: 'block_suspected', severity: 'warning', facts });
+    expect(block({ heldBack: true })).toBe(true);
+    // Whatever the veto (`edge_disabled` included), a switched-off gate can hide an
+    // outage behind it: only the detector's judgement counts.
+    expect(block({ heldBack: false })).toBe(false);
+    expect(block({})).toBe(false);
+    // The flag says nothing for any other warning.
     expect(
-      alertWorthy({ kind: 'spare_untested', severity: 'warning', code: 'edge_disabled' }),
+      alertWorthy({
+        kind: 'spare_untested',
+        severity: 'warning',
+        facts: { heldBack: true },
+      }),
     ).toBe(false);
   });
 
@@ -601,7 +582,7 @@ describe('operator alerts', () => {
     // Whatever the fixture raises on its own goes out first.
     await t.action(internal.alerts.dispatch, {});
     const before = r.posts.length;
-    const suspect = (veto: string) =>
+    const suspect = (veto: string, heldBack: boolean) =>
       t.run((ctx) =>
         ctx.db.patch(fx.relayId, {
           suspicion: {
@@ -619,14 +600,18 @@ describe('operator alerts', () => {
             quietEvals: 0,
             baselineWarm: true,
             veto,
+            ...(heldBack ? { heldBack: true } : {}),
           },
         }),
       );
     // FCP is replacing it: nothing to tell.
-    await suspect('rotation_active');
+    await suspect('rotation_active', false);
     expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 0 });
-    // Automation is off: FCP will not act, so the operator hears it.
-    await suspect('edge_disabled');
+    // Automation is off, but the node is offline behind it: not held back, no alert.
+    await suspect('edge_disabled', false);
+    expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 0 });
+    // Automation is off and FCP would replace it otherwise: the operator hears it.
+    await suspect('edge_disabled', true);
     expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 1, error: null });
     expect(r.posts).toHaveLength(before + 1);
     expect(r.posts.at(-1)!.body).toMatchObject({ priority: 4, tags: ['warning'] });
@@ -635,9 +620,16 @@ describe('operator alerts', () => {
     expect(sent).not.toContain(FIXTURE_NODE);
     expect(sent).not.toContain(fx.relayId);
     // Still suspected, now held by the daily cap: the same item, not sent again.
-    await suspect('daily_cap');
+    await suspect('daily_cap', true);
     expect(await t.action(internal.alerts.dispatch, {})).toMatchObject({ sent: 0 });
     expect(r.posts).toHaveLength(before + 1);
+    // Rollback: the field an older schema refuses is stripped, the rest kept.
+    expect(await t.mutation(internal.edgeDetector.clearHeldBackForRollback, {})).toEqual({
+      cleared: 1,
+    });
+    const after = (await t.run((ctx) => ctx.db.get(fx.relayId)))!.suspicion!;
+    expect(after.heldBack).toBeUndefined();
+    expect(after).toMatchObject({ state: 'suspected', veto: 'daily_cap' });
   });
 
   test('the message drops a code that is not a short identifier', () => {

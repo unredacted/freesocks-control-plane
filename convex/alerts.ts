@@ -7,7 +7,7 @@
  * Alert-worthy: every `critical` item (quarantine, a fleet brake, a provider
  * whose API keeps failing, a stuck rotation, dark members, ...), the prompts
  * FCP never acts on by itself (`PROMPT_KINDS`), and a suspected block FCP is
- * holding back (`HELD_BLOCK_VETOES`). An item is sent once while it stays on the list,
+ * holding back (the detector's `heldBack`). An item is sent once while it stays on the list,
  * at any severity (`alerts:state` holds the ids already sent; an id that
  * leaves the list is forgotten, so a recurrence alerts again). A failed post keeps nothing, and
  * the next tick tries again.
@@ -33,7 +33,6 @@ import {
   urlOrigin,
   type AlertsConfig,
 } from './lib/alertsConfig';
-import type { AutoRotateVeto } from './lib/edges/scoring';
 
 const STATE_KEY = 'alerts:state';
 const POST_TIMEOUT_MS = 10_000;
@@ -48,28 +47,6 @@ const PROMPT_KINDS: ReadonlySet<string> = new Set([
   'location_refused',
 ]);
 
-/**
- * A suspected block (`block_suspected`, a warning) alerts when its veto is one
- * where FCP holds back a replacement it would otherwise make: automation or
- * the node's own Auto rotate off, probe evidence alone not allowed, a cap or
- * cooldown, a Host FCP cannot rewrite, the open lane's budget spent. Members
- * stay on the suspected address until the operator acts or the hold lifts.
- * Not here: holds that already alert on their own (quarantine, fleet brake),
- * a rotation already running, a setup run's origin, the outage and evidence
- * judgements (node offline, every address alike, no edge named) and the
- * steering holds (members already routed around).
- */
-const HELD_BLOCK_VETOES: ReadonlySet<string> = new Set<AutoRotateVeto>([
-  'edge_disabled',
-  'auto_rotate_off',
-  'probe_only_disallowed',
-  'cooldown',
-  'daily_cap',
-  'fleet_daily_cap',
-  'hosts_unmanaged',
-  'open_lane_budget',
-]);
-
 export interface AlertItem {
   id: string;
   kind: string;
@@ -77,13 +54,25 @@ export interface AlertItem {
   code: string | null;
 }
 
+/**
+ * Alert-worthy: a critical item, a prompt, or a suspected block
+ * (`block_suspected`, a warning) that FCP is holding back: the detector judged
+ * that it would replace the address but for a hold (automation or the node's
+ * Auto rotate off, probe evidence alone not allowed, a cooldown or a daily
+ * cap, a Host FCP cannot rewrite, the open lane's budget spent), on the whole
+ * decision (lib/edges/scoring.ts `replacementHeldBack`), never on its veto
+ * alone: a switched-off gate is checked before the outage and evidence gates,
+ * so an offline node or a protocol-level block behind it does not alert.
+ * Members stay on the suspected address until the operator acts or the hold
+ * lifts.
+ */
 export function alertWorthy(item: {
   kind: string;
   severity: string;
-  code?: string | null;
+  facts?: Record<string, unknown>;
 }): boolean {
   if (item.severity === 'critical' || PROMPT_KINDS.has(item.kind)) return true;
-  return item.kind === 'block_suspected' && !!item.code && HELD_BLOCK_VETOES.has(item.code);
+  return item.kind === 'block_suspected' && item.facts?.heldBack === true;
 }
 
 interface AlertState {

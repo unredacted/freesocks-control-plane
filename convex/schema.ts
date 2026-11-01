@@ -1877,6 +1877,9 @@ export default defineSchema({
         // Test block evidence (convex/edgeSimulations.ts) took part in this
         // evaluation: a simulated block on a test deployment, never a real one.
         simulated: v.optional(v.boolean()),
+        // Suspected, and FCP is holding back a replacement it would otherwise
+        // make (lib/edges/scoring.ts `replacementHeldBack`): the operator alert.
+        heldBack: v.optional(v.boolean()),
       }),
     ),
     driftHash: v.optional(v.string()),

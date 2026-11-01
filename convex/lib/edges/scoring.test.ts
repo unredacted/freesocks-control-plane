@@ -4,6 +4,7 @@ import {
   autoRotateDecision,
   evaluate,
   loadBaseline,
+  replacementHeldBack,
   type EdgeProbeState,
   type EvaluationInput,
   type SteeringInput,
@@ -723,6 +724,118 @@ describe('autoRotateDecision', () => {
     expect(decide({ evaluation: both, published: [{ edgeId: 'e1', poolIndex: 0 }] })).toEqual({
       edgeId: 'e1',
       source: 'probes',
+    });
+  });
+
+  describe('replacementHeldBack (the operator alert)', () => {
+    const args = (over: Partial<Parameters<typeof autoRotateDecision>[0]> = {}) => ({
+      evaluation: suspectedEv,
+      cfg: on,
+      origin,
+      published,
+      now,
+      ...over,
+    });
+    const off = { ...on, enabled: false };
+    const probeOnlyOff = { ...on, detect: { ...on.detect, allowProbeOnlyAutoRotate: false } };
+
+    test('a replacement FCP would make, held by a switch, a cap, a cooldown or a Host, is held back', () => {
+      expect(replacementHeldBack(args({ cfg: off }))).toBe(true);
+      expect(replacementHeldBack(args({ origin: { ...origin, autoRotate: false } }))).toBe(true);
+      expect(replacementHeldBack(args({ cfg: probeOnlyOff }))).toBe(true);
+      expect(
+        replacementHeldBack(args({ origin: { ...origin, cooldownUntil: now + 60_000 } })),
+      ).toBe(true);
+      expect(replacementHeldBack(args({ origin: { ...origin, rotationsToday: 3 } }))).toBe(true);
+      expect(
+        replacementHeldBack(
+          args({ fleet: { brakeEngaged: false, rotationsToday: 12, rotationsPerDay: 12 } }),
+        ),
+      ).toBe(true);
+      expect(replacementHeldBack(args({ origin: { ...origin, hostManaged: false } }))).toBe(true);
+      expect(
+        replacementHeldBack(args({ lanes: { openEdgeIds: ['e1'], openBudgetLeft: false } })),
+      ).toBe(true);
+    });
+
+    test('nothing is held back when FCP acts, or when the decision is not a replacement at all', () => {
+      // FCP replaces it now.
+      expect(replacementHeldBack(args())).toBe(false);
+      // Not suspected; a rotation running; quarantine and the fleet brake (alerts of their own).
+      expect(replacementHeldBack(args({ cfg: off, evaluation: evaluate(input()) }))).toBe(false);
+      expect(replacementHeldBack(args({ origin: { ...origin, rotationActive: true } }))).toBe(
+        false,
+      );
+      expect(replacementHeldBack(args({ origin: { ...origin, quarantined: true } }))).toBe(false);
+      expect(
+        replacementHeldBack(
+          args({ cfg: off, fleet: { brakeEngaged: true, rotationsToday: 0, rotationsPerDay: 12 } }),
+        ),
+      ).toBe(false);
+    });
+
+    test('a switched-off gate never hides an outage or a protocol-level block behind it', () => {
+      const offline = evaluate(
+        input({
+          window: { ...loud, byEdge: { e1: { count: 6, countries: { IR: 6 } } } },
+          usersOnline: 0,
+          nodeOnline: false,
+          edges: [edge('e1', { byCountry: [c('IR', 'unreachable')] }), edge('e2')],
+        }),
+      );
+      const protocol = evaluate(
+        input({
+          edges: [
+            edge('e1', { byCountry: [c('IR', 'unreachable'), c('RU', 'unreachable')] }),
+            edge('e2', { byCountry: [c('RU', 'unreachable'), c('IR', 'unreachable')] }),
+          ],
+        }),
+      );
+      // The stored veto would be `edge_disabled` for each of these.
+      for (const evaluation of [
+        offline,
+        protocol,
+        { ...suspectedEv, outageEdges: ['e1'] },
+        evaluate(input({ window: loud, usersOnline: 0 })),
+      ]) {
+        expect(autoRotateDecision(args({ cfg: off, evaluation }))).toEqual({
+          veto: 'edge_disabled',
+        });
+        expect(replacementHeldBack(args({ cfg: off, evaluation }))).toBe(false);
+      }
+      // Probe evidence alone with the probe sources gone quiet: not held back either.
+      const quiet = { ...suspectedEv, probeSourcesDown: true };
+      expect(autoRotateDecision(args({ cfg: probeOnlyOff, evaluation: quiet }))).toEqual({
+        veto: 'probe_only_disallowed',
+      });
+      expect(replacementHeldBack(args({ cfg: probeOnlyOff, evaluation: quiet }))).toBe(false);
+    });
+
+    test('a steering hold is no held-back replacement: members are routed around', () => {
+      const REALITY = { protocol: 'vless', streamTransport: 'raw', security: 'reality' } as const;
+      const pub = (edgeId: string, poolIndex: number, blockedIn: string[] = []): PublishedEdge => ({
+        edgeId,
+        poolIndex,
+        provider: 'p1',
+        listenerId: 'l1',
+        listenerKey: 'a1',
+        matchRule: { kind: 'remark', remark: 'r' },
+        proto: REALITY,
+        edgePort: 443,
+        addresses: { v4: `203.0.113.${poolIndex + 1}` },
+        serverNames: [{ sni: 'a.example', status: 'active' }],
+        blockedIn,
+      });
+      const steering: SteeringInput = {
+        published: [pub('e1', 0, ['IR']), pub('e2', 1)],
+        paths: [{ format: 'links', canEmitV6: true }],
+        checked: ['IR', 'RU'],
+        curated: ['IR', 'RU'],
+        held: [],
+        freedomListeners: ['a1'],
+      };
+      expect(autoRotateDecision(args({ steering }))).toEqual({ veto: 'country_scoped' });
+      expect(replacementHeldBack(args({ cfg: off, steering }))).toBe(false);
     });
   });
 });
