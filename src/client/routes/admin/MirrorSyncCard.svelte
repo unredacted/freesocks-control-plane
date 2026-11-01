@@ -72,6 +72,14 @@
     return `${Math.round(s / 86400)}d ago`;
   }
 
+  /** How long since `at`, as a duration ("for 2h"). */
+  function dur(at: number): string {
+    const m = Math.max(1, Math.round((Date.now() - at) / 60_000));
+    if (m < 90) return `${m}m`;
+    if (m < 2160) return `${Math.round(m / 60)}h`;
+    return `${Math.round(m / 1440)}d`;
+  }
+
   const hours = (ms: number) => `${Math.round(ms / 3_600_000)} h`;
   const n = (c: { count: number; capped: boolean }) => `${c.count}${c.capped ? '+' : ''}`;
 
@@ -219,7 +227,7 @@
               </div>
               <div class="mt-1 text-xs text-muted-foreground space-y-0.5">
                 <p>
-                  {st.label} since {ago(r.since)}{r.reason
+                  {st.label} for {dur(r.since)}{r.reason
                     ? `: ${REASON_WORDS[r.reason] ?? r.reason}`
                     : ''}.
                 </p>
