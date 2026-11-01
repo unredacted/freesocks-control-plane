@@ -1063,6 +1063,29 @@ function dnsResource(
   };
 }
 
+/**
+ * The edge's versionless domain found by its exact name, or null when there is
+ * none. A domain name is unique per account, so the exact-name listing is
+ * authoritative. Ours is the one linked to THIS service; the same name
+ * anywhere else is somebody else's and is never taken over.
+ */
+async function versionlessDomainDiscovery(
+  api: FastlyApi,
+  hostname: string,
+  serviceId: string,
+): Promise<Discovery | null> {
+  const named = (await api.findVersionlessDomains(hostname)).filter((d) =>
+    sameDnsName(d.fqdn, hostname),
+  );
+  if (named.length === 0) return null;
+  if (named.length === 1 && named[0]!.service_id === serviceId)
+    return { status: 'found', resources: [versionlessResource(named[0]!, 'adopted')] };
+  return {
+    status: 'ambiguous',
+    candidates: named.map((d) => candidateOf(versionlessResource(d, 'adopted'))),
+  };
+}
+
 /** A versionless domain as the ledger records it (`resourceId` = the domain's own id). */
 function versionlessResource(
   d: FastlyVersionlessDomain,
@@ -1454,7 +1477,12 @@ async function versionlessDnsReadiness(
   const traffic = resourcesOfKind(ledger, 'dns_record').find(
     (r) => metaOf(r).role === 'traffic' && metaOf(r).candidate !== true,
   );
-  if (!traffic) return d.activated === true ? { dns: 'ready' } : { dns: 'pending' };
+  if (!traffic)
+    return d.activated === true
+      ? { dns: 'ready' }
+      : d.activated === false
+        ? { dns: 'pending', notActivated: true }
+        : { dns: 'pending' };
   // The record as the zone holds it NOW: still there, and still pointing at
   // the CNAME target of the TLS configuration the front uses.
   try {
@@ -2057,20 +2085,20 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       case 'create_domain': {
         const svc = serviceOf(ledger);
         if (!hostname) return { status: 'confirmed_absent' };
-        if (domainModelOf(cfg) === 'versionless') {
-          // A domain name is unique per account: the exact-name listing is
-          // authoritative. Ours is the one linked to THIS service; the same
-          // name anywhere else is somebody else's and is never taken over.
-          const named = (await api.findVersionlessDomains(hostname)).filter((d) =>
-            sameDnsName(d.fqdn, hostname),
+        if (domainModelOf(cfg) === 'versionless')
+          return (
+            (await versionlessDomainDiscovery(api, hostname, svc.id)) ?? {
+              status: 'confirmed_absent',
+            }
           );
-          if (named.length === 0) return { status: 'confirmed_absent' };
-          if (named.length === 1 && named[0]!.service_id === svc.id)
-            return { status: 'found', resources: [versionlessResource(named[0]!, 'adopted')] };
-          return {
-            status: 'ambiguous',
-            candidates: named.map((d) => candidateOf(versionlessResource(d, 'adopted'))),
-          };
+        // A wildcard edge whose intent names a versionless domain may have
+        // sent that create before wildcard fronts got classic domains (its
+        // response lost across the deploy): what it made is recorded as it
+        // is, so a rollback deletes it instead of a classic create colliding
+        // with it.
+        if (cfg.domainModel === 'versionless') {
+          const earlier = await versionlessDomainDiscovery(api, hostname, svc.id);
+          if (earlier) return earlier;
         }
         try {
           const domain = await api.getDomain(svc.id, svc.version, hostname);
