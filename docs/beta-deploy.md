@@ -360,16 +360,22 @@ See `docs/threat-model-cdn-blinding.md`.
 
 ## Notes
 
-- **Image pinning.** EVERY image is pinned by digest: the Convex backend +
-  dashboard (and `keygen`, which reuses the backend image), `cap`,
-  `valkey:9-alpine`, `postgres:18` (compose + the backup image), and the
-  `caddy:2-alpine` / `oven/bun` Dockerfile bases. Re-pinned to current stable
-  digests 2026-07-07 (valkey 8→9, transparent — Cap uses it as a plain
-  Redis-compatible store). Re-pin on intentional upgrades:
-  `docker buildx imagetools inspect <image:tag>` (keep the backend/keygen pair
-  and the postgres compose/backup-Dockerfile pair matched). For the Convex
-  images specifically, use the monthly flow instead — see
-  § Upgrading the Convex backend below.
+- **Image pinning.** EVERY image is pinned by digest, and to an exact version
+  tag (`caddy:2.11.7-alpine`, `postgres:18.6-trixie`, `valkey/valkey:9.1.3-alpine`,
+  never a floating `2-alpine` or `18`): the Convex backend + dashboard (and
+  `keygen`, which reuses the backend image), `cap`, `valkey`, `postgres`
+  (compose + the backup image), and the `caddy` / `oven/bun` Dockerfile bases.
+  Dependabot proposes updates daily, and the compose files and the `docker/`
+  Dockerfiles share ONE PR (the `stack-images` group in
+  `.github/dependabot.yml`), so the postgres compose/backup pair and the Caddy
+  pins move together. Its PRs name versions: "2.11.7-alpine to 2.11.8-alpine"
+  is a release, "2.11.7-alpine to 2.11.7-alpine" a rebuild of the same version
+  (a base-image refresh, or one architecture re-pushed). To re-pin by hand,
+  take the exact tag and its digest from
+  `docker buildx imagetools inspect <image>:<exact tag>` and change every file
+  that pins it (`convex/deployPins.test.ts` fails on a missed half or a
+  floating tag). For the Convex images specifically, use the monthly flow
+  instead — see § Upgrading the Convex backend below.
 - **Privacy defaults.** The stack does not persist client IPs anywhere by
   default — Caddy access logs are explicitly discarded, the backend's request
   log is silenced, and Cap is configured not to surface a peer IP. The full

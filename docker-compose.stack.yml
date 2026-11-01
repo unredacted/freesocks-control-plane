@@ -129,9 +129,13 @@ services:
   # INSTANCE_NAME-only change used to leave pg_dump successfully backing up the
   # EMPTY old DB with a green heartbeat).
   postgres:
-    # Pinned by digest like every other image (re-pin on upgrade:
-    # docker buildx imagetools inspect postgres:18).
-    image: postgres:18@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
+    # Pinned to an exact version and its digest like every other image (re-pin:
+    # docker buildx imagetools inspect postgres:<version>-trixie). The `-trixie`
+    # is deliberate: a default-distro switch would change the glibc under the
+    # data directory, and with it the collation order its indexes were built on.
+    # docker/backup.Dockerfile must pin the same image; Dependabot moves both in
+    # one PR (.github/dependabot.yml, `stack-images`).
+    image: postgres:18.6-trixie@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -276,10 +280,11 @@ services:
 
   # Cap's datastore (Redis-compatible). Persists issued challenges/tokens.
   valkey:
-    # Pinned by digest (re-pin: docker buildx imagetools inspect valkey/valkey:9-alpine).
+    # Pinned to an exact version and its digest (re-pin:
+    # docker buildx imagetools inspect valkey/valkey:<version>-alpine).
     # Cap uses it purely as a Redis-compatible store (challenges/tokens), so the
     # 8→9 bump is transparent; the --save/--appendonly flags below are unchanged.
-    image: valkey/valkey:9-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    image: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
     pids_limit: 128
     restart: unless-stopped
     logging: *log

@@ -94,12 +94,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bash scripts/verify-reproducible.sh | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # Validate the Caddyfile adapts + parses (catches the servers/trusted_proxies
-  # block + the {$CADDY_TRUSTED_PROXIES} placeholder syntax). All active env
-  # placeholders carry defaults, so no env is needed. Pinned to the SAME digest as
-  # docker/web.Dockerfile so CI validates against the exact deployed Caddy — the
-  # drift guard below enforces the match (they drifted once and CI validated a
-  # different Caddy than deployed for weeks).
   # Static analysis of the workflow files themselves: expression typos, invalid
   # `if:` conditions, unknown contexts, and shellcheck over every `run:` block.
   # Pinned by digest; Dependabot does not track `docker run` refs in workflows,
@@ -114,20 +108,23 @@ jobs:
             rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 \
             -color
 
+  # Validate the Caddyfile adapts + parses (catches the servers/trusted_proxies
+  # block + the {$CADDY_TRUSTED_PROXIES} placeholder syntax). All active env
+  # placeholders carry defaults, so no env is needed. The Caddy is the one
+  # docker/web.Dockerfile deploys, read from its FROM line, the way the Bun above
+  # comes from package.json. A copy pinned here drifted once (CI validated a
+  # different Caddy than deployed for weeks), and its later drift guard failed
+  # every Caddy bump, since no Dependabot ecosystem updates a `docker run` ref.
   caddyfile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Guard against digest drift vs docker/web.Dockerfile
+      - name: Validate Caddyfile with the deployed Caddy
         run: |
-          ci_digest="$(grep -oP 'caddy:2-alpine@sha256:\K[0-9a-f]{64}' .github/workflows/ci.yml | head -1)"
-          web_digest="$(grep -oP 'caddy:2-alpine@sha256:\K[0-9a-f]{64}' docker/web.Dockerfile | head -1)"
-          if [ -z "$ci_digest" ] || [ "$ci_digest" != "$web_digest" ]; then
-            echo "::error::Caddy digest drift: ci.yml=$ci_digest web.Dockerfile=$web_digest"
+          image="$(grep -oE '^FROM caddy:[^ ]+@sha256:[0-9a-f]{64}' docker/web.Dockerfile | cut -d' ' -f2)"
+          if [ -z "$image" ] || [ "$(wc -l <<< "$image")" -ne 1 ]; then
+            echo "::error::expected one digest-pinned FROM caddy:… in docker/web.Dockerfile, got: $image"
             exit 1
           fi
-      - name: Validate Caddyfile
-        run: |
-          docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f \
+          docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" "$image" \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
