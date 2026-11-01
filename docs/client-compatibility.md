@@ -15,7 +15,7 @@ Clash Verge, FlClash and Mihomo Party each run their own served bodies in the pi
 | Reference engines    | sing-box and Mihomo, exact versions and SHA-256 in manifest                                                          | Native config validation; REALITY handshake; HTTPS to a fresh nonce; remote hostname resolution; SOCKS5 UDP association carrying a real DNS question.                                                                                                     |
 | Shipped templates    | Real Remnawave serving FCP's own templates, the same pinned engines                                                  | Every sing-box/Mihomo-format User-Agent's body carries HTTPS with default routing unchanged, then through each of three individually selected proxies. The legacy Clash body's default route is checked statically.                                       |
 | Network controls     | Separate Docker networks                                                                                             | Origin unreachable directly; wrong VLESS credential cannot pass through a fallback.                                                                                                                                                                       |
-| Packaged SFL         | Installed checksum-verified `.deb`, Debian container + Xvfb + the app's own daemon                                   | Actual application opens generated deep link, accepts manually entered URL, validates and saves all three selectable endpoints with its bundled core, then preserves them on refresh. Its real HTTP User-Agent is asserted.                               |
+| Packaged SFL         | Installed checksum-verified `.deb`: Debian container + Xvfb + the app's own daemon, and a Debian 13 Xfce desktop VM  | Actual application opens generated deep link, accepts manually entered URL, validates and saves all three selectable endpoints with its bundled core, then preserves them on refresh. Its real HTTP User-Agent is asserted.                               |
 | Report form          | Chromium and Firefox                                                                                                 | Actual Svelte dialog and API transport; required reason, short/mobile viewport, no free-text box (support mailto shown instead), successful POST, failed POST retains the chosen reason, reopening starts clean. Responses are intercepted test fixtures. |
 | Edge connection      | Real panel and relay nodes, fake edges, pinned sing-box and Mihomo (see "Edge connection")                           | Every cell of the supported matrix (docs/edges.md): a member connects through its L4 or L7 edge with each engine the cell claims, after FCP takes the node through the real lifecycle; the body names no origin and the member network reaches no node.   |
 | REALITY key share    | Real Xray-core v26.7.28 (the node image's) and v26.10.21, pinned sing-box and Mihomo (see "REALITY client versions") | Mihomo connects to both cores with the body FCP serves; the backend's own Mihomo body and sing-box connect to v26.7.28 and are refused by v26.10.21.                                                                                                      |
@@ -107,15 +107,39 @@ The proof is `bun run test:integration:reality-keyshare` (job **REALITY key shar
 
 ## Full desktop VMs
 
-The Debian container smoke test is not an Xfce test. The same SFL adapter can run on disposable, signed-in Xfce VMs with labels `fcp-debian-13-xfce` and `fcp-mx-25-2-xfce`. Provision Docker, Node 24, Bun and a running Xfce desktop session; run the Actions runner inside that session so DISPLAY, XAUTHORITY and DBUS_SESSION_BUS_ADDRESS are available. Allow package installation for that disposable runner. Record and pin the OS image/checksum in the VM provisioning system.
+The Debian container smoke test is not a desktop test. The **Client compatibility (desktop VMs)** workflow (`.github/workflows/client-compat-desktop.yml`) runs the same SFL adapter in a real desktop session: `scripts/compat/desktop-vm.sh` boots a pinned distribution image (its SHA-512 checked) under KVM on a standard hosted runner, with QEMU from a digest-pinned image, and cloud-init provisions Xfce under LightDM on Xorg with automatic login. The verified `.deb` is installed with apt, so the package's own postinst starts the real `sing-box-daemon` service, as on a member's machine. The panel, the engines and the harness stay on the runner; `FCP_COMPAT_SFL_REMOTE=scripts/compat/sfl-remote.sh` runs the driver inside the VM's Xfce session over SSH, with the session's own `DISPLAY`, `XAUTHORITY` and `DBUS_SESSION_BUS_ADDRESS` read from its `xfce4-session` process (a run without an Xfce session fails), and the subscription port forwarded to the VM's loopback. The app's result and screenshot are uploaded (fixture data only).
+
+| Target           | Image                                                       | Typical run                               |
+| ---------------- | ----------------------------------------------------------- | ----------------------------------------- |
+| `debian-13-xfce` | Debian 13 `generic` cloud image, build pinned in the script | about 5 minutes (2 to boot and provision) |
+
+Standard hosted runners for this public repository expose `/dev/kvm` (the job's udev rule opens it to the runner user) and cost nothing, so the matrix needs no larger runner and no self-hosted machine. The VM goes away with the runner, so pull-request code may run here: the workflow runs on pull requests that change the desktop path, on pushes to main, nightly and by hand. For reference if that changes: a 4-core larger runner costs $0.012 a minute, about $0.06 a run; a self-hosted desktop VM must be reset after every job and must never run pull-request code.
+
+MX Linux 25.2 (the other distribution the matrix named) publishes no cloud image, only a live ISO, so it is not in the matrix yet: booting it means extracting the ISO's kernel and initrd, adding a serial console and an SSH key to the live system, and pinning the ISO's checksum. A target is added to `image_for` in `scripts/compat/desktop-vm.sh` and to the workflow matrix.
 
 The nightly schedule also runs the provider contract test against a Remnawave 2.x backend (`REMNAWAVE_TEST_IMAGE=remnawave/backend:2.8.0`): production runs 3.x, but the provider stays dual-contract for backends that have not upgraded, and nothing on the PR gate boots a 2.x backend.
 
-Enable repository variable `CLIENT_COMPAT_VM_RUNNERS=true` only after those runners are available. The job installs the verified package and sets `FCP_COMPAT_SFL_EXECUTABLE` to drive the actual desktop application. These jobs only run trusted main-branch code, never pull-request code. Destroy or reset each VM after the job. The runner label identifies the intended OS; inspect the OS record in the application result when certifying it.
+`FCP_COMPAT_SFL_EXECUTABLE` still drives an app installed on the machine that runs the suite, for a desktop where the harness itself runs inside the session.
 
 ## Deployed canaries
 
-Create a dedicated test subscription and configure the `client-compatibility` Actions environment secret `FCP_COMPAT_SMOKE_TARGETS`:
+The smoke reads a dedicated canary subscription: a test account, never a member's, on a tier with no traffic or device limit (so the idle-free sweep never reclaims it). `scripts/compat/make-canary.sh` makes one on a stack host, from the stack checkout, through the deployer container: it creates the account as a sign-up does, grants it the `member` tier for ten years and issues its key into the default mode. It prints no secret: the account number and the targets file go to root-only files in `/root/fcp-canary`. Never sign in with the canary's account number or regenerate its key; that rotates the URL and the smoke fails. Device tests use a separate account (`docs/client-device-checklists.md`).
+
+```sh
+bash scripts/compat/make-canary.sh .env.beta https://<the site's public origin>
+```
+
+The `client-compatibility` Actions environment holds the targets as the secret `FCP_COMPAT_SMOKE_TARGETS`. Create the environment limited to the main branch, then pipe the file in without displaying it:
+
+```sh
+gh api -X PUT repos/<owner>/<repo>/environments/client-compatibility --input - <<'EOF'
+{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
+EOF
+gh api -X POST repos/<owner>/<repo>/environments/client-compatibility/deployment-branch-policies -f name=main -f type=branch
+ssh root@<stack host> cat /root/fcp-canary/smoke-targets.json | gh secret set FCP_COMPAT_SMOKE_TARGETS --env client-compatibility --repo <owner>/<repo>
+```
+
+The file holds one target named after the stack. For a mirror, add an entry by hand:
 
 ```json
 [
@@ -124,7 +148,7 @@ Create a dedicated test subscription and configure the `client-compatibility` Ac
 ]
 ```
 
-Run **Deployed client compatibility** after deploying or changing a CDN/mirror configuration. Missing targets fail explicitly. HTTP redirects, errors, empty/wrong formats, unsafe shared-cache responses and invalid native configs fail. Once per target, the `revalidate` stage fetches the canary as identity, gzip and zstd: each answer must carry the same weak `W/"fs1-…"` validator (a proxy that rewrites or suffixes it fails), a compressed answer must vary on `Accept-Encoding`, and sending the validator back must return 304 (once per target because the per-token throttle would not carry it for every client). This workflow never creates, rotates or deletes an account. Use an unrestricted test tier for the format matrix; device-limit testing is a separate capability check.
+Run **Deployed client compatibility** after deploying or changing a CDN/mirror configuration. Missing targets fail explicitly. HTTP redirects, errors, empty/wrong formats, unsafe shared-cache responses and invalid native configs fail. Once per target, the `revalidate` stage fetches the canary as identity, gzip and zstd: each answer must carry the same weak `W/"fs1-…"` validator (a proxy that rewrites or suffixes it fails), a compressed answer must vary on `Accept-Encoding`, and sending the validator back must return 304 (once per target because the per-token throttle would not carry it for every client). This workflow never creates, rotates or deletes an account. Device-limit testing is a separate capability check.
 
 ## Refresh behaviour
 
@@ -159,7 +183,7 @@ No client honours `Retry-After`. What follows from the table:
 
 `tests/compat/manifest.ts` records each catalog client's scope and remaining gaps. Add an entry whenever adding a default recommendation. For CMS-only recommendations, review/export the live catalog before a release: the offline coverage guard cannot inspect a production database. Add an adapter for the actual package instead of relabeling a shared engine test as application coverage.
 
-Apps needing Apple hardware, Android devices, licensed installs or missing automation are explicitly unverified. `scripts/compat/certify.ts` fails until every recommended app has recent application evidence for the exact requested FCP commit in `tests/compat/application-evidence.json`. The committed file starts empty intentionally. Set `FCP_COMPAT_CERTIFY_COMMIT` and run the command as a release checklist gate; never invent passes to make it green. Each entry records:
+Apps needing Apple hardware, Android devices, licensed installs or missing automation are explicitly unverified. `scripts/compat/certify.ts` fails until every recommended app has recent application evidence for the exact requested FCP commit in `tests/compat/application-evidence.json`. The committed file starts empty intentionally. Set `FCP_COMPAT_CERTIFY_COMMIT` and run the command as a release checklist gate; never invent passes to make it green. `docs/client-device-checklists.md` is the per-app device checklist, and `scripts/compat/evidence.ts` writes a record only after the tester confirms every check. Each entry records:
 
 - client, exact app version, OS, backend version and 40-character FCP commit;
 - UTC `testedAt`, tester, and a URL to the test evidence;

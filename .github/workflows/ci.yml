@@ -62,7 +62,7 @@ jobs:
       # The runner image ships shellcheck; no apt-get update, which hangs the
       # job whenever the runner's Ubuntu mirror stalls.
       - name: shellcheck the docker and repo scripts
-        run: shellcheck -S error docker/*.sh docker/compat/*.sh scripts/*.sh
+        run: shellcheck -S error docker/*.sh docker/compat/*.sh scripts/*.sh scripts/compat/*.sh
       - name: Build docker images (no cache)
         run: |
           docker build -f docker/web.Dockerfile .
