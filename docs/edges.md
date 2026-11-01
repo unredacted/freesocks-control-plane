@@ -400,7 +400,8 @@ intent default, § "Fastly fronts"):
   answered "unknown domain" while the wildcard was served, both when it was created before the
   wildcard was issued (the proof failed `front_error`, the rotation `front_unqualified`) and
   when it was created after (held 10 minutes). The same front with a classic domain was routed
-  by its version and passed its proof about 90 seconds after the version was activated.
+  by its version and passed its proof within two minutes of the version's activation, and the
+  first front of a zone, ordering the wildcard, passed at its first proof once it was issued.
 - `per_host` (an account created before, until it is switched): one subscription per front
   hostname, deleted with the edge.
 
