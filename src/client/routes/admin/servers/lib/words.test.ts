@@ -223,8 +223,9 @@ describe('what the page says', () => {
       "Members get this node's edges instead. 1,204 of its 2,050 keys have not fetched since it went live: those apps still use these fronts until the member updates the subscription in the app. Once their traffic stops, delete these fronts at their provider, and their addresses here.",
     );
     expect(frontsHint(1, { stale: 1, total: 1 })).toMatch(/1 of its 1 key has not fetched/);
+    // A zero keeps the traffic check: a shared key or a direct backend fetch is not counted.
     expect(frontsHint(1, { stale: 0, total: 9 })).toBe(
-      "Members get this node's edges instead, and every key on it has fetched since it went live. Delete this front at its provider, and its address here.",
+      "Members get this node's edges instead, and every key on it has fetched since it went live. An app sharing a key with one that fetched, or reading the backend's own subscription address, may still use this front. Once its traffic stops, delete this front at its provider, and its address here.",
     );
   });
 

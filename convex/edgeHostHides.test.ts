@@ -1142,18 +1142,20 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     expect((await relay()).operatorFronts).toBeUndefined();
   });
 
-  test("it says how many of the node's keys still hold it: counted apart from the look, at most hourly, against the binding's claim", async () => {
+  test("it says how many of the node's keys still hold it: counted apart from the look, hourly and after a re-claim, by the renders handed out", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
-    const { t, relayId, relay, subId } = await world({
+    const { t, relayId, relay, subId, download } = await world({
       hosts: [...panelHosts().filter((h) => h.uuid === FCP_UUID), front()],
     });
     const binding = async () =>
       (await t.run((ctx) => ctx.db.query('edgeDeliveryBindings').first()))!;
     const since = (await binding()).updatedAt;
-    // The world's key never fetched. Add one that last fetched before the claim,
-    // one after it, one pinned to another node and a deleted one (neither of
-    // the last two is the node's).
+    // The world's key never fetched. Add keys handed a render before the claim
+    // and after it; one whose delivery was stamped after the claim with no
+    // render (a request that read the cache before it: no proof); one
+    // superseded and still in its grace, and one whose grace is over; one
+    // pinned to another node and a deleted one.
     await t.run(async (ctx) => {
       const { _id, _creationTime, ...base } = (await ctx.db.get(subId))!;
       void _id;
@@ -1166,8 +1168,15 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
           subToken: `tok_${key}`,
           ...over,
         });
-      await add('before', { lastDeliveredAt: since - 1 });
-      await add('after', { lastDeliveredAt: since + 1 });
+      await add('before', { lastRenderedAt: since - 1 });
+      await add('after', { lastRenderedAt: since + 1 });
+      await add('stamped', { lastDeliveredAt: since + 1 });
+      await add('grace', {
+        state: 'disabled',
+        deletedAt: NOW + 86_400_000,
+        lastRenderedAt: since - 1,
+      });
+      await add('expired', { state: 'disabled', deletedAt: NOW - 1 });
       await add('other', { pinnedNode: 'node-two' });
       await add('gone', { state: 'deleted', deletedAt: NOW });
     });
@@ -1191,30 +1200,34 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     expect((await relay()).operatorFronts?.hostUuids).toEqual([FRONT]);
     expect((await relay()).frontKeys).toBeUndefined();
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect((await relay()).frontKeys).toMatchObject({ since, stale: 2, total: 3 });
+    expect((await relay()).frontKeys).toMatchObject({ since, stale: 4, total: 5 });
     await leftOut();
     expect((await frontItem())?.facts).toEqual({
       count: 1,
       remarks: [`${FIXTURE_NODE}-relay`],
-      staleKeys: 2,
-      keys: 3,
+      staleKeys: 4,
+      keys: 5,
     });
-    // Within the hour a look does not count again; after it, it does.
-    await t.run((ctx) => ctx.db.patch(subId, { lastDeliveredAt: since + 5 }));
+    // The world's app fetches through the real route: a rendered body, stamped.
     vi.setSystemTime(NOW + 30 * 60_000);
+    expect((await download()).status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.lastRenderedAt).toBeGreaterThan(since);
+    // Within the hour a look does not count again; after it, it does.
     await t.action(internal.edgeHostHides.reobserveDirect, {});
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect((await relay()).frontKeys?.stale).toBe(2);
+    expect((await relay()).frontKeys?.stale).toBe(4);
     vi.setSystemTime(NOW + 61 * 60_000);
     await t.action(internal.edgeHostHides.reobserveDirect, {});
     await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect((await relay()).frontKeys).toMatchObject({ since, stale: 1, total: 3 });
+    expect((await relay()).frontKeys).toMatchObject({ since, stale: 3, total: 5 });
     // The binding claimed again moves the boundary: the old count says nothing
-    // about it, a count made against the old claim is dropped, and the next
-    // count judges every key against the new one.
+    // about it, a count made against the old claim is dropped, and the next look
+    // counts at once against the new one (well inside the hour).
     const b = await binding();
+    const reclaimed = Date.now() + 1;
     await t.run((ctx) =>
-      ctx.db.patch(b._id, { updatedAt: Date.now(), policyVersion: b.policyVersion + 1 }),
+      ctx.db.patch(b._id, { updatedAt: reclaimed, policyVersion: b.policyVersion + 1 }),
     );
     await leftOut();
     expect((await frontItem())?.facts).toEqual({ count: 1, remarks: [`${FIXTURE_NODE}-relay`] });
@@ -1222,25 +1235,30 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
       relayId,
       counted: { since, stale: 9, total: 9 },
     });
-    expect((await relay()).frontKeys?.stale).toBe(1);
-    expect(await t.action(internal.edgeFrontKeys.refresh, { relayId })).toEqual({
-      stale: 3,
-      total: 3,
-    });
-    expect((await frontItem())?.facts).toMatchObject({ staleKeys: 3, keys: 3 });
+    expect((await relay()).frontKeys).toMatchObject({ since, stale: 3 });
+    await t.action(internal.edgeHostHides.reobserveDirect, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await relay()).frontKeys).toMatchObject({ since: reclaimed, stale: 5, total: 5 });
+    await leftOut();
+    expect((await frontItem())?.facts).toMatchObject({ staleKeys: 5, keys: 5 });
     // No front left (its Host disabled): nothing holds one, and the count goes.
     await t.mutation(internal.edgeHostHides.noteFronts, { relayId, remarks: [], hostUuids: [] });
     expect((await relay()).operatorFronts).toBeUndefined();
     expect((await relay()).frontKeys).toBeUndefined();
     expect(await t.action(internal.edgeFrontKeys.refresh, { relayId })).toBeNull();
-    // Rollback: an older schema has no such field.
+    // Rollback: an older schema has none of the fields, on the keys or the origin.
     await t.run((ctx) =>
       ctx.db.patch(relayId, { frontKeys: { at: NOW, since, stale: 1, total: 1 } }),
     );
-    expect(await t.mutation(internal.edgeHostHides.clearFrontsForRollback, {})).toEqual({
+    expect(await t.action(internal.edgeFrontKeys.clearForRollback, {})).toEqual({
+      stripped: 4,
       cleared: 1,
     });
     expect((await relay()).frontKeys).toBeUndefined();
+    const left = await t.run(async (ctx) =>
+      (await ctx.db.query('subscriptions').collect()).filter((s) => s.lastRenderedAt !== undefined),
+    );
+    expect(left).toEqual([]);
   });
 
   test('a Host at the node itself, or at an edge, is never a front; nor is one by a name (a failed lookup could hide the node)', async () => {

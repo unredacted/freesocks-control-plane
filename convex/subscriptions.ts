@@ -388,12 +388,17 @@ export const markDelivered = internalMutation({
     // client family, the country or a tier) rewrites the snapshot, cache hit or not.
     const snapshotChanged = !!render && !sameSnapshot(sub.lastRender, render);
     const stale = now - (sub.lastDeliveredAt ?? 0) >= DELIVERY_STAMP_THROTTLE_MS;
-    if (!contentAdvanced && !epochChanged && !snapshotChanged && !stale) return null;
+    // A rendered body was served (the evidence that this key's app no longer
+    // holds a raw body: convex/edgeFrontKeys.ts), on the same throttle.
+    const renderedDue = !!render && now - (sub.lastRenderedAt ?? 0) >= DELIVERY_STAMP_THROTTLE_MS;
+    if (!contentAdvanced && !epochChanged && !snapshotChanged && !stale && !renderedDue)
+      return null;
     await ctx.db.patch(subscriptionId, {
       lastDeliveredAt: now,
       lastDeliveredContentAt: Math.max(sub.lastDeliveredContentAt ?? 0, contentAt),
       ...(epochChanged ? { lastRenderedEpoch: renderedEpoch } : {}),
       ...(render && snapshotChanged ? { lastRender: { ...render, at: now } } : {}),
+      ...(render ? { lastRenderedAt: now } : {}),
     });
     return null;
   },
@@ -550,6 +555,7 @@ export async function invalidateDelivery(
     pinnedNode: undefined,
     lastRender: undefined,
     lastRenderedEpoch: undefined,
+    lastRenderedAt: undefined,
     rawContentHash: undefined,
     ...(opts.excludePin && sub.pinnedNode ? { excludeNode: sub.pinnedNode } : {}),
     deliveryRev: (sub.deliveryRev ?? 0) + 1,

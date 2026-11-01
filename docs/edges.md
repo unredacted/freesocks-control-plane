@@ -2002,30 +2002,8 @@ that failed would leave the node itself looking like a front), so it keeps the c
 cannot place, but an entry a known front names is not the node: it raises attention
 `front_host_unused` (info: members no longer get it, so it can be deleted at its provider once
 its traffic stops, and its Host in the backend) instead of `direct_host_reappeared`. An entry
-left out that no look knows stays the critical alarm.
-
-**The keys that still hold a front** (`convex/edgeFrontKeys.ts`, `lib/edges/frontKeys.ts`). A
-member render leaves the front out from the moment the binding is claimed, but an app that has
-not fetched its subscription since still has the body from before, the front in it, and connects
-through it (most link-list apps never refresh on their own: docs/client-compatibility.md
-"Refresh behaviour"). So the same look, for a bound node with fronts, schedules a count of the
-node's keys at most hourly (`frontKeysDue`): an action pages the node's active keys
-(`by_backend_server_pinned`, 50 a page, one query each; never inside the attention query, since
-`subscriptions` scales with traffic) and stores on the origin how many there are and how many
-have not fetched since the binding's claim (`lastDeliveredAt` absent or before the binding's
-`updatedAt`; `relays.frontKeys {at, since, stale, total}`, counts only). A count made against an
-earlier claim is dropped, and one the binding has moved past since is not shown (a binding
-claimed again moves the boundary). `front_host_unused` then carries `staleKeys` and `keys` and
-says how many keys still connect through the front and that a member moves over by updating the
-subscription in the app; with none left it says every key has fetched since. The node page's
-line under its fronts says the same (`NodeView.frontKeys`). A key that never fetched counts as
-holding it (it may be a copied configuration). An app reaching the backend's own subscription URL
-directly is not counted: that body lists the front's Host for as long as it is enabled. When the
-last front goes (its Host disabled or deleted), the next look clears both records, so the count
-ends with it: FCP cannot see a load balancer that no Host names, and apps holding the old body
-still connect through it. Read the count before disabling the Host, and delete the load balancer
-only once its own traffic has fallen. The node page (Admin -> Servers -> the node, each transport)
-lists such a Host apart from "Addresses members get", as one of the operator's own fronts left
+left out that no look knows stays the critical alarm. The node page (Admin -> Servers -> the
+node, each transport) lists such a Host apart from "Addresses members get", as one of the operator's own fronts left
 out of members' subscriptions, once the node is bound: `serverAdmin.tree` marks an address
 `operatorFront` when its Host is one the `operatorFronts` of the origin the node's delivery
 binding names records, by Host uuid (a backend does not keep remarks unique; a record from
@@ -2034,6 +2012,37 @@ with the binding released, members get the raw body, front included, so it stays
 members get. An origin whose Hosts cannot
 be read is skipped for that pass (unknown is not an observation), and one that fails does not
 stop the others.
+
+**The keys that still hold a front** (`convex/edgeFrontKeys.ts`, `lib/edges/frontKeys.ts`). A
+member render leaves the front out from the moment the binding is claimed, but an app that has
+not fetched its subscription since still has the body from before, the front in it, and connects
+through it (most link-list apps never refresh on their own: docs/client-compatibility.md
+"Refresh behaviour"). So the same look, for a bound node with fronts, schedules a count of the
+node's keys (`frontKeysDue`): at most hourly, and at once when the binding was claimed again
+since the last count (a re-claim moves the boundary). An action pages the node's keys in use
+(`by_backend_server_pinned`, 50 a page, one query each; never inside the attention query, since
+`subscriptions` scales with traffic): the active ones, and the ones a regenerate or a switch
+superseded that are still in their grace (`disabled` with a future `deletedAt`: their backend
+user keeps working for a day, so an app holding their old body still connects; `keyInUse`). It
+stores on the origin how many there are and how many have not been handed an edge render since
+the binding's claim (`relays.frontKeys {at, since, stale, total}`, counts only; `keyIsStale`).
+Only a render is proof: a delivery stamp says a 200 went out, not which body (a request that read
+the cache before the claim may stamp after it), so the route stamps `subscriptions.lastRenderedAt`
+whenever the body it served was an edge render (throttled like `lastDeliveredAt`;
+`lastRender.at`, written with a render's snapshot, stands in for a key last served before that
+stamp existed). A count made against an earlier claim is dropped, and one the binding has moved
+past since is not shown. `front_host_unused` then carries `staleKeys` and `keys` and says how
+many keys still connect through the front and that a member moves over by updating the
+subscription in the app; the node page's line under its fronts says the same
+(`NodeView.frontKeys`). A key that never fetched counts as holding it (it may be a copied
+configuration). The count is per key: a key shared by several apps counts as moved once any of
+them fetched, and an app reaching the backend's own subscription URL directly is not counted at
+all (that body lists the front's Host for as long as it is enabled). So a zero is never read as
+"no app uses it": both words still say to delete the front only once its traffic stops. When the
+last front goes (its Host disabled or deleted), the next look clears both records, so the count
+ends with it: FCP cannot see a load balancer that no Host names, and apps holding the old body
+still connect through it. Read the count before disabling the Host, and delete the load balancer
+only once its own traffic has fallen.
 
 After the Host look, the same pass judges every bound origin's REALITY listeners from the panel
 (`edgeRealityClients.reobserve`: each transport's `minClientVer` / `maxClientVer` and the node's
@@ -6092,10 +6101,15 @@ already parked in `needs_operator` from before stays where it is: close it with 
 back, run `edgeRotations:clearRefusedLocations` with no arguments before deploying the older
 build (an older schema refuses the push while a node still carries the field).
 
-**The keys that still hold a front** add one optional field (`relays.frontKeys`) and two facts
-on `front_host_unused` (`staleKeys`, `keys`), plus `NodeView.frontKeys`: one deploy, no
-migration, no env change. From the first reconcile pass after it, each bound node with operator
-fronts is counted within minutes and then at most hourly; each count pages that node's active
-keys, 50 a query. To roll back, run `edgeHostHides:clearFrontsForRollback` with no arguments
-right before deploying the older build: its schema has no `frontKeys` (it clears the fronts too,
-which the older build records again on its next pass).
+**The keys that still hold a front** add two optional fields (`relays.frontKeys`,
+`subscriptions.lastRenderedAt`), two facts on `front_host_unused` (`staleKeys`, `keys`) and
+`NodeView.frontKeys`: one deploy, no migration, no env change. From the first reconcile pass
+after it, each bound node with operator fronts is counted within minutes and then at most hourly
+(and at once after a re-claim); each count pages that node's keys, 50 a query. Every rendered
+delivery stamps `lastRenderedAt` (in the same write as the delivery stamp, or one more write at
+most a minute per key). Keys handed a render before the deploy count by their snapshot's time.
+To roll back, run `edgeFrontKeys:clearForRollback` with no arguments right before deploying the
+older build: its schema has neither field. It strips `lastRenderedAt` from every key (50 a
+mutation) and then clears the origins' records (the fronts too, which the older build records
+again on its next pass); deliveries keep stamping meanwhile, so run it again if the push is
+refused.

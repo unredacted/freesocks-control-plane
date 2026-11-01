@@ -833,6 +833,14 @@ export default defineSchema({
     lastDeliveredAt: v.optional(v.number()),
     lastDeliveredContentAt: v.optional(v.number()),
     lastRenderedEpoch: v.optional(v.number()),
+    // The last successful delivery whose body was an edge render (a body
+    // rendered under a binding, never the raw one), throttled like
+    // `lastDeliveredAt`. A delivery stamp alone cannot say which body was
+    // served (a request may read the cache before a binding claim and stamp
+    // after it); this one is written only with a render's snapshot, so the
+    // count of keys still holding an operator front reads it
+    // (convex/edgeFrontKeys.ts).
+    lastRenderedAt: v.optional(v.number()),
     // The eligibility snapshot of the last render (what this subscriber was
     // handed): member connection labels and report attribution read it and
     // never reconstruct an assignment without the body.

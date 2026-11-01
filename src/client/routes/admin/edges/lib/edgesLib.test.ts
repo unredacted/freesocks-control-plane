@@ -536,10 +536,12 @@ describe('an unused operator front row', () => {
       /1 of the node's 1 key has not fetched/,
     );
   });
-  it('says when every key has fetched since', () => {
-    expect(attentionHeading(row({ count: 1, staleKeys: 0, keys: 12 }), true).explain).toMatch(
-      /Every key on the node has fetched its subscription since the node went live/,
+  it('says when every key has fetched since, and still asks for the traffic to stop', () => {
+    const explain = attentionHeading(row({ count: 1, staleKeys: 0, keys: 12 }), true).explain;
+    expect(explain).toMatch(
+      /Every key on the node has fetched its subscription since the node went live, but an app sharing a key/,
     );
+    expect(explain).toMatch(/Once its traffic stops, delete it at its provider/);
   });
   it("falls back to the kind's words before a count", () => {
     expect(attentionHeading(row({ count: 1, remarks: ['lb-a'] }), true)).toMatchObject({

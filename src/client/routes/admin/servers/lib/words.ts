@@ -271,8 +271,10 @@ export function frontsHint(
 ): string {
   const one = count === 1;
   const it = one ? 'this front' : 'these fronts';
+  // A key counts once any app on it fetched: a zero is no proof that no app
+  // still uses the fronts, so the traffic check stays.
   if (keys && keys.stale === 0)
-    return `Members get this node's edges instead, and every key on it has fetched since it went live. Delete ${it} at ${one ? 'its' : 'their'} provider, and ${one ? 'its address' : 'their addresses'} here.`;
+    return `Members get this node's edges instead, and every key on it has fetched since it went live. An app sharing a key with one that fetched, or reading the backend's own subscription address, may still use ${it}. Once ${one ? 'its' : 'their'} traffic stops, delete ${it} at ${one ? 'its' : 'their'} provider, and ${one ? 'its address' : 'their addresses'} here.`;
   const holding =
     keys && keys.stale > 0
       ? ` ${keysHolding(keys)} not fetched since it went live: those apps still use ${it} until the member updates the subscription in the app.`

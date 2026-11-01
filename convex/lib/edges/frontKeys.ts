@@ -21,14 +21,44 @@ export const FRONT_KEYS_EVERY_MS = 60 * 60_000;
 /** Keys one count page reads (whole subscription rows, cached bodies included). */
 export const FRONT_KEYS_PAGE = 50;
 
-/** Whether a node with fronts should be counted again. */
-export function frontKeysDue(rec: FrontKeysRecord | undefined | null, now: number): boolean {
-  return !rec || now - rec.at >= FRONT_KEYS_EVERY_MS;
+/**
+ * Whether a node with fronts should be counted again: never counted, counted
+ * against another claim of its binding (`claimedAt`, the binding's
+ * `updatedAt`; a re-claim moves the boundary, so the old count is hidden and a
+ * new one is due at once), or counted over an hour ago.
+ */
+export function frontKeysDue(
+  rec: FrontKeysRecord | undefined | null,
+  claimedAt: number | null,
+  now: number,
+): boolean {
+  return !rec || rec.since !== claimedAt || now - rec.at >= FRONT_KEYS_EVERY_MS;
 }
 
-/** Whether a key has not fetched its subscription since `since` (never fetched counts too). */
-export function keyIsStale(lastDeliveredAt: number | undefined, since: number): boolean {
-  return (lastDeliveredAt ?? 0) < since;
+/**
+ * Whether a key's app may still hold a body from before `since`: no delivery
+ * of an edge render since then. Only a rendered body proves it: a delivery
+ * stamp alone does not say which body went out (a request that read the cache
+ * before the claim may stamp after it), and only a body rendered under a
+ * binding leaves the fronts out. `lastRenderedAt` is that proof;
+ * `lastRender.at` (written with a render's snapshot) stands in for a key last
+ * served before `lastRenderedAt` existed. Never fetched counts as stale too.
+ */
+export function keyIsStale(
+  key: { lastRenderedAt?: number; lastRender?: { at: number } },
+  since: number,
+): boolean {
+  return Math.max(key.lastRenderedAt ?? 0, key.lastRender?.at ?? 0) < since;
+}
+
+/**
+ * Whether a key counts at all: an active key, or one superseded by a
+ * regenerate or a switch that is still inside its grace (`disabled` with a
+ * future `deletedAt`): its backend user keeps working for a day, so an app
+ * holding its old body still connects through the front.
+ */
+export function keyInUse(key: { state: string; deletedAt?: number }, now: number): boolean {
+  return key.state === 'active' || (key.state === 'disabled' && (key.deletedAt ?? 0) > now);
 }
 
 /**

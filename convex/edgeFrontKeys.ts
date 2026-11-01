@@ -8,17 +8,20 @@
  *
  * `subscriptions` scales with traffic, so the count is never made inside the
  * attention query: the reconcile's Host look schedules `refresh` for a bound
- * node with fronts at most hourly (`frontKeysDue`), which pages the node's
- * active keys (`by_backend_server_pinned`, FRONT_KEYS_PAGE a page, one query
- * each) and stores the result on the relay (`relays.frontKeys`). Counts only,
- * never a key, a member or an address.
+ * node with fronts at most hourly, and at once after its binding is claimed
+ * again (`frontKeysDue`). It pages the node's keys in use (active, and
+ * superseded ones still in their grace: `keyInUse`) by
+ * `by_backend_server_pinned`, FRONT_KEYS_PAGE a page, one query each, and
+ * stores the result on the relay (`relays.frontKeys`). A key counts as fetched
+ * only once it was handed an edge render after the claim (`keyIsStale`).
+ * Counts only, never a key, a member or an address.
  */
 import { v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { deliveryBindingFor } from './relays';
-import { FRONT_KEYS_PAGE, keyIsStale } from './lib/edges/frontKeys';
+import { FRONT_KEYS_PAGE, keyInUse, keyIsStale } from './lib/edges/frontKeys';
 
 interface Target {
   backendServerId: Id<'backendServers'>;
@@ -47,25 +50,31 @@ export const target = internalQuery({
   },
 });
 
-/** One page of the node's active keys: how many, and how many have not fetched since `since`. */
+/**
+ * One page of the node's keys in one state: how many are in use, and how many
+ * of those have not been handed an edge render since `since`.
+ */
 export const countPage = internalQuery({
   args: {
     backendServerId: v.id('backendServers'),
     nodeName: v.string(),
+    state: v.union(v.literal('active'), v.literal('disabled')),
     since: v.number(),
+    now: v.number(),
     cursor: v.union(v.string(), v.null()),
     numItems: v.number(),
   },
-  handler: async (ctx, { backendServerId, nodeName, since, cursor, numItems }) => {
+  handler: async (ctx, { backendServerId, nodeName, state, since, now, cursor, numItems }) => {
     const res = await ctx.db
       .query('subscriptions')
       .withIndex('by_backend_server_pinned', (q) =>
-        q.eq('backendServerId', backendServerId).eq('pinnedNode', nodeName).eq('state', 'active'),
+        q.eq('backendServerId', backendServerId).eq('pinnedNode', nodeName).eq('state', state),
       )
       .paginate({ cursor, numItems });
+    const inUse = res.page.filter((s) => keyInUse(s, now));
     return {
-      total: res.page.length,
-      stale: res.page.filter((s) => keyIsStale(s.lastDeliveredAt, since)).length,
+      total: inUse.length,
+      stale: inUse.filter((s) => keyIsStale(s, since)).length,
       isDone: res.isDone,
       continueCursor: res.continueCursor,
     };
@@ -108,25 +117,71 @@ export const refresh = internalAction({
       await ctx.runMutation(internal.edgeFrontKeys.record, { relayId, counted: null });
       return null;
     }
-    let cursor: string | null = null;
+    const now = Date.now();
     let stale = 0;
     let total = 0;
-    for (;;) {
-      const page: { total: number; stale: number; isDone: boolean; continueCursor: string } =
-        await ctx.runQuery(internal.edgeFrontKeys.countPage, {
-          ...t,
-          cursor,
-          numItems: FRONT_KEYS_PAGE,
-        });
-      stale += page.stale;
-      total += page.total;
-      if (page.isDone) break;
-      cursor = page.continueCursor;
+    for (const state of ['active', 'disabled'] as const) {
+      let cursor: string | null = null;
+      for (;;) {
+        const page: { total: number; stale: number; isDone: boolean; continueCursor: string } =
+          await ctx.runQuery(internal.edgeFrontKeys.countPage, {
+            ...t,
+            state,
+            now,
+            cursor,
+            numItems: FRONT_KEYS_PAGE,
+          });
+        stale += page.stale;
+        total += page.total;
+        if (page.isDone) break;
+        cursor = page.continueCursor;
+      }
     }
     await ctx.runMutation(internal.edgeFrontKeys.record, {
       relayId,
       counted: { since: t.since, stale, total },
     });
     return { stale, total };
+  },
+});
+
+/** One page of the rollback strip: keys lose `lastRenderedAt`. */
+export const stripRenderedAtPage = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db
+      .query('subscriptions')
+      .paginate({ cursor, numItems: FRONT_KEYS_PAGE });
+    let stripped = 0;
+    for (const s of page.page) {
+      if (s.lastRenderedAt === undefined) continue;
+      await ctx.db.patch(s._id, { lastRenderedAt: undefined });
+      stripped++;
+    }
+    return { stripped, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});
+
+/**
+ * Before deploying a build without this count (docs/edges.md "Deploy notes"):
+ * strip `subscriptions.lastRenderedAt` from every key, then clear the origins'
+ * records (`edgeHostHides.clearFrontsForRollback`), so the older schema
+ * accepts what is left. Deliveries keep stamping meanwhile: run it right
+ * before the push, and again if the push is refused.
+ */
+export const clearForRollback = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ stripped: number; cleared: number }> => {
+    let cursor: string | null = null;
+    let stripped = 0;
+    for (;;) {
+      const page: { stripped: number; isDone: boolean; continueCursor: string } =
+        await ctx.runMutation(internal.edgeFrontKeys.stripRenderedAtPage, { cursor });
+      stripped += page.stripped;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    const { cleared } = await ctx.runMutation(internal.edgeHostHides.clearFrontsForRollback, {});
+    return { stripped, cleared };
   },
 });

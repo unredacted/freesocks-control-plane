@@ -179,6 +179,8 @@ export interface HideContext {
   fcpRemarks: string[];
   legacyHostUuids: string[];
   bound: boolean;
+  /** When the binding naming this origin was last claimed (its `updatedAt`); null when not bound. */
+  claimedAt: number | null;
   /** Every other address that is the node (`nodeIntents.nodeAddressesOf`). */
   alsoAddresses: string[];
 }
@@ -207,6 +209,7 @@ async function hideContext(
     fcpRemarks,
     legacyHostUuids,
     bound: !!binding && binding.relaySlug === relay.slug,
+    claimedAt: binding && binding.relaySlug === relay.slug ? binding.updatedAt : null,
     alsoAddresses: await nodeAddressesOf(ctx, relay),
   };
 }
@@ -1132,8 +1135,10 @@ async function reobserveOne(
   const known = nodeInbounds(c, hosts, undefined);
   const dctx = directContextOf(c, known, conventionRemarks(hosts, c.nodeName));
   // A bound node with fronts: how many of its keys still hold them, counted
-  // apart (it pages every key) and at most hourly (convex/edgeFrontKeys.ts).
-  if ((await recordFronts(ctx, c, hosts, known)) > 0 && frontKeysDue(c.relay.frontKeys, Date.now()))
+  // apart (it pages every key), at most hourly and at once after a re-claim
+  // (convex/edgeFrontKeys.ts).
+  const fronts = await recordFronts(ctx, c, hosts, known);
+  if (fronts > 0 && frontKeysDue(c.relay.frontKeys, c.claimedAt, Date.now()))
     await ctx.scheduler.runAfter(0, internal.edgeFrontKeys.refresh, { relayId });
   const enabledDirect = hosts.filter((h) => !h.isDisabled && isDirectHost(h, dctx));
   const covered = new Set(c.listenerInboundUuids.map((u) => u.toLowerCase()));
