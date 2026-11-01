@@ -544,6 +544,19 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   for Outline/legacy keys), plus the key's location and the location's coarse
   **load band**. The SPA polls it (~30s) for the hero badge; the Access Pass
   shows the node label + band and deep-links to the public `/status#loc-<code>`.
+- **Member "Switch server":** `POST /api/v1/account/switch-server`
+  (`account.switchServer`) moves a key without changing its mode, trying in order:
+  another mode group on the key's own backend (an in-place PATCH), another node of the
+  key's current group (rotating the node pin; needs fresh stats showing more than one
+  node AND a node on record, which only an app's fetch sets and every move clears), then
+  another mode group anywhere (a re-issue carrying the sub token). With none it refuses
+  `server.no_alternative` and changes nothing: a mode whose pool is one group with one
+  node can never switch. The account view projects `subscription.canSwitchServer`
+  from the same conditions (`convex/lib/switchServer.ts`, read-only), and the SPA shows
+  the button only when it is true. A refusal hands back the rate-limit units the
+  request charged (`account.switch-server` and the shared `account.reissue` /
+  `account.reissue.day`), so it never spends the member's allowance for regenerate or
+  switch-mode.
 - **Public status page:** the same healthcheck signals feed `GET /api/v1/status`
   (the `/status` page) — per-location online + coarse load bands
   (`convex/lib/loadBands.ts`: maxKeys utilization when every instance of a

@@ -167,6 +167,23 @@ function issuanceErrorResponse(err: unknown, requestId: string): Response {
   );
 }
 
+const ISSUANCE_SHARED_POLICIES = ['account.reissue', 'account.reissue.day'] as const;
+
+/**
+ * Hand back the units `withIssuanceSaga` charged, for a request that was
+ * refused without moving the key: a refusal mints nothing and shows no new
+ * node, so it must not spend the member's allowance for the changes that do.
+ */
+async function releaseIssuanceUnits(
+  ctx: ActionCtx,
+  userId: Id<'users'>,
+  policyKey: string,
+): Promise<void> {
+  for (const key of [policyKey, ...ISSUANCE_SHARED_POLICIES]) {
+    await ctx.runMutation(internal.rateLimits.release, { policyKey: key, subject: userId });
+  }
+}
+
 /**
  * The shared member issuance-saga scaffold (regenerate / switch-backend /
  * switch-profile): rate-limit → acquire the per-user issuance lock → run → map
@@ -189,7 +206,7 @@ async function withIssuanceSaga(
   policyKey: string,
   run: (requestId: string) => Promise<Response>,
 ): Promise<Response> {
-  for (const shared of ['account.reissue', 'account.reissue.day'] as const) {
+  for (const shared of ISSUANCE_SHARED_POLICIES) {
     const sharedRl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: shared,
       subject: userId,
@@ -1700,6 +1717,9 @@ http.route({
         detected,
         requestId,
       });
+      // switchServer answers ok:false only where the key stayed put (nowhere
+      // else to go, unsupported, mode unavailable, placement still resolving).
+      if (!result.ok) await releaseIssuanceUnits(ctx, member.userId, 'account.switch-server');
       return sagaResult(result);
     });
   }),
