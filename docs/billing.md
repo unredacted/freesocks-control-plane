@@ -325,17 +325,45 @@ No hosted processor cleanly does "accept Monero **and** auto-deposit USD to a US
 bank." The supported pattern for the nonprofit is **two-step**:
 
 1. Configure NOWPayments to **auto-convert** incoming crypto to **USDC**,
-   delivered to a wallet the org controls (non-custodial).
-2. Move USDC to a **US-regulated exchange business/nonprofit account**
-   (Coinbase or Kraken) → sell 1:1 to USD → **free ACH** to the US bank.
+   delivered to a wallet the org controls (non-custodial). In the NOWPayments
+   dashboard (Store Settings → Outcome Wallet) make the USDC wallet the **only**
+   outcome wallet: a coin that has its own wallet is paid out in that coin, and
+   a coin with none goes to the first wallet entered. NOWPayments charges 1%
+   without an exchange and 1.5% when one is needed, plus network fees on both
+   the deposit and the payout leg.
+2. Move USDC to a **business account at a US-regulated exchange** (Coinbase
+   Business or Kraken) → sell USDC for USD → **ACH** to the org's US bank
+   account (the bank account name must match the exchange account name).
+   Neither exchange has a separate nonprofit account type, and the conversion
+   is not free on either: Coinbase Business says USDC to USD conversion is
+   subject to a fee, and Kraken Pro charges 0.20% on stablecoin pairs at the
+   lowest volume tier. Kraken ACH withdrawal is free; Coinbase's Business ACH
+   page states no fee. Read the live fee screen before relying on a number.
 
 Pre-launch checklist (see also the launch plan):
 
-- Get **written confirmation** from NOWPayments that a US 501(c)(3) may use the
-  non-custodial merchant flow (their ToS restricts US persons; the non-custodial
-  flow routes funds straight to your wallet, but confirm in writing).
-- Open the Coinbase/Kraken nonprofit account (EIN + 501(c)(3) letter), confirm
-  USDC deposit + free USD ACH.
+- Get **written permission** from NOWPayments before relying on it. Its Terms of
+  Service (section 15.1) say the services are not rendered to residents or
+  citizens of the United States and carve out neither nonprofits nor the
+  non-custodial flow, and it can end an account at any time without reasons.
+  Until NOWPayments confirms in writing that a US-organized 501(c)(3) may use
+  it, treat the rail as not permitted, and give accurate entity and business
+  details in every registration or question.
+- Open the exchange business account and confirm USDC deposit, the USDC to USD
+  sell fee and the USD ACH withdrawal on the live account:
+  - **Coinbase Business** is listed for C corporations and LLCs, so ask whether a
+    nonprofit corporation qualifies, and get Coinbase's written consent for
+    accepting donations for a nonprofit (its Prohibited & Conditional Use
+    Policy). It asks for ID for the applicant, the control person and each 25%
+    owner, filed formation documents, a business bank statement under 90 days
+    old, the EIN and W-9, and a description of the business.
+  - **Kraken** offers a business account with an NGO business type. It asks for
+    formation documents, proof of operating address under 3 months old, IDs for
+    beneficial owners, controllers and every account accessor, two AML
+    questionnaires and source of funds. ACH needs a US-registered account and
+    is not offered to New York residents; ask whether that applies to a
+    business.
+  - Neither application lists the IRS determination letter. Keep it ready.
 - Re-check XMR support quarterly (MiCA/AMLR pressure on privacy coins is moving).
 
 ## BTCPay Server setup (self-hosted Bitcoin rail — on-chain + Lightning)
@@ -345,7 +373,8 @@ settle directly to the org's node/wallet with no intermediary and no third-party
 ToS. It is also the only rail whose checkout page loads **zero third-party
 subresources** — the payer reaches exactly one host, ours — which is why it is
 the primary rail for censored regions. Converting what it receives into USD is a
-separate job with no BTCPay-native support; see "USD off-ramp" below.
+separate job with no BTCPay-native support; see "USD off-ramp" above (it covers
+only the NOWPayments leg) and `docs/btcpay-server-runbook.md` section 8.
 
 **Minimum server version: BTCPay 2.4.2** (with NBXplorer ≥ 2.6.10). Everything
 below 2.4.2, release candidates included, has an actively-exploited LND macaroon
