@@ -423,6 +423,7 @@ describe('adopting a direct node the node role set up', () => {
       nodeUuid: UUID(400),
       mode: 'freedom-ws',
       externallyFronted: true,
+      originHostname: 'origin-f.example.net',
     });
     await expect(
       s.t.mutation(internal.backendNodeRenames.request, {
@@ -773,6 +774,7 @@ describe('an adopted node whose edge FCP does not run', () => {
       nodeUuid: UUID(400),
       mode: 'freedom-ws',
       externallyFronted: true,
+      originHostname: 'origin-f.example.net',
     });
     const parked = await throughMaintenance(s.t, intentId);
     expect(parked.delivery.disposition).toBe('staged');
@@ -866,7 +868,7 @@ describe("an adopted WebSocket node's origin name", () => {
     expect(origin!.directAddresses).toEqual(['192.0.2.61']);
   });
 
-  test("is a DNS name, on a WebSocket node only, and never another node's", async () => {
+  test("is required, a DNS name, on a WebSocket node only, and never another node's", async () => {
     const s = await seed();
     const g = await legacyFront(s, 'legacy-g', 420);
     const h = await legacyFront(s, 'legacy-h', 430);
@@ -891,8 +893,60 @@ describe("an adopted WebSocket node's origin name", () => {
     expect(await adopt(direct, 'privacy-reality', 'legacy-d.example.net')).toBe('validation');
     expect(await adopt(g, 'freedom-ws', 'origin.example.net')).toBeNull();
     expect(await adopt(h, 'freedom-ws', 'ORIGIN.example.net')).toBe('servers.origin_name_in_use');
-    // Left blank, the node is adopted without one (as before).
-    expect(await adopt(h, 'freedom-ws', '  ')).toBeNull();
+    // Left out or blank, nothing is adopted: an adopted node could never get one later.
+    expect(await adopt(h, 'freedom-ws', '  ')).toBe('servers.adopt_origin_name_required');
+    expect(
+      await codeOf(
+        s.t.mutation(internal.nodeIntents.adoptNode, {
+          backendServerId: s.serverId,
+          nodeUuid: h,
+          mode: 'freedom-ws',
+          externallyFronted: true,
+        }),
+      ),
+    ).toBe('servers.adopt_origin_name_required');
+    expect(await adopt(h, 'freedom-ws', 'origin-h.example.net')).toBeNull();
+  });
+
+  test("a settings change never gives a node another node's origin name", async () => {
+    const s = await seed();
+    const g = await legacyFront(s, 'legacy-g', 460);
+    await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid: g,
+      mode: 'freedom-ws',
+      externallyFronted: true,
+      originHostname: 'origin.example.net',
+    });
+    const { intentId } = await s.t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: s.serverId,
+      name: 'node-e',
+      mode: 'freedom-ws',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.70', port: 2222 },
+        publicIps: { v4: '203.0.113.70' },
+        capabilities: { caddy: true, ipv6: false },
+      },
+    });
+    await idle(s.t, intentId);
+    expect(
+      await codeOf(
+        s.t.mutation(internal.nodeIntents.patchSettings, {
+          intentId,
+          patch: { explicitHostname: 'ORIGIN.example.net' },
+        }),
+      ),
+    ).toBe('servers.origin_name_in_use');
+    // A free name is fine.
+    expect(
+      await codeOf(
+        s.t.mutation(internal.nodeIntents.patchSettings, {
+          intentId,
+          patch: { explicitHostname: 'origin-e.example.net' },
+        }),
+      ),
+    ).toBeNull();
   });
 
   test('a machine setting is never changed for an adopted node: the role would never apply it', async () => {
@@ -903,9 +957,10 @@ describe("an adopted WebSocket node's origin name", () => {
       nodeUuid,
       mode: 'freedom-ws',
       externallyFronted: true,
+      originHostname: 'origin-g.example.net',
     });
     for (const patch of [
-      { explicitHostname: 'origin-g.example.net' },
+      { explicitHostname: 'origin-g2.example.net' },
       { publishV6: true },
       { nodePort: 2223 },
     ])

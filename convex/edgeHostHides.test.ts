@@ -262,18 +262,20 @@ describe('namesElsewhere (pure)', () => {
       ),
     ).toEqual(['cdn.example.net']);
   });
-  test('a name with no IPv4 answer (its A lookup failed) or any answer that is the node is not', () => {
+  test('a name one of whose lookups failed, with no answer, or with an answer that is the node is not', () => {
     expect(
       namesElsewhere(
         ctx,
         {
+          'cdn-partial.example.net': ['198.51.100.8'],
           'v6only.example.net': ['2001:db8:1::8'],
           'none.example.net': [],
           'shares.example.net': ['198.51.100.9', '192.0.2.10'],
         },
         [],
+        ['cdn-partial.example.net'],
       ),
-    ).toEqual([]);
+    ).toEqual(['v6only.example.net']);
   });
 });
 
@@ -1218,10 +1220,10 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     }
   });
 
-  test('a name that answers no IPv4 address, or answers one of the node, is never a front', async () => {
+  test('a name one of whose lookups failed, or that answers the node, is never a front', async () => {
     __setNameResolutionForTests(async (name) =>
       name === 'v6only.example.net'
-        ? { v4: [], v6: ['2001:db8:1::78'] }
+        ? { v4: ['198.51.100.78'], v6: [], conclusive: false }
         : name === 'alias.example.net'
           ? { v4: ['198.51.100.79', FIXTURE_ORIGIN], v6: [] }
           : { v4: [], v6: [] },

@@ -765,10 +765,12 @@ export const adoptNode = internalMutation({
 });
 
 /**
- * The origin name an adopted WebSocket node is given, checked: a DNS name
- * (never an address: a front's TLS name must be a name its certificate
- * covers), on a WebSocket mode only, and no other node's. Undefined when none
- * was given.
+ * The origin name an adopted node is given, checked. A WebSocket node needs
+ * one (`servers.adopt_origin_name_required`): its edges dial it, and an
+ * adopted machine's settings never change afterwards, so it could not be
+ * added later. It is a DNS name (never an address: a front's TLS name must be
+ * a name its certificate covers) and no other node's. Any other node takes
+ * none.
  */
 async function adoptedOriginName(
   ctx: MutationCtx,
@@ -777,19 +779,46 @@ async function adoptedOriginName(
   shape: ModeShape,
   given: string | undefined,
 ): Promise<string | undefined> {
-  if (given === undefined || given.trim() === '') return undefined;
-  if (!isWs(shape))
-    refuse('validation', 'Only a node members reach through a CDN front has an origin name');
-  const name = given.trim().toLowerCase().replace(/\.$/, '');
+  const blank = given === undefined || given.trim() === '';
+  if (!isWs(shape)) {
+    if (!blank)
+      refuse('validation', 'Only a node members reach through a CDN front has an origin name');
+    return undefined;
+  }
+  if (blank)
+    refuse(
+      'servers.adopt_origin_name_required',
+      'A WebSocket node is adopted with its origin name: the name its CDN fronts dial',
+    );
+  const name = given!.trim().toLowerCase().replace(/\.$/, '');
   if (!HOSTNAME_RE.test(name) || !name.includes('.') || IPV4.test(name))
     refuse('validation', 'The origin name is a DNS name, such as node.example.org');
+  await assertOriginNameFree(ctx, sid, setup, name);
+  return name;
+}
+
+/**
+ * One node per origin name on a backend: edges of two nodes would dial one
+ * machine, and a DNS change for one would move the other. Checked wherever a
+ * node is given a name (adoption, a settings change).
+ */
+async function assertOriginNameFree(
+  ctx: MutationCtx,
+  sid: Id<'backendServers'>,
+  setup: Pick<Setup, 'originDns'> | null,
+  name: string,
+  except?: Id<'panelNodeIntents'>,
+): Promise<void> {
   for (const other of await ctx.db
     .query('panelNodeIntents')
     .withIndex('by_server', (q) => q.eq('backendServerId', sid))
     .collect())
-    if (other.state !== 'retired' && originHostnameOf(other, setup) === name)
+    if (
+      other._id !== except &&
+      other.state !== 'retired' &&
+      originHostnameOf(other, setup)?.toLowerCase() === name
+    )
       refuse('servers.origin_name_in_use', `${other.name} already has this origin name`);
-  return name;
 }
 
 /**
@@ -1016,6 +1045,16 @@ export const patchSettings = internalMutation({
       if (s.explicitHostname !== p.explicitHostname) rewritesPath = true;
       next.explicitHostname = p.explicitHostname.toLowerCase();
       next.originHostnameSource = 'explicit';
+      await assertOriginNameFree(
+        ctx,
+        intent.backendServerId,
+        await ctx.db
+          .query('panelSetups')
+          .withIndex('by_server', (q) => q.eq('backendServerId', intent.backendServerId))
+          .unique(),
+        next.explicitHostname,
+        intent._id,
+      );
     }
     if (p.originAddressOverride !== undefined) {
       if ((s.originAddressOverride ?? null) !== p.originAddressOverride) rewritesPath = true;

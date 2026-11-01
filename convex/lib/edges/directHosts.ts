@@ -12,7 +12,7 @@
 import type { BackendHost } from '../backends/types';
 import { sha256Hex } from '../crypto';
 import { normalizeAddress, sameAddress } from './hosts';
-import { canonicalIp, isIpv4Literal } from './ip';
+import { canonicalIp } from './ip';
 
 export interface DirectHost {
   uuid: string;
@@ -147,18 +147,19 @@ export function nodeNamesOf(
 
 /**
  * The candidate names (`nodeNameCandidates`) that answered with addresses
- * none of which is the node: the name's A lookup answered (an IPv4 answer),
- * and no answer is an address the node is known by (the origin and
- * `alsoAddresses`, the origin's own answers, and every name `nodeNamesOf`
- * found to be the node, with its answers). A front the operator built at a
- * name of its own (a CDN hostname) is such a name. A name with no IPv4
- * answer is never one: a lookup that failed would leave the node looking
- * like something else.
+ * none of which is the node: both lookups (A and AAAA) answered conclusively
+ * (a record, or "no such record"), at least one address came back, and no
+ * answer is an address the node is known by (the origin and `alsoAddresses`,
+ * the origin's own answers, and every name `nodeNamesOf` found to be the
+ * node, with its answers). A front the operator built at a name of its own (a
+ * CDN hostname) is such a name. A name one of whose lookups failed
+ * (`inconclusive`) is never one: the missing family could be the node.
  */
 export function namesElsewhere(
   ctx: Pick<DirectHostContext, 'originAddress' | 'alsoAddresses'>,
   answers: Readonly<Record<string, readonly string[]>>,
   nodeNames: readonly string[],
+  inconclusive: readonly string[] = [],
 ): string[] {
   const origin = normalizeAddress(ctx.originAddress);
   const node = [
@@ -171,8 +172,9 @@ export function namesElsewhere(
     .filter(
       ([name, ans]) =>
         name !== origin &&
+        !inconclusive.includes(name) &&
         !node.some((a) => sameAddress(a, name)) &&
-        ans.some((a) => isIpv4Literal(a)) &&
+        ans.some((a) => canonicalIp(a) !== null) &&
         !ans.some((a) => node.some((n) => sameAddress(n, a))),
     )
     .map(([name]) => name);
@@ -202,9 +204,9 @@ export function classifyDirectHosts(
  * balancer at its own public address. Members get them until the node is bound
  * to its edges; from then on a member render leaves them out (`withheld`), so
  * they can be deleted at their provider. A Host by a NAME is one only when this
- * look resolved that name elsewhere (`frontNames`, from `namesElsewhere`), such
- * as a CDN front's hostname: an unresolved name could be the node itself, so it
- * keeps the fail-closed alert. `fcpRemarks` here are the listeners' own: the
+ * look resolved that name elsewhere, conclusively (`frontNames`, from
+ * `namesElsewhere`), such as a CDN front's hostname: a name a lookup failed for
+ * could be the node itself, so it keeps the fail-closed alert. `fcpRemarks` here are the listeners' own: the
  * origin convention (`relayRemarkRegex`) also matches the bare `<node>-relay`
  * an operator gives such a Host.
  */

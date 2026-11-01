@@ -2009,10 +2009,11 @@ setup run's rehearsal look, `observe`, before go-live) records the node's **oper
 (`relays.operatorFronts`, their names and Host uuids, never an address, every one of them; `operatorFrontHosts`): enabled Hosts on a protected
 transport that dial an IP that is neither the node nor an edge of the origin and are not FCP's,
 such as a load balancer the operator built by hand, or a name that the same look resolved
-elsewhere, such as a CDN front the operator built (`namesElsewhere`: the name's A lookup
-answered, and none of its answers is an address the node is known by). A name with no IPv4
-answer is never one (a lookup that failed would leave the node itself looking like a front),
-so it keeps the critical alarm. A member render leaves their entries out like any it
+elsewhere, such as a CDN front the operator built (`namesElsewhere`: both its lookups, A and
+AAAA, answered conclusively, a record or "no such record"; at least one address came back; and
+none is an address the node is known by). A name one of whose lookups failed (a timeout, a
+server failure: anything but "no such record") is never one, since the missing family could
+be the node itself, so it keeps the critical alarm. A member render leaves their entries out like any it
 cannot place, but an entry a known front names is not the node: it raises attention
 `front_host_unused` (info: members no longer get it, so it can be deleted at its provider, and
 its Host in the backend) instead of `direct_host_reappeared`. An entry left out that no look

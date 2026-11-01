@@ -186,8 +186,8 @@
             spellcheck="false"
           />
           <p class="text-muted-foreground text-sm">
-            The name its CDN fronts dial, the one its certificate is for. Fronts FCP builds for it
-            dial the same name. It cannot be changed once the node is adopted.
+            Needed. The name its CDN fronts dial, the one its certificate is for. Fronts FCP builds
+            for it dial the same name. It cannot be changed once the node is adopted.
           </p>
         </div>
       {/if}
@@ -201,7 +201,9 @@
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Close</Button>
-        <Button type="submit" disabled={busy || !mode}>Adopt</Button>
+        <Button type="submit" disabled={busy || !mode || (websocket && !originHostname.trim())}
+          >Adopt</Button
+        >
       </Dialog.Footer>
     </form>
   </Dialog.Content>

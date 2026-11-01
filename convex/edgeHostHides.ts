@@ -756,9 +756,11 @@ export async function resolveNodeNames(
       code: TOO_MANY_HOST_NAMES,
       message: `The node's Hosts dial ${names.length} names, more than the ${MAX_NODE_NAME_LOOKUPS} FCP checks at once; remove the ones not in use`,
     });
-  const answers = await ctx.runAction(internal.nodeIntentOps.resolveNames, { names });
+  const { answers, inconclusive } = await ctx.runAction(internal.nodeIntentOps.resolveNames, {
+    names,
+  });
   const node = nodeNamesOf(dctx, answers);
-  return { node, elsewhere: namesElsewhere(dctx, answers, node) };
+  return { node, elsewhere: namesElsewhere(dctx, answers, node, inconclusive) };
 }
 
 /**
