@@ -104,6 +104,22 @@ export function afterCheck(
     lastError: prev.lastError,
     lastErrorAt: prev.lastErrorAt,
   };
+  // A copy whose public URL fails stays failing whatever a check says: the
+  // object holding the body (per the S3 API) does not prove the URL serves
+  // it. Only a read that matches clears it (`afterVerify`).
+  const urlFailing =
+    prev.state === 'failing' && (prev.reason === 'url_unreadable' || prev.reason === 'url_stale');
+  if (
+    urlFailing &&
+    (outcome.kind === 'confirmed' || (outcome.kind === 'uploaded' && !outcome.moved))
+  )
+    return {
+      ...prev,
+      ...seen,
+      checkedAt: at,
+      ...(outcome.kind === 'uploaded' ? { uploadedAt: at } : {}),
+      objectHash: served?.hash ?? prev.objectHash,
+    };
   switch (outcome.kind) {
     case 'confirmed':
       return {

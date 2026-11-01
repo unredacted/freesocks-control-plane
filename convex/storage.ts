@@ -1026,8 +1026,10 @@ export const refreshMirrorsForSubscription = internalAction({
     subscriptionId: v.id('subscriptions'),
     force: v.optional(v.boolean()),
     forceProviders: v.optional(v.array(v.string())),
+    /** Read the forced copies back once rewritten (a rewrite a read asked for). */
+    verifyAfter: v.optional(v.boolean()),
   },
-  handler: async (ctx, { subscriptionId, force, forceProviders }): Promise<null> => {
+  handler: async (ctx, { subscriptionId, force, forceProviders, verifyAfter }): Promise<null> => {
     const set = await refreshSet(ctx);
     if (set.byName.size === 0) return null;
     const target = await ctx.runQuery(internal.subscriptions.mirrorRefreshTarget, {
@@ -1037,9 +1039,36 @@ export const refreshMirrorsForSubscription = internalAction({
     await refreshOneSubMirrors(ctx, set, target, {
       force: force === true ? 'all' : forceProviders,
     });
+    if (verifyAfter && forceProviders?.length) await readBack(ctx, subscriptionId, forceProviders);
     return null;
   },
 });
+
+/**
+ * Read copies back right after a rewrite that a read asked for, so the copy
+ * ends in a definite state now: the rewrite fixed it (a match), or the URL
+ * itself is the problem (`afterVerify`'s repeat). No further rewrite is
+ * scheduled from here.
+ */
+async function readBack(
+  ctx: ActionCtx,
+  subscriptionId: Id<'subscriptions'>,
+  providers: string[],
+): Promise<void> {
+  const targets = await ctx.runQuery(internal.mirrorCopies.verifyTargetsOf, {
+    subscriptionId,
+    providers,
+  });
+  for (const c of targets) {
+    const outcome = await verifyCopy(mirrorFetch, c.publicUrl, c.objectHash);
+    await ctx.runMutation(internal.mirrorCopies.recordVerify, {
+      id: c.id,
+      objectHash: c.objectHash,
+      at: Date.now(),
+      outcome,
+    });
+  }
+}
 
 /**
  * Cron: the repair pass of the mirror barrier (convex/mirrorUploads.ts). A due
@@ -1278,12 +1307,17 @@ export const verifyMirrorCopies = internalAction({
         await ctx.scheduler.runAfter(0, internal.storage.refreshMirrorsForSubscription, {
           subscriptionId,
           forceProviders,
+          verifyAfter: true,
         });
       return out;
     }),
 });
 
-/** Admin re-check of one copy: render and compare now (rewriting it when it differs), then read it back. */
+/**
+ * Admin re-check of one copy: render and compare now (rewriting it when it
+ * differs), read it back, and when that read asks for a rewrite, rewrite it
+ * and read it back again.
+ */
 export const recheckCopy = internalAction({
   args: { id: v.id('mirrorCopies') },
   handler: async (ctx, { id }): Promise<{ ok: boolean }> => {
@@ -1309,6 +1343,7 @@ export const recheckCopy = internalAction({
           subscriptionId: ref.subscriptionId,
         });
         if (again) await refreshOneSubMirrors(ctx, set, again, { force: [ref.provider] });
+        await readBack(ctx, ref.subscriptionId, [ref.provider]);
       }
     }
     return { ok: true };

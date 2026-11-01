@@ -71,6 +71,14 @@ describe('afterCheck', () => {
     expect(healed).toMatchObject({ state: 'in_sync', failures: 0, lastError: 'upload_failed' });
   });
 
+  test('a check never clears a public-URL failure (only a matching read does)', () => {
+    const failing = base({ state: 'failing', reason: 'url_stale', failures: 1, since: T0 });
+    const confirmed = afterCheck(failing, { kind: 'confirmed' }, T0 + 5, served('h1'));
+    expect(confirmed).toMatchObject({ state: 'failing', reason: 'url_stale', checkedAt: T0 + 5 });
+    const uploaded = afterCheck(failing, { kind: 'uploaded', moved: false }, T0 + 6, served('h2'));
+    expect(uploaded).toMatchObject({ state: 'failing', objectHash: 'h2', uploadedAt: T0 + 6 });
+  });
+
   test('a fetch failure says nothing new about the served body', () => {
     const next = afterCheck(base(), { kind: 'fetch_failed' }, T0 + 1, null);
     expect(next).toMatchObject({ state: 'failing', servedHash: 'h1', objectHash: 'h1' });

@@ -593,7 +593,7 @@ describe('the member-facing URL is read back', () => {
     expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'never', reason: 'missing' });
     const queued = await scheduled(w.t, 'refreshMirrorsForSubscription');
     expect(queued.map((f) => f.args[0])).toEqual([
-      { subscriptionId: subId, forceProviders: ['p1'] },
+      { subscriptionId: subId, forceProviders: ['p1'], verifyAfter: true },
     ]);
     await w.t.action(internal.storage.refreshMirrorsForSubscription, {
       subscriptionId: subId,
@@ -615,6 +615,37 @@ describe('the member-facing URL is read back', () => {
     });
     // No upload loop: nothing new was scheduled for it.
     expect(await scheduled(w.t, 'refreshMirrorsForSubscription')).toHaveLength(1);
+  });
+
+  test('an admin re-check rewrites a deleted object and reads it back, so a later overwrite is repaired too', async () => {
+    // Found on the beta walk: without the read after the rewrite, the next
+    // problem (an unrelated overwrite) looked like "the rewrite did not help".
+    const w = await world();
+    const { userId, subId } = await member(w);
+    await w.t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    const path = (await sub(w.t, subId))!.subscriptionMirrors[0]!.objectPath!;
+    const [c] = await copies(w.t, subId);
+    w.objects.delete(`p1:${path}`);
+    expect(await w.t.action(internal.storage.recheckCopy, { id: c!._id })).toEqual({ ok: true });
+    expect(w.objects.has(`p1:${path}`)).toBe(true);
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync', verify: 'match' });
+    w.objects.set(`p1:${path}`, 'tampered');
+    await w.t.action(internal.storage.recheckCopy, { id: c!._id });
+    expect(w.objects.get(`p1:${path}`)).toContain('key-shortA');
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync', verify: 'match' });
+    // A URL that really serves nothing, even right after the rewrite: failing.
+    w.urlOverride.status = 404;
+    await w.t.action(internal.storage.recheckCopy, { id: c!._id });
+    expect((await copies(w.t, subId))[0]).toMatchObject({
+      state: 'failing',
+      reason: 'url_unreadable',
+    });
+    // A refresh does not clear it; a read that matches does.
+    await w.t.action(internal.storage.refreshMirrorsForSubscription, { subscriptionId: subId });
+    expect((await copies(w.t, subId))[0]!.state).toBe('failing');
+    w.urlOverride.status = null;
+    await w.t.action(internal.storage.recheckCopy, { id: c!._id });
+    expect((await copies(w.t, subId))[0]).toMatchObject({ state: 'in_sync', verify: 'match' });
   });
 
   test('an overwritten object is seen and rewritten', async () => {
