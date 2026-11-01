@@ -1,0 +1,81 @@
+name: Client compatibility (desktop VMs)
+# The packaged SFL app in a real desktop session of each target distribution
+# (docs/client-compatibility.md "Full desktop VMs"): a pinned distribution image
+# booted under KVM on a standard hosted runner, provisioned into an Xfce session
+# that logs in by itself, the verified .deb installed with apt (its own service
+# starts the daemon). The VM is thrown away with the runner, so pull-request
+# code is safe here; it runs on a PR only when the desktop path itself changes.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/client-compat-desktop.yml
+      - scripts/compat/desktop-vm.sh
+      - scripts/compat/sfl-remote.sh
+      - tests/compat/sfl.ts
+  push:
+    branches: [main]
+  schedule:
+    - cron: '47 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: client-compat-desktop-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  desktop:
+    name: SFL on ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [debian-13-xfce]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v6
+        with:
+          # download.ts re-verifies every cached artifact's SHA-256 before use.
+          path: .cache/compat/bin
+          key: compat-bin-${{ hashFiles('tests/compat/manifest.ts') }}
+      - name: Let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - run: bun --no-env-file scripts/compat/download.ts
+      - name: Boot the ${{ matrix.target }} VM into its Xfce session
+        run: bash scripts/compat/desktop-vm.sh up ${{ matrix.target }}
+      - name: Install the verified SFL package in the VM
+        run: bash scripts/compat/desktop-vm.sh install-sfl
+      - run: bun run test:compat
+        env:
+          FCP_COMPAT_SFL_REMOTE: scripts/compat/sfl-remote.sh
+          FCP_COMPAT_OS: ${{ matrix.target }}
+      - if: always()
+        run: bun --no-env-file scripts/compat/report.ts
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: sfl-${{ matrix.target }}
+          # The sanitized summary and the driver's result and screenshots
+          # (fixture data only). Raw configs and logs can contain keys.
+          path: |
+            test-results/compat/public/
+            test-results/compat/sfl/
+          retention-days: 14
+      - if: always()
+        run: bash scripts/compat/desktop-vm.sh down

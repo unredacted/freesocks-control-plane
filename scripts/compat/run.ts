@@ -11,9 +11,10 @@ mkdirSync('test-results/compat', { recursive: true });
 // Pass the variable explicitly: a mutation of process.env is not reliably
 // inherited by child processes under every runtime.
 const env = { ...process.env, FCP_COMPAT_BUN_VERSION: bunVersion };
-// On the desktop-VM path the packaged app is installed on the runner itself, so
-// the container image that carries it is never used.
-const buildDesktopImage = !process.env.FCP_COMPAT_SFL_EXECUTABLE;
+// On the desktop paths the packaged app is installed on the runner itself or in
+// a desktop VM, so the container image that carries it is never used.
+const buildDesktopImage =
+  !process.env.FCP_COMPAT_SFL_EXECUTABLE && !process.env.FCP_COMPAT_SFL_REMOTE;
 const docker = (...args: string[]) =>
   execFileSync('docker', [...compose, ...args], { stdio: 'inherit', env });
 let status = 1;
