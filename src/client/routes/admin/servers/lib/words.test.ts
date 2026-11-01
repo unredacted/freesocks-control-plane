@@ -218,6 +218,14 @@ describe('what the page says', () => {
       "Members get this node's edges instead. Once its traffic stops, delete this front at its provider, and its address here.",
     );
     expect(frontsHint(2)).toMatch(/delete these fronts at their provider/);
+    // With the count of the node's keys that have not fetched since it went live.
+    expect(frontsHint(3, { stale: 1204, total: 2050 })).toBe(
+      "Members get this node's edges instead. 1,204 of its 2,050 keys have not fetched since it went live: those apps still use these fronts until the member updates the subscription in the app. Once their traffic stops, delete these fronts at their provider, and their addresses here.",
+    );
+    expect(frontsHint(1, { stale: 1, total: 1 })).toMatch(/1 of its 1 key has not fetched/);
+    expect(frontsHint(1, { stale: 0, total: 9 })).toBe(
+      "Members get this node's edges instead, and every key on it has fetched since it went live. Delete this front at its provider, and its address here.",
+    );
   });
 
   test('a transport whose only addresses are fronts left out has none for members', () => {
@@ -253,6 +261,8 @@ describe('what the page says', () => {
       nodeWords(node({ profile: null }) as never).sentence,
       frontsHint(1),
       frontsHint(2),
+      frontsHint(2, { stale: 5, total: 9 }),
+      frontsHint(1, { stale: 0, total: 9 }),
     ].join('\n');
     expect(all).not.toMatch(/—|–/);
     expect(all).not.toMatch(/\/api\//);

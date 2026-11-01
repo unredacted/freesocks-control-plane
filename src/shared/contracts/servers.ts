@@ -113,6 +113,13 @@ export const NodeView = z.object({
   tags: z.array(z.string()),
   /** The node's Xray version as the backend reports it (null until observed). */
   xrayVersion: z.string().nullable().default(null),
+  /**
+   * While the node is bound and has operator fronts: how many of its keys had
+   * not fetched their subscription since the binding was claimed when last
+   * counted (their apps still use the fronts), of how many. Null: no fronts,
+   * or not counted yet.
+   */
+  frontKeys: z.object({ stale: z.number(), total: z.number() }).nullable().default(null),
   profile: z
     .object({
       profileUuid: z.string(),

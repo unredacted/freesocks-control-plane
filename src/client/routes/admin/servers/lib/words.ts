@@ -260,11 +260,32 @@ export function splitAddresses<A extends Pick<AddressView, 'operatorFront'>>(
   };
 }
 
-/** The line under a node's own fronts on its page (`splitAddresses`). */
-export function frontsHint(count: number): string {
-  return count === 1
-    ? "Members get this node's edges instead. Once its traffic stops, delete this front at its provider, and its address here."
-    : "Members get this node's edges instead. Once their traffic stops, delete these fronts at their provider, and their addresses here.";
+/**
+ * The line under a node's own fronts on its page (`splitAddresses`). `keys`:
+ * how many of the node's keys had not fetched since it went live when last
+ * counted (`NodeView.frontKeys`), whose apps still use the fronts.
+ */
+export function frontsHint(
+  count: number,
+  keys: { stale: number; total: number } | null = null,
+): string {
+  const one = count === 1;
+  const it = one ? 'this front' : 'these fronts';
+  if (keys && keys.stale === 0)
+    return `Members get this node's edges instead, and every key on it has fetched since it went live. Delete ${it} at ${one ? 'its' : 'their'} provider, and ${one ? 'its address' : 'their addresses'} here.`;
+  const holding =
+    keys && keys.stale > 0
+      ? ` ${keysHolding(keys)} not fetched since it went live: those apps still use ${it} until the member updates the subscription in the app.`
+      : '';
+  return one
+    ? `Members get this node's edges instead.${holding} Once its traffic stops, delete this front at its provider, and its address here.`
+    : `Members get this node's edges instead.${holding} Once their traffic stops, delete these fronts at their provider, and their addresses here.`;
+}
+
+/** "1 of its 3 keys has" / "40 of its 2,050 keys have". */
+function keysHolding(keys: { stale: number; total: number }): string {
+  const n = (x: number) => x.toLocaleString('en-US');
+  return `${n(keys.stale)} of its ${n(keys.total)} ${keys.total === 1 ? 'key' : 'keys'} ${keys.stale === 1 ? 'has' : 'have'}`;
 }
 
 function list(names: readonly string[]): string {

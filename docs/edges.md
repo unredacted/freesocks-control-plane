@@ -1719,8 +1719,12 @@ minClientVer, maxClientVer}` in the plan. Each restriction is its own reason wit
   plan hash covers, so a front added, removed or renamed since is `edge.plan_stale`; the review
   says members reach the node through a front FCP did not build and stop getting it once the
   node is live), the render leaves it out once the node is bound, and attention
-  `front_host_unused` (info) says it can be deleted at its provider, never
-  `direct_host_reappeared`.
+  `front_host_unused` (info) says it can be deleted at its provider once its traffic stops,
+  never `direct_host_reappeared`. An app that has not fetched its subscription since go-live
+  still holds the body from before and connects through the front until its member updates the
+  subscription, so the item (and the node page) says how many of the node's keys have not
+  fetched since (§ "Direct-Host hides and the restore workflow", the keys that still hold a
+  front). Deleting the front while that number is high cuts those apps off.
 
 What a protect run writes to such a panel, in order:
 
@@ -1996,9 +2000,31 @@ transport that dial an IP that is neither the node nor an edge of the origin and
 such as a load balancer the operator built by hand. A Host by a name is never one (a lookup
 that failed would leave the node itself looking like a front), so it keeps the critical alarm. A member render leaves their entries out like any it
 cannot place, but an entry a known front names is not the node: it raises attention
-`front_host_unused` (info: members no longer get it, so it can be deleted at its provider, and
-its Host in the backend) instead of `direct_host_reappeared`. An entry left out that no look
-knows stays the critical alarm. The node page (Admin -> Servers -> the node, each transport)
+`front_host_unused` (info: members no longer get it, so it can be deleted at its provider once
+its traffic stops, and its Host in the backend) instead of `direct_host_reappeared`. An entry
+left out that no look knows stays the critical alarm.
+
+**The keys that still hold a front** (`convex/edgeFrontKeys.ts`, `lib/edges/frontKeys.ts`). A
+member render leaves the front out from the moment the binding is claimed, but an app that has
+not fetched its subscription since still has the body from before, the front in it, and connects
+through it (most link-list apps never refresh on their own: docs/client-compatibility.md
+"Refresh behaviour"). So the same look, for a bound node with fronts, schedules a count of the
+node's keys at most hourly (`frontKeysDue`): an action pages the node's active keys
+(`by_backend_server_pinned`, 50 a page, one query each; never inside the attention query, since
+`subscriptions` scales with traffic) and stores on the origin how many there are and how many
+have not fetched since the binding's claim (`lastDeliveredAt` absent or before the binding's
+`updatedAt`; `relays.frontKeys {at, since, stale, total}`, counts only). A count made against an
+earlier claim is dropped, and one the binding has moved past since is not shown (a binding
+claimed again moves the boundary). `front_host_unused` then carries `staleKeys` and `keys` and
+says how many keys still connect through the front and that a member moves over by updating the
+subscription in the app; with none left it says every key has fetched since. The node page's
+line under its fronts says the same (`NodeView.frontKeys`). A key that never fetched counts as
+holding it (it may be a copied configuration). An app reaching the backend's own subscription URL
+directly is not counted: that body lists the front's Host for as long as it is enabled. When the
+last front goes (its Host disabled or deleted), the next look clears both records, so the count
+ends with it: FCP cannot see a load balancer that no Host names, and apps holding the old body
+still connect through it. Read the count before disabling the Host, and delete the load balancer
+only once its own traffic has fallen. The node page (Admin -> Servers -> the node, each transport)
 lists such a Host apart from "Addresses members get", as one of the operator's own fronts left
 out of members' subscriptions, once the node is bound: `serverAdmin.tree` marks an address
 `operatorFront` when its Host is one the `operatorFronts` of the origin the node's delivery
@@ -6065,3 +6091,11 @@ fails its edge instead of leaving it waiting for an operator (the reconcile clos
 already parked in `needs_operator` from before stays where it is: close it with Destroy. To roll
 back, run `edgeRotations:clearRefusedLocations` with no arguments before deploying the older
 build (an older schema refuses the push while a node still carries the field).
+
+**The keys that still hold a front** add one optional field (`relays.frontKeys`) and two facts
+on `front_host_unused` (`staleKeys`, `keys`), plus `NodeView.frontKeys`: one deploy, no
+migration, no env change. From the first reconcile pass after it, each bound node with operator
+fronts is counted within minutes and then at most hourly; each count pages that node's active
+keys, 50 a query. To roll back, run `edgeHostHides:clearFrontsForRollback` with no arguments
+right before deploying the older build: its schema has no `frontKeys` (it clears the fronts too,
+which the older build records again on its next pass).

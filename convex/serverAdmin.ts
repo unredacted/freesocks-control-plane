@@ -22,6 +22,7 @@ import { poolFromConfig } from './lib/remnawavePlacement';
 import { flattenServerConfig, resolveServerConfig, serverConfigWrites } from './lib/serverConfig';
 import { modeRefOf } from './nodeIntents';
 import { deliveryBindingFor } from './relays';
+import { frontKeysFor } from './lib/edges/frontKeys';
 import { realityClientRefusal } from '../src/shared/contracts/realityClients';
 
 const iso = (ms: number | undefined) => (ms ? new Date(ms).toISOString() : null);
@@ -268,6 +269,11 @@ function mapHost(h: Doc<'panelHosts'>, isFront?: (h: Doc<'panelHosts'>) => boole
   };
 }
 
+interface NodeFronts {
+  isFront: (h: Doc<'panelHosts'>) => boolean;
+  keys: { stale: number; total: number } | null;
+}
+
 /**
  * Per node (by uuid), which of its Hosts are operator fronts its members no
  * longer get: those `relays.operatorFronts` records for the origin the node's
@@ -275,14 +281,17 @@ function mapHost(h: Doc<'panelHosts'>, isFront?: (h: Doc<'panelHosts'>) => boole
  * unique; a record from before uuids were kept matches by remark until the
  * next look rewrites it). A member render leaves them out (docs/edges.md
  * "Direct-Host hides and the restore workflow"). A node with no active
- * binding is served the raw body, fronts included, so it has none.
+ * binding is served the raw body, fronts included, so it has none. With each,
+ * how many of the node's keys had not fetched since the binding was claimed
+ * when last counted (`relays.frontKeys`; null when not counted for this claim):
+ * their apps still use the fronts.
  */
 async function leftOutFronts(
   db: DatabaseReader,
   sid: Id<'backendServers'>,
   nodes: readonly Doc<'panelNodes'>[],
-): Promise<Map<string, (h: Doc<'panelHosts'>) => boolean>> {
-  const out = new Map<string, (h: Doc<'panelHosts'>) => boolean>();
+): Promise<Map<string, NodeFronts>> {
+  const out = new Map<string, NodeFronts>();
   const relays = await db
     .query('relays')
     .withIndex('by_backend_server', (q) => q.eq('backendServerId', sid))
@@ -291,14 +300,17 @@ async function leftOutFronts(
   if (bySlug.size === 0) return out;
   for (const n of nodes) {
     const binding = await deliveryBindingFor(db, sid, originNameOf(n.name));
-    const fronts = binding && bySlug.get(binding.relaySlug)?.operatorFronts;
+    const relay = binding ? bySlug.get(binding.relaySlug) : undefined;
+    const fronts = relay?.operatorFronts;
     if (!fronts) continue;
+    const counted = frontKeysFor(relay.frontKeys, binding);
+    const keys = counted ? { stale: counted.stale, total: counted.total } : null;
     if (fronts.hostUuids) {
       const uuids = new Set(fronts.hostUuids.map((u) => u.toLowerCase()));
-      out.set(n.nodeUuid, (h) => uuids.has(h.hostUuid.toLowerCase()));
+      out.set(n.nodeUuid, { isFront: (h) => uuids.has(h.hostUuid.toLowerCase()), keys });
     } else {
       const remarks = new Set(fronts.remarks);
-      out.set(n.nodeUuid, (h) => remarks.has(h.remark));
+      out.set(n.nodeUuid, { isFront: (h) => remarks.has(h.remark), keys });
     }
   }
   return out;
@@ -372,7 +384,7 @@ export const tree = internalQuery({
                 : null,
               addresses: mine
                 .sort((a, b) => (a.viewPosition ?? 0) - (b.viewPosition ?? 0))
-                .map((h) => mapHost(h, frontsOf.get(n.nodeUuid))),
+                .map((h) => mapHost(h, frontsOf.get(n.nodeUuid)?.isFront)),
               modeGroups: squads
                 .filter((sq) => sq.inboundUuids.includes(i.inboundUuid))
                 .map((sq) => ({ groupUuid: sq.squadUuid, name: sq.name })),
@@ -389,6 +401,7 @@ export const tree = internalQuery({
           usersOnline: n.usersOnline,
           tags: n.tags,
           xrayVersion: n.xrayVersion ?? null,
+          frontKeys: frontsOf.get(n.nodeUuid)?.keys ?? null,
           profile: profile
             ? {
                 profileUuid: profile.profileUuid,

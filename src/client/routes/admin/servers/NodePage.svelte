@@ -350,7 +350,7 @@
                   <h3 class="text-xs font-medium uppercase">
                     Your own fronts, left out of members' subscriptions
                   </h3>
-                  <p>{frontsHint(split.fronts.length)}</p>
+                  <p>{frontsHint(split.fronts.length, node.frontKeys)}</p>
                   <ul class="mt-1 space-y-0.5">
                     {#each split.fronts as host (host.addressUuid)}
                       {@render addressRow(inbound, host)}

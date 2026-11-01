@@ -1044,8 +1044,8 @@ const COPY = {
   front_host_unused: {
     label: 'Old front no longer used',
     explain:
-      'A backend Host on a protected node dials a front FCP did not build, such as a load balancer made by hand. It is not the node, and members no longer get it.',
-    fix: 'Delete that front at its provider, and its Host in the backend.',
+      'A backend Host on a protected node dials a front FCP did not build, such as a load balancer made by hand. It is not the node, and members no longer get it in their subscriptions, but an app that has not fetched its subscription since the node went live still connects through it.',
+    fix: 'Once its traffic stops, delete that front at its provider, and its Host in the backend. A member whose app stops connecting then updates the subscription in the app.',
   },
   restore_in_progress: {
     label: 'Restoring the direct address',

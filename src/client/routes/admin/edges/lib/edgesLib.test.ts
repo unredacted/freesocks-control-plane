@@ -519,6 +519,35 @@ describe('a failed run in the attention list', () => {
   });
 });
 
+describe('an unused operator front row', () => {
+  const row = (facts: Record<string, unknown>) =>
+    ({ ...item({ kind: 'front_host_unused', severity: 'info' }), facts }) as AttentionItem;
+  it("says how many of the node's keys still hold it, and how a member moves over", () => {
+    const h = attentionHeading(
+      row({ count: 3, remarks: ['lb-a', 'lb-b', 'lb-c'], staleKeys: 1204, keys: 2050 }),
+      true,
+    );
+    expect(h).toMatchObject({ label: 'Old front no longer used', final: true });
+    expect(h.explain).toMatch(
+      /1,204 of the node's 2,050 keys have not fetched since the node went live, so those apps still connect through it until the member updates the subscription in the app\./,
+    );
+    expect(h.explain).toMatch(/Once its traffic stops, delete it at its provider/);
+    expect(attentionHeading(row({ count: 1, staleKeys: 1, keys: 1 }), true).explain).toMatch(
+      /1 of the node's 1 key has not fetched/,
+    );
+  });
+  it('says when every key has fetched since', () => {
+    expect(attentionHeading(row({ count: 1, staleKeys: 0, keys: 12 }), true).explain).toMatch(
+      /Every key on the node has fetched its subscription since the node went live/,
+    );
+  });
+  it("falls back to the kind's words before a count", () => {
+    expect(attentionHeading(row({ count: 1, remarks: ['lb-a'] }), true)).toMatchObject({
+      final: false,
+    });
+  });
+});
+
 describe('a REALITY refusal row', () => {
   const row = (facts: Record<string, unknown>) =>
     ({ ...item({ kind: 'reality_refuses_clients' }), facts }) as AttentionItem;

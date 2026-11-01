@@ -1828,6 +1828,19 @@ export default defineSchema({
         hostUuids: v.optional(v.array(v.string())),
       }),
     ),
+    // While the node has operator fronts: how many of its active keys had not
+    // fetched their subscription since its binding was claimed (`since`, the
+    // binding's `updatedAt`) when last counted (convex/edgeFrontKeys.ts, at
+    // most hourly). Their apps still hold a body with the fronts in it. Counts
+    // only, never a key. Absent = no fronts, or not counted yet.
+    frontKeys: v.optional(
+      v.object({
+        at: v.number(),
+        since: v.number(),
+        stale: v.number(),
+        total: v.number(),
+      }),
+    ),
     // The node's REALITY transports that refuse sing-box or Mihomo clients, as
     // the reconcile's last look at the panel saw them (edgeRealityClients.note;
     // src/shared/contracts/realityClients.ts): attention `reality_refuses_clients`
