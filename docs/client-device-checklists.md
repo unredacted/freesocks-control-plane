@@ -20,13 +20,13 @@ Every record is for one commit, so test every app against the same beta deployme
 
 Write down the app's exact version and the device's OS and version, then:
 
-| Check      | Pass when                                                                                                                   | Screenshot                    |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| Import     | The app's button on the account page (or the copied link) adds a profile holding every server the account page lists.       | The app's server list.        |
-| Connection | The app connects through one of those servers.                                                                              | The app's connected screen.   |
-| HTTPS      | While connected, `https://ipleak.net` loads in the device's browser and shows an address that is not your own network's.    | The page's address section.   |
-| DNS        | On the same page, no DNS server listed belongs to your own network or ISP (names resolved through the tunnel).              | The page's DNS section.       |
-| Refresh    | The app's update action on the profile succeeds: its last-updated time changes and the list still matches the account page. | The profile after the update. |
+| Check      | Pass when                                                                                                                                                                                                                                  | Screenshot                    |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
+| Import     | The app's button on the account page (or the copied link) adds a profile with every server of the subscription: the same names in every app you test (FCP serves the same entries in every format; the first app's list is the reference). | The app's server list.        |
+| Connection | The app connects through one of those servers.                                                                                                                                                                                             | The app's connected screen.   |
+| HTTPS      | While connected, `https://ipleak.net` loads in the device's browser and shows an address that is not your own network's.                                                                                                                   | The page's address section.   |
+| DNS        | On the same page, no DNS server listed belongs to your own network or ISP (names resolved through the tunnel).                                                                                                                             | The page's DNS section.       |
+| Refresh    | The app's update action on the profile succeeds: its last-updated time changes and the server list is unchanged.                                                                                                                           | The profile after the update. |
 
 A check that fails is a bug: report it and record nothing for that app. `scripts/compat/evidence.ts` refuses to write a record with a failed check.
 

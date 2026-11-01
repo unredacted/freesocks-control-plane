@@ -38,13 +38,21 @@ if (!client)
   );
 
 const checks = [
-  ['import', 'Import: every server the account page lists is in the app'],
+  [
+    'import',
+    'Import: the profile holds every server of the subscription (the same names as in the other apps)',
+  ],
   ['connection', 'Connection: the app connected through one of them'],
   ['dns', 'DNS: names resolved while connected, and no resolver of your own network showed'],
   ['https', 'HTTPS: an HTTPS page loaded, from an address that is not your own'],
   ...(client.format === 'outline'
     ? []
-    : [['refresh', 'Refresh: an update in the app succeeded and the list still matches'] as const]),
+    : [
+        [
+          'refresh',
+          'Refresh: an update in the app succeeded and the server list is unchanged',
+        ] as const,
+      ]),
 ] as const;
 for (const [, question] of checks) {
   const answer = prompt(`${question}? [y/N]`);
