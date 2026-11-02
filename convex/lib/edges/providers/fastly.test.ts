@@ -3226,6 +3226,44 @@ describe('fastly: one wildcard certificate per account and zone', () => {
     expect(dns.deleted).toEqual([]);
   });
 
+  test('a record FCP did not write that already holds this subscription’s challenge is used as it is, never edited or deleted', async () => {
+    // The zone's certificate ordered by hand in the same Fastly customer: Fastly
+    // validates every subscription of that customer for the zone through it.
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    await serve(p.route);
+    const dns = fakeDns([
+      {
+        id: 'handmade',
+        type: 'CNAME',
+        name: '_acme-challenge.example.org',
+        content: WILD_ACME,
+        proxied: false,
+        comment: '',
+      },
+    ]);
+    const acme = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_dns_acme')!;
+    const out = await fastlyProvider.runStep(cfgW, acme, spec, tpl, afterTls(WILD));
+    expect(out.status).toBe('done');
+    expect(out.resources).toEqual([
+      expect.objectContaining({
+        resourceId: 'handmade',
+        ownership: 'adopted',
+        meta: expect.objectContaining({ candidate: true, shared: true }),
+      }),
+    ]);
+    expect(await fastlyProvider.discover(cfgW, acme, spec, afterTls(WILD), 1)).toMatchObject({
+      status: 'found',
+      resources: [{ resourceId: 'handmade' }],
+    });
+    expect(dns.deleted).toEqual([]);
+    expect(dns.rows.filter((x) => x.name === '_acme-challenge.example.org')).toEqual([
+      expect.objectContaining({ id: 'handmade', content: WILD_ACME, comment: '' }),
+    ]);
+  });
+
   test('our own record for a subscription that is gone is replaced; one for a live subscription is not', async () => {
     const p = wildcardProvider();
     p.state.ordered = true;

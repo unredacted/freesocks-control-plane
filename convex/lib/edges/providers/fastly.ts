@@ -1103,10 +1103,13 @@ function versionlessResource(
  * The ACME step of a WILDCARD edge, shared by the step and its discovery: the
  * record at `_acme-challenge.<zone>` carrying this customer's marker for this
  * subscription is ours (found). Our own marker for a subscription that no
- * longer exists is stale: absent, and the step replaces it. Anything else
- * there (another customer's marker, no marker, our marker for a subscription
- * that still exists) is somebody else's: ambiguous, recorded as candidates
- * that are never deleted.
+ * longer exists is stale: absent, and the step replaces it. A record without
+ * our marker that already holds THIS subscription's challenge (the zone's
+ * certificate ordered by hand in the same Fastly customer, which Fastly
+ * validates through the same name) is used as it is: found, as a candidate,
+ * never edited or deleted. Anything else there (another customer's marker or
+ * challenge, our marker for a subscription that still exists) is somebody
+ * else's: ambiguous, recorded as candidates that are never deleted.
  */
 async function sharedAcmeRecord(
   cfg: FastlyConfig,
@@ -1161,11 +1164,18 @@ async function sharedAcmeRecord(
     }
     (gone ? stale : foreign).push(r);
   }
-  if (foreign.length > 0)
+  if (foreign.length > 0) {
+    const challenge = managedDnsChallenge(
+      await api.getTlsSubscription(sub.resourceId, 'tls_authorizations'),
+    );
+    const same = challenge && foreign.find((r) => sameDnsName(r.content, challenge.values[0]!));
+    if (same && foreign.length === 1)
+      return { status: 'found', resource: candidateOf(dnsResource('acme', same, dns, true)) };
     return {
       status: 'ambiguous',
       candidates: foreign.map((r) => candidateOf(dnsResource('acme', r, dns, true))),
     };
+  }
   return { status: 'absent', marker, stale, dns };
 }
 

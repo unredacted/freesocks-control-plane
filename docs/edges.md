@@ -406,7 +406,10 @@ intent default, § "Fastly fronts"):
   EFFECTIVE TLS configuration (the location's, else the default one, the same one the traffic
   CNAME points at); one ordered another way, or several, is never reused
   (`shared_certificate_ambiguous`). At the challenge name, a record with another customer's
-  marker or none is never reused, replaced or deleted (`acme_name_in_use`); our own customer's
+  marker or none is never replaced or deleted; it stops the step (`acme_name_in_use`) unless it
+  already holds the new subscription's own challenge (the zone's certificate ordered by hand in
+  the same Fastly customer: Fastly validates every subscription of that customer for the zone
+  through one name), which is then used as it is, as a candidate; our own customer's
   marker for a subscription that no longer exists (a failed one deleted at the provider) is
   stale, and the step replaces it with the new subscription's; so is our own record that no
   longer holds the challenge's current value (edited by hand, or a target the provider moved).
@@ -451,7 +454,9 @@ SNI and the zone still link the fronts of one account either way, so the zone ch
 more than the certificate. A zone carries the wildcard of one Fastly account only (a second
 one finds the first one's ACME record and stops at `acme_name_in_use`), and the challenge name
 sits at the zone apex: a zone whose own certificate is validated there by another ACME client
-should keep one certificate per front.
+should keep one certificate per front. A certificate the same Fastly customer ordered by hand
+for the zone is no obstacle: its record already holds the challenge FCP's subscription asks
+for, so FCP uses it and never edits or deletes it.
 
 **CAA preflight.** The check of a Fastly or CloudFront front location (run by the credential test for every
 location, by "Check again" and when a zone is added) resolves the CAA records of that location's
