@@ -105,7 +105,35 @@ export const plan = internalQuery({
       for (const n of listener.tlsNames ?? [])
         if (n.status === 'active' || (n.drainUntil !== undefined && n.drainUntil > now))
           inUse.add(n.name);
-    const retained = onPanel.filter((n) => inUse.has(n));
+    // So does a name an address members hold presents: the node refuses every
+    // connection presenting a name its transport no longer lists. An address
+    // FCP writes per name (an enrolled node's own) is removed once its name
+    // has left, so it holds nothing; an adopted node's and an operator's are
+    // never rewritten.
+    const perName = new Set<string>();
+    for (const i of await ctx.db
+      .query('panelNodeIntents')
+      .withIndex('by_server', (q) => q.eq('backendServerId', b.backendServerId))
+      .collect())
+      if (!i.adopted) for (const u of i.addressUuids ?? []) perName.add(u);
+    const presented = new Set<string>();
+    for (const h of await ctx.db
+      .query('panelHosts')
+      .withIndex('by_server', (q) => q.eq('backendServerId', b.backendServerId))
+      .collect())
+      if (
+        !h.isDisabled &&
+        h.configProfileInboundUuid === b.inboundUuid &&
+        h.sni &&
+        !perName.has(h.hostUuid)
+      )
+        presented.add(h.sni.toLowerCase());
+    const retained = onPanel.filter((n) => inUse.has(n) || presented.has(n.toLowerCase()));
+    const offered = new Set(
+      names
+        .filter((n) => n.status === 'active' && n.qualification.state === 'ok')
+        .map((n) => n.name),
+    );
     const planned = planAllowlist(
       names.map((n) => ({
         name: n.name,
@@ -143,6 +171,8 @@ export const plan = internalQuery({
       names: planned.names,
       added,
       removed: onPanel.filter((n) => !after.has(n)),
+      // Kept only because an address members hold presents it.
+      held: retained.filter((n) => !inUse.has(n) && !offered.has(n)),
       witness: witness ?? null,
       overflow: planned.overflow,
       changed: added.length > 0 || onPanel.some((n) => !after.has(n)),

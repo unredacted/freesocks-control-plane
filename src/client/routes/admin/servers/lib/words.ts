@@ -184,7 +184,7 @@ export function needsYou(
     if (p.foreignEditAt)
       out.push({
         key: `edit:${p.profileUuid}`,
-        text: `${p.name} was changed on the backend, not from here. What this page shows of it may be out of date.`,
+        text: `${p.name} was changed on the backend, not from here. What this page shows of it may be out of date. Look at it, then press Seen it: until then, a node FCP manages is closed for maintenance the next time FCP checks it.`,
       });
   if (tree.unattached.addresses.length > 0)
     out.push({
@@ -450,6 +450,8 @@ const ERROR_WORDS: Record<string, string> = {
     "No address on this node's transport carries its name or address. Tick the addresses members use for it.",
   'servers.adopt_address_unknown':
     'An address you ticked is turned off, not on that transport any more, or another node has it. Refresh and pick again.',
+  'servers.adopt_mode_mismatch':
+    "This node's own addresses are on another transport, so its members reach it there, not on this mode's. Adopt it as the mode of that transport. If the setup has none, add it with Change setup first.",
   'servers.adopt_edges_retest':
     'Edges protect this node. Adopting it would keep its tested addresses from members until each is tested again, so it stays as it is. Its server names and edges work without adopting it.',
   'servers.mode_change_needs_admin':
@@ -802,6 +804,22 @@ export function serverErrorWords(code: string | null | undefined): string {
   // Codes carry detail after a colon (`servers.profile_incompatible:TAG:field`).
   const key = code ? (code.split(':')[0] ?? '') : '';
   return ERROR_WORDS[key] || 'That did not work. Try again in a moment.';
+}
+/**
+ * A refused adoption, said with the setup's modes: a node whose members reach
+ * it on another transport (`servers.adopt_mode_mismatch:<tag>`) is named the
+ * mode of that transport, since the mode list does not show transports.
+ */
+export function adoptRefusalWords(
+  code: string | null | undefined,
+  modes: readonly { name: string; tag: string }[],
+): string {
+  const [key, tag] = (code ?? '').split(':');
+  if (key !== 'servers.adopt_mode_mismatch' || !tag) return serverErrorWords(code);
+  const theirs = modes.find((m) => m.tag === tag);
+  return theirs
+    ? `This node's members reach it on ${tag}, not on this mode's transport. Adopt it as ${theirs.name}.`
+    : `This node's members reach it on ${tag}, not on this mode's transport. Add the mode for ${tag} with Change setup first, then adopt it as that mode.`;
 }
 /** Every code with its own words (pinned by the tests against the server's vocabulary). */
 export const WORDED_CODES: readonly string[] = Object.keys(ERROR_WORDS);

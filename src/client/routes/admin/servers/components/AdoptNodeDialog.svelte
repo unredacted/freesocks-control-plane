@@ -23,7 +23,7 @@
   import { adoptNode, invalidateServers } from '@client/lib/serversApi';
   import type { ModeSetupView, ServerTree } from '../../../../../shared/contracts/servers';
   import { codeOf } from '../lib/run';
-  import { serverErrorWords, shapeWords } from '../lib/words';
+  import { adoptRefusalWords, shapeWords } from '../lib/words';
   import { realityRefusalWords } from '@client/lib/realityClientWords';
 
   interface Props {
@@ -104,7 +104,7 @@
       );
       open = false;
     } catch (e) {
-      toast.error(serverErrorWords(codeOf(e)));
+      toast.error(adoptRefusalWords(codeOf(e), modes));
     } finally {
       busy = false;
       invalidateServers(qc);

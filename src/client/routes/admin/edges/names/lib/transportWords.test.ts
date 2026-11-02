@@ -390,6 +390,10 @@ describe('what each action did, in words', () => {
     expect(sendPlanWords({ ...plan, changed: false }, two)).toEqual([
       'The backend already lists exactly these names. Nothing to send.',
     ]);
+    // A name an address members hold presents is kept, and the sheet says why.
+    expect(sendPlanWords({ ...plan, held: ['a.example'] }, two)[1]).toBe(
+      '1 name the list no longer gives stays: an address members hold presents it, and they could not connect without it. Point that address at another name first to drop it.',
+    );
     expect(provenWords(6, 'node-one')).toBe('6 names are now given to members on node-one.');
     expect(provenWords(0, 'node-one')).toBe('Recorded. node-one had nothing new to hand out.');
     expect(

@@ -283,6 +283,89 @@ describe('rollout', () => {
       'b.example',
     ]);
   });
+
+  test('a name an address members hold presents stays, unless FCP writes that address per name', async () => {
+    const { t, panel, serverId, bindingId, listenerId } = await seed();
+    await t.action(internal.sniRollouts.start, { bindingId });
+    panel.node.lastStatusChange = 't1';
+    await t.action(internal.backendWrites.reconcile, {});
+    // b.example is off the origin and past its drain: nothing of Edges holds it.
+    await t.mutation(internal.relayListeners.retireName, { id: listenerId, names: ['b.example'] });
+    await t.run(async (ctx) => {
+      const l = (await ctx.db.get(listenerId))!;
+      await ctx.db.patch(listenerId, {
+        tlsNames: l.tlsNames!.map((n) =>
+          n.name === 'b.example' ? { ...n, drainUntil: Date.now() - 1 } : n,
+        ),
+      });
+    });
+    const now = Date.now();
+    const host = (hostUuid: string, sni: string, isDisabled = false) =>
+      t.run((ctx) =>
+        ctx.db.insert('panelHosts', {
+          backendServerId: serverId,
+          hostUuid,
+          remark: `${hostUuid}-reality`,
+          address: 'node.example.net',
+          port: 443,
+          sni,
+          isDisabled,
+          isHidden: false,
+          configProfileInboundUuid: INBOUND,
+          nodeUuids: [],
+          observedAt: now,
+        }),
+      );
+    const intent = (name: string, hostUuid: string, adopted: boolean) =>
+      t.run((ctx) =>
+        ctx.db.insert('panelNodeIntents', {
+          backendServerId: serverId,
+          name,
+          label: name,
+          mode: 'privacy-reality',
+          contractVersion: 2,
+          generation: 1,
+          desiredHash: 'fixture',
+          state: 'ready',
+          observed: {
+            management: { address: '192.0.2.20', port: 2222 },
+            publicIps: { v4: '203.0.113.10' },
+            capabilities: { caddy: false, ipv6: false },
+            at: now,
+          },
+          settings: { originHostnameSource: 'none', publishV6: false, nodePort: 2222 },
+          machineRevision: 1,
+          activation: { stage: 'live', evidence: [] },
+          delivery: {
+            disposition: 'live',
+            acceptingAssignments: true,
+            exposure: { everLive: true, hosts: [hostUuid], mirrors: 0, testCredentials: 0, dns: 0 },
+          },
+          origin: { dns: 'none' },
+          addressUuids: [hostUuid],
+          ...(adopted
+            ? { adopted: { at: now, externallyFronted: false, activeInboundUuids: [INBOUND] } }
+            : {}),
+          registeredAt: now,
+          updatedAt: now,
+        }),
+      );
+    const plan = () => t.query(internal.sniRollouts.plan, { bindingId });
+    // A turned-off address, and an enrolled node's own (removed after its name), hold nothing.
+    await host('off', 'b.example', true);
+    await host('enrolled', 'B.example');
+    await intent('node-enrolled', 'enrolled', false);
+    expect(await plan()).toMatchObject({ removed: ['b.example'], held: [] });
+    // An adopted node's address keeps it, as does an operator's.
+    await host('adopted', 'b.example');
+    const adoptedId = await intent('node-adopted', 'adopted', true);
+    let p = await plan();
+    expect(p.names).toContain('b.example');
+    expect(p).toMatchObject({ removed: [], held: ['b.example'] });
+    await t.run((ctx) => ctx.db.delete(adoptedId));
+    p = await plan();
+    expect(p).toMatchObject({ removed: [], held: ['b.example'] });
+  });
 });
 
 describe('acceptance', () => {

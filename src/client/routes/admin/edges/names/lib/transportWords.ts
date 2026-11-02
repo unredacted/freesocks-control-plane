@@ -231,6 +231,11 @@ export function sendPlanWords(p: SniRolloutPlan, t: SniTransport): string[] {
     out.push(
       `${plural(p.removed.length, 'name')} will be removed. No member is given ${p.removed.length === 1 ? 'it' : 'any of them'} any more.`,
     );
+  const held = p.held?.length ?? 0;
+  if (held)
+    out.push(
+      `${plural(held, 'name')} the list no longer gives ${held === 1 ? 'stays' : 'stay'}: an address members hold presents ${held === 1 ? 'it' : 'them'}, and they could not connect without ${held === 1 ? 'it' : 'them'}. Point that address at another name first to drop ${held === 1 ? 'it' : 'them'}.`,
+    );
   if (p.overflow)
     out.push(`${plural(p.overflow, 'checked name')} will wait: the port's list is full for now.`);
   const nodes = t.profileNodes.length;

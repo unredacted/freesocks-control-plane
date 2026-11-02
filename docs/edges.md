@@ -2670,7 +2670,13 @@ itself (next section); an operator's test link stays available either way.
 
 **Removal is the reverse.** A name leaves the origins first, with its drain. The plan **retains**
 on the backend every name an origin still hands out or that is still draining, whoever it belongs to
-and whatever its family says, and a later rollout drops it once nothing holds it. A burn is
+and whatever its family says, and a later rollout drops it once nothing holds it. So does every name
+a turned-on address (backend Host) on the transport presents, unless FCP writes that address per name
+(an enrolled node's own, removed once its name has left): an adopted node's or an operator's address
+is never rewritten, and the node refuses every member presenting a name the transport no longer
+lists. One failed check of such a name would otherwise drop it at the next send and cut off every
+member that address serves. The plan lists those names as `held`, and the send sheet says to point
+the address at another name first. A burn is
 immediate on the origins and restarts nothing.
 
 ### FCP's own test of a send

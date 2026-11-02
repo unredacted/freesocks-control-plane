@@ -287,8 +287,13 @@ short id or a private key.
 
 The flag is a warning at the top of the Servers page and stays, across looks, until an operator
 says they have seen it (`POST {slug}/profiles/{uuid}/acknowledge`, audited as
-`servers.profile.foreign_edit_seen` with the profile name only). It changes nothing by itself:
-what to do about an edit is a judgement. A token made with another digest key is a new
+`servers.profile.foreign_edit_seen` with the profile name only). It writes nothing, and what to
+do about an edit is a judgement, but it decides how the next check of an enrolled node (adopted
+or not) reads the moved token: while the flag stands, the move is somebody else's edit and closes
+a live node under drift (`servers.foreign_profile_edit`); once seen, the move is re-stamped like
+FCP's own and the node stays live (a moved REALITY key still closes it). A ready node is checked
+only when something reconciles it (a rename, a port change, maintenance, a country change), so the
+notice says to look and press Seen it before that. A token made with another digest key is a new
 baseline, never a flag, and so is the logging harden, which is FCP's own edit outside the
 ledger and re-reads the backend as a baseline when it changed something.
 
@@ -685,7 +690,12 @@ pinning reads) or whose address is the row's. Only a Host turned on counts (one 
 is not live, and a re-approval would turn it back on as a candidate), never one another node
 recorded. A direct node with none is refused (`servers.adopt_addresses_missing`: nothing would
 tell its members' Hosts from anybody else's), and so is a named address that is off, not on
-the transport or another node's (`servers.adopt_address_unknown`). Where its members reach it is read from those Hosts (the
+the transport or another node's (`servers.adopt_address_unknown`). A node is adopted as the mode its
+members reach it on: when the addresses turned on under its name (FCP's form or the role's v1 remark) are all on
+another transport it runs and none is named, it is refused (`servers.adopt_mode_mismatch:<tag>`, naming the set-up
+mode of that transport, or saying to add one with Change setup). Under the wrong mode a maintenance whose checks
+never pass, or a retirement (which removes its row), would take the node from those members, and it could never be
+adopted as their mode. Where its members reach it is read from those Hosts (the
 test link, one per address with the endpoint it dials; the review's address tuples; its public
 address, or, for a Host that dials a name, its origin address, which edges dial once Edges
 protects it), never from the row, which may hold a private management address. A fronted node whose edge FCP does not run yet (an earlier

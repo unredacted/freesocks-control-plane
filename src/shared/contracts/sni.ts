@@ -262,6 +262,8 @@ export const SniRolloutPlan = z
     names: z.array(z.string()),
     added: z.array(z.string()),
     removed: z.array(z.string()),
+    // Names the list no longer gives that stay: an address members hold presents them.
+    held: z.array(z.string()).optional(),
     witness: z.string().nullable(),
     overflow: z.number(),
     changed: z.boolean(),
