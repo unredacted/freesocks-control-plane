@@ -1290,7 +1290,11 @@ distinct `backendPlacement` among the subscriptions pinned to the node, walked w
 over every page; a backend-server origin is one cohort of the whole server), never from render
 snapshots. Each representative body is fetched FRESH per supported format (links, sing-box,
 Clash, through catalogued client user agents) and run through `applyEdgeRender` in dry-run: no
-persistence, no snapshot. Every non-dark cohort must yield `serve` in every format; an approved
+persistence, no snapshot. A body is pinned to the node rehearsed whenever that node is in it
+(`fetchSubscriptionContent {pinNode}`), whatever its delivery gate says: the gate is closed
+for the length of an activation, which is exactly when the rehearsal looks, and with another
+node of the same group open the plain pick would land every key, the credential's too, on
+that other node (`pinned_elsewhere`). Every non-dark cohort must yield `serve` in every format; an approved
 dark cohort (`darkCohortKeys`) is excluded. A cohort's first key does not always stand for it:
 its body may be the backend's placeholder for an expired or disabled key (every entry at an
 unusable address, no node named: `placeholderBody`, `convex/lib/nodePinning.ts`), or resolve to

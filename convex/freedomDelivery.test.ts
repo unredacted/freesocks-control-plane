@@ -313,6 +313,38 @@ describe('the delivery rule', () => {
     expect((await fetch(true)).pinnedNode).toBe(OTHER);
   });
 
+  test("the rehearsal's look lands on the node it rehearses, closed or not, while that node is in the body", async () => {
+    stubPanel(`${OTHER_LINE}\n${COVERED_LINE}`);
+    // A key whose plain pick is the other node.
+    const short = Array.from({ length: 50 }, (_, i) => `short-${i}`).find(
+      (k) => pickNode(k, [OTHER, NODE]) === OTHER,
+    )!;
+    const { t, serverId } = await seed({ keys: [{ token: 'tok_one', short }] });
+    const fetch = (extra: Record<string, unknown>) =>
+      t.action(internal.backends.fetchSubscriptionContent, {
+        backend: 'remnawave',
+        backendServerId: serverId,
+        backendShortId: short,
+        subscriptionUrl: `https://panel.example/sub/${short}`,
+        nodeCheck: true,
+        ...extra,
+      });
+    expect((await fetch({})).pinnedNode).toBe(OTHER);
+    expect((await fetch({ pinNode: NODE })).pinnedNode).toBe(NODE);
+    // Its gate closed (an activation): members are kept off it, the rehearsal still looks at it.
+    await t.run(async (c) => {
+      const intent = await c.db
+        .query('panelNodeIntents')
+        .withIndex('by_server', (q) => q.eq('backendServerId', serverId))
+        .collect();
+      for (const i of intent.filter((x) => x.name === NODE))
+        await c.db.patch(i._id, { delivery: { ...i.delivery, disposition: 'activating' } });
+    });
+    expect((await fetch({ pinNode: NODE })).pinnedNode).toBe(NODE);
+    // A node the body does not carry pins nothing new: the plain pick stands.
+    expect((await fetch({ pinNode: 'absent-node' })).pinnedNode).toBe(OTHER);
+  });
+
   test('on: the raw backend URL of a freedom key is never shown', async () => {
     stubPanel(OTHER_LINE);
     const { t, subIds } = await seed();

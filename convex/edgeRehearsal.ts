@@ -328,6 +328,8 @@ async function fetchBody(
       userAgent: REHEARSAL_USER_AGENTS[format],
       ...(ref.excludeNode ? { excludeNode: ref.excludeNode } : {}),
       nodeCheck: true,
+      // The node rehearsed, closed while it activates: what its members get once it opens.
+      ...(c.nodeName ? { pinNode: c.nodeName } : {}),
     });
     return {
       kind: 'body',
