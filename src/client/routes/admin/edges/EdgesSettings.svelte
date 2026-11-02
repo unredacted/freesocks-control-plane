@@ -361,7 +361,7 @@
         A name needs a DNS lookup, which a censor can see and answer falsely, and blocking one zone
         stops every name in it. So a node's addresses are spread over the zones you pick, and apps
         that switch by themselves keep the IP as a fallback. Addresses made before this is on keep
-        their IPs.
+        their IPs until you open one and press Give it a name.
       </p>
       <div class="grid gap-5 sm:grid-cols-2">
         {#each NAMES_FIELDS as field (field.path)}

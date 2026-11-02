@@ -27,12 +27,15 @@
   import { Progress } from '@client/components/ui/progress';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Badge } from '@client/components/ui/badge';
-  import { liveRefreshFailure } from '../lib/edgeErrors';
+  import { edgeErrorCode, liveRefreshFailure } from '../lib/edgeErrors';
   import InlineError from '@client/components/InlineError.svelte';
+  import Link from '@client/components/Link.svelte';
   import {
+    edgeConfigQuery,
     edgeCountriesQuery,
     dismissEdgeName,
     edgeDetailQuery,
+    edgeKeys,
     invalidateEdge,
     providersQuery,
     refreshEdgeLive,
@@ -60,6 +63,8 @@
   import { edgeHasCountryData } from '../lib/countryChecks';
   import { formatBytes, providerLabel } from '../lib/format';
   import { showsPublication } from '../lib/pool';
+  import { FIRST_NAME_WORDS, firstNameOffer } from '../lib/addressName';
+  import { edgesPaths } from '../lib/routes';
   import { relativeTime, shortId } from '../lib/time';
   import type { KeyValueRow } from '../lib/types';
 
@@ -121,15 +126,40 @@
       { label: 'Last problem', value: n.failure ? codeLabel(n.failure.code) : '' },
     ];
   });
+  // An address planned before the switch was on has none: its first name is
+  // the same call as New name. The settings say whether one can be made.
+  const nameConfig = edgeConfigQuery();
+  const NAME_DONE_WORDS = {
+    first: 'A name is being made',
+    renew: 'A new name is being made',
+    dismiss: 'Name closed',
+  } as const;
   const nameAction = createMutation(() => ({
-    mutationFn: (a: { id: string; kind: 'renew' | 'dismiss' }) =>
-      a.kind === 'renew' ? renewEdgeName(a.id) : dismissEdgeName(a.id),
+    mutationFn: (a: { id: string; kind: keyof typeof NAME_DONE_WORDS }) =>
+      a.kind === 'dismiss' ? dismissEdgeName(a.id) : renewEdgeName(a.id),
     onSuccess: (_d, a) => {
       invalidateEdge(qc, a.id);
-      toast.success(a.kind === 'renew' ? 'A new name is being made' : 'Name closed');
+      toast.success(NAME_DONE_WORDS[a.kind]);
     },
-    onError: () => toast.error('The name could not be changed'),
+    onError: (err) => {
+      // The settings changed since they were read: read them again.
+      if (edgeErrorCode(err) === 'names_off')
+        void qc.invalidateQueries({ queryKey: edgeKeys.config });
+      toast.error('The name could not be changed');
+    },
   }));
+  const firstName = $derived.by(() => {
+    if (!edge || nameConfig.isPending) return null;
+    const offer = firstNameOffer(edge, addressName, nameConfig.data ?? null);
+    const v = nameAction.variables;
+    const refused =
+      offer === 'offer' &&
+      nameAction.isError &&
+      v?.kind === 'first' &&
+      v.id === edge.id &&
+      edgeErrorCode(nameAction.error) === 'names_off';
+    return refused ? 'refused' : offer;
+  });
 
   // The accounts (with their locations) name the edge's location and the DNS
   // account its front writes through. The page around the drawer reads the
@@ -377,6 +407,33 @@
             {#if addressName.stuck}
               <p class="text-muted-foreground text-xs">
                 Dismiss only after removing its records in the zone by hand.
+              </p>
+            {/if}
+          </section>
+        {:else if firstName}
+          <section class="space-y-2">
+            <h3 class="text-sm font-semibold">Address name</h3>
+            <p class="text-muted-foreground text-sm">It has none, so members get its IPs.</p>
+            {#if firstName === 'offer' || firstName === 'refused'}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={nameAction.isPending}
+                onclick={() => nameAction.mutate({ id: edge.id, kind: 'first' })}
+              >
+                Give it a name
+              </Button>
+            {/if}
+            {#if firstName !== 'offer'}
+              <p class="text-muted-foreground text-xs">
+                {FIRST_NAME_WORDS[firstName]}
+                {#if firstName === 'refused'}
+                  <Link href={edgesPaths.providers()} class="underline">Open Providers</Link>
+                {:else}
+                  <Link href={edgesPaths.settings({ section: 'names' })} class="underline"
+                    >Open Settings</Link
+                  >
+                {/if}
               </p>
             {/if}
           </section>

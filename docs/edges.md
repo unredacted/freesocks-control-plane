@@ -1558,12 +1558,21 @@ REALITY member still sends the target's name). The code is `lib/edges/addressNam
 DNS calls).
 
 **Which addresses.** The switch is frozen into an address when it is planned
-(`edges.nameWanted`): an address made before keeps its IPs, and turning the switch on changes
-nothing for members until an address made after it is in use. An address that wants a name gets
+(`edges.nameWanted`): an address made before keeps its IPs until the operator gives it a name
+(below), and turning the switch on changes nothing for members until an address with a name is
+in use. An address that wants a name gets
 it as soon as it is active with an IPv4 (the rotation's verify step asks for it, and the
 reconcile pass makes any that are missing): a spare has its name before it is ever published,
 so the publish that puts it in use hands the name out at once. An imported address (FCP does not
 own it) never gets one, nor does an L7 front (its hostname is its name).
+
+An address made before the switch can be given a name from its drawer: an active L4 address FCP
+owns, with an IPv4 and no name, shows **Give it a name** (the same `POST edges/{id}/name/renew`
+as New name, which sets `nameWanted` and makes the name in the same pass). While the switch is
+off, or no chosen zone is a DNS account's zone, the drawer says so in place of the button (read
+from the settings view); the server refuses then too (`edge.names_off`), and also when every
+chosen zone's location or DNS account is switched off, which the drawer then shows under the
+button.
 
 **Which zone.** A new name goes in the eligible zone this node uses least, then the one the
 deployment uses least: with two zones, a node's two addresses (a member's main and backup) sit in
