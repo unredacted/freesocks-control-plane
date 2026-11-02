@@ -594,7 +594,7 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
   // --- L7: Fastly (service + domain + TLS subscription) ---------------------------------
   fastly: {
     source:
-      'https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare`',
+      'https://www.fastly.com/documentation/reference/api/ via fastly@16.1.0, 2026-09-16; Domain Management (versionless domains) and TLS authorizations re-read 2026-10-20; TLS activations read 2026-11-02; the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare`',
     calls: [
       {
         method: 'POST',
@@ -789,6 +789,37 @@ export const WIRE_CONTRACTS: Record<EdgeProviderId, WireContract> = {
         method: 'GET',
         path: '^/tls/configurations$',
         purpose: 'account form choices, and the CNAME target every fronted hostname points at',
+      },
+      {
+        method: 'POST',
+        path: '^/tls/activations$',
+        purpose: "activate a front's own name on the zone's wildcard certificate (JSON:API)",
+        body: ['data'],
+      },
+      {
+        method: 'GET',
+        path: '^/tls/activations$',
+        purpose: "discover a front's activation by its name; confirm its removal",
+        query: ['filter[tls_domain.id]'],
+        withoutQuery: ['filter[tls_certificate.id]'],
+      },
+      {
+        method: 'GET',
+        path: '^/tls/activations$',
+        purpose: 'the activations left on an older certificate after the wildcard renews',
+        query: ['filter[tls_certificate.id]'],
+        withoutQuery: ['filter[tls_domain.id]'],
+      },
+      {
+        method: 'PATCH',
+        path: '^/tls/activations/[^/]+$',
+        purpose: "move a front's activation to the renewed certificate",
+        body: ['data'],
+      },
+      {
+        method: 'DELETE',
+        path: '^/tls/activations/[^/]+$',
+        purpose: "delete a front's activation, before its domain",
       },
       {
         method: 'GET',

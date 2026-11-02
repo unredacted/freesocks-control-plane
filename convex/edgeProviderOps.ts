@@ -907,6 +907,19 @@ async function recordSharedCertificate(
     ? await provider.sharedCertificate(cfg, { ordered })
     : null;
   await ctx.runMutation(internal.edgeLocations.recordSharedCertificate, { id: locationId, status });
+  // A renewal: what fronts activated on an older certificate moves to the newest
+  // (a front on the wildcard that activates its own name), whatever state the
+  // account's own view of the wildcard reads. Never fatal here.
+  if (provider.followSharedRenewal && status) {
+    try {
+      const { moved } = await provider.followSharedRenewal(cfg);
+      if (moved > 0)
+        console.info(`[edge-certificates] ${moved} activation(s) moved to the renewed certificate`);
+    } catch (err) {
+      const code = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
+      console.warn(`[edge-certificates] following a renewal failed: ${code}`);
+    }
+  }
   return status;
 }
 

@@ -37,6 +37,7 @@ import {
   ProductWebsocketsApi,
   ServiceApi,
   SnippetApi,
+  TlsActivationsApi,
   TlsConfigurationsApi,
   TlsSubscriptionsApi,
   TokensApi,
@@ -52,6 +53,10 @@ import {
   withRefusal,
 } from '../http';
 import type { FastlyConfig } from '../types';
+
+/** Activations read per page, and the most pages one listing reads (100 x 50 fronts). */
+const ACTIVATION_PAGE_SIZE = 100;
+const ACTIVATION_PAGES_MAX = 50;
 
 /** The one origin the SDK's generated methods target. Also the redirect-safety pin. */
 export const FASTLY_API_ORIGIN = 'https://api.fastly.com';
@@ -461,6 +466,15 @@ export interface FastlyApi {
   listTlsSubscriptionsForDomain(hostname: string): Promise<FastlyJsonApiCollection>;
   deleteTlsSubscription(id: string): Promise<void>;
   listTlsConfigurations(include?: string): Promise<FastlyJsonApiCollection>;
+  /** Enable TLS for one name with one certificate (`POST /tls/activations`). */
+  createTlsActivation(body: unknown): Promise<FastlyJsonApiDoc>;
+  /** The activations of one TLS domain (a name, exactly). */
+  listTlsActivationsForDomain(name: string): Promise<FastlyJsonApiCollection>;
+  /** The activations on one certificate. */
+  listTlsActivationsForCertificate(certificateId: string): Promise<FastlyJsonApiCollection>;
+  /** Move one activation to another certificate (`PATCH /tls/activations/{id}`). */
+  updateTlsActivation(id: string, certificateId: string): Promise<FastlyJsonApiDoc>;
+  deleteTlsActivation(id: string): Promise<void>;
   // account
   getTokenCurrent(): Promise<FastlyTokenSelf>;
   getLoggedInCustomer(): Promise<FastlyCustomer>;
@@ -513,6 +527,7 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
   const websockets = new ProductWebsocketsApi(client);
   const tlsSubs = new TlsSubscriptionsApi(client);
   const tlsConfigs = new TlsConfigurationsApi(client);
+  const tlsActivations = new TlsActivationsApi(client);
   const tokens = new TokensApi(client);
   const customer = new CustomerApi(client);
   // A refusal on any call keeps Fastly's answer (`meta.detail`): the token is
@@ -717,6 +732,54 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
         () => tlsConfigs.listTlsConfigsWithHttpInfo({ include, page_size: 100 }),
         [cfg.apiToken],
       ),
+
+    createTlsActivation: (body) =>
+      call('create-tls-activation', JsonApiDoc, () =>
+        tlsActivations.createTlsActivationWithHttpInfo({ tls_activation: body }),
+      ),
+    listTlsActivationsForDomain: (name) =>
+      call('tls-activations', JsonApiCollection, () =>
+        tlsActivations.listTlsActivationsWithHttpInfo({
+          filter_tls_domain_id: name,
+          page_size: 20,
+        }),
+      ),
+    listTlsActivationsForCertificate: async (certificateId) => {
+      // Every page: a wildcard may carry more fronts than one page holds.
+      const data: FastlyJsonApiResource[] = [];
+      for (let page = 1; page <= ACTIVATION_PAGES_MAX; page++) {
+        const res = await call('tls-activations', JsonApiCollection, () =>
+          tlsActivations.listTlsActivationsWithHttpInfo({
+            filter_tls_certificate_id: certificateId,
+            include: 'tls_domain',
+            page_number: page,
+            page_size: ACTIVATION_PAGE_SIZE,
+          }),
+        );
+        data.push(...res.data);
+        if (res.data.length < ACTIVATION_PAGE_SIZE) break;
+      }
+      return { data };
+    },
+    updateTlsActivation: (id, certificateId) =>
+      call('update-tls-activation', JsonApiDoc, () =>
+        tlsActivations.updateTlsActivationWithHttpInfo({
+          tls_activation_id: id,
+          tls_activation: {
+            data: {
+              type: 'tls_activation',
+              relationships: {
+                tls_certificate: { data: { type: 'tls_certificate', id: certificateId } },
+              },
+            },
+          },
+        }),
+      ),
+    deleteTlsActivation: async (id) => {
+      await call('destroy-tls-activation', Empty, () =>
+        tlsActivations.deleteTlsActivationWithHttpInfo({ tls_activation_id: id }),
+      );
+    },
 
     getTokenCurrent: () =>
       call('token-self', TokenSelf, () => tokens.getTokenCurrentWithHttpInfo({}), [cfg.apiToken]),
