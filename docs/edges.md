@@ -2423,10 +2423,14 @@ raises the ones still on an old default pair (§ Runbooks).
 
 **Dark members.** Every refusal the subscription route answers under edge-required delivery
 (the 503 with `x-fcp-delivery: <reason>`) is counted per reason in a sharded `appState` counter
-(`edge:refusals:<0..7>`, ten-minute buckets, `convex/deliveryRefusals.ts`): codes and counts
-only. The route schedules the count rather than waiting for it, so a burst of refusals (a gate
-closing across the fleet) never slows the 503s on conflicting writes; the count lands a moment
-later. Attention `delivery_refusals` sums the last hour (`facts.byReason`), critical from 25. A
+(`edge:refusals:<0..7>`, ten-minute buckets, `convex/deliveryRefusals.ts`), and per reason
+which node the body resolved to (else the stored pin) and which client family asked
+(`detail`, `reason|node|family`, at most `DETAIL_KEYS_MAX` keys per bucket): codes, node
+names, families and counts, never a token, a member or an address. The route schedules the
+count rather than waiting for it, so a burst of refusals (a gate closing across the fleet) never
+slows the 503s on conflicting writes; the count lands a moment later. Attention
+`delivery_refusals` sums the last hour (`facts.byReason`, and `facts.topSources`: the three
+reason/node/family pairs with the most, which the row names), critical from 25. A
 client family whose render rule is off now answers `family_disabled` (no longer
 `render_disabled`), and attention `family_rule_disabled` lists the families while any node is
 edge-required. A `rotation_stuck` item (critical) appears for a rotation running over an hour.

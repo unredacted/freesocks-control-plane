@@ -2217,6 +2217,7 @@ export const attention = internalQuery({
         facts: {
           total: refusals.total,
           byReason: refusals.byReason,
+          ...(refusals.top.length > 0 ? { topSources: refusals.top } : {}),
           windowMinutes: Math.round(REFUSAL_WINDOW_MS / 60_000),
         },
         action: 'open_settings',

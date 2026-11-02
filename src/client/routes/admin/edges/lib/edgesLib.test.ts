@@ -324,6 +324,23 @@ describe('attention', () => {
     expect(attentionFactsLine(item({ facts: { count: 1, refuses: ['singbox', 'mihomo'] } }))).toBe(
       '1 affected · Refuses sing-box and Mihomo',
     );
+    // Where members were refused: the node and the app family, the most first.
+    expect(
+      attentionFactsLine(
+        item({
+          facts: {
+            total: 5,
+            topSources: [
+              { reason: 'empty_pool', node: 'node-a', family: 'mihomo', count: 4 },
+              { reason: 'node_gated', node: null, family: 'other', count: 1 },
+              { bogus: true },
+            ],
+          },
+        }),
+      ),
+    ).toMatch(
+      /5 refused in the last hour · Most: .+ on node-a \(Mihomo apps\) 4; .+ with no node \(other apps\) 1$/,
+    );
     // A failed run's kind is its title, never a "Provision run" fact.
     expect(attentionFactsLine(item({ facts: { kind: 'provision', phase: 'failed' } }))).toBe('');
     expect(attentionSubject(item({ listenerKey: 'main' }))).toBe('Origin relay-a, listener main');
