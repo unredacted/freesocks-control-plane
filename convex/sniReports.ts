@@ -95,9 +95,10 @@ export async function attributeReport(
     inferred: args.consentedCountry,
     curated: sniCfg.curatedCountries,
   }).where;
-  // The rule of the app the body was made for: a link list holds the first
-  // server name only, so its member is credited that one.
-  const { rule, hasAutoGroup } = snapshotRuleOf(cfg.render, snap.family);
+  // The rule of the app the body was made for, and whether the body had an
+  // auto group: a link list holds the first server name only, so its member
+  // is credited that one.
+  const { rule, hasAutoGroup } = snapshotRuleOf(cfg.render, snap);
   // The snapshot's roles as they were (a seed over two edges could swap them).
   const assigned = endpointsFor(
     sub.renderKey,

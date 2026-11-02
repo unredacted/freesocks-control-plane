@@ -21,6 +21,7 @@ import {
   renderEntries,
   renderEntriesChecked,
   renderEdgeEndpoints,
+  snapshotRuleOf,
 } from './render';
 import { applyEdgeRender } from './renderPipeline';
 import { decodeBase64Loose, encodeBase64 } from './render/base64';
@@ -190,6 +191,27 @@ describe('rewriteProxyUri', () => {
     expect(tuic.startsWith(`tuic://${UUID}:pw@203.0.113.10:443?`)).toBe(true);
     expect(qsOf(tuic).get('sni')).toBe('cdn-a.example');
     expect(qsOf(tuic).get('congestion_control')).toBe('bbr');
+  });
+});
+
+describe('snapshotRuleOf: the rule a replay reads', () => {
+  const render = { ...EDGE_DEFAULTS.render, enabled: true };
+  test('what the snapshot recorded about the body wins over the family', () => {
+    // A list family whose body came back as sing-box with the family's group on.
+    expect(snapshotRuleOf(render, { family: 'v2rayng', autoGroup: true }).hasAutoGroup).toBe(true);
+    // A sing-box family served a plain list.
+    expect(snapshotRuleOf(render, { family: 'singbox', autoGroup: false }).hasAutoGroup).toBe(
+      false,
+    );
+  });
+
+  test("a snapshot from before that was recorded: the family's base format", () => {
+    expect(snapshotRuleOf(render, { family: 'singbox' }).hasAutoGroup).toBe(true);
+    expect(snapshotRuleOf(render, { family: 'v2rayng' }).hasAutoGroup).toBe(false);
+    // An unknown family reads as `other`, a link list.
+    const unknown = snapshotRuleOf(render, { family: 'martian' });
+    expect(unknown.hasAutoGroup).toBe(false);
+    expect(unknown.rule).toEqual(effectiveRule(render, render.clients.other));
   });
 });
 
@@ -580,7 +602,12 @@ describe('applyEdgeRender: IPv6-only edges', () => {
     expect(out.emitted).toBe(1);
     expect(out.body).toContain(`@${edgeB.addresses.v4}:443?`);
     expect(out.body).not.toContain('2001:db8::6');
-    expect(out.snapshot).toEqual({ listenerKeys: ['a1'], primaryEdgeId: 'eB', backupEdgeId: null });
+    expect(out.snapshot).toEqual({
+      listenerKeys: ['a1'],
+      primaryEdgeId: 'eB',
+      backupEdgeId: null,
+      autoGroup: false,
+    });
   });
 
   test('ipv6Mode off with ONLY a v6-only edge: nothing is assignable, so delivery is unavailable', () => {

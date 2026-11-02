@@ -176,6 +176,7 @@ describe('applyEdgeRender: listener-aware assignment', () => {
         listenerKeys: ['a'],
         primaryEdgeId: 'eA',
         backupEdgeId: null,
+        autoGroup: false,
       });
       expect(out.emitted).toBe(1);
       expect(out.body).toContain('@203.0.113.10:443?');
@@ -259,7 +260,12 @@ describe('applyEdgeRender: listener-aware assignment', () => {
     // Every edge lost eligibility, so the pool is judged empty before any codec runs.
     expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'empty_pool' });
     expect(out.applied).toBe(false);
-    expect(out.snapshot).toEqual({ listenerKeys: [], primaryEdgeId: null, backupEdgeId: null });
+    expect(out.snapshot).toEqual({
+      listenerKeys: [],
+      primaryEdgeId: null,
+      backupEdgeId: null,
+      autoGroup: false,
+    });
   });
 
   test('a body with no entry at all is no_entries, never an empty pool', () => {
@@ -333,7 +339,13 @@ describe('applyEdgeRender: listener-aware assignment', () => {
       { now: NOW },
     );
     expect(out.delivery).toEqual({ kind: 'serve' });
-    expect(out.snapshot).toEqual({ listenerKeys: ['a'], primaryEdgeId: 'eA', backupEdgeId: null });
+    // The body had an auto group: the snapshot says so for the replays.
+    expect(out.snapshot).toEqual({
+      listenerKeys: ['a'],
+      primaryEdgeId: 'eA',
+      backupEdgeId: null,
+      autoGroup: true,
+    });
     expect(out.body).not.toContain('203.0.113.20');
   });
 });

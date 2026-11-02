@@ -68,6 +68,12 @@ export interface RenderSnapshot {
   listenerKeys: string[];
   primaryEdgeId: string | null;
   backupEdgeId: string | null;
+  /**
+   * Whether the body got an auto group: it then holds the further server names
+   * and the auto-group order (render.ts `namesInBody`). The body decides, not
+   * the family, so a replay reads this, never the family's usual format.
+   */
+  autoGroup: boolean;
   /** With an `edgeCountry`: the tier each endpoint came from there (0 proven, 1 not known, 2 blocked). */
   primaryTier?: EdgeTier;
   backupTier?: EdgeTier;
@@ -180,6 +186,7 @@ export function applyEdgeRender(
       listenerKeys: [...resolved].sort(),
       primaryEdgeId: assigned.primary?.edge.edgeId ?? null,
       backupEdgeId: assigned.backup?.edge.edgeId ?? null,
+      autoGroup: hasAutoGroup,
       ...(assigned.primaryTier !== undefined ? { primaryTier: assigned.primaryTier } : {}),
       ...(assigned.backupTier !== undefined ? { backupTier: assigned.backupTier } : {}),
     },

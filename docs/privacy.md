@@ -275,12 +275,12 @@ and the transport/Reality settings remain Ansible-only. See `docs/backends.md`
   mirrors are re-rendered or replaced by an unavailable stub. `docs/edges.md` § "Rendering".
 - **No member data in the edges area.** Probes measure FCP's own addresses; report
   attribution uses a peppered per-member dedupe mark and the member's own render snapshot
-  (`subscriptions.lastRender`: epoch, edge ids and, when the body was shaped for the member's
-  STORED country, that country and the tier each address came from there; no addresses);
-  audit payloads carry origin
-  slugs, listener keys and codes, never addresses, hostnames or provider account names. The one
-  member fact the delivery uses is where they connect from, which lives on their subscription
-  row under the rules in §1 and nowhere in the edges tables.
+  (`subscriptions.lastRender`: epoch, edge ids, whether the body had an automatic group and, when
+  the body was shaped for the member's STORED country, that country and the tier each address
+  came from there; no addresses); audit payloads carry origin slugs, listener keys and codes,
+  never addresses, hostnames or provider account names. The one member fact the delivery uses is
+  where they connect from, which lives on their subscription row under the rules in §1 and
+  nowhere in the edges tables.
 - **Address lanes read the account, store nothing about it.** On a node with lanes on
   (`docs/edges.md` § "Address enumeration"), which addresses a member may be handed follows
   from facts the account already has: whether its tier is paid while the membership runs, and

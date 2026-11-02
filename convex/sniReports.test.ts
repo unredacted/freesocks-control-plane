@@ -110,7 +110,14 @@ import { realityListener, registerRelay } from './lib/edges/testing/fixtures';
 const NAMES = ['a.example', 'b.example', 'c.example', 'd.example', 'e.example'];
 
 async function seedMember(
-  opts: { hrw?: boolean; sniRegion?: string; mode?: string; guess?: string; family?: string } = {},
+  opts: {
+    hrw?: boolean;
+    sniRegion?: string;
+    mode?: string;
+    guess?: string;
+    family?: string;
+    autoGroup?: boolean;
+  } = {},
 ) {
   const t = convexTest(schema, modules);
   const serverId = await t.run(async (ctx) => {
@@ -186,6 +193,7 @@ async function seedMember(
         epoch: relay.publicationEpoch,
         // An app with an auto group: it holds every server name it was handed.
         family: opts.family ?? 'singbox',
+        ...(opts.autoGroup !== undefined ? { autoGroup: opts.autoGroup } : {}),
         listenerKeys: ['a'],
         primaryEdgeId: edgeId,
       },
@@ -239,6 +247,14 @@ describe('a report, attributed', () => {
     expect(rows).toHaveLength(1);
     expect(NAMES).toContain(rows[0]!.name);
     expect(rows[0]!.weight).toBeCloseTo(1);
+  });
+
+  test('what the body was decides, not the family: a list app handed an auto-group body holds three', async () => {
+    const { report, counts } = await seedMember({ family: 'v2rayng', autoGroup: true });
+    await report({ country: 'IR' });
+    const rows = await counts();
+    expect(rows).toHaveLength(3);
+    for (const r of rows) expect(r.weight).toBeCloseTo(1 / 3);
   });
 
   test('a repeat inside the window is weight 0 and attributes nothing more', async () => {

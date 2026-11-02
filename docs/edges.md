@@ -1083,7 +1083,8 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    role, the IPv6 sibling belongs to the first name only, a single-key delivery stays one
    entry, and a listener on the default PRF or an L7 front keeps exactly one name. The
    snapshot persisted on the subscription names edges only, never which names a member holds
-   (the replays below rebuild them from the snapshot's app family);
+   (the replays below rebuild them under the snapshot's app family and its record of whether
+   the body had an automatic group);
 4. rewrites: address, port, SNI, HTTP Host header (and Clash `servername`); never the
    credentials or routing (`pbk`, `sid`, `flow`, `path`, `serviceName`, SIP002 userinfo,
    `hy2`/`tuic` auth). Per **client family** (`render.clients.<family>`): auto-capable
@@ -1112,8 +1113,12 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
 6. checks every outgoing entry, emitted AND retained, against the node by any of its
    addresses (the origin and the node's address set below, IPs compared as the address they
    are, however written: `leak_detected`), and persists an **eligibility snapshot** (`subscriptions.lastRender`:
-   epoch, family, resolved listeners, primary/backup edge) that the member's connection labels
-   and report attribution read: they never reconstruct an assignment without the body.
+   epoch, family, resolved listeners, primary/backup edge, and whether the body had an
+   automatic group, `autoGroup`) that the member's connection labels and report attribution
+   read: they never reconstruct an assignment without the body. The body's format decides the
+   automatic group, not the family (a family's app can be served another format), so a replay
+   reads `autoGroup`, and only a snapshot from before it was recorded falls back to the
+   family's usual format.
    Attribution names an edge ONLY from that snapshot (current epoch) and covers unpinned
    whole-server subscriptions (Outline); no snapshot leaves the report at origin level.
 
@@ -3179,8 +3184,9 @@ When a report counts for the detector (deduplicated, weight 1), names the edge i
 and that edge's listener ranks names per member (`hrw1`), `sniReports.attributeReport`
 recomputes the names that member holds on that edge, from the snapshot's edges only, exactly
 as the account page rebuilds its labels, under the rule of the app family the body was made for
-(`snapshotRuleOf`: a link-list member holds the first name only, so it takes the whole report),
-and adds `1/K` to each in `sniReportCounts`
+and the snapshot's `autoGroup` (`snapshotRuleOf`: a member whose body had no automatic group
+holds the first name only, so it takes the whole report), and adds `1/K` to each in
+`sniReportCounts`
 (name, country, day, weight: see docs/privacy.md). The country is the member's saved region,
 else the one they shared with the report, when curated; else `ZZ`.
 
@@ -6132,6 +6138,14 @@ To roll back, run `edgeNames:clearForRollback` with no arguments until it no lon
 `removing` (it turns the switch off and removes every name from its zone), then with the `cursor`
 it answers each time (`{"cursor": "..."}`, one page of addresses per run) until it answers `done`
 (rows and `edges.nameWanted` cleared), then deploy the older build.
+
+**One entry per way in for list apps** (§ "Names for load balancer addresses", "What members
+get") adds one optional field, `subscriptions.lastRender.autoGroup`, written with every render
+snapshot: one deploy, no migration, no env change. Each key's snapshot is rewritten once at its
+next fetch, and members get the new entries then (the mirrors at their next sweep). To roll
+back, run `edgeRender:clearSnapshotAutoGroupForRollback` with no arguments right before
+deploying the older build (its schema refuses the field); deliveries keep writing it
+meanwhile, so run it again if the push is refused.
 
 **A held block alerts** adds one optional field (`relays.suspicion.heldBack`), written by the
 detector, and one alert-worthy case (§ "Operator alerts"): one deploy, no migration, no env

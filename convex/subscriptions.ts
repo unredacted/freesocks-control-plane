@@ -317,6 +317,7 @@ export const renderSnapshotValidator = v.object({
   listenerKeys: v.array(v.string()),
   primaryEdgeId: v.optional(v.id('edges')),
   backupEdgeId: v.optional(v.id('edges')),
+  autoGroup: v.optional(v.boolean()),
   country: v.optional(v.string()),
   primaryTier: v.optional(v.number()),
   backupTier: v.optional(v.number()),
@@ -333,6 +334,7 @@ function sameSnapshot(
     a.family === b.family &&
     a.primaryEdgeId === b.primaryEdgeId &&
     a.backupEdgeId === b.backupEdgeId &&
+    a.autoGroup === b.autoGroup &&
     a.country === b.country &&
     a.primaryTier === b.primaryTier &&
     a.backupTier === b.backupTier &&

@@ -15,7 +15,9 @@
 import { locationKeyOf } from './lib/edges/locations';
 import { verificationListenersOf } from './lib/edges/verificationContext';
 import { v } from 'convex/values';
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
+import { FRONT_KEYS_PAGE } from './lib/edges/frontKeys';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
@@ -662,9 +664,10 @@ export const memberView = internalQuery({
     const primary = snap.primaryEdgeId ? byId.get(snap.primaryEdgeId) : undefined;
     const backup = snap.backupEdgeId ? byId.get(snap.backupEdgeId) : undefined;
     if (!primary) return { refreshSuggested: true, known: false, connections: [] };
-    // The rule of the app the body was made for: a link list holds neither the
-    // further server names nor an auto group's order.
-    const { rule, hasAutoGroup } = snapshotRuleOf(cfg.render, snap.family);
+    // The rule of the app the body was made for, and whether the body had an
+    // auto group: a link list holds neither the further server names nor an
+    // auto group's order.
+    const { rule, hasAutoGroup } = snapshotRuleOf(cfg.render, snap);
     // The snapshot's roles as they were: a seed over just these two edges could
     // swap them (the member's primary would read as their backup).
     const assigned = endpointsFor(
@@ -682,6 +685,49 @@ export const memberView = internalQuery({
       family: e.family,
     }));
     return { refreshSuggested, known: true, connections };
+  },
+});
+
+// --- rollback: the snapshot's auto-group fact ---------------------------------------------------------
+
+/** One page of the rollback strip: render snapshots lose `autoGroup`. */
+export const stripSnapshotAutoGroupPage = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db
+      .query('subscriptions')
+      .paginate({ cursor, numItems: FRONT_KEYS_PAGE });
+    let stripped = 0;
+    for (const s of page.page) {
+      if (s.lastRender?.autoGroup === undefined) continue;
+      const { autoGroup, ...rest } = s.lastRender;
+      void autoGroup;
+      await ctx.db.patch(s._id, { lastRender: rest });
+      stripped++;
+    }
+    return { stripped, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});
+
+/**
+ * Before deploying a build whose schema has no `subscriptions.lastRender.autoGroup`
+ * (docs/edges.md "Deploy notes"): strip it from every key, so the older schema
+ * accepts what is left. Deliveries keep writing it meanwhile: run it right
+ * before the push, and again if the push is refused.
+ */
+export const clearSnapshotAutoGroupForRollback = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ stripped: number }> => {
+    let cursor: string | null = null;
+    let stripped = 0;
+    for (;;) {
+      const page: { stripped: number; isDone: boolean; continueCursor: string } =
+        await ctx.runMutation(internal.edgeRender.stripSnapshotAutoGroupPage, { cursor });
+      stripped += page.stripped;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return { stripped };
   },
 });
 

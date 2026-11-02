@@ -116,17 +116,22 @@ export function namesInBody(
 
 /**
  * The rule a stored render snapshot was made under, for a replay without the
- * body (member labels, report attribution): the snapshot family's own rule and
- * whether its base format (`CLIENT_FAMILY_FORMATS`) has an auto group. An
+ * body (member labels, report attribution): the snapshot family's own rule,
+ * and whether the body had an auto group as the snapshot recorded it (the
+ * body decides, not the family). A snapshot from before that was recorded
+ * falls back to the family's base format (`CLIENT_FAMILY_FORMATS`). An
  * unknown family reads as `other` (a link list).
  */
 export function snapshotRuleOf(
   render: EdgeConfig['render'],
-  family: string | undefined,
+  snap: { family?: string; autoGroup?: boolean },
 ): { rule: EffectiveRule; hasAutoGroup: boolean } {
-  const fam: RenderClientFamily = isRenderClientFamily(family) ? family : 'other';
+  const fam: RenderClientFamily = isRenderClientFamily(snap.family) ? snap.family : 'other';
   const rule = effectiveRule(render, render.clients[fam]);
-  return { rule, hasAutoGroup: formatHasAutoGroup(rule, CLIENT_FAMILY_FORMATS[fam]) };
+  return {
+    rule,
+    hasAutoGroup: snap.autoGroup ?? formatHasAutoGroup(rule, CLIENT_FAMILY_FORMATS[fam]),
+  };
 }
 
 /**

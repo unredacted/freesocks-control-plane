@@ -838,6 +838,27 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     await t.mutation(internal.relays.update, { id: relayId, enabled: false });
     expect(await t.query(internal.edgeRender.memberView, { subscriptionId: subId })).toBeNull();
   });
+
+  test('the snapshot records whether the body had an auto group; the rollback strip removes only that', async () => {
+    stubPanel();
+    const { t, subId } = await seed();
+    await get(t); // a v2rayNG list: no auto group
+    const before = (await t.run((ctx) => ctx.db.get(subId)))!.lastRender!;
+    expect(before.autoGroup).toBe(false);
+    const labels = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
+    expect(await t.action(internal.edgeRender.clearSnapshotAutoGroupForRollback, {})).toEqual({
+      stripped: 1,
+    });
+    const after = (await t.run((ctx) => ctx.db.get(subId)))!.lastRender!;
+    expect(after).not.toHaveProperty('autoGroup');
+    const { autoGroup, ...rest } = before;
+    void autoGroup;
+    expect(after).toEqual(rest);
+    // Without it a replay falls back to the family's usual format: the same labels here.
+    expect(await t.query(internal.edgeRender.memberView, { subscriptionId: subId })).toEqual(
+      labels,
+    );
+  });
 });
 
 // The REAL topology: one mode group per node, so every member body carries exactly
