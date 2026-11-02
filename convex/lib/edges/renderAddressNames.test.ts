@@ -95,22 +95,30 @@ const singbox = {
 };
 
 describe('an address with a name', () => {
-  test('a link list dials the name (it carries both families), never the IPs', () => {
+  test('a link list dials the name in place of the IPv4 entry; the IPv6 entry stays', () => {
     const out = render(templateLink);
     expect(out.delivery).toEqual({ kind: 'serve' });
     const lines = out.body.split('\n');
-    expect(lines).toHaveLength(2);
+    expect(lines).toHaveLength(3);
     expect(lines[0]).toContain(`@${NAME_A}:443?`);
     expect(new URLSearchParams(lines[0]!.split('?')[1]!.split('#')[0]).get('sni')).toBe(
       'cdn-a.example',
     );
+    // Where IPv4 is blocked and IPv6 works, the member can still pick IPv6.
+    expect(lines[1]).toContain('@[2001:db8::10]:443?');
     // The backup has no name: its IP, as before.
-    expect(lines[1]).toContain('@203.0.113.20:443?');
-    expect(out.body).not.toContain('203.0.113.10');
+    expect(lines[2]).toContain('@203.0.113.20:443?');
+    // No IPv4 literal of the named address in a list that never switches by itself.
+    expect(out.body).not.toContain('@203.0.113.10:');
+  });
+
+  test('IPv6 off for the family: the name alone, no IPv6 entry', () => {
+    const out = render(templateLink, { rule: { ...linksRule, ipv6Mode: 'off' } });
+    expect(out.body.split('\n')[0]).toContain(`@${NAME_A}:443?`);
     expect(out.body).not.toContain('2001:db8::10');
   });
 
-  test('sing-box: the name first, its IPs as fallbacks inside the auto group', () => {
+  test('sing-box: the name first, the IPv6 entry as before, the IPv4 as a fallback in the group', () => {
     const out = render(JSON.stringify(singbox), { rule: autoRule });
     expect(out.delivery).toEqual({ kind: 'serve' });
     const doc = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
@@ -119,12 +127,12 @@ describe('an address with a name', () => {
     );
     expect(emitted.map((o) => [o.tag, o.server])).toEqual([
       ['FreeSocks', NAME_A],
+      ['FreeSocks (IPv6)', '2001:db8::10'],
       ['FreeSocks (backup)', '203.0.113.20'],
       ['FreeSocks (IP)', '203.0.113.10'],
-      ['FreeSocks (IPv6)', '2001:db8::10'],
     ]);
     // The server name is the listener's, never the address's name.
-    for (const o of emitted.slice(0, 1).concat(emitted.slice(2)))
+    for (const o of emitted.filter((x) => x.tag !== 'FreeSocks (backup)'))
       expect((o.tls as { server_name: string }).server_name).toBe('cdn-a.example');
     const auto = doc.outbounds.find((o) => o.type === 'urltest') as { outbounds: string[] };
     expect(auto.outbounds).toEqual(emitted.map((o) => o.tag));

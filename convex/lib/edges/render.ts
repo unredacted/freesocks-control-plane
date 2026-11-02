@@ -135,11 +135,11 @@ export function ruleCanEmitV6(
  * Expand assigned endpoints into render entries: the IPv4 entry per endpoint
  * plus an IPv6 entry when the edge has one and the mode allows it. An L7
  * (CDN-fronted) edge is ONE entry carrying its hostname. An L4 address with a
- * name (`addressName`, subscription delivery only) is dialled by the name,
- * which carries both families; in a body with an auto group its IPs follow as
- * fallback entries, so an app whose lookup of the name is blocked switches to
- * the IP by itself. A single key (Outline) keeps the IP: it has no room for a
- * fallback.
+ * name (`addressName`, subscription delivery only) is dialled by the name in
+ * place of its IPv4 entry (the name carries both families); its IPv6 entry is
+ * unchanged, and in a body with an auto group its IPv4 follows as a fallback
+ * entry, so an app whose lookup of the name is blocked switches to the IP by
+ * itself. A single key (Outline) keeps the IP: it has no room for a fallback.
  *
  * Leak guard: an endpoint whose address is the origin itself is never emitted,
  * whatever the pool says; `leaked` counts them so the caller can refuse.
@@ -211,21 +211,25 @@ export function renderEntriesChecked(
         leaked++;
         return;
       }
+      // The name takes the IPv4 entry's place. The IPv6 entry stays exactly
+      // as without a name: where IPv4 is blocked and IPv6 works, a client that
+      // dials the name over IPv4 first (its TCP connects, REALITY is then cut)
+      // never tries the other family, so the member (or the auto group) needs
+      // the IPv6 entry of its own.
       out.push({ ...base, label, address: named, family: 'name' });
-      if (!hasAutoGroup) return;
-      out.push({
-        ...base,
-        label: `${label} (${rule.ipLabel})`,
-        address: v4,
-        family: 'v4',
-        fallback: true,
-      });
       if (v6 && wantV6)
         out.push({
           ...base,
           label: `${label} (${rule.ipv6Label})`,
           address: v6,
           family: 'v6',
+        });
+      if (hasAutoGroup)
+        out.push({
+          ...base,
+          label: `${label} (${rule.ipLabel})`,
+          address: v4,
+          family: 'v4',
           fallback: true,
         });
       return;

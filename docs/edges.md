@@ -1548,17 +1548,33 @@ they can still be removed). A zone or a DNS account cannot be deleted while a na
 **What members get** (`lib/edges/render.ts`, every format: links, sing-box, Clash / Mihomo, the
 mirrors and the cached and stale bodies of `/api/v1/sub`, which all go through the same render):
 
-- the name as the entry's address, carrying both families, so the IPv6 sibling entry is not
-  emitted beside it; further server names (`render.namesPerEndpoint`) dial the name too;
-- in a body with an auto group (sing-box, Clash / Mihomo), the address's IPs as **fallback
-  entries** in the same group (`<label> (IP)`, the suffix `render.ipLabel`, and the IPv6 one
-  under `render.ipv6Label` where the rule emits IPv6): an app whose lookup of the name is
-  blocked or answered falsely switches to the IP by itself. The IP is no secret (anyone can look
-  the name up). Under an entry cap they rank after every first entry and before further names,
-  since a blocked name takes its further names with it;
+- the name in place of the IPv4 entry; further server names (`render.namesPerEndpoint`) dial
+  the name too;
+- the IPv6 entry exactly as without a name (`<label> (IPv6)`, where the family's rule emits
+  IPv6), in every format, link lists included (below);
+- in a body with an auto group (sing-box, Clash / Mihomo), the IPv4 as a **fallback entry** in
+  the same group (`<label> (IP)`, the suffix `render.ipLabel`): an app whose lookup of the name
+  is blocked or answered falsely switches to the IP by itself. The IP is no secret (anyone can
+  look the name up). Under an entry cap it ranks after every first entry and before further
+  names, since a blocked name takes its further names with it;
 - a link list (v2rayNG, Happ, Streisand and the like, which never switch by themselves) gets the
-  name only, plus the backup as before;
+  name and the IPv6 entry, plus the backup as before, and no IPv4 literal;
 - a single key (Outline) keeps the IP: it has no room for a fallback.
+
+**Why the IPv6 entry stays.** A name with both an A and an AAAA record leaves the choice of
+family to the client: Go dialers (sing-box, Mihomo, Xray) race the two families at TCP connect
+(RFC 6555, about 300 ms), in the order the resolver or the setting gives. FCP's sing-box
+template resolves with `prefer_ipv4` (`fallback_delay` 300 ms by default), its Clash and Mihomo
+templates resolve AAAA (`dns.ipv6: true`) and leave each proxy's `ip-version` at its default,
+and an Xray app with the default `domainStrategy: AsIs` dials through Go's system dialer, which
+sorts addresses by RFC 6724 (IPv6 first where the network has it). An app may also force one
+family in its own settings. The race decides only which TCP connection opens: where a censor
+lets the IPv4 connection open and then cuts REALITY, the client never tries IPv6 for that
+entry. So the IPv6 entry of today is kept beside the name. An auto group moves to it when the
+name fails, and in a link list the member can pick it. Testers in one country found REALITY
+over IPv6 working on a network where it is blocked over IPv4, while most networks there have
+no IPv6 at all. The AAAA record is written for the address's confirmed IPv6 only (one a describe
+learned is added once a test promotes it).
 
 The leak check refuses a name whose address is the node, exactly like the address itself, and a
 retained entry at a name of the origin's addresses is one of its edges (never withheld). The
