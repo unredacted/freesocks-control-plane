@@ -726,7 +726,7 @@ describe('enrolled nodes', () => {
       standbyWords({ listenerKey: 'ws', layer: 'l7', endpoint: null, accountName: null }),
     ).toBe('ws: members get a new address.');
     expect(blockerWords('servers.stage')).toMatch(/approved/);
-    expect(blockerWords('servers.maintenance_required')).toMatch(/^Put the node in maintenance/);
+    expect(blockerWords('servers.maintenance_required')).toMatch(/^Approving closes this node/);
     expect(blockerWords('servers.template_drifted')).toBe(
       serverErrorWords('servers.template_drifted'),
     );

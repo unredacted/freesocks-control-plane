@@ -1123,6 +1123,81 @@ describe('activating a direct node', () => {
     expect(panel.hosts.find((h) => h.sni === 'www.decoy-a.example').isDisabled).toBe(true);
   });
 
+  // The admin's one Approve: the approval closes the gate itself when that is
+  // all it needs, and the commit opens it again.
+  test('one approval closes a live node when that is all it needs, and its commit opens it again', async () => {
+    const { t, serverId, panel, intentId } = await liveAndCommitted();
+    await addFamilyName(t, serverId, panel);
+    await t.mutation(internal.nodeIntents.enroll, {
+      backendServerId: serverId,
+      name: 'node-a',
+      mode: 'privacy-reality',
+      contractVersion: 2,
+      observed: {
+        management: { address: '192.0.2.10', port: 2222 },
+        publicIps: { v4: '203.0.113.10' },
+        capabilities: { caddy: false, ipv6: false },
+      },
+    });
+    await settled(() => t.run((c) => c.db.get(intentId)));
+    const built = await t.action(internal.nodeActivation.buildDirectTestLink, { intentId });
+    const { intentId: _i, issuedAt: _t, ...binding } = built.binding;
+    await t.mutation(internal.nodeActivation.confirmDirect, { intentId, binding });
+    const review = await t.query(internal.nodeActivation.review, { intentId });
+    expect(review.blockers).toEqual(['servers.maintenance_required']);
+    // A review read before something moved closes nothing.
+    await expect(
+      t.mutation(internal.nodeActivation.approve, {
+        intentId,
+        reviewHash: 'stale',
+        closeGate: true,
+      }),
+    ).rejects.toThrow(/review_stale/);
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    expect((await t.run((c) => c.db.get(intentId)))!.maintenance).toBeUndefined();
+
+    const { runId } = await t.mutation(internal.nodeActivation.approve, {
+      intentId,
+      reviewHash: review.reviewHash,
+      closeGate: true,
+    });
+    // Closed from the approval: members are held off the node until the commit.
+    const closed = (await t.run((c) => c.db.get(intentId)))!;
+    expect(closed.maintenance).toBeUndefined();
+    expect(closed.activation.stage).toBe('activating');
+    expect(closed.delivery.disposition).toBe('activating');
+    const actions = (await t.run((c) => c.db.query('auditLog').collect())).map((r) => r.action);
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        'servers.node.maintenance_started',
+        'servers.node.maintenance_finished',
+        'servers.node.approved',
+      ]),
+    );
+    const run = await runUntil(
+      () => t.run((c) => c.db.get(runId)),
+      (state) => state !== 'running',
+    );
+    expect(run.state).toBe('committed');
+    expect((await t.run((c) => c.db.get(intentId)))!.delivery.disposition).toBe('live');
+    expect((await gateOf(t, serverId)).state).toBe('open');
+    expect(panel.hosts.find((h) => h.sni === 'www.decoy-a.example').isDisabled).toBe(false);
+  });
+
+  test('closing the gate is no way past another blocker', async () => {
+    const { t, intentId } = await liveAndCommitted();
+    const review = await t.query(internal.nodeActivation.review, { intentId });
+    await t.run((c) => c.db.patch(intentId, { state: 'retiring' as const }));
+    await expect(
+      t.mutation(internal.nodeActivation.approve, {
+        intentId,
+        reviewHash: review.reviewHash,
+        closeGate: true,
+      }),
+    ).rejects.toThrow(/node_retiring/);
+    expect((await t.run((c) => c.db.get(intentId)))!.maintenance).toBeUndefined();
+  });
+
   // One entry says nothing about the others: the rehearsal reads every
   // candidate address, with the name it is there to serve.
   test('the rehearsal refuses a body that carries only one of two addresses', async () => {

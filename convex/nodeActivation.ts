@@ -64,6 +64,8 @@ import {
   modeEntry,
   nodeGateFor,
   modeSlug,
+  openMaintenance,
+  endMaintenance,
   originAddressOf,
   originHostnameOf,
   transportFor,
@@ -901,16 +903,44 @@ export const approve = internalMutation({
   args: {
     intentId: v.id('panelNodeIntents'),
     reviewHash: v.string(),
+    /**
+     * A live node whose approval needs its gate closed first
+     * (`servers.maintenance_required`, and nothing else): the approval closes
+     * it itself, as Start and Finish maintenance would, and the commit opens
+     * it again. Members are held off the node only from here to the commit.
+     */
+    closeGate: v.optional(v.boolean()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
-    const intent = await ctx.db.get(a.intentId);
+    let intent = await ctx.db.get(a.intentId);
     if (!intent) return refuse('not_found', 'No such node');
     const setup = await setupOf(ctx, intent.backendServerId);
     const direct = isDirect(modeEntry(setup, modeSlug(intent)).shape);
     // A fronted approval starts edge work (its run publishes): held while the
     // edges maintenance switch is on, like every other admission of new work.
     if (!direct) await assertAdmission(ctx.db, 'publish');
+    if (a.closeGate) {
+      const before = await activationBlockers(
+        ctx,
+        intent,
+        setup,
+        direct,
+        direct ? null : await standbysOf(ctx, intent),
+      );
+      const others = before.filter((b) => b.split(':')[0] !== 'servers.maintenance_required');
+      if (others.length > 0)
+        refuse(others[0]!.split(':')[0]!, 'The node is not ready for approval');
+      if (before.length > 0) {
+        // What the admin read is checked before anything moves (the review
+        // never covers the gate, so it reads the same once it is closed).
+        if ((await reviewHashOf(await reviewShapeOf(ctx, intent, setup))) !== a.reviewHash)
+          refuse('servers.review_stale', 'The review changed since you read it. Read it again');
+        await openMaintenance(ctx, intent, 'go_live', a.actorAdminId);
+        await endMaintenance(ctx, (await ctx.db.get(intent._id))!, a.actorAdminId);
+        intent = (await ctx.db.get(intent._id))!;
+      }
+    }
     const standbys = direct ? null : await standbysOf(ctx, intent);
     const blockers = await activationBlockers(ctx, intent, setup, direct, standbys);
     // A blocker's `:detail` is for the review card; the refusal is its code.

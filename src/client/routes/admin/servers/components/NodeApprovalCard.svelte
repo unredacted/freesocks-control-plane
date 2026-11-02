@@ -8,11 +8,14 @@
    * show this card, so approving looks and works the same in either place.
    *
    * Approve is enabled iff the review is loaded and names no blocker (the
-   * server words a stage it would refuse as a blocker too). When the blocker is
-   * that a live node needs maintenance first (a new address reaches members
-   * only while they are held off it), the card offers "Start maintenance"; while
-   * a maintenance is open it offers "Finish maintenance", the step before the
-   * approval (the Servers page then leaves its own button out).
+   * server words a stage it would refuse as a blocker too), or its only
+   * blocker is that a live node needs its gate closed first (a new address
+   * reaches members only while they are held off it): the approval then closes
+   * the gate itself (`closeGate`) and the go-live opens it again, so members
+   * are held off only until the commit. The card says so beside the button and
+   * in the confirmation. While a maintenance opened elsewhere is open it offers
+   * "Finish maintenance", the step before the approval (the Servers page then
+   * leaves its own button out).
    *
    * Props: slug (the backend's), intentId, nodeName, fronted,
    *        maintenance? (the node is closed for maintenance; shown even before
@@ -28,7 +31,6 @@
     finishMaintenance,
     invalidateServers,
     reviewQuery,
-    startMaintenance,
   } from '@client/lib/serversApi';
   import ConfirmDialog from '../../edges/components/ConfirmDialog.svelte';
   import { codeOf } from '../lib/run';
@@ -50,17 +52,21 @@
     () => intentId,
   );
   let open = $state(false);
-  let maintenanceOpen = $state(false);
   let busy = $state(false);
   // Set once the approval went through: the card says so instead of offering it again
   // while the node (and on Edges the run) moves on.
   let approved = $state(false);
 
   const label = $derived(fronted ? 'Approve go-live' : 'Approve and activate');
-  const canApprove = $derived(!!review.data && review.data.blockers.length === 0);
   const blocked = (code: string) => !!review.data?.blockers.some((b) => b.split(':')[0] === code);
-  const needsMaintenance = $derived(blocked('servers.maintenance_required'));
   const inMaintenance = $derived(maintenance || blocked('servers.maintenance_open'));
+  // The gate a live node needs closed is closed by the approval itself; any
+  // other blocker still keeps Approve off.
+  const others = $derived(
+    review.data?.blockers.filter((b) => b.split(':')[0] !== 'servers.maintenance_required') ?? [],
+  );
+  const closesGate = $derived(blocked('servers.maintenance_required') && others.length === 0);
+  const canApprove = $derived(!!review.data && others.length === 0);
   // A listener with no tested address yet is named too, so nothing is approved unseen.
   const bare = $derived(
     review.data
@@ -69,20 +75,6 @@
         )
       : [],
   );
-
-  async function closeForMaintenance() {
-    maintenanceOpen = false;
-    busy = true;
-    try {
-      await startMaintenance(slug, intentId);
-      toast.success(`${nodeName} is closed for maintenance. Finish it, then approve it again.`);
-    } catch (e) {
-      toast.error(serverErrorWords(codeOf(e)));
-    } finally {
-      busy = false;
-      invalidateServers(qc);
-    }
-  }
 
   async function endMaintenance() {
     busy = true;
@@ -103,7 +95,7 @@
     if (!data) return;
     busy = true;
     try {
-      await approveNode(slug, intentId, data.reviewHash);
+      await approveNode(slug, intentId, data.reviewHash, closesGate);
       approved = true;
       toast.success(
         fronted
@@ -162,20 +154,17 @@
         ).length} matched.
       </li>
     </ul>
-    {#if review.data.blockers.length > 0}
+    {#if others.length > 0}
       <ul class="space-y-1 text-amber-700 dark:text-amber-300">
-        {#each review.data.blockers as b (b)}<li>{blockerWords(b)}</li>{/each}
+        {#each others as b (b)}<li>{blockerWords(b)}</li>{/each}
       </ul>
+    {/if}
+    {#if closesGate}
+      <p class="text-muted-foreground">{blockerWords('servers.maintenance_required')}</p>
     {/if}
     <div class="flex flex-wrap gap-2">
       <Button disabled={busy || !canApprove} onclick={() => (open = true)}>{label}</Button>
-      {#if inMaintenance}
-        {@render finishButton()}
-      {:else if needsMaintenance}
-        <Button variant="outline" disabled={busy} onclick={() => (maintenanceOpen = true)}>
-          Start maintenance
-        </Button>
-      {/if}
+      {#if inMaintenance}{@render finishButton()}{/if}
     </div>
   {/if}
 </div>
@@ -183,19 +172,13 @@
 <ConfirmDialog
   bind:open
   title={fronted ? `Approve go-live for ${nodeName}?` : `Release ${nodeName} to members?`}
-  body={fronted
-    ? 'FCP rehearses the real subscription bodies first. Members get the new addresses only if that passes, and nothing changes for them until then.'
-    : 'The node is enabled for members only once its real subscription bodies rehearse correctly. Until then nobody sees it.'}
-  typed={fronted ? nodeName : undefined}
+  body={closesGate
+    ? `This closes ${nodeName} for members until it goes live, about a minute: members who refresh meanwhile are given another node, or keep their configuration. FCP then rehearses the real subscription bodies and opens it with the new addresses only if that passes.`
+    : fronted
+      ? 'FCP rehearses the real subscription bodies first. Members get the new addresses only if that passes, and nothing changes for them until then.'
+      : 'The node is enabled for members only once its real subscription bodies rehearse correctly. Until then nobody sees it.'}
+  typed={fronted || closesGate ? nodeName : undefined}
   confirmLabel={label}
+  danger={closesGate}
   onConfirm={approve}
-/>
-<ConfirmDialog
-  bind:open={maintenanceOpen}
-  title={`Close ${nodeName} for maintenance?`}
-  body="Members of this node get the unavailable answer until it is approved again. Once you finish the maintenance, approve it to reopen it with its new address."
-  typed={nodeName}
-  confirmLabel="Start maintenance"
-  danger
-  onConfirm={closeForMaintenance}
 />

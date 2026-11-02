@@ -959,9 +959,16 @@ mirror). FCP never starts a run by itself.
 - **Candidate Hosts on a live node.** A direct node's body reaches members as the backend serves
   it, so an address a candidate would enable cannot be kept out of it; a fronted listener without
   a committed template edge would get a new Host or a moved Host pointer. Either needs the gate
-  closed first: the review shows `servers.maintenance_required` and approval refuses it until
-  the node is closed for maintenance (`POST …/maintenance {start: true}`, then Finish
-  maintenance and a fresh activation with the gate closed).
+  closed first: the review shows `servers.maintenance_required`. When that is its only blocker,
+  the approval closes the gate itself (`POST approve {reviewHash, closeGate: true}`, what the
+  review card's Approve sends): in one transaction it checks the review the admin read, closes
+  the node and finishes the transition exactly as Start and Finish maintenance do (audited as
+  both, reason `go_live`), and approves; the commit opens the gate again, so members are held
+  off the node only from the approval to the go-live (about a minute; those who refresh
+  meanwhile are given another node of the group while one is open, or keep their
+  configuration). Without `closeGate` the approval refuses it as before; the explicit route
+  (`POST …/maintenance {start: true}`, then Finish maintenance and a fresh activation) stays
+  for every other reason to close a node.
 - **Keep members on the direct address** does not exist for an enrolled fronted node: refused as
   `edge.keep_direct_enrolled` when a run is created and when it resumes (the plan reports
   `enrolled`, and the sheet hides the choice). Removing protection stays the restore workflow's job.
@@ -1059,7 +1066,7 @@ treatment (`hold` | `acknowledge`) whenever nodes FCP does not manage run the to
 and `POST {slug}/holds/{id}/release` ends one. `POST {slug}/nodes/adopt` adopts a node (above).
 
 Admin routes on `{slug}/nodes/intents/{id}`: `GET review`, `POST test-link`, `POST confirm`,
-`POST approve {reviewHash}`, `POST settings {patch, maintenance}`, `POST maintenance {start:
+`POST approve {reviewHash, closeGate?}`, `POST settings {patch, maintenance}`, `POST maintenance {start:
 true}` (close the node for maintenance) and `POST maintenance` (finish),
 `POST retire [{disposition}]`, `POST reject-retirement` (turn down the node role's retirement
 request; the node keeps serving), `POST wiped` (an ADOPTED node's machine confirmed gone by an
