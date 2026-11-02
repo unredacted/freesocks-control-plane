@@ -627,6 +627,11 @@ export const fetchSubscriptionContent = internalAction({
     // before freedom delivery through edges narrows the pick, so a node about
     // to be covered (or uncovered) is the node looked at, not a covered one.
     nodeCheck: v.optional(v.boolean()),
+    // The delivery rehearsal's node: the body is pinned to it while it is in
+    // the body, whatever its gate says (it is closed for the length of an
+    // activation, which is exactly when the rehearsal looks at it), so the
+    // rehearsal renders what its members get once it opens, not another node's.
+    pinNode: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -639,6 +644,7 @@ export const fetchSubscriptionContent = internalAction({
       excludeNode,
       unpinned,
       nodeCheck,
+      pinNode,
     },
   ): Promise<SubscriptionContent> => {
     if (mockBackendEnabled()) return mockFetchContent();
@@ -676,12 +682,14 @@ export const fetchSubscriptionContent = internalAction({
         });
         const blocked = new Set(rules.blocked);
         const servable = rules.servable && !nodeCheck ? new Set(rules.servable) : null;
-        const pinned = pinSubscriptionToNode(
-          fetched.content,
-          backendShortId,
-          [...(excludeNode ? [excludeNode] : []), ...rules.blocked],
-          servable ? (n) => servable.has(n) && !blocked.has(n) : undefined,
-        );
+        const pinned = pinNode
+          ? pinSubscriptionToNode(fetched.content, backendShortId, [], (n) => n === pinNode)
+          : pinSubscriptionToNode(
+              fetched.content,
+              backendShortId,
+              [...(excludeNode ? [excludeNode] : []), ...rules.blocked],
+              servable ? (n) => servable.has(n) && !blocked.has(n) : undefined,
+            );
         return {
           ...fetched,
           content: pinned.content,

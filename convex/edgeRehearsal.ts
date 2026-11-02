@@ -44,8 +44,13 @@ import type { Doc, Id } from './_generated/dataModel';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import { RENDER_CLIENT_FAMILIES, resolveEdgeConfig, type EdgeConfig } from './lib/edgeConfig';
 import { classifyClient } from './lib/edges/clientFamilies';
-import type { Cohort } from './lib/edges/cohorts';
-import { cohortValidator, walkRelayCohorts, type CohortCandidate } from './edgeCohorts';
+import { cohortKeyOf, type Cohort } from './lib/edges/cohorts';
+import {
+  cohortValidator,
+  walkCohorts,
+  walkRelayCohorts,
+  type CohortCandidate,
+} from './edgeCohorts';
 import { placeholderBody } from './lib/nodePinning';
 import { bodyMentionsAny } from './lib/subscriptionDelivery';
 import { formatSupported, type RenderFormat } from './lib/edges/protocols';
@@ -328,6 +333,8 @@ async function fetchBody(
       userAgent: REHEARSAL_USER_AGENTS[format],
       ...(ref.excludeNode ? { excludeNode: ref.excludeNode } : {}),
       nodeCheck: true,
+      // The node rehearsed, closed while it activates: what its members get once it opens.
+      ...(c.nodeName ? { pinNode: c.nodeName } : {}),
     });
     return {
       kind: 'body',
@@ -500,6 +507,57 @@ async function rehearseBody(
   return null;
 }
 
+/**
+ * The placements an enrolled node serves: its mode's group (a key's
+ * `backendPlacement` is the group it was issued into). Null for an origin
+ * that is not one enrolled node, or a mode the setup has no group for.
+ */
+export const nodePlacements = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (
+    ctx,
+    { relayId },
+  ): Promise<{ backendServerId: Id<'backendServers'>; placements: string[] } | null> => {
+    const relay = await ctx.db.get(relayId);
+    if (!relay?.backendServerId || relay.origin.kind !== 'panel-node' || !relay.nodeName)
+      return null;
+    const sid = relay.backendServerId;
+    const intent = (
+      await ctx.db
+        .query('panelNodeIntents')
+        .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+        .collect()
+    ).find((i) => i.name === relay.nodeName && i.state !== 'retired');
+    if (!intent) return null;
+    const setup = await ctx.db
+      .query('panelSetups')
+      .withIndex('by_server', (q) => q.eq('backendServerId', sid))
+      .unique();
+    const group = setup?.modes?.find((m) => m.slug === intent.mode)?.groupUuid;
+    return group ? { backendServerId: sid, placements: [group] } : null;
+  },
+});
+
+/**
+ * The cohorts a rehearsal judges: the node's members (keys whose stored pin is
+ * the node), and every placement the node serves that none of them is on, from
+ * the keys of that placement anywhere on the server. Such a key reaches the
+ * node once its gate opens (the pin picks among the nodes in the body), though
+ * no key may be pinned to it yet: a new node, or one whose members moved away
+ * while it was closed. Its body is pinned to the node for the look
+ * (`pinNode`), so it is rehearsed as it will be served.
+ */
+async function rehearsalCohorts(ctx: ActionCtx, relayId: Id<'relays'>): Promise<Cohort[]> {
+  const pinned = await walkRelayCohorts(ctx, relayId);
+  const node = await ctx.runQuery(internal.edgeRehearsal.nodePlacements, { relayId });
+  if (!node) return pinned;
+  const have = new Set(pinned.map((c) => c.key));
+  const missing = new Set(node.placements.filter((p) => !have.has(cohortKeyOf(p))));
+  if (missing.size === 0) return pinned;
+  const server = await walkCohorts(ctx, { backendServerId: node.backendServerId });
+  return [...pinned, ...server.filter((c) => c.placement !== null && missing.has(c.placement))];
+}
+
 export const run = internalAction({
   args: {
     relayId: v.id('relays'),
@@ -516,7 +574,7 @@ export const run = internalAction({
         relayId,
         darkCohortKeys,
         ...(activationRunId ? { activationRunId } : {}),
-        cohorts: await walkRelayCohorts(ctx, relayId),
+        cohorts: await rehearsalCohorts(ctx, relayId),
       });
       if (!c) throw new Error('rehearsal: the origin has no backend origin');
       const failures: RehearsalFailure[] = [];
