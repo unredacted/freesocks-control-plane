@@ -49,6 +49,7 @@
   import ModeGroupsCard from './components/ModeGroupsCard.svelte';
   import PortChangesCard from './components/PortChangesCard.svelte';
   import { codeOf } from './lib/run';
+  import { machineNameShown } from './lib/machineName';
   import { nodeMatches } from './lib/nodeFilter';
   import { pickInstance, serversPaths } from './lib/routes';
   import { setupSummary } from './lib/setupChange';
@@ -391,6 +392,7 @@
             {@const country = countryLabel(node.countryCode)}
             {@const intent = intentOf(node)}
             {@const st = intent ? stageWords(intent) : null}
+            {@const machine = machineNameShown(node.name, intent?.machineName)}
             <li>
               <Link
                 href={serversPaths.node(node.nodeUuid, { instance: slug ?? undefined })}
@@ -400,9 +402,9 @@
                 <span class="min-w-0 flex-1">
                   <span class="flex flex-wrap items-baseline gap-x-2">
                     <span class="font-medium">{node.name}</span>
-                    {#if intent?.machineName}
+                    {#if machine}
                       <span class="text-muted-foreground font-mono text-xs" title="Machine name"
-                        >{intent.machineName}</span
+                        >{machine}</span
                       >
                     {/if}
                     {#if intent}

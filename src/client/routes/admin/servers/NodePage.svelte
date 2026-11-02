@@ -42,6 +42,7 @@
   import PortChangesCard from './components/PortChangesCard.svelte';
   import PortDialog from './components/PortDialog.svelte';
   import { codeOf } from './lib/run';
+  import { machineNameShown } from './lib/machineName';
   import { pickInstance, serversPaths } from './lib/routes';
   import {
     countryLabel,
@@ -143,7 +144,11 @@
   <p class="text-destructive text-sm">{serverErrorWords(codeOf(tree.error))}</p>
 {:else if !node && slug && intent?.retirement}
   <!-- Retiring removes the panel row before the machine is wiped: the steps stay here. -->
-  <SectionHeader title={intent.name} description={intent.machineName ?? undefined} {back} />
+  <SectionHeader
+    title={intent.name}
+    description={machineNameShown(intent.name, intent.machineName) ?? undefined}
+    {back}
+  />
   <ActivationSection {slug} {intent} />
 {:else if !node || !slug}
   <SectionHeader title="Node not found" {back} />
@@ -156,8 +161,9 @@
   {@const notes = nodeNotes(node)}
   <SectionHeader
     title={node.name}
-    description={[intent?.machineName, country, node.address].filter(Boolean).join(' · ') ||
-      undefined}
+    description={[machineNameShown(node.name, intent?.machineName), country, node.address]
+      .filter(Boolean)
+      .join(' · ') || undefined}
     {back}
   >
     {#snippet actions()}
