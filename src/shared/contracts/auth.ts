@@ -12,6 +12,15 @@ const httpsOrEmpty = z.string().refine((u) => u === '' || u.startsWith('https://
   message: 'must be https or empty',
 });
 
+/** An admin-uploaded site image (convex/lib/siteImage.ts): the version is a
+ *  hex digest prefix, so it is safe to put in a URL as is. */
+export const SiteImageRef = z.object({
+  version: z.string().regex(/^[0-9a-f]{16}$/),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+export type SiteImageRef = z.infer<typeof SiteImageRef>;
+
 export const AuthMeResponse = z.object({
   authenticated: z.boolean(),
   member: z
@@ -298,6 +307,10 @@ export const PublicConfig = z.object({
        *  home hero; 1 shows it statically; [] falls back to heroTitle, then the
        *  built-in translated variant list. */
       heroTitles: z.array(z.string()).optional().default([]),
+      /** The admin-uploaded home page image, served at
+       *  `/api/v1/site/home-image?v=<version>`; null = the built-in one. The
+       *  size lets the page reserve its space. Defaulted for deploy skew. */
+      homeImage: SiteImageRef.nullable().optional().default(null),
     })
     .optional(),
   /** Whether the SPA should send its anonymous pageview beacon to

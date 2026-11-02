@@ -8,10 +8,11 @@
 
     Drawn on a canvas with the bundled brand fonts so the output carries the
     site's real typography without any screenshot tooling. Colors are the dark
-    theme's values from globals.css (.dark), and the poster on the right is the
-    same pixel scene as components/PixelPoster.svelte. The copy is the hero
-    title + the meta description - keep those in sync with index.html /
-    Home.svelte when they change.
+    theme's values from globals.css (.dark), and the picture on the right is the
+    home page's built-in one (src/client/assets/home-poster.png; an image an
+    admin uploads does not change this card). The copy is the hero title + the
+    meta description - keep those in sync with index.html / Home.svelte when
+    they change.
   -->
   <head>
     <meta charset="UTF-8" />
@@ -33,12 +34,6 @@
         font-family: 'Atkinson Hyperlegible Next';
         font-weight: 400;
         src: url('../node_modules/@fontsource/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-400-normal.woff2')
-          format('woff2');
-      }
-      @font-face {
-        font-family: 'Silkscreen';
-        font-weight: 400;
-        src: url('../node_modules/@fontsource/silkscreen/files/silkscreen-latin-400-normal.woff2')
           format('woff2');
       }
       body {
@@ -65,35 +60,11 @@
       const INK = '#f5f4ef';
       const BODY = '#dcdbd5';
       const MUTED = '#b0afa9';
-      const BRAND = '#5aba6a';
       const LOGO_GREEN = '#007e4b';
-      // Poster colors (components/PixelPoster.svelte).
-      const PLATE = '#c9cbd6';
-      const NIGHT = '#262a3a';
 
       // The 8-point star on a 24x24 box (the logo mark, BrandMark.svelte).
       const STAR =
         'M12 2l1.53 6.3 5.54-3.37-3.37 5.54L22 12l-6.3 1.53 3.37 5.54-5.54-3.37L12 22l-1.53-6.3-5.54 3.37 3.37-5.54L2 12l6.3-1.53L4.93 4.93l5.54 3.37L12 2Z';
-      // The same star as pixel art on a 17x17 grid (PixelPoster.svelte).
-      const PIXEL_STAR =
-        'M8 0h1v17h-1zM0 8h17v1h-17zM2 2h1v1h-1zM14 2h1v1h-1zM3 3h1v1h-1zM13 3h1v1h-1zM4 4h2v1h-2zM7 4h3v1h-3zM11 4h2v1h-2zM4 5h9v1h-9zM5 6h7v1h-7zM4 7h9v1h-9zM4 9h9v1h-9zM5 10h7v1h-7zM4 11h9v1h-9zM4 12h2v1h-2zM7 12h3v1h-3zM11 12h2v1h-2zM3 13h1v1h-1zM13 13h1v1h-1zM2 14h1v1h-1zM14 14h1v1h-1z';
-      const BAYER = [
-        [0, 8, 2, 10],
-        [12, 4, 14, 6],
-        [3, 11, 1, 9],
-        [15, 7, 13, 5],
-      ].map((row) => row.map((v) => (v + 0.5) / 16));
-      const SPARKLES = [
-        [4, 4],
-        [26, 3],
-        [34, 7],
-        [3, 19],
-        [37, 17],
-        [7, 34],
-        [35, 31],
-        [15, 39],
-        [30, 39],
-      ];
 
       function logo(ctx, x, y, size) {
         ctx.fillStyle = LOGO_GREEN;
@@ -109,70 +80,24 @@
         ctx.restore();
       }
 
-      // The poster: a lettered plate over a 40x43 pixel scene (star, dithered
-      // glow, sparkles), framed like PixelPoster.svelte.
-      const POSTER = { pad: 7, border: 3, plateH: 92 };
-      function posterHeight(width) {
-        const { pad, border, plateH } = POSTER;
-        const sceneH = ((width - 2 * (pad + border)) / 40) * 43;
-        return 2 * pad + border + plateH + border + sceneH + border;
-      }
-      function poster(ctx, x, y, width) {
-        const { pad, border, plateH } = POSTER;
-        const inner = width - 2 * (pad + border);
-        const cell = inner / 40;
-        const sceneH = cell * 43;
-        const outerH = posterHeight(width);
-        // Outer navy rule, plate-colored frame.
-        ctx.fillStyle = NIGHT;
-        ctx.fillRect(x - 3, y - 3, width + 6, outerH + 6);
-        ctx.fillStyle = PLATE;
-        ctx.fillRect(x, y, width, outerH);
-        // Plate.
-        const px = x + pad;
-        const py = y + pad;
-        ctx.fillStyle = NIGHT;
-        ctx.fillRect(px, py, width - 2 * pad, border);
-        ctx.fillRect(px, py, border, plateH + border);
-        ctx.fillRect(px + width - 2 * pad - border, py, border, plateH + border);
-        ctx.font = '400 30px "Silkscreen"';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillText('INTERNET', x + width / 2, py + border + 40);
-        ctx.fillText('FREEDOM', x + width / 2, py + border + 74);
-        ctx.textAlign = 'start';
-        // Scene.
-        const sx = px + border;
-        const sy = py + border + plateH;
-        ctx.fillStyle = NIGHT;
-        ctx.fillRect(px, sy - border, width - 2 * pad, sceneH + 2 * border);
-        ctx.save();
-        ctx.translate(sx, sy);
-        ctx.scale(cell, cell);
-        const cx = 12 + 8.5;
-        const cy = 11 + 8.5;
-        ctx.fillStyle = 'rgba(90, 186, 106, 0.22)';
-        for (let gy = 0; gy < 43; gy++) {
-          for (let gx = 0; gx < 40; gx++) {
-            const tt = Math.min(1, Math.hypot(gx + 0.5 - cx, gy + 0.5 - cy) / 16);
-            const f = (1 - tt * tt * (3 - 2 * tt)) * 0.9;
-            if (f > BAYER[gy & 3][gx & 3]) ctx.fillRect(gx, gy, 1, 1);
-          }
-        }
-        ctx.fillStyle = 'rgba(201, 203, 214, 0.75)';
-        for (const [gx, gy] of SPARKLES) ctx.fillRect(gx, gy, 1, 1);
-        ctx.translate(12, 11);
-        ctx.fillStyle = BRAND;
-        ctx.fill(new Path2D(PIXEL_STAR));
-        ctx.restore();
+      // The home page's built-in picture: 100x144 pixel art stored at 10x, so a
+      // width that is a multiple of 100 keeps every pixel square and sharp.
+      const POSTER_SRC = '../src/client/assets/home-poster.png';
+      function loadImage(src) {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = src;
+        });
       }
 
       async function draw() {
-        await Promise.all([
+        const [posterImg] = await Promise.all([
+          loadImage(POSTER_SRC),
           document.fonts.load('700 100px "Schibsted Grotesk"'),
           document.fonts.load('800 50px "Schibsted Grotesk"'),
           document.fonts.load('400 34px "Atkinson Hyperlegible Next"'),
-          document.fonts.load('400 30px "Silkscreen"'),
         ]);
         const c = document.getElementById('card');
         const ctx = c.getContext('2d');
@@ -220,10 +145,11 @@
         ctx.fillText('Free, open & uncensored proxies for users', M, 452);
         ctx.fillText('in heavily-censored regions.', M, 494);
 
-        // The poster, right-aligned to the same margin.
-        // Vertically centered in the space above the band.
+        // The picture, right-aligned to the same margin and vertically centered
+        // in the space above the band.
         const W = 300;
-        poster(ctx, 1200 - M - W, Math.round((BAND_Y - posterHeight(W)) / 2), W);
+        const H = Math.round((W * posterImg.naturalHeight) / posterImg.naturalWidth);
+        ctx.drawImage(posterImg, 1200 - M - W, Math.round((BAND_Y - H) / 2), W, H);
       }
 
       document.getElementById('save').addEventListener('click', () => {

@@ -4638,6 +4638,21 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_key', ['key']),
 
+  // Admin-uploaded site images, one row per slot (today only `homeImage`, the
+  // picture beside the home hero). The bytes sit in the datastore so database
+  // backups carry them; the `site.homeImage` appSettings row holds the small
+  // reference /api/v1/config hands out (lib/siteImage.ts). Capped at 512 KiB.
+  siteImages: defineTable({
+    slot: v.string(),
+    data: v.bytes(),
+    contentType: v.string(),
+    width: v.number(),
+    height: v.number(),
+    version: v.string(),
+    updatedByAdminId: v.optional(v.id('adminUsers')),
+    updatedAt: v.number(),
+  }).index('by_slot', ['slot']),
+
   // Operator-published network-status incidents (the public /status page).
   // Deliberately NOT auto-derived from healthcheck flapping: a human writes and
   // resolves each entry, so the page stays trustworthy. `locationCodes` scopes

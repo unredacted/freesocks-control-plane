@@ -115,7 +115,6 @@
   --font-mono:
     'Atkinson Hyperlegible Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     'Liberation Mono', 'Courier New', monospace;
-  --font-pixel: 'Silkscreen', ui-monospace, monospace;
 }
 
 /* The site's content column: 1200px wide, with a gutter that grows from 18px
@@ -201,10 +200,9 @@
 }
 
 /* The brand's ONE signature texture is the Bayer-dithered field rendered by
-   DitherField.svelte on a low-res canvas (the empty-state disc; the home
-   poster draws it in SVG) - no CSS equivalent lives here; the canvas resolves the
-   --primary token to sRGB itself (older engines can't take oklch() in
-   fillStyle). */
+   DitherField.svelte on a low-res canvas (the empty-state disc) - no CSS
+   equivalent lives here; the canvas resolves the --primary token to sRGB
+   itself (older engines can't take oklch() in fillStyle). */
 
 /* Admin pages that opt in (the Servers section, a node's edges): every control
    is at least 44px tall on a phone. Switches and checkboxes keep their shape
