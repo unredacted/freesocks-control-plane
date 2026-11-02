@@ -228,12 +228,13 @@ export function operatorFrontHosts(
   const covered = lower(ctx.coveredInboundUuids);
   const known = [ctx.originAddress, ...(ctx.alsoAddresses ?? []), ...(ctx.edgeAddresses ?? [])];
   const named = new Set((ctx.frontNames ?? []).map(normalizeAddress));
-  const others = new Set(ctx.otherNodeNames ?? []);
+  const others = new Set((ctx.otherNodeNames ?? []).map((n) => n.toLowerCase()));
   return hosts.filter((h) => {
     const inbound = h.inbound?.configProfileInboundUuid?.toLowerCase();
     if (h.isDisabled || !inbound || !covered.has(inbound)) return false;
-    const node = splitPanelRemark(h.remark, h.sni)?.node;
-    if (node !== undefined && others.has(node)) return false;
+    // The server name the pinner reads: the SNI, else the HTTP Host.
+    const node = splitPanelRemark(h.remark, h.sni || h.host)?.node;
+    if (node !== undefined && others.has(node.toLowerCase())) return false;
     if (canonicalIp(h.address) === null && !named.has(normalizeAddress(h.address))) return false;
     if (known.some((a) => sameAddress(h.address, a))) return false;
     return !ctx.fcpRemarks.includes(h.remark) && !ctx.legacyHostUuids.includes(h.uuid);

@@ -230,7 +230,9 @@ export async function otherNodeNamesOf(
     .query('backendNodeInventory')
     .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
     .collect(); // one backend's nodes: operator-scale
-  return nodes.map((n) => n.name).filter((n) => n !== nodeName);
+  // A relay keeps its node name lowercased; the inventory keeps the panel's.
+  const own = nodeName?.toLowerCase();
+  return nodes.map((n) => n.name).filter((n) => n.toLowerCase() !== own);
 }
 
 export const context = internalQuery({

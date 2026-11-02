@@ -13,12 +13,14 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import type { BackendHost } from './lib/backends/types';
 import { upsertSettingRow } from './appSettings';
 import {
   MAX_NODE_NAME_LOOKUPS,
   classifyDirectHosts,
   listingHash,
   namesElsewhere,
+  operatorFrontHosts,
 } from './lib/edges/directHosts';
 import { cohortPage, type Cohort, type CohortCursor, type CohortPage } from './lib/edges/cohorts';
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
@@ -244,6 +246,48 @@ describe('classifyDirectHosts (pure)', () => {
     );
     expect(a).not.toBe(b);
     expect(c).toBe(a);
+  });
+});
+
+describe('operatorFrontHosts and other nodes (pure)', () => {
+  const INBOUND = 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1';
+  const ctx = {
+    originAddress: '192.0.2.10',
+    nodeInboundUuids: [INBOUND],
+    fcpRemarks: [],
+    legacyHostUuids: [],
+    coveredInboundUuids: [INBOUND],
+    otherNodeNames: ['Node-Two'],
+  };
+  const host = (uuid: string, remark: string, over: Partial<BackendHost> = {}): BackendHost =>
+    ({
+      uuid,
+      remark,
+      address: '198.51.100.7',
+      port: 443,
+      sni: '',
+      host: '',
+      isDisabled: false,
+      inbound: { configProfileUuid: 'p', configProfileInboundUuid: INBOUND },
+      ...over,
+    }) as BackendHost;
+  test("a Host another node's remark names is that node's, whatever case either is in", () => {
+    const fronts = operatorFrontHosts(
+      [
+        host('a', 'node-one-ws-0d6f2b'),
+        host('b', 'node-two-ws-50cc9d'),
+        host('c', 'NODE-TWO-relay'),
+      ],
+      ctx,
+    );
+    expect(fronts.map((h) => h.uuid)).toEqual(['a']);
+  });
+  test('an address remark is read with the HTTP Host when the Host carries no SNI, as the pinner reads it', () => {
+    // Its rest is the Host it sends: the other node's entry.
+    const theirs = host('d', 'Node-Two | label.example', { host: 'label.example' });
+    // Its rest is not what it sends: an operator's display remark, a front of this node.
+    const display = host('e', 'Node-Two | label.example', { host: 'cdn.example' });
+    expect(operatorFrontHosts([theirs, display], ctx).map((h) => h.uuid)).toEqual(['e']);
   });
 });
 
@@ -1198,6 +1242,17 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
         backendServerId: serverId,
         nodeUuid: 'node-uuid-other',
         name: OTHER,
+        usersOnline: 0,
+        online: true,
+        lastStatsAt: NOW,
+      }),
+    );
+    // The panel's own spelling of this node: a relay keeps its name lowercased.
+    await t.run((ctx) =>
+      ctx.db.insert('backendNodeInventory', {
+        backendServerId: serverId,
+        nodeUuid: 'node-uuid-own',
+        name: FIXTURE_NODE.toUpperCase(),
         usersOnline: 0,
         online: true,
         lastStatsAt: NOW,

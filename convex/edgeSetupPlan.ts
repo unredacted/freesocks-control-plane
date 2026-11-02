@@ -309,7 +309,7 @@ async function planContextOf(
         address: node.address ?? null,
         port: node.port ?? null,
       },
-      otherNodeNames: inventory.filter((n) => n.name !== node.name).map((n) => n.name),
+      otherNodeNames: inventory.filter((n) => n.nodeUuid !== node.nodeUuid).map((n) => n.name),
       enrolled,
       websocketNode,
       modes,
