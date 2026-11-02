@@ -988,6 +988,66 @@ describe("an adopted WebSocket node's origin name", () => {
   });
 });
 
+describe('a node adopted as another transport’s mode', () => {
+  /** A direct node as prod has them: it runs the WebSocket transport too, with no Host for it. */
+  async function directRunningWs(s: Seeded) {
+    const { nodeUuid, hostUuid } = await legacyDirect(s, { name: 'legacy-m', uuid: 460 });
+    s.panel.nodes.at(-1)!.configProfile.activeInbounds.push(s.ws);
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    return { nodeUuid, hostUuid };
+  }
+
+  test('is refused while its own addresses are all on the other transport', async () => {
+    const s = await seed();
+    const { nodeUuid } = await directRunningWs(s);
+    await expect(
+      s.t.mutation(internal.nodeIntents.adoptNode, {
+        backendServerId: s.serverId,
+        nodeUuid,
+        mode: 'freedom-ws',
+        externallyFronted: true,
+        originHostname: 'legacy-m.example.net',
+      }),
+    ).rejects.toThrow(/servers\.adopt_mode_mismatch:PRIVACY_REALITY.*Adopt it as Privacy-Reality/);
+    expect(await s.t.run((ctx) => ctx.db.query('panelNodeIntents').collect())).toEqual([]);
+    // As the mode its members use, it is adopted with its address.
+    const r = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'privacy-reality',
+    });
+    expect(r.addresses).toBe(1);
+  });
+
+  test('goes ahead once it also has an address of its own on the mode’s transport', async () => {
+    const s = await seed();
+    const { nodeUuid } = await directRunningWs(s);
+    s.panel.hosts.push({
+      uuid: UUID(470),
+      remark: 'legacy-m-ws-6a536a',
+      address: 'cdn-legacy-m.example.net',
+      port: 443,
+      sni: 'cdn-legacy-m.example.net',
+      host: 'cdn-legacy-m.example.net',
+      securityLayer: 'TLS',
+      inbound: {
+        configProfileUuid: s.panel.profiles[0].uuid,
+        configProfileInboundUuid: s.ws.uuid,
+      },
+      isDisabled: false,
+    });
+    await s.t.action(internal.backendObserve.refresh, { backendServerId: s.serverId });
+    const r = await s.t.mutation(internal.nodeIntents.adoptNode, {
+      backendServerId: s.serverId,
+      nodeUuid,
+      mode: 'freedom-ws',
+      externallyFronted: true,
+      originHostname: 'origin-m.example.net',
+    });
+    expect((await intentOf(s.t, r.intentId))!.mode).toBe('freedom-ws');
+  });
+});
+
 describe('a node Edges already protect', () => {
   /** The node, and an origin Edges built for it while FCP did not manage it, with one L4 address. */
   async function protectedLegacy(s: Seeded, opts: { verified: boolean; publish: boolean }) {

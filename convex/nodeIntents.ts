@@ -649,17 +649,46 @@ export const adoptNode = internalMutation({
               roleWroteAddress(node.name, h.remark) ||
               (!!node.address && h.address === node.address),
           );
-    if (direct && addresses.length === 0)
-      refuse(
-        'servers.adopt_addresses_missing',
-        'No address turned on on its transport carries this node’s name or address. Name its addresses',
-      );
     const profile = await ctx.db
       .query('panelProfiles')
       .withIndex('by_server_uuid', (q) =>
         q.eq('backendServerId', sid).eq('profileUuid', setup!.profileUuid!),
       )
       .unique();
+    // A node is adopted as the mode its members reach it on. Addresses under
+    // its name, all on another transport it runs, say its members are that
+    // transport's: under this mode, a maintenance its checks never pass or a
+    // retirement (which removes its row) takes the node from them, and it
+    // could never be adopted as their mode.
+    if (!named) {
+      const own = hosts.filter(
+        (h) =>
+          !h.isDisabled &&
+          !taken.has(h.hostUuid) &&
+          !!h.configProfileInboundUuid &&
+          node.activeInboundUuids.includes(h.configProfileInboundUuid) &&
+          (ownsAddress(node.name, h.remark) || roleWroteAddress(node.name, h.remark)),
+      );
+      const elsewhere = own.find((h) => h.configProfileInboundUuid !== t.uuid);
+      if (elsewhere && !own.some((h) => h.configProfileInboundUuid === t.uuid)) {
+        const uuid = elsewhere.configProfileInboundUuid!;
+        const tag = profile?.inbounds.find((i) => i.inboundUuid === uuid)?.tag ?? uuid;
+        const theirs = setup!.modes.find((m) => m.transport?.uuid === uuid);
+        refuse(
+          `servers.adopt_mode_mismatch:${tag}`,
+          `Its members reach it on ${tag}, not on the ${mode.name} transport. ${
+            theirs
+              ? `Adopt it as ${theirs.name}`
+              : 'Add the mode for that transport to the backend setup, then adopt it as that mode'
+          }`,
+        );
+      }
+    }
+    if (direct && addresses.length === 0)
+      refuse(
+        'servers.adopt_addresses_missing',
+        'No address turned on on its transport carries this node’s name or address. Name its addresses',
+      );
     const inbound = profile?.inbounds.find((i) => i.inboundUuid === t.uuid);
     const configRevision = `${profile?.changeToken ?? ''}:${t.uuid}`;
     const authRevision = inbound?.realityAuth?.digest ?? undefined;

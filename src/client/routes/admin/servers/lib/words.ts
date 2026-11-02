@@ -450,6 +450,8 @@ const ERROR_WORDS: Record<string, string> = {
     "No address on this node's transport carries its name or address. Tick the addresses members use for it.",
   'servers.adopt_address_unknown':
     'An address you ticked is turned off, not on that transport any more, or another node has it. Refresh and pick again.',
+  'servers.adopt_mode_mismatch':
+    "This node's own addresses are on another transport, so its members reach it there, not on this mode's. Adopt it as the mode of that transport. If the setup has none, add it with Change setup first.",
   'servers.adopt_edges_retest':
     'Edges protect this node. Adopting it would keep its tested addresses from members until each is tested again, so it stays as it is. Its server names and edges work without adopting it.',
   'servers.mode_change_needs_admin':
