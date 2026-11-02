@@ -3264,6 +3264,77 @@ describe('fastly: one wildcard certificate per account and zone', () => {
     ]);
   });
 
+  test('a hand-made record is used only alone and unproxied; with no challenge on offer, only once the subscription is issued', async () => {
+    const handmade = (over: Partial<DnsRecord> = {}): DnsRecord => ({
+      id: 'handmade',
+      type: 'CNAME',
+      name: '_acme-challenge.example.org',
+      content: WILD_ACME,
+      proxied: false,
+      comment: '',
+      ...over,
+    });
+    const acme = fastlyProvider
+      .planProvision(cfgW, spec, tpl)
+      .find((x) => x.kind === 'create_dns_acme')!;
+    const codeOf = async () =>
+      (
+        (await fastlyProvider
+          .runStep(cfgW, acme, spec, tpl, afterTls(WILD))
+          .catch((e: unknown) => e)) as { meta?: { code?: string } }
+      ).meta?.code;
+    const p = wildcardProvider();
+    p.state.ordered = true;
+    // Proxied: the provider never sees the CNAME.
+    await serve(p.route);
+    fakeDns([handmade({ proxied: true })]);
+    expect(await codeOf()).toBe('acme_name_in_use');
+    // Beside our own record for this subscription with an old value: never one of two.
+    const dns = fakeDns([
+      handmade(),
+      challengeRecord(sharedAcmeMarker(CUSTOMER, WILD), 'ours-old'),
+    ]);
+    expect(await codeOf()).toBe('acme_name_in_use');
+    expect(dns.deleted).toEqual([]);
+    // No challenge on offer: the record is used once the subscription is issued
+    // through it, and not before.
+    const noChallenge = (state: string) => {
+      const doc = fixture('tls-subscription-wildcard-issued.json') as {
+        data: { attributes: Record<string, unknown> };
+        included?: unknown[];
+      };
+      return {
+        status: 200,
+        body: {
+          ...doc,
+          data: { ...doc.data, attributes: { ...doc.data.attributes, state } },
+          included: [],
+        },
+        contentType: 'application/vnd.api+json',
+      };
+    };
+    for (const [state, expected] of [
+      ['issued', 'done'],
+      ['processing', 'refused'],
+    ] as const) {
+      await serve((c) =>
+        c.method === 'GET' && c.path === `/tls/subscriptions/${WILD}`
+          ? noChallenge(state)
+          : p.route(c, 0),
+      );
+      fakeDns([handmade({ content: 'anything.fastly-validations.com' })]);
+      const out = await fastlyProvider
+        .runStep(cfgW, acme, spec, tpl, afterTls(WILD))
+        .then((o) => o.status as string)
+        .catch((e: unknown) =>
+          (e as { meta?: { code?: string } }).meta?.code === 'acme_name_in_use'
+            ? 'refused'
+            : String(e),
+        );
+      expect(out).toBe(expected);
+    }
+  });
+
   test('our own record for a subscription that is gone is replaced; one for a live subscription is not', async () => {
     const p = wildcardProvider();
     p.state.ordered = true;

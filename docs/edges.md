@@ -417,9 +417,10 @@ intent default, § "Fastly fronts"):
   CNAME points at); one ordered another way, or several, is never reused
   (`shared_certificate_ambiguous`). At the challenge name, a record with another customer's
   marker or none is never replaced or deleted; it stops the step (`acme_name_in_use`) unless it
-  already holds the new subscription's own challenge (the zone's certificate ordered by hand in
-  the same Fastly customer: Fastly validates every subscription of that customer for the zone
-  through one name), which is then used as it is, as a candidate; our own customer's
+  is the only record there, unproxied, and already holds the new subscription's own challenge
+  (or, with none on offer, the subscription is already issued through it): the zone's
+  certificate ordered by hand in the same Fastly customer, whose record Fastly validates every
+  subscription of that customer through. It is then used as it is, as a candidate; our own customer's
   marker for a subscription that no longer exists (a failed one deleted at the provider) is
   stale, and the step replaces it with the new subscription's; so is our own record that no
   longer holds the challenge's current value (edited by hand, or a target the provider moved).

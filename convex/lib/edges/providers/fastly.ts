@@ -1106,8 +1106,9 @@ function versionlessResource(
  * longer exists is stale: absent, and the step replaces it. A record without
  * our marker that already holds THIS subscription's challenge (the zone's
  * certificate ordered by hand in the same Fastly customer, which Fastly
- * validates through the same name) is used as it is: found, as a candidate,
- * never edited or deleted. Anything else there (another customer's marker or
+ * validates through the same name), or through which the subscription is
+ * already issued when none is on offer, is used as it is when it is the only
+ * record there and unproxied: found, as a candidate, never edited or deleted. Anything else there (another customer's marker or
  * challenge, our marker for a subscription that still exists) is somebody
  * else's: ambiguous, recorded as candidates that are never deleted.
  */
@@ -1165,12 +1166,24 @@ async function sharedAcmeRecord(
     (gone ? stale : foreign).push(r);
   }
   if (foreign.length > 0) {
-    const challenge = managedDnsChallenge(
-      await api.getTlsSubscription(sub.resourceId, 'tls_authorizations'),
-    );
-    const same = challenge && foreign.find((r) => sameDnsName(r.content, challenge.values[0]!));
-    if (same && foreign.length === 1)
-      return { status: 'found', resource: candidateOf(dnsResource('acme', same, dns, true)) };
+    // The one record at the name (nothing stale beside it), unproxied (a proxy
+    // hides the CNAME from the provider), that validates this subscription:
+    // it holds the challenge on offer, or, with none on offer, the
+    // subscription is already issued through it.
+    const lone = foreign.length === 1 && stale.length === 0 && !foreign[0]!.proxied;
+    if (lone) {
+      const doc = await api.getTlsSubscription(sub.resourceId, 'tls_authorizations');
+      const challenge = managedDnsChallenge(doc);
+      const state = subscriptionState(doc);
+      const validates = challenge
+        ? sameDnsName(foreign[0]!.content, challenge.values[0]!)
+        : state === 'issued' || state === 'renewing';
+      if (validates)
+        return {
+          status: 'found',
+          resource: candidateOf(dnsResource('acme', foreign[0]!, dns, true)),
+        };
+    }
     return {
       status: 'ambiguous',
       candidates: foreign.map((r) => candidateOf(dnsResource('acme', r, dns, true))),
