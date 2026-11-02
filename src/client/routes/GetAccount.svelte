@@ -706,6 +706,7 @@
           backend={subscription.backend}
           rawConfigFirst
           deviceLimited={account.data?.user.tier.deviceLimited ?? false}
+          modeId={effectiveModeId}
         />
       {:else}
         <!-- The pick reaches the apps that read a plain link list; sing-box and
@@ -715,6 +716,7 @@
           subscriptionUrl={subUrl}
           linkListUrl={keyLink}
           deviceLimited={account.data?.user.tier.deviceLimited ?? false}
+          modeId={effectiveModeId}
         />
         <RawConfig />
       {/if}

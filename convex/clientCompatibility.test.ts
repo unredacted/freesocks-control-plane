@@ -24,6 +24,15 @@ describe('client compatibility coverage', () => {
     for (const artifact of Object.values(artifacts))
       expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
+  test('no app FCP serves a sing-box body or an Outline key claims XHTTP', () => {
+    // The catalog's xhttp flag is what reaches the app, not what its core
+    // could do: the panel builds sing-box bodies without XHTTP.
+    for (const client of clients) {
+      if (client.format !== 'singbox' && client.format !== 'outline') continue;
+      const entry = DEFAULT_CLIENTS.find((c) => c.name === client.name);
+      expect(entry?.xhttp, client.name).not.toBe(true);
+    }
+  });
   test('every manifest User-Agent classifies to the format the manifest expects', () => {
     // The manifest says what the PANEL serves each UA; classifyClient is what
     // the /api/v1/sub handler expects for edge rendering. They must agree, or a

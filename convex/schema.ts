@@ -4624,6 +4624,9 @@ export default defineSchema({
     // Verified IPv6-through-tunnel behavior: true works / false IPv4-only /
     // absent untested (tri-state; see lib/clientCatalog.ts).
     ipv6: v.optional(v.boolean()),
+    // XHTTP under REALITY as FCP delivers it to the app: true works / false
+    // can't (hidden on an XHTTP mode) / absent untested (lib/clientCatalog.ts).
+    xhttp: v.optional(v.boolean()),
     enabled: v.boolean(),
     priority: v.number(),
     updatedAt: v.number(),

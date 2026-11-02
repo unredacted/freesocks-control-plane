@@ -157,6 +157,34 @@ describe('clients CRUD', () => {
     expect(d.ipv6).toBeNull();
   });
 
+  test('xhttp tri-state round-trips through create, update and upsertByName', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.clients.create, {
+      name: 'XApp',
+      platforms: ['android'],
+      backends: ['remnawave'],
+      homepageUrl: 'https://x.example',
+      xhttp: false,
+    });
+    expect(created.xhttp).toBe(false); // can't, distinct from untested
+    const id = created.id as Id<'clients'>;
+    // Unspecified → preserved.
+    expect((await t.mutation(internal.clients.update, { id, priority: 2 })).xhttp).toBe(false);
+    expect((await t.mutation(internal.clients.update, { id, xhttp: true })).xhttp).toBe(true);
+    // Null clears back to untested.
+    expect((await t.mutation(internal.clients.update, { id, xhttp: null })).xhttp).toBeNull();
+    const up = await t.mutation(internal.clients.upsertByName, { name: 'XApp', xhttp: false });
+    expect(up.xhttp).toBe(false);
+    // A row that never had it reads as untested.
+    const plain = await t.mutation(internal.clients.create, {
+      name: 'Plain',
+      platforms: [],
+      backends: ['remnawave'],
+      homepageUrl: 'https://p.example',
+    });
+    expect(plain.xhttp).toBeNull();
+  });
+
   test('description round-trips (trimmed + capped), null clears it', async () => {
     const t = convexTest(schema, modules);
     const created = await t.mutation(internal.clients.create, {
@@ -220,6 +248,31 @@ describe('clients CRUD', () => {
     expect(admin.homepageUrl).toBe('https://admin.example'); // untouched
     // The refresh is how a catalog fix (Anywhere's IPv6) reaches a running deployment.
     expect(after.find((c) => c.name === 'Anywhere')!.ipv6).toBe(true);
+  });
+
+  test('a deployment seeded before xhttp gets the flags from the refresh, not the deploy seed', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.seedClients, {});
+    // Rows seeded before the flag existed carry none.
+    for (const c of (await t.query(internal.clients.listForAdmin, {})).clients) {
+      await t.mutation(internal.clients.update, { id: c.id as Id<'clients'>, xhttp: null });
+    }
+    // The deploy's insert-if-missing seed leaves existing rows untested.
+    await t.mutation(internal.seed.seedClients, {});
+    const seeded = (await t.query(internal.clients.listForAdmin, {})).clients;
+    expect(seeded.every((c) => c.xhttp === null)).toBe(true);
+
+    await t.mutation(internal.seed.refreshDefaultClients, {});
+    const after = (await t.query(internal.clients.listForAdmin, {})).clients;
+    const flag = (name: string) => after.find((c) => c.name === name)!.xhttp;
+    expect(flag('sing-box')).toBe(false);
+    expect(flag('Karing')).toBe(false);
+    expect(flag('Hiddify')).toBe(true);
+    expect(flag('Shadowrocket')).toBeNull();
+    // And the public projection carries what the setup page filters on.
+    const pub = await t.run(async (ctx) => publicClients(await resolveClients(ctx.db)));
+    expect(pub.find((c) => c.name === 'Karing')?.xhttp).toBe(false);
+    expect(pub.find((c) => c.name === 'Shadowrocket')?.xhttp).toBeUndefined();
   });
 });
 
@@ -306,6 +359,28 @@ describe('clientCatalog resolve + project', () => {
     const projected = publicClients(DEFAULT_CLIENTS);
     expect(projected.find((c) => c.name === 'sing-box')?.ipv6).toBe(true);
     expect(projected.find((c) => c.name === 'Anywhere')?.ipv6).toBe(true);
+  });
+
+  test('xhttp defaults: what reaches each app through FCP, carried by the projection', () => {
+    const flags = Object.fromEntries(DEFAULT_CLIENTS.map((c) => [c.name, c.xhttp]));
+    expect(flags).toEqual({
+      // sing-box has no XHTTP; Karing gets sing-box bodies (built without it).
+      'sing-box': false,
+      Karing: false,
+      Outline: false,
+      Hiddify: true,
+      v2rayNG: true,
+      v2rayN: true,
+      Throne: true,
+      Anywhere: true,
+      Clash: true,
+      FlClash: true,
+      'Mihomo Party': true,
+      // XHTTP under REALITY unverified: untested, so still shown.
+      Shadowrocket: undefined,
+    });
+    const projected = publicClients(DEFAULT_CLIENTS);
+    for (const c of projected) expect(c.xhttp, c.name).toBe(flags[c.name]);
   });
 
   test('DEFAULT_CLIENTS carry open-source metadata (labels + source repos)', () => {

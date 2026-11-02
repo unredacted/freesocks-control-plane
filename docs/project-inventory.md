@@ -304,7 +304,9 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
     that flags enabled-but-misconfigured rails; §1.7); **Storage mirrors** (provider pool, §1.7);
     **Client apps** (the DB-driven recommended-client catalog — `convex/clients.ts`, `AdminClients.svelte`,
     `/admin/clients`; per-client `easeOfUse` (easy/moderate/advanced) + `openSource`/`license`/
-    `sourceUrl` metadata and install-page `homepageUrl`s, sorted OSS-first-then-easiest; the
+    `sourceUrl` metadata and install-page `homepageUrl`s, sorted OSS-first-then-easiest; tri-state
+    `ipv6` and `xhttp` flags, the second hiding apps that can't use XHTTP from members on an
+    XHTTP mode (`docs/client-compatibility.md`); the
     defaults are re-synced by operator-run `seed:refreshDefaultClients`, which preserves
     `enabled` flags + admin-added rows); **Theme** (preset gallery + hue slider + live preview; §1.7); **Rate-limit policies**
     (W2); **Membership codes** (W4); **Status page** (`/admin/status` — publish/edit/

@@ -375,6 +375,9 @@ export const PublicConfig = z.object({
         easeOfUse: z.enum(['easy', 'moderate', 'advanced']).optional(),
         /** Verified IPv6-through-tunnel behavior; absent = untested. */
         ipv6: z.boolean().optional(),
+        /** XHTTP under REALITY as FCP delivers it; false = hidden on an XHTTP
+         *  mode, absent = untested. */
+        xhttp: z.boolean().optional(),
         /** Admin-set blurb (verbatim in every locale); absent = the SPA's
          *  built-in translated copy for known default apps. */
         description: z.string().optional(),

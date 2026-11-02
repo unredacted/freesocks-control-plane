@@ -15,6 +15,18 @@
 export const FALLBACK_CONNECTION_MODE = 'freedom-ws';
 
 /**
+ * Modes whose entries are XHTTP under REALITY (the built-in `freedom-xhttp`).
+ * An app the client catalog marks `xhttp: false` can't connect on one: sing-box
+ * has no XHTTP, and the panel leaves it out of the sing-box bodies Karing gets
+ * too. The setup page leaves those apps out on these modes.
+ */
+const XHTTP_MODE_IDS: ReadonlySet<string> = new Set(['freedom-xhttp']);
+
+export function isXhttpMode(modeId: string | null | undefined): boolean {
+  return !!modeId && XHTTP_MODE_IDS.has(modeId);
+}
+
+/**
  * Which mode to highlight/use. When server-backed (a key exists + a pool is
  * bound), the server-persisted `connectionModeId` is authoritative and the local
  * pref is only an optimistic bridge; otherwise the local device choice wins, then

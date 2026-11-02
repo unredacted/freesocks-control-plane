@@ -320,7 +320,8 @@ Swap the final command for whatever you need — the common ones:
 
 - `bunx convex run seed:refreshDefaultClients '{}'` — re-sync the recommended-client
   catalog after a code update changes the defaults (preserves `enabled` flags and
-  admin-added clients).
+  admin-added clients). This is how per-app flags such as `xhttp` reach a seeded
+  deployment (`docs/client-compatibility.md` § "XHTTP in the client catalog").
 - `bunx convex run lifecycle:purgeInactiveFree '{}'` — the only path that actually
   removes idle free accounts the `deactivate-idle-free` cron deactivated-and-retained.
 - `bunx convex run serverAdmin:removedBackends '{}'`, then

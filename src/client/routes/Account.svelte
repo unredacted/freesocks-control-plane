@@ -1169,12 +1169,14 @@
                     backend={data.subscription.backend}
                     rawConfigFirst
                     deviceLimited={data.user.tier.deviceLimited ?? false}
+                    modeId={effectiveModeId}
                   />
                 {:else}
                   <ConnectClient
                     backend={data.subscription.backend}
                     subscriptionUrl={subUrl}
                     deviceLimited={data.user.tier.deviceLimited ?? false}
+                    modeId={effectiveModeId}
                   />
                   <RawConfig />
                 {/if}
