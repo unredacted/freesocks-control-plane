@@ -4,7 +4,8 @@
  * serves it (which decides which renderer applies). Conservative: unknown UAs
  * are `other` + `links`, and the renderer confirms the format from the body.
  */
-import type { RenderClientFamily } from '../edgeConfig';
+import { RENDER_CLIENT_FAMILIES, type RenderClientFamily } from '../edgeConfig';
+import { formatSupported, type ListenerProto, type RenderFormat } from './protocols';
 
 export type SubscriptionFormat = 'links' | 'singbox-json' | 'clash-yaml';
 
@@ -78,3 +79,26 @@ export const CLIENT_FAMILY_FORMATS: Record<RenderClientFamily, SubscriptionForma
   v2rayng: 'links',
   other: 'links',
 };
+
+/** The renderer codec (lib/edges/protocols.ts `CODECS`) of each subscription format. */
+export const RENDER_FORMAT_OF: Record<SubscriptionFormat, RenderFormat> = {
+  links: 'links',
+  'singbox-json': 'singbox',
+  'clash-yaml': 'clash',
+};
+
+/** Whether a family's format can carry the listener at all (sing-box has no XHTTP). */
+export function familyCarries(family: RenderClientFamily, proto: ListenerProto): boolean {
+  return formatSupported(proto, RENDER_FORMAT_OF[CLIENT_FAMILY_FORMATS[family]]);
+}
+
+/**
+ * The family the setup status samples an origin with: the first one (in
+ * `RENDER_CLIENT_FAMILIES` order, so sing-box wherever it can) that carries at
+ * least one of the origin's live listeners; null when none carries any. An
+ * XHTTP-only origin samples Mihomo: sing-box has no XHTTP, so the panel gives
+ * sing-box members no entry for it.
+ */
+export function sampleFamilyFor(protos: readonly ListenerProto[]): RenderClientFamily | null {
+  return RENDER_CLIENT_FAMILIES.find((f) => protos.some((p) => familyCarries(f, p))) ?? null;
+}

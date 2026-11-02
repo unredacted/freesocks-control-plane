@@ -145,6 +145,7 @@ export function membersDarkCode(
 
 /** Rendering blockers that leave a bound origin serving, with a problem (first one wins). */
 export const SOFT_RENDER_BLOCKERS = [
+  'no_family_carries',
   'preview_not_applied',
   'entry_mismatch',
   'mirrors_unvalidated',
@@ -157,7 +158,8 @@ export const SOFT_RENDER_BLOCKERS = [
  * the node's own address; a guided origin's binding is deferred until
  * go-live), `degraded` (bound and serving, but the
  * sample render hit a soft problem; `preview_not_applied` carries the sample
- * render's delivery reason as its detail), else `serving`.
+ * render's delivery reason as its detail; `no_family_carries` = no app family
+ * carries a live listener, so nothing was sampled), else `serving`.
  */
 export function deliveryOf(f: DeliveryFacts): OriginDelivery {
   if (f.originKind === 'manual') return { kind: 'manual', code: null };

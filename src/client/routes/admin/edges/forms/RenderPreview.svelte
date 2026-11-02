@@ -128,7 +128,8 @@
       </p>
     {/if}
 
-    {#if !data.applied && data.reason}
+    <!-- The same code twice says nothing new: the verdict's note carries it. -->
+    {#if !data.applied && data.reason && data.reason !== unavailable?.reason}
       <CodeNote issue={{ code: data.reason }} tone="blocker" />
     {/if}
     {#if unavailable}

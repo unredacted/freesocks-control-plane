@@ -8,9 +8,13 @@
  *
  * Clash has no `httpupgrade` network: mihomo carries an HTTP-Upgrade transport as
  * `network: ws`, so the Clash fixture for it is the ws one.
+ *
+ * A listener a format cannot carry at all (sing-box has no XHTTP) gets no entry
+ * in that format's sample (`previewSample`), as the panel builds none for it.
  */
-import type { SubscriptionFormat } from './clientFamilies';
-import { listenerCombo, type ListenerProto } from './protocols';
+import { RENDER_FORMAT_OF, type SubscriptionFormat } from './clientFamilies';
+import { formatSupported, listenerCombo, type ListenerProto } from './protocols';
+import type { ListenerMatch } from './render/types';
 
 const EXAMPLE_UUID = '00000000-0000-4000-8000-000000000000';
 const EXAMPLE_ORIGIN = '192.0.2.10';
@@ -263,17 +267,75 @@ export function previewBody(
   remarks: readonly string[],
   proto: ListenerProto = PREVIEW_DEFAULT_PROTO,
 ): string {
-  if (!listenerCombo(proto)) throw new Error('preview: invalid listener combination');
   const names = remarks.length > 0 ? remarks : ['node-relay-a'];
+  return bodyOf(
+    format,
+    names.map((remark) => ({ remark, proto })),
+  );
+}
+
+/** One live listener of an origin, as its preview sample needs it. */
+export interface PreviewListener {
+  key: string;
+  remark: string;
+  proto: ListenerProto;
+}
+
+/**
+ * The sample body one format receives for an origin: one template entry per
+ * live listener, each in that listener's own shape. A listener the format
+ * cannot carry gets no entry and is named in `uncarried`; when it carries none,
+ * the body holds no connection, as the panel serves that app (`no_entries`).
+ * An origin with no live listener gets one example entry.
+ */
+export function previewSample(
+  format: SubscriptionFormat,
+  listeners: readonly PreviewListener[],
+): { body: string; uncarried: string[] } {
+  if (listeners.length === 0) return { body: previewBody(format, []), uncarried: [] };
+  const carried = listeners.filter((l) => formatSupported(l.proto, RENDER_FORMAT_OF[format]));
+  return {
+    body: bodyOf(format, carried),
+    uncarried: listeners.filter((l) => !carried.includes(l)).map((l) => l.key),
+  };
+}
+
+/** The per-listener result with every listener the format cannot carry said so (`family_cannot_carry`). */
+export function withUncarried(
+  listeners: readonly ListenerMatch[],
+  uncarried: readonly string[],
+): Array<ListenerMatch | { listenerKey: string; matched: false; reason: 'family_cannot_carry' }> {
+  const cannot = (listenerKey: string) => ({
+    listenerKey,
+    matched: false as const,
+    reason: 'family_cannot_carry' as const,
+  });
+  const out = listeners.map((l) => (uncarried.includes(l.listenerKey) ? cannot(l.listenerKey) : l));
+  for (const k of uncarried) if (!out.some((l) => l.listenerKey === k)) out.push(cannot(k));
+  return out;
+}
+
+function bodyOf(
+  format: SubscriptionFormat,
+  entries: ReadonlyArray<{ remark: string; proto: ListenerProto }>,
+): string {
+  for (const e of entries)
+    if (!listenerCombo(e.proto)) throw new Error('preview: invalid listener combination');
+  const names = entries.map((e) => e.remark);
   switch (format) {
     case 'links':
-      return names.map((r) => linkFor(proto, r)).join('\n');
+      return entries.map((e) => linkFor(e.proto, e.remark)).join('\n');
     case 'singbox-json':
       return JSON.stringify(
         {
           outbounds: [
-            { type: 'selector', tag: 'proxy', outbounds: [...names, 'direct'], default: names[0] },
-            ...names.map((r) => singboxOutbound(proto, r)),
+            {
+              type: 'selector',
+              tag: 'proxy',
+              outbounds: [...names, 'direct'],
+              default: names[0] ?? 'direct',
+            },
+            ...entries.map((e) => singboxOutbound(e.proto, e.remark)),
             { type: 'direct', tag: 'direct' },
           ],
         },
@@ -283,7 +345,7 @@ export function previewBody(
     case 'clash-yaml':
       return [
         'proxies:',
-        ...names.flatMap((r) => clashProxy(proto, r)),
+        ...entries.flatMap((e) => clashProxy(e.proto, e.remark)),
         'proxy-groups:',
         '  - name: PROXY',
         '    type: select',

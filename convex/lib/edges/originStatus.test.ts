@@ -488,6 +488,17 @@ describe('deliveryOf', () => {
     ).toBe('entry_mismatch');
   });
 
+  test('no app family carries a live listener: degraded with its own code, never empty_pool', () => {
+    expect(d({ renderBlockers: blockers({ code: 'no_family_carries', detail: null }) })).toEqual({
+      kind: 'degraded',
+      code: 'no_family_carries',
+    });
+    // A sample that carries no entry for its app says so, not that the pool is empty.
+    expect(
+      d({ renderBlockers: blockers({ code: 'preview_not_applied', detail: 'no_entries' }) }),
+    ).toEqual({ kind: 'degraded', code: 'no_entries' });
+  });
+
   test('the status carries delivery without the render blockers', () => {
     expect(status({ published: 0, pool: [] }).delivery).toEqual({
       kind: 'dark',

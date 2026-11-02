@@ -83,6 +83,8 @@ export const SETUP_BLOCKER_CODES = [
   // rendering
   'render_disabled',
   'relay_disabled',
+  // no app family can carry any live listener of the origin, so nothing is sampled
+  'no_family_carries',
   'preview_not_applied',
   'entry_mismatch',
   'mirrors_unvalidated',
