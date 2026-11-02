@@ -354,7 +354,7 @@ export const sendTest = internalAction({
     const error = await post(cfg, {
       ...(cfg.topic ? { topic: cfg.topic } : {}),
       title: 'Edges: test alert',
-      message: 'Alerts reach this channel. Nothing needs you.',
+      message: 'Alerts reach this channel. This is only a test.',
       priority: 3,
       tags: ['white_check_mark'],
     });

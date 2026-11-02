@@ -613,7 +613,7 @@ describe('enrolled nodes', () => {
         disposition: 'retiring',
         retirement: { stage: 'needs_admin' },
       }).sentence,
-    ).toMatch(/decision/);
+    ).toBe('Retiring. Waiting for you to confirm the retirement.');
     expect(
       stageWords({
         ...base,
@@ -666,6 +666,28 @@ describe('enrolled nodes', () => {
       /Approve go-live below/,
     );
     expect(protectionWords({ state: 'running', need: null })).toMatch(/carries on by itself/);
+    // Any other stop says what to do, never only that it needs you.
+    expect(
+      stageWords({
+        ...fronted,
+        stage: 'machine_ready',
+        protection: { state: 'needs_you', need: 'try_it' },
+      }).sentence,
+    ).toBe('Being protected in Edges. Test each new address.');
+    expect(
+      stageWords({
+        ...fronted,
+        stage: 'live',
+        disposition: 'live',
+        protection: { state: 'needs_you', need: 'address_unreachable' },
+      }).sentence,
+    ).toBe(
+      'Live. Its protection in Edges is waiting. The new address cannot be reached. Check it again.',
+    );
+    expect(protectionWords({ state: 'needs_you', need: 'try_it' })).toBe('Test each new address.');
+    expect(protectionWords({ state: 'needs_you', need: null })).toBe(
+      'Open its progress to see what to do.',
+    );
     // Approved: the run's parked need is stale until it wakes, so the stage speaks.
     const approved = { state: 'needs_you', need: 'node_not_approved' };
     expect(protectionWords(approved, 'activating')).toMatch(/^Approved\./);

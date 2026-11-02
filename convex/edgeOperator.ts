@@ -1420,17 +1420,20 @@ export const attention = internalQuery({
         });
       }
       // With FCP's own client check replacing blocked addresses, a protected node
-      // with one address in use has no backup for members while one is made.
+      // that wants more than one address in use but has one leaves members no
+      // backup while a replacement is made. A node set to one address
+      // (`desiredPublished` 1) has what it asked for: one address is a valid
+      // choice, so nothing is raised (the node page states the tradeoff).
       if (cfg.clientCheck.enabled && bindingState.bound) {
         const inUse = edges.filter((e) => e.publication === 'published').length;
-        if (inUse === 1)
+        if (inUse === 1 && relay.desiredPublished > 1)
           items.push({
             ...base(relay),
             id: `single_address:${relay._id}`,
             kind: 'single_address',
             severity: 'warning',
             code: null,
-            facts: { inUse },
+            facts: { published: inUse, desired: relay.desiredPublished },
             action: 'open_relay',
             since: null,
           });

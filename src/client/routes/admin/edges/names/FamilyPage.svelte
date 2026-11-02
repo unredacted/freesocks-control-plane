@@ -435,7 +435,7 @@
       {:else if shown.length === 0 && !(filter === 'all' ? everything : suggestions).isError}
         <p class="text-muted-foreground">
           {filter === 'needs_you'
-            ? 'Nothing needs you here.'
+            ? 'Nothing to do here.'
             : filter === 'in_use'
               ? 'No name of this list is in use yet.'
               : 'No names yet.'}

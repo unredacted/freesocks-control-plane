@@ -114,7 +114,7 @@
   import { assertEdgeOk, edgeErrorMessage } from '../lib/edgeErrors';
   import { transportName } from '../lib/format';
   import { edgesPaths } from '../lib/routes';
-  import { originSentence, statusOf } from '../lib/statusWords';
+  import { oneAddressNote, originSentence, statusOf } from '../lib/statusWords';
   import { timelineLinkParams } from '../relay/relayLogic';
   import EndpointTestCard from './EndpointTestCard.svelte';
   import ListenerAddresses from './ListenerAddresses.svelte';
@@ -567,8 +567,7 @@
         </ul>
         {#if config.data?.config.clientCheck.enabled && published.length === 1}
           <p class="text-muted-foreground mt-2 text-xs">
-            Keep at least 2 addresses in use: members fall back to the other one while FCP replaces
-            a blocked address.
+            {oneAddressNote(relay.desiredPublished)}
           </p>
         {/if}
       {/if}

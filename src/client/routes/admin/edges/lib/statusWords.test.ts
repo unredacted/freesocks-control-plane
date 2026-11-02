@@ -3,11 +3,13 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import type { EdgeCountryRow, OriginStatus } from '../../../../../shared/contracts/edges';
 import {
+  ATTENTION_KINDS,
   COUNTRY_GROUP_GRADES,
   COUNTRY_REASONS,
   COUNTRY_ROUND_RESULTS,
   COUNTRY_STATE_FROM,
   PROBE_FAILURE_CLASSES,
+  SETUP_RUN_NEEDS,
 } from '../../../../../shared/contracts/edgeCodes';
 import {
   capClause,
@@ -23,6 +25,7 @@ import {
   deliveryWords,
   fleetSentence,
   gradeWords,
+  oneAddressNote,
   originSentence,
   probeFailureWords,
   sourceWords,
@@ -51,7 +54,7 @@ const status = (over: Partial<OriginStatus> = {}): OriginStatus => ({
 describe('originSentence: a failed run', () => {
   test('any run that failed, not only a replacement', () => {
     expect(originSentence(status({ kind: 'needs-you', code: 'rotation_failed' }))).toBe(
-      'The last run on this node failed. It needs you.',
+      'The last run on this node failed. Open the node to see the step that failed.',
     );
   });
 });
@@ -76,7 +79,7 @@ describe('originSentence', () => {
       originSentence(
         status({ kind: 'needs-you', runId: 'r', runKind: 'protect', step: 3, code: 'try_it' }),
       ),
-    ).toBe('Setting up, step 3 of 4. It needs you.');
+    ).toBe('Setting up, step 3 of 4. Test each new address.');
   });
 
   test('a re-protect says members keep what they have', () => {
@@ -87,7 +90,7 @@ describe('originSentence', () => {
       originSentence(
         status({ kind: 'needs-you', runId: 'r', runKind: 'reprotect', step: 3, code: 'try_it' }),
       ),
-    ).toBe('Protecting again, step 3 of 4. It needs you.');
+    ).toBe('Protecting again, step 3 of 4. Test each new address.');
   });
 
   test('every other kind', () => {
@@ -96,7 +99,7 @@ describe('originSentence', () => {
     );
     expect(originSentence(status({ kind: 'removing', code: 'deleting' }))).toBe('Being removed.');
     expect(originSentence(status({ kind: 'paused', dot: 'red' }))).toBe(
-      'Paused for safety. It needs you.',
+      'Paused for safety. Check the backend, then choose which addresses to keep.',
     );
     expect(originSentence(status({ kind: 'needs-you', code: 'offline', offline: 2 }))).toBe(
       '2 addresses are offline.',
@@ -104,8 +107,8 @@ describe('originSentence', () => {
     expect(originSentence(status({ kind: 'needs-you', code: 'offline', offline: 1 }))).toBe(
       '1 address is offline.',
     );
-    expect(originSentence(status({ kind: 'needs-you', code: 'members_dark' }))).toMatch(
-      /It needs you\.$/,
+    expect(originSentence(status({ kind: 'needs-you', code: 'members_dark' }))).toBe(
+      'Members get nothing. Put an address in use and turn rendering on.',
     );
     expect(originSentence(status({ kind: 'off' }))).toBe('Protection is switched off (Advanced).');
     expect(originSentence(status({ kind: 'not-live', published: 1 }))).toBe(
@@ -122,7 +125,7 @@ describe('originSentence', () => {
       'Address ready, not live yet. Members get no address for this node until it goes live.',
     );
     expect(originSentence(status({ kind: 'needs-you', code: 'setup_run_failed' }))).toBe(
-      'Setup stopped. It needs you.',
+      'Setup stopped. Open the run and try again, or remove protection to start over.',
     );
     expect(originSentence(status({ kind: 'unprotected', published: 0 }))).toBe(
       'No address in use. Members get nothing.',
@@ -134,6 +137,55 @@ describe('originSentence', () => {
   });
 });
 
+describe('originSentence: one address in use', () => {
+  // The server raises single_address only when the node wants more than it has
+  // (convex/edgeReplaceWithoutSpare.test.ts pins that side).
+  test('1 of 1 wanted: protected, nothing asked of the operator', () => {
+    const one = originSentence(status({ published: 1 }));
+    expect(one).toBe('Protected. 1 address in use.');
+    expect(one).not.toMatch(/need|you/i);
+  });
+
+  test('1 of 2 wanted: flagged, with what to do', () => {
+    expect(
+      originSentence(status({ kind: 'needs-you', dot: 'amber', code: 'single_address' })),
+    ).toBe('Only one address in use. Put a second address in use.');
+  });
+
+  test('the node page states the tradeoff of one address, and asks only when it wants more', () => {
+    expect(oneAddressNote(1)).toBe(
+      'One address in use, as set for this node. There is no backup address: if it is blocked, members in that country wait about 10 to 15 minutes for FCP to replace it.',
+    );
+    expect(oneAddressNote(1)).not.toMatch(/keep at least|need/i);
+    expect(oneAddressNote(2)).toBe(
+      '1 of the 2 addresses wanted is in use. Until another one is, members have no backup address while FCP replaces a blocked one.',
+    );
+  });
+});
+
+describe('originSentence: a row that waits on the operator says what to do', () => {
+  test('every reason, every run need: no "needs you", no em-dash, no API path, no code word', () => {
+    const kinds = [
+      ...ATTENTION_KINDS.map((code) => status({ kind: 'needs-you', dot: 'amber', code })),
+      ...SETUP_RUN_NEEDS.map((code) =>
+        status({ kind: 'needs-you', dot: 'amber', code, runId: 'r', runKind: 'protect', step: 3 }),
+      ),
+      status({ kind: 'paused', dot: 'red' }),
+      status({ kind: 'needs-you', dot: 'amber', code: 'something_new' }),
+      status({ kind: 'needs-you', dot: 'amber', code: null, runId: 'r', step: 2 }),
+    ];
+    for (const s of kinds) {
+      const words = originSentence(s);
+      expect(words, String(s.code)).not.toMatch(/needs? you/i);
+      expect(words, String(s.code)).not.toContain('—');
+      expect(words, String(s.code)).not.toContain('/api/');
+      expect(words, String(s.code)).not.toMatch(/\b[a-z]+_[a-z_]+\b/);
+      // At least two sentences: what is wrong, then what to do.
+      expect(words.split('. ').length, String(s.code)).toBeGreaterThanOrEqual(2);
+    }
+  });
+});
+
 describe('fleetSentence', () => {
   test('what matters most, then the count', () => {
     expect(fleetSentence(null)).toBe('');
@@ -142,10 +194,10 @@ describe('fleetSentence', () => {
     );
     expect(
       fleetSentence({ kind: 'needs-you', dot: 'amber', count: 1, total: 3, protected: 2 }),
-    ).toBe('1 node needs you.');
+    ).toBe('1 node needs attention.');
     expect(
       fleetSentence({ kind: 'needs-you', dot: 'amber', count: 2, total: 3, protected: 1 }),
-    ).toBe('2 nodes need you.');
+    ).toBe('2 nodes need attention.');
     expect(
       fleetSentence({ kind: 'setting-up', dot: 'blue', count: 1, total: 2, protected: 1 }),
     ).toBe('Setting up 1 node.');

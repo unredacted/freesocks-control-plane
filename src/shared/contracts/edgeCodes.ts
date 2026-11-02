@@ -328,7 +328,8 @@ export const ATTENTION_KINDS = [
   'client_check_unavailable',
   // Replacing a blocked address without a spare: automatic replacement held for a
   // transport (a replacement blocked again soon after going into use); a protected
-  // node with one address in use (no backup while a replacement is made).
+  // node with one address in use that wants more (no backup while a replacement
+  // is made; a node set to one address is never raised).
   'auto_replace_held',
   'single_address',
   // Address lanes (docs/edges.md "Address enumeration"): a transport of a node with
