@@ -13,9 +13,10 @@
  * call, so a crash between `issueUser` and `store` is settled on the next
  * `ensure` by re-finding the user by name (the version-neutral by-username
  * read) and adopting it instead of minting a second one. A stored credential
- * is reused only when its binding {backendServerId, placement, modeSlug}
- * equals the request; a different binding (after the operator chose another
- * mode) replaces it, and the old backend user goes through the same owed-removal
+ * is reused only when its binding {backendServerId, placement, extraPlacements,
+ * modeSlug} equals the request; a different binding (after the operator chose
+ * another mode, or the origin gained a transport of another mode group)
+ * replaces it, and the old backend user goes through the same owed-removal
  * ledger every removal uses.
  *
  * Deactivation is never assumed: a backend delete that fails is recorded on the
@@ -69,12 +70,17 @@ export function qualificationUsername(relaySlug: string, nonceHex8: string): str
 }
 
 export type MintOp = NonNullable<Doc<'relays'>['qualificationMint']>;
-export type MintBinding = Pick<MintOp, 'backendServerId' | 'placement' | 'modeSlug'>;
+export type MintBinding = Pick<
+  MintOp,
+  'backendServerId' | 'placement' | 'extraPlacements' | 'modeSlug'
+>;
 
 export function sameMintBinding(a: MintBinding, b: MintBinding): boolean {
+  const extras = (m: MintBinding) => [...(m.extraPlacements ?? [])].sort().join(',');
   return (
     (a.backendServerId as string) === (b.backendServerId as string) &&
     (a.placement ?? null) === (b.placement ?? null) &&
+    extras(a) === extras(b) &&
     (a.modeSlug ?? null) === (b.modeSlug ?? null)
   );
 }
@@ -213,6 +219,7 @@ const mintOpValidator = v.object({
   username: v.string(),
   backendServerId: v.id('backendServers'),
   placement: v.union(v.string(), v.null()),
+  extraPlacements: v.optional(v.array(v.string())),
   modeSlug: v.union(v.string(), v.null()),
   claimedAt: v.number(),
 });
@@ -462,17 +469,55 @@ function definitiveCreateFailure(err: unknown): boolean {
 }
 
 /**
+ * The fewest mode groups that together hold every one of `inbounds` (pure;
+ * greedy: the group holding most of what is still uncovered first, ties by
+ * uuid, so the same panel gives the same answer), or null when some inbound
+ * sits in no group at all. A node whose transports serve different modes (raw
+ * REALITY for one mode, XHTTP under REALITY for another, each mode's group
+ * carrying exactly its own transport) has no single group holding them all:
+ * the account then sits in each group of the cover, and the node lets it in
+ * on every transport.
+ */
+export function coverOf(
+  groups: readonly Pick<ObservedModeGroup, 'squadUuid' | 'inboundUuids'>[],
+  inbounds: readonly string[],
+): string[] | null {
+  const held = [...groups]
+    .sort((a, b) => (a.squadUuid < b.squadUuid ? -1 : a.squadUuid > b.squadUuid ? 1 : 0))
+    .map((g) => ({
+      uuid: g.squadUuid,
+      inbounds: new Set(g.inboundUuids.map((u) => u.toLowerCase())),
+    }));
+  const left = new Set(inbounds.map((u) => u.toLowerCase()));
+  const cover: string[] = [];
+  while (left.size > 0) {
+    let best: (typeof held)[number] | null = null;
+    let bestCount = 0;
+    for (const g of held) {
+      const count = [...left].filter((u) => g.inbounds.has(u)).length;
+      if (count > bestCount) [best, bestCount] = [g, count];
+    }
+    if (!best) return null;
+    cover.push(best.uuid);
+    for (const u of best.inbounds) left.delete(u);
+  }
+  return cover;
+}
+
+/**
  * Which mode groups of the backend hold every one of `inbounds`, by uuid
  * (sorted, so the same panel gives the same answer; empty when the panel lists
- * none that does, or no group at all): `unknown` when the panel could not be
- * read (never "none"), `unlisted` when the backend has no group listing (mock
- * mode, no such endpoint): there is nothing to choose from.
+ * none that does, or no group at all), and the fewest groups that together
+ * hold them (`coverOf`; null when some inbound is in no group): `unknown` when
+ * the panel could not be read (never "none"), `unlisted` when the backend has
+ * no group listing (mock mode, no such endpoint): there is nothing to choose
+ * from.
  */
 async function groupsHolding(
   ctx: { runAction: ActionCtx['runAction'] },
   backendServerId: Id<'backendServers'>,
   inbounds: readonly string[],
-): Promise<{ holding: string[] } | 'unknown' | 'unlisted'> {
+): Promise<{ holding: string[]; cover: string[] | null } | 'unknown' | 'unlisted'> {
   let groups: ObservedModeGroup[] | null;
   try {
     groups = await ctx.runAction(internal.backends.listModeGroups, { backendServerId });
@@ -488,6 +533,7 @@ async function groupsHolding(
       })
       .map((g) => g.squadUuid)
       .sort(),
+    cover: coverOf(groups, inbounds),
   };
 }
 
@@ -522,7 +568,8 @@ export interface EnsureResult {
  * credential), `credential_unresolved` (the settle rule is still running),
  * `mode_groups_unknown` (the panel's groups could not be read for a first
  * mint: retried), `no_group_holds_transports` (the panel lists its groups and
- * none holds every transport the origin protects).
+ * a transport the origin protects is in none of them; transports in different
+ * groups are covered by putting the account in each, `coverOf`).
  */
 export const ensure = internalAction({
   args: {
@@ -534,11 +581,21 @@ export const ensure = internalAction({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a): Promise<EnsureResult> => {
+    // What a later re-read binds to: the request, or the group decided below
+    // (a re-read after adopting a stray must not fall back to the default).
+    let decided: { placement: string; modeSlug: string | null } | null = null;
     const read = () =>
       ctx.runQuery(internal.relayQualification.ensureContext, {
         relayId: a.relayId,
-        ...(a.placement !== undefined ? { placement: a.placement } : {}),
-        ...(a.modeSlug !== undefined ? { modeSlug: a.modeSlug } : {}),
+        ...(decided
+          ? {
+              placement: decided.placement,
+              ...(decided.modeSlug ? { modeSlug: decided.modeSlug } : {}),
+            }
+          : {
+              ...(a.placement !== undefined ? { placement: a.placement } : {}),
+              ...(a.modeSlug !== undefined ? { modeSlug: a.modeSlug } : {}),
+            }),
       });
     let c = await read();
     if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
@@ -551,31 +608,52 @@ export const ensure = internalAction({
     // the stored account's group (unknown is not "none": no re-mint over an
     // outage). With no stored account either, nothing is minted until the
     // groups can be read (`mode_groups_unknown`, retried): an account in a group
-    // without the transport would make every test link fail at the node.
+    // without the transport would make every test link fail at the node. When
+    // no one group holds them all (a node serving two modes, each mode's group
+    // carrying only its own transport), the account sits in each group of the
+    // fewest that do together (`coverOf`): the first is its placement, the rest
+    // its extra placements.
+    let extraPlacements: string[] = [];
     if (!c.chosen && c.placementRequired && c.protectedInbounds.length > 0) {
       const groups = await groupsHolding(ctx, c.backendServerId, c.protectedInbounds);
-      const stored = c.op?.state === 'stored' && c.stored ? c.op.placement : null;
+      const storedOp = c.op?.state === 'stored' && c.stored ? c.op : null;
+      const stored = storedOp?.placement ?? null;
       if (groups === 'unknown' && !stored)
         return { ok: false, code: 'mode_groups_unknown', reused: false };
-      // The panel lists its groups and none holds them all: some transport
-      // could never be tested with this account, wherever it is made.
-      if (groups !== 'unknown' && groups !== 'unlisted' && groups.holding.length === 0)
+      // The panel lists its groups and not even several of them hold them all
+      // (a transport sits in no group): it could never be tested with this
+      // account, wherever it is made.
+      if (
+        groups !== 'unknown' &&
+        groups !== 'unlisted' &&
+        groups.holding.length === 0 &&
+        !groups.cover
+      )
         return { ok: false, code: 'no_group_holds_transports', reused: false };
-      const holding = groups === 'unknown' || groups === 'unlisted' ? null : groups.holding;
-      const placement =
-        groups === 'unknown'
-          ? stored
-          : !holding || holding.includes(c.placement ?? '')
-            ? null
-            : stored && holding.includes(stored)
-              ? stored
-              : holding[0]!;
+      let placement: string | null = null;
+      if (groups === 'unknown') {
+        placement = stored;
+        extraPlacements = [...(storedOp?.extraPlacements ?? [])];
+      } else if (groups !== 'unlisted' && groups.holding.length > 0) {
+        const holding = groups.holding;
+        placement = holding.includes(c.placement ?? '')
+          ? null
+          : stored && holding.includes(stored)
+            ? stored
+            : holding[0]!;
+      } else if (groups !== 'unlisted' && groups.cover) {
+        const cover = groups.cover;
+        const first = cover.includes(c.placement ?? '')
+          ? c.placement!
+          : stored && cover.includes(stored)
+            ? stored
+            : cover[0]!;
+        placement = first === c.placement ? null : first;
+        extraPlacements = cover.filter((g) => g !== first).sort();
+      }
       if (placement && placement !== c.placement) {
-        c = await ctx.runQuery(internal.relayQualification.ensureContext, {
-          relayId: a.relayId,
-          placement,
-          ...(c.modeSlug ? { modeSlug: c.modeSlug } : {}),
-        });
+        decided = { placement, modeSlug: c.modeSlug };
+        c = await read();
         if (!c) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
       }
     }
@@ -598,6 +676,7 @@ export const ensure = internalAction({
     const wanted: MintBinding = {
       backendServerId: c.backendServerId,
       placement: c.placement,
+      ...(extraPlacements.length > 0 ? { extraPlacements } : {}),
       modeSlug: c.modeSlug,
     };
     const now = Date.now();
@@ -664,6 +743,7 @@ export const ensure = internalAction({
             username: op.username,
             backendServerId: op.backendServerId,
             placement: op.placement,
+            ...(op.extraPlacements?.length ? { extraPlacements: op.extraPlacements } : {}),
             modeSlug: op.modeSlug,
             claimedAt: op.claimedAt,
           },
@@ -705,6 +785,7 @@ export const ensure = internalAction({
       username: qualificationUsername(c.slug, randomHex(4)),
       backendServerId: c.backendServerId,
       placement: c.placement,
+      ...(extraPlacements.length > 0 ? { extraPlacements } : {}),
       modeSlug: c.modeSlug,
       claimedAt: Date.now(),
     };
@@ -726,6 +807,7 @@ export const ensure = internalAction({
               ? 'FCP delivery rehearsal (automated, capped)'
               : 'FCP front qualification (automated, capped)',
           placement: c.placement,
+          ...(extraPlacements.length > 0 ? { extraPlacements } : {}),
         },
       });
     } catch (err) {

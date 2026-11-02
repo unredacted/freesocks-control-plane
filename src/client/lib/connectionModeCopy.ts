@@ -51,6 +51,10 @@ export const MODE_COPY: Record<
     bodyKey: 'delivery.freedomRealityLinkBody',
     rawConfigBodyKey: 'delivery.freedomRealityBody',
   },
+  // XHTTP under REALITY: its own mode, never the only entry of a REALITY body,
+  // because sing-box has no XHTTP and the panel leaves it out of sing-box bodies
+  // (the body names the apps that carry it).
+  'freedom-xhttp': { titleKey: 'delivery.freedomXhttpTitle', bodyKey: 'delivery.freedomXhttpBody' },
   'privacy-reality': {
     titleKey: 'delivery.privacyRealityTitle',
     bodyKey: 'delivery.privacyRealityBody',

@@ -1777,10 +1777,10 @@ const REFUSAL_COPY = {
     fix: 'It asks again by itself. If it keeps waiting, check that the panel answers.',
   },
   no_group_holds_transports: {
-    label: 'Transports in different groups',
+    label: 'A transport in no group',
     explain:
-      "No mode group on the panel holds every transport this node's protection covers, so FCP's test account cannot reach them all and some could never be tested.",
-    fix: 'Put the transports in one mode group on the panel, or choose the mode whose group the test account should use.',
+      "A transport this node's protection covers is in no mode group on the panel, so FCP's test account cannot reach it and it could never be tested. Transports in different groups are fine: the test account sits in each of them.",
+    fix: 'Put the transport in a mode group on the panel, or choose the mode whose group the test account should use.',
   },
   origin_deleting: {
     label: 'Old protection still going',

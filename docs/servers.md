@@ -576,7 +576,12 @@ the **server-name family** whose target and names the transport carries:
 
 Every REALITY transport listens on 443: a node serves ONE mode, so they never collide. A mode
 named by a node is the only thing the role needs to know about it (`node_mode`); the machine
-shape (Caddy or not, ingress, what an edge dials) follows from the mode's shape.
+shape (Caddy or not, ingress, what an edge dials) follows from the mode's shape. A node FCP does
+not manage (an operator's node, protected by Edges) may serve two modes on two ports, such as
+`freedom-reality` on 443 and `freedom-xhttp` on another port added with Add a transport and
+turned on for the node in the panel: each mode's group still carries exactly its own transport,
+and FCP's check account sits in both groups (docs/edges.md "Protecting a node FCP does not
+manage").
 
 While freedom modes are only served through edges (`edge.freedom.edgesOnly`, docs/edges.md
 "Freedom modes only through edges"), a mode of the freedom family is never given the shape

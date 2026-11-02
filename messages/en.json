@@ -796,6 +796,8 @@
     "freedomRealityTitle": "REALITY",
     "freedomRealityBody": "For the heaviest censorship, when WebSocket won't connect. Harder to block, but you copy the configuration in by hand.",
     "freedomRealityLinkBody": "For the heaviest censorship, when WebSocket won't connect. Harder to block, and it still comes as an auto-updating link.",
+    "freedomXhttpTitle": "XHTTP",
+    "freedomXhttpBody": "Another way through when REALITY keeps getting cut off. Works in up-to-date Hiddify, v2rayNG, v2rayN, Throne and Clash apps. sing-box and Karing can't use it.",
     "privacyTitle": "Privacy Mode",
     "privacyAudience": "For open internet - a traditional VPN",
     "privacyBody": "Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks.",

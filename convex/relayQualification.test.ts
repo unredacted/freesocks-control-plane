@@ -12,6 +12,7 @@ import {
 import { fakePanel } from './lib/edges/testing/fakePanel';
 import {
   __setEnsureFailpointForTests,
+  coverOf,
   __setQualificationRemoverForTests,
   MINT_SETTLE_LOOKS,
   MINT_SETTLE_MS,
@@ -598,6 +599,126 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
     expect((await t.run((ctx) => ctx.db.get(relayId)))!.qualificationMint).toMatchObject({
       placement: 'sq-node-one',
     });
+  });
+
+  test("a node serving two modes (raw REALITY and XHTTP, each in its own mode's group): the account sits in both groups, so both transports can be tested", async () => {
+    const XHTTP_INBOUND = '55555555-5555-4555-8555-555555555555';
+    const panel = fakePanel({
+      squads: [
+        { uuid: 'sq-xhttp', inboundUuids: [XHTTP_INBOUND] },
+        { uuid: 'sq-reality', inboundUuids: [FIXTURE_INBOUND] },
+      ],
+    });
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    const { relayId } = await registerRelay(t, {
+      listeners: [
+        realityListener(),
+        realityListener({
+          listenerKey: 'x',
+          streamTransport: 'xhttp',
+          originPort: 8443,
+          transportParams: { path: '/', mode: 'auto' },
+          panelBinding: {
+            inboundTag: 'FREEDOM_XHTTP',
+            configProfileUuid: realityListener().panelBinding!.configProfileUuid,
+            configProfileInboundUuid: XHTTP_INBOUND,
+          },
+        }),
+      ],
+    });
+    // The default pool is the raw transport's group: it stays the placement.
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-reality'] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect(
+      await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true, reused: false });
+    expect([...panel.users.values()].map((u) => u.squads)).toEqual([['sq-reality', 'sq-xhttp']]);
+    expect((await t.run((ctx) => ctx.db.get(relayId)))!.qualificationMint).toMatchObject({
+      state: 'stored',
+      placement: 'sq-reality',
+      extraPlacements: ['sq-xhttp'],
+    });
+    // The same panel next time: reused, not minted again.
+    expect(
+      await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true, reused: true });
+    expect(panel.created).toHaveLength(1);
+    // A listing that fails keeps the account where it is, both groups included.
+    panel.failSquadsWith = 503;
+    expect(
+      await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true, reused: true });
+    panel.failSquadsWith = null;
+    expect(panel.created).toHaveLength(1);
+  });
+
+  test('an origin that protected raw REALITY alone and then gains an XHTTP transport of another group: the account is replaced by one in both groups', async () => {
+    const XHTTP_INBOUND = '55555555-5555-4555-8555-555555555555';
+    const panel = fakePanel({
+      squads: [
+        { uuid: 'sq-reality', inboundUuids: [FIXTURE_INBOUND] },
+        { uuid: 'sq-xhttp', inboundUuids: [XHTTP_INBOUND] },
+      ],
+    });
+    const t = convexTest(schema, modules);
+    await insertPanelServer(t);
+    const { relayId } = await registerRelay(t, {
+      listeners: [
+        realityListener(),
+        realityListener({
+          listenerKey: 'x',
+          streamTransport: 'xhttp',
+          originPort: 8443,
+          transportParams: { path: '/', mode: 'auto' },
+          panelBinding: {
+            inboundTag: 'FREEDOM_XHTTP',
+            configProfileUuid: realityListener().panelBinding!.configProfileUuid,
+            configProfileInboundUuid: XHTTP_INBOUND,
+          },
+          deployed: false,
+        }),
+      ],
+    });
+    await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' });
+    expect([...panel.users.values()].map((u) => u.squads)).toEqual([['sq-reality']]);
+    const first = (await t.run((ctx) => ctx.db.get(relayId)))!.qualificationBackendUserId!;
+    // The XHTTP transport is deployed: its group joins the binding.
+    await t.run(async (ctx) => {
+      const x = (
+        await ctx.db
+          .query('relayListeners')
+          .withIndex('by_relay', (q) => q.eq('relayId', relayId))
+          .collect()
+      ).find((l) => l.listenerKey === 'x')!;
+      await ctx.db.patch(x._id, { deployed: true });
+    });
+    expect(
+      await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true, reused: false });
+    expect(panel.created).toHaveLength(2);
+    expect(panel.deleted).toEqual([first]);
+    expect([...panel.users.values()].map((u) => u.squads)).toEqual([['sq-reality', 'sq-xhttp']]);
+  });
+
+  test('coverOf: one group when one holds them all, else the fewest that do together, null when a transport is in none', () => {
+    const g = (squadUuid: string, ...inboundUuids: string[]) => ({ squadUuid, inboundUuids });
+    expect(coverOf([g('b', 'X', 'y'), g('a', 'x')], ['x', 'y'])).toEqual(['b']);
+    expect(coverOf([g('b', 'y'), g('a', 'x'), g('c', 'z')], ['x', 'y'])).toEqual(['a', 'b']);
+    // The group holding most of what is left goes first; ties by uuid.
+    expect(coverOf([g('a', 'x'), g('b', 'x', 'y'), g('c', 'z')], ['x', 'y', 'z'])).toEqual([
+      'b',
+      'c',
+    ]);
+    expect(coverOf([g('a', 'x')], ['x', 'y'])).toBeNull();
+    expect(coverOf([], ['x'])).toBeNull();
+    expect(coverOf([g('a', 'x')], [])).toEqual([]);
   });
 
   test('deleting an origin with an unsettled operation schedules the by-username removal', async () => {
