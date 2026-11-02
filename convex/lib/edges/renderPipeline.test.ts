@@ -226,6 +226,16 @@ describe('applyEdgeRender: listener-aware assignment', () => {
       expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'no_entries' });
       expect(out.body).toBe(body);
     }
+    // An entry that is there but malformed is still an entry: never no_entries.
+    for (const body of [
+      'proxies:\n  - name: broken\n    type: vless\n',
+      JSON.stringify({ outbounds: [{ type: 'vless', tag: 'broken' }] }),
+      'vless://not-a-share-link',
+      'socks://203.0.113.9:1080#unknown-scheme',
+    ]) {
+      const out = applyEdgeRender(rctx([edgeA, edgeS]), body, key(1), { now: NOW });
+      expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'empty_pool' });
+    }
     // A body that does not read as its format is not one: it never reaches the pool.
     const broken = applyEdgeRender(rctx([edgeA, edgeS]), '{"outbounds": [', key(1), { now: NOW });
     expect(broken.delivery).toEqual({ kind: 'unavailable', reason: 'unsupported_format' });

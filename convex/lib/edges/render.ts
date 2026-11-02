@@ -261,23 +261,43 @@ export function outgoingAddresses(
   }
 }
 
+/** sing-box outbound types that route rather than connect: not an entry. */
+const SINGBOX_ROUTING_TYPES = new Set(['direct', 'block', 'dns', 'selector', 'urltest']);
+/** A share link of any scheme: an entry, whether or not FCP parses it. */
+const SHARE_LINK_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+
 /**
  * Whether the backend served this body no connection at all: it reads as its
- * format but carries no proxy entry. That is the backend's template for an app
- * that cannot speak the node's protocol (a legacy Clash core has no VLESS, so
- * its body holds no proxy), not a fault of the fleet: `no_entries`, never
- * `empty_pool`.
+ * format and its own entry list is empty (a Clash `proxies` list, the sing-box
+ * outbounds that are not routing helpers, the share-link lines). That is the
+ * backend's template for an app that cannot speak the node's protocol (a
+ * legacy Clash core has no VLESS, so its body holds no proxy), not a fault of
+ * the fleet: `no_entries`, never `empty_pool`. An entry that is there but
+ * malformed (no address, a link that does not parse) is still an entry, left
+ * to the renderer's own verdicts.
  */
 function carriesNoEntry(body: string, format: SubscriptionFormat): boolean {
-  if (outgoingAddresses(body, format).length > 0) return false;
   try {
-    const doc: unknown =
-      format === 'clash-yaml'
-        ? YAML.parse(body)
-        : format === 'singbox-json'
-          ? JSON.parse(body)
-          : decodeLinkList(body);
-    return typeof doc === 'object' && doc !== null;
+    if (format === 'clash-yaml') {
+      const doc: unknown = YAML.parse(body);
+      if (typeof doc !== 'object' || doc === null) return false;
+      const proxies = (doc as { proxies?: unknown }).proxies;
+      return proxies == null || (Array.isArray(proxies) && proxies.length === 0);
+    }
+    if (format === 'singbox-json') {
+      const outbounds = (JSON.parse(body) as { outbounds?: unknown } | null)?.outbounds;
+      return (
+        Array.isArray(outbounds) &&
+        outbounds.every(
+          (o: unknown) =>
+            typeof o === 'object' &&
+            o !== null &&
+            SINGBOX_ROUTING_TYPES.has(String((o as { type?: unknown }).type)),
+        )
+      );
+    }
+    const list = decodeLinkList(body);
+    return list !== null && !list.lines.some((l) => SHARE_LINK_RE.test(l));
   } catch {
     return false;
   }
