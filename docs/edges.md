@@ -370,8 +370,18 @@ host: null }`; `none` security → `{ address, port, sni: null, host: null }`.
 ### L7 edges
 
 An L7 edge is one hostname `<label>.<zone>` minted deterministically from the edge's
-provider-side name (`convex/lib/edges/hostname.ts`). Everything a step, discovery, describe or
-destroy needs is **frozen** into `edges.provisionIntent` when the edge is planned. Readiness
+provider-side name (`convex/lib/edges/hostname.ts`). The label is, by the template's or the
+pick's **Name style** (`labelStyle`, Names): random letters and digits (`random`, the default;
+`labelLength` 8 to 16), or dictionary words joined by dashes (`words`; `labelWords` 2 or 3),
+such as `shiny-orchestra`, which reads like an ordinary site's name. The words come from a
+large public dictionary, SCOWL's common English words up to size 50 (`wordlist-english`, 4 to
+9 lowercase letters, about 41,000), without the words `naughty-words` lists and without
+words that speak of getting around a block (`lib/edges/frontWords.ts`). The list being public
+does not help a censor: two words make some 1.7 billion names per zone, and the shape is common.
+Both packages are pinned exactly; a new version changes only the names of fronts planned after
+it (a front's name is frozen with it). `labelPrefix` goes before either style. Everything a
+step, discovery, describe or destroy needs is **frozen** into `edges.provisionIntent` when the
+edge is planned. Readiness
 has three dimensions: `dns`, `certificate` and `front` (the end-to-end qualification below).
 
 **Certificates.** A Cloudflare front's certificate is its zone's own: the edge certificate for
@@ -5582,6 +5592,8 @@ live resource; FCP never applies one (a new edge is built instead).
 | ovh        | Health check      | HTTP check host name                  | `health_monitor.httpConfiguration.domainName`           | provider's own               | template, per node             | in place                    |
 | cloudflare | Names             | Name length                           |                                                         | 12                           | template, per node             | rebuild                     |
 | cloudflare | Names             | Name prefix                           |                                                         | provider's own               | template, per node             | rebuild                     |
+| cloudflare | Names             | Name style                            |                                                         | Random letters and digits    | template, per node             | rebuild                     |
+| cloudflare | Names             | Words in a name                       |                                                         | 2                            | template, per node             | rebuild                     |
 | cloudflare | DNS record        | Record comment prefix                 | `dns_record.comment`                                    | fcp                          | template, per node             | in place                    |
 | cloudflare | DNS record        | Answer addresses                      | `dns_record.settings.ipv4_only`                         | IPv4 and IPv6                | template, per node             | in place                    |
 | cloudflare | DNS record        | Record tags                           | `dns_record.tags`                                       | provider's own               | template, per node             | in place                    |
@@ -5589,6 +5601,8 @@ live resource; FCP never applies one (a new edge is built instead).
 | cloudflare | Request           | Pass the member's address to the node | `header_rule.action_parameters.headers`                 | off                          | template, per node             | rebuild                     |
 | fastly     | Names             | Name length                           |                                                         | 12                           | template, per node             | rebuild                     |
 | fastly     | Names             | Name prefix                           |                                                         | provider's own               | template, per node             | rebuild                     |
+| fastly     | Names             | Name style                            |                                                         | Random letters and digits    | template, per node             | rebuild                     |
+| fastly     | Names             | Words in a name                       |                                                         | 2                            | template, per node             | rebuild                     |
 | fastly     | Service           | Service note                          | `service.comment`                                       | origin edge                  | template, per node             | new service version         |
 | fastly     | Backend           | Host sent to the node                 | `backend.override_host`                                 | The front name               | template, per node             | new service version         |
 | fastly     | Backend           | Prefer IPv6 to the node               | `backend.prefer_ipv6`                                   | off                          | template, per node             | new service version         |
@@ -5610,6 +5624,8 @@ live resource; FCP never applies one (a new edge is built instead).
 | fastly     | Certificate       | Certificate                           | `tls_subscription.tls_domains`                          | One per front                | account default, per node      | rebuild                     |
 | cloudfront | Names             | Name length                           |                                                         | 12                           | template, per node             | rebuild                     |
 | cloudfront | Names             | Name prefix                           |                                                         | provider's own               | template, per node             | rebuild                     |
+| cloudfront | Names             | Name style                            |                                                         | Random letters and digits    | template, per node             | rebuild                     |
+| cloudfront | Names             | Words in a name                       |                                                         | 2                            | template, per node             | rebuild                     |
 | cloudfront | Distribution      | Edge locations                        | `distribution.PriceClass`                               | All edge locations           | template, per node             | in place                    |
 | cloudfront | Distribution      | IPv6 for members                      | `distribution.IsIPV6Enabled`                            | on                           | template, per node             | in place                    |
 | cloudfront | Distribution      | HTTP versions offered to members      | `distribution.HttpVersion`                              | HTTP/1.1 only                | template, per node             | in place                    |

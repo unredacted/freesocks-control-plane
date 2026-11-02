@@ -1019,6 +1019,9 @@ const LABEL_FIELDS = {
     .string()
     .regex(/^[a-z0-9-]{0,8}$/, 'lowercase letters, digits, dashes; up to 8 chars')
     .default(''),
+  // Optional with no default: a template from before them parses (and hashes) as it did.
+  labelStyle: z.enum(['random', 'words']).optional(),
+  labelWords: z.number().int().min(2).max(3).optional(),
 };
 
 /**
@@ -1050,6 +1053,32 @@ const LABEL_FIELD_DESCRIPTORS: TemplateFieldDescriptor[] = [
     group: 'Names',
     advanced: true,
     help: 'Optional text before the random label, up to 8 lowercase characters.',
+    live: 'rebuild',
+  },
+  {
+    key: 'labelStyle',
+    label: 'Name style',
+    type: 'select',
+    group: 'Names',
+    help: 'Random letters and digits, or dictionary words joined by dashes, which read like an ordinary site.',
+    options: [
+      { value: 'random', label: 'Random letters and digits' },
+      { value: 'words', label: 'Dictionary words' },
+    ],
+    default: 'random',
+    live: 'rebuild',
+  },
+  {
+    key: 'labelWords',
+    label: 'Words in a name',
+    type: 'number',
+    group: 'Names',
+    advanced: true,
+    min: 2,
+    max: 3,
+    help: 'How many dictionary words each front name has, 2 or 3.',
+    when: { key: 'labelStyle', in: ['words'] },
+    default: 2,
     live: 'rebuild',
   },
 ];

@@ -131,7 +131,7 @@ import { activeNames, hostSniOf, listenerRemark, listenersOf } from './relayList
 // The freshness window the DETECTOR scores on is the one this gate accepts
 // evidence on: one rule, imported, never a second copy of "two intervals".
 import { probeStaleAfterMs } from './lib/edges/scoring';
-import { edgeHostnameFor } from './lib/edges/hostname';
+import { edgeHostnameFor, labelOptionsOf } from './lib/edges/hostname';
 import { publishAddressOf, hasPublishableAddress, l4OriginProblem } from './lib/edges/ip';
 import { verificationCurrent } from './lib/edges/verification';
 import {
@@ -4234,12 +4234,12 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       if (!zoneModeCarriesOrigin(zoneSslMode, originTransport))
         return void (await fail('origin_tls_mismatch'));
     }
-    const tpl = selection.template.params as { labelLength?: number; labelPrefix?: string };
     try {
-      hostname = edgeHostnameFor(name, selection.account.zoneName, {
-        labelLength: typeof tpl.labelLength === 'number' ? tpl.labelLength : 12,
-        labelPrefix: tpl.labelPrefix,
-      });
+      hostname = edgeHostnameFor(
+        name,
+        selection.account.zoneName,
+        labelOptionsOf(selection.template.params),
+      );
     } catch {
       return void (await fail('hostname_invalid'));
     }

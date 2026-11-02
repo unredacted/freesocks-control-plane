@@ -22,7 +22,7 @@
  * that no longer describes what would be published.
  */
 import { canonicalJson } from './providers/template';
-import { edgeHostnameFor } from './hostname';
+import { edgeHostnameFor, labelOptionsOf } from './hostname';
 import {
   EDGE_PROVIDER_CAPABILITIES,
   edgeLayerOf,
@@ -198,12 +198,7 @@ export function buildProvisionIntent(a: BuildIntentArgs): ProvisionIntent | null
   const originTransport = a.listener.originTransport ?? null;
   if (!originTransport) throw new IntentError('origin_transport_missing');
   const tpl = a.templateParams;
-  const hostname =
-    a.hostnameOverride ??
-    edgeHostnameFor(a.specName, zoneName, {
-      labelLength: typeof tpl.labelLength === 'number' ? tpl.labelLength : 12,
-      labelPrefix: str(tpl.labelPrefix),
-    });
+  const hostname = a.hostnameOverride ?? edgeHostnameFor(a.specName, zoneName, labelOptionsOf(tpl));
   // The zone's encryption mode decides how the front dials the origin ONLY
   // when the CDN fronting this edge is the zone's own proxy (`providesDns`).
   // It is OBSERVED at the provider (the location's zone check), never entered,
