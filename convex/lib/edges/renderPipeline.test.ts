@@ -90,26 +90,75 @@ describe('applyEdgeRender: three server names for one member', () => {
     status: 'active' as const,
   }));
 
-  test('an hrw1 listener renders three entries with three distinct names; a legacy one renders one', () => {
+  const singboxBody = JSON.stringify({
+    outbounds: [
+      { tag: 'proxy', type: 'selector', outbounds: [REALITY_REMARK], default: REALITY_REMARK },
+      {
+        type: 'vless',
+        tag: REALITY_REMARK,
+        server: ORIGIN,
+        server_port: 443,
+        uuid: UUID,
+        flow: 'xtls-rprx-vision',
+        tls: {
+          enabled: true,
+          server_name: 'target.example',
+          utls: { enabled: true, fingerprint: 'chrome' },
+          reality: { enabled: true, public_key: 'PUBKEY', short_id: 'abcd' },
+        },
+      },
+      { tag: 'direct', type: 'direct' },
+    ],
+  });
+  const singboxRule = effectiveRule(cfg, defaultClientRule('singbox'));
+
+  test('an hrw1 listener renders three entries with three distinct names in an auto group; a legacy one renders one', () => {
+    const hrw = { ...edgeA, serverNames: pool, sniPick: 'hrw1' as const };
+    for (let i = 0; i < 100; i++) {
+      const out = applyEdgeRender(rctx([hrw], { rule: singboxRule }), singboxBody, key(i), {
+        now: NOW,
+      });
+      const ours = (
+        JSON.parse(out.body) as {
+          outbounds: Array<{ type: string; server?: string; tls?: { server_name: string } }>;
+        }
+      ).outbounds.filter((o) => o.type === 'vless');
+      const snis = ours.map((o) => o.tls!.server_name);
+      expect(snis).toHaveLength(3);
+      expect(new Set(snis).size).toBe(3);
+      expect(out.emitted).toBe(3);
+      // Same endpoint on every entry.
+      for (const o of ours) expect(o.server).toBe('203.0.113.10');
+      // The persisted snapshot names edges only: never which names a member holds.
+      expect(JSON.stringify(out.snapshot)).not.toContain('.example');
+    }
+    const legacy = applyEdgeRender(
+      rctx([{ ...edgeA, serverNames: pool }], { rule: singboxRule }),
+      singboxBody,
+      key(1),
+      { now: NOW },
+    );
+    expect(legacy.emitted).toBe(1);
+  });
+
+  test("a link list carries the first name only: the one the member's auto-group body leads with", () => {
     const hrw = { ...edgeA, serverNames: pool, sniPick: 'hrw1' as const };
     for (let i = 0; i < 100; i++) {
       const out = applyEdgeRender(rctx([hrw]), realityLink, key(i), { now: NOW });
       const lines = out.body.split('\n').filter((l) => l.startsWith('vless://'));
-      const snis = lines.map((l) =>
-        new URL(l.replace('vless://', 'http://')).searchParams.get('sni'),
-      );
-      expect(snis).toHaveLength(3);
-      expect(new Set(snis).size).toBe(3);
-      expect(out.emitted).toBe(3);
-      // Same endpoint and credentials on every line.
-      for (const l of lines) expect(l).toContain(`${UUID}@203.0.113.10:443?`);
-      // The persisted snapshot names edges only: never which names a member holds.
-      expect(JSON.stringify(out.snapshot)).not.toContain('.example');
+      expect(lines).toHaveLength(1);
+      expect(out.emitted).toBe(1);
+      const sni = new URL(lines[0]!.replace('vless://', 'http://')).searchParams.get('sni');
+      const auto = applyEdgeRender(rctx([hrw], { rule: singboxRule }), singboxBody, key(i), {
+        now: NOW,
+      });
+      const first = (
+        JSON.parse(auto.body) as {
+          outbounds: Array<{ type: string; tls?: { server_name: string } }>;
+        }
+      ).outbounds.find((o) => o.type === 'vless')!.tls!.server_name;
+      expect(sni).toBe(first);
     }
-    const legacy = applyEdgeRender(rctx([{ ...edgeA, serverNames: pool }]), realityLink, key(1), {
-      now: NOW,
-    });
-    expect(legacy.emitted).toBe(1);
   });
 });
 
@@ -127,6 +176,7 @@ describe('applyEdgeRender: listener-aware assignment', () => {
         listenerKeys: ['a'],
         primaryEdgeId: 'eA',
         backupEdgeId: null,
+        autoGroup: false,
       });
       expect(out.emitted).toBe(1);
       expect(out.body).toContain('@203.0.113.10:443?');
@@ -210,7 +260,12 @@ describe('applyEdgeRender: listener-aware assignment', () => {
     // Every edge lost eligibility, so the pool is judged empty before any codec runs.
     expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'empty_pool' });
     expect(out.applied).toBe(false);
-    expect(out.snapshot).toEqual({ listenerKeys: [], primaryEdgeId: null, backupEdgeId: null });
+    expect(out.snapshot).toEqual({
+      listenerKeys: [],
+      primaryEdgeId: null,
+      backupEdgeId: null,
+      autoGroup: false,
+    });
   });
 
   test('a body with no entry at all is no_entries, never an empty pool', () => {
@@ -284,7 +339,13 @@ describe('applyEdgeRender: listener-aware assignment', () => {
       { now: NOW },
     );
     expect(out.delivery).toEqual({ kind: 'serve' });
-    expect(out.snapshot).toEqual({ listenerKeys: ['a'], primaryEdgeId: 'eA', backupEdgeId: null });
+    // The body had an auto group: the snapshot says so for the replays.
+    expect(out.snapshot).toEqual({
+      listenerKeys: ['a'],
+      primaryEdgeId: 'eA',
+      backupEdgeId: null,
+      autoGroup: true,
+    });
     expect(out.body).not.toContain('203.0.113.20');
   });
 });

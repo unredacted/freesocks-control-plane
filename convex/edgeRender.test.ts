@@ -838,6 +838,27 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     await t.mutation(internal.relays.update, { id: relayId, enabled: false });
     expect(await t.query(internal.edgeRender.memberView, { subscriptionId: subId })).toBeNull();
   });
+
+  test('the snapshot records whether the body had an auto group; the rollback strip removes only that', async () => {
+    stubPanel();
+    const { t, subId } = await seed();
+    await get(t); // a v2rayNG list: no auto group
+    const before = (await t.run((ctx) => ctx.db.get(subId)))!.lastRender!;
+    expect(before.autoGroup).toBe(false);
+    const labels = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
+    expect(await t.action(internal.edgeRender.clearSnapshotAutoGroupForRollback, {})).toEqual({
+      stripped: 1,
+    });
+    const after = (await t.run((ctx) => ctx.db.get(subId)))!.lastRender!;
+    expect(after).not.toHaveProperty('autoGroup');
+    const { autoGroup, ...rest } = before;
+    void autoGroup;
+    expect(after).toEqual(rest);
+    // Without it a replay falls back to the family's usual format: the same labels here.
+    expect(await t.query(internal.edgeRender.memberView, { subscriptionId: subId })).toEqual(
+      labels,
+    );
+  });
 });
 
 // The REAL topology: one mode group per node, so every member body carries exactly
@@ -857,6 +878,11 @@ describe("edgeRender: server names for the member's country", () => {
     t.fetch('/api/v1/sub/tok_abc', {
       headers: { 'user-agent': 'v2rayNG/1.9.0', ...(country ? { 'cf-ipcountry': country } : {}) },
     });
+  // A link list carries the endpoint's first name only: here, one of CN's proven two.
+  const provenInCn = (names: Array<string | null>) => {
+    expect(names).toHaveLength(1);
+    expect(['cn-ok-1.example', 'cn-ok-2.example']).toContain(names[0]);
+  };
 
   /** A listener on hrw1 with four names: two proven in CN, one blocked in CN, one unjudged. */
   async function seedCountry() {
@@ -890,9 +916,8 @@ describe("edgeRender: server names for the member's country", () => {
     expect(res.status).toBe(200);
     const names = sniOf(await res.text());
     expect(names).not.toContain('cn-blocked.example');
-    // Both proven names come first; the third slot is filled by an unjudged one.
-    expect(names.slice(0, 2).sort()).toEqual(['cn-ok-1.example', 'cn-ok-2.example']);
-    expect(names[2]).toBe('plain.example');
+    // A proven name comes first (an auto group's further slots are the assignment's tests).
+    provenInCn(names);
     // The inferred country shaped this body: not cached, not shareable, kept nowhere.
     expect(res.headers.get('cache-control')).toBe('private, no-store');
     const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
@@ -912,11 +937,7 @@ describe("edgeRender: server names for the member's country", () => {
     // A later request from a curated country is NOT served that cached body.
     const cn = await from(t, 'CN');
     expect(cn.headers.get('cache-control')).toBe('private, no-store');
-    expect(
-      sniOf(await cn.text())
-        .slice(0, 2)
-        .sort(),
-    ).toEqual(['cn-ok-1.example', 'cn-ok-2.example']);
+    provenInCn(sniOf(await cn.text()));
   });
 
   test('no country and every name blocked somewhere: the least blocked names, never a 503', async () => {
@@ -972,8 +993,7 @@ describe("edgeRender: server names for the member's country", () => {
     await t.mutation(internal.memberCountry.setChoice, { userId, region: 'cn' });
     // The request says RU; the member said CN.
     const res = await from(t, 'RU');
-    const names = sniOf(await res.text());
-    expect(names.slice(0, 2).sort()).toEqual(['cn-ok-1.example', 'cn-ok-2.example']);
+    provenInCn(sniOf(await res.text()));
     expect(res.headers.get('cache-control')).toMatch(/^public/);
     const entries = JSON.parse((await t.run((ctx) => ctx.db.get(subId)))!.subCache!) as {
       region?: string;
@@ -1448,10 +1468,9 @@ describe('edgeRender: the raw-config view goes through delivery', () => {
       content: string;
     };
     const inferredSub = await (await subNoUa(s.t, { 'cf-ipcountry': 'CN' })).text();
-    expect(sniOf(inferredRaw.content).slice(0, 2).sort()).toEqual([
-      'cn-ok-1.example',
-      'cn-ok-2.example',
-    ]);
+    // A link list: the first name only, one of CN's proven two.
+    expect(sniOf(inferredRaw.content)).toHaveLength(1);
+    expect(['cn-ok-1.example', 'cn-ok-2.example']).toContain(sniOf(inferredRaw.content)[0]);
     expect(sniOf(inferredRaw.content)).toEqual(sniOf(inferredSub));
     // The member's own answer wins over the request, on both routes.
     const userId = (await s.t.run((ctx) => ctx.db.get(s.subId)))!.userId;
@@ -1645,20 +1664,23 @@ describe('edgeRender: where a member connects from, at a place an origin covers'
     const { t, subId } = await world();
     const first = await sub(t, 'v2rayNG/1.9.0', 'CN');
     expect(first.headers.get('cache-control')).toMatch(/^public/);
-    expect(sniOf(await first.text()).sort()).toEqual(CN_OK);
+    // A link list carries the first name only: one of CN's proven two, the same on every route.
+    const cnNames = sniOf(await first.text());
+    expect(cnNames).toHaveLength(1);
+    expect(CN_OK).toContain(cnNames[0]);
     let s = await row(t, subId);
     expect(s.regionSeenCountry).toBe('CN');
     expect(regions(s)).toEqual(['CN']);
     // Later readings from elsewhere keep it (sticky): the next body is still CN's.
     const later = await sub(t, 'Hiddify/2.0', 'DE');
-    expect(sniOf(await later.text()).sort()).toEqual(CN_OK);
+    expect(sniOf(await later.text())).toEqual(cnNames);
     s = await row(t, subId);
     expect(s.regionSeenCountry).toBe('CN');
     // The raw-config view locates the member the same way, from its own request.
     const raw = await t.fetch('/api/v1/subscription/content', {
       headers: { cookie: await memberCookie(t, subId), 'cf-ipcountry': 'DE' },
     });
-    expect(sniOf(((await raw.json()) as { content: string }).content).sort()).toEqual(CN_OK);
+    expect(sniOf(((await raw.json()) as { content: string }).content)).toEqual(cnNames);
   });
 
   test('the raw-config view takes a reading too, and a stored answer wins over it', async () => {

@@ -144,7 +144,8 @@ export interface AssignedEndpoint {
    * Further server names for the SAME endpoint, best first after `sni`: the
    * renderer emits one more entry per name so a member whose first name is
    * blocked still holds working ones. Only ever filled for an L4 listener on
-   * the `hrw1` PRF (a ranking is what makes "the next best name" stable);
+   * the `hrw1` PRF (a ranking is what makes "the next best name" stable), and
+   * only asked for a body with an auto group (render.ts `namesInBody`);
    * absent everywhere else.
    */
   alternates?: { sni: string; hostHeader: string | null }[];

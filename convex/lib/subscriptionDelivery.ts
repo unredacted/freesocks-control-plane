@@ -192,6 +192,8 @@ export interface RenderSnapshot {
   listenerKeys: string[];
   primaryEdgeId?: Id<'edges'>;
   backupEdgeId?: Id<'edges'>;
+  /** Whether the body got an auto group (its further server names and order); absent on older snapshots. */
+  autoGroup?: boolean;
   /**
    * The member's STORED country the body was shaped for (names, and edges when
    * steered); never a transient reading (docs/privacy.md).
@@ -433,6 +435,7 @@ export async function deliverBody(
           listenerKeys: out.snapshot.listenerKeys,
           primaryEdgeId: (out.snapshot.primaryEdgeId as Id<'edges'> | null) ?? undefined,
           backupEdgeId: (out.snapshot.backupEdgeId as Id<'edges'> | null) ?? undefined,
+          autoGroup: out.snapshot.autoGroup,
           ...(stored ? { country: stored } : {}),
           ...(stored && out.snapshot.primaryTier !== undefined
             ? { primaryTier: out.snapshot.primaryTier }

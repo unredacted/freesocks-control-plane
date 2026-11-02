@@ -302,9 +302,9 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
   {
     kind: 'text',
     path: 'render.ipLabel',
-    label: 'IP fallback suffix',
+    label: 'IPv4 suffix',
     helper:
-      'Added to the label of the IP entry that follows an address handed out by name, in apps that switch by themselves.',
+      'Added to the label of the IPv4 entry beside an address handed out by name, for when the name is blocked.',
     maxLength: 24,
   },
   {
@@ -313,14 +313,15 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
     label: 'Server names per member',
     unit: 'names',
     helper:
-      'How many server names one member gets for their main address, so a blocked name does not cut them off. Only for listeners that use the growth-stable name selection.',
+      'How many server names one member gets for their main address, so a blocked name does not cut them off. Only in apps with an Auto group, which switch past a blocked name by themselves; apps that show a plain list get the first name only. Only for listeners that use the growth-stable name selection.',
   },
   {
     kind: 'number',
     path: 'render.backupNames',
     label: 'Server names on the backup address',
     unit: 'names',
-    helper: 'The same, for the backup address. They differ from the main ones where possible.',
+    helper:
+      'The same, for the backup address, also only in apps with an Auto group. They differ from the main ones where possible.',
   },
   {
     kind: 'select',

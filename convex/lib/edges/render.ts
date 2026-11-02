@@ -13,9 +13,15 @@
  * out of the body instead (`withheld`), and the operator is told.
  */
 import YAML from 'yaml';
-import { RENDER_CLIENT_FAMILIES, type ClientRenderRule, type EdgeConfig } from '../edgeConfig';
+import {
+  RENDER_CLIENT_FAMILIES,
+  isRenderClientFamily,
+  type ClientRenderRule,
+  type EdgeConfig,
+  type RenderClientFamily,
+} from '../edgeConfig';
 import { edgeHostname, type AssignedEndpoint, type DeliveryPath } from './assignment';
-import { detectBodyFormat, type SubscriptionFormat } from './clientFamilies';
+import { CLIENT_FAMILY_FORMATS, detectBodyFormat, type SubscriptionFormat } from './clientFamilies';
 import { sameAddress } from './hosts';
 import { clashAddresses, matchClash, renderClash } from './render/clash';
 import { decodeLinkList, linkAddresses, matchLinks, renderLinks } from './render/links';
@@ -37,7 +43,7 @@ export interface EffectiveRule extends RenderRuleInput {
   primaryLabel: string;
   backupLabel: string;
   ipv6Label: string;
-  /** The suffix of a named address's IP fallback entry (`<label> (<ipLabel>)`). */
+  /** The suffix of a named address's raw IPv4 entry (`<label> (<ipLabel>)`). */
   ipLabel: string;
   /** Server names per endpoint for a listener on the `hrw1` PRF (1 = one name, as ever). */
   namesPerEndpoint: number;
@@ -93,6 +99,42 @@ export function formatHasAutoGroup(
 }
 
 /**
+ * Server names per endpoint a body carries. Further names only where an auto
+ * group hides them and moves past a blocked one by itself; a link list would
+ * show each as one more entry the member cannot tell from the first (same
+ * address and key, only the unseen server name differs), so it carries the
+ * first name only.
+ */
+export function namesInBody(
+  rule: Pick<EffectiveRule, 'namesPerEndpoint' | 'backupNames'>,
+  hasAutoGroup: boolean,
+): { namesPerEndpoint: number; backupNames: number } {
+  return hasAutoGroup
+    ? { namesPerEndpoint: rule.namesPerEndpoint, backupNames: rule.backupNames }
+    : { namesPerEndpoint: 1, backupNames: 1 };
+}
+
+/**
+ * The rule a stored render snapshot was made under, for a replay without the
+ * body (member labels, report attribution): the snapshot family's own rule,
+ * and whether the body had an auto group as the snapshot recorded it (the
+ * body decides, not the family). A snapshot from before that was recorded
+ * falls back to the family's base format (`CLIENT_FAMILY_FORMATS`). An
+ * unknown family reads as `other` (a link list).
+ */
+export function snapshotRuleOf(
+  render: EdgeConfig['render'],
+  snap: { family?: string; autoGroup?: boolean },
+): { rule: EffectiveRule; hasAutoGroup: boolean } {
+  const fam: RenderClientFamily = isRenderClientFamily(snap.family) ? snap.family : 'other';
+  const rule = effectiveRule(render, render.clients[fam]);
+  return {
+    rule,
+    hasAutoGroup: snap.autoGroup ?? formatHasAutoGroup(rule, CLIENT_FAMILY_FORMATS[fam]),
+  };
+}
+
+/**
  * Every delivery path a member body can take on this deployment (the format
  * of the body x whether its rule may emit IPv6), over the client families
  * whose rule is on: what the detector's steering veto must cover
@@ -136,10 +178,15 @@ export function ruleCanEmitV6(
  * plus an IPv6 entry when the edge has one and the mode allows it. An L7
  * (CDN-fronted) edge is ONE entry carrying its hostname. An L4 address with a
  * name (`addressName`, subscription delivery only) is dialled by the name in
- * place of its IPv4 entry (the name carries both families); its IPv6 entry is
- * unchanged, and in a body with an auto group its IPv4 follows as a fallback
- * entry, so an app whose lookup of the name is blocked switches to the IP by
- * itself. A single key (Outline) keeps the IP: it has no room for a fallback.
+ * place of its IPv4 entry (the name carries both families), and its raw IPs
+ * stay in the body beside it, so a member whose lookup of the name is blocked
+ * or answered falsely still has a way in. In a body with an auto group the
+ * IPv6 entry is unchanged and the IPv4 follows as a fallback the app switches
+ * to by itself; in a link list the member picks by hand, so both raw IPs are
+ * alternatives after every first entry, the IPv4 first (it is the one an
+ * IPv4-only network can use). A single key (Outline) keeps the IP: it has no
+ * room for an alternative. Further server names (`alternates`) become entries
+ * only in a body with an auto group (`namesInBody`).
  *
  * Leak guard: an endpoint whose address is the origin itself is never emitted,
  * whatever the pool says; `leaked` counts them so the caller can refuse.
@@ -211,27 +258,34 @@ export function renderEntriesChecked(
         leaked++;
         return;
       }
-      // The name takes the IPv4 entry's place. The IPv6 entry stays exactly
-      // as without a name: where IPv4 is blocked and IPv6 works, a client that
-      // dials the name over IPv4 first (its TCP connects, REALITY is then cut)
-      // never tries the other family, so the member (or the auto group) needs
-      // the IPv6 entry of its own.
+      // The name takes the IPv4 entry's place. The IPv6 entry stays: where
+      // IPv4 is blocked and IPv6 works, a client that dials the name over
+      // IPv4 first (its TCP connects, REALITY is then cut) never tries the
+      // other family, so the member (or the auto group) needs the IPv6 entry
+      // of its own. The raw IPv4 stays too, for a name that is blocked or
+      // answered falsely.
       out.push({ ...base, label, address: named, family: 'name' });
-      if (v6 && wantV6)
-        out.push({
-          ...base,
-          label: `${label} (${rule.ipv6Label})`,
-          address: v6,
-          family: 'v6',
-        });
-      if (hasAutoGroup)
-        out.push({
-          ...base,
-          label: `${label} (${rule.ipLabel})`,
-          address: v4,
-          family: 'v4',
-          fallback: true,
-        });
+      const ipv4: RenderEndpoint = {
+        ...base,
+        label: `${label} (${rule.ipLabel})`,
+        address: v4,
+        family: 'v4',
+        fallback: true,
+      };
+      const ipv6: RenderEndpoint | null =
+        v6 && wantV6
+          ? { ...base, label: `${label} (${rule.ipv6Label})`, address: v6, family: 'v6' }
+          : null;
+      if (hasAutoGroup) {
+        // The IPv6 entry ranks as without a name; the IPv4 is the fallback.
+        if (ipv6) out.push(ipv6);
+        out.push(ipv4);
+      } else {
+        // A link list never switches by itself: both raw IPs are alternatives
+        // the member picks by hand, IPv4 before IPv6, after every first entry.
+        out.push(ipv4);
+        if (ipv6) out.push({ ...ipv6, fallback: true });
+      }
       return;
     }
     if (ep.edge.addresses.v4) {
@@ -250,8 +304,11 @@ export function renderEntriesChecked(
     }
   };
   // A further server name is one more IPv4 entry for the same endpoint (the
-  // IPv6 sibling belongs to the first name only: entries multiply otherwise).
+  // IPv6 sibling belongs to the first name only: entries multiply otherwise),
+  // and only in a body with an auto group (`namesInBody`): a link list would
+  // show it as a look-alike of the first.
   const pushAlternates = (ep: AssignedEndpoint | null) => {
+    if (!hasAutoGroup) return;
     if (!ep?.alternates || !ep.edge.addresses.v4 || leaks(ep.edge.addresses.v4)) return;
     const label = ep.role === 'primary' ? rule.primaryLabel : rule.backupLabel;
     // A named address's further names dial the name too.
