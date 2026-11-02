@@ -57,8 +57,35 @@ const JPEG_SOF = new Set([
   0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
 ]);
 
+/**
+ * The EXIF orientation (1 to 8) in an APP1 segment spanning [start, end), or 1
+ * when there is none. Cameras store the picture unturned and set this flag;
+ * browsers turn the picture when they draw it.
+ */
+function exifOrientation(b: Uint8Array, start: number, end: number): number {
+  // "Exif\0\0", then a TIFF header: byte order, 42, the first directory's offset.
+  if (ascii(b, start, 6) !== 'Exif\0\0') return 1;
+  const tiff = start + 6;
+  const order = ascii(b, tiff, 2);
+  if (order !== 'II' && order !== 'MM') return 1;
+  const le = order === 'II';
+  const u16 = (i: number) => (le ? u16le(b, i) : u16be(b, i));
+  const u32 = (i: number) => (le ? u16le(b, i) + u16le(b, i + 2) * 0x10000 : u32be(b, i));
+  if (u16(tiff + 2) !== 42) return 1;
+  const dir = tiff + u32(tiff + 4);
+  if (dir + 2 > end) return 1;
+  // Twelve-byte entries; Orientation is tag 0x0112, a SHORT stored inline.
+  for (let k = 0, n = u16(dir); k < n; k++) {
+    const entry = dir + 2 + k * 12;
+    if (entry + 12 > end) break;
+    if (u16(entry) === 0x0112) return u16(entry + 8);
+  }
+  return 1;
+}
+
 function sniffJpeg(b: Uint8Array): SiteImageInfo | null {
   if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let orientation = 1;
   let i = 2;
   while (i + 9 < b.length) {
     if (b[i] !== 0xff) return null;
@@ -66,12 +93,23 @@ function sniffJpeg(b: Uint8Array): SiteImageInfo | null {
     while (b[i] === 0xff && i < b.length) i++;
     const marker = b[i] ?? 0;
     if (JPEG_SOF.has(marker)) {
-      return { contentType: 'image/jpeg', height: u16be(b, i + 4), width: u16be(b, i + 6) };
+      const height = u16be(b, i + 4);
+      const width = u16be(b, i + 6);
+      // Orientations 5 to 8 turn the picture a quarter, so it shows on its side.
+      const turned = orientation >= 5 && orientation <= 8;
+      return {
+        contentType: 'image/jpeg',
+        width: turned ? height : width,
+        height: turned ? width : height,
+      };
     }
     // Image data or the end before any frame header: not a usable file.
     if (marker === 0xda || marker === 0xd9) return null;
     const len = u16be(b, i + 1);
     if (len < 2) return null;
+    if (marker === 0xe1 && orientation === 1) {
+      orientation = exifOrientation(b, i + 3, Math.min(b.length, i + 1 + len));
+    }
     i += 1 + len;
   }
   return null;

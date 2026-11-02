@@ -43,6 +43,41 @@ describe('sniffImage', () => {
     expect(sniffImage(jpeg)).toEqual({ contentType: 'image/jpeg', width: 640, height: 900 });
   });
 
+  test('swaps the JPEG size when EXIF turns the picture a quarter', () => {
+    // An APP1 Exif segment with one Orientation entry, in either byte order.
+    const exif = (le: boolean, orientation: number) => {
+      const w16 = (n: number) => (le ? le16(n) : be16(n));
+      const w32 = (n: number) => (le ? [...le16(n), 0, 0] : [0, 0, ...be16(n)]);
+      const body = [
+        ...bytes('Exif', [0, 0], le ? 'II' : 'MM'),
+        ...w16(42),
+        ...w32(8),
+        ...w16(1),
+        ...[...w16(0x0112), ...w16(3), ...w32(1), ...w16(orientation), 0, 0],
+        ...w32(0),
+      ];
+      return [0xff, 0xe1, ...be16(body.length + 2), ...body];
+    };
+    const jpeg = (app1: number[]) =>
+      bytes(
+        [0xff, 0xd8],
+        app1,
+        [0xff, 0xc0, 0x00, 0x11, 0x08],
+        be16(3000), // stored height
+        be16(4000), // stored width
+        [3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1],
+      );
+    const size = (b: Uint8Array) => {
+      const info = sniffImage(b);
+      return info && [info.width, info.height];
+    };
+    expect(size(jpeg(exif(false, 6)))).toEqual([3000, 4000]);
+    expect(size(jpeg(exif(true, 8)))).toEqual([3000, 4000]);
+    // Upside down (3) or no flag at all keeps the stored size.
+    expect(size(jpeg(exif(true, 3)))).toEqual([4000, 3000]);
+    expect(size(jpeg([]))).toEqual([4000, 3000]);
+  });
+
   test('refuses a JPEG that reaches image data before a frame header', () => {
     const jpeg = bytes([0xff, 0xd8], [0xff, 0xda, 0x00, 0x08], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     expect(sniffImage(jpeg)).toBeNull();
