@@ -21,7 +21,6 @@ import { initI18n } from './lib/i18n/index.svelte';
  *   - Schibsted Grotesk (display headings):       600, 700, 800
  *   - Atkinson Hyperlegible Next (body, UI):      400, 500, 600, 700
  *   - Atkinson Hyperlegible Mono (URLs, config):  400, 500
- *   - Silkscreen (the pixel lettering on the home page poster):  400
  *
  * Those three are Latin-only, so the font stacks (globals.css) fall back per
  * script: Vazirmatn for Persian and Arabic (400-800), Inter for Cyrillic
@@ -40,7 +39,6 @@ import '@fontsource/atkinson-hyperlegible-next/600.css';
 import '@fontsource/atkinson-hyperlegible-next/700.css';
 import '@fontsource/atkinson-hyperlegible-mono/400.css';
 import '@fontsource/atkinson-hyperlegible-mono/500.css';
-import '@fontsource/silkscreen/400.css';
 import '@fontsource/vazirmatn/400.css';
 import '@fontsource/vazirmatn/500.css';
 import '@fontsource/vazirmatn/600.css';

@@ -9,9 +9,9 @@
    * background shows through), so the mass dissolves outward like light
    * falling off, rendered in chunky ordered-dither pixels.
    *
-   * Used sparingly by design: the dithered empty-state disc (the home page's
-   * poster draws the same ordered dither in SVG). Static - no animation, so the reduced-motion clamp has
-   * nothing to neutralize. Decorative: aria-hidden.
+   * Used sparingly by design: the dithered empty-state disc. Static - no
+   * animation, so the reduced-motion clamp has nothing to neutralize.
+   * Decorative: aria-hidden.
    *
    * The root element IS the <canvas> - callers position it via `class`
    * (e.g. "absolute -inset-x-6 -top-8 bottom-0 -z-10"); the parent provides

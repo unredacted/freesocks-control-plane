@@ -103,6 +103,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'heroSubtitle',
     'heroTitles',
   ],
+  // The home page image an admin uploaded (the bytes stay in siteImages; the
+  // trail records which version went up and its size). The reset writes none.
+  'admin.site.home_image.set': ['version', 'width', 'height', 'bytes', 'contentType'],
   // Analytics origin config. Booleans + presence/hash flags ONLY: the Umami
   // host is an apiUrl-class value (and an exfiltration target if repointed) and
   // the website id is a correlatable UUID, so neither is ever persisted here.

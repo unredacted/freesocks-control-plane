@@ -10,7 +10,7 @@
    *
    * Layout: full-width sections on the site-wrap column, alternating the page
    * and band backgrounds, each separated by a top rule. In order: the hero
-   * with its poster, what donations are doing for free accounts right now,
+   * with its picture, what donations are doing for free accounts right now,
    * how it works, what we store, membership, the FAQ (general + threat
    * model), and the donate box. Each claim appears exactly once.
    *
@@ -23,7 +23,7 @@
   import { Button } from '@client/components/ui/button';
   import * as Tabs from '@client/components/ui/tabs';
   import TierComparison from '../components/TierComparison.svelte';
-  import PixelPoster from '../components/PixelPoster.svelte';
+  import HomeImage from '../components/HomeImage.svelte';
   import CountUp from '../components/CountUp.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
@@ -231,7 +231,7 @@
   </div>
 {/snippet}
 
-<!-- HERO: the headline, the subtitle, one primary action, and the poster. -->
+<!-- HERO: the headline, the subtitle, one primary action, and the picture. -->
 <section>
   <div
     class="site-wrap grid items-center gap-12 py-14 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] md:gap-16 md:pt-[88px] md:pb-24"
@@ -289,7 +289,7 @@
       </div>
     </div>
 
-    <PixelPoster />
+    <HomeImage />
   </div>
 </section>
 

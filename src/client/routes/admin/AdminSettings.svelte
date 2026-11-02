@@ -20,6 +20,7 @@
   import AdminListState from './AdminListState.svelte';
   import AlertsCard from './AlertsCard.svelte';
   import CensoredCountriesCard from './CensoredCountriesCard.svelte';
+  import HomeImageCard from './HomeImageCard.svelte';
   import { adminAnalyticsQuery, appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
   import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -1009,6 +1010,8 @@
           </div>
         </CardContent>
       </Card>
+
+      <HomeImageCard />
 
       <!-- Analytics relay (self-hosted Umami): own namespace + own save -->
       <Card>

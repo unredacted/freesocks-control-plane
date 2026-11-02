@@ -10,6 +10,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import { sanitizeHttpsUrl } from './verificationConfig';
+import { HOME_IMAGE_SETTING_KEY, sanitizeSiteImageRef, type SiteImageRef } from './siteImage';
 
 export interface SiteConfig {
   /** Master switch for the site-wide announcement banner. */
@@ -53,6 +54,9 @@ export interface SiteConfig {
    *  home hero through them; 1 shows it statically; empty falls back to
    *  heroTitle, then the built-in translated variant list. */
   heroTitles: string[];
+  /** The admin-uploaded home page image (served by GET /api/v1/site/home-image);
+   *  null = the built-in one. Written only by siteImages.setHomeImage. */
+  homeImage: SiteImageRef | null;
 }
 
 export const SITE_DEFAULTS: SiteConfig = {
@@ -72,6 +76,7 @@ export const SITE_DEFAULTS: SiteConfig = {
   heroTitle: '',
   heroSubtitle: '',
   heroTitles: [],
+  homeImage: null,
 };
 
 const MAX_BANNER = 280;
@@ -154,6 +159,7 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     heroTitleVal,
     heroSubtitleVal,
     heroTitlesVal,
+    homeImageVal,
   ] = await Promise.all([
     read('site.bannerEnabled'),
     read('site.bannerText'),
@@ -171,6 +177,7 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     read('site.heroTitle'),
     read('site.heroSubtitle'),
     read('site.heroTitles'),
+    read(HOME_IMAGE_SETTING_KEY),
   ]);
   return {
     bannerEnabled:
@@ -192,5 +199,6 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     heroTitle: sanitizeBannerText(heroTitleVal, MAX_HERO_TITLE),
     heroSubtitle: sanitizeBannerText(heroSubtitleVal, MAX_HERO_SUBTITLE),
     heroTitles: sanitizeHeroTitles(heroTitlesVal),
+    homeImage: sanitizeSiteImageRef(homeImageVal),
   };
 }
