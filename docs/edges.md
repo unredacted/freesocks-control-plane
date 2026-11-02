@@ -1540,8 +1540,10 @@ own it) never gets one, nor does an L7 front (its hostname is its name).
 
 **Which zone.** A new name goes in the eligible zone this node uses least, then the one the
 deployment uses least: with two zones, a node's two addresses (a member's main and backup) sit in
-different zones. A zone the operator unticks gets no new name; names already there stay. A zone
-or a DNS account cannot be deleted while a name lives in it (`edge.names_in_zone`).
+different zones. A zone the operator unticks, or whose location or DNS account is switched off,
+gets no new name and takes no move; names already there stay (they keep their frozen zone, so
+they can still be removed). A zone or a DNS account cannot be deleted while a name lives in it
+(`edge.names_in_zone`).
 
 **What members get** (`lib/edges/render.ts`, every format: links, sing-box, Clash / Mihomo, the
 mirrors and the cached and stale bodies of `/api/v1/sub`, which all go through the same render):
@@ -1620,13 +1622,19 @@ without a destroy walk (gone at the provider) has its names removed by the next 
 **Discipline.** One pass per name at a time (`edgeNames.begin` claims, `settle` releases; a
 claim lapses after `EDGE_PLUMBING.opClaimMs`). Every pass first reads the name back from its zone
 and writes only what differs, so an answer lost mid-call is settled by what the zone holds (the
-marker says which records are FCP's), never by a second blind create. Anything at the name FCP did
+marker says which records are FCP's), never by a second blind create. Pointing a name elsewhere
+(a move, a move back, removal, New name) revokes the pass in flight: its settle no longer
+matches, changes nothing and asks for one more pass, which reads the zone back after whatever the
+revoked pass wrote. Removal starts its own count of tries. The reconcile pass looks at every
+live name (a page at a time) for records that no longer match its address, and an address the
+provider reports gone has its names removed at once. Anything at the name FCP did
 not write (a CNAME, a record without the marker, a proxied one) is never touched: a name being
 made moves to the next word pair (up to eight), any other is parked. A pass that fails counts;
 after twelve (about an hour of reconcile passes) the name is parked, and so is one whose zone's DNS
 account is gone. A parked name raises attention **`address_name_stuck`** (critical when it was
-being removed: its records may point at an address given back); the operator removes its
-records by hand and presses **Dismiss** (`POST edges/{id}/name/dismiss`), or **New name**.
+being removed or moved: its records may point at an address given back); the operator removes
+its records by hand and presses **Dismiss** (`POST edges/{id}/name/dismiss`), or **New name**,
+which tries the removal again with a fresh count and makes another name.
 
 **Turning it off** stops new names and hands every member IPs again at their next fetch (the
 epoch moves); names already made stay in their zones until their address goes, so a member

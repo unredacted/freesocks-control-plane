@@ -214,9 +214,9 @@ describe('names for addresses', () => {
     const zone = zones.get('0'.repeat(32))!;
     const id = zone.rows[0]!.id;
     await t.run((ctx) => ctx.db.patch(edgeId, { addresses: { v4: '198.51.100.42' } }));
-    const plan = await t.query(internal.edgeNames.upkeepPlan, { candidates: [], limit: 10 });
+    const drift = await t.query(internal.edgeNames.liveDrift, { cursor: null });
     const row = (await nameOf(t, edgeId))!;
-    expect(plan.nameIds).toEqual([row._id]);
+    expect(drift).toEqual({ nameIds: [row._id], cursor: null });
     await t.action(internal.edgeNameOps.work, { nameId: row._id });
     expect(zone.rows).toEqual([expect.objectContaining({ id, content: '198.51.100.42' })]);
     expect(zone.deleted).toEqual([]);
@@ -391,6 +391,79 @@ describe('names for addresses', () => {
     expect(zone.rows).toEqual([]);
     expect((await t.run((ctx) => ctx.db.get(row._id)))!.state).toBe('gone');
     expect((await t.run((ctx) => ctx.db.get(a)))!.status).toBe('destroyed');
+  });
+
+  test('a pass whose claim was revoked settles nothing and asks for a fresh one', async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    const a = await address(t, f, '198.51.100.131', { published: true });
+    const b = await address(t, f, '198.51.100.132', { nameWanted: false });
+    await t.action(internal.edgeNameOps.work, { edgeId: a });
+    const row = (await nameOf(t, a))!;
+    // A pass is in flight when the replace moves the name.
+    const order = await t.mutation(internal.edgeNames.begin, { nameId: row._id });
+    expect(order.kind).toBe('order');
+    await t.run(async (ctx) =>
+      moveNameOnReplace(ctx, {
+        from: (await ctx.db.get(a))!,
+        to: (await ctx.db.get(b))!,
+        toLane: 'open',
+        now: Date.now(),
+      }),
+    );
+    const moved = (await t.run((ctx) => ctx.db.get(row._id)))!;
+    expect(moved.currentOp).toBeUndefined();
+    const late = await t.mutation(internal.edgeNames.settle, {
+      nameId: row._id,
+      opId: (order as { opId: string }).opId,
+      outcome: { kind: 'done', records: [] },
+    });
+    expect(late).toEqual({ ok: false });
+    // Still moving, toward b: the late settle changed nothing.
+    expect((await t.run((ctx) => ctx.db.get(row._id)))!).toMatchObject({
+      state: 'moving',
+      edgeId: b,
+    });
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.filter((j) => j.name.includes('edgeNameOps')).length).toBeGreaterThan(0);
+  });
+
+  test('removal gets its own tries; New name on a stuck name removes it again', async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    const a = await address(t, f, '198.51.100.141');
+    await t.action(internal.edgeNameOps.work, { edgeId: a });
+    const row = (await nameOf(t, a))!;
+    await t.run((ctx) => ctx.db.patch(row._id, { attempts: 11 }));
+    await t.run((ctx) => ctx.db.patch(a, { status: 'destroying' }));
+    await t.mutation(internal.edgeNames.retireForDestroy, { edgeId: a });
+    expect((await t.run((ctx) => ctx.db.get(row._id)))!).toMatchObject({
+      state: 'removing',
+      attempts: 0,
+    });
+    // A name parked while in use: New name removes it again and makes another.
+    const b = await address(t, f, '198.51.100.142');
+    await t.action(internal.edgeNameOps.work, { edgeId: b });
+    const stuck = (await nameOf(t, b))!;
+    await t.run((ctx) =>
+      ctx.db.patch(stuck._id, { state: 'parked', attempts: 12, failure: { code: 'x', at: 1 } }),
+    );
+    const view = await t.query(internal.edgeAdmin.edgeDetail, { edgeId: b });
+    expect(view?.name).toMatchObject({ state: 'parked', stuck: true });
+    await t.mutation(internal.edgeNames.renew, { edgeId: b });
+    expect((await t.run((ctx) => ctx.db.get(stuck._id)))!).toMatchObject({
+      state: 'removing',
+      attempts: 0,
+    });
+  });
+
+  test('a switched-off zone gets no new name and no move', async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    await t.run((ctx) => ctx.db.patch(f.zoneIds[0]!, { enabled: false }));
+    const a = await address(t, f, '198.51.100.151');
+    expect(await t.action(internal.edgeNameOps.work, { edgeId: a })).toBe('none');
+    expect(await nameRows(t)).toEqual([]);
   });
 
   test('upkeep: an address that wants a name and has none is listed once', async () => {

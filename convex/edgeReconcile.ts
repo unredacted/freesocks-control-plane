@@ -1146,6 +1146,8 @@ async function namesFirst(ctx: ActionCtx, edge: Edge): Promise<boolean> {
 
 /** Name passes per tick (each is a few DNS calls). */
 const NAMES_PER_TICK = 20;
+/** Pages of live names (200 each) looked at for drift per tick. */
+const NAME_DRIFT_PAGES = 50;
 
 async function namesPass(ctx: ActionCtx, edges: Edge[], report: ReconcileReport) {
   const candidates = edges
@@ -1162,7 +1164,19 @@ async function namesPass(ctx: ActionCtx, edges: Edge[], report: ReconcileReport)
     candidates: candidates.slice(0, 200),
     limit: NAMES_PER_TICK,
   });
-  for (const nameId of plan.nameIds) {
+  // Live names whose records no longer match their address, every page of them.
+  const work = [...plan.nameIds];
+  let cursor: string | null = null;
+  for (let page = 0; page < NAME_DRIFT_PAGES; page++) {
+    const drift: { nameIds: Id<'edgeNames'>[]; cursor: string | null } = await ctx.runQuery(
+      internal.edgeNames.liveDrift,
+      { cursor },
+    );
+    for (const id of drift.nameIds) if (!work.includes(id)) work.push(id);
+    if (!drift.cursor) break;
+    cursor = drift.cursor;
+  }
+  for (const nameId of work.slice(0, NAMES_PER_TICK * 2)) {
     try {
       await ctx.runAction(internal.edgeNameOps.work, { nameId });
     } catch (err) {

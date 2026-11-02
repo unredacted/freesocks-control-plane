@@ -363,7 +363,7 @@
                   New name
                 </Button>
               {/if}
-              {#if addressName.state === 'parked'}
+              {#if addressName.stuck}
                 <Button
                   size="sm"
                   variant="outline"
@@ -374,7 +374,7 @@
                 </Button>
               {/if}
             </div>
-            {#if addressName.state === 'parked'}
+            {#if addressName.stuck}
               <p class="text-muted-foreground text-xs">
                 Dismiss only after removing its records in the zone by hand.
               </p>

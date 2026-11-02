@@ -2150,7 +2150,9 @@ export const attention = internalQuery({
       .take(50);
     for (const row of parkedNames) {
       const relay = relays.find((r) => r._id === row.relayId) ?? null;
-      const stale = row.served.at(-1)?.until !== undefined;
+      // Stale: it was being removed, or moved and its records may still point
+      // at the address it was leaving.
+      const stale = row.served.at(-1)?.until !== undefined || row.leavingEdgeId !== undefined;
       items.push({
         id: `address_name_stuck:${row._id}`,
         kind: 'address_name_stuck',

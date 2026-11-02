@@ -1237,6 +1237,8 @@ export const EdgeAddressName = z.object({
   /** It came to this address from the one this address replaced. */
   movedHere: z.boolean(),
   failure: z.object({ code: z.string(), at: z.string() }).nullable(),
+  /** A name of this address FCP gave up on is still open (Dismiss once removed by hand). */
+  stuck: z.boolean().default(false),
 });
 export type EdgeAddressName = z.infer<typeof EdgeAddressName>;
 

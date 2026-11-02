@@ -129,12 +129,15 @@ export async function nameViewOf(
   movedAt?: number;
   movedHere: boolean;
   failure?: { code: string; at: number };
+  /** A name of this address FCP gave up on is still open (the drawer offers Dismiss). */
+  stuck: boolean;
 } | null> {
   const rows = await namesOfEdge(db, edgeId);
   const row = rows.find((r) => !ENDED.includes(r.state)) ?? rows.find((r) => r.state === 'parked');
   if (!row) return null;
   const first = row.served[0];
   return {
+    stuck: rows.some((r) => r.state === 'parked'),
     fqdn: row.fqdn,
     state: row.state,
     zoneLocationId: row.zoneLocationId,
@@ -152,16 +155,20 @@ export interface NameZone {
   zoneName: string;
 }
 
-/** The eligible zones that can hold a name now: a location of a DNS account with a zone. */
+/**
+ * The eligible zones that can take new work now: a location of a DNS account
+ * with a zone, both switched on. A switched-off one gets no new name and no
+ * move; a name already there keeps its frozen zone, so it can still be removed.
+ */
 export async function nameZonesOf(db: DatabaseReader, ids: readonly string[]): Promise<NameZone[]> {
   const out: NameZone[] = [];
   for (const id of ids) {
     const locationId = db.normalizeId('edgeLocations', id);
     if (!locationId) continue;
     const loc = await db.get(locationId);
-    if (!loc) continue;
+    if (!loc || !loc.enabled) continue;
     const acct = await db.get(loc.accountId);
-    if (!acct || !EDGE_PROVIDER_CAPABILITIES[acct.provider].providesDns) continue;
+    if (!acct || !acct.enabled || !EDGE_PROVIDER_CAPABILITIES[acct.provider].providesDns) continue;
     const p = loc.placement as { zoneId?: unknown; zoneName?: unknown };
     if (typeof p.zoneId !== 'string' || typeof p.zoneName !== 'string' || !p.zoneName) continue;
     out.push({ locationId, dnsAccountId: acct._id, zoneId: p.zoneId, zoneName: p.zoneName });
@@ -227,11 +234,7 @@ export const begin = internalMutation({
       if (target.kind === 'hold') return { kind: 'none' };
       if (target.kind === 'remove') {
         state = 'removing';
-        await ctx.db.patch(row._id, {
-          state,
-          served: closeServed(row.served, now, 'destroyed'),
-          updatedAt: now,
-        });
+        await retarget(ctx, row, { state, served: closeServed(row.served, now, 'destroyed') }, now);
         await scheduleEpochIfServing(ctx, row);
       } else desired = desiredNameRecords(row.fqdn, target);
     }
@@ -375,7 +378,15 @@ export const settle = internalMutation({
   },
   handler: async (ctx, a) => {
     const row = await ctx.db.get(a.nameId);
-    if (!row || row.currentOp?.opId !== a.opId) return { ok: false as const };
+    if (!row) return { ok: false as const };
+    if (row.currentOp?.opId !== a.opId) {
+      // A pass whose claim was revoked (the name was pointed elsewhere) or lapsed:
+      // whatever it wrote landed before this call, so one more pass reads the
+      // zone back after it and puts right what it left.
+      if (!ENDED.includes(row.state))
+        await ctx.scheduler.runAfter(0, internal.edgeNameOps.work, { nameId: row._id });
+      return { ok: false as const };
+    }
     const now = Date.now();
     const base = { currentOp: undefined, updatedAt: now };
     const o = a.outcome;
@@ -454,6 +465,26 @@ export const settle = internalMutation({
   },
 });
 
+/**
+ * Point a name somewhere else (another address, or nowhere: `removing`). A
+ * pass in flight is revoked: its settle no longer matches and asks for a fresh
+ * pass that reads the zone back after it. Removing starts its own count of
+ * tries, so failures while the name was made never cut its removal short.
+ */
+async function retarget(
+  ctx: MutationCtx,
+  row: Name,
+  patch: Partial<Omit<Name, '_id' | '_creationTime'>>,
+  now: number,
+) {
+  await ctx.db.patch(row._id, {
+    ...patch,
+    currentOp: undefined,
+    ...(patch.state === 'removing' && row.state !== 'removing' ? { attempts: 0 } : {}),
+    updatedAt: now,
+  });
+}
+
 async function park(ctx: MutationCtx, row: Name, code: string, now: number) {
   await ctx.db.patch(row._id, {
     currentOp: undefined,
@@ -525,10 +556,11 @@ export async function moveNameOnReplace(
 ): Promise<MoveVerdict> {
   const settings = await namesSettingsOf(ctx.db);
   const name = await servingNameOf(ctx.db, a.from._id);
+  const eligible = settings.enabled ? await nameZonesOf(ctx.db, settings.zones) : [];
   const verdict = mayMoveName({
     enabled: settings.enabled,
     moveQuietDays: settings.moveQuietDays,
-    eligibleZones: settings.zones,
+    eligibleZones: eligible.map((z) => z.locationId as string),
     now: a.now,
     name,
     from: { listenerId: a.from.listenerId, lane: edgeLaneOf(a.from) },
@@ -542,22 +574,27 @@ export async function moveNameOnReplace(
   if (!verdict.move || !name) return verdict;
   for (const own of await namesOfEdge(ctx.db, a.to._id)) {
     if (!['creating', 'live'].includes(own.state)) continue;
-    await ctx.db.patch(own._id, {
-      state: 'removing',
-      served: closeServed(own.served, a.now, 'replaced'),
-      updatedAt: a.now,
-    });
+    await retarget(
+      ctx,
+      own,
+      { state: 'removing', served: closeServed(own.served, a.now, 'replaced') },
+      a.now,
+    );
     await ctx.scheduler.runAfter(0, internal.edgeNameOps.work, { nameId: own._id });
   }
-  await ctx.db.patch(name._id, {
-    edgeId: a.to._id,
-    leavingEdgeId: a.from._id,
-    state: 'moving',
-    moves: name.moves + 1,
-    movedAt: a.now,
-    served: openServed(closeServed(name.served, a.now, 'moved'), a.to._id, a.now),
-    updatedAt: a.now,
-  });
+  await retarget(
+    ctx,
+    name,
+    {
+      edgeId: a.to._id,
+      leavingEdgeId: a.from._id,
+      state: 'moving',
+      moves: name.moves + 1,
+      movedAt: a.now,
+      served: openServed(closeServed(name.served, a.now, 'moved'), a.to._id, a.now),
+    },
+    a.now,
+  );
   await auditName(ctx, { ...name, edgeId: a.to._id }, 'edge.name.moved', {
     fromEdgeId: a.from._id,
     rotationId: a.rotationId,
@@ -579,13 +616,17 @@ export async function moveNameBack(
     if (!NAME_SERVES.includes(row.state)) continue;
     const prior = row.served.at(-2);
     if (!prior || prior.edgeId !== a.previous || prior.why !== 'moved') continue;
-    await ctx.db.patch(row._id, {
-      edgeId: a.previous,
-      leavingEdgeId: a.current,
-      state: 'moving',
-      served: openServed(closeServed(row.served, a.now, 'rolled_back'), a.previous, a.now),
-      updatedAt: a.now,
-    });
+    await retarget(
+      ctx,
+      row,
+      {
+        edgeId: a.previous,
+        leavingEdgeId: a.current,
+        state: 'moving',
+        served: openServed(closeServed(row.served, a.now, 'rolled_back'), a.previous, a.now),
+      },
+      a.now,
+    );
     await ctx.scheduler.runAfter(0, internal.edgeNameOps.work, { nameId: row._id });
     return true;
   }
@@ -611,33 +652,39 @@ export const retireForDestroy = internalMutation({
     for (const row of await namesOfEdge(ctx.db, edgeId)) {
       if (ENDED.includes(row.state)) continue;
       if (row.state === 'creating' || row.state === 'live') {
-        await ctx.db.patch(row._id, {
-          state: 'removing',
-          served: closeServed(row.served, now, 'destroyed'),
-          updatedAt: now,
-        });
+        await retarget(
+          ctx,
+          row,
+          { state: 'removing', served: closeServed(row.served, now, 'destroyed') },
+          now,
+        );
       } else if (row.state === 'moving') {
         // Moving TO this address while it is destroyed (a rollback kept the old
         // one): take the name back to where it came from instead.
         if (row.leavingEdgeId) {
           const back = await ctx.db.get(row.leavingEdgeId);
           if (back && nameTargetOf(back).kind === 'serve') {
-            await ctx.db.patch(row._id, {
-              edgeId: row.leavingEdgeId,
-              // Its records may still point here: the walk waits for them.
-              leavingEdgeId: edgeId,
-              served: openServed(closeServed(row.served, now, 'destroyed'), back._id, now),
-              updatedAt: now,
-            });
+            await retarget(
+              ctx,
+              row,
+              {
+                edgeId: row.leavingEdgeId,
+                // Its records may still point here: the walk waits for them.
+                leavingEdgeId: edgeId,
+                served: openServed(closeServed(row.served, now, 'destroyed'), back._id, now),
+              },
+              now,
+            );
             pending.push(row._id);
             continue;
           }
         }
-        await ctx.db.patch(row._id, {
-          state: 'removing',
-          served: closeServed(row.served, now, 'destroyed'),
-          updatedAt: now,
-        });
+        await retarget(
+          ctx,
+          row,
+          { state: 'removing', served: closeServed(row.served, now, 'destroyed') },
+          now,
+        );
       }
       pending.push(row._id);
     }
@@ -684,16 +731,22 @@ export const renew = internalMutation({
         message: 'This address takes no name',
       });
     const settings = await namesSettingsOf(ctx.db);
-    if (!settings.enabled || settings.zones.length === 0)
+    if (!settings.enabled || (await nameZonesOf(ctx.db, settings.zones)).length === 0)
       throw new ConvexError({ code: 'edge.names_off', message: 'Names for addresses are off' });
     const now = Date.now();
-    const row = await openNameOf(ctx.db, edgeId);
+    // The name in use, else the one FCP gave up on: either is removed again
+    // (a parked one gets a fresh count of tries) before the new one is made.
+    const row =
+      (await openNameOf(ctx.db, edgeId)) ??
+      (await namesOfEdge(ctx.db, edgeId)).find((r) => r.state === 'parked') ??
+      null;
     if (row) {
-      await ctx.db.patch(row._id, {
-        state: 'removing',
-        served: closeServed(row.served, now, 'renewed'),
-        updatedAt: now,
-      });
+      await retarget(
+        ctx,
+        row,
+        { state: 'removing', served: closeServed(row.served, now, 'renewed') },
+        now,
+      );
       await ctx.scheduler.runAfter(0, internal.edgeNameOps.work, { nameId: row._id });
     }
     await ctx.db.patch(edgeId, { nameWanted: true, updatedAt: now });
@@ -732,18 +785,6 @@ export const upkeepPlan = internalQuery({
         .take(limit);
       for (const r of rows) if (!r.currentOp || r.currentOp.expiresAt <= now) nameIds.push(r._id);
     }
-    const live = await ctx.db
-      .query('edgeNames')
-      .withIndex('by_state', (q) => q.eq('state', 'live'))
-      .take(500);
-    for (const r of live) {
-      const target = nameTargetOf(await ctx.db.get(r.edgeId));
-      if (target.kind === 'hold') continue;
-      const want =
-        target.kind === 'remove' ? [] : desiredNameRecords(r.fqdn, target).map((d) => d.content);
-      const have = r.records.map((x) => x.content);
-      if (want.length !== have.length || want.some((c) => !have.includes(c))) nameIds.push(r._id);
-    }
     const edgeIds: Id<'edges'>[] = [];
     if (candidates.length > 0 && (await namesEnabledOf(ctx.db))) {
       for (const id of candidates) {
@@ -762,6 +803,36 @@ export const upkeepPlan = internalQuery({
     return { nameIds: nameIds.slice(0, limit), edgeIds };
   },
 });
+
+/**
+ * One page of live names whose records no longer match their address
+ * (re-addressed, or the address ended); the reconcile pass walks every page,
+ * so a deployment with many names never leaves one unlooked at.
+ */
+export const liveDrift = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db
+      .query('edgeNames')
+      .withIndex('by_state', (q) => q.eq('state', 'live'))
+      .paginate({ cursor, numItems: 200 });
+    const nameIds: Id<'edgeNames'>[] = [];
+    for (const r of page.page) {
+      const target = nameTargetOf(await ctx.db.get(r.edgeId));
+      if (target.kind === 'hold') continue;
+      const want =
+        target.kind === 'remove' ? [] : desiredNameRecords(r.fqdn, target).map((d) => d.content);
+      const have = r.records.map((x) => x.content);
+      if (want.length !== have.length || want.some((c) => !have.includes(c))) nameIds.push(r._id);
+    }
+    return { nameIds, cursor: page.isDone ? null : page.continueCursor };
+  },
+});
+
+/** Whether an address has a name being made or in use (its end must remove it). */
+export async function hasOpenName(db: DatabaseReader, edgeId: Id<'edges'>): Promise<boolean> {
+  return (await openNameOf(db, edgeId)) !== null;
+}
 
 /** Parked names (attention): the operator removes their records by hand or renews them. */
 export async function parkedNamesOf(db: DatabaseReader, relayId: Id<'relays'>): Promise<Name[]> {
@@ -823,11 +894,12 @@ export const clearForRollback = internalMutation({
       for (const row of rows) {
         open++;
         if (state !== 'removing')
-          await ctx.db.patch(row._id, {
-            state: 'removing',
-            served: closeServed(row.served, now, 'rollback'),
-            updatedAt: now,
-          });
+          await retarget(
+            ctx,
+            row,
+            { state: 'removing', served: closeServed(row.served, now, 'rollback') },
+            now,
+          );
         await ctx.scheduler.runAfter(0, internal.edgeNameOps.work, { nameId: row._id });
       }
     }

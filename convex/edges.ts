@@ -35,7 +35,7 @@ import {
 } from './lib/edges/verification';
 import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { nextFailure } from './lib/edges/rotation';
-import { namesEnabledOf } from './edgeNames';
+import { hasOpenName, namesEnabledOf } from './edgeNames';
 import { SPEND_CAP_REACHED, capRefusal, edgeCostAt } from './edgePlans';
 
 /** Consecutive `gone` describes before the pool drop + status transition act. */
@@ -927,6 +927,10 @@ export const recordDescribe = internalMutation({
       addresses: addressesNext,
       ...(transition as Partial<Edge>),
     });
+    // Gone at the provider: its address is released now, so its name goes at
+    // once rather than at the next reconcile pass.
+    if (acted && (await hasOpenName(ctx.db, a.edgeId)))
+      await ctx.scheduler.runAfter(0, internal.edgeNameOps.work, { edgeId: a.edgeId });
     return {
       dropped,
       goneObservations: acted ? 0 : goneObservations,
