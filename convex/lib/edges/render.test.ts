@@ -24,7 +24,7 @@ import {
 } from './render';
 import { applyEdgeRender } from './renderPipeline';
 import { decodeBase64Loose, encodeBase64 } from './render/base64';
-import type { RenderMatcher } from './render/types';
+import { orderEndpoints, type RenderMatcher } from './render/types';
 import { parseProxyUri, rewriteProxyUri } from './render/uri';
 import type { ListenerProto } from './protocols';
 
@@ -509,35 +509,29 @@ describe('further server names per endpoint', () => {
     ]);
   });
 
-  test('link list: each name is its own line, pbk / sid / flow untouched', () => {
+  test('link list: the first name only, never a look-alike per further name; pbk / sid / flow untouched', () => {
     const out = render(templateLink, { assigned: withNames });
     const lines = out.body.split('\n').filter((l) => l.startsWith('vless://'));
     expect(lines.map((l) => qsOf(l).get('sni'))).toEqual([
       'cdn-a.example',
       'cdn-a.example', // the IPv6 sibling of the first name
       'cdn-b.example',
-      'cdn-c.example',
-      'cdn-d.example',
     ]);
     for (const l of lines) {
       expect(qsOf(l).get('pbk')).toBe(new URLSearchParams(REALITY_QS).get('pbk'));
       expect(qsOf(l).get('sid')).toBe(new URLSearchParams(REALITY_QS).get('sid'));
       expect(l).not.toContain(ORIGIN);
     }
-    expect(decodeURIComponent(lines[3].split('#')[1])).toBe('FreeSocks 2');
+    expect(out.body).not.toContain(encodeURIComponent('FreeSocks 2'));
   });
 
   test('an entry cap drops the further names before it drops a role', () => {
     // Three first-name entries exist (primary, its IPv6 sibling, backup): a cap
     // of three keeps exactly those and cuts both further names.
-    const capped = { ...linksRule, maxEntries: 3 };
-    const out = render(templateLink, { assigned: withNames, rule: capped });
-    const lines = out.body.split('\n').filter((l) => l.startsWith('vless://'));
-    expect(lines.map((l) => decodeURIComponent(l.split('#')[1]))).toEqual([
-      'FreeSocks',
-      'FreeSocks (IPv6)',
-      'FreeSocks (backup)',
-    ]);
+    const capped = { ...autoRule, maxEntries: 3 };
+    expect(
+      orderEndpoints(renderEntries(withNames, capped, true, ORIGIN), capped).map((e) => e.label),
+    ).toEqual(['FreeSocks', 'FreeSocks (IPv6)', 'FreeSocks (backup)']);
   });
 
   test('a single-key delivery stays one entry', () => {

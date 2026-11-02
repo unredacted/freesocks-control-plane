@@ -50,9 +50,10 @@ export interface RenderEndpoint {
    */
   variant?: number;
   /**
-   * The IP of an address members are handed by NAME, as a fallback for an app
-   * that switches by itself when the name does not resolve (an auto group).
-   * Ranked after every first-name entry and before further names.
+   * A raw IP of an address members are handed by NAME, for when the name is
+   * blocked or answered falsely: the IPv4 in a body with an auto group (the
+   * app switches to it by itself), both IPs in a link list (the member picks
+   * one by hand). Ranked after every first-name entry and before further names.
    */
   fallback?: boolean;
 }
@@ -115,8 +116,8 @@ export function orderEndpoints(
     const variant = e.variant ?? 0;
     // Every first-name entry (both roles, both families) outranks every
     // further-name entry, so a cap cuts the extra names first; a named
-    // address's IP fallback sits between them (a blocked name takes its
-    // further names with it, never its IP).
+    // address's raw IPs sit between them (a blocked name takes its further
+    // names with it, never its IPs), IPv4 before IPv6.
     return (
       (variant > 0 ? 1000 : e.fallback ? 500 : 0) +
       roleRank * 100 +

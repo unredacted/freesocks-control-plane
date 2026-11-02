@@ -1,14 +1,21 @@
 /**
  * Names for load balancer addresses in member bodies (lib/edges/render.ts): an
- * address with a name is dialled by it in every format; where the app switches
- * by itself (an auto group) its IPs follow as fallbacks; a single key keeps the
+ * address with a name is dialled by it in every format, and its raw IPs stay
+ * beside it for a name that is blocked: in an auto group the IPv6 entry as
+ * without a name and the IPv4 as a fallback, in a link list both as
+ * alternatives the member picks by hand (IPv4 first); a single key keeps the
  * IP. Every value is RFC 5737 / RFC 3849 / `*.example`.
  */
 import { describe, expect, test } from 'vitest';
 import YAML from 'yaml';
-import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
+import { EDGE_DEFAULTS, defaultClientRule, sanitizeRelayConfig } from '../edgeConfig';
 import type { AssignedEndpoint, PublishedEdge } from './assignment';
-import { edgeAddressesOf, effectiveRule, renderEdgeEndpoints } from './render';
+import {
+  edgeAddressesOf,
+  effectiveRule,
+  renderEdgeEndpoints,
+  renderEntriesChecked,
+} from './render';
 import { orderEndpoints, type RenderMatcher, type RenderEndpoint } from './render/types';
 import type { ListenerProto } from './protocols';
 
@@ -94,28 +101,111 @@ const singbox = {
   ],
 };
 
+const linesOf = (body: string) =>
+  body
+    .split('\n')
+    .filter((l) => l.startsWith('vless://'))
+    .map((l) => ({
+      label: decodeURIComponent(l.split('#')[1]!),
+      host: l.slice(l.indexOf('@') + 1, l.lastIndexOf(':443?')),
+      sni: new URLSearchParams(l.split('?')[1]!.split('#')[0]).get('sni'),
+    }));
+
 describe('an address with a name', () => {
-  test('a link list dials the name in place of the IPv4 entry; the IPv6 entry stays', () => {
+  test('a link list: the name first, then the backup, then the raw IPv4 and IPv6 to pick by hand', () => {
     const out = render(templateLink);
     expect(out.delivery).toEqual({ kind: 'serve' });
-    const lines = out.body.split('\n');
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toContain(`@${NAME_A}:443?`);
-    expect(new URLSearchParams(lines[0]!.split('?')[1]!.split('#')[0]).get('sni')).toBe(
-      'cdn-a.example',
-    );
-    // Where IPv4 is blocked and IPv6 works, the member can still pick IPv6.
-    expect(lines[1]).toContain('@[2001:db8::10]:443?');
-    // The backup has no name: its IP, as before.
-    expect(lines[2]).toContain('@203.0.113.20:443?');
-    // No IPv4 literal of the named address in a list that never switches by itself.
-    expect(out.body).not.toContain('@203.0.113.10:');
+    expect(linesOf(out.body).map((l) => [l.label, l.host])).toEqual([
+      ['FreeSocks', NAME_A],
+      // The backup has no name: its IP, as before.
+      ['FreeSocks (backup)', '203.0.113.20'],
+      // Where the name is blocked or answered falsely; an IPv4-only network needs this one.
+      ['FreeSocks (IPv4)', '203.0.113.10'],
+      // Where IPv4 is blocked and IPv6 works.
+      ['FreeSocks (IPv6)', '[2001:db8::10]'],
+    ]);
+    // Every entry of the named address carries the listener's server name, never the name.
+    for (const l of linesOf(out.body).filter((x) => x.label !== 'FreeSocks (backup)'))
+      expect(l.sni).toBe('cdn-a.example');
   });
 
-  test('IPv6 off for the family: the name alone, no IPv6 entry', () => {
+  test('a link list, the named address without IPv6: the name and its raw IPv4', () => {
+    const v4Only = { ...edgeA, addresses: { v4: '203.0.113.10' } };
+    const out = render(templateLink, {
+      assigned: { ...assigned, primary: { ...assigned.primary, edge: v4Only } },
+    });
+    expect(out.delivery).toEqual({ kind: 'serve' });
+    expect(linesOf(out.body).map((l) => [l.label, l.host])).toEqual([
+      ['FreeSocks', NAME_A],
+      ['FreeSocks (backup)', '203.0.113.20'],
+      ['FreeSocks (IPv4)', '203.0.113.10'],
+    ]);
+  });
+
+  test('a link list, both addresses named: each raw pair after both names, primary first', () => {
+    const namedB = {
+      ...edgeB,
+      addresses: { v4: '203.0.113.20', v6: '2001:db8::20' },
+      addressName: 'b.names.example',
+    };
+    const both = { ...assigned, backup: { ...assigned.backup, edge: namedB } };
+    expect(linesOf(render(templateLink, { assigned: both }).body).map((l) => l.label)).toEqual([
+      'FreeSocks',
+      'FreeSocks (backup)',
+      'FreeSocks (IPv4)',
+      'FreeSocks (IPv6)',
+      'FreeSocks (backup) (IPv4)',
+      'FreeSocks (backup) (IPv6)',
+    ]);
+    const backupFirst = { ...linksRule, order: 'backup-first' as const };
+    expect(
+      linesOf(render(templateLink, { assigned: both, rule: backupFirst }).body).map((l) => l.label),
+    ).toEqual([
+      'FreeSocks (backup)',
+      'FreeSocks',
+      'FreeSocks (backup) (IPv4)',
+      'FreeSocks (backup) (IPv6)',
+      'FreeSocks (IPv4)',
+      'FreeSocks (IPv6)',
+    ]);
+  });
+
+  test('IPv6 off for the family: the name and the raw IPv4, no IPv6 entry', () => {
     const out = render(templateLink, { rule: { ...linksRule, ipv6Mode: 'off' } });
-    expect(out.body.split('\n')[0]).toContain(`@${NAME_A}:443?`);
+    expect(linesOf(out.body).map((l) => [l.label, l.host])).toEqual([
+      ['FreeSocks', NAME_A],
+      ['FreeSocks (backup)', '203.0.113.20'],
+      ['FreeSocks (IPv4)', '203.0.113.10'],
+    ]);
     expect(out.body).not.toContain('2001:db8::10');
+  });
+
+  test('a link list under a cap: no further names at all, the raw IPs go first, and the backup stays', () => {
+    const withAlternates = {
+      ...assigned,
+      primary: { ...assigned.primary, alternates: [{ sni: 'cdn-c.example', hostHeader: null }] },
+    };
+    const labels = (maxEntries: number) =>
+      linesOf(
+        render(templateLink, { assigned: withAlternates, rule: { ...linksRule, maxEntries } }).body,
+      ).map((l) => l.label);
+    // The member holds a further name; a link list never shows it (a look-alike of the first).
+    expect(labels(0)).toEqual([
+      'FreeSocks',
+      'FreeSocks (backup)',
+      'FreeSocks (IPv4)',
+      'FreeSocks (IPv6)',
+    ]);
+    expect(labels(3)).toEqual(['FreeSocks', 'FreeSocks (backup)', 'FreeSocks (IPv4)']);
+    expect(labels(2)).toEqual(['FreeSocks', 'FreeSocks (backup)']);
+  });
+
+  test("an operator's own IPv4 suffix is kept; the default reads as a pair with IPv6", () => {
+    expect(EDGE_DEFAULTS.render.ipLabel).toBe('IPv4');
+    const own = sanitizeRelayConfig({ 'render.ipLabel': 'IP', 'render.enabled': true }).render;
+    const out = render(templateLink, { rule: effectiveRule(own, defaultClientRule('v2rayng')) });
+    expect(linesOf(out.body).map((l) => l.label)).toContain('FreeSocks (IP)');
+    expect(linesOf(out.body).map((l) => l.label)).not.toContain('FreeSocks (IPv4)');
   });
 
   test('sing-box: the name first, the IPv6 entry as before, the IPv4 as a fallback in the group', () => {
@@ -129,7 +219,7 @@ describe('an address with a name', () => {
       ['FreeSocks', NAME_A],
       ['FreeSocks (IPv6)', '2001:db8::10'],
       ['FreeSocks (backup)', '203.0.113.20'],
-      ['FreeSocks (IP)', '203.0.113.10'],
+      ['FreeSocks (IPv4)', '203.0.113.10'],
     ]);
     // The server name is the listener's, never the address's name.
     for (const o of emitted.filter((x) => x.tag !== 'FreeSocks (backup)'))
@@ -168,7 +258,7 @@ describe('an address with a name', () => {
       server: NAME_A,
       servername: 'cdn-a.example',
     });
-    expect(ours.find((p) => p.name === 'FreeSocks (IP)')?.server).toBe('203.0.113.10');
+    expect(ours.find((p) => p.name === 'FreeSocks (IPv4)')?.server).toBe('203.0.113.10');
   });
 
   test('a single key keeps the IP: it has no room for a fallback', () => {
@@ -207,6 +297,20 @@ describe('an address with a name', () => {
       assigned: { primary: { ...assigned.primary, edge: leaky }, backup: null },
     });
     expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'leak_detected' });
+  });
+
+  test('a link list refuses a named address whose raw IPv4 is the node: no entry of it is served', () => {
+    const nodeAddresses = ['203.0.113.10'];
+    const out = render(templateLink, {
+      assigned: { primary: assigned.primary, backup: null },
+      nodeAddresses,
+    });
+    expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'leak_detected' });
+    expect(
+      renderEntriesChecked(assigned, linksRule, false, ORIGIN, nodeAddresses).entries.map(
+        (e) => e.address,
+      ),
+    ).toEqual(['203.0.113.20']);
   });
 
   test("further names are refused too when the name's IPv6 is the node", () => {

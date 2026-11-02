@@ -31,10 +31,13 @@ import { resolveMemberCountryConfig } from './memberCountry';
 import { capabilitiesOf } from './lib/backends/capabilities';
 import {
   effectiveRule,
+  namesInBody,
   renderEntries,
+  snapshotRuleOf,
   type DeliveryStyle,
   type RenderMatcher,
 } from './lib/edges/render';
+import { orderEndpoints } from './lib/edges/render/types';
 import { assignEndpoints, endpointsFor } from './lib/edges/assignment';
 import type { CountryContext, PublishedEdge } from './lib/edges/assignment';
 import { protocolUsesSni } from './lib/edges/protocols';
@@ -659,16 +662,21 @@ export const memberView = internalQuery({
     const primary = snap.primaryEdgeId ? byId.get(snap.primaryEdgeId) : undefined;
     const backup = snap.backupEdgeId ? byId.get(snap.backupEdgeId) : undefined;
     if (!primary) return { refreshSuggested: true, known: false, connections: [] };
-    const rule = effectiveRule(cfg.render, cfg.render.clients.other);
+    // The rule of the app the body was made for: a link list holds neither the
+    // further server names nor an auto group's order.
+    const { rule, hasAutoGroup } = snapshotRuleOf(cfg.render, snap.family);
     // The snapshot's roles as they were: a seed over just these two edges could
     // swap them (the member's primary would read as their backup).
     const assigned = endpointsFor(
       sub.renderKey ?? '',
       primary,
       rule.includeBackup ? (backup ?? null) : null,
-      { namesPerEndpoint: rule.namesPerEndpoint, backupNames: rule.backupNames },
+      namesInBody(rule, hasAutoGroup),
     );
-    const connections = renderEntries(assigned, rule, false, origin.originAddress).map((e) => ({
+    const connections = orderEndpoints(
+      renderEntries(assigned, rule, hasAutoGroup, origin.originAddress),
+      rule,
+    ).map((e) => ({
       label: e.label,
       role: e.role,
       family: e.family,

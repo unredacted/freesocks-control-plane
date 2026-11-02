@@ -22,7 +22,7 @@ import { internalMutation, type MutationCtx } from './_generated/server';
 import { endpointsFor, type CountryContext } from './lib/edges/assignment';
 import { resolveWhere } from './lib/edges/sni/country';
 import { NO_COUNTRY, dayOf, shareOf } from './lib/edges/sni/health';
-import { effectiveRule } from './lib/edges/render';
+import { namesInBody, snapshotRuleOf } from './lib/edges/render';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import { resolveSniConfig } from './lib/sniConfig';
 import { recordHeartbeat } from './cronHeartbeat';
@@ -95,17 +95,15 @@ export async function attributeReport(
     inferred: args.consentedCountry,
     curated: sniCfg.curatedCountries,
   }).where;
-  const rule = effectiveRule(cfg.render, cfg.render.clients.other);
+  // The rule of the app the body was made for: a link list holds the first
+  // server name only, so its member is credited that one.
+  const { rule, hasAutoGroup } = snapshotRuleOf(cfg.render, snap.family);
   // The snapshot's roles as they were (a seed over two edges could swap them).
   const assigned = endpointsFor(
     sub.renderKey,
     primary,
     rule.includeBackup ? (backup ?? null) : null,
-    {
-      namesPerEndpoint: rule.namesPerEndpoint,
-      backupNames: rule.backupNames,
-      where,
-    },
+    { ...namesInBody(rule, hasAutoGroup), where },
   );
   const endpoint = [assigned.primary, assigned.backup].find((e) => e?.edge.edgeId === edgeId);
   // Only ranked, name-presenting L4 listeners: elsewhere the name is not a

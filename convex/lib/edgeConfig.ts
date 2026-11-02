@@ -238,7 +238,7 @@ export interface EdgeConfig {
     primaryLabel: string;
     backupLabel: string;
     ipv6Label: string;
-    /** The suffix of a named address's IP fallback entry (`edge.names`). */
+    /** The suffix of a named address's raw IPv4 entry (`edge.names`); the key keeps its old name. */
     ipLabel: string;
     ipv6Mode: Exclude<Ipv6Mode, 'inherit'>;
     /**
@@ -389,7 +389,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     primaryLabel: 'FreeSocks',
     backupLabel: 'FreeSocks (backup)',
     ipv6Label: 'IPv6',
-    ipLabel: 'IP',
+    ipLabel: 'IPv4',
     ipv6Mode: 'both',
     namesPerEndpoint: 3,
     backupNames: 1,

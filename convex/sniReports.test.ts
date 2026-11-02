@@ -110,7 +110,7 @@ import { realityListener, registerRelay } from './lib/edges/testing/fixtures';
 const NAMES = ['a.example', 'b.example', 'c.example', 'd.example', 'e.example'];
 
 async function seedMember(
-  opts: { hrw?: boolean; sniRegion?: string; mode?: string; guess?: string } = {},
+  opts: { hrw?: boolean; sniRegion?: string; mode?: string; guess?: string; family?: string } = {},
 ) {
   const t = convexTest(schema, modules);
   const serverId = await t.run(async (ctx) => {
@@ -184,7 +184,8 @@ async function seedMember(
       lastRender: {
         at: Date.now(),
         epoch: relay.publicationEpoch,
-        family: 'other',
+        // An app with an auto group: it holds every server name it was handed.
+        family: opts.family ?? 'singbox',
         listenerKeys: ['a'],
         primaryEdgeId: edgeId,
       },
@@ -229,6 +230,15 @@ describe('a report, attributed', () => {
         ['_creationTime', '_id', 'country', 'day', 'name', 'updatedAt', 'weight'].sort(),
       );
     }
+  });
+
+  test('a link-list member holds the first name only, so that one name takes the whole report', async () => {
+    const { report, counts } = await seedMember({ family: 'v2rayng' });
+    await report({ country: 'IR' });
+    const rows = await counts();
+    expect(rows).toHaveLength(1);
+    expect(NAMES).toContain(rows[0]!.name);
+    expect(rows[0]!.weight).toBeCloseTo(1);
   });
 
   test('a repeat inside the window is weight 0 and attributes nothing more', async () => {

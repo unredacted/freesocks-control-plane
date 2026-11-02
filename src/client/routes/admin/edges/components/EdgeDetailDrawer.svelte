@@ -350,7 +350,8 @@
           <section class="space-y-2">
             <KeyValue title="Address name" rows={nameRows} hideEmpty />
             <p class="text-muted-foreground text-xs">
-              Members dial this name. Apps that switch by themselves also hold the IP.
+              Members dial this name. Their apps also hold its IPv4 and IPv6, for when the name is
+              blocked.
             </p>
             <div class="flex flex-wrap gap-2">
               {#if addressName.state !== 'removing' && addressName.state !== 'gone'}

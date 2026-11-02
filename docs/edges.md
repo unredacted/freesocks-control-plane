@@ -1068,17 +1068,22 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    whose name list is meant to grow should be on `hrw1`. Switching is an explicit operator
    action (`POST listeners/{id}/sni-pick {"version": "hrw1" | null}`): every member of that
    listener gets a different one of the names the node already accepts at their next refresh,
-   so it is never a side effect. On `hrw1` a member holds **several names per endpoint**
-   (`render.namesPerEndpoint`, default 3; `render.backupNames`, default 1): the top of their
-   ranking, one more entry per name with the same address and credentials, labelled
-   `<label> 2`, `<label> 3` and placed in the automatic group, so a client fails over by
-   itself when one name is blocked. The backup's names avoid the primary's while the list
-   allows it. Adding a name changes at most one of a member's names, and only to the new
-   one; retiring one replaces only that slot. A family's `maxEntries` cuts the further names
-   before it cuts a role, the IPv6 sibling belongs to the first name only, a single-key
-   delivery stays one entry, and a listener on the default PRF or an L7 front keeps exactly
-   one name. The snapshot persisted on the subscription names edges only, never which names
-   a member holds;
+   so it is never a side effect. On `hrw1` a member of an app with an automatic group
+   (sing-box, Clash / Mihomo) holds **several names per endpoint** (`render.namesPerEndpoint`,
+   default 3; `render.backupNames`, default 1): the top of their ranking, one more entry per
+   name with the same address and credentials, labelled `<label> 2`, `<label> 3` and placed in
+   the automatic group, so the app fails over by itself when one name is blocked. A link list
+   (Xray share links, v2rayNG, Happ, Streisand, Anywhere and any other app without an
+   automatic group) carries the **first name only** (`namesInBody`): the app shows no server
+   name and never fails over by itself, so each further name would read as a duplicate of the
+   first (decided 2026-11-02). Its one name is the same first name the member's auto-group
+   body leads with. The backup's names avoid the primary's while the list allows it. Adding a
+   name changes at most one of a member's names, and only to the new one; retiring one
+   replaces only that slot. A family's `maxEntries` cuts the further names before it cuts a
+   role, the IPv6 sibling belongs to the first name only, a single-key delivery stays one
+   entry, and a listener on the default PRF or an L7 front keeps exactly one name. The
+   snapshot persisted on the subscription names edges only, never which names a member holds
+   (the replays below rebuild them from the snapshot's app family);
 4. rewrites: address, port, SNI, HTTP Host header (and Clash `servername`); never the
    credentials or routing (`pbk`, `sid`, `flow`, `path`, `serviceName`, SIP002 userinfo,
    `hy2`/`tuic` auth). Per **client family** (`render.clients.<family>`): auto-capable
@@ -1089,7 +1094,7 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    switches on its own, so the member page adds one line when the key has a backup: pick the
    backup when the first stops working (`hero.relayBackupHint`).
    An L7 edge renders as ONE entry (its hostname). An L4 address with a name is dialled by the
-   name, with its IPs as fallback entries in an auto group (§ "Names for load balancer
+   name, with its raw IPv4 and IPv6 as entries beside it (§ "Names for load balancer
    addresses"). A backend that hands out a single access
    key (Outline) renders in **single-key** style: one entry, no backup, no auto group;
 5. leaves out every RETAINED entry FCP cannot place: one that speaks what a listener speaks
@@ -1575,18 +1580,35 @@ they can still be removed). A zone or a DNS account cannot be deleted while a na
 **What members get** (`lib/edges/render.ts`, every format: links, sing-box, Clash / Mihomo, the
 mirrors and the cached and stale bodies of `/api/v1/sub`, which all go through the same render):
 
-- the name in place of the IPv4 entry; further server names (`render.namesPerEndpoint`) dial
-  the name too;
-- the IPv6 entry exactly as without a name (`<label> (IPv6)`, where the family's rule emits
-  IPv6), in every format, link lists included (below);
-- in a body with an auto group (sing-box, Clash / Mihomo), the IPv4 as a **fallback entry** in
-  the same group (`<label> (IP)`, the suffix `render.ipLabel`): an app whose lookup of the name
-  is blocked or answered falsely switches to the IP by itself. The IP is no secret (anyone can
-  look the name up). Under an entry cap it ranks after every first entry and before further
-  names, since a blocked name takes its further names with it;
-- a link list (v2rayNG, Happ, Streisand and the like, which never switch by themselves) gets the
-  name and the IPv6 entry, plus the backup as before, and no IPv4 literal;
-- a single key (Outline) keeps the IP: it has no room for a fallback.
+- the name in place of the IPv4 entry, first; in a body with an auto group, further server
+  names (`render.namesPerEndpoint`) dial the name too (a link list carries none, above);
+- beside it, two raw-IP entries in every subscription format: the IPv4 (`<label> (IPv4)`, the
+  suffix `render.ipLabel`) and the IPv6 (`<label> (IPv6)`, `render.ipv6Label`, where the
+  family's rule emits IPv6). They are the way out when the name does not work: a lookup that is
+  blocked or answered falsely (the DNS risk, below), or a network where only one family gets
+  through. The IPs are no secret (anyone can look the name up);
+- in a body with an auto group (sing-box, Clash / Mihomo) the app switches by itself: the IPv6
+  entry ranks exactly as without a name, the IPv4 is a **fallback entry** in the same group
+  that ranks after every first entry (both roles) and before further names, since a blocked
+  name takes its further names with it. Order: name, IPv6, backup, IPv4, further names
+  (`<label> 2`, `<label> 3`);
+- a link list (v2rayNG, Happ, Streisand and the like, which never switch by themselves) leaves
+  the pick to the member, so both raw IPs are alternatives after every first entry, the IPv4
+  before the IPv6: many networks where names get blocked have no IPv6, and link-list apps are
+  the ones most used there. Order: name, backup, IPv4, IPv6 (then the backup's own raw IPs if it
+  has a name), and no further names: a further name would be one more look-alike entry. So one
+  entry per way in: `FreeSocks`, `FreeSocks (IPv4)`, `FreeSocks (IPv6)`, plus the backup's. An
+  entry cap cuts from the end: the raw IPs first, and the backup stays as long as there is room
+  for two entries;
+- a single key (Outline) keeps the IP: it has no room for an alternative.
+
+**The cost of a raw IP.** A member who picked a raw-IP entry dials that IP, not the name, so a
+replacement does not reach them: the name moves to the new address (below), the IP does not.
+They refresh the subscription after a replacement, as every member did before names, and the
+fresh body holds the new address's IPs. A member on the name needs nothing.
+
+The suffix default was `IP` until 2026-11-02 and is now `IPv4`, so the two read as a pair. The
+key is unchanged: a deployment that never set it gets `IPv4`, one that set its own keeps it.
 
 **Why the IPv6 entry stays.** A name with both an A and an AAAA record leaves the choice of
 family to the client: Go dialers (sing-box, Mihomo, Xray) race the two families at TCP connect
@@ -1616,8 +1638,9 @@ own sing-box template resolves a server's name over plain DNS to a public resolv
 entries (no `proxy-server-nameserver`), and link-list apps through their own DNS setting, which
 is mostly plain DNS too. Censors in Iran and China answer such lookups falsely for names they
 list. Listing one name costs a censor about what blocking one IP does; listing a zone takes out
-every name in it at once, which IPs never allowed. Hence the spread over zones and the IP
-fallback (chosen 2026-11-02). Not done: per-country IPs (members in a chosen
+every name in it at once, which IPs never allowed. Hence the spread over zones and the raw
+IPs beside the name (chosen 2026-11-02: the fallback in auto groups first, then both raw IPs in
+every format the same day). Not done: per-country IPs (members in a chosen
 country keep IPs) and looking the name up over encrypted DNS in our templates (often blocked
 itself where it would matter, and a template change for every app). Use two or more zones used
 for nothing else.
@@ -1651,10 +1674,11 @@ the render snapshot (an edge, at its epoch; a replace bumps the epoch), and `edg
 (`edgeNames.served`: which addresses it pointed at, from when, and why it stopped: `moved`,
 `replaced`, `renewed`, `destroyed`), how often it moved and when last, which is what the
 quiet-window rule reads. A block of the name itself (a false DNS answer) is not seen by the
-probes, which dial the IP; apps with the fallback keep working, and the operator gives the
-address a new name from its drawer (**New name**, `POST edges/{id}/name/renew`): the old one is
-removed from its zone, members get the IP until the new one exists, then the new one, in
-another zone when there is one. Checking names from inside a country is not built yet.
+probes, which dial the IP; an auto group switches to the raw IPv4 by itself, a member of a
+link-list app picks a raw-IP entry by hand, and the operator gives the address a new name from
+its drawer (**New name**, `POST edges/{id}/name/renew`): the old one is removed from its zone,
+members get the IP until the new one exists, then the new one, in another zone when there is
+one. Checking names from inside a country is not built yet.
 
 **Removed with its address.** Before any provider resource of a destroying address is touched,
 its names go (`namesFirst` in the reconcile's destroy walk): the address goes back to its
@@ -3154,7 +3178,9 @@ it), and the operator's judgement needs something to go on. Member reports give 
 When a report counts for the detector (deduplicated, weight 1), names the edge it is about,
 and that edge's listener ranks names per member (`hrw1`), `sniReports.attributeReport`
 recomputes the names that member holds on that edge, from the snapshot's edges only, exactly
-as the account page rebuilds its labels, and adds `1/K` to each in `sniReportCounts`
+as the account page rebuilds its labels, under the rule of the app family the body was made for
+(`snapshotRuleOf`: a link-list member holds the first name only, so it takes the whole report),
+and adds `1/K` to each in `sniReportCounts`
 (name, country, day, weight: see docs/privacy.md). The country is the member's saved region,
 else the one they shared with the report, when curated; else `ZZ`.
 
@@ -6097,15 +6123,15 @@ lifecycle runs in that test and its rows appear here.
 **Names for load balancer addresses** (§ "Names for load balancer addresses") add one table
 (`edgeNames`), one optional field (`edges.nameWanted`), four settings with defaults
 (`edge.names.enabled` false, `edge.names.zones` empty, `edge.names.moveQuietDays` 30,
-`edge.render.ipLabel` `IP`), one attention kind (`address_name_stuck`), two admin calls
-(`POST edges/{id}/name/renew|dismiss`) and a reconcile step: one deploy, no migration, no env
-change. With the switch off nothing changes: no address wants a name, the render reads one
-setting and finds it off. Turning it on needs a DNS account whose token may edit DNS in the
-zones ticked, and changes only addresses made after it. To roll back, run
-`edgeNames:clearForRollback` with no arguments until it no longer answers `removing` (it turns
-the switch off and removes every name from its zone), then with the `cursor` it answers each time
-(`{"cursor": "..."}`, one page of addresses per run) until it answers `done` (rows and
-`edges.nameWanted` cleared), then deploy the older build.
+`edge.render.ipLabel` `IPv4`, `IP` before 2026-11-02), one attention kind
+(`address_name_stuck`), two admin calls (`POST edges/{id}/name/renew|dismiss`) and a reconcile
+step: one deploy, no migration, no env change. With the switch off nothing changes: no address
+wants a name, the render reads one setting and finds it off. Turning it on needs a DNS account
+whose token may edit DNS in the zones ticked, and changes only addresses made after it.
+To roll back, run `edgeNames:clearForRollback` with no arguments until it no longer answers
+`removing` (it turns the switch off and removes every name from its zone), then with the `cursor`
+it answers each time (`{"cursor": "..."}`, one page of addresses per run) until it answers `done`
+(rows and `edges.nameWanted` cleared), then deploy the older build.
 
 **A held block alerts** adds one optional field (`relays.suspicion.heldBack`), written by the
 detector, and one alert-worthy case (§ "Operator alerts"): one deploy, no migration, no env

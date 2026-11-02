@@ -25,6 +25,7 @@ import {
   edgeAddressesOf,
   formatHasAutoGroup,
   matchListeners,
+  namesInBody,
   renderEdgeEndpoints,
   ruleCanEmitV6,
   ruleForDelivery,
@@ -133,7 +134,8 @@ export function applyEdgeRender(
       : { ...e, eligible: false },
   );
   const rule = ruleForDelivery(rctx.rule, rctx.deliveryStyle ?? 'subscription');
-  const canEmitV6 = ruleCanEmitV6(rule, formatHasAutoGroup(rule, format));
+  const hasAutoGroup = formatHasAutoGroup(rule, format);
+  const canEmitV6 = ruleCanEmitV6(rule, hasAutoGroup);
   // (4): the PRF pick over the FULL pool order, walking past ineligible positions.
   const assigned = assignEndpoints(renderKey, published, {
     now: opts.now,
@@ -142,8 +144,8 @@ export function applyEdgeRender(
     ...(rctx.memberLane ? { memberLane: rctx.memberLane } : {}),
     includeBackup: rule.includeBackup,
     canEmitV6,
-    namesPerEndpoint: rule.namesPerEndpoint,
-    backupNames: rule.backupNames,
+    // Further server names only where an auto group hides them.
+    ...namesInBody(rule, hasAutoGroup),
     where: opts.where,
     edgeCountry: opts.edgeCountry ?? null,
     ...(opts.avoidBlockedIn ? { avoidBlockedIn: opts.avoidBlockedIn } : {}),
