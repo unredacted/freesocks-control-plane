@@ -111,6 +111,7 @@ import {
 } from './relayListeners';
 import type { ListenerSpecInput } from './lib/edges/registration';
 import { currentNodeName, runningRenameOf } from './lib/backend/nodeAliases';
+import { namesHoldingOrigin } from './edgeNames';
 
 export {
   assertNoRotationOrQuarantine,
@@ -1262,6 +1263,14 @@ export const finalizeDelete = internalMutation({
     const listeners = await listenersOf(ctx, id);
     if (listeners.some((l) => l.host && l.host.ownership === 'fcp' && l.host.state !== 'absent'))
       return { removed: false, waitingOn: 'hosts' as const };
+    // Names for its addresses: removed, or dismissed by the operator once parked.
+    if ((await namesHoldingOrigin(ctx.db, id)) > 0)
+      return { removed: false, waitingOn: 'names' as const };
+    for (const n of await ctx.db
+      .query('edgeNames')
+      .withIndex('by_relay', (q) => q.eq('relayId', id).eq('state', 'gone'))
+      .collect())
+      await ctx.db.delete(n._id);
     for (const l of listeners) await ctx.db.delete(l._id);
     // Probe rollups are keyed by target id strings and never cascade.
     const dropRollups = async (kind: 'edge' | 'relay', ref: string) => {

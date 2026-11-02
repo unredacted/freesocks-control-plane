@@ -693,7 +693,7 @@ export const retireForDestroy = internalMutation({
       .withIndex('by_leaving', (q) => q.eq('leavingEdgeId', edgeId))
       .take(20);
     for (const row of leaving)
-      if (row.state === 'moving' && !pending.includes(row._id)) pending.push(row._id);
+      if (holdsLeaving(row) && !pending.includes(row._id)) pending.push(row._id);
     return pending;
   },
 });
@@ -709,9 +709,18 @@ export const pendingForDestroy = internalQuery({
       .query('edgeNames')
       .withIndex('by_leaving', (q) => q.eq('leavingEdgeId', edgeId))
       .take(20);
-    return n + leaving.filter((r) => r.state === 'moving').length;
+    return n + leaving.filter((r) => r.edgeId !== edgeId && holdsLeaving(r)).length;
   },
 });
+
+/**
+ * A name whose records may still point at the address it was leaving: moving
+ * away from it, or being removed after a move that never landed (both keep
+ * `leavingEdgeId` until their records are written or gone).
+ */
+function holdsLeaving(row: Name): boolean {
+  return row.state === 'moving' || row.state === 'removing';
+}
 
 // --- the operator's own calls ------------------------------------------------------------------
 
@@ -774,11 +783,16 @@ export const renew = internalMutation({
  * want a name), those that have none yet.
  */
 export const upkeepPlan = internalQuery({
-  args: { candidates: v.array(v.id('edges')), limit: v.number() },
-  handler: async (ctx, { candidates, limit }) => {
+  args: {
+    candidates: v.array(v.id('edges')),
+    limit: v.number(),
+    /** False: only the candidates (a further page of them). */
+    rows: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { candidates, limit, rows: withRows }) => {
     const nameIds: Id<'edgeNames'>[] = [];
     const now = Date.now();
-    for (const state of ['creating', 'moving', 'removing'] as const) {
+    for (const state of withRows === false ? [] : (['creating', 'moving', 'removing'] as const)) {
       const rows = await ctx.db
         .query('edgeNames')
         .withIndex('by_state', (q) => q.eq('state', state))
@@ -829,6 +843,27 @@ export const liveDrift = internalQuery({
   },
 });
 
+/**
+ * An origin being deleted waits for its names: any that still holds (or may
+ * hold) records, a parked one included, which the operator dismisses after
+ * removing its records by hand (its attention item opens the origin, so the
+ * origin row must outlive it). Gone rows are deleted with the origin.
+ */
+export async function namesHoldingOrigin(
+  db: DatabaseReader,
+  relayId: Id<'relays'>,
+): Promise<number> {
+  let n = 0;
+  for (const state of [...OPEN, 'parked'] as const)
+    n += (
+      await db
+        .query('edgeNames')
+        .withIndex('by_relay', (q) => q.eq('relayId', relayId).eq('state', state))
+        .take(1)
+    ).length;
+  return n;
+}
+
 /** Whether an address has a name being made or in use (its end must remove it). */
 export async function hasOpenName(db: DatabaseReader, edgeId: Id<'edges'>): Promise<boolean> {
   return (await openNameOf(db, edgeId)) !== null;
@@ -866,12 +901,13 @@ export const dismissParked = internalMutation({
 
 /**
  * Before deploying a build without names (docs/edges.md "Deploy notes"): run it
- * with no arguments, again until it answers `done`. Each run first turns the
- * switch off (members get IPs again) and sends every name that still holds
+ * with no arguments until it stops answering `removing`, then pass the
+ * `cursor` it answers each time until it answers `done`. Each run first turns
+ * the switch off (members get IPs again) and sends every name that still holds
  * records to `removing` (the next passes delete them from their zones); once
- * none is left, it deletes the rows and clears `edges.nameWanted`, a page at a
- * time. A parked name holds it until the operator removes its records by hand
- * and dismisses it.
+ * none is left, it deletes the rows and clears `edges.nameWanted`, one page of
+ * addresses per run. A parked name holds it until the operator removes its
+ * records by hand and dismisses it.
  */
 export const clearForRollback = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
@@ -919,11 +955,9 @@ export const clearForRollback = internalMutation({
     const page = await ctx.db.query('edges').paginate({ cursor: cursor ?? null, numItems: 200 });
     for (const e of page.page)
       if (e.nameWanted !== undefined) await ctx.db.patch(e._id, { nameWanted: undefined });
-    // The rest of the edges in pages of their own (this run answers for the first).
-    if (!page.isDone)
-      await ctx.scheduler.runAfter(0, internal.edgeNames.clearForRollback, {
-        cursor: page.continueCursor,
-      });
-    return { done: page.isDone, removing: 0, parked: 0 };
+    // One page of addresses per run: the caller goes on with the cursor it answers.
+    return page.isDone
+      ? { done: true, removing: 0, parked: 0 }
+      : { done: false, removing: 0, parked: 0, cursor: page.continueCursor };
   },
 });

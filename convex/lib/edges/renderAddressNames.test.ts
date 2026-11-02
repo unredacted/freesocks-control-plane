@@ -209,6 +209,23 @@ describe('an address with a name', () => {
     expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'leak_detected' });
   });
 
+  test("further names are refused too when the name's IPv6 is the node", () => {
+    const leaky = { ...edgeA, addresses: { v4: '203.0.113.10', v6: '2001:db8::99' } };
+    const out = render(templateLink, {
+      assigned: {
+        primary: {
+          ...assigned.primary,
+          edge: leaky,
+          alternates: [{ sni: 'cdn-c.example', hostHeader: null }],
+        },
+        backup: null,
+      },
+      nodeAddresses: ['2001:db8::99'],
+    });
+    expect(out.body).not.toContain(NAME_A);
+    expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'leak_detected' });
+  });
+
   test('a retained entry at the name is one of the edges, never withheld', () => {
     expect(edgeAddressesOf([edgeA])).toContain(NAME_A);
   });

@@ -1160,10 +1160,19 @@ async function namesPass(ctx: ActionCtx, edges: Edge[], report: ReconcileReport)
         !!e.addresses.v4,
     )
     .map((e) => e._id);
+  // Every candidate is looked at, 200 per read, until a tick's worth want one.
   const plan = await ctx.runQuery(internal.edgeNames.upkeepPlan, {
     candidates: candidates.slice(0, 200),
     limit: NAMES_PER_TICK,
   });
+  for (let i = 200; i < candidates.length && plan.edgeIds.length < NAMES_PER_TICK; i += 200) {
+    const more = await ctx.runQuery(internal.edgeNames.upkeepPlan, {
+      candidates: candidates.slice(i, i + 200),
+      limit: NAMES_PER_TICK - plan.edgeIds.length,
+      rows: false,
+    });
+    plan.edgeIds.push(...more.edgeIds);
+  }
   // Live names whose records no longer match their address, every page of them.
   const work = [...plan.nameIds];
   let cursor: string | null = null;

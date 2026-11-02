@@ -255,8 +255,10 @@ export function renderEntriesChecked(
     if (!ep?.alternates || !ep.edge.addresses.v4 || leaks(ep.edge.addresses.v4)) return;
     const label = ep.role === 'primary' ? rule.primaryLabel : rule.backupLabel;
     // A named address's further names dial the name too.
+    // (the name also resolves to the IPv6: refused with it, as the first entry is)
     const named = addressNameOf(ep, names);
-    if (named && leaks(named)) return;
+    const v6 = ep.edge.addresses.v6;
+    if (named && (leaks(named) || (!!v6 && leaks(v6)))) return;
     ep.alternates.forEach((alt, i) =>
       out.push({
         role: ep.role,

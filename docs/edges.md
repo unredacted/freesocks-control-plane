@@ -1632,8 +1632,10 @@ another zone when there is one. Checking names from inside a country is not buil
 **Removed with its address.** Before any provider resource of a destroying address is touched,
 its names go (`namesFirst` in the reconcile's destroy walk): the address goes back to its
 provider, and a record still pointing at it could send members to whoever gets it next. A name
-moving away from it holds the walk until its records point elsewhere. An address that disappears
-without a destroy walk (gone at the provider) has its names removed by the next reconcile pass.
+moving away from it holds the walk until its records point elsewhere, and so does one being
+removed after a move that never landed. An address that disappears without a destroy walk (gone
+at the provider) has its names removed at once. An origin being deleted waits for its names too
+(a parked one until the operator dismisses it, so its attention item can still open the origin).
 
 **Discipline.** One pass per name at a time (`edgeNames.begin` claims, `settle` releases; a
 claim lapses after `EDGE_PLUMBING.opClaimMs`). Every pass first reads the name back from its zone
@@ -6066,9 +6068,10 @@ lifecycle runs in that test and its rows appear here.
 change. With the switch off nothing changes: no address wants a name, the render reads one
 setting and finds it off. Turning it on needs a DNS account whose token may edit DNS in the
 zones ticked, and changes only addresses made after it. To roll back, run
-`edgeNames:clearForRollback` with no arguments until it answers `done` (it turns the switch off,
-removes every name from its zone, then clears the rows and `edges.nameWanted`), then deploy the
-older build.
+`edgeNames:clearForRollback` with no arguments until it no longer answers `removing` (it turns
+the switch off and removes every name from its zone), then with the `cursor` it answers each time
+(`{"cursor": "..."}`, one page of addresses per run) until it answers `done` (rows and
+`edges.nameWanted` cleared), then deploy the older build.
 
 **A held block alerts** adds one optional field (`relays.suspicion.heldBack`), written by the
 detector, and one alert-worthy case (§ "Operator alerts"): one deploy, no migration, no env

@@ -485,6 +485,49 @@ describe('names for addresses', () => {
     expect(await t.run((ctx) => namesEnabledOf(ctx.db))).toBe(false);
   });
 
+  test('a move that never landed keeps holding the address it was leaving until removed', async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    const a = await address(t, f, '198.51.100.171', { published: true });
+    const b = await address(t, f, '198.51.100.172', { nameWanted: false });
+    await t.action(internal.edgeNameOps.work, { edgeId: a });
+    const row = (await nameOf(t, a))!;
+    await t.run(async (ctx) =>
+      moveNameOnReplace(ctx, {
+        from: (await ctx.db.get(a))!,
+        to: (await ctx.db.get(b))!,
+        toLane: 'open',
+        now: Date.now(),
+      }),
+    );
+    // The move gave up and the name is being removed; its records may still point at a.
+    await t.run((ctx) => ctx.db.patch(row._id, { state: 'removing' }));
+    expect(await t.query(internal.edgeNames.pendingForDestroy, { edgeId: a })).toBe(1);
+    expect(await t.mutation(internal.edgeNames.retireForDestroy, { edgeId: a })).toEqual([row._id]);
+    await t.action(internal.edgeNameOps.work, { nameId: row._id });
+    expect(await t.query(internal.edgeNames.pendingForDestroy, { edgeId: a })).toBe(0);
+  });
+
+  test('an origin being deleted waits for its names, a stuck one until dismissed', async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    const a = await address(t, f, '198.51.100.181');
+    await t.action(internal.edgeNameOps.work, { edgeId: a });
+    const row = (await nameOf(t, a))!;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(row._id, { state: 'parked', failure: { code: 'x', at: 1 } });
+      await ctx.db.patch(a, { status: 'destroyed' });
+      await ctx.db.patch(f.relayId, { deleting: true });
+    });
+    expect(await t.mutation(internal.relays.finalizeDelete, { id: f.relayId })).toMatchObject({
+      removed: false,
+      waitingOn: 'names',
+    });
+    await t.mutation(internal.edgeNames.dismissParked, { edgeId: a });
+    const done = await t.mutation(internal.relays.finalizeDelete, { id: f.relayId });
+    expect(done.waitingOn).not.toBe('names');
+  });
+
   test('upkeep: an address that wants a name and has none is listed once', async () => {
     const t = convexTest(schema, modules);
     const f = await seed(t);
@@ -495,5 +538,10 @@ describe('names for addresses', () => {
     await t.action(internal.edgeNameOps.work, { edgeId: a });
     plan = await t.query(internal.edgeNames.upkeepPlan, { candidates: [a, b], limit: 10 });
     expect(plan).toEqual({ nameIds: [], edgeIds: [] });
+    // A further page of candidates reads only the candidates.
+    const c = await address(t, f, '198.51.100.113');
+    expect(
+      await t.query(internal.edgeNames.upkeepPlan, { candidates: [c], limit: 10, rows: false }),
+    ).toEqual({ nameIds: [], edgeIds: [c] });
   });
 });
