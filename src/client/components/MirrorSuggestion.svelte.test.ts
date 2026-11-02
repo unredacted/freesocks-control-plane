@@ -5,6 +5,7 @@ import { apiClient } from '@client/lib/api';
 import { queryKeys } from '@client/lib/queries';
 import { mountWithQuery } from '../testing/mountWithQuery';
 import MirrorSuggestion from './MirrorSuggestion.svelte';
+import MirrorHelp from './MirrorHelp.svelte';
 
 vi.mock('@client/lib/api', async (importOriginal) => {
   const real = await importOriginal<typeof import('@client/lib/api')>();
@@ -30,6 +31,7 @@ beforeAll(() => {
 
 let client: QueryClient;
 let app: ReturnType<typeof mountWithQuery> | null = null;
+let help: ReturnType<typeof mountWithQuery> | null = null;
 const onPick = vi.fn();
 const props = $state({
   mirrors: [] as string[],
@@ -49,7 +51,9 @@ beforeEach(() => {
 });
 afterEach(() => {
   if (app) unmount(app);
+  if (help) unmount(help);
   app = null;
+  help = null;
   client.clear();
 });
 
@@ -147,5 +151,47 @@ describe('once the key has a mirror', () => {
     flushSync();
     expect(radios()[1]!.checked).toBe(true);
     expect(radios()[0]!.checked).toBe(false);
+  });
+});
+
+describe('one mirror request at a time on the page', () => {
+  // Both buttons on /get-account: two requests in flight for a key with no
+  // mirror could race to the same provider.
+  const both = () => {
+    show();
+    help = mountWithQuery(client, MirrorHelp, {
+      mirrors: [],
+      geoCountry: 'IR',
+      subscriptionUrl: MAIN,
+      available: true,
+    });
+    flushSync();
+    button('Trouble connecting?')!.click();
+    flushSync();
+  };
+
+  test("the suggestion's request holds MirrorHelp's button until it settles", async () => {
+    let settle!: (v: unknown) => void;
+    vi.mocked(apiClient.post).mockReturnValue(new Promise((r) => (settle = r)) as never);
+    both();
+    button('Create a mirror link')!.click();
+    await vi.waitFor(() => expect(button('Get a mirror link')).toBeUndefined());
+    // Both show the request running and neither can start another.
+    const working = [...document.querySelectorAll('button')].filter((b) =>
+      b.textContent?.includes('Working'),
+    );
+    expect(working).toHaveLength(2);
+    expect(working.every((b) => b.disabled)).toBe(true);
+    settle({ status: 'exhausted', remaining: 1 });
+    await vi.waitFor(() => expect(button('Get a mirror link')?.disabled).toBe(false));
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+  });
+
+  test("MirrorHelp's request holds the suggestion's button", async () => {
+    vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}) as never);
+    both();
+    button('Get a mirror link')!.click();
+    await vi.waitFor(() => expect(button('Create a mirror link')).toBeUndefined());
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
   });
 });

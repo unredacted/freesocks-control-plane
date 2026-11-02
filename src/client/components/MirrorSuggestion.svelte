@@ -7,11 +7,11 @@
   import { t, getLocale } from '../lib/i18n/index.svelte';
   import { COUNTRY_CODES, countryName } from '../lib/countries';
   import { queryKeys } from '../lib/queries';
-  import { withMirror } from '../lib/mirrorSuggestion';
+  import { MIRROR_REQUEST_KEY, withMirror } from '../lib/mirrorSuggestion';
   import { MirrorRequestResponse } from '../../shared/contracts/mirror';
   import type { AccountResponse } from '../../shared/contracts/account';
   import MirrorRegionSelect from './MirrorRegionSelect.svelte';
-  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { createMutation, useIsMutating, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
 
   /**
@@ -26,6 +26,8 @@
    * one their app gets (the mirror is the recommendation). The pick is page
    * state only: `onPick` hands it to the parent, which feeds the pass (copy,
    * download, QR) and the app list (import buttons); `link` is what it resolved.
+   * A mirror serves one fixed format, so sing-box and Clash apps keep importing
+   * the main link (ConnectClient `linkListUrl`), and the copy says so.
    */
   interface Props {
     /** The key's mirror links (lib/mirrorSuggestion `mirrorLinks`). */
@@ -51,6 +53,7 @@
   let status = $state<MirrorRequestResponse['status'] | 'idle'>('idle');
 
   const request = createMutation(() => ({
+    mutationKey: MIRROR_REQUEST_KEY,
     mutationFn: () =>
       apiClient.post(
         '/api/v1/mirror/request',
@@ -73,6 +76,10 @@
       toast.error(t('mirror.errorToast'), { description: apiErrorMessage(err) });
     },
   }));
+
+  // MirrorHelp's request holds this button too (one request per key at a time).
+  const requesting = useIsMutating({ mutationKey: MIRROR_REQUEST_KEY });
+  const busy = $derived(request.isPending || requesting.current > 0);
 
   const options = $derived([
     ...mirrors.map((url) => ({ url, mirror: true })),
@@ -98,8 +105,8 @@
 
   {#if mirrors.length === 0}
     <MirrorRegionSelect id="mirror-suggest-region" bind:value={selected} />
-    <Button onclick={() => request.mutate()} disabled={request.isPending} class="min-h-11">
-      {request.isPending ? t('mirror.working') : t('mirrorSuggest.create')}
+    <Button onclick={() => request.mutate()} disabled={busy} class="min-h-11">
+      {busy ? t('mirror.working') : t('mirrorSuggest.create')}
     </Button>
     {#if status === 'capped'}
       <p class="text-sm text-amber-600" transition:fade={{ duration: 150 }}>

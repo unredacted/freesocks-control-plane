@@ -14,9 +14,11 @@
   import { COUNTRY_CODES } from '../lib/countries';
   import MirrorRegionSelect from './MirrorRegionSelect.svelte';
   import { MirrorRequestResponse, MirrorClearResponse } from '../../shared/contracts/mirror';
+  import type { AccountResponse } from '../../shared/contracts/account';
   import { queryKeys } from '../lib/queries';
+  import { MIRROR_REQUEST_KEY, withoutMirrors } from '../lib/mirrorSuggestion';
   import { copyText } from '../lib/utils';
-  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { createMutation, useIsMutating, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
 
   /**
@@ -120,6 +122,7 @@
   }
 
   const request = createMutation(() => ({
+    mutationKey: MIRROR_REQUEST_KEY,
     mutationFn: () =>
       apiClient.post(
         '/api/v1/mirror/request',
@@ -147,6 +150,9 @@
     mutationFn: () => apiClient.delete('/api/v1/mirror', MirrorClearResponse),
     onSuccess: () => {
       removed = fromServer.map((m) => m.publicUrl);
+      // The shared view too: a link picked from these (the onboarding choice)
+      // stops reaching the pass and the app buttons now, not at the refetch.
+      qc.setQueryData<AccountResponse>(queryKeys.account, (old) => withoutMirrors(old));
       pending = [];
       status = 'idle';
       void qc.invalidateQueries({ queryKey: queryKeys.account });
@@ -156,6 +162,10 @@
   }));
 
   const exhausted = $derived(status === 'capped' || status === 'exhausted');
+  // A request from either mirror button (this one or the onboarding
+  // suggestion) holds both, and the remove, until it settles.
+  const requesting = useIsMutating({ mutationKey: MIRROR_REQUEST_KEY });
+  const busy = $derived(request.isPending || requesting.current > 0);
 </script>
 
 <div class="rounded-lg border border-border/70 bg-card">
@@ -252,8 +262,8 @@
         {#if !exhausted}
           <MirrorRegionSelect id="mirror-region" bind:value={selected} />
 
-          <Button onclick={() => request.mutate()} disabled={request.isPending} class="min-h-11">
-            {request.isPending
+          <Button onclick={() => request.mutate()} disabled={busy} class="min-h-11">
+            {busy
               ? t('mirror.working')
               : added.length === 0
                 ? t('mirror.getButton')
@@ -287,7 +297,7 @@
             type="button"
             class="rounded-sm text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onclick={() => clear.mutate()}
-            disabled={clear.isPending}
+            disabled={clear.isPending || busy}
           >
             {clear.isPending ? t('mirror.working') : t('mirror.removeAll')}
           </button>

@@ -1,7 +1,16 @@
 /**
  * The onboarding mirror suggestion (/get-account step 3, MirrorSuggestion):
  * when it shows, and which link the member's app gets once there is a choice.
+ * Also what it shares with MirrorHelp: one pending mirror request at a time,
+ * and the account-cache writes that keep the key's mirror list current.
  */
+
+/**
+ * The mutation key both mirror buttons (MirrorSuggestion, MirrorHelp) request
+ * under: each disables while ANY request for the key is in flight, so two can't
+ * race to the same provider from one page.
+ */
+export const MIRROR_REQUEST_KEY = ['mirror', 'request'] as const;
 
 /**
  * Whether onboarding suggests a mirror link: the server says THIS request's
@@ -61,4 +70,16 @@ export function withMirror<
     ...view,
     subscription: { ...view.subscription, mirrors: [...view.subscription.mirrors, mirror] },
   };
+}
+
+/**
+ * The account view with no mirrors: "Remove all mirrors" clears the cached view
+ * at once, so a link picked from the removed mirrors stops reaching the pass and
+ * the app buttons even if the refetch fails.
+ */
+export function withoutMirrors<
+  V extends { subscription: { mirrors: { provider: string; publicUrl: string }[] } | null },
+>(view: V | undefined): V | undefined {
+  if (!view?.subscription || view.subscription.mirrors.length === 0) return view;
+  return { ...view, subscription: { ...view.subscription, mirrors: [] } };
 }

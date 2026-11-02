@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest';
-import { chosenLink, mirrorLinks, mirrorSuggested, withMirror } from './mirrorSuggestion';
+import {
+  chosenLink,
+  mirrorLinks,
+  mirrorSuggested,
+  withMirror,
+  withoutMirrors,
+} from './mirrorSuggestion';
 
 const MAIN = 'https://site.example/api/v1/sub/token-1';
 const A = 'https://cdn-1.example/mirrors/aaaa';
@@ -92,5 +98,26 @@ describe('withMirror', () => {
     expect(withMirror(undefined, { provider: 'p2', publicUrl: B })).toBeUndefined();
     const keyless = { subscription: null };
     expect(withMirror(keyless, { provider: 'p2', publicUrl: B })).toBe(keyless);
+  });
+});
+
+describe('withoutMirrors', () => {
+  test('empties the cached list and keeps the rest', () => {
+    const view = {
+      geoCountry: 'IR',
+      subscription: { url: MAIN, mirrors: [{ provider: 'p1', publicUrl: A }] },
+    };
+    const next = withoutMirrors(view);
+    expect(next?.subscription?.mirrors).toEqual([]);
+    expect(next?.geoCountry).toBe('IR');
+    expect(view.subscription.mirrors).toHaveLength(1);
+  });
+
+  test('nothing to clear: unchanged', () => {
+    const empty = { subscription: { mirrors: [] as { provider: string; publicUrl: string }[] } };
+    expect(withoutMirrors(empty)).toBe(empty);
+    expect(withoutMirrors(undefined)).toBeUndefined();
+    const keyless = { subscription: null };
+    expect(withoutMirrors(keyless)).toBe(keyless);
   });
 });

@@ -322,8 +322,9 @@
   // Censored-country onboarding: the server says this request's country is on
   // the list, so the main link may be blocked there. The suggestion offers a
   // mirror link (opt-in) and, once there is one, the member picks which link
-  // their app gets: the pass and the app list both follow the pick. Page state
-  // only; nothing about the country or the pick is stored.
+  // their app gets: the pass and the link-list apps follow the pick (sing-box
+  // and Clash apps keep the main link). Page state only; nothing about the
+  // country or the pick is stored.
   let suggestMirror = $derived(
     !!subscription &&
       mirrorSuggested({
@@ -707,9 +708,12 @@
           deviceLimited={account.data?.user.tier.deviceLimited ?? false}
         />
       {:else}
+        <!-- The pick reaches the apps that read a plain link list; sing-box and
+             Clash apps keep the main link (a mirror serves one fixed format). -->
         <ConnectClient
           backend={subscription.backend}
-          subscriptionUrl={keyLink}
+          subscriptionUrl={subUrl}
+          linkListUrl={keyLink}
           deviceLimited={account.data?.user.tier.deviceLimited ?? false}
         />
         <RawConfig />

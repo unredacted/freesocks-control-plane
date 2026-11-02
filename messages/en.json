@@ -677,6 +677,7 @@
   "setup": {
     "title": "Set up your VPN app",
     "install": "Install",
+    "mainLinkOnly": "Imports your main link: this app can't read a mirror link.",
     "noApps": "No recommended apps for this platform yet - use any compatible client and add your subscription manually.",
     "openSource": "Open source",
     "ipv6Works": "IPv6 ready",
@@ -754,11 +755,11 @@
     "create": "Create a mirror link",
     "chooseLabel": "Which link should your app use?",
     "optionMirror": "Mirror link",
-    "optionMirrorHint": "Served from another host, harder to block.",
+    "optionMirrorHint": "Served from another host, harder to block. sing-box and Clash apps can't read it.",
     "optionMain": "Main link",
     "optionMainHint": "Served from our main website.",
     "recommended": "Recommended",
-    "chooseHint": "Copy, download, the QR code and the app buttons below all use the link you pick."
+    "chooseHint": "Copy, download, the QR code and the app buttons below use the link you pick. sing-box and Clash apps always import the main link."
   },
   "rawconfig": {
     "disclosure": "Show raw configuration",

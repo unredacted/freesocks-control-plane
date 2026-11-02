@@ -844,6 +844,19 @@ export const appendMirror = internalMutation({
       return { appended: false as const, reason: 'capped' as const };
     }
     const others = row.subscriptionMirrors.filter((m) => m.provider !== entry.provider);
+    // Two requests for a key with no mirror yet that raced to the same provider
+    // each uploaded under their own object path, and this entry replaces the
+    // other's: that object holds the key's config with nothing pointing at it,
+    // so it is withdrawn like any other copy nobody should serve.
+    const replaced = row.subscriptionMirrors.find(
+      (m) => m.provider === entry.provider && !!m.objectPath && m.objectPath !== entry.objectPath,
+    );
+    if (replaced?.objectPath)
+      await recordWithdrawal(ctx, {
+        subscriptionId,
+        objectPath: replaced.objectPath,
+        providers: [replaced.provider],
+      });
     // The new copy holds the body just rendered, which is what FCP serves now.
     // A copy on another provider that holds something else is stale: it gets
     // the same body at once (a refresh), and the subscription-wide hash only

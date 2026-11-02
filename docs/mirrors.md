@@ -26,7 +26,10 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   (edge rendering, member-facing entry names, the node pin) and written before the member is
   handed the URL. The member page offers mirrors only while a provider is active and the cap is
   above zero (`publicConfig.mirrorsEnabled`). A request that fails says so ("Couldn't add a mirror
-  just now").
+  just now"). Two requests that raced to one provider for a key with no mirror yet each upload
+  under their own path; the append that replaces the other's entry withdraws that object
+  (`appendMirror`), and the member page holds both of its mirror buttons while either request
+  runs.
 - **Suggested at sign-up.** On `/get-account`, once the first key is issued, a visitor the CDN
   places in a country on the censored-country list is told the main link may be blocked there
   and offered a mirror link, the country prefilled. The account view carries only the server's
@@ -35,7 +38,9 @@ flow, "Trouble connecting?", right under the key on `/account` and `/get-account
   Still opt-in: the mirror is requested only on the member's click, through the same route. With
   a mirror on the key both links are listed and the member picks the one their app gets (the
   mirror is the recommendation); the pass (copy, download, QR) and the app buttons follow the
-  pick, which is page state only. rawConfig modes get no suggestion, as they get no mirrors.
+  pick, which is page state only. A mirror serves one fixed format (the base64 default,
+  `docs/backends.md`), so sing-box and Clash apps keep importing the main link and their cards say
+  so. rawConfig modes get no suggestion, as they get no mirrors.
 - **Keeping it current.** A full pass (`storage.drainMirrors`) re-renders every mirrored key and
   rewrites each copy whose object does not hold that body. It runs every six hours
   (`mirror-refresh`) and at once for any change members must see (an edge leaves the pool, a node

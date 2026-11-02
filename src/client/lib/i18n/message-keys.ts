@@ -611,6 +611,7 @@ export type MessageKey =
   | "setup.linkKind.github"
   | "setup.linkKind.play"
   | "setup.linkKind.website"
+  | "setup.mainLinkOnly"
   | "setup.noApps"
   | "setup.noDeviceLimit"
   | "setup.openSource"
