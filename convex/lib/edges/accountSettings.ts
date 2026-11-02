@@ -264,8 +264,14 @@ export const EDGE_INTENT_FACTS: Record<
   scaleway: {},
   ovh: {},
   cloudflare: {},
-  // A versionless (Domain Management) domain instead of a version's domain.
-  fastly: { domainModel: { planned: 'versionless', legacy: 'classic' } },
+  // A versionless (Domain Management) domain instead of a version's domain;
+  // and on the zone's wildcard, a versionless domain the front activates on
+  // the wildcard's certificate (`activated`) instead of a classic one, which
+  // every wildcard front planned before it keeps (`classic`).
+  fastly: {
+    domainModel: { planned: 'versionless', legacy: 'classic' },
+    wildcardDomain: { planned: 'activated', legacy: 'classic' },
+  },
   cloudfront: {},
 };
 

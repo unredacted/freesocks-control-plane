@@ -37,6 +37,7 @@ import {
   ProductWebsocketsApi,
   ServiceApi,
   SnippetApi,
+  TlsActivationsApi,
   TlsConfigurationsApi,
   TlsSubscriptionsApi,
   TokensApi,
@@ -461,6 +462,15 @@ export interface FastlyApi {
   listTlsSubscriptionsForDomain(hostname: string): Promise<FastlyJsonApiCollection>;
   deleteTlsSubscription(id: string): Promise<void>;
   listTlsConfigurations(include?: string): Promise<FastlyJsonApiCollection>;
+  /** Enable TLS for one name with one certificate (`POST /tls/activations`). */
+  createTlsActivation(body: unknown): Promise<FastlyJsonApiDoc>;
+  /** The activations of one TLS domain (a name, exactly). */
+  listTlsActivationsForDomain(name: string): Promise<FastlyJsonApiCollection>;
+  /** The activations on one certificate. */
+  listTlsActivationsForCertificate(certificateId: string): Promise<FastlyJsonApiCollection>;
+  /** Move one activation to another certificate (`PATCH /tls/activations/{id}`). */
+  updateTlsActivation(id: string, certificateId: string): Promise<FastlyJsonApiDoc>;
+  deleteTlsActivation(id: string): Promise<void>;
   // account
   getTokenCurrent(): Promise<FastlyTokenSelf>;
   getLoggedInCustomer(): Promise<FastlyCustomer>;
@@ -513,6 +523,7 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
   const websockets = new ProductWebsocketsApi(client);
   const tlsSubs = new TlsSubscriptionsApi(client);
   const tlsConfigs = new TlsConfigurationsApi(client);
+  const tlsActivations = new TlsActivationsApi(client);
   const tokens = new TokensApi(client);
   const customer = new CustomerApi(client);
   // A refusal on any call keeps Fastly's answer (`meta.detail`): the token is
@@ -717,6 +728,45 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
         () => tlsConfigs.listTlsConfigsWithHttpInfo({ include, page_size: 100 }),
         [cfg.apiToken],
       ),
+
+    createTlsActivation: (body) =>
+      call('create-tls-activation', JsonApiDoc, () =>
+        tlsActivations.createTlsActivationWithHttpInfo({ tls_activation: body }),
+      ),
+    listTlsActivationsForDomain: (name) =>
+      call('tls-activations', JsonApiCollection, () =>
+        tlsActivations.listTlsActivationsWithHttpInfo({
+          filter_tls_domain_id: name,
+          page_size: 20,
+        }),
+      ),
+    listTlsActivationsForCertificate: (certificateId) =>
+      call('tls-activations', JsonApiCollection, () =>
+        tlsActivations.listTlsActivationsWithHttpInfo({
+          filter_tls_certificate_id: certificateId,
+          include: 'tls_domain',
+          page_size: 100,
+        }),
+      ),
+    updateTlsActivation: (id, certificateId) =>
+      call('update-tls-activation', JsonApiDoc, () =>
+        tlsActivations.updateTlsActivationWithHttpInfo({
+          tls_activation_id: id,
+          tls_activation: {
+            data: {
+              type: 'tls_activation',
+              relationships: {
+                tls_certificate: { data: { type: 'tls_certificate', id: certificateId } },
+              },
+            },
+          },
+        }),
+      ),
+    deleteTlsActivation: async (id) => {
+      await call('destroy-tls-activation', Empty, () =>
+        tlsActivations.deleteTlsActivationWithHttpInfo({ tls_activation_id: id }),
+      );
+    },
 
     getTokenCurrent: () =>
       call('token-self', TokenSelf, () => tokens.getTokenCurrentWithHttpInfo({}), [cfg.apiToken]),

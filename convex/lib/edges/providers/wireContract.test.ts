@@ -1432,6 +1432,25 @@ describe('wire contract: fastly', () => {
 
   const DM = 'DMDOM01kq7v3xzwYb9pRn';
   const WILD = 'WILDsub0example0org01';
+  /** The fronts' own activations on the wildcard, as the provider holds them. */
+  const activations = new Map<string, { domain: string; certificate: string }>();
+  /** The wildcard renewed: its subscription lists a newer certificate too. */
+  let renewed = false;
+  const activationDoc = (id: string) => ({
+    id,
+    type: 'tls_activation',
+    relationships: {
+      tls_domain: { data: { type: 'tls_domain', id: activations.get(id)!.domain } },
+      tls_certificate: {
+        data: { type: 'tls_certificate', id: activations.get(id)!.certificate },
+      },
+    },
+  });
+  const jsonApi = (body: unknown) => ({
+    status: 200,
+    body,
+    contentType: 'application/vnd.api+json',
+  });
 
   function defaultReply(c: RecordedCall) {
     const p = c.path;
@@ -1449,8 +1468,57 @@ describe('wire contract: fastly', () => {
       c.query['filter[tls_domains.id]'] === '*.example.org'
     )
       return api('tls-subscriptions-wildcard-list.json');
-    if (m === 'GET' && p === `/tls/subscriptions/${WILD}`)
-      return api('tls-subscription-wildcard-issued.json');
+    if (m === 'GET' && p === `/tls/subscriptions/${WILD}`) {
+      const doc = fixture('tls-subscription-wildcard-issued.json') as { included?: unknown[] };
+      return renewed
+        ? jsonApi({
+            ...doc,
+            included: [
+              ...(doc.included ?? []),
+              {
+                id: 'CERTW2',
+                type: 'tls_certificate',
+                attributes: { not_after: '2026-12-19T10:12:00Z' },
+              },
+            ],
+          })
+        : api('tls-subscription-wildcard-issued.json');
+    }
+    if (m === 'POST' && p === '/tls/activations') {
+      const body = c.body as {
+        data: { relationships: Record<string, { data: { id: string } }> };
+      };
+      const id = `ACT${activations.size + 1}`;
+      activations.set(id, {
+        domain: body.data.relationships.tls_domain!.data.id,
+        certificate: body.data.relationships.tls_certificate!.data.id,
+      });
+      return jsonApi({ data: activationDoc(id) });
+    }
+    if (m === 'GET' && p === '/tls/activations') {
+      const byDomain = c.query['filter[tls_domain.id]'];
+      const byCertificate = c.query['filter[tls_certificate.id]'];
+      return jsonApi({
+        data: [...activations.entries()]
+          .filter(([, a]) => (byDomain ? a.domain === byDomain : a.certificate === byCertificate))
+          .map(([id]) => activationDoc(id)),
+      });
+    }
+    if (p.startsWith('/tls/activations/')) {
+      const id = p.slice('/tls/activations/'.length);
+      if (!activations.has(id)) return NOT_FOUND;
+      if (m === 'DELETE') {
+        activations.delete(id);
+        return { status: 204 };
+      }
+      if (m === 'PATCH') {
+        const body = c.body as {
+          data: { relationships: { tls_certificate: { data: { id: string } } } };
+        };
+        activations.get(id)!.certificate = body.data.relationships.tls_certificate.data.id;
+        return jsonApi({ data: activationDoc(id) });
+      }
+    }
     if (m === 'POST' && p === '/service') return ok('service-create.json');
     if (m === 'GET' && p === '/service/search') return ok('service-search.json');
     if (m === 'GET' && p === `/service/${SVC}/details`) return ok('service-detail-active.json');
@@ -1511,13 +1579,21 @@ describe('wire contract: fastly', () => {
   }
 
   /**
-   * NEW edges: a versionless domain with its own certificate, and a front on the
-   * account's shared wildcard (whose domain is classic: Fastly routes a
-   * versionless one only with an activation of its own).
+   * NEW edges: a versionless domain with its own certificate; a front on the
+   * account's shared wildcard planned before fronts activated their names
+   * (classic domain); and one planned now (versionless, its name activated on
+   * the wildcard's certificate, moved along when the wildcard renews).
    */
   async function newEdgeLifecycle(): Promise<void> {
-    for (const certificateScope of ['per_host', 'wildcard'] as const) {
-      const cfgNew: FastlyConfig = { ...cfg, domainModel: 'versionless', certificateScope };
+    const variants = [
+      { certificateScope: 'per_host' as const },
+      { certificateScope: 'wildcard' as const },
+      { certificateScope: 'wildcard' as const, wildcardDomain: 'activated' as const },
+    ];
+    for (const variant of variants) {
+      const { certificateScope } = variant;
+      const activated = 'wildcardDomain' in variant;
+      const cfgNew: FastlyConfig = { ...cfg, domainModel: 'versionless', ...variant };
       let ledger: Ledger = { steps: [], resources: [] };
       const steps = fastlyProvider.planProvision(cfgNew, spec, tpl);
       for (const step of steps) {
@@ -1528,14 +1604,28 @@ describe('wire contract: fastly', () => {
           ledger = apply(ledger, step, polled);
         }
       }
-      const domainKind = certificateScope === 'wildcard' ? 'domain' : 'versionless_domain';
+      const domainKind =
+        certificateScope === 'wildcard' && !activated ? 'domain' : 'versionless_domain';
       expect(ledger.resources.map((r) => r.kind)).toContain(domainKind);
       for (const step of steps) await fastlyProvider.discover(cfgNew, step, spec, ledger, 1);
       await fastlyProvider.describe(cfgNew, ledger);
       if (certificateScope === 'wildcard') await fastlyProvider.sharedCertificate!(cfgNew);
-      expect(await destroyAll(fastlyProvider as never, cfgNew as never, ledger)).toContain(
-        domainKind,
-      );
+      if (activated) {
+        expect(ledger.resources.map((r) => r.kind)).toContain('tls_activation');
+        renewed = true;
+        expect(await fastlyProvider.followSharedRenewal!(cfgNew, { subscriptionId: WILD })).toEqual(
+          { moved: 1 },
+        );
+        // The front's activation moved from the older certificate to the newest.
+        expect([...activations.values()].map((a) => a.certificate)).toEqual(['CERTW2']);
+        renewed = false;
+      }
+      const destroyed = await destroyAll(fastlyProvider as never, cfgNew as never, ledger);
+      expect(destroyed).toContain(domainKind);
+      if (activated) {
+        expect(destroyed.indexOf('tls_activation')).toBeLessThan(destroyed.indexOf(domainKind));
+        expect(activations.size).toBe(0);
+      }
     }
   }
 

@@ -88,7 +88,7 @@ import {
   refusedCreate,
   withRefusal,
 } from './http';
-import { acmeChallengeName, normalizeZoneName } from '../hostname';
+import { acmeChallengeName, isFirstLevelUnder, normalizeZoneName } from '../hostname';
 import { addressFamily } from '../ip';
 import { certCovers } from '../layers';
 import { caaProbeName, checkCaa, wildcardBase, wildcardNameFor, type CaaLookup } from '../caa';
@@ -173,18 +173,25 @@ function certificateScopeOf(cfg: FastlyConfig): 'per_host' | 'wildcard' {
 /**
  * `versionless` = a Domain Management domain; absent = a version-scoped (classic) domain.
  *
- * A front on the zone's wildcard gets a classic domain whatever the account
- * chose. Fastly routes a versionless domain only once it has a TLS activation
- * of its own (`activated`), and the wildcard's activation is for `*.<zone>`,
- * never for a front's name: such a domain stayed `activated: false` and its
- * name answered "unknown domain" while the wildcard was served, whether it
- * was created before the wildcard was issued or after (beta, 2026-11-01). A
- * classic domain is routed by the version that holds it, and the wildcard's
- * activation serves its TLS (proven the same day).
+ * Fastly routes a versionless domain only once it has a TLS activation of its
+ * own (`activated`). A per-front subscription makes it. The zone's wildcard
+ * does not: its activation is for `*.<zone>`, never for a front's name, so
+ * such a domain stayed `activated: false` and answered "unknown domain"
+ * (beta, 2026-11-01). A front on the wildcard planned now activates its own
+ * name on the wildcard's certificate (`create_tls_activation`; beta,
+ * 2026-11-02: activated within 20 s and routed, served by the wildcard), so it
+ * keeps its versionless domain. One planned on the wildcard before that (its
+ * intent has no `wildcardDomain`) got a classic domain and keeps it.
  */
 function domainModelOf(cfg: FastlyConfig): 'classic' | 'versionless' {
-  if (certificateScopeOf(cfg) === 'wildcard') return 'classic';
+  if (certificateScopeOf(cfg) === 'wildcard' && cfg.wildcardDomain !== 'activated')
+    return 'classic';
   return cfg.domainModel === 'versionless' ? 'versionless' : 'classic';
+}
+
+/** Whether the front activates its own name on the zone's wildcard certificate. */
+function activatesOnWildcard(cfg: FastlyConfig): boolean {
+  return certificateScopeOf(cfg) === 'wildcard' && domainModelOf(cfg) === 'versionless';
 }
 
 /**
@@ -244,6 +251,7 @@ const FASTLY_CREATE_STEPS = new Set([
   'create_tls_subscription',
   'create_dns_acme',
   'create_dns_record',
+  'create_tls_activation',
 ]);
 
 function refusal(step: string, code: string, why: string): EdgeProviderError {
@@ -900,6 +908,46 @@ function latestNotAfter(doc: unknown): string | undefined {
 }
 
 /**
+ * The certificates a subscription holds (`include=tls_certificates`), newest
+ * (latest `not_after`) first: after a renewal the older one may still be
+ * listed until it lapses.
+ */
+export function subscriptionCertificates(doc: unknown): Array<{ id: string; notAfter: number }> {
+  const included = (doc as { included?: unknown })?.included;
+  const out: Array<{ id: string; notAfter: number }> = [];
+  if (Array.isArray(included))
+    for (const entry of included) {
+      const res = entry as FastlyJsonApiResource | undefined;
+      if (!res || res.type !== 'tls_certificate' || typeof res.id !== 'string') continue;
+      const raw = (res.attributes as { not_after?: unknown } | undefined)?.not_after;
+      const at = typeof raw === 'string' ? Date.parse(raw) : NaN;
+      out.push({ id: res.id, notAfter: Number.isFinite(at) ? at : 0 });
+    }
+  return out.sort((a, b) => b.notAfter - a.notAfter);
+}
+
+/** The activation of one name on one certificate, in one TLS configuration. */
+function tlsActivationBody(hostname: string, certificateId: string, configurationId: string) {
+  return {
+    data: {
+      type: 'tls_activation',
+      relationships: {
+        tls_certificate: { data: { type: 'tls_certificate', id: certificateId } },
+        tls_configuration: { data: { type: 'tls_configuration', id: configurationId } },
+        tls_domain: { data: { type: 'tls_domain', id: hostname } },
+      },
+    },
+  };
+}
+
+/** The TLS domain (name) an activation is for, from its relationships. */
+function activationDomainOf(res: FastlyJsonApiResource): string | undefined {
+  const id = (res.relationships as { tls_domain?: { data?: { id?: unknown } } } | undefined)
+    ?.tls_domain?.data?.id;
+  return typeof id === 'string' ? id : undefined;
+}
+
+/**
  * The CAA preflight of a front location's check: whether the DNS account's zone
  * lets the account's CA issue what this account orders (the zone's wildcard,
  * or one name under it: the walk then starts at the zone, since a front's own
@@ -973,6 +1021,7 @@ const STEP_IDS = {
   tls: 'tls',
   acme: 'acme',
   await: 'await-tls',
+  activation: 'tls-activation',
   dns: 'dns',
 } as const;
 
@@ -1030,6 +1079,18 @@ function planSteps(cfg: FastlyConfig, spec: EdgeSpec): ResourceStep[] {
       discoverability: 'by_name',
     },
     { id: STEP_IDS.await, kind: 'await_tls', resourceName: certName, discoverability: 'by_name' },
+    // On the wildcard, a versionless domain is routed once its own name is
+    // activated on the wildcard's certificate, which needs that certificate issued.
+    ...(activatesOnWildcard(cfg)
+      ? [
+          {
+            id: STEP_IDS.activation,
+            kind: 'create_tls_activation' as const,
+            resourceName: hostname,
+            discoverability: 'by_name' as const,
+          },
+        ]
+      : []),
     {
       id: STEP_IDS.dns,
       kind: 'create_dns_record',
@@ -1398,7 +1459,8 @@ export const fastlySharedTeardown: SharedTeardownDriver<FastlyConfig> = {
 
 /**
  * Destroy order by kind (DNS role included): traffic record first so no client
- * is sent to a front being dismantled, then the subscription (which needs its
+ * is sent to a front being dismantled, then the front's own activation on a
+ * wildcard (before the domain it is for), then the subscription (which needs its
  * ACME record until it is gone), then the ACME record, then a versionless
  * domain (its own resource, so it does not go with the service, and only once
  * its certificate is gone), then the version is deactivated, the service
@@ -1407,6 +1469,7 @@ export const fastlySharedTeardown: SharedTeardownDriver<FastlyConfig> = {
  */
 export const FASTLY_DESTROY_ORDER = [
   'dns_record:traffic',
+  'tls_activation',
   'tls_subscription',
   'dns_record:acme',
   'versionless_domain',
@@ -1610,6 +1673,32 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
       ...(reported ? { code: reported } : {}),
       ...(notAfter ? { notAfter } : {}),
     };
+  },
+
+  /**
+   * After the wildcard renews: every activation a front made of its own name
+   * on an older certificate of the subscription moves to the newest one (the
+   * provider moves the wildcard's own `*.<zone>` activation itself, and may
+   * have moved these too: then nothing is left to move).
+   */
+  async followSharedRenewal(cfg, { subscriptionId }): Promise<{ moved: number }> {
+    const zone = fastlyZoneOf(cfg);
+    if (!zone) return { moved: 0 };
+    const api = fastlyApiFor(cfg);
+    const certificates = subscriptionCertificates(
+      await api.getTlsSubscription(subscriptionId, 'tls_certificates'),
+    );
+    const [current, ...older] = certificates;
+    if (!current) return { moved: 0 };
+    let moved = 0;
+    for (const old of older)
+      for (const a of (await api.listTlsActivationsForCertificate(old.id)).data) {
+        const name = activationDomainOf(a);
+        if (!name || name === `*.${zone}` || !isFirstLevelUnder(name, zone)) continue;
+        await api.updateTlsActivation(a.id, current.id);
+        moved++;
+      }
+    return { moved };
   },
 
   /**
@@ -2000,6 +2089,34 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           // shared wildcard, typically) finishes the step without a poll.
           return awaitOutcome(cfg, step, sub.resourceId, ledger);
         }
+        case 'create_tls_activation': {
+          // The front's own name, on the wildcard's newest certificate, in the
+          // configuration its traffic name points at.
+          const sub = firstResource(ledger, 'tls_subscription');
+          if (!sub) throw ledgerIncomplete(step.id);
+          const doc = await api.getTlsSubscription(sub.resourceId, 'tls_certificates');
+          const certificate = subscriptionCertificates(doc)[0];
+          if (!certificate)
+            throw refusal(step.id, 'tls_pending', 'the wildcard has no certificate yet');
+          const configurationId =
+            cfg.tlsConfigurationId ?? defaultConfigurationIdOf(await api.listTlsConfigurations());
+          if (!configurationId)
+            throw refusal(step.id, 'tls_configuration_missing', 'no TLS configuration was found');
+          const act = await api.createTlsActivation(
+            tlsActivationBody(hostname, certificate.id, configurationId),
+          );
+          return {
+            status: 'done',
+            resources: [
+              {
+                kind: 'tls_activation',
+                resourceId: act.data.id,
+                ownership: 'created',
+                meta: { hostname, certificateId: certificate.id },
+              },
+            ],
+          };
+        }
         case 'create_dns_record': {
           const doc = await api.listTlsConfigurations('dns_records');
           const target = parseTrafficCname(doc, cfg.tlsConfigurationId);
@@ -2243,6 +2360,23 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           resources: [{ ...dnsResource(role, ours[0], dns), ownership: 'adopted' }],
           ...(role === 'traffic' ? { addresses: { hostname } } : {}),
         };
+      }
+      case 'create_tls_activation': {
+        // The front's name is its own: an activation of it is this edge's.
+        if (!hostname) return { status: 'confirmed_absent' };
+        const found = (await api.listTlsActivationsForDomain(hostname)).data.filter(
+          (a) => activationDomainOf(a) === undefined || activationDomainOf(a) === hostname,
+        );
+        if (found.length === 0) return { status: 'confirmed_absent' };
+        const resources = found.map((a) => ({
+          kind: 'tls_activation',
+          resourceId: a.id,
+          ownership: 'created' as const,
+          meta: { hostname },
+        }));
+        return found.length === 1
+          ? { status: 'found', resources }
+          : { status: 'ambiguous', candidates: resources.map(candidateOf) };
       }
       case 'await_tls': {
         const sub = firstResource(ledger, 'tls_subscription');
@@ -2600,6 +2734,11 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
           await api.deleteVersionlessDomain(r.resourceId);
           return { status: 'delete_requested' };
         }
+        case 'tls_activation': {
+          // The front's own name on the wildcard: the wildcard stays.
+          await api.deleteTlsActivation(r.resourceId);
+          return { status: 'delete_requested' };
+        }
         case 'domain':
         case 'backend':
         case 'snippet': {
@@ -2644,6 +2783,14 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
         case 'versionless_domain': {
           await api.getVersionlessDomain(r.resourceId);
           return { status: 'still_present' };
+        }
+        case 'tls_activation': {
+          const hostname = metaOf(r).hostname;
+          if (typeof hostname !== 'string') return { status: 'unresolved' };
+          const left = (await api.listTlsActivationsForDomain(hostname)).data;
+          return left.some((a) => a.id === r.resourceId)
+            ? { status: 'still_present' }
+            : { status: 'confirmed_gone' };
         }
         case 'tls_subscription': {
           // Never deleted by an edge, so never waited for.

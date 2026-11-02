@@ -65,6 +65,8 @@ export interface ProvisionIntent {
   certificateScope?: string;
   /** Fastly: `versionless` for every edge planned now; absent = a version-scoped (classic) domain. */
   domainModel?: string;
+  /** Fastly, on the wildcard: `activated` for every edge planned now; absent = a classic domain. */
+  wildcardDomain?: string;
   originTransport: FrozenOriginTransport;
   originPort: number;
   /**

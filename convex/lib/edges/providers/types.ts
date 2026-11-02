@@ -91,6 +91,13 @@ export interface FastlyConfig {
    * (absent, `classic`) for one planned before. Frozen per edge; not a setting.
    */
   domainModel?: 'classic' | 'versionless';
+  /**
+   * On the zone's wildcard: `activated` = the front's versionless domain is
+   * activated on the wildcard's certificate by the front itself (every edge
+   * planned now); absent / `classic` = a classic domain (one planned before).
+   * Frozen per edge; not a setting.
+   */
+  wildcardDomain?: 'activated' | 'classic';
   /** Present once the referenced DNS account is resolved (edgeProviderOps.loadAdapter). */
   dns?: CloudflareDnsConfig;
 }
@@ -169,7 +176,8 @@ export type ResourceKind =
   | 'activate_version'
   | 'create_tls_subscription'
   | 'create_dns_acme'
-  | 'await_tls';
+  | 'await_tls'
+  | 'create_tls_activation';
 
 export type Discoverability = 'by_name' | 'by_tag' | 'none';
 
@@ -583,6 +591,12 @@ export interface EdgeProvider<
     cfg: Cfg,
     opts: { ordered: readonly string[] },
   ): Promise<{ removed: boolean; code?: string }>;
+  /**
+   * After a renewal of that shared certificate: move what the fronts activated
+   * on an older certificate of it to the current one (a front that activates
+   * its own name on the wildcard). Returns how many moved; a no-op otherwise.
+   */
+  followSharedRenewal?(cfg: Cfg, opts: { subscriptionId: string }): Promise<{ moved: number }>;
 
   /**
    * Ledger resources in destroy order, skipping gone ones. Ordered by KIND
