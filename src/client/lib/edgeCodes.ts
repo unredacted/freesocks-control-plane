@@ -1146,6 +1146,12 @@ const COPY = {
     label: 'Format unsupported',
     explain: 'The renderer has no codec for this client format and listener combination.',
   },
+  no_entries: {
+    label: 'App gets no connection',
+    explain:
+      "The panel served this app no connection at all, because the app's format cannot carry the node's protocol. An old Clash app has no VLESS, for one. More addresses would not change it.",
+    fix: 'Members on such an app need one that supports the mode, such as a Mihomo (Clash Meta) app.',
+  },
   no_match: {
     label: 'No template entry',
     explain: 'No entry in the backend body matched the listener match rule.',
@@ -1418,7 +1424,7 @@ const COPY = {
     label: 'Members refused',
     explain:
       'Members asked for their subscription in the last hour and got nothing usable. The reasons are counted.',
-    fix: 'Look at the reasons: a switch that is off, an empty pool or a node that is not live.',
+    fix: 'Look at the reasons: a switch that is off, an empty pool or a node that is not live. An app that gets no connection needs another app, not another address.',
   },
   family_rule_disabled: {
     label: 'App family switched off',

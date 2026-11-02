@@ -27,6 +27,12 @@ const BUCKET_MS = 10 * 60_000;
 export const REFUSAL_WINDOW_MS = 60 * 60_000;
 /** Refusals in the window from which the attention item is critical (members are dark now). */
 export const REFUSALS_CRITICAL_AT = 25;
+/**
+ * Refusals no edge would change: the member's app got no connection from the
+ * backend at all (`no_entries`, an app that cannot speak the node's protocol).
+ * Counted and shown, but never what grades the attention item.
+ */
+export const APP_REFUSALS: ReadonlySet<string> = new Set(['no_entries']);
 
 const KNOWN = new Set<string>(DELIVERY_UNAVAILABLE_CODES);
 const keyOf = (shard: number) => `edge:refusals:${shard}`;

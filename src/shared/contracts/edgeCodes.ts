@@ -417,6 +417,10 @@ export const DELIVERY_UNAVAILABLE_CODES = [
   'no_render_key',
   'empty_pool',
   'unsupported_format',
+  // the backend served the client's app no connection at all: its template cannot carry the
+  // node's protocol (a legacy Clash core has no VLESS). Not a fault of the fleet: counted, but
+  // never what makes `delivery_refusals` critical
+  'no_entries',
   'no_match',
   'ambiguous_match',
   'entry_mismatch',

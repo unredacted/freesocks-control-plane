@@ -1090,7 +1090,10 @@ active delivery binding is served the rendered body ONLY when the render produce
 and passed the leak check. Otherwise the route answers **HTTP 503 with `Retry-After`** and a
 reason, one of `DELIVERY_UNAVAILABLE_CODES` (`src/shared/contracts/edgeCodes.ts`):
 `relay_missing`, `relay_disabled`, `render_disabled`, `no_render_key`, `empty_pool`,
-`unsupported_format`, `no_match`, `ambiguous_match`, `entry_mismatch`, `leak_detected`,
+`unsupported_format`, `no_entries` (the body reads as its format but carries no connection at
+all: the backend's template for an app that cannot speak the node's protocol, such as a legacy
+Clash core without VLESS; judged before the pool, so it is never counted as `empty_pool`),
+`no_match`, `ambiguous_match`, `entry_mismatch`, `leak_detected`,
 `node_gated`, `policy_moved` (the place's token moved twice during one request),
 `family_disabled` (the client's app family has its render rule off), `render_failed` (the
 format's renderer could not rewrite the body for any other reason) or `node_unprotected` (a
@@ -2430,7 +2433,10 @@ names, families and counts, never a token, a member or an address. The route sch
 count rather than waiting for it, so a burst of refusals (a gate closing across the fleet) never
 slows the 503s on conflicting writes; the count lands a moment later. Attention
 `delivery_refusals` sums the last hour (`facts.byReason`, and `facts.topSources`: the three
-reason/node/family pairs with the most, which the row names), critical from 25. A
+reason/node/family pairs with the most, which the row names), critical from 25 refusals the
+fleet could fix. `no_entries` (`APP_REFUSALS`) is counted and shown but never grades the item: no
+address would change it, so with nothing else it is `info`, and any other reason names the item
+first. A
 client family whose render rule is off now answers `family_disabled` (no longer
 `render_disabled`), and attention `family_rule_disabled` lists the families while any node is
 edge-required. A `rotation_stuck` item (critical) appears for a rotation running over an hour.

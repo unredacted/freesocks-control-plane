@@ -99,7 +99,12 @@ import {
   sharedCertificateUsers as zoneSharedCertificateUsers,
 } from './edgeLocations';
 import { l7PlaceOf } from './lib/edges/l7Place';
-import { readRefusals, REFUSAL_WINDOW_MS, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
+import {
+  APP_REFUSALS,
+  readRefusals,
+  REFUSAL_WINDOW_MS,
+  REFUSALS_CRITICAL_AT,
+} from './deliveryRefusals';
 import { fleetRotationsToday, readFleetBrake } from './lib/edges/fleet';
 import { readStateJson } from './lib/appStateJson';
 import { clientCheckService } from './lib/edges/clientCheck/client';
@@ -2207,13 +2212,19 @@ export const attention = internalQuery({
     // Dark members, counted at the subscription route (deliveryRefusals.ts).
     const refusals = await readRefusals(ctx.db, now);
     if (refusals.total > 0) {
-      const top = Object.entries(refusals.byReason).sort((x, y) => y[1] - x[1])[0];
+      // The fleet's own refusals grade the item and name it first; an app the
+      // backend serves nothing to (`APP_REFUSALS`) is shown, never graded.
+      const isApp = (reason: string) => (APP_REFUSALS.has(reason) ? 1 : 0);
+      const ranked = Object.entries(refusals.byReason).sort(
+        (x, y) => isApp(x[0]) - isApp(y[0]) || y[1] - x[1],
+      );
+      const fleet = ranked.reduce((n, [reason, count]) => n + (isApp(reason) ? 0 : count), 0);
       items.push({
         ...fleetBase,
         id: 'delivery_refusals',
         kind: 'delivery_refusals',
-        severity: refusals.total >= REFUSALS_CRITICAL_AT ? 'critical' : 'warning',
-        code: top?.[0] ?? null,
+        severity: fleet >= REFUSALS_CRITICAL_AT ? 'critical' : fleet > 0 ? 'warning' : 'info',
+        code: ranked[0]?.[0] ?? null,
         facts: {
           total: refusals.total,
           byReason: refusals.byReason,

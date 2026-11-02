@@ -240,7 +240,8 @@ export function attentionSubject(item: AttentionItem): string {
 function familyWords(family: string): string {
   const words: Record<string, string> = {
     singbox: 'sing-box apps',
-    mihomo: 'Mihomo apps',
+    // Every Clash-type app (lib/edges/clientFamilies.ts), legacy Clash cores included.
+    mihomo: 'Clash apps',
     'xray-links': 'Xray link apps',
     happ: 'Happ',
     hiddify: 'Hiddify',

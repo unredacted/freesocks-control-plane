@@ -12,12 +12,13 @@
  * transport, at neither an edge nor an address the node is known by) is left
  * out of the body instead (`withheld`), and the operator is told.
  */
+import YAML from 'yaml';
 import { RENDER_CLIENT_FAMILIES, type ClientRenderRule, type EdgeConfig } from '../edgeConfig';
 import { edgeHostname, type AssignedEndpoint, type DeliveryPath } from './assignment';
 import { detectBodyFormat, type SubscriptionFormat } from './clientFamilies';
 import { sameAddress } from './hosts';
 import { clashAddresses, matchClash, renderClash } from './render/clash';
-import { linkAddresses, matchLinks, renderLinks } from './render/links';
+import { decodeLinkList, linkAddresses, matchLinks, renderLinks } from './render/links';
 import { matchSingbox, renderSingbox, singboxAddresses } from './render/singbox';
 import type {
   ListenerMatch,
@@ -260,12 +261,35 @@ export function outgoingAddresses(
   }
 }
 
+/**
+ * Whether the backend served this body no connection at all: it reads as its
+ * format but carries no proxy entry. That is the backend's template for an app
+ * that cannot speak the node's protocol (a legacy Clash core has no VLESS, so
+ * its body holds no proxy), not a fault of the fleet: `no_entries`, never
+ * `empty_pool`.
+ */
+function carriesNoEntry(body: string, format: SubscriptionFormat): boolean {
+  if (outgoingAddresses(body, format).length > 0) return false;
+  try {
+    const doc: unknown =
+      format === 'clash-yaml'
+        ? YAML.parse(body)
+        : format === 'singbox-json'
+          ? JSON.parse(body)
+          : decodeLinkList(body);
+    return typeof doc === 'object' && doc !== null;
+  } catch {
+    return false;
+  }
+}
+
 export type DeliveryVerdict =
   | { kind: 'serve' }
   | {
       kind: 'unavailable';
       reason:
         | 'unsupported_format'
+        | 'no_entries'
         | 'no_match'
         | 'ambiguous_match'
         | 'entry_mismatch'
@@ -300,7 +324,9 @@ export function edgeAddressesOf(
  * entries still point at whatever the backend Host carries and must be DROPPED
  * regardless of the family rule's flags. Under edge-required delivery an empty
  * pool is `unavailable` (never an empty body: an empty 200 would wipe the
- * client's configuration, a 503 keeps its last one).
+ * client's configuration, a 503 keeps its last one). A body with no entry at
+ * all is judged first (`no_entries`): no edge could be placed in it, so it says
+ * nothing about the pool.
  */
 export function renderEdgeEndpoints(args: {
   body: string;
@@ -337,6 +363,7 @@ export function renderEdgeEndpoints(args: {
   });
   if (format !== 'links' && format !== 'singbox-json' && format !== 'clash-yaml')
     return unavailable('unsupported_format');
+  if (carriesNoEntry(args.body, format)) return unavailable('no_entries');
   if (emptyPool) return unavailable('empty_pool');
   const rule: EffectiveRule = rule0;
   const { entries, leaked } = renderEntriesChecked(
