@@ -423,7 +423,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(fetchCalls).toBe(1);
   });
 
-  test('every edge-required refusal is counted per reason, never the member or the node', async () => {
+  test('every edge-required refusal is counted per reason, with its node and app family, never the member', async () => {
     vi.useFakeTimers();
     stubPanel();
     const { t } = await seed({ renderEnabled: false });
@@ -441,11 +441,17 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       relaySlug: null,
       facts: { total: 2, byReason: { render_disabled: 2 }, windowMinutes: 60 },
     });
-    // The rows hold reason codes and counts only.
+    // Where: the node the body resolved to and the app family that asked.
+    expect(item.facts.topSources).toEqual([
+      { reason: 'render_disabled', node: NODE, family: 'other', count: 1 },
+      { reason: 'render_disabled', node: NODE, family: 'v2rayng', count: 1 },
+    ]);
+    // The rows hold reason codes, node names, app families and counts: never a
+    // token, a member or an address.
     const rows = await t.run((ctx) => ctx.db.query('appState').collect());
     const shards = rows.filter((r) => r.key.startsWith('edge:refusals:'));
     expect(shards.length).toBeGreaterThan(0);
-    for (const r of shards) expect(r.value).not.toMatch(/tok_|short-1|node-|198\.51/);
+    for (const r of shards) expect(r.value).not.toMatch(/tok_|short-1|uuid-|198\.51|203\.0/);
   });
 
   test('the cache token follows the delivery binding policy version', async () => {

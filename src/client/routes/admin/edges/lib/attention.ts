@@ -236,6 +236,20 @@ export function attentionSubject(item: AttentionItem): string {
   return parts.join(', ');
 }
 
+/** A render client family as members know the apps. */
+function familyWords(family: string): string {
+  const words: Record<string, string> = {
+    singbox: 'sing-box apps',
+    mihomo: 'Mihomo apps',
+    'xray-links': 'Xray link apps',
+    happ: 'Happ',
+    hiddify: 'Hiddify',
+    streisand: 'Streisand',
+    v2rayng: 'v2rayNG',
+  };
+  return words[family] ?? 'other apps';
+}
+
 /**
  * The small facts of a row as one line. Only well-known keys are rendered
  * (counts, country codes, ages); anything else in `facts` is ignored so a new
@@ -298,6 +312,23 @@ export function attentionFactsLine(item: AttentionItem): string {
       .slice(0, 3)
       .map(([reason, n]) => `${codeLabel(reason)} ${n}`);
     if (top.length > 0) out.push(top.join(', '));
+  }
+  // Where the refusals were: the node each body resolved to and the app family that asked.
+  const sources = f['topSources'];
+  if (Array.isArray(sources)) {
+    const parts = sources
+      .filter(
+        (s): s is { reason: string; node: string | null; family: string; count: number } =>
+          !!s &&
+          typeof s === 'object' &&
+          typeof (s as { reason?: unknown }).reason === 'string' &&
+          typeof (s as { count?: unknown }).count === 'number',
+      )
+      .map(
+        (s) =>
+          `${codeLabel(s.reason)} ${s.node ? `on ${s.node}` : 'with no node'} (${familyWords(s.family)}) ${s.count}`,
+      );
+    if (parts.length > 0) out.push(`Most: ${parts.join('; ')}`);
   }
   const refuses = f['refuses'];
   if (Array.isArray(refuses) && refuses.length > 0)

@@ -323,23 +323,29 @@ export async function deliverBody(
   },
 ): Promise<DeliveryOutcome> {
   const { sub, fetched, now } = input;
-  // Every edge-required refusal is counted per reason (deliveryRefusals.ts):
-  // dark members must be visible to the operator. Counting never changes the
-  // answer, nor delays it: the write is scheduled, not awaited, so a burst of
-  // refusals never waits on writes conflicting over the shared counter rows.
-  const refuse = async (reason: string): Promise<DeliveryOutcome> => {
-    try {
-      await ctx.scheduler.runAfter(0, internal.deliveryRefusals.record, { reason });
-    } catch {
-      /* the counter is best effort */
-    }
-    return { kind: 'refuse', reason };
-  };
   // ONE node value drives everything below: the pin recorded on the row, the
   // render context, and the token the caller stores with the body. The pinner
   // reports a node for every known body shape, so the stored pin only covers
   // unknown shapes.
   const node = fetched.pinnedNode ?? sub.pinnedNode;
+  const family = classifyClient(input.ua).family;
+  // Every edge-required refusal is counted per reason, with the node and the
+  // client family it was for (deliveryRefusals.ts): dark members must be
+  // visible to the operator, and where. Counting never changes the answer, nor
+  // delays it: the write is scheduled, not awaited, so a burst of refusals
+  // never waits on writes conflicting over the shared counter rows.
+  const refuse = async (reason: string): Promise<DeliveryOutcome> => {
+    try {
+      await ctx.scheduler.runAfter(0, internal.deliveryRefusals.record, {
+        reason,
+        ...(node ? { node } : {}),
+        family,
+      });
+    } catch {
+      /* the counter is best effort */
+    }
+    return { kind: 'refuse', reason };
+  };
   // A backend placeholder (an expired or disabled key: every entry at a
   // placeholder host, no node named) carries nothing an origin serves and no
   // node address, so it passes through unrendered whatever the stored pin
@@ -381,7 +387,6 @@ export async function deliverBody(
   // What the served pass left out, noted only once that pass is the one served.
   let withheld: WithheldNote | null = null;
   if (sub.backendServerId && !passthrough) {
-    const family = classifyClient(input.ua).family;
     let renderedUnder: string | null = null;
     for (let pass = 0; pass < 2; pass++) {
       const before = await ctx.runQuery(internal.edgeRender.epochFor, {
@@ -478,7 +483,7 @@ export async function deliverBody(
       });
       const decision = await ctx.runQuery(internal.edgeRender.decideForSubscription, {
         subscriptionId: sub.subscriptionId,
-        family: classifyClient(input.ua).family,
+        family,
         nodeName: node ?? undefined,
       });
       if (decision.kind === 'unavailable') return refuse(decision.reason);
