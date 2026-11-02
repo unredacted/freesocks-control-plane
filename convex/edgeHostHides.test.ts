@@ -13,12 +13,14 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import type { BackendHost } from './lib/backends/types';
 import { upsertSettingRow } from './appSettings';
 import {
   MAX_NODE_NAME_LOOKUPS,
   classifyDirectHosts,
   listingHash,
   namesElsewhere,
+  operatorFrontHosts,
 } from './lib/edges/directHosts';
 import { cohortPage, type Cohort, type CohortCursor, type CohortPage } from './lib/edges/cohorts';
 import { HIDE_MAX_ATTEMPTS, judgeLook } from './edgeHostHides';
@@ -244,6 +246,48 @@ describe('classifyDirectHosts (pure)', () => {
     );
     expect(a).not.toBe(b);
     expect(c).toBe(a);
+  });
+});
+
+describe('operatorFrontHosts and other nodes (pure)', () => {
+  const INBOUND = 'b1b1b1b1-b1b1-4b1b-8b1b-b1b1b1b1b1b1';
+  const ctx = {
+    originAddress: '192.0.2.10',
+    nodeInboundUuids: [INBOUND],
+    fcpRemarks: [],
+    legacyHostUuids: [],
+    coveredInboundUuids: [INBOUND],
+    otherNodeNames: ['Node-Two'],
+  };
+  const host = (uuid: string, remark: string, over: Partial<BackendHost> = {}): BackendHost =>
+    ({
+      uuid,
+      remark,
+      address: '198.51.100.7',
+      port: 443,
+      sni: '',
+      host: '',
+      isDisabled: false,
+      inbound: { configProfileUuid: 'p', configProfileInboundUuid: INBOUND },
+      ...over,
+    }) as BackendHost;
+  test("a Host another node's remark names is that node's, whatever case either is in", () => {
+    const fronts = operatorFrontHosts(
+      [
+        host('a', 'node-one-ws-0d6f2b'),
+        host('b', 'node-two-ws-50cc9d'),
+        host('c', 'NODE-TWO-relay'),
+      ],
+      ctx,
+    );
+    expect(fronts.map((h) => h.uuid)).toEqual(['a']);
+  });
+  test('an address remark is read with the HTTP Host when the Host carries no SNI, as the pinner reads it', () => {
+    // Its rest is the Host it sends: the other node's entry.
+    const theirs = host('d', 'Node-Two | label.example', { host: 'label.example' });
+    // Its rest is not what it sends: an operator's display remark, a front of this node.
+    const display = host('e', 'Node-Two | label.example', { host: 'cdn.example' });
+    expect(operatorFrontHosts([theirs, display], ctx).map((h) => h.uuid)).toEqual(['e']);
   });
 });
 
@@ -1177,6 +1221,57 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
       cleared: 1,
     });
     expect((await relay()).operatorFronts).toBeUndefined();
+  });
+
+  test("another node's front on the same transport is never this node's: members pinned here never get it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const OTHER = 'xray9-other';
+    const theirs: AddressRow = {
+      ...front(),
+      uuid: 'f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f3f3',
+      remark: `${OTHER}-ws-0d6f2b`,
+      address: '198.51.100.30',
+    };
+    const { t, relayId, relay } = await world({
+      hosts: [...panelHosts().filter((h) => h.uuid === FCP_UUID), front(), theirs],
+    });
+    const serverId = (await relay()).backendServerId!;
+    await t.run((ctx) =>
+      ctx.db.insert('backendNodeInventory', {
+        backendServerId: serverId,
+        nodeUuid: 'node-uuid-other',
+        name: OTHER,
+        usersOnline: 0,
+        online: true,
+        lastStatsAt: NOW,
+      }),
+    );
+    // The panel's own spelling of this node: a relay keeps its name lowercased.
+    await t.run((ctx) =>
+      ctx.db.insert('backendNodeInventory', {
+        backendServerId: serverId,
+        nodeUuid: 'node-uuid-own',
+        name: FIXTURE_NODE.toUpperCase(),
+        usersOnline: 0,
+        online: true,
+        lastStatsAt: NOW,
+      }),
+    );
+    await t.action(internal.edgeHostHides.observe, { relayId });
+    expect((await relay()).operatorFronts?.remarks).toEqual([`${FIXTURE_NODE}-relay`]);
+    expect((await relay()).operatorFronts?.hostUuids).toEqual([FRONT]);
+    // Without the other node in the inventory its Host reads as a front (a
+    // node FCP has not listed yet is never assumed).
+    await t.run(async (ctx) => {
+      for (const n of await ctx.db.query('backendNodeInventory').collect())
+        if (n.name === OTHER) await ctx.db.delete(n._id);
+    });
+    await t.action(internal.edgeHostHides.observe, { relayId });
+    expect((await relay()).operatorFronts?.remarks).toEqual([
+      `${FIXTURE_NODE}-relay`,
+      `${OTHER}-ws-0d6f2b`,
+    ]);
   });
 
   test("it says how many of the node's keys still hold it: counted apart from the look, hourly and after a re-claim, by the renders handed out", async () => {

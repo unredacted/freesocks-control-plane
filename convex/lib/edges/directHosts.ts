@@ -11,6 +11,7 @@
  */
 import type { BackendHost } from '../backends/types';
 import { sha256Hex } from '../crypto';
+import { splitPanelRemark } from '../nodePinning';
 import { normalizeAddress, sameAddress } from './hosts';
 import { canonicalIp } from './ip';
 
@@ -206,7 +207,11 @@ export function classifyDirectHosts(
  * they can be deleted at their provider. A Host by a NAME is one only when this
  * look resolved that name elsewhere, conclusively (`frontNames`, from
  * `namesElsewhere`), such as a CDN front's hostname: a name a lookup failed for
- * could be the node itself, so it keeps the fail-closed alert. `fcpRemarks` here are the listeners' own: the
+ * could be the node itself, so it keeps the fail-closed alert. A Host whose
+ * remark names ANOTHER node of the backend (`otherNodeNames`, read as the
+ * pinner reads it) is that node's, whatever it dials: nodes that share a
+ * transport list each other's Hosts, and members pinned to this node never get
+ * them. `fcpRemarks` here are the listeners' own: the
  * origin convention (`relayRemarkRegex`) also matches the bare `<node>-relay`
  * an operator gives such a Host.
  */
@@ -216,14 +221,20 @@ export function operatorFrontHosts(
     edgeAddresses?: readonly string[];
     /** Names this look resolved elsewhere (`namesElsewhere`). */
     frontNames?: readonly string[];
+    /** The backend's other nodes, by name. */
+    otherNodeNames?: readonly string[];
   },
 ): BackendHost[] {
   const covered = lower(ctx.coveredInboundUuids);
   const known = [ctx.originAddress, ...(ctx.alsoAddresses ?? []), ...(ctx.edgeAddresses ?? [])];
   const named = new Set((ctx.frontNames ?? []).map(normalizeAddress));
+  const others = new Set((ctx.otherNodeNames ?? []).map((n) => n.toLowerCase()));
   return hosts.filter((h) => {
     const inbound = h.inbound?.configProfileInboundUuid?.toLowerCase();
     if (h.isDisabled || !inbound || !covered.has(inbound)) return false;
+    // The server name the pinner reads: the SNI, else the HTTP Host.
+    const node = splitPanelRemark(h.remark, h.sni || h.host)?.node;
+    if (node !== undefined && others.has(node.toLowerCase())) return false;
     if (canonicalIp(h.address) === null && !named.has(normalizeAddress(h.address))) return false;
     if (known.some((a) => sameAddress(h.address, a))) return false;
     return !ctx.fcpRemarks.includes(h.remark) && !ctx.legacyHostUuids.includes(h.uuid);

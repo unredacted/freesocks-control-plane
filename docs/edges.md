@@ -370,8 +370,18 @@ host: null }`; `none` security → `{ address, port, sni: null, host: null }`.
 ### L7 edges
 
 An L7 edge is one hostname `<label>.<zone>` minted deterministically from the edge's
-provider-side name (`convex/lib/edges/hostname.ts`). Everything a step, discovery, describe or
-destroy needs is **frozen** into `edges.provisionIntent` when the edge is planned. Readiness
+provider-side name (`convex/lib/edges/hostname.ts`). The label is, by the template's or the
+pick's **Name style** (`labelStyle`, Names): random letters and digits (`random`, the default;
+`labelLength` 8 to 16), or dictionary words joined by dashes (`words`; `labelWords` 2 or 3),
+such as `shiny-orchestra`, which reads like an ordinary site's name. The words come from a
+large public dictionary, SCOWL's common English words up to size 50 (`wordlist-english`, 4 to
+9 lowercase letters, about 41,000), without the words `naughty-words` lists and without
+words that speak of getting around a block (`lib/edges/frontWords.ts`). The list being public
+does not help a censor: two words make some 1.7 billion names per zone, and the shape is common.
+Both packages are pinned exactly; a new version changes only the names of fronts planned after
+it (a front's name is frozen with it). `labelPrefix` goes before either style. Everything a
+step, discovery, describe or destroy needs is **frozen** into `edges.provisionIntent` when the
+edge is planned. Readiness
 has three dimensions: `dns`, `certificate` and `front` (the end-to-end qualification below).
 
 **Certificates.** A Cloudflare front's certificate is its zone's own: the edge certificate for
@@ -406,7 +416,11 @@ intent default, § "Fastly fronts"):
   EFFECTIVE TLS configuration (the location's, else the default one, the same one the traffic
   CNAME points at); one ordered another way, or several, is never reused
   (`shared_certificate_ambiguous`). At the challenge name, a record with another customer's
-  marker or none is never reused, replaced or deleted (`acme_name_in_use`); our own customer's
+  marker or none is never replaced or deleted; it stops the step (`acme_name_in_use`) unless it
+  is the only record there, unproxied, and already holds the new subscription's own challenge
+  (or, with none on offer, the subscription is already issued through it): the zone's
+  certificate ordered by hand in the same Fastly customer, whose record Fastly validates every
+  subscription of that customer through. It is then used as it is, as a candidate; our own customer's
   marker for a subscription that no longer exists (a failed one deleted at the provider) is
   stale, and the step replaces it with the new subscription's; so is our own record that no
   longer holds the challenge's current value (edited by hand, or a target the provider moved).
@@ -451,7 +465,9 @@ SNI and the zone still link the fronts of one account either way, so the zone ch
 more than the certificate. A zone carries the wildcard of one Fastly account only (a second
 one finds the first one's ACME record and stops at `acme_name_in_use`), and the challenge name
 sits at the zone apex: a zone whose own certificate is validated there by another ACME client
-should keep one certificate per front.
+should keep one certificate per front. A certificate the same Fastly customer ordered by hand
+for the zone is no obstacle: its record already holds the challenge FCP's subscription asks
+for, so FCP uses it and never edits or deletes it.
 
 **CAA preflight.** The check of a Fastly or CloudFront front location (run by the credential test for every
 location, by "Check again" and when a zone is added) resolves the CAA records of that location's
@@ -2083,7 +2099,10 @@ elsewhere, such as a CDN front the operator built (`namesElsewhere`: both its lo
 AAAA, answered conclusively, a record or "no such record"; at least one address came back; and
 none is an address the node is known by). A name one of whose lookups failed (a timeout, a
 server failure: anything but "no such record") is never one, since the missing family could
-be the node itself, so it keeps the critical alarm. A member render leaves their entries out like any it
+be the node itself, so it keeps the critical alarm. A Host whose remark names another node of the
+backend (read as the pinner reads it, against the backend's node inventory) is that node's and never
+this one's front: nodes that share a transport list each other's Hosts, and a member pinned here never
+gets them. A member render leaves their entries out like any it
 cannot place, but an entry a known front names is not the node: it raises attention
 `front_host_unused` (info: members no longer get it, so it can be deleted at its provider once
 its traffic stops, and its Host in the backend) instead of `direct_host_reappeared`. An entry
@@ -5582,6 +5601,8 @@ live resource; FCP never applies one (a new edge is built instead).
 | ovh        | Health check      | HTTP check host name                  | `health_monitor.httpConfiguration.domainName`           | provider's own               | template, per node             | in place                    |
 | cloudflare | Names             | Name length                           |                                                         | 12                           | template, per node             | rebuild                     |
 | cloudflare | Names             | Name prefix                           |                                                         | provider's own               | template, per node             | rebuild                     |
+| cloudflare | Names             | Name style                            |                                                         | Random letters and digits    | template, per node             | rebuild                     |
+| cloudflare | Names             | Words in a name                       |                                                         | 2                            | template, per node             | rebuild                     |
 | cloudflare | DNS record        | Record comment prefix                 | `dns_record.comment`                                    | fcp                          | template, per node             | in place                    |
 | cloudflare | DNS record        | Answer addresses                      | `dns_record.settings.ipv4_only`                         | IPv4 and IPv6                | template, per node             | in place                    |
 | cloudflare | DNS record        | Record tags                           | `dns_record.tags`                                       | provider's own               | template, per node             | in place                    |
@@ -5589,6 +5610,8 @@ live resource; FCP never applies one (a new edge is built instead).
 | cloudflare | Request           | Pass the member's address to the node | `header_rule.action_parameters.headers`                 | off                          | template, per node             | rebuild                     |
 | fastly     | Names             | Name length                           |                                                         | 12                           | template, per node             | rebuild                     |
 | fastly     | Names             | Name prefix                           |                                                         | provider's own               | template, per node             | rebuild                     |
+| fastly     | Names             | Name style                            |                                                         | Random letters and digits    | template, per node             | rebuild                     |
+| fastly     | Names             | Words in a name                       |                                                         | 2                            | template, per node             | rebuild                     |
 | fastly     | Service           | Service note                          | `service.comment`                                       | origin edge                  | template, per node             | new service version         |
 | fastly     | Backend           | Host sent to the node                 | `backend.override_host`                                 | The front name               | template, per node             | new service version         |
 | fastly     | Backend           | Prefer IPv6 to the node               | `backend.prefer_ipv6`                                   | off                          | template, per node             | new service version         |
@@ -5610,6 +5633,8 @@ live resource; FCP never applies one (a new edge is built instead).
 | fastly     | Certificate       | Certificate                           | `tls_subscription.tls_domains`                          | One per front                | account default, per node      | rebuild                     |
 | cloudfront | Names             | Name length                           |                                                         | 12                           | template, per node             | rebuild                     |
 | cloudfront | Names             | Name prefix                           |                                                         | provider's own               | template, per node             | rebuild                     |
+| cloudfront | Names             | Name style                            |                                                         | Random letters and digits    | template, per node             | rebuild                     |
+| cloudfront | Names             | Words in a name                       |                                                         | 2                            | template, per node             | rebuild                     |
 | cloudfront | Distribution      | Edge locations                        | `distribution.PriceClass`                               | All edge locations           | template, per node             | in place                    |
 | cloudfront | Distribution      | IPv6 for members                      | `distribution.IsIPV6Enabled`                            | on                           | template, per node             | in place                    |
 | cloudfront | Distribution      | HTTP versions offered to members      | `distribution.HttpVersion`                              | HTTP/1.1 only                | template, per node             | in place                    |

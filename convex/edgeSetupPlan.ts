@@ -178,12 +178,11 @@ async function planContextOf(
   {
     const server = await ctx.db.get(backendServerId);
     if (!server) throw new ConvexError({ code: 'not_found', message: 'Backend server not found' });
-    const node = (
-      await ctx.db
-        .query('backendNodeInventory')
-        .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
-        .collect()
-    ).find((n) => n.nodeUuid === nodeUuid);
+    const inventory = await ctx.db
+      .query('backendNodeInventory')
+      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+      .collect();
+    const node = inventory.find((n) => n.nodeUuid === nodeUuid);
     if (!node)
       throw new ConvexError({
         code: 'edge.node_not_found',
@@ -310,6 +309,7 @@ async function planContextOf(
         address: node.address ?? null,
         port: node.port ?? null,
       },
+      otherNodeNames: inventory.filter((n) => n.nodeUuid !== node.nodeUuid).map((n) => n.name),
       enrolled,
       websocketNode,
       modes,
@@ -1118,6 +1118,7 @@ export async function buildPlan(
     alsoAddresses: [...(dctx.alsoAddresses ?? []), ...names],
     edgeAddresses: c.relay?.edgeAddresses ?? [],
     frontNames: looked.elsewhere,
+    otherNodeNames: c.otherNodeNames,
   }).map((h) => ({ uuid: h.uuid, remark: h.remark }));
   // Each transport's test link source: a load balancer address of one with
   // none would stop the run at its test card after the address was bought.

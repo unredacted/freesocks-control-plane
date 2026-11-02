@@ -5,7 +5,12 @@ import {
   isFirstLevelUnder,
   isValidHostname,
   labelFromSeed,
+  labelOptionsOf,
+  wordsFromSeed,
 } from './hostname';
+import { frontWords } from './frontWords';
+import naughty from 'naughty-words/en.json';
+import { validatePickOptions, validateTemplateParams } from './providers/templates';
 
 describe('hostname minting', () => {
   test('deterministic, random-looking, first-level label of the requested length', () => {
@@ -57,5 +62,68 @@ describe('hostname minting', () => {
 
   test('acme challenge name', () => {
     expect(acmeChallengeName('A.Example.org.')).toBe('_acme-challenge.a.example.org');
+  });
+
+  test('a words-style label is two (or three) distinct dictionary words, deterministic, under the zone', () => {
+    const opts = { labelLength: 12, labelStyle: 'words' as const };
+    const a = edgeHostnameFor('fcp-relay-o1-0badf00d', 'Example.ORG.', opts);
+    expect(edgeHostnameFor('fcp-relay-o1-0badf00d', 'example.org', opts)).toBe(a);
+    const label = a.slice(0, -'.example.org'.length);
+    expect(label).toMatch(/^[a-z]{4,9}-[a-z]{4,9}$/);
+    const [w1, w2] = label.split('-');
+    expect(w1).not.toBe(w2);
+    expect(frontWords()).toContain(w1);
+    expect(frontWords()).toContain(w2);
+    expect(isFirstLevelUnder(a, 'example.org')).toBe(true);
+    const three = edgeHostnameFor('fcp-relay-o1-0badf00d', 'example.org', {
+      ...opts,
+      labelWords: 3,
+      labelPrefix: 'cdn-',
+    });
+    expect(three.split('.')[0]).toMatch(/^cdn-[a-z]{4,9}-[a-z]{4,9}-[a-z]{4,9}$/);
+    // Clamped to 2..3; another spec name or zone gives another name.
+    expect(
+      edgeHostnameFor('x', 'example.org', { ...opts, labelWords: 9 })
+        .split('.')[0]
+        .split('-'),
+    ).toHaveLength(3);
+    const others = new Set(
+      ['a', 'b', 'c', 'd'].map((n) => edgeHostnameFor(`fcp-relay-${n}`, 'example.org', opts)),
+    );
+    expect(others.size).toBe(4);
+    expect(wordsFromSeed('seed', 3, ['one', 'two', 'three'])).toHaveLength(3);
+  });
+
+  test('the dictionary is large, sorted, plain, and free of offensive and telling words', () => {
+    const words = frontWords();
+    expect(words.length).toBeGreaterThan(30000);
+    expect([...words].sort()).toEqual(words);
+    expect(new Set(words).size).toBe(words.length);
+    expect(words.every((w) => /^[a-z]{4,9}$/.test(w))).toBe(true);
+    const offensive = (naughty as string[]).filter((w) => /^[a-z]{4,9}$/.test(w));
+    expect(offensive.length).toBeGreaterThan(50);
+    expect(offensive.filter((w) => words.includes(w))).toEqual([]);
+    for (const w of ['proxy', 'tunnel', 'censor', 'bypass', 'freedom', 'secret', 'hidden'])
+      expect(words.includes(w)).toBe(false);
+  });
+
+  test('a template without the name style parses as before; a pick may choose words', () => {
+    for (const provider of ['fastly', 'cloudflare'] as const) {
+      const parsed = validateTemplateParams(provider, {});
+      expect(parsed.ok && 'labelStyle' in parsed.params).toBe(false);
+      expect(parsed.ok && 'labelWords' in parsed.params).toBe(false);
+      expect(validatePickOptions(provider, { labelStyle: 'words', labelWords: 3 })).toMatchObject({
+        ok: true,
+        values: { labelStyle: 'words', labelWords: 3 },
+      });
+      expect(validatePickOptions(provider, { labelWords: 5 }).ok).toBe(false);
+    }
+    expect(labelOptionsOf({})).toEqual({ labelLength: 12, labelPrefix: undefined });
+    expect(labelOptionsOf({ labelStyle: 'words', labelWords: 3, labelPrefix: '' })).toEqual({
+      labelLength: 12,
+      labelPrefix: '',
+      labelStyle: 'words',
+      labelWords: 3,
+    });
   });
 });
