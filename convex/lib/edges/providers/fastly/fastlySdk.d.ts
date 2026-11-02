@@ -130,6 +130,13 @@ declare module 'fastly' {
     listTlsConfigsWithHttpInfo(options?: Options): Promise<FastlyHttpInfo>;
   }
 
+  export class TlsActivationsApi {
+    constructor(apiClient: ApiClient);
+    createTlsActivationWithHttpInfo(options?: Options): Promise<FastlyHttpInfo>;
+    deleteTlsActivationWithHttpInfo(options: Options): Promise<FastlyHttpInfo>;
+    listTlsActivationsWithHttpInfo(options?: Options): Promise<FastlyHttpInfo>;
+  }
+
   export class TokensApi {
     constructor(apiClient: ApiClient);
     getTokenCurrentWithHttpInfo(options?: Options): Promise<FastlyHttpInfo>;

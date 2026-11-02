@@ -2215,3 +2215,98 @@ export const confirmDestroyed = internalAction({
       return provider.confirmDestroyed(cfg, a.resource, a.ledger as Ledger);
     }),
 });
+
+/**
+ * THROWAWAY beta probe (never merged): can a versionless domain under the zone's
+ * wildcard be activated with an explicit TLS activation on that certificate, and
+ * does Fastly then route it? Creates one probe domain on `serviceId`, activates
+ * it, looks, and removes both unless `keep`.
+ */
+export const wildcardActivationProbe = internalAction({
+  args: {
+    accountId: v.id('edgeProviderAccounts'),
+    locationId: v.id('edgeLocations'),
+    zone: v.string(),
+    serviceId: v.string(),
+    viaHost: v.string(),
+    keep: v.optional(v.boolean()),
+  },
+  handler: async (ctx, a) => {
+    const out: Array<Record<string, unknown>> = [];
+    const note = (step: string, x: Record<string, unknown> = {}) => out.push({ step, ...x });
+    const errOf = (e: unknown) =>
+      e instanceof Error
+        ? { error: e.message.slice(0, 400), meta: JSON.stringify((e as { meta?: unknown }).meta ?? null).slice(0, 600) }
+        : { error: String(e).slice(0, 400) };
+    const { cfg } = await loadAdapter(ctx, a.accountId, undefined, undefined, a.locationId);
+    const { fastlyApi } = await import('./lib/edges/providers/fastly/sdk');
+    const api = fastlyApi(cfg as import('./lib/edges/providers/types').FastlyConfig);
+    const wildcard = `*.${a.zone}`;
+    const subs = await api.listTlsSubscriptionsForDomain(wildcard);
+    const sub = subs.data[0];
+    note('subscriptions', { count: subs.data.length, state: (sub?.attributes as { state?: string } | undefined)?.state });
+    if (!sub) return out;
+    const doc = await api.getTlsSubscription(sub.id, 'tls_certificates');
+    const certs = ((doc.data.relationships as { tls_certificates?: { data?: Array<{ id: string }> } } | undefined)
+      ?.tls_certificates?.data ?? []).map((c) => c.id);
+    note('certificates', { count: certs.length });
+    const configs = await api.listTlsConfigurations();
+    const conf =
+      (cfg as { tlsConfigurationId?: string }).tlsConfigurationId ??
+      configs.data.find((c) => (c.attributes as { default?: boolean } | undefined)?.default)?.id ??
+      configs.data[0]?.id;
+    const existing = await api.listTlsActivationsForDomain(wildcard);
+    note('wildcard activations', { count: existing.data.length });
+    const fqdn = `fcp-probe-${Math.random().toString(36).slice(2, 8)}.${a.zone}`;
+    let domainId: string | null = null;
+    let activationId: string | null = null;
+    try {
+      const d = await api.createVersionlessDomain({ fqdn, service_id: a.serviceId, description: 'fcp probe' });
+      domainId = d.id;
+      note('domain created', { fqdn, activated: (d as { activated?: boolean }).activated ?? null });
+      try {
+        const act = await api.createTlsActivation({
+          data: {
+            type: 'tls_activation',
+            relationships: {
+              tls_certificate: { data: { type: 'tls_certificate', id: certs[0] } },
+              tls_configuration: { data: { type: 'tls_configuration', id: conf } },
+              tls_domain: { data: { type: 'tls_domain', id: fqdn } },
+            },
+          },
+        });
+        activationId = act.data.id;
+        note('activation created', { id: activationId });
+      } catch (e) {
+        note('activation refused', errOf(e));
+      }
+      const { connect } = await import('node:tls');
+      const dns = await import('node:dns');
+      const ip = (await dns.promises.resolve4(a.viaHost))[0]!;
+      for (let i = 0; i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 20_000));
+        const dm = await api.getVersionlessDomain(domainId);
+        const answer = await new Promise<string>((resolve) => {
+          const s = connect({ host: ip, port: 443, servername: fqdn, timeout: 8000, rejectUnauthorized: false }, () => {
+            s.write(`GET / HTTP/1.1\r\nHost: ${fqdn}\r\nConnection: close\r\n\r\n`);
+          });
+          let buf = '';
+          s.on('data', (c) => (buf += String(c)));
+          s.on('end', () => resolve(`${buf.split('\r\n')[0]} unknownDomain=${/unknown domain/i.test(buf)} cert=${(s.getPeerCertificate()?.subject?.CN as string | undefined) ?? '-'}`));
+          s.on('timeout', () => { resolve('timeout'); s.destroy(); });
+          s.on('error', (e) => resolve(`error ${e.message}`));
+        });
+        note(`look ${i + 1}`, { activated: (dm as { activated?: boolean }).activated ?? null, answer });
+        if ((dm as { activated?: boolean }).activated && !/unknownDomain=true/.test(answer)) break;
+      }
+    } catch (e) {
+      note('failed', errOf(e));
+    } finally {
+      if (!a.keep) {
+        if (activationId) await api.deleteTlsActivation(activationId).then(() => note('activation removed')).catch((e) => note('activation remove failed', errOf(e)));
+        if (domainId) await api.deleteVersionlessDomain(domainId).then(() => note('domain removed')).catch((e) => note('domain remove failed', errOf(e)));
+      }
+    }
+    return out;
+  },
+});
