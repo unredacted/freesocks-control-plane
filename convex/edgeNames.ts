@@ -885,8 +885,9 @@ export const clearForRollback = internalMutation({
         .collect())
         await ctx.db.patch(r._id, { publicationEpoch: r.publicationEpoch + 1, updatedAt: now });
     }
+    // Removing first: a row this run sends to removing is not counted twice.
     let open = 0;
-    for (const state of ['creating', 'live', 'moving', 'removing'] as const) {
+    for (const state of ['removing', 'creating', 'live', 'moving'] as const) {
       const rows = await ctx.db
         .query('edgeNames')
         .withIndex('by_state', (q) => q.eq('state', state))

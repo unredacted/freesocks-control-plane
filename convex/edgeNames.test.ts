@@ -14,7 +14,7 @@ import { seedEdgeFixture } from './lib/edges/testing/fixtures';
 import { fakeDnsZone, type FakeDnsZone } from './lib/edges/testing/fakeCloudFront';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { __setAddressNameDnsFactory } from './edgeNameOps';
-import { moveNameBack, moveNameOnReplace } from './edgeNames';
+import { moveNameBack, moveNameOnReplace, namesEnabledOf } from './edgeNames';
 import { publishedEdgesOf } from './edgeRender';
 import { addressNameMarker, mintAddressName } from './lib/edges/addressNames';
 
@@ -464,6 +464,25 @@ describe('names for addresses', () => {
     const a = await address(t, f, '198.51.100.151');
     expect(await t.action(internal.edgeNameOps.work, { edgeId: a })).toBe('none');
     expect(await nameRows(t)).toEqual([]);
+  });
+
+  test('the rollback helper turns names off, removes them, then clears rows and flags', async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+    const a = await address(t, f, '198.51.100.161', { published: true });
+    await t.action(internal.edgeNameOps.work, { edgeId: a });
+    const row = (await nameOf(t, a))!;
+    expect(await t.mutation(internal.edgeNames.clearForRollback, {})).toEqual({
+      done: false,
+      removing: 1,
+      parked: 0,
+    });
+    await t.action(internal.edgeNameOps.work, { nameId: row._id });
+    expect(zones.get('0'.repeat(32))!.rows).toEqual([]);
+    expect(await t.mutation(internal.edgeNames.clearForRollback, {})).toMatchObject({ done: true });
+    expect(await nameRows(t)).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(a)))!.nameWanted).toBeUndefined();
+    expect(await t.run((ctx) => namesEnabledOf(ctx.db))).toBe(false);
   });
 
   test('upkeep: an address that wants a name and has none is listed once', async () => {
