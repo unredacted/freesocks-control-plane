@@ -47,6 +47,12 @@ export interface DnsClient {
   getRecord(id: string): Promise<DnsRecord | null>;
   /** Idempotent: a missing record is a success. */
   deleteRecord(id: string): Promise<void>;
+  /**
+   * Change a record's content in place (a moved name: deleting then creating
+   * would leave a moment with no record, which a resolver can cache for the
+   * zone's negative TTL). Optional: a client without it cannot move a name.
+   */
+  updateRecord?(id: string, args: DnsCreateArgs): Promise<DnsRecord>;
   /** CAA records at the zone apex (issuance preflight); empty = unrestricted. */
   listCaa(): Promise<Array<{ flags: number; tag: string; value: string }>>;
   /**

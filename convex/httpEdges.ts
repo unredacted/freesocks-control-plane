@@ -1681,6 +1681,15 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         return json(
           await ctx.runMutation(internal.edgeReconcileMutations.retryDestroy, { edgeId, ...act }),
         );
+      case 'name':
+        // The address's name (edgeNames.ts): `renew` removes it from its zone
+        // and makes a new one; `dismiss` closes a name FCP gave up on, once its
+        // records were removed by hand.
+        if (d === 'renew' && !parts[4])
+          return json(await ctx.runMutation(internal.edgeNames.renew, { edgeId, ...act }));
+        if (d === 'dismiss' && !parts[4])
+          return json(await ctx.runMutation(internal.edgeNames.dismissParked, { edgeId, ...act }));
+        return notFound();
       case 'resolve-operator': {
         const action = body.action;
         if (action !== 'destroy' && action !== 'forget' && action !== 'reactivate') {

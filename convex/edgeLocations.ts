@@ -53,6 +53,7 @@ import {
 import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { deletePlansOfLocation, locationCostAdmin, type LocationCostAdmin } from './edgePlans';
 import { sizeKeyOf } from './lib/edges/pricing';
+import { namesInZone } from './edgeNames';
 
 export type Location = Doc<'edgeLocations'>;
 type Account = Doc<'edgeProviderAccounts'>;
@@ -1031,6 +1032,13 @@ export const remove = internalMutation({
       throw new ConvexError({
         code: 'edge.location_in_use',
         message: 'A node is being protected in this location; finish or cancel that first',
+      });
+    // Nor a zone that still holds names for addresses: their records are
+    // reached only through it.
+    if ((await namesInZone(ctx.db, id)) > 0)
+      throw new ConvexError({
+        code: 'edge.names_in_zone',
+        message: 'Names for addresses still live in this zone; they go with their addresses',
       });
     // Nor one whose wildcard FCP ordered is still at the provider: this row is
     // the only record of it, and the account's delete guard reads its zones.

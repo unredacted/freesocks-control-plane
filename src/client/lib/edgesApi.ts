@@ -713,6 +713,12 @@ export const qualifyEdge = (edgeId: string) =>
   apiClient.post(`${BASE}/${enc(edgeId)}/qualify`, {}, EdgeQualifyResponse);
 export const retryDestroyEdge = (edgeId: string) =>
   apiClient.post(`${BASE}/${enc(edgeId)}/retry-destroy`, {}, EdgeOkResponse);
+/** A new name for a load balancer address (its own is removed from its zone). */
+export const renewEdgeName = (edgeId: string) =>
+  apiClient.post(`${BASE}/${enc(edgeId)}/name/renew`, {}, EdgeOkResponse);
+/** Close a name FCP gave up on, once its records were removed by hand. */
+export const dismissEdgeName = (edgeId: string) =>
+  apiClient.post(`${BASE}/${enc(edgeId)}/name/dismiss`, {}, EdgeOkResponse);
 export const resolveEdgeOperator = (edgeId: string, action: ResolveOperatorAction) =>
   apiClient.post(`${BASE}/${enc(edgeId)}/resolve-operator`, { action }, EdgeOkResponse);
 export const probeEdge = (edgeId: string) =>

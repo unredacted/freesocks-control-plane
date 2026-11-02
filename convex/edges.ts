@@ -17,6 +17,7 @@
 import { parseOptionValues } from './lib/edges/providers/options';
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { randomHex } from './lib/crypto';
 import { reserveAllocation } from './edgeProviderAccounts';
@@ -34,6 +35,7 @@ import {
 } from './lib/edges/verification';
 import { verificationListenersOf, type VerifiableListener } from './lib/edges/verificationContext';
 import { nextFailure } from './lib/edges/rotation';
+import { namesEnabledOf } from './edgeNames';
 import { SPEND_CAP_REACHED, capRefusal, edgeCostAt } from './edgePlans';
 
 /** Consecutive `gone` describes before the pool drop + status transition act. */
@@ -466,6 +468,9 @@ export async function insertPlannedEdge(
     listeners: a.listeners,
     addresses: {},
     layer: a.layer ?? 'l4',
+    // Planned while names for addresses are on: it gets one once addressed
+    // (edgeNames.ts). An address planned before keeps its IP.
+    ...((a.layer ?? 'l4') === 'l4' && (await namesEnabledOf(ctx.db)) ? { nameWanted: true } : {}),
     // Frozen here and never recomputed: every later step, discovery, describe
     // and destroy reads this instead of the account settings or the template.
     provisionIntent: a.provisionIntent ? JSON.stringify(a.provisionIntent) : undefined,
@@ -676,6 +681,22 @@ export const settleOp = internalMutation({
     return { ok: true as const };
   },
 });
+
+/**
+ * An address that wants a name gets a pass the moment it is active with a
+ * new IPv4 (made active, or re-addressed); the reconcile pass would get to it
+ * within five minutes anyway.
+ */
+export async function scheduleNameOnAddress(
+  ctx: { scheduler: import('./_generated/server').MutationCtx['scheduler'] },
+  before: Pick<Edge, 'nameWanted' | 'status' | 'addresses'>,
+  after: Pick<Edge, '_id' | 'nameWanted' | 'status' | 'addresses' | 'managed'>,
+) {
+  if (!after.nameWanted || !after.managed || after.status !== 'active' || !after.addresses.v4)
+    return;
+  if (before.status === 'active' && before.addresses.v4 === after.addresses.v4) return;
+  await ctx.scheduler.runAfter(0, internal.edgeNameOps.work, { edgeId: after._id });
+}
 
 /** Status / publication changes outside an op (the rotation machine's advance path). */
 export const patchEdge = internalMutation({
@@ -900,6 +921,11 @@ export const recordDescribe = internalMutation({
         : {}),
       ...transition,
       updatedAt: now,
+    });
+    await scheduleNameOnAddress(ctx, edge, {
+      ...edge,
+      addresses: addressesNext,
+      ...(transition as Partial<Edge>),
     });
     return {
       dropped,

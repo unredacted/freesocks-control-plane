@@ -138,6 +138,32 @@ const COPY = {
     explain: 'The provider knows this token, but it is disabled or expired.',
     fix: 'Enable the token or roll a new one in the provider dashboard, then test again.',
   },
+  name_zone_unreachable: {
+    label: 'Zone not reachable',
+    explain: "The DNS account that holds this name's zone is gone or has no token.",
+    fix: 'Restore the DNS account, or remove the records by hand and dismiss the name.',
+  },
+  name_taken: {
+    label: 'Name used by someone else',
+    explain: 'A record FCP did not write sits at the name, so FCP leaves it alone.',
+    fix: 'Remove that record if it is stray, or give the address a new name.',
+  },
+  name_dns_refused: {
+    label: 'DNS provider refused',
+    explain:
+      'The DNS provider refused to change the records, usually a token without edit rights for the zone.',
+    fix: 'Give the DNS account a token that may edit DNS in this zone; FCP tries again by itself.',
+  },
+  name_dns_rate_limited: {
+    label: 'DNS provider busy',
+    explain: 'The DNS provider asked FCP to slow down.',
+    fix: 'Nothing to do: FCP tries again on its next pass.',
+  },
+  name_dns_unreachable: {
+    label: 'DNS provider did not answer',
+    explain: 'The call to the DNS provider timed out or failed.',
+    fix: 'Nothing to do unless it lasts: FCP tries again on its next pass.',
+  },
   dns_account_missing: {
     label: 'DNS account missing',
     explain:
@@ -1035,6 +1061,12 @@ const COPY = {
     explain:
       'The listener or the address changed since you tested it, so the test no longer counts.',
     fix: 'Test the address again against its current configuration.',
+  },
+  address_name_stuck: {
+    label: 'Address name stuck',
+    explain:
+      'FCP could not make, move or remove the name of a load balancer address after several tries. A name it was removing may still point at an address that went back to its provider.',
+    fix: 'Open the address. Remove its records in the DNS zone by hand if they are still there, then press Dismiss; or press New name.',
   },
   test_key_cleanup: {
     label: 'Test key not removed',

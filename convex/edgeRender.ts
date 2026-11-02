@@ -52,6 +52,7 @@ import { freedomEdgesOnly, freedomHoldOf, type NodeProtection } from './lib/edge
 import type { EdgeLayer } from '../src/shared/contracts/edges';
 import { lanesOn } from './lib/edges/lanes';
 import { memberLaneOfUser } from './edgeLanes';
+import { namesEnabledOf, servingNameOf } from './edgeNames';
 
 const familyValidator = v.union(
   ...(RENDER_CLIENT_FAMILIES.map((f) => v.literal(f)) as [
@@ -190,6 +191,8 @@ export async function publishedEdgesOf(
   }
   const published: PublishedEdge[] = [];
   const now = Date.now();
+  // Names for addresses (edgeNames.ts): read only while the switch is on.
+  const namesOn = await namesEnabledOf(ctx.db);
   for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
     const edgeId = origin.publishedEdgeIds[i];
     if (!edgeId || !selected(edgeId as string)) continue;
@@ -213,7 +216,9 @@ export async function publishedEdgesOf(
       listener.enabled;
     if (!eligible && !opts.includeIneligible) continue;
     if (!listener) continue; // no listener at all: nothing to render from
-    published.push(toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible, now));
+    const name =
+      namesOn && (edge.layer ?? 'l4') === 'l4' ? await servingNameOf(ctx.db, edge._id) : null;
+    published.push(toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible, now, name?.fqdn));
   }
   return { published, matchers };
 }
@@ -229,6 +234,8 @@ export function toPublishedEdge(
   poolIndex: number,
   eligible: boolean,
   now = Date.now(),
+  /** The address's name in use (an L4 edge, names on); the test link keeps the IPs. */
+  addressName?: string,
 ): PublishedEdge {
   // The effective per-country state (edgeCountry.ts), entries past their
   // `until` already dropped: only an assignment given an `edgeCountry` reads it.
@@ -259,6 +266,7 @@ export function toPublishedEdge(
       v6: edge.addresses.v6,
       hostname: edge.addresses.hostname,
     },
+    ...(addressName ? { addressName } : {}),
     serverNames: protocolUsesSni(proto)
       ? (listener.tlsNames ?? []).map((s) => ({
           sni: s.name,

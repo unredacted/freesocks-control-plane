@@ -211,6 +211,26 @@ export interface EdgeConfig {
     /** Same-provider L7 replacements per origin per UTC day (a new hostname is not a new frontend IP). */
     maxSameProviderReplacementsPerDay: number;
   };
+  /**
+   * Names for load balancer addresses (lib/edges/addressNames.ts, docs/edges.md
+   * "Names for load balancer addresses"). Ships off.
+   */
+  names: {
+    /**
+     * On: an L4 address planned from now on gets a name, and members are handed
+     * the name (plus the IP as a fallback where the app switches by itself).
+     * Off: no new name is made and every member gets IPs again; names already
+     * made stay in their zone until their address goes.
+     */
+    enabled: boolean;
+    /** The zones (locations of DNS accounts) new names go in. */
+    zones: string[];
+    /**
+     * A name moves to the address that replaces its own at most once in this
+     * many days (0 = a name never moves; every replacement gets a new one).
+     */
+    moveQuietDays: number;
+  };
   render: {
     /** Master switch for FCP-rendered origin endpoints; off = the backend body passes through. */
     enabled: boolean;
@@ -218,6 +238,8 @@ export interface EdgeConfig {
     primaryLabel: string;
     backupLabel: string;
     ipv6Label: string;
+    /** The suffix of a named address's IP fallback entry (`edge.names`). */
+    ipLabel: string;
     ipv6Mode: Exclude<Ipv6Mode, 'inherit'>;
     /**
      * Server names handed to ONE member per endpoint, for a listener on the
@@ -355,6 +377,11 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     autoSelect: false,
     maxSameProviderReplacementsPerDay: 2,
   },
+  names: {
+    enabled: false,
+    zones: [],
+    moveQuietDays: 30,
+  },
   render: {
     enabled: false,
     autoGroupName: 'FreeSocks Auto',
@@ -362,6 +389,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     primaryLabel: 'FreeSocks',
     backupLabel: 'FreeSocks (backup)',
     ipv6Label: 'IPv6',
+    ipLabel: 'IP',
     ipv6Mode: 'both',
     namesPerEndpoint: 3,
     backupNames: 1,
@@ -434,6 +462,24 @@ export function sanitizeLabel(v: unknown, dflt: string, max = 48): string {
 }
 
 /** ISO-3166-1 alpha-2 list: uppercased, deduped, ≤40 entries; non-arrays → default. */
+/** The eligible name zones from a stored value (space separated location ids). */
+export function parseNameZones(raw: string): string[] {
+  return [
+    ...new Set(
+      raw
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter((s) => /^[A-Za-z0-9]{10,64}$/.test(s)),
+    ),
+  ].slice(0, 32);
+}
+
+/** The eligible name zones: location ids, as an array or a space separated string. */
+export function sanitizeNameZones(v: unknown): string[] {
+  if (Array.isArray(v)) return parseNameZones(v.filter((x) => typeof x === 'string').join(' '));
+  return typeof v === 'string' ? parseNameZones(v) : [];
+}
+
 export function sanitizeCountryList(v: unknown, dflt: string[]): string[] {
   if (!Array.isArray(v)) return dflt;
   const out: string[] = [];
@@ -518,11 +564,15 @@ export const EDGE_KEYS = {
   'lanes.openReplacesPerFleetDay': 'edge.lanes.openReplacesPerFleetDay',
   'l7.autoSelect': 'edge.l7.autoSelect',
   'l7.maxSameProviderReplacementsPerDay': 'edge.l7.maxSameProviderReplacementsPerDay',
+  'names.enabled': 'edge.names.enabled',
+  'names.zones': 'edge.names.zones',
+  'names.moveQuietDays': 'edge.names.moveQuietDays',
   'render.enabled': 'edge.render.enabled',
   'render.autoGroupName': 'edge.render.autoGroupName',
   'render.primaryLabel': 'edge.render.primaryLabel',
   'render.backupLabel': 'edge.render.backupLabel',
   'render.ipv6Label': 'edge.render.ipv6Label',
+  'render.ipLabel': 'edge.render.ipLabel',
   'render.namesPerEndpoint': 'edge.render.namesPerEndpoint',
   'render.backupNames': 'edge.render.backupNames',
   'render.ipv6Mode': 'edge.render.ipv6Mode',
@@ -724,12 +774,18 @@ export function sanitizeRelayConfig(
         D.l7.maxSameProviderReplacementsPerDay,
       ),
     },
+    names: {
+      enabled: sanitizeBool(raw['names.enabled'], D.names.enabled),
+      zones: sanitizeNameZones(raw['names.zones']),
+      moveQuietDays: sanitizeInt(raw['names.moveQuietDays'], 0, 365, D.names.moveQuietDays),
+    },
     render: {
       enabled: sanitizeBool(raw['render.enabled'], D.render.enabled),
       autoGroupName: sanitizeLabel(raw['render.autoGroupName'], D.render.autoGroupName),
       primaryLabel: sanitizeLabel(raw['render.primaryLabel'], D.render.primaryLabel),
       backupLabel: sanitizeLabel(raw['render.backupLabel'], D.render.backupLabel),
       ipv6Label: sanitizeLabel(raw['render.ipv6Label'], D.render.ipv6Label, 24),
+      ipLabel: sanitizeLabel(raw['render.ipLabel'], D.render.ipLabel, 24),
       namesPerEndpoint: sanitizeInt(
         raw['render.namesPerEndpoint'],
         1,
@@ -1230,6 +1286,7 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'lanes.openReplacesPerDay': { min: 0, max: 50 },
   'lanes.openReplacesPerFleetDay': { min: 0, max: 500 },
   'l7.maxSameProviderReplacementsPerDay': { min: 0, max: 50 },
+  'names.moveQuietDays': { min: 0, max: 365 },
   'render.namesPerEndpoint': { min: 1, max: 5 },
   'render.backupNames': { min: 1, max: 5 },
   'probe.intervalMinutes': { min: 5, max: 1440 },

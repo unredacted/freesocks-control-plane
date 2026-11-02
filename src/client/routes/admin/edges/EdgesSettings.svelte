@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Edge settings (`/admin/edges/settings`).
-   * URL state: `?section` = basics | rotation | rendering | detector | probes | l7 | maintenance | freedom.
+   * URL state: `?section` = basics | rotation | rendering | detector | probes | l7 | names | maintenance | freedom.
    * Basics and Maintenance are always open; `?section` opens ONE advanced card and
    * scrolls to it. Each section saves only its own changed keys (flat patch); the
    * knobs, their copy and their section live in settings/fields.ts, bounds and
@@ -12,6 +12,7 @@
   import { Input } from '@client/components/ui/input';
   import { Label } from '@client/components/ui/label';
   import { Badge } from '@client/components/ui/badge';
+  import { Checkbox } from '@client/components/ui/checkbox';
   import { searchParam } from '@client/lib/urlState.svelte';
   import { edgeConfigQuery } from '@client/lib/edgesApi';
   import { drainWarningCodes } from '@shared/contracts/edgeCodes';
@@ -35,6 +36,8 @@
     DETECTOR_FIELDS,
     COUNTRY_FIELDS,
     L7_FIELDS,
+    NAMES_FIELDS,
+    NAME_ZONES_PATH,
     PROBE_FIELDS,
     PROBE_SOURCE_FIELDS,
     RENDER_GLOBAL_FIELDS,
@@ -47,6 +50,13 @@
 
   const config = edgeConfigQuery();
   const form = new ConfigForm(() => config.data);
+
+  // Names for addresses: the zones of every DNS account, ticked when eligible.
+  const nameZones = $derived(config.data?.nameZones ?? []);
+  const toggleZone = (id: string, on: boolean) => {
+    const now = form.list(NAME_ZONES_PATH).filter((z) => z !== id);
+    form.set(NAME_ZONES_PATH, on ? [...now, id] : now);
+  };
 
   const sectionParam = searchParam('section', 'basics');
   const section = $derived(parseSection(sectionParam.value));
@@ -335,6 +345,54 @@
           <ConfigField {field} {form} />
         {/each}
       </div>
+    </SettingsSectionCard>
+
+    <SettingsSectionCard
+      id="names"
+      title="Names for load balancer addresses"
+      description="Hand members a name instead of a load balancer's IP. FCP writes the records in the zones you pick."
+      {form}
+      paths={SECTION_PATHS.names}
+      collapsible
+      open={section === 'names'}
+      onToggle={toggle('names')}
+    >
+      <p class="text-muted-foreground mb-4 text-sm">
+        A name needs a DNS lookup, which a censor can see and answer falsely, and blocking one zone
+        stops every name in it. So a node's addresses are spread over the zones you pick, and apps
+        that switch by themselves keep the IP as a fallback. Addresses made before this is on keep
+        their IPs.
+      </p>
+      <div class="grid gap-5 sm:grid-cols-2">
+        {#each NAMES_FIELDS as field (field.path)}
+          <ConfigField {field} {form} />
+        {/each}
+      </div>
+      <h3 class="mt-6 mb-2 text-sm font-medium">Zones names go in</h3>
+      {#if nameZones.length === 0}
+        <p class="text-muted-foreground text-sm">
+          No DNS account has a zone yet. Add one under Providers, DNS providers.
+        </p>
+      {:else}
+        <ul class="space-y-2">
+          {#each nameZones as z (z.id)}
+            <li class="flex items-center gap-2 text-sm">
+              <Checkbox
+                id={`name-zone-${z.id}`}
+                checked={form.list(NAME_ZONES_PATH).includes(z.id)}
+                onCheckedChange={(v) => toggleZone(z.id, v === true)}
+              />
+              <Label for={`name-zone-${z.id}`} class="font-normal">
+                {z.zone} <span class="text-muted-foreground">({z.account})</span>
+              </Label>
+            </li>
+          {/each}
+        </ul>
+        <p class="text-muted-foreground mt-2 text-xs">
+          Use two or more zones you use for nothing else: a blocked zone then takes out only part of
+          a node's addresses.
+        </p>
+      {/if}
     </SettingsSectionCard>
 
     <FreedomDeliveryCard />

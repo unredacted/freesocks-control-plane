@@ -93,6 +93,12 @@ export interface PublishedEdge {
   layer?: EdgeLayer;
   /** L4: IP literals. L7: the fronted hostname members connect to. */
   addresses: { v4?: string; v6?: string; hostname?: string };
+  /**
+   * L4 only: the address's NAME (convex/edgeNames.ts), when names for
+   * addresses are on and the name is in use. A subscription body dials it
+   * instead of the IP literals (lib/edges/render.ts); absent = the IPs.
+   */
+  addressName?: string;
   /** Empty for a listener that presents no name. */
   serverNames: AssignableSni[];
   /** How one name is chosen from `serverNames`. Absent = the legacy modulus PRF. */

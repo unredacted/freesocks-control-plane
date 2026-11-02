@@ -306,6 +306,9 @@ export const ATTENTION_KINDS = [
   // An L7 front's certificate waits on something FCP cannot fix (a CAA record,
   // the validation record), or an account's shared certificate failed.
   'certificate_waiting',
+  // A load balancer address's name FCP could not make, move or remove after its
+  // tries (edgeNames.ts): its records may need removing by hand.
+  'address_name_stuck',
   // The node's newest guided setup run failed and nothing replaced it (its sheet has Try again).
   'setup_run_failed',
   // Freedom modes only through edges: a node in a freedom mode's pool that is not behind a

@@ -37,6 +37,8 @@ export interface EffectiveRule extends RenderRuleInput {
   primaryLabel: string;
   backupLabel: string;
   ipv6Label: string;
+  /** The suffix of a named address's IP fallback entry (`<label> (<ipLabel>)`). */
+  ipLabel: string;
   /** Server names per endpoint for a listener on the `hrw1` PRF (1 = one name, as ever). */
   namesPerEndpoint: number;
   backupNames: number;
@@ -56,6 +58,7 @@ export function effectiveRule(cfg: EdgeConfig['render'], rule: ClientRenderRule)
     primaryLabel: rule.primaryLabel || cfg.primaryLabel,
     backupLabel: rule.backupLabel || cfg.backupLabel,
     ipv6Label: cfg.ipv6Label,
+    ipLabel: cfg.ipLabel,
     namesPerEndpoint: cfg.namesPerEndpoint,
     backupNames: cfg.backupNames,
   };
@@ -131,7 +134,12 @@ export function ruleCanEmitV6(
 /**
  * Expand assigned endpoints into render entries: the IPv4 entry per endpoint
  * plus an IPv6 entry when the edge has one and the mode allows it. An L7
- * (CDN-fronted) edge is ONE entry carrying its hostname.
+ * (CDN-fronted) edge is ONE entry carrying its hostname. An L4 address with a
+ * name (`addressName`, subscription delivery only) is dialled by the name,
+ * which carries both families; in a body with an auto group its IPs follow as
+ * fallback entries, so an app whose lookup of the name is blocked switches to
+ * the IP by itself. A single key (Outline) keeps the IP: it has no room for a
+ * fallback.
  *
  * Leak guard: an endpoint whose address is the origin itself is never emitted,
  * whatever the pool says; `leaked` counts them so the caller can refuse.
@@ -143,6 +151,13 @@ export function renderEntries(
   originAddress?: string,
 ): RenderEndpoint[] {
   return renderEntriesChecked(assigned, rule, hasAutoGroup, originAddress).entries;
+}
+
+/** The name an L4 endpoint is dialled by in this render, or null for its IPs. */
+function addressNameOf(ep: AssignedEndpoint, names: boolean): string | null {
+  return names && (ep.edge.layer ?? 'l4') === 'l4' && ep.edge.addresses.v4
+    ? (ep.edge.addressName ?? null)
+    : null;
 }
 
 /** Whether an address is the node itself: its origin or another address it is known by. */
@@ -163,10 +178,12 @@ export function renderEntriesChecked(
   hasAutoGroup: boolean,
   originAddress?: string,
   nodeAddresses: readonly string[] = [],
+  opts: { names?: boolean } = {},
 ): { entries: RenderEndpoint[]; leaked: number } {
   const out: RenderEndpoint[] = [];
   let leaked = 0;
   const wantV6 = ruleCanEmitV6(rule, hasAutoGroup);
+  const names = opts.names ?? true;
   const leaks = (addr: string) => isNodeAddress(addr, originAddress, nodeAddresses);
   const push = (ep: AssignedEndpoint | null) => {
     if (!ep) return;
@@ -183,6 +200,34 @@ export function renderEntriesChecked(
     if (hostname) {
       if (leaks(hostname)) leaked++;
       else out.push({ ...base, label, address: hostname, family: 'name' });
+      return;
+    }
+    const named = addressNameOf(ep, names);
+    if (named) {
+      // The name resolves to the address's own IPs: refused with any of them.
+      const v4 = ep.edge.addresses.v4!;
+      const v6 = ep.edge.addresses.v6;
+      if (leaks(named) || leaks(v4) || (!!v6 && leaks(v6))) {
+        leaked++;
+        return;
+      }
+      out.push({ ...base, label, address: named, family: 'name' });
+      if (!hasAutoGroup) return;
+      out.push({
+        ...base,
+        label: `${label} (${rule.ipLabel})`,
+        address: v4,
+        family: 'v4',
+        fallback: true,
+      });
+      if (v6 && wantV6)
+        out.push({
+          ...base,
+          label: `${label} (${rule.ipv6Label})`,
+          address: v6,
+          family: 'v6',
+          fallback: true,
+        });
       return;
     }
     if (ep.edge.addresses.v4) {
@@ -205,6 +250,9 @@ export function renderEntriesChecked(
   const pushAlternates = (ep: AssignedEndpoint | null) => {
     if (!ep?.alternates || !ep.edge.addresses.v4 || leaks(ep.edge.addresses.v4)) return;
     const label = ep.role === 'primary' ? rule.primaryLabel : rule.backupLabel;
+    // A named address's further names dial the name too.
+    const named = addressNameOf(ep, names);
+    if (named && leaks(named)) return;
     ep.alternates.forEach((alt, i) =>
       out.push({
         role: ep.role,
@@ -214,8 +262,8 @@ export function renderEntriesChecked(
         sni: alt.sni,
         hostHeader: alt.hostHeader,
         label: `${label} ${i + 2}`,
-        address: ep.edge.addresses.v4!,
-        family: 'v4',
+        address: named ?? ep.edge.addresses.v4!,
+        family: named ? 'name' : 'v4',
         variant: i + 1,
       }),
     );
@@ -327,12 +375,17 @@ export interface RenderResult extends RenderOutput {
   delivery: DeliveryVerdict;
 }
 
-/** Every address an origin's edges answer on (IPv4, IPv6, an L7 front's hostname). */
+/** Every address an origin's edges answer on (IPv4, IPv6, an L7 front's hostname, an address's name). */
 export function edgeAddressesOf(
-  edges: ReadonlyArray<{ addresses: { v4?: string; v6?: string; hostname?: string } }>,
+  edges: ReadonlyArray<{
+    addresses: { v4?: string; v6?: string; hostname?: string };
+    addressName?: string;
+  }>,
 ): string[] {
   return edges.flatMap((e) =>
-    [e.addresses.v4, e.addresses.v6, e.addresses.hostname].filter((a): a is string => !!a),
+    [e.addresses.v4, e.addresses.v6, e.addresses.hostname, e.addressName].filter(
+      (a): a is string => !!a,
+    ),
   );
 }
 
@@ -392,6 +445,7 @@ export function renderEdgeEndpoints(args: {
     formatHasAutoGroup(rule, format),
     args.originAddress,
     args.nodeAddresses,
+    { names: (args.deliveryStyle ?? 'subscription') === 'subscription' },
   );
   if (entries.length === 0) return unavailable(leaked > 0 ? 'leak_detected' : 'empty_pool');
   const edgeAddresses = args.edgeAddresses;
