@@ -601,6 +601,7 @@ const postHandler: Handler = async (ctx, parts, admin, body) => {
         await ctx.runMutation(internal.nodeActivation.approve, {
           intentId,
           reviewHash: String(body.reviewHash ?? ''),
+          ...(body.closeGate === true ? { closeGate: true } : {}),
           ...actorOf(admin),
         }),
       );

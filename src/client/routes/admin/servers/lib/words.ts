@@ -814,7 +814,7 @@ const BLOCKER_WORDS: Record<string, string> = {
   'servers.stage':
     'The node is not at a step where it can be approved. Wait for the step it is on to finish.',
   'servers.maintenance_required':
-    'Put the node in maintenance first: a live node gets a new address only while members are held off it.',
+    'Approving closes this node for members until it goes live, about a minute: a live node gets a new address only while members are held off it. Members who refresh meanwhile are given another node, or keep their configuration.',
   'servers.standbys_unverified:key_changed':
     'The node’s REALITY key changed since its new addresses were tried. Try each one again with the new key (its protection progress, or the node in Edges), then approve.',
 };

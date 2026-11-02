@@ -2330,77 +2330,103 @@ export const startMaintenance = internalMutation({
   handler: async (ctx, { intentId, reason, actorAdminId }) => {
     const intent = await ctx.db.get(intentId);
     if (!intent) return refuse('not_found', 'No such node');
-    if (intent.state === 'retiring' || intent.state === 'retired')
-      refuse('servers.node_retiring', 'This node is being retired');
-    if (intent.maintenance) return { ok: true as const, stage: intent.activation.stage };
-    const now = Date.now();
-    for (const r of await ctx.db
-      .query('panelActivationRuns')
-      .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
-      .collect())
-      if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
-        await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
-    const stage =
-      intent.activation.stage === 'activating' || intent.activation.stage === 'live'
-        ? 'awaiting_approval'
-        : intent.activation.stage;
-    await ctx.db.patch(intentId, {
-      delivery: {
-        ...intent.delivery,
-        disposition: intent.delivery.disposition === 'live' ? 'unavailable' : 'staged',
-      },
-      maintenance: {
-        id: crypto.randomUUID(),
-        reason: (reason ?? 'operator').slice(0, 60),
-        since: now,
-        byAdminId: actorAdminId,
-      },
-      activation: { ...intent.activation, stage, reviewHash: undefined, currentRunId: undefined },
-      updatedAt: now,
-    });
-    await bumpGateVersion(ctx, intent.backendServerId);
-    // A live node's mirrors still hold its working body: rewritten under the closed gate.
-    if (intent.delivery.disposition === 'live') await scheduleMirrorRefresh(ctx);
-    const server = await ctx.db.get(intent.backendServerId);
-    await writeAuditLog(ctx, {
-      actorType: 'admin',
-      actorId: actorAdminId ?? undefined,
-      action: 'servers.node.maintenance_started',
-      targetType: 'panel_node_intent',
-      targetId: intentId,
-      payload: { backendSlug: server?.slug ?? '', name: intent.name },
-    });
-    return { ok: true as const, stage };
+    return { ok: true as const, stage: await openMaintenance(ctx, intent, reason, actorAdminId) };
   },
 });
+
+/**
+ * Close one node for maintenance (`startMaintenance`, and a go-live approval
+ * that closes the gate itself, nodeActivation.approve `closeGate`). Returns
+ * the activation stage the node is at afterwards.
+ */
+export async function openMaintenance(
+  ctx: MutationCtx,
+  intent: Doc<'panelNodeIntents'>,
+  reason: string | undefined,
+  actorAdminId: Id<'adminUsers'> | undefined,
+): Promise<string> {
+  if (intent.state === 'retiring' || intent.state === 'retired')
+    refuse('servers.node_retiring', 'This node is being retired');
+  if (intent.maintenance) return intent.activation.stage;
+  const now = Date.now();
+  for (const r of await ctx.db
+    .query('panelActivationRuns')
+    .withIndex('by_intent', (q) => q.eq('intentId', intent._id))
+    .collect())
+    if (r.state === 'running' || r.state === 'blocked' || r.state === 'review')
+      await ctx.db.patch(r._id, { state: 'superseded', updatedAt: now });
+  const stage =
+    intent.activation.stage === 'activating' || intent.activation.stage === 'live'
+      ? 'awaiting_approval'
+      : intent.activation.stage;
+  await ctx.db.patch(intent._id, {
+    delivery: {
+      ...intent.delivery,
+      disposition: intent.delivery.disposition === 'live' ? 'unavailable' : 'staged',
+    },
+    maintenance: {
+      id: crypto.randomUUID(),
+      reason: (reason ?? 'operator').slice(0, 60),
+      since: now,
+      byAdminId: actorAdminId,
+    },
+    activation: { ...intent.activation, stage, reviewHash: undefined, currentRunId: undefined },
+    updatedAt: now,
+  });
+  await bumpGateVersion(ctx, intent.backendServerId);
+  // A live node's mirrors still hold its working body: rewritten under the closed gate.
+  if (intent.delivery.disposition === 'live') await scheduleMirrorRefresh(ctx);
+  const server = await ctx.db.get(intent.backendServerId);
+  await writeAuditLog(ctx, {
+    actorType: 'admin',
+    actorId: actorAdminId ?? undefined,
+    action: 'servers.node.maintenance_started',
+    targetType: 'panel_node_intent',
+    targetId: intent._id,
+    payload: { backendSlug: server?.slug ?? '', name: intent.name },
+  });
+  return stage;
+}
 
 export const finishMaintenance = internalMutation({
   args: { intentId: v.id('panelNodeIntents'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { intentId, actorAdminId }) => {
     const intent = await ctx.db.get(intentId);
     if (!intent) return refuse('not_found', 'No such node');
-    if (!intent.maintenance) return { ok: true as const, stage: intent.activation.stage };
-    const now = Date.now();
-    await ctx.db.patch(intentId, {
-      maintenance: undefined,
-      delivery: { ...intent.delivery, disposition: intent.approved ? 'staged' : 'staged' },
-      approved: undefined,
-      updatedAt: now,
-    });
-    await bumpGateVersion(ctx, intent.backendServerId);
-    const server = await ctx.db.get(intent.backendServerId);
-    await writeAuditLog(ctx, {
-      actorType: 'admin',
-      actorId: actorAdminId ?? undefined,
-      action: 'servers.node.maintenance_finished',
-      targetType: 'panel_node_intent',
-      targetId: intentId,
-      payload: { backendSlug: server?.slug ?? '', name: intent.name },
-    });
-    await scheduleReconcile(ctx, (await ctx.db.get(intentId))!);
+    await endMaintenance(ctx, intent, actorAdminId);
     return { ok: true as const, stage: intent.activation.stage };
   },
 });
+
+/**
+ * Finish a node's maintenance transition (`finishMaintenance`, and a go-live
+ * approval that closes the gate itself): the node is approved again before it
+ * is served; nothing reopens here.
+ */
+export async function endMaintenance(
+  ctx: MutationCtx,
+  intent: Doc<'panelNodeIntents'>,
+  actorAdminId: Id<'adminUsers'> | undefined,
+): Promise<void> {
+  if (!intent.maintenance) return;
+  await ctx.db.patch(intent._id, {
+    maintenance: undefined,
+    delivery: { ...intent.delivery, disposition: 'staged' },
+    approved: undefined,
+    updatedAt: Date.now(),
+  });
+  await bumpGateVersion(ctx, intent.backendServerId);
+  const server = await ctx.db.get(intent.backendServerId);
+  await writeAuditLog(ctx, {
+    actorType: 'admin',
+    actorId: actorAdminId ?? undefined,
+    action: 'servers.node.maintenance_finished',
+    targetType: 'panel_node_intent',
+    targetId: intent._id,
+    payload: { backendSlug: server?.slug ?? '', name: intent.name },
+  });
+  await scheduleReconcile(ctx, (await ctx.db.get(intent._id))!);
+}
 
 // --- a shared change: the maintenance transition over its blast radius ------------------------------
 

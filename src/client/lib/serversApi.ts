@@ -216,10 +216,11 @@ export const buildDirectTestLink = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/test-link`, {}, DirectTestLink);
 export const confirmDirect = (slug: string, id: string, binding: DirectTestLink['binding']) =>
   apiClient.post(`${intentPath(slug, id)}/confirm`, { binding }, z.object({ stage: z.string() }));
-export const approveNode = (slug: string, id: string, reviewHash: string) =>
+/** `closeGate`: the approval closes a live node's gate itself (it needs it closed, nothing else). */
+export const approveNode = (slug: string, id: string, reviewHash: string, closeGate = false) =>
   apiClient.post(
     `${intentPath(slug, id)}/approve`,
-    { reviewHash },
+    { reviewHash, ...(closeGate ? { closeGate: true } : {}) },
     z.object({ runId: z.string() }),
   );
 export const retireNode = (slug: string, id: string, decision?: { disposition: 'keep-dark' }) =>
@@ -236,13 +237,6 @@ export const confirmWiped = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/wiped`, {}, z.object({ stage: z.string() }));
 export const finishMaintenance = (slug: string, id: string) =>
   apiClient.post(`${intentPath(slug, id)}/maintenance`, {}, z.object({ ok: z.literal(true) }));
-/** Close the node for maintenance: members get the unavailable answer until it is approved again. */
-export const startMaintenance = (slug: string, id: string) =>
-  apiClient.post(
-    `${intentPath(slug, id)}/maintenance`,
-    { start: true },
-    z.object({ ok: z.literal(true) }),
-  );
 
 const ROOT = ['admin', 'servers'] as const;
 export const serverKeys = {
