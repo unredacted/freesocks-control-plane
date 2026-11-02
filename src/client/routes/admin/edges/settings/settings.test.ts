@@ -21,6 +21,7 @@ import {
   COUNTRY_FIELDS,
   DETECTOR_FIELDS,
   L7_FIELDS,
+  NAMES_FIELDS,
   PROBE_FIELDS,
   PROBE_SOURCE_FIELDS,
   RENDER_GLOBAL_FIELDS,
@@ -42,6 +43,7 @@ const ALL_FIELDS: Field[] = [
   ...PROBE_FIELDS,
   ...COUNTRY_FIELDS,
   ...L7_FIELDS,
+  ...NAMES_FIELDS,
 ];
 
 describe('flattenConfig', () => {

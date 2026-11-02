@@ -12,6 +12,7 @@ export const SETTINGS_SECTIONS = [
   'detector',
   'probes',
   'l7',
+  'names',
   'maintenance',
   'freedom',
 ] as const;
@@ -296,6 +297,14 @@ export const RENDER_GLOBAL_FIELDS: Field[] = [
     path: 'render.ipv6Label',
     label: 'IPv6 suffix',
     helper: 'Added to the label of an IPv6 entry.',
+    maxLength: 24,
+  },
+  {
+    kind: 'text',
+    path: 'render.ipLabel',
+    label: 'IP fallback suffix',
+    helper:
+      'Added to the label of the IP entry that follows an address handed out by name, in apps that switch by themselves.',
     maxLength: 24,
   },
   {
@@ -745,6 +754,28 @@ export const L7_FIELDS: Field[] = [
   },
 ];
 
+/** Names for load balancer addresses; the zones are a checklist of their own (`names.zones`). */
+export const NAMES_FIELDS: Field[] = [
+  {
+    kind: 'switch',
+    path: 'names.enabled',
+    label: 'Give load balancer addresses a name',
+    helper:
+      'On: an address made from now on gets a name in one of the zones below, and members dial the name. Apps that switch by themselves also get the IP as a fallback. Off: every member gets IPs again; names already made stay until their address goes.',
+  },
+  {
+    kind: 'number',
+    path: 'names.moveQuietDays',
+    label: 'Move a name to its replacement at most every',
+    unit: 'days',
+    helper:
+      'When an address is replaced, its name points at the new one, so members keep working without updating. A name whose new address is blocked within this window is likely known to the censor, so the next address gets a new name. 0: never move a name.',
+  },
+];
+
+/** The zone checklist's own path (a list of zone ids). */
+export const NAME_ZONES_PATH = 'names.zones';
+
 const pathsOf = (fields: readonly Field[]): string[] => fields.map((f) => f.path);
 
 /** Every flat path a section owns (the rendering section adds its family rules at runtime). */
@@ -758,4 +789,5 @@ export const SECTION_PATHS: Record<
   detector: pathsOf(DETECTOR_FIELDS),
   probes: [...pathsOf(PROBE_SOURCE_FIELDS), ...pathsOf(PROBE_FIELDS), ...pathsOf(COUNTRY_FIELDS)],
   l7: pathsOf(L7_FIELDS),
+  names: [...pathsOf(NAMES_FIELDS), NAME_ZONES_PATH],
 };

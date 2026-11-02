@@ -56,6 +56,7 @@ export const ATTENTION_RANK = [
   'setup_run_failed',
   'needs_test',
   'certificate_waiting',
+  'address_name_stuck',
   'rotation_failed',
   'node_ready_to_protect',
   'node_mode_disabled',

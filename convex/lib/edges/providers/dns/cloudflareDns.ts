@@ -337,6 +337,23 @@ export function cloudflareDnsClient(cfg: CloudflareDnsConfig, fetchImpl?: FetchL
       }
     },
 
+    async updateRecord(id: string, args: DnsCreateArgs): Promise<DnsRecord> {
+      // PATCH: only what is sent changes; the record keeps its id.
+      const body = {
+        zone_id,
+        type: args.type,
+        name: normalizeDnsName(args.name),
+        content: args.content,
+        proxied: args.proxied,
+        ttl: args.proxied ? 1 : (args.ttl ?? 1),
+        comment: args.comment,
+      };
+      const rec = await cfCall('dns-update', () => client.dns.records.edit(id, body as never), [
+        cfg.apiToken,
+      ]);
+      return toDnsRecord(rec as unknown as RawRecord);
+    },
+
     async readZone() {
       const zone = await cfCall('location', () => client.zones.get({ zone_id }), [cfg.apiToken]);
       const plan = (zone.plan as { legacy_id?: string } | undefined)?.legacy_id;

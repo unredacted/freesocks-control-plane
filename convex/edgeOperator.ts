@@ -2140,6 +2140,35 @@ export const attention = internalQuery({
         since: iso(row.updatedAt),
       });
     }
+    // Names for load balancer addresses FCP gave up on (edgeNames.ts): one
+    // that was being removed may still point at an address given back to its
+    // provider, so it is critical; one that could not be made or moved leaves
+    // its address on its IP.
+    const parkedNames = await ctx.db
+      .query('edgeNames')
+      .withIndex('by_state', (q) => q.eq('state', 'parked'))
+      .take(50);
+    for (const row of parkedNames) {
+      const relay = relays.find((r) => r._id === row.relayId) ?? null;
+      // Stale: it was being removed, or moved and its records may still point
+      // at the address it was leaving.
+      const stale = row.served.at(-1)?.until !== undefined || row.leavingEdgeId !== undefined;
+      items.push({
+        id: `address_name_stuck:${row._id}`,
+        kind: 'address_name_stuck',
+        severity: stale ? 'critical' : 'warning',
+        relaySlug: relay?.slug ?? null,
+        relayId: relay ? (relay._id as string) : null,
+        edgeId: row.edgeId as string,
+        listenerKey: null,
+        accountId: row.dnsAccountId as string,
+        rotationId: null,
+        code: row.failure?.code ?? null,
+        facts: { attempts: row.attempts, removing: stale, nameId: row._id as string },
+        action: 'open_relay',
+        since: iso(row.failure?.at ?? row.updatedAt),
+      });
+    }
     // FCP's own client-check service is set up but did not answer its last
     // health check: no address can be checked by it until it does.
     const clientCheck = await readStateJson<ClientCheckHealthRecord>(

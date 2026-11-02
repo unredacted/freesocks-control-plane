@@ -31,10 +31,12 @@
   import InlineError from '@client/components/InlineError.svelte';
   import {
     edgeCountriesQuery,
+    dismissEdgeName,
     edgeDetailQuery,
     invalidateEdge,
     providersQuery,
     refreshEdgeLive,
+    renewEdgeName,
     setEdgeLiveSnapshot,
   } from '@client/lib/edgesApi';
   import {
@@ -86,6 +88,48 @@
 
   const edge = $derived(detail.data?.edge ?? null);
   const live = $derived(detail.data?.live ?? null);
+  // Names for load balancer addresses: what members dial instead of the IPs.
+  const addressName = $derived(detail.data?.name ?? null);
+  const NAME_STATE_WORDS: Record<string, string> = {
+    creating: 'Being made',
+    live: 'In use',
+    moving: 'Moving here',
+    removing: 'Being removed',
+    gone: 'Removed',
+    parked: 'Stuck',
+  };
+  const nameRows = $derived.by((): KeyValueRow[] => {
+    const n = addressName;
+    if (!n) return [];
+    return [
+      {
+        label: 'Name',
+        value: n.fqdn,
+        mono: true,
+        copy: true,
+        hint: n.movedHere ? 'It came here from the address this one replaced.' : undefined,
+      },
+      {
+        label: 'State',
+        value: NAME_STATE_WORDS[n.state] ?? humanizeCode(n.state),
+        tone: n.state === 'parked' ? 'danger' : n.state === 'live' ? 'success' : 'neutral',
+      },
+      {
+        label: 'Moved',
+        value: n.movedAt ? `${n.moves} times, last ${relativeTime(n.movedAt)}` : '',
+      },
+      { label: 'Last problem', value: n.failure ? codeLabel(n.failure.code) : '' },
+    ];
+  });
+  const nameAction = createMutation(() => ({
+    mutationFn: (a: { id: string; kind: 'renew' | 'dismiss' }) =>
+      a.kind === 'renew' ? renewEdgeName(a.id) : dismissEdgeName(a.id),
+    onSuccess: (_d, a) => {
+      invalidateEdge(qc, a.id);
+      toast.success(a.kind === 'renew' ? 'A new name is being made' : 'Name closed');
+    },
+    onError: () => toast.error('The name could not be changed'),
+  }));
 
   // The accounts (with their locations) name the edge's location and the DNS
   // account its front writes through. The page around the drawer reads the
@@ -302,6 +346,41 @@
         {/if}
 
         <KeyValue title="Identity" rows={identityRows} hideEmpty />
+        {#if addressName}
+          <section class="space-y-2">
+            <KeyValue title="Address name" rows={nameRows} hideEmpty />
+            <p class="text-muted-foreground text-xs">
+              Members dial this name. Apps that switch by themselves also hold the IP.
+            </p>
+            <div class="flex flex-wrap gap-2">
+              {#if addressName.state !== 'removing' && addressName.state !== 'gone'}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={nameAction.isPending}
+                  onclick={() => nameAction.mutate({ id: edge.id, kind: 'renew' })}
+                >
+                  New name
+                </Button>
+              {/if}
+              {#if addressName.stuck}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={nameAction.isPending}
+                  onclick={() => nameAction.mutate({ id: edge.id, kind: 'dismiss' })}
+                >
+                  Dismiss
+                </Button>
+              {/if}
+            </div>
+            {#if addressName.stuck}
+              <p class="text-muted-foreground text-xs">
+                Dismiss only after removing its records in the zone by hand.
+              </p>
+            {/if}
+          </section>
+        {/if}
         <KeyValue title="Times" rows={timeRows} hideEmpty />
 
         {#if edge.readiness}

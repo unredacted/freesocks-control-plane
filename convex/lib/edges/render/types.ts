@@ -29,7 +29,10 @@ export interface RenderEndpoint {
   /** The listener whose template entry to clone. */
   listenerKey: string;
   address: string;
-  /** `name` = an L7 front's hostname (one entry, never a v6 sibling). */
+  /**
+   * `name` = an L7 front's hostname (one entry, never a v6 sibling), or an L4
+   * address's name (lib/edges/addressNames.ts).
+   */
   family: 'v4' | 'v6' | 'name';
   port: number;
   /** Selected server name; null when the listener presents none (address/port swap only). */
@@ -46,6 +49,12 @@ export interface RenderEndpoint {
    * thing `maxEntries` drops: a rule that caps entries keeps primary + backup.
    */
   variant?: number;
+  /**
+   * The IP of an address members are handed by NAME, as a fallback for an app
+   * that switches by itself when the name does not resolve (an auto group).
+   * Ranked after every first-name entry and before further names.
+   */
+  fallback?: boolean;
 }
 
 export interface RenderRuleInput {
@@ -105,8 +114,15 @@ export function orderEndpoints(
       rule.order === 'backup-first' ? (e.role === 'backup' ? 0 : 1) : e.role === 'primary' ? 0 : 1;
     const variant = e.variant ?? 0;
     // Every first-name entry (both roles, both families) outranks every
-    // further-name entry, so a cap cuts the extra names first.
-    return (variant > 0 ? 1000 : 0) + roleRank * 100 + variant * 2 + (e.family === 'v6' ? 1 : 0);
+    // further-name entry, so a cap cuts the extra names first; a named
+    // address's IP fallback sits between them (a blocked name takes its
+    // further names with it, never its IP).
+    return (
+      (variant > 0 ? 1000 : e.fallback ? 500 : 0) +
+      roleRank * 100 +
+      variant * 2 +
+      (e.family === 'v6' ? 1 : 0)
+    );
   };
   const sorted = [...endpoints].sort((a, b) => rank(a) - rank(b));
   return rule.maxEntries > 0 ? sorted.slice(0, rule.maxEntries) : sorted;

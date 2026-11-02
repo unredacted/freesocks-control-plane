@@ -1227,10 +1227,27 @@ export const EdgeDetailProbe = z.object({
   okVantages: z.number().int(),
   failVantages: z.number().int(),
 });
+/** An L4 address's name (names for load balancer addresses); null = it is handed out by IP. */
+export const EdgeAddressName = z.object({
+  fqdn: z.string(),
+  state: z.enum(['creating', 'live', 'moving', 'removing', 'gone', 'parked']),
+  zoneLocationId: z.string(),
+  moves: z.number(),
+  movedAt: z.string().nullable(),
+  /** It came to this address from the one this address replaced. */
+  movedHere: z.boolean(),
+  failure: z.object({ code: z.string(), at: z.string() }).nullable(),
+  /** A name of this address FCP gave up on is still open (Dismiss once removed by hand). */
+  stuck: z.boolean().default(false),
+});
+export type EdgeAddressName = z.infer<typeof EdgeAddressName>;
+
 export const EdgeDetail = z.object({
   edge: EdgeAdmin,
   live: EdgeLive.nullable(),
   probes: z.array(EdgeDetailProbe),
+  /** Absent from an older server. */
+  name: EdgeAddressName.nullable().default(null),
 });
 export type EdgeDetail = z.infer<typeof EdgeDetail>;
 export const EdgeLiveResponse = z.object({ live: EdgeLive.nullable() });
@@ -2266,6 +2283,14 @@ export const EdgeConfigView = z.object({
       lanes: z
         .object({ openReplacesPerDay: z.number(), openReplacesPerFleetDay: z.number() })
         .default({ openReplacesPerDay: 1, openReplacesPerFleetDay: 10 }),
+      /** Names for load balancer addresses (absent from an older server: off). */
+      names: z
+        .object({
+          enabled: z.boolean(),
+          zones: z.array(z.string()),
+          moveQuietDays: z.number(),
+        })
+        .default({ enabled: false, zones: [], moveQuietDays: 30 }),
       render: z
         .object({
           enabled: z.boolean(),
@@ -2273,6 +2298,7 @@ export const EdgeConfigView = z.object({
           primaryLabel: z.string(),
           backupLabel: z.string(),
           ipv6Label: z.string(),
+          ipLabel: z.string().default('IP'),
           namesPerEndpoint: z.number().default(3),
           backupNames: z.number().default(1),
           ipv6Mode: z.enum(['off', 'auto-group-only', 'both']),
@@ -2306,6 +2332,13 @@ export const EdgeConfigView = z.object({
   bounds: z.record(z.string(), z.object({ min: z.number(), max: z.number() })).default({}),
   /** The compiled defaults (same flat paths), for the reset-to-default affordance. */
   defaults: z.record(z.string(), z.unknown()).default({}),
+  /**
+   * The zones a name for an address can go in: every zone location of a DNS
+   * account (`names.zones` holds the chosen ids). Absent from an older server.
+   */
+  nameZones: z
+    .array(z.object({ id: z.string(), zone: z.string(), account: z.string() }))
+    .default([]),
 });
 export type EdgeConfigView = z.infer<typeof EdgeConfigView>;
 

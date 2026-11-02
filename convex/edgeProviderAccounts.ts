@@ -93,6 +93,7 @@ import {
   assertDnsAccountOfPlacement,
   type LocationAdmin,
 } from './edgeLocations';
+import { namesInZone } from './edgeNames';
 import { deleteCatalogOf } from './edgeProviderCatalog';
 import {
   accountCostAdmin,
@@ -1094,7 +1095,7 @@ export const remove = internalMutation({
         message: "A backend's origin names use this account; change its setup first",
       });
     // Its locations go with it, unless a protected node or an open setup run
-    // still names one.
+    // still names one, or names for addresses still live in one of its zones.
     const locations = await locationsOfAccount(ctx.db, id);
     for (const loc of locations) {
       const use = await locationInUse(ctx.db, loc);
@@ -1102,6 +1103,11 @@ export const remove = internalMutation({
         throw new ConvexError({
           code: 'edge.account_in_use',
           message: 'A node still uses or is being protected in a location of this account',
+        });
+      if ((await namesInZone(ctx.db, loc._id)) > 0)
+        throw new ConvexError({
+          code: 'edge.names_in_zone',
+          message: 'Names for addresses still live in a zone of this account',
         });
     }
     for (const loc of locations) await ctx.db.delete(loc._id);

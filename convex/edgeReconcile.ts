@@ -475,6 +475,16 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     console.warn(`[edge-reconcile] plans: ${errText(err)}`);
   }
 
+  // 4g. Names for load balancer addresses (edgeNames.ts): every name being
+  // made, moved or removed gets a pass, a live one whose address changed is
+  // written again, and an address that wants a name and has none gets one.
+  try {
+    await namesPass(ctx, edges, report);
+  } catch (err) {
+    report.errors++;
+    console.warn(`[edge-reconcile] names: ${errText(err)}`);
+  }
+
   // 5. Pool upkeep + 6. origin deletes. While the maintenance switch is on,
   // upkeep (new provisioning / publishing) is not admitted; deletes still finish.
   const maintenance = await ctx.runQuery(internal.edgeMaintenance.state, {});
@@ -948,6 +958,9 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     await ctx.runMutation(internal.edgeReconcileMutations.destroyExhausted, { edgeId: edge._id });
     return;
   }
+  // Names first: the address goes back to the provider, and no name may still
+  // point at it when it does.
+  if (await namesFirst(ctx, edge)) return;
   let current = edge;
   for (let walked = 0; walked < EDGE_PLUMBING.maxDestroyStepsPerPass; walked++) {
     const ledger = ledgerOf(current);
@@ -1114,6 +1127,80 @@ async function destroyResource(
         : null,
   });
   return out.status === 'confirmed_gone';
+}
+
+/**
+ * A destroying address's names are removed (or moved off it) before any of
+ * its provider resources: one pass each, then whether any still points at it
+ * (the walk waits; a name that cannot be removed parks after its tries and
+ * stops holding it).
+ */
+async function namesFirst(ctx: ActionCtx, edge: Edge): Promise<boolean> {
+  const pending = await ctx.runMutation(internal.edgeNames.retireForDestroy, {
+    edgeId: edge._id,
+  });
+  if (pending.length === 0) return false;
+  for (const nameId of pending) await ctx.runAction(internal.edgeNameOps.work, { nameId });
+  return (await ctx.runQuery(internal.edgeNames.pendingForDestroy, { edgeId: edge._id })) > 0;
+}
+
+/** Name passes per tick (each is a few DNS calls). */
+const NAMES_PER_TICK = 20;
+/** Pages of live names (200 each) looked at for drift per tick. */
+const NAME_DRIFT_PAGES = 50;
+
+async function namesPass(ctx: ActionCtx, edges: Edge[], report: ReconcileReport) {
+  const candidates = edges
+    .filter(
+      (e) =>
+        e.nameWanted === true &&
+        e.managed &&
+        e.status === 'active' &&
+        (e.layer ?? 'l4') === 'l4' &&
+        !!e.addresses.v4,
+    )
+    .map((e) => e._id);
+  // Every candidate is looked at, 200 per read, until a tick's worth want one.
+  const plan = await ctx.runQuery(internal.edgeNames.upkeepPlan, {
+    candidates: candidates.slice(0, 200),
+    limit: NAMES_PER_TICK,
+  });
+  for (let i = 200; i < candidates.length && plan.edgeIds.length < NAMES_PER_TICK; i += 200) {
+    const more = await ctx.runQuery(internal.edgeNames.upkeepPlan, {
+      candidates: candidates.slice(i, i + 200),
+      limit: NAMES_PER_TICK - plan.edgeIds.length,
+      rows: false,
+    });
+    plan.edgeIds.push(...more.edgeIds);
+  }
+  // Live names whose records no longer match their address, every page of them.
+  const work = [...plan.nameIds];
+  let cursor: string | null = null;
+  for (let page = 0; page < NAME_DRIFT_PAGES; page++) {
+    const drift: { nameIds: Id<'edgeNames'>[]; cursor: string | null } = await ctx.runQuery(
+      internal.edgeNames.liveDrift,
+      { cursor },
+    );
+    for (const id of drift.nameIds) if (!work.includes(id)) work.push(id);
+    if (!drift.cursor) break;
+    cursor = drift.cursor;
+  }
+  for (const nameId of work.slice(0, NAMES_PER_TICK * 2)) {
+    try {
+      await ctx.runAction(internal.edgeNameOps.work, { nameId });
+    } catch (err) {
+      report.errors++;
+      console.warn(`[edge-reconcile] name ${nameId}: ${errText(err)}`);
+    }
+  }
+  for (const edgeId of plan.edgeIds) {
+    try {
+      await ctx.runAction(internal.edgeNameOps.work, { edgeId });
+    } catch (err) {
+      report.errors++;
+      console.warn(`[edge-reconcile] name for ${edgeId}: ${errText(err)}`);
+    }
+  }
 }
 
 /** Whether the edge's provider confirms deletes by reading them back (`confirmDestroyed`). */

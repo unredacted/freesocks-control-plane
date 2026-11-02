@@ -48,7 +48,8 @@ import {
   scheduleMirrorRefresh,
   todayKey,
 } from './relays';
-import { insertPlannedEdge } from './edges';
+import { insertPlannedEdge, scheduleNameOnAddress } from './edges';
+import { moveNameBack, moveNameOnReplace } from './edgeNames';
 import { accountTested, certificateRefusalFor, dayKey } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
 import {
@@ -180,6 +181,7 @@ import { clientCheckFailedNow, clientCheckReadiness, runClientCheck } from './ed
 import { locationTicked } from './lib/edges/tickedLocation';
 import { replacementPlacement, replacementPolicyOf } from './lib/edges/replacementHolders';
 import { isOpenLaneReplace, laneForPublish, openBudgetLeft, openReplacesToday } from './edgeLanes';
+import { edgeLaneOf } from './lib/edges/lanes';
 import { noteBlockedIn } from './edgeTrust';
 
 type Rotation = Doc<'edgeRotations'>;
@@ -1872,12 +1874,14 @@ export const advance = internalMutation({
       case 'verified': {
         if (r.toEdgeId) {
           const e = await ctx.db.get(r.toEdgeId);
-          if (e && e.status !== 'active')
+          if (e && e.status !== 'active') {
             await ctx.db.patch(r.toEdgeId, {
               status: 'active',
               statusChangedAt: now,
               updatedAt: now,
             });
+            await scheduleNameOnAddress(ctx, e, { ...e, status: 'active' });
+          }
         }
         await ctx.db.patch(rotationId, {
           phase: 'publishing',
@@ -2398,6 +2402,16 @@ export const applyPublish = internalMutation({
         : {}),
       updatedAt: now,
     });
+    // The replaced address's name serves the new one, where it may move
+    // (edgeNames.ts `moveNameOnReplace`): members holding it need no refresh.
+    if (replaced)
+      await moveNameOnReplace(ctx, {
+        from: replaced,
+        to,
+        toLane: edgeLaneOf({ lane: lane.lane ?? to.lane }),
+        now,
+        rotationId,
+      });
     const epoch = origin.publicationEpoch + 1;
     await ctx.db.patch(r.relayId, {
       publishedEdgeIds: withEdgeAt(published, poolIndex, to._id),
@@ -2628,6 +2642,7 @@ export const applyRollbackBinding = internalMutation({
           statusChangedAt: now,
           updatedAt: now,
         });
+        if (r.toEdgeId) await moveNameBack(ctx, { current: r.toEdgeId, previous: prev._id, now });
         const placed = await placeAt(
           ctx,
           origin,
@@ -2856,6 +2871,8 @@ export const resolveQuarantine = internalMutation({
             statusChangedAt: now,
             updatedAt: now,
           });
+          if (rotation.toEdgeId)
+            await moveNameBack(ctx, { current: rotation.toEdgeId, previous: prev._id, now });
           const placed = await placeAt(
             ctx,
             origin,

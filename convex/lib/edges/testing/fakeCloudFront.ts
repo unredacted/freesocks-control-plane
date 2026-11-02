@@ -432,6 +432,13 @@ export function fakeDnsZone(dns: CloudflareDnsConfig, seed: DnsRecord[] = []): F
       const i = rows.findIndex((r) => r.id === id);
       if (i >= 0) rows.splice(i, 1);
     },
+    async updateRecord(id: string, args: DnsCreateArgs) {
+      const i = rows.findIndex((r) => r.id === id);
+      if (i < 0) throw new Error('fake dns: no such record');
+      const rec: DnsRecord = { id, ...args, name: norm(args.name) };
+      rows[i] = rec;
+      return rec;
+    },
     async listCaa() {
       return [];
     },

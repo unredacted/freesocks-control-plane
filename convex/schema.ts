@@ -2359,6 +2359,11 @@ export default defineSchema({
     // a country round strike its fresh holders once. `evidenceAt`: when the block's
     // evidence began.
     blockClaim: v.optional(v.object({ at: v.number(), evidenceAt: v.number() })),
+    // An L4 address planned while `edge.names.enabled` was on: it gets a name
+    // (an `edgeNames` row) once it has an address. Frozen at plan time, so an
+    // address made before the switch keeps its IP (docs/edges.md "Names for
+    // load balancer addresses").
+    nameWanted: v.optional(v.boolean()),
     updatedAt: v.number(),
   })
     .index('by_relay_status', ['relayId', 'status'])
@@ -2367,6 +2372,74 @@ export default defineSchema({
     .index('by_account_status', ['accountId', 'status'])
     .index('by_location_status', ['locationId', 'status'])
     .index('by_name', ['name']),
+
+  // A name for a load balancer address (lib/edges/addressNames.ts, docs/edges.md
+  // "Names for load balancer addresses"): A/AAAA records FCP writes in a zone of
+  // a DNS account, for the address `edgeId`. Its own row, not an edge resource,
+  // because a name can MOVE to the address that replaces its own. Every record
+  // carries the marker `fcp-name:<this id>`; each pass reads the name back
+  // before it writes, so an answer lost mid-call is settled by discovery.
+  edgeNames: defineTable({
+    relayId: v.id('relays'),
+    // The address the name serves (its records point there once `live`).
+    edgeId: v.id('edges'),
+    // While `moving`: the address the records still point at.
+    leavingEdgeId: v.optional(v.id('edges')),
+    fqdn: v.string(),
+    // A taken name moves to the next (a new word pair from the same seed).
+    generation: v.number(),
+    // The zone, frozen: a location of a DNS account.
+    zoneLocationId: v.id('edgeLocations'),
+    dnsAccountId: v.id('edgeProviderAccounts'),
+    zoneId: v.string(),
+    zoneName: v.string(),
+    state: v.union(
+      v.literal('creating'),
+      v.literal('live'),
+      v.literal('moving'),
+      v.literal('removing'),
+      v.literal('gone'),
+      v.literal('parked'),
+    ),
+    // What the zone held for the name after the last pass (ours only).
+    records: v.array(
+      v.object({
+        type: v.union(v.literal('A'), v.literal('AAAA')),
+        recordId: v.string(),
+        content: v.string(),
+      }),
+    ),
+    // Times it was pointed at the address that replaced its own, and when last.
+    moves: v.number(),
+    movedAt: v.optional(v.number()),
+    // The addresses it served, newest last (bounded): the name's own evidence.
+    served: v.array(
+      v.object({
+        edgeId: v.id('edges'),
+        from: v.number(),
+        until: v.optional(v.number()),
+        // Why it stopped: `moved`, `replaced`, `renewed`, `destroyed`.
+        why: v.optional(v.string()),
+      }),
+    ),
+    // The one in-flight pass (claimed before any DNS call).
+    currentOp: v.optional(
+      v.object({ opId: v.string(), startedAt: v.number(), expiresAt: v.number() }),
+    ),
+    // Consecutive failed passes, and the last failure (a code only).
+    attempts: v.number(),
+    failure: v.optional(v.object({ code: v.string(), at: v.number() })),
+    createdAt: v.number(),
+    liveAt: v.optional(v.number()),
+    goneAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_edge', ['edgeId', 'state'])
+    .index('by_leaving', ['leavingEdgeId'])
+    .index('by_relay', ['relayId', 'state'])
+    .index('by_zone', ['zoneLocationId', 'state'])
+    .index('by_state', ['state', 'updatedAt'])
+    .index('by_fqdn', ['fqdn']),
 
   // The rotation ledger + saga state. Advanced ONLY through edgeRotations.advance
   // (step version) and the claimOp/settleOp pair (external writes). Control flow

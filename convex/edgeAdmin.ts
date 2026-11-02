@@ -62,6 +62,8 @@ import { EDGE_PROVIDER_IDS } from './lib/edgeProviderIds';
 import { bumpEpochAndRefresh, setupRunLiveOn } from './lib/edges/relayGuards';
 import { pickMoves } from './lib/edges/edgePick';
 import { lanesOn } from './lib/edges/lanes';
+import { locationsOfAccount } from './edgeLocations';
+import { nameViewOf } from './edgeNames';
 import { assertAdmission } from './lib/edges/maintenance';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
@@ -167,6 +169,17 @@ export const configView = internalQuery({
       resolveEdgeConfig(ctx.db),
       resolveEdgeSecrets(ctx.db),
     ]);
+    // The zones a name for an address can go in: every zone of a DNS account
+    // (operator-scale tables: a handful of accounts and locations).
+    const nameZones: Array<{ id: string; zone: string; account: string }> = [];
+    for (const acct of await ctx.db.query('edgeProviderAccounts').take(200)) {
+      if (!EDGE_PROVIDER_CAPABILITIES[acct.provider].providesDns) continue;
+      for (const loc of await locationsOfAccount(ctx.db, acct._id)) {
+        const zone = (loc.placement as { zoneName?: unknown }).zoneName;
+        if (typeof zone === 'string' && zone)
+          nameZones.push({ id: loc._id, zone, account: acct.name });
+      }
+    }
     return {
       config,
       secrets: edgeSecretStatus(secrets),
@@ -174,6 +187,7 @@ export const configView = internalQuery({
       // Flat paths: what the settings page diffs against and resets to.
       defaults: flattenEdgeConfig(EDGE_DEFAULTS),
       bounds: EDGE_CONFIG_BOUNDS,
+      nameZones,
     };
   },
 });
@@ -199,7 +213,8 @@ export const patchConfig = internalMutation({
       await upsertSettingRow(ctx, w.key, w.value, actorAdminId);
     }
     const changed = [...changedKeys, ...secretWrites.map(() => 'probe.secret')];
-    if (changedKeys.some((k) => k.startsWith('render.'))) {
+    // Names for addresses on or off changes what every member is handed too.
+    if (changedKeys.some((k) => k.startsWith('render.') || k === 'names.enabled')) {
       const now = Date.now();
       const relays = await ctx.db
         .query('relays')
@@ -825,6 +840,19 @@ export const edgeDetail = internalQuery({
         okVantages: r.results.filter((x) => x.ok).length,
         failVantages: r.results.filter((x) => !x.ok).length,
       })),
+      // Names for addresses (edgeNames.ts): admin display only.
+      name: await (async () => {
+        const n = await nameViewOf(ctx.db, edgeId);
+        return n
+          ? {
+              ...n,
+              movedAt: n.movedAt !== undefined ? new Date(n.movedAt).toISOString() : null,
+              failure: n.failure
+                ? { code: n.failure.code, at: new Date(n.failure.at).toISOString() }
+                : null,
+            }
+          : null;
+      })(),
     };
   },
 });

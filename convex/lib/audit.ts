@@ -470,6 +470,13 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.host.reappeared': ['relaySlug', 'count', 'remarks'],
   // A member render left out entries it could not place (edgeHostHides.noteWithheld).
   'edge.render.withheld': ['relaySlug', 'count', 'remarks'],
+  // Names for load balancer addresses (edgeNames.ts): ids and codes, never a name or a zone.
+  'edge.name.live': ['relaySlug', 'edgeId', 'nameId', 'zoneLocationId'],
+  'edge.name.moved': ['relaySlug', 'edgeId', 'nameId', 'fromEdgeId', 'rotationId'],
+  'edge.name.removed': ['relaySlug', 'edgeId', 'nameId', 'why'],
+  'edge.name.parked': ['relaySlug', 'edgeId', 'nameId', 'code'],
+  'admin.edge.name.renew': ['relaySlug', 'edgeId', 'nameId'],
+  'admin.edge.name.dismiss': ['relaySlug', 'edgeId', 'nameId'],
   'edge.relay.restore_started': ['relaySlug', 'purpose'],
   'edge.relay.restore_finished': ['relaySlug', 'purpose', 'hidesRestored'],
   'relay.upsert': ['slug', 'created', 'changed'],

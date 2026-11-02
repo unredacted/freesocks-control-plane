@@ -158,6 +158,7 @@ health check in the adapter, then the proof above.
 | Edge              | `edges`                | One provider resource bound to a LISTENER and created in one LOCATION (frozen on the row): its layer, the resource-step ledger, child resources, addresses (IP literals for L4, the hostname for L7), publication state and pool index, health, readiness, front qualification, live snapshot, reachability. L7 edges carry a frozen **provision intent**.                                                                                                       |
 | Rotation          | `edgeRotations`        | One provision / publish / replace run: phase, step version, operation claim, per-listener Host plan, previous binding, live event log; its audit trail is assembled on read.                                                                                                                                                                                                                                                                                     |
 | Delivery binding  | `edgeDeliveryBindings` | The edge-required policy an origin imposes on the subscriptions of its node or backend server, kept apart from the origin row so deleting the origin never silently restores raw delivery.                                                                                                                                                                                                                                                                       |
+| Address name      | `edgeNames`            | A name for an L4 address (§ "Names for load balancer addresses"): its A/AAAA records in a zone of a DNS account, the address it serves (it can move to the address that replaces its own), its state, the addresses it served and when it moved.                                                                                                                                                                                                                 |
 | Probe target      | `probeTargets`         | An operator-entered public host:port probed alongside the derived targets (edges, origin targets). Operator evidence only.                                                                                                                                                                                                                                                                                                                                       |
 | Probe run         | `probeRuns`            | One reachability measurement of one target address from one source.                                                                                                                                                                                                                                                                                                                                                                                              |
 | Reachability      | `probeReachability`    | Per target, per country, per source, per address family: the last run's vantage counts and verdict; summarised onto the target's own row.                                                                                                                                                                                                                                                                                                                        |
@@ -1087,7 +1088,9 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
    A link-list app (v2rayNG, Anywhere, anything unrecognized) shows both side by side and never
    switches on its own, so the member page adds one line when the key has a backup: pick the
    backup when the first stops working (`hero.relayBackupHint`).
-   An L7 edge renders as ONE entry (its hostname). A backend that hands out a single access
+   An L7 edge renders as ONE entry (its hostname). An L4 address with a name is dialled by the
+   name, with its IPs as fallback entries in an auto group (§ "Names for load balancer
+   addresses"). A backend that hands out a single access
    key (Outline) renders in **single-key** style: one entry, no backup, no auto group;
 5. leaves out every RETAINED entry FCP cannot place: one that speaks what a listener speaks
    (its scheme, transport and security agree with a listener's) and is neither a template
@@ -1539,6 +1542,148 @@ them to see half of a 16-address lane and about 26 to see all of it, and a repla
 any one of them with probability 3/(P+1). Where enumeration is seen, 1 or 2 open and 8 to 16
 trusted addresses per transport is a reasonable shape (each trusted address is a load balancer;
 with 2, one watching account sees the whole lane).
+
+### Names for load balancer addresses
+
+An L4 edge publishes IP literals. With **`edge.names.enabled`** (Admin -> Edges -> Settings,
+"Names for load balancer addresses"; off by default) an L4 address planned from then on also gets
+a **name**, the way a CDN front gets one: two dictionary words joined by a dash
+(`lib/edges/frontWords.ts`) as ONE label under a zone the operator made eligible
+(`edge.names.zones`: locations of DNS accounts, ticked on the same card). FCP writes the records
+itself through that zone's DNS account: an A record for the address's IPv4 and an AAAA where it
+has IPv6, DNS only (never proxied), TTL 60 s, each carrying the marker `fcp-name:<row id>`.
+Members then dial the name; the server name a REALITY or TLS listener presents is unchanged (a
+REALITY member still sends the target's name). The code is `lib/edges/addressNames.ts` (pure),
+`convex/edgeNames.ts` (rows, claims, moves, the destroy gate) and `convex/edgeNameOps.ts` (the
+DNS calls).
+
+**Which addresses.** The switch is frozen into an address when it is planned
+(`edges.nameWanted`): an address made before keeps its IPs, and turning the switch on changes
+nothing for members until an address made after it is in use. An address that wants a name gets
+it as soon as it is active with an IPv4 (the rotation's verify step asks for it, and the
+reconcile pass makes any that are missing): a spare has its name before it is ever published,
+so the publish that puts it in use hands the name out at once. An imported address (FCP does not
+own it) never gets one, nor does an L7 front (its hostname is its name).
+
+**Which zone.** A new name goes in the eligible zone this node uses least, then the one the
+deployment uses least: with two zones, a node's two addresses (a member's main and backup) sit in
+different zones. A zone the operator unticks, or whose location or DNS account is switched off,
+gets no new name and takes no move; names already there stay (they keep their frozen zone, so
+they can still be removed). A zone or a DNS account cannot be deleted while a name lives in it
+(`edge.names_in_zone`).
+
+**What members get** (`lib/edges/render.ts`, every format: links, sing-box, Clash / Mihomo, the
+mirrors and the cached and stale bodies of `/api/v1/sub`, which all go through the same render):
+
+- the name in place of the IPv4 entry; further server names (`render.namesPerEndpoint`) dial
+  the name too;
+- the IPv6 entry exactly as without a name (`<label> (IPv6)`, where the family's rule emits
+  IPv6), in every format, link lists included (below);
+- in a body with an auto group (sing-box, Clash / Mihomo), the IPv4 as a **fallback entry** in
+  the same group (`<label> (IP)`, the suffix `render.ipLabel`): an app whose lookup of the name
+  is blocked or answered falsely switches to the IP by itself. The IP is no secret (anyone can
+  look the name up). Under an entry cap it ranks after every first entry and before further
+  names, since a blocked name takes its further names with it;
+- a link list (v2rayNG, Happ, Streisand and the like, which never switch by themselves) gets the
+  name and the IPv6 entry, plus the backup as before, and no IPv4 literal;
+- a single key (Outline) keeps the IP: it has no room for a fallback.
+
+**Why the IPv6 entry stays.** A name with both an A and an AAAA record leaves the choice of
+family to the client: Go dialers (sing-box, Mihomo, Xray) race the two families at TCP connect
+(RFC 6555, about 300 ms), in the order the resolver or the setting gives. FCP's sing-box
+template resolves with `prefer_ipv4` (`fallback_delay` 300 ms by default), its Clash and Mihomo
+templates resolve AAAA (`dns.ipv6: true`) and leave each proxy's `ip-version` at its default,
+and an Xray app with the default `domainStrategy: AsIs` dials through Go's system dialer, which
+sorts addresses by RFC 6724 (IPv6 first where the network has it). An app may also force one
+family in its own settings. The race decides only which TCP connection opens: where a censor
+lets the IPv4 connection open and then cuts REALITY, the client never tries IPv6 for that
+entry. So the IPv6 entry of today is kept beside the name. An auto group moves to it when the
+name fails, and in a link list the member can pick it. Testers in one country found REALITY
+over IPv6 working on a network where it is blocked over IPv4, while most networks there have
+no IPv6 at all. The AAAA record is written for the address's confirmed IPv6 only (one a describe
+learned is added once a test promotes it).
+
+The leak check refuses a name whose address is the node, exactly like the address itself, and a
+retained entry at a name of the origin's addresses is one of its edges (never withheld). The
+test link and FCP's own client check keep testing the IP: they confirm an endpoint, and the
+name only points at it. A name being made, removed or turned off changes what members of a
+published address are handed, so the origin's publication epoch moves then (and when the switch
+flips), and the mirrors are rendered again.
+
+**The DNS risk, and why these defences.** A name adds a lookup before the connection. FCP's
+own sing-box template resolves a server's name over plain DNS to a public resolver
+(`default_domain_resolver`), its Clash and Mihomo templates through plain-DNS `nameserver`
+entries (no `proxy-server-nameserver`), and link-list apps through their own DNS setting, which
+is mostly plain DNS too. Censors in Iran and China answer such lookups falsely for names they
+list. Listing one name costs a censor about what blocking one IP does; listing a zone takes out
+every name in it at once, which IPs never allowed. Hence the spread over zones and the IP
+fallback (chosen 2026-11-02). Not done: per-country IPs (members in a chosen
+country keep IPs) and looking the name up over encrypted DNS in our templates (often blocked
+itself where it would matter, and a template change for every app). Use two or more zones used
+for nothing else.
+
+**A replacement takes the name, once.** When a replace puts a new address in the place of one
+with a name, the name MOVES to it (`moveNameOnReplace`, in the publish flip's transaction):
+members who hold it reach the new address at their next lookup, without refreshing their
+subscription. The replaced address drains and stays up while the records follow on the next
+pass, which changes them in place (deleting and creating again would leave a moment with no
+record, which resolvers cache for the zone's negative TTL). A name the new address already had
+(made while it was a spare) is removed. The name moves only when (`mayMoveName`):
+
+- the switch is on and `edge.names.moveQuietDays` (default 30) is above 0;
+- the new address serves the same transport, in the same lane (a name an open member holds never
+  leads to a trusted address, § "Address enumeration"), and the name's zone is still eligible;
+- the name has not moved within `moveQuietDays`.
+
+Moving hands the new address to anyone who holds the name, the censor included. A censor that
+found the old address by watching traffic does not have the name, and moving defeats it. One
+that took the name from a member's subscription blocks the new address soon after; a name whose
+new address is blocked within the window is treated as known, so it stays with that address and
+goes with it, and the address after it gets a new name (members then refresh, as they do for an
+IP). A replace that rolls back takes the name back (it still counts as moved). A move that
+cannot be written after its tries is undone the other way: the name is removed (members refresh)
+and the new address gets a name of its own.
+
+**What is kept per name and per address.** The detector's evidence stays per address, as
+before: probes measure the IP (a TCP connection to it), member reports are attributed through
+the render snapshot (an edge, at its epoch; a replace bumps the epoch), and `edgeAttribution`,
+`edgeDetector` and the per-country state read only that. A name keeps its own history
+(`edgeNames.served`: which addresses it pointed at, from when, and why it stopped: `moved`,
+`replaced`, `renewed`, `destroyed`), how often it moved and when last, which is what the
+quiet-window rule reads. A block of the name itself (a false DNS answer) is not seen by the
+probes, which dial the IP; apps with the fallback keep working, and the operator gives the
+address a new name from its drawer (**New name**, `POST edges/{id}/name/renew`): the old one is
+removed from its zone, members get the IP until the new one exists, then the new one, in
+another zone when there is one. Checking names from inside a country is not built yet.
+
+**Removed with its address.** Before any provider resource of a destroying address is touched,
+its names go (`namesFirst` in the reconcile's destroy walk): the address goes back to its
+provider, and a record still pointing at it could send members to whoever gets it next. A name
+moving away from it holds the walk until its records point elsewhere, and so does one being
+removed after a move that never landed. An address that disappears without a destroy walk (gone
+at the provider) has its names removed at once. An origin being deleted waits for its names too
+(a parked one until the operator dismisses it, so its attention item can still open the origin).
+
+**Discipline.** One pass per name at a time (`edgeNames.begin` claims, `settle` releases; a
+claim lapses after `EDGE_PLUMBING.opClaimMs`). Every pass first reads the name back from its zone
+and writes only what differs, so an answer lost mid-call is settled by what the zone holds (the
+marker says which records are FCP's), never by a second blind create. Pointing a name elsewhere
+(a move, a move back, removal, New name) revokes the pass in flight: its settle no longer
+matches, changes nothing and asks for one more pass, which reads the zone back after whatever the
+revoked pass wrote. Removal starts its own count of tries. The reconcile pass looks at every
+live name (a page at a time) for records that no longer match its address, and an address the
+provider reports gone has its names removed at once. Anything at the name FCP did
+not write (a CNAME, a record without the marker, a proxied one) is never touched: a name being
+made moves to the next word pair (up to eight), any other is parked. A pass that fails counts;
+after twelve (about an hour of reconcile passes) the name is parked, and so is one whose zone's DNS
+account is gone. A parked name raises attention **`address_name_stuck`** (critical when it was
+being removed or moved: its records may point at an address given back); the operator removes
+its records by hand and presses **Dismiss** (`POST edges/{id}/name/dismiss`), or **New name**,
+which tries the removal again with a fresh count and makes another name.
+
+**Turning it off** stops new names and hands every member IPs again at their next fetch (the
+epoch moves); names already made stay in their zones until their address goes, so a member
+still holding one keeps working.
 
 ## Operations
 
@@ -4143,7 +4288,8 @@ edges keep `tls` / `https` by name.
 `edge.*` in `appSettings` (Admin → Edges → Advanced → Settings, `/admin/edges/settings`, probe
 settings included; `GET/PATCH /api/v1/admin/edges/config`). Ships fully dormant:
 `enabled=false`, `autoRotate=false`, `render.enabled=false`, `probe.enabled=false`,
-`l7.autoSelect=false`. Probe credentials are write-only (`edge.secret.probe.*`). Defaults and
+`l7.autoSelect=false`, `names.enabled=false` (with `names.zones` empty and
+`names.moveQuietDays` 30, 0..365; § "Names for load balancer addresses"). Probe credentials are write-only (`edge.secret.probe.*`). Defaults and
 bounds: `convex/lib/edgeConfig.ts`. Every stored key has a control on the Settings page and
 every control a key (pinned by `settings.test.ts`). `edge.freedom.edgesOnly` is not one of
 them: it has its own card and route (§ "Freedom modes only through edges").
@@ -5751,7 +5897,9 @@ Fastly and CloudFront forms ask for one first; § "L7 edges"). Cloudflare is the
 (`nodeIntentOps.ts`) are written through:
 
 - `createRecord`, `findRecordsByName`, `getRecord`, `deleteRecord` over A, AAAA and CNAME
-  records in ONE zone. Every record carries the ownership `comment` marker (at most 100
+  records in ONE zone, and the optional `updateRecord` (a record's content changed in place: how
+  a load balancer address's name moves without a moment of no record; without it a move deletes
+  and creates). Every record carries the ownership `comment` marker (at most 100
   characters) that discovery proves ownership with; `findRecordsByName` is one request;
   `deleteRecord` is idempotent (a missing record is a success).
 - `listCaa`, the apex CAA records as the zone itself holds them (a front location's CAA
@@ -5770,7 +5918,8 @@ reaches), a `DnsClient` beside `cloudflareDns.ts`
 (no transport retries, logging off, errors reduced to an HTTP status and a short code, never a
 response body), a credential test that accepts every token kind the provider issues,
 `role: 'dns'` and `providesDns: true` in its capability row, and `dnsClientFor` / the origin-name
-writer choosing the client by the DNS account's provider instead of assuming Cloudflare. A
+writer / the address-name writer (`edgeNameOps.ts`, whose factory already picks by provider)
+choosing the client by the DNS account's provider instead of assuming Cloudflare. A
 provider that can never front would also need the `EdgeProvider` front lifecycle made optional
 for it; that split has not been needed yet.
 
@@ -5944,6 +6093,19 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Names for load balancer addresses** (§ "Names for load balancer addresses") add one table
+(`edgeNames`), one optional field (`edges.nameWanted`), four settings with defaults
+(`edge.names.enabled` false, `edge.names.zones` empty, `edge.names.moveQuietDays` 30,
+`edge.render.ipLabel` `IP`), one attention kind (`address_name_stuck`), two admin calls
+(`POST edges/{id}/name/renew|dismiss`) and a reconcile step: one deploy, no migration, no env
+change. With the switch off nothing changes: no address wants a name, the render reads one
+setting and finds it off. Turning it on needs a DNS account whose token may edit DNS in the
+zones ticked, and changes only addresses made after it. To roll back, run
+`edgeNames:clearForRollback` with no arguments until it no longer answers `removing` (it turns
+the switch off and removes every name from its zone), then with the `cursor` it answers each time
+(`{"cursor": "..."}`, one page of addresses per run) until it answers `done` (rows and
+`edges.nameWanted` cleared), then deploy the older build.
 
 **A held block alerts** adds one optional field (`relays.suspicion.heldBack`), written by the
 detector, and one alert-worthy case (§ "Operator alerts"): one deploy, no migration, no env
