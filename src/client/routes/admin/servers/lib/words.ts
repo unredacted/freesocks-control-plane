@@ -805,6 +805,22 @@ export function serverErrorWords(code: string | null | undefined): string {
   const key = code ? (code.split(':')[0] ?? '') : '';
   return ERROR_WORDS[key] || 'That did not work. Try again in a moment.';
 }
+/**
+ * A refused adoption, said with the setup's modes: a node whose members reach
+ * it on another transport (`servers.adopt_mode_mismatch:<tag>`) is named the
+ * mode of that transport, since the mode list does not show transports.
+ */
+export function adoptRefusalWords(
+  code: string | null | undefined,
+  modes: readonly { name: string; tag: string }[],
+): string {
+  const [key, tag] = (code ?? '').split(':');
+  if (key !== 'servers.adopt_mode_mismatch' || !tag) return serverErrorWords(code);
+  const theirs = modes.find((m) => m.tag === tag);
+  return theirs
+    ? `This node's members reach it on ${tag}, not on this mode's transport. Adopt it as ${theirs.name}.`
+    : `This node's members reach it on ${tag}, not on this mode's transport. Add the mode for ${tag} with Change setup first, then adopt it as that mode.`;
+}
 /** Every code with its own words (pinned by the tests against the server's vocabulary). */
 export const WORDED_CODES: readonly string[] = Object.keys(ERROR_WORDS);
 

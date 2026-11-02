@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { pickInstance, resolveServersRoute, serversPaths } from './routes';
 import {
+  adoptRefusalWords,
   blockerWords,
   firewallNodeWords,
   portChangeTitle,
@@ -858,4 +859,23 @@ test('a rename in words: where it stands, and that members keep connecting', () 
   ).toMatch(/^Not renamed to node-b: /);
   for (const step of ['backend', 'hosts', 'subscriptions', 'done'] as const)
     expect(renameWords({ ...r, state: 'running', step }).sentence).not.toMatch(/—/);
+});
+
+describe('a refused adoption', () => {
+  test("names the set-up mode of the transport the node's members use, or says to add it", () => {
+    const modes = [
+      { name: 'Freedom-WebSocket', tag: 'VLESS_WS_CDN' },
+      { name: 'Privacy-Reality', tag: 'VLESS_REALITY' },
+    ];
+    expect(adoptRefusalWords('servers.adopt_mode_mismatch:VLESS_REALITY', modes)).toBe(
+      "This node's members reach it on VLESS_REALITY, not on this mode's transport. Adopt it as Privacy-Reality.",
+    );
+    expect(adoptRefusalWords('servers.adopt_mode_mismatch:VLESS_REALITY', modes.slice(0, 1))).toBe(
+      "This node's members reach it on VLESS_REALITY, not on this mode's transport. Add the mode for VLESS_REALITY with Change setup first, then adopt it as that mode.",
+    );
+    // Any other refusal reads as everywhere else.
+    expect(adoptRefusalWords('servers.node_exists', modes)).toBe(
+      serverErrorWords('servers.node_exists'),
+    );
+  });
 });
