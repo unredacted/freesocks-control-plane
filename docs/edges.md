@@ -973,9 +973,14 @@ operator's own replace is never held. The detector asks for the hold after any r
 cap or a freeze named first does not hide a rapid re-block.
 
 **A backup entry.** Members fall back to the node's other published address while a
-replacement is made (about 10 to 15 minutes): keep at least two in use. The automation card and
-the node page say so, and attention `single_address` (warning) lists protected nodes with one
-address in use while `edge.clientCheck.enabled` is on. Nothing is refused for it.
+replacement is made (about 10 to 15 minutes). One address in use is a valid choice (it saves a
+second load balancer): a node whose own `desiredPublished` is 1 has what it asked for, raises
+nothing and reads as protected; its members in a country that blocks the address wait for the
+replacement. The automation card and the node page state that tradeoff. Attention
+`single_address` (warning, facts `published` and `desired`) lists only a protected node with one
+address in use that wants more (`desiredPublished` above 1) while `edge.clientCheck.enabled` is
+on: a real gap, so the node's row says what to do. It never alerts (not critical, not a prompt).
+Nothing is refused for it.
 
 ### Rendering (what members receive)
 
@@ -1832,11 +1837,14 @@ qualified -> trusted, quarantine -> paused for safety; `PLAIN_WORDS` in
 `src/client/lib/edgeCodes.ts`):
 
 - **Nodes** (`/admin/edges`, `EdgesHome`): one status sentence with a dot ("All 6 nodes
-  protected" / "1 node needs you" / "Setting up 1 node"), the **Needs you** rows from
+  protected" / "1 node needs attention" / "Setting up 1 node"), the **Needs you** rows from
   `attention` (the endpoint test opens the test card in place; go-live calls `require-edges`
   and renders the same card for whatever comes back pending), one row per protected node
   (name, country, one sentence, dot; a live run shows "Setting up, step N of 4" and opens its
-  progress; a backend node's row opens its Servers node page), the primary **Protect a node**, and the automatic-protection switch (`POST
+  progress; a backend node's row opens its Servers node page). A row that waits on the operator
+  says what is wrong and what to do (the item's label, then the first sentence of its fix, or
+  the run's next step from `lib/runNeedWords.ts`), never only that it "needs you". Then the
+  primary **Protect a node**, and the automatic-protection switch (`POST
 automation`; while it is off, a card with the cost and limitation sentences shows once a node is
   live, and the same offer sits on a run's Live card).
   `?protect=1` opens the protect sheet, `?run=<id>` a run's progress.

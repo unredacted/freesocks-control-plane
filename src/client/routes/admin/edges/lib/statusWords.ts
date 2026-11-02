@@ -9,6 +9,7 @@
  * Exports:
  *   originSentence(status)       one plain sentence for one origin
  *   fleetSentence(fleet)         the Edges home's headline
+ *   oneAddressNote(desired)      the node page's note while one address is in use
  *   deliveryWords(delivery)      the Delivery card: tone, headline, what members get, why, the fix
  *   statusOf(origins, slug)      one origin's status from the attention response, or null
  *
@@ -44,9 +45,11 @@ import {
   codeFix,
   codeLabel,
   humanizeCode,
+  plainWords,
   type Tone,
 } from '../../../../lib/edgeCodes';
 import type { EdgeCountryLine, LocationGradeCell } from './countryChecks';
+import { RUN_NEED_STEP, runNeedStep } from './runNeedWords';
 import { durationLabel, relativeTime } from './time';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -58,9 +61,16 @@ function runSentence(s: OriginStatus): string {
   if (s.kind === 'needs-you') {
     if (s.code === 'node_not_approved')
       return 'Every address works. Waiting for you to approve go-live.';
-    return `${lead}. It needs you.`;
+    return `${lead}. ${runNeedStep(s.code)}`;
   }
   return again ? `${lead}. Members keep what they have.` : `${lead}.`;
+}
+
+/** What to do about an attention item: the first sentence of its fix, in plain words. */
+function nextStep(code: string): string {
+  const fix = codeFix(code);
+  const first = fix ? /^.+?[.!?](?=\s|$)/.exec(plainWords(fix))?.[0] : undefined;
+  return first ?? 'Open the node to see what to do.';
 }
 
 export function originSentence(s: OriginStatus): string {
@@ -69,13 +79,17 @@ export function originSentence(s: OriginStatus): string {
     case 'removing':
       return s.code === 'restore' ? 'Removing protection.' : 'Being removed.';
     case 'paused':
-      return 'Paused for safety. It needs you.';
-    case 'needs-you':
+      return RUN_NEED_STEP.quarantined;
+    case 'needs-you': {
       if (s.code === 'offline')
         return `${plural(s.offline, 'address is', 'addresses are')} offline.`;
       // Any run (a spare, a new address, a replacement), not only a replacement.
-      if (s.code === 'rotation_failed') return 'The last run on this node failed. It needs you.';
-      return `${codeLabel(s.code ?? 'needs_operator')}. It needs you.`;
+      if (s.code === 'rotation_failed')
+        return 'The last run on this node failed. Open the node to see the step that failed.';
+      // What is wrong, then what to do: never only that something waits.
+      const code = s.code ?? 'needs_operator';
+      return `${plainWords(codeLabel(code))}. ${nextStep(code)}`;
+    }
     case 'off':
       return 'Protection is switched off (Advanced).';
     case 'not-live':
@@ -104,7 +118,7 @@ export function fleetSentence(f: FleetStatus | null): string {
     case 'empty':
       return 'No node is protected yet.';
     case 'needs-you':
-      return `${plural(f.count, 'node needs', 'nodes need')} you.`;
+      return `${plural(f.count, 'node needs', 'nodes need')} attention.`;
     case 'setting-up':
       return `Setting up ${plural(f.count, 'node', 'nodes')}.`;
     case 'not-live':
@@ -114,6 +128,17 @@ export function fleetSentence(f: FleetStatus | null): string {
     case 'partial':
       return `${f.protected} of ${plural(f.total, 'node', 'nodes')} protected.`;
   }
+}
+
+/**
+ * The node page's note while one address is in use and FCP's own client check
+ * replaces blocked ones. One address is a valid choice: a node set to one
+ * states the tradeoff and asks for nothing; one set to more says what it lacks.
+ */
+export function oneAddressNote(desired: number): string {
+  return desired <= 1
+    ? 'One address in use, as set for this node. There is no backup address: if it is blocked, members in that country wait about 10 to 15 minutes for FCP to replace it.'
+    : `1 of the ${desired} addresses wanted is in use. Until another one is, members have no backup address while FCP replaces a blocked one.`;
 }
 
 export interface DeliveryWords {
@@ -170,7 +195,7 @@ export function deliveryWords(d: OriginDelivery): DeliveryWords {
     case 'dark':
       return {
         tone: 'danger',
-        headline: 'Members are dark',
+        headline: 'Members get nothing',
         detail:
           'Subscriptions on this origin are answered "temporarily unavailable" instead of the direct address. Clients keep their last configuration until something can be served.',
         reason: why(d.code),

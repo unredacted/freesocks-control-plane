@@ -336,7 +336,7 @@ const COPY = {
     fix: 'Check the node\'s Xray version in the backend, and set "minClientVer": "1.8.1" in the transport\'s realitySettings if it has none.',
   },
   members_dark: {
-    label: 'Members dark',
+    label: 'Members get nothing',
     explain:
       'Subscriptions on this origin are edge-required but nothing can be served for them yet.',
     fix: 'Publish an edge and turn rendering on.',
@@ -893,8 +893,8 @@ const COPY = {
     fix: 'Inspect the live Hosts and keep the previous or the current binding.',
   },
   needs_operator: {
-    label: 'Needs an operator',
-    explain: 'An edge ended in a state the machine cannot resolve on its own.',
+    label: 'Address stuck',
+    explain: 'An edge ended in a state FCP cannot resolve on its own.',
     fix: 'Destroy, forget or reactivate the edge.',
   },
   host_unresolved: {
@@ -1020,10 +1020,10 @@ const COPY = {
       'Trusted addresses only stay out of reach if the members of a blocked address scatter. Spread members over the addresses on this node first.',
   },
   single_address: {
-    label: 'One address in use',
+    label: 'Only one address in use',
     explain:
-      'Members of this node have no second address to fall back on while FCP replaces a blocked one, which takes about 10 to 15 minutes.',
-    fix: 'Keep at least 2 addresses in use on each node.',
+      'This node is set to keep more than one address in use, but only one is. If it is blocked, members have no other address to use while FCP replaces it, which takes about 10 to 15 minutes.',
+    fix: 'Put a second address in use. If one is enough for this node, set Published edges wanted to 1.',
   },
   spare_untested: {
     label: 'Spare address untested',
@@ -2663,7 +2663,7 @@ export function setupRunNeedCopy(code: string | null | undefined): CodeCopy {
   return (
     known ?? {
       label: humanizeCode(code ?? ''),
-      explain: `The run needs you: ${humanizeCode(code ?? 'something')}.`,
+      explain: `The run stopped: ${humanizeCode(code ?? 'unknown')}. Open it to see what to do.`,
     }
   );
 }
@@ -2745,7 +2745,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'edge.relay.rebalanced': 'Duplicate edge sent back to standby',
   'edge.automation.set': 'Automatic protection switched',
   'edge.setup_run.started': 'Guided setup started',
-  'edge.setup_run.needs_operator': 'Guided setup needs you',
+  'edge.setup_run.needs_operator': 'Guided setup waiting for you',
   'edge.setup_run.go_live': 'Guided setup went live',
   'edge.setup_run.finished': 'Guided setup finished',
   'edge.setup_run.cancelled': 'Guided setup cancelled',
@@ -2974,7 +2974,7 @@ const PLAIN_AUDIT_LABELS: Record<string, string> = {
   'edge.render.withheld': 'Unplaced entry left out for members',
   'edge.relay.restore_started': 'Removing protection',
   'edge.setup_run.started': 'Protection started',
-  'edge.setup_run.needs_operator': 'Protection needs you',
+  'edge.setup_run.needs_operator': 'Protection waiting for you',
   'edge.setup_run.go_live': 'Protection live',
   'edge.setup_run.finished': 'Protection finished',
   'edge.setup_run.cancelled': 'Protection cancelled',

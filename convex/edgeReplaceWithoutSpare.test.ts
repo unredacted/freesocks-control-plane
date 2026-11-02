@@ -479,17 +479,41 @@ describe('replacing a blocked address without a spare', () => {
     expect(await gate()).toEqual({ ok: false, code: 'unverified_endpoint' });
   });
 
-  test('one address in use while replacements count on the check: single_address', async () => {
+  test('one address in use of 2 wanted while replacements count on the check: single_address', async () => {
     world(() => ({ code: 'ok' }));
-    const { t } = await seed();
+    const { t, relayId } = await seed();
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
+    expect(await t.run(async (ctx) => (await ctx.db.get(relayId))!.desiredPublished)).toBe(2);
     const attention = await t.query(internal.edgeOperator.attention, {});
     expect(attention.items.find((i) => i.kind === 'single_address')).toMatchObject({
       severity: 'warning',
-      facts: { inUse: 1 },
+      facts: { published: 1, desired: 2 },
+    });
+    // A real gap: the node row says so.
+    expect(attention.origins.find((o) => o.relayId === relayId)?.status).toMatchObject({
+      kind: 'needs-you',
+      code: 'single_address',
     });
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.clientCheck.enabled', 'false'));
     const off = await t.query(internal.edgeOperator.attention, {});
     expect(off.items.some((i) => i.kind === 'single_address')).toBe(false);
+  });
+
+  test('one address in use of 1 wanted: what the node asked for, nothing raised', async () => {
+    world(() => ({ code: 'ok' }));
+    const { t, relayId } = await seed();
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
+    await t.run((ctx) => ctx.db.patch(relayId, { desiredPublished: 1 }));
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.some((i) => i.kind === 'single_address')).toBe(false);
+    expect(attention.items.filter((i) => i.relayId === relayId && i.severity !== 'info')).toEqual(
+      [],
+    );
+    expect(attention.origins.find((o) => o.relayId === relayId)?.status).toMatchObject({
+      kind: 'protected',
+      published: 1,
+    });
+    expect(attention.fleet.kind).toBe('protected');
   });
 
   test('no ticked location: refused before anything is bought', async () => {

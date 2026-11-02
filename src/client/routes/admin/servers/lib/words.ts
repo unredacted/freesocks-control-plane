@@ -10,6 +10,7 @@ import type {
   NodeView,
   ServerTree,
 } from '../../../../../shared/contracts/servers';
+import { runNeedStep } from '../../edges/lib/runNeedWords';
 
 export type Dot = 'green' | 'amber' | 'red' | 'grey';
 
@@ -559,7 +560,7 @@ export function stageWords(i: {
     // A role's request leaves the node serving until the admin decides.
     if (s === 'needs_admin')
       return i.disposition === 'retiring'
-        ? { dot: 'amber', sentence: 'Retiring. Needs your decision.' }
+        ? { dot: 'amber', sentence: 'Retiring. Waiting for you to confirm the retirement.' }
         : {
             dot: 'amber',
             sentence: 'The node role asked to retire it. It serves members until you decide.',
@@ -585,12 +586,13 @@ export function stageWords(i: {
             ? 'Live. Its new addresses are tested and wait for you to approve go-live.'
             : 'Tested. Waiting for you to approve go-live.',
       };
+    // What the run waits for, as what to do: never only that something waits.
     return {
       dot: 'amber',
       sentence:
         i.stage === 'live'
-          ? 'Live. Its protection in Edges needs you.'
-          : 'Being protected in Edges. It needs you there.',
+          ? `Live. Its protection in Edges is waiting. ${runNeedStep(p.need)}`
+          : `Being protected in Edges. ${runNeedStep(p.need)}`,
     };
   }
   if (p && i.stage !== 'live') return { dot: 'amber', sentence: 'Being protected in Edges.' };
@@ -760,7 +762,7 @@ export function protectionWords(p: ProtectionLike, stage?: string): string {
   if (p.state === 'needs_you')
     return p.need === 'node_not_approved'
       ? 'Its new addresses are tested. Approve go-live below, or in its protection progress.'
-      : 'Its protection in Edges needs you.';
+      : runNeedStep(p.need);
   return 'Being protected in Edges. It carries on by itself.';
 }
 

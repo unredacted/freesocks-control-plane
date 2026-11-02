@@ -282,8 +282,9 @@
           clients, and moves members to it. Nothing extra is billed while no address is blocked.
         </p>
         <p class="text-muted-foreground mt-2 max-w-prose text-sm">
-          Keep at least 2 addresses in use on each node: members use the other one while FCP
-          replaces a blocked address.
+          With 2 addresses in use on a node, members use the other one while FCP replaces a blocked
+          address. With 1, members in the country that blocks it wait about 10 to 15 minutes for the
+          replacement.
         </p>
       {:else}
         <p class="text-muted-foreground mt-1 max-w-prose text-sm">
