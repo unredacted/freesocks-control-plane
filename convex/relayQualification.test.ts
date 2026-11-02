@@ -603,12 +603,13 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
 
   test("a node serving two modes (raw REALITY and XHTTP, each in its own mode's group): the account sits in both groups, so both transports can be tested", async () => {
     const XHTTP_INBOUND = '55555555-5555-4555-8555-555555555555';
-    const panel = fakePanel({
+    const opts: Parameters<typeof fakePanel>[0] = {
       squads: [
         { uuid: 'sq-xhttp', inboundUuids: [XHTTP_INBOUND] },
         { uuid: 'sq-reality', inboundUuids: [FIXTURE_INBOUND] },
       ],
-    });
+    };
+    const panel = fakePanel(opts);
     const t = convexTest(schema, modules);
     await insertPanelServer(t);
     const { relayId } = await registerRelay(t, {
@@ -656,6 +657,14 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
       await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
     ).toMatchObject({ ok: true, reused: true });
     panel.failSquadsWith = null;
+    expect(panel.created).toHaveLength(1);
+    // So does a panel that stops listing its groups at all (404): nothing to judge by.
+    const squads = opts.squads;
+    delete opts.squads;
+    expect(
+      await t.action(internal.relayQualification.ensure, { relayId, purpose: 'rehearsal' }),
+    ).toMatchObject({ ok: true, reused: true });
+    opts.squads = squads;
     expect(panel.created).toHaveLength(1);
   });
 
@@ -716,6 +725,15 @@ describe('relayQualification.ensure: the persisted mint operation', () => {
       'b',
       'c',
     ]);
+    // The fewest, not the greedy pick: the largest group is not in the smallest cover.
+    expect(
+      coverOf(
+        [g('A', '1', '2', '3', '4'), g('B', '1', '2', '5'), g('C', '3', '4', '6')],
+        ['1', '2', '3', '4', '5', '6'],
+      ),
+    ).toEqual(['B', 'C']);
+    // Two groups holding the same transports: the lower uuid.
+    expect(coverOf([g('z', 'x'), g('m', 'x'), g('q', 'y')], ['x', 'y'])).toEqual(['m', 'q']);
     expect(coverOf([g('a', 'x')], ['x', 'y'])).toBeNull();
     expect(coverOf([], ['x'])).toBeNull();
     expect(coverOf([g('a', 'x')], [])).toEqual([]);

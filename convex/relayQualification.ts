@@ -469,39 +469,60 @@ function definitiveCreateFailure(err: unknown): boolean {
 }
 
 /**
- * The fewest mode groups that together hold every one of `inbounds` (pure;
- * greedy: the group holding most of what is still uncovered first, ties by
- * uuid, so the same panel gives the same answer), or null when some inbound
- * sits in no group at all. A node whose transports serve different modes (raw
- * REALITY for one mode, XHTTP under REALITY for another, each mode's group
- * carrying exactly its own transport) has no single group holding them all:
- * the account then sits in each group of the cover, and the node lets it in
- * on every transport.
+ * The fewest mode groups that together hold every one of `inbounds` (pure),
+ * or null when some inbound sits in no group at all. A node whose transports
+ * serve different modes (raw REALITY for one mode, XHTTP under REALITY for
+ * another, each mode's group carrying exactly its own transport) has no single
+ * group holding them all: the account then sits in each group of the cover,
+ * and the node lets it in on every transport, and in no group it does not need.
+ *
+ * An exact search, small by construction: an origin protects at most
+ * `MAX_COVERAGE_LISTENERS` (8) transports, so each group is the set it holds of
+ * them (a bit mask), one group per distinct set (the lowest uuid), and a group
+ * whose set another's contains is never needed. Of the covers with the fewest
+ * groups, the one whose sorted uuids come first, so the same panel gives the
+ * same answer; the uuids come back sorted.
  */
 export function coverOf(
   groups: readonly Pick<ObservedModeGroup, 'squadUuid' | 'inboundUuids'>[],
   inbounds: readonly string[],
 ): string[] | null {
-  const held = [...groups]
-    .sort((a, b) => (a.squadUuid < b.squadUuid ? -1 : a.squadUuid > b.squadUuid ? 1 : 0))
-    .map((g) => ({
-      uuid: g.squadUuid,
-      inbounds: new Set(g.inboundUuids.map((u) => u.toLowerCase())),
-    }));
-  const left = new Set(inbounds.map((u) => u.toLowerCase()));
-  const cover: string[] = [];
-  while (left.size > 0) {
-    let best: (typeof held)[number] | null = null;
-    let bestCount = 0;
-    for (const g of held) {
-      const count = [...left].filter((u) => g.inbounds.has(u)).length;
-      if (count > bestCount) [best, bestCount] = [g, count];
-    }
-    if (!best) return null;
-    cover.push(best.uuid);
-    for (const u of best.inbounds) left.delete(u);
+  const wanted = [...new Set(inbounds.map((u) => u.toLowerCase()))];
+  if (wanted.length === 0) return [];
+  const byMask = new Map<number, string>();
+  for (const g of groups) {
+    const held = new Set(g.inboundUuids.map((u) => u.toLowerCase()));
+    const mask = wanted.reduce((m, u, i) => (held.has(u) ? m | (1 << i) : m), 0);
+    if (mask === 0) continue;
+    const kept = byMask.get(mask);
+    if (kept === undefined || g.squadUuid < kept) byMask.set(mask, g.squadUuid);
   }
-  return cover;
+  const all = [...byMask.keys()];
+  const masks = all.filter((m) => !all.some((o) => o !== m && (m & o) === m));
+  const full = (1 << wanted.length) - 1;
+  const pick = (from: number, k: number, acc: number[], out: number[][]): void => {
+    if (acc.length === k) {
+      out.push([...acc]);
+      return;
+    }
+    for (let i = from; i < masks.length; i++) {
+      acc.push(masks[i]!);
+      pick(i + 1, k, acc, out);
+      acc.pop();
+    }
+  };
+  for (let k = 1; k <= Math.min(wanted.length, masks.length); k++) {
+    const combos: number[][] = [];
+    pick(0, k, [], combos);
+    let best: string[] | null = null;
+    for (const combo of combos) {
+      if (combo.reduce((a, m) => a | m, 0) !== full) continue;
+      const uuids = combo.map((m) => byMask.get(m)!).sort();
+      if (!best || uuids.join(',') < best.join(',')) best = uuids;
+    }
+    if (best) return best;
+  }
+  return null;
 }
 
 /**
@@ -631,7 +652,9 @@ export const ensure = internalAction({
       )
         return { ok: false, code: 'no_group_holds_transports', reused: false };
       let placement: string | null = null;
-      if (groups === 'unknown') {
+      // Nothing to judge by (the panel could not be read, or lists no groups):
+      // a stored account keeps the groups it sits in, extra ones included.
+      if (groups === 'unknown' || (groups === 'unlisted' && storedOp)) {
         placement = stored;
         extraPlacements = [...(storedOp?.extraPlacements ?? [])];
       } else if (groups !== 'unlisted' && groups.holding.length > 0) {
