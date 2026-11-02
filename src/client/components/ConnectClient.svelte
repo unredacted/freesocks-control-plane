@@ -21,7 +21,7 @@
   import QrCode from './QrCode.svelte';
   import { configQuery } from '../lib/queries';
   import { backendEntry } from '../lib/backends';
-  import { buildImportLink, IMPORT_PROFILE_NAME } from '../lib/appLinks';
+  import { buildImportLink, IMPORT_PROFILE_NAME, SHARE_LINK_SCHEMES } from '../lib/appLinks';
   import { installKind, type InstallKind } from '../lib/installKind';
   import { detectClientPlatform, type PlatformKey } from '../lib/platform';
 
@@ -34,6 +34,11 @@
      *  config below, so step 2 says "enter the configuration below" instead of
      *  "paste your link". */
     rawConfigFirst?: boolean;
+    /** The link apps that read a plain link list import instead (the onboarding
+     *  mirror pick). A mirror serves one fixed format (the base64 default, no UA
+     *  negotiation), so apps that take whole profiles only (sing-box, Clash: not
+     *  in SHARE_LINK_SCHEMES) keep importing `subscriptionUrl`. */
+    linkListUrl?: string;
     /** True when the member's plan enforces a device limit (tier opts in AND the
      *  global toggle is on). Only then do we split apps by HWID support + show
      *  the HWID note; otherwise the device-limit concept is irrelevant and hidden. */
@@ -42,6 +47,7 @@
   let {
     backend = 'remnawave',
     subscriptionUrl,
+    linkListUrl,
     rawConfigFirst = false,
     deviceLimited = false,
   }: Props = $props();
@@ -77,10 +83,17 @@
   // A one-tap import link is possible only with a (non-rawConfig) subscription
   // URL and an app that has an import scheme.
   let canImport = $derived(!rawConfigFirst && !!subscriptionUrl);
+  // A link-list pick that differs from the key's own link (a mirror).
+  let otherList = $derived(linkListUrl && linkListUrl !== subscriptionUrl ? linkListUrl : null);
+  // This app imports the key's own link although another was picked: it takes
+  // whole profiles only and a mirror can't give it one.
+  function keepsMainLink(schemeId: string | null): boolean {
+    return !!otherList && !!schemeId && !SHARE_LINK_SCHEMES.has(schemeId);
+  }
   function importLink(schemeId: string | null): string | null {
-    return canImport && subscriptionUrl
-      ? buildImportLink(schemeId, subscriptionUrl, IMPORT_PROFILE_NAME)
-      : null;
+    if (!canImport || !subscriptionUrl) return null;
+    const url = otherList && !keepsMainLink(schemeId) ? otherList : subscriptionUrl;
+    return buildImportLink(schemeId, url, IMPORT_PROFILE_NAME);
   }
 
   // Per-card QR toggle (one open at a time), keyed by client name.
@@ -244,6 +257,9 @@
         </div>
         {#if desc}
           <p class="mt-1.5 text-[15px] leading-relaxed text-body">{desc}</p>
+        {/if}
+        {#if link && keepsMainLink(c.schemeId)}
+          <p class="mt-1.5 text-sm text-muted-foreground">{t('setup.mainLinkOnly')}</p>
         {/if}
         {#if link && qrFor === c.name}
           <div class="mt-3 flex flex-col items-center">

@@ -695,6 +695,55 @@ describe('subscriptions.appendMirror — a superseded row is refused', () => {
       expect((await ctx.db.get(subId))!.subscriptionMirrors).toHaveLength(1);
     });
   });
+
+  test('two requests that raced to one provider: the replaced object is withdrawn', async () => {
+    // Both read a key with no mirror, so each uploaded under its own random
+    // path to the same provider. The second append replaces the first entry;
+    // the first object must not stay in the bucket with nothing pointing at it.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const subId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'k',
+        backendShortId: 's',
+        subscriptionUrl: 'https://panel.test/sub/s',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+      return subId;
+    });
+    const append = (path: string) =>
+      t.mutation(internal.subscriptions.appendMirror, {
+        subscriptionId: subId,
+        mirror: { provider: 'p1', publicUrl: `https://cdn.test/${path}`, objectPath: path },
+        rawContentHash: 'h',
+        cap: 3,
+      });
+
+    expect((await append('mirrors/first')).appended).toBe(true);
+    expect((await append('mirrors/second')).appended).toBe(true);
+    // The same path again (the usual case: one path per key) withdraws nothing.
+    expect((await append('mirrors/second')).appended).toBe(true);
+
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subId))!.subscriptionMirrors.map((m) => m.objectPath)).toEqual([
+        'mirrors/second',
+      ]);
+      const uploads = await ctx.db.query('mirrorUploads').collect();
+      expect(
+        uploads.map((u) => ({ kind: u.kind, path: u.objectPath, providers: u.providers })),
+      ).toEqual([{ kind: 'withdraw', path: 'mirrors/first', providers: ['p1'] }]);
+    });
+  });
 });
 
 describe('subscriptions — origin render key + delivery stamps', () => {

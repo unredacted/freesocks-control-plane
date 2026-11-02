@@ -2,6 +2,7 @@ import { QueryClient } from '@tanstack/svelte-query';
 import { flushSync, unmount } from 'svelte';
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { apiClient } from '@client/lib/api';
+import { queryKeys } from '@client/lib/queries';
 import { mountWithQuery } from '../testing/mountWithQuery';
 import MirrorHelp from './MirrorHelp.svelte';
 
@@ -84,6 +85,19 @@ describe("the member's mirror list follows the server", () => {
     flushSync();
     expect(text()).toContain(A.publicUrl);
     expect(text()).not.toContain(B.publicUrl);
+  });
+
+  test('removing all clears the cached view too (the onboarding pick follows it)', async () => {
+    vi.mocked(apiClient.delete).mockResolvedValue({ removed: 1 });
+    client.setQueryData(queryKeys.account, { subscription: { url: 'x', mirrors: [A] } });
+    show();
+    button('Remove all mirrors').click();
+    await vi.waitFor(() =>
+      expect(
+        client.getQueryData<{ subscription: { mirrors: unknown[] } }>(queryKeys.account)
+          ?.subscription.mirrors,
+      ).toEqual([]),
+    );
   });
 
   test('removing all hides them before the refetch; a new key starts clean', async () => {

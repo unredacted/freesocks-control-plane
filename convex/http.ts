@@ -1053,11 +1053,19 @@ http.route({
         : await ctx.runQuery(internal.memberCountry.memberView, { userId: member.userId });
     // A stored answer stands even when it is no country ("Somewhere else"): the
     // request's country is used only when nothing is stored at all.
-    const suggestedModeId = await ctx.runQuery(internal.censoredCountries.suggestMode, {
-      backend: view.user.tier.backend,
-      country: suggestionCountry(stored, geoCountry),
-    });
-    return json({ ...view, geoCountry, suggestedModeId });
+    // geoCountryCensored is THIS request's country only (never the stored
+    // answer): the onboarding mirror suggestion prefills it, so no country, no
+    // suggestion. Like geoCountry it is computed per request and never stored.
+    const [suggestedModeId, geoCountryCensored] = await Promise.all([
+      ctx.runQuery(internal.censoredCountries.suggestMode, {
+        backend: view.user.tier.backend,
+        country: suggestionCountry(stored, geoCountry),
+      }),
+      geoCountry
+        ? ctx.runQuery(internal.censoredCountries.isListed, { country: geoCountry })
+        : false,
+    ]);
+    return json({ ...view, geoCountry, suggestedModeId, geoCountryCensored });
   }),
 });
 

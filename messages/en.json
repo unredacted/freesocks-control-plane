@@ -271,6 +271,7 @@
   "hero": {
     "titleDefault": "Your key",
     "urlLabelSubscription": "Your link",
+    "urlLabelMirror": "Your mirror link",
     "urlLabelAccessKey": "Access key",
     "tierLine": "Plan {tier}",
     "viaLine": "via {backend}",
@@ -676,6 +677,7 @@
   "setup": {
     "title": "Set up your VPN app",
     "install": "Install",
+    "mainLinkOnly": "Imports your main link: this app can't read a mirror link.",
     "noApps": "No recommended apps for this platform yet - use any compatible client and add your subscription manually.",
     "openSource": "Open source",
     "ipv6Works": "IPv6 ready",
@@ -745,6 +747,19 @@
     "quickLabel": "First, try moving servers",
     "quickHint": "A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key.",
     "pickLocation": "Pick a different location"
+  },
+  "mirrorSuggest": {
+    "title": "The main link may be blocked in {country}",
+    "body": "Your app fetches your key from our main website, and networks in {country} often block it. A mirror link serves the same key from a different host that is harder to block.",
+    "recommend": "We recommend adding a mirror link to your app instead of the main link.",
+    "create": "Create a mirror link",
+    "chooseLabel": "Which link should your app use?",
+    "optionMirror": "Mirror link",
+    "optionMirrorHint": "Served from another host, harder to block. sing-box and Clash apps can't read it.",
+    "optionMain": "Main link",
+    "optionMainHint": "Served from our main website.",
+    "recommended": "Recommended",
+    "chooseHint": "Copy, download, the QR code and the app buttons below use the link you pick. sing-box and Clash apps always import the main link."
   },
   "rawconfig": {
     "disclosure": "Show raw configuration",

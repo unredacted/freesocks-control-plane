@@ -16,6 +16,7 @@ import {
   LEGACY_COUNTRY_KEYS,
   MAX_CENSORED_COUNTRIES,
   censoredCountriesDiff,
+  normalizeCode,
   resolveCensoredCountries,
   validateCensoredCountries,
 } from './lib/censoredCountries';
@@ -254,5 +255,19 @@ export const suggestMode = internalQuery({
       })),
       defaultId,
     });
+  },
+});
+
+/**
+ * Whether the CDN places this request in a country on the list: the account
+ * view's flag behind the onboarding mirror suggestion. Only the verdict leaves;
+ * the list stays server-side, and neither the country nor the verdict is stored.
+ */
+export const isListed = internalQuery({
+  args: { country: v.union(v.string(), v.null()) },
+  handler: async (ctx, { country }): Promise<boolean> => {
+    const code = normalizeCode(country);
+    if (!code) return false;
+    return (await resolveCensoredCountries(ctx.db)).codes.includes(code);
   },
 });

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { slide, fade } from 'svelte/transition';
   import { Button } from '@client/components/ui/button';
-  import * as Select from '@client/components/ui/select';
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import LifeBuoy from '@lucide/svelte/icons/life-buoy';
@@ -11,12 +10,15 @@
   import Flag from '@lucide/svelte/icons/flag';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
-  import { t, getLocale } from '../lib/i18n/index.svelte';
-  import { COUNTRY_CODES, countryName } from '../lib/countries';
+  import { t } from '../lib/i18n/index.svelte';
+  import { COUNTRY_CODES } from '../lib/countries';
+  import MirrorRegionSelect from './MirrorRegionSelect.svelte';
   import { MirrorRequestResponse, MirrorClearResponse } from '../../shared/contracts/mirror';
+  import type { AccountResponse } from '../../shared/contracts/account';
   import { queryKeys } from '../lib/queries';
+  import { MIRROR_REQUEST_KEY, withoutMirrors } from '../lib/mirrorSuggestion';
   import { copyText } from '../lib/utils';
-  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
+  import { createMutation, useIsMutating, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
 
   /**
@@ -44,8 +46,9 @@
     /** Quick fix #2: open the new-key flow with the location picker (the
      *  regenerate modal). Omitted = not offered (single-location deploys). */
     onPickLocation?: () => void;
-    /** Open the report-issue dialog (same handler as the pass's red button) -
-     *  a member stuck in this backend is exactly who should tell us why. */
+    /** Open the report-issue dialog. The one place a member reports from (the
+     *  pass has no report button): a member stuck here is exactly who should
+     *  tell us why. */
     onReportIssue?: () => void;
   }
   let {
@@ -59,7 +62,6 @@
   }: Props = $props();
 
   const qc = useQueryClient();
-  const locale = getLocale();
 
   let open = $state(false);
 
@@ -108,16 +110,7 @@
     }
   });
 
-  // Region options: localized names (Intl.DisplayNames), sorted; "Global" first.
-  const regions = COUNTRY_CODES.map((c) => ({ code: c, name: countryName(c, locale) })).sort(
-    (a, b) => a.name.localeCompare(b.name, locale),
-  );
   let selected = $state<string>(init.selected);
-  const selectedLabel = $derived(
-    selected
-      ? (regions.find((r) => r.code === selected)?.name ?? selected)
-      : t('mirror.regionGlobal'),
-  );
 
   async function copy(url: string) {
     if (await copyText(url)) {
@@ -129,6 +122,7 @@
   }
 
   const request = createMutation(() => ({
+    mutationKey: MIRROR_REQUEST_KEY,
     mutationFn: () =>
       apiClient.post(
         '/api/v1/mirror/request',
@@ -156,6 +150,9 @@
     mutationFn: () => apiClient.delete('/api/v1/mirror', MirrorClearResponse),
     onSuccess: () => {
       removed = fromServer.map((m) => m.publicUrl);
+      // The shared view too: a link picked from these (the onboarding choice)
+      // stops reaching the pass and the app buttons now, not at the refetch.
+      qc.setQueryData<AccountResponse>(queryKeys.account, (old) => withoutMirrors(old));
       pending = [];
       status = 'idle';
       void qc.invalidateQueries({ queryKey: queryKeys.account });
@@ -165,6 +162,10 @@
   }));
 
   const exhausted = $derived(status === 'capped' || status === 'exhausted');
+  // A request from either mirror button (this one or the onboarding
+  // suggestion) holds both, and the remove, until it settles.
+  const requesting = useIsMutating({ mutationKey: MIRROR_REQUEST_KEY });
+  const busy = $derived(request.isPending || requesting.current > 0);
 </script>
 
 <div class="rounded-lg border border-border/70 bg-card">
@@ -259,26 +260,10 @@
         {/if}
 
         {#if !exhausted}
-          <div class="space-y-2">
-            <label class="block text-sm text-muted-foreground" for="mirror-region">
-              {t('mirror.regionLabel')}
-            </label>
-            <Select.Root type="single" value={selected} onValueChange={(v) => (selected = v ?? '')}>
-              <Select.Trigger id="mirror-region" class="w-full sm:w-72"
-                >{selectedLabel}</Select.Trigger
-              >
-              <Select.Content class="max-h-72 overflow-y-auto">
-                <Select.Item value="">{t('mirror.regionGlobal')}</Select.Item>
-                {#each regions as r (r.code)}
-                  <Select.Item value={r.code}>{r.name}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-            <p class="text-sm text-muted-foreground/80">{t('mirror.regionNotStored')}</p>
-          </div>
+          <MirrorRegionSelect id="mirror-region" bind:value={selected} />
 
-          <Button onclick={() => request.mutate()} disabled={request.isPending} class="min-h-11">
-            {request.isPending
+          <Button onclick={() => request.mutate()} disabled={busy} class="min-h-11">
+            {busy
               ? t('mirror.working')
               : added.length === 0
                 ? t('mirror.getButton')
@@ -312,7 +297,7 @@
             type="button"
             class="rounded-sm text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onclick={() => clear.mutate()}
-            disabled={clear.isPending}
+            disabled={clear.isPending || busy}
           >
             {clear.isPending ? t('mirror.working') : t('mirror.removeAll')}
           </button>

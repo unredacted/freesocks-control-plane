@@ -41,6 +41,8 @@
   import RedeemCode from '../components/RedeemCode.svelte';
   import ReferralsCard from '../components/ReferralsCard.svelte';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+  import Flag from '@lucide/svelte/icons/flag';
+  import LifeBuoy from '@lucide/svelte/icons/life-buoy';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import LogOut from '@lucide/svelte/icons/log-out';
   import Smartphone from '@lucide/svelte/icons/smartphone';
@@ -81,7 +83,6 @@
   import type { SwitchServerReason } from '../../shared/contracts/switchServerReasons';
   import type { ReportIssueReason } from '../../shared/contracts/issueReasons';
   import { ReportIssueResponse, type TelemetryPayload } from '../../shared/contracts/telemetry';
-  import Flag from '@lucide/svelte/icons/flag';
 
   const account = accountQuery();
   const config = configQuery();
@@ -1055,22 +1056,8 @@
                         <RotateCcw class="size-4" />
                         {regenerate.isPending ? t('common.working') : t('account.regenerate')}
                       </Button>
-                      <!-- Report issue: red-tinted outline (a flag, not a bomb - it
-                         sits beside two neutral actions and changes nothing). -->
-                      <Button
-                        onclick={() => {
-                          reportIssueReason = null;
-                          reportIssueConnection = null;
-                          reportIssueOpen = true;
-                        }}
-                        disabled={reportIssue.isPending || actionsDisabled}
-                        variant="outline"
-                        size="sm"
-                        class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <Flag class="size-4" />
-                        {reportIssue.isPending ? t('report.working') : t('report.action')}
-                      </Button>
+                      <!-- No report button on the pass: reporting lives under
+                           "Trouble connecting?" right below it. -->
                       {#if canSwitchBackend}
                         {#each switchTargets as target (target.id)}
                           <Button
@@ -1095,8 +1082,63 @@
                     </div>
                   {/snippet}
                 </SubscriptionHero>
-                <!-- Below lg the globe follows the pass (one instance at a time: it
-                     runs its own animation loop). -->
+                {#if !rawConfigFirst}
+                  <!-- Right under the pass it fixes. Always rendered outside
+                       rawConfig modes: mirror AVAILABILITY is member-visible state
+                       (the component shows a "not available here" note when the
+                       deployment has no mirror provider). rawConfig modes get no
+                       public mirrors: they'd expose the config to third parties. -->
+                  <MirrorHelp
+                    mirrors={data.subscription.mirrors}
+                    geoCountry={data.geoCountry}
+                    subscriptionUrl={subUrl}
+                    available={config.data?.mirrorsEnabled ?? false}
+                    onSwitchServer={actionsDisabled || !canSwitchServer
+                      ? undefined
+                      : () => {
+                          switchServerReason = null;
+                          switchServerOpen = true;
+                        }}
+                    onPickLocation={actionsDisabled || locations.length < 2
+                      ? undefined
+                      : () => (regenerateOpen = true)}
+                    onReportIssue={actionsDisabled
+                      ? undefined
+                      : () => {
+                          reportIssueReason = null;
+                          reportIssueConnection = null;
+                          reportIssueOpen = true;
+                        }}
+                  />
+                {:else if !actionsDisabled}
+                  <!-- rawConfig modes have no "Trouble connecting?" (no public
+                       mirrors), and reporting lives there in link modes: so it
+                       gets this row, in the same place and under the same words. -->
+                  <div
+                    class="flex min-h-14 flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border border-border/70 bg-card px-5 py-3"
+                  >
+                    <span class="flex items-center gap-2 font-bold text-muted-foreground">
+                      <LifeBuoy class="size-4 shrink-0" />
+                      {t('mirror.disclosure')}
+                    </span>
+                    <Button
+                      onclick={() => {
+                        reportIssueReason = null;
+                        reportIssueConnection = null;
+                        reportIssueOpen = true;
+                      }}
+                      disabled={reportIssue.isPending}
+                      variant="outline"
+                      size="sm"
+                      class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Flag class="size-4" />
+                      {reportIssue.isPending ? t('report.working') : t('report.action')}
+                    </Button>
+                  </div>
+                {/if}
+                <!-- Below lg the globe follows the pass and its help (one instance
+                     at a time: it runs its own animation loop). -->
                 {#if showGlobe && !wideLayout.current}
                   <KeyLocationGlobe
                     locations={mapLocations}
@@ -1133,32 +1175,6 @@
                     backend={data.subscription.backend}
                     subscriptionUrl={subUrl}
                     deviceLimited={data.user.tier.deviceLimited ?? false}
-                  />
-
-                  <!-- Always rendered: mirror AVAILABILITY is member-visible state
-                     (the component shows a "not available here" note when the
-                     deployment has no mirror provider). -->
-                  <MirrorHelp
-                    mirrors={data.subscription.mirrors}
-                    geoCountry={data.geoCountry}
-                    subscriptionUrl={subUrl}
-                    available={config.data?.mirrorsEnabled ?? false}
-                    onSwitchServer={actionsDisabled || !canSwitchServer
-                      ? undefined
-                      : () => {
-                          switchServerReason = null;
-                          switchServerOpen = true;
-                        }}
-                    onPickLocation={actionsDisabled || locations.length < 2
-                      ? undefined
-                      : () => (regenerateOpen = true)}
-                    onReportIssue={actionsDisabled
-                      ? undefined
-                      : () => {
-                          reportIssueReason = null;
-                          reportIssueConnection = null;
-                          reportIssueOpen = true;
-                        }}
                   />
                   <RawConfig />
                 {/if}

@@ -9,6 +9,8 @@
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import UsagePanel from '../components/UsagePanel.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
+  import MirrorSuggestion from '../components/MirrorSuggestion.svelte';
+  import { chosenLink, mirrorLinks, mirrorSuggested } from '../lib/mirrorSuggestion';
   import RawConfig from '../components/RawConfig.svelte';
   import InlineError from '../components/InlineError.svelte';
   import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
@@ -317,6 +319,25 @@
     subscription ? subscriptionDisplayUrl(subscription.subToken, subscription.url) : '',
   );
 
+  // Censored-country onboarding: the server says this request's country is on
+  // the list, so the main link may be blocked there. The suggestion offers a
+  // mirror link (opt-in) and, once there is one, the member picks which link
+  // their app gets: the pass and the link-list apps follow the pick (sing-box
+  // and Clash apps keep the main link). Page state only; nothing about the
+  // country or the pick is stored.
+  let suggestMirror = $derived(
+    !!subscription &&
+      mirrorSuggested({
+        geoCountry: account.data?.geoCountry,
+        geoCountryCensored: account.data?.geoCountryCensored,
+        mirrorsEnabled: config.data?.mirrorsEnabled,
+        rawConfig: rawConfigFirst,
+      }),
+  );
+  let keyMirrors = $derived(subscription ? mirrorLinks(subscription.mirrors, subUrl) : []);
+  let pickedLink = $state<string | null>(null);
+  let keyLink = $derived(suggestMirror ? chosenLink(subUrl, keyMirrors, pickedLink) : subUrl);
+
   // Step numbers in the visitor's own digits (Persian and Arabic included).
   const stepNumber = $derived(new Intl.NumberFormat(getLocale()));
   const STEP_LABELS = $derived([
@@ -624,11 +645,23 @@
   {:else}
     <!-- STEP 3 (key issued): the pass + setup. This is the flow's destination. -->
     <div id="get-key" class="scroll-mt-24 space-y-6">
+      {#if suggestMirror && account.data?.geoCountry}
+        <!-- Before the pass: it says the main link may be blocked here, and the
+             link it lets the member pick is the one the pass shows. -->
+        <MirrorSuggestion
+          mirrors={keyMirrors}
+          geoCountry={account.data.geoCountry}
+          subscriptionUrl={subUrl}
+          link={keyLink}
+          onPick={(url) => (pickedLink = url)}
+        />
+      {/if}
       <SubscriptionHero
         backendLabel={backendEntry(config.data?.backends, subscription.backend)?.label}
         accessKeyOnly={backendEntry(config.data?.backends, subscription.backend)?.capabilities
           .accessKeyOnly}
-        subscriptionUrl={subUrl}
+        subscriptionUrl={keyLink}
+        linkLabel={keyLink !== subUrl ? t('hero.urlLabelMirror') : undefined}
         status={subscription.status}
         tierName={account.data?.user.tier.name ?? accountTier?.name ?? ''}
         backend={subscription.backend}
@@ -644,6 +677,15 @@
         nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
         nodeRelay={nodeStatus.data?.node?.relay ?? null}
       />
+      {#if !rawConfigFirst}
+        <!-- Right under the pass it fixes (rawConfig modes get no public mirrors). -->
+        <MirrorHelp
+          mirrors={subscription.mirrors}
+          geoCountry={account.data?.geoCountry}
+          subscriptionUrl={subUrl}
+          available={config.data?.mirrorsEnabled ?? false}
+        />
+      {/if}
       <!-- Usage & validity beside the pass (extracted from it): what the key
            includes and how long it stays active. -->
       <UsagePanel
@@ -666,16 +708,13 @@
           deviceLimited={account.data?.user.tier.deviceLimited ?? false}
         />
       {:else}
+        <!-- The pick reaches the apps that read a plain link list; sing-box and
+             Clash apps keep the main link (a mirror serves one fixed format). -->
         <ConnectClient
           backend={subscription.backend}
           subscriptionUrl={subUrl}
+          linkListUrl={keyLink}
           deviceLimited={account.data?.user.tier.deviceLimited ?? false}
-        />
-        <MirrorHelp
-          mirrors={subscription.mirrors}
-          geoCountry={account.data?.geoCountry}
-          subscriptionUrl={subUrl}
-          available={config.data?.mirrorsEnabled ?? false}
         />
         <RawConfig />
       {/if}
