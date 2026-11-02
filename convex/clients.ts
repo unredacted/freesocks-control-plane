@@ -69,6 +69,7 @@ function mapClient(r: Doc<'clients'>) {
     sourceUrl: r.sourceUrl ?? null,
     easeOfUse: r.easeOfUse ?? null,
     ipv6: r.ipv6 ?? null,
+    xhttp: r.xhttp ?? null,
     description: r.description ?? null,
     enabled: r.enabled,
     priority: r.priority,
@@ -111,6 +112,7 @@ export const create = internalMutation({
     easeOfUse: v.optional(v.union(easeOfUse, v.null())),
     // Tri-state: true / false / null = untested (clears the flag).
     ipv6: v.optional(v.union(v.boolean(), v.null())),
+    xhttp: v.optional(v.union(v.boolean(), v.null())),
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -147,6 +149,7 @@ export const create = internalMutation({
       sourceUrl: optionalHttpsUrl(a.sourceUrl, 'The source URL'),
       easeOfUse: a.easeOfUse ?? undefined,
       ipv6: a.ipv6 ?? undefined,
+      xhttp: a.xhttp ?? undefined,
       description: normalizeDescription(a.description),
       enabled: a.enabled ?? true,
       priority: a.priority ?? 0,
@@ -180,6 +183,7 @@ export const update = internalMutation({
     easeOfUse: v.optional(v.union(easeOfUse, v.null())),
     // Tri-state: true / false / null = untested (clears the flag).
     ipv6: v.optional(v.union(v.boolean(), v.null())),
+    xhttp: v.optional(v.union(v.boolean(), v.null())),
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -220,6 +224,7 @@ export const update = internalMutation({
       fields.sourceUrl = optionalHttpsUrl(patch.sourceUrl, 'The source URL');
     if (patch.easeOfUse !== undefined) fields.easeOfUse = patch.easeOfUse ?? undefined;
     if (patch.ipv6 !== undefined) fields.ipv6 = patch.ipv6 ?? undefined;
+    if (patch.xhttp !== undefined) fields.xhttp = patch.xhttp ?? undefined;
     if (patch.description !== undefined)
       fields.description = normalizeDescription(patch.description);
     if (patch.enabled !== undefined) fields.enabled = patch.enabled;
@@ -273,6 +278,7 @@ export const upsertByName = internalMutation({
     easeOfUse: v.optional(v.union(easeOfUse, v.null())),
     // Tri-state: true / false / null = untested (clears the flag).
     ipv6: v.optional(v.union(v.boolean(), v.null())),
+    xhttp: v.optional(v.union(v.boolean(), v.null())),
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -304,6 +310,7 @@ export const upsertByName = internalMutation({
         sourceUrl: optionalHttpsUrl(a.sourceUrl, 'The source URL'),
         easeOfUse: a.easeOfUse ?? undefined,
         ipv6: a.ipv6 ?? undefined,
+        xhttp: a.xhttp ?? undefined,
         description: normalizeDescription(a.description),
         enabled: a.enabled ?? true,
         priority: a.priority ?? 0,
@@ -332,6 +339,7 @@ export const upsertByName = internalMutation({
       fields.sourceUrl = optionalHttpsUrl(a.sourceUrl, 'The source URL');
     if (a.easeOfUse !== undefined) fields.easeOfUse = a.easeOfUse ?? undefined;
     if (a.ipv6 !== undefined) fields.ipv6 = a.ipv6 ?? undefined;
+    if (a.xhttp !== undefined) fields.xhttp = a.xhttp ?? undefined;
     if (a.description !== undefined) fields.description = normalizeDescription(a.description);
     if (a.enabled !== undefined) fields.enabled = a.enabled;
     if (a.priority !== undefined) fields.priority = a.priority;

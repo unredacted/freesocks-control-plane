@@ -127,6 +127,10 @@
               <strong class="text-foreground"
                 >{c.ipv6 === true ? 'works' : c.ipv6 === false ? 'IPv4 only' : 'untested'}</strong
               >
+              · XHTTP:
+              <strong class="text-foreground"
+                >{c.xhttp === true ? 'works' : c.xhttp === false ? "can't" : 'untested'}</strong
+              >
             </div>
             <div class="text-muted-foreground">
               License:

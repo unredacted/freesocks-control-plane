@@ -626,6 +626,7 @@ export type MessageKey =
   | "setup.title"
   | "setup.viewSource"
   | "setup.windows"
+  | "setup.xhttpOnly"
   | "status.incidentsGlobal"
   | "status.incidentsNone"
   | "status.incidentsOngoing"

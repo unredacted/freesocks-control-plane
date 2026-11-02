@@ -212,3 +212,26 @@ Apps needing Apple hardware, Android devices, licensed installs or missing autom
 - `refresh`: `passed` (or `not-applicable` for Outline's static key).
 
 Evidence expires after 30 days and certifies only the recorded configuration/version/OS. This is the place to attach full TUN/device tests; the automatic engine and SFL import jobs alone cannot certify every client. Configure branch protection to require **Subscriptions, engines and packaged SFL** and **Report form (Chromium and Firefox)**. A green PR means those automated checks passed; full application certification remains a distinct release decision.
+
+## XHTTP in the client catalog
+
+Each catalog app carries an `xhttp` flag (`convex/lib/clientCatalog.ts`), tri-state like `ipv6`: `true` means the app connects on an XHTTP-under-REALITY entry (the `freedom-xhttp` mode), `false` means it can't, and unset means untested. The value is what reaches the app through FCP's delivery, not what its own core could do. Karing's core has XHTTP, but FCP serves it sing-box bodies and the panel builds those without XHTTP, so Karing is `false`. `convex/clientCompatibility.test.ts` holds that rule: a default app whose manifest format is `singbox` or `outline` can't be `true`.
+
+The defaults come from release notes and source, checked 2026-11-02. None is device-tested.
+
+| `xhttp` | Apps                                                                                                                                                           |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `false` | sing-box, Karing, Outline                                                                                                                                      |
+| `true`  | Hiddify (v4.0.4 or later), v2rayNG, v2rayN, Throne, Anywhere, Clash (Clash Verge Rev 2.5.0 or later), FlClash (0.8.93 or later), Mihomo Party (1.9.5 or later) |
+| unset   | Shadowrocket (XHTTP under REALITY unverified)                                                                                                                  |
+
+The member setup page (`ConnectClient.svelte`, on `/account` and `/get-account`) reads it. When the member's effective connection mode is an XHTTP mode, apps marked `false` are left out and one line says why (`setup.xhttpOnly`). Untested apps stay, and other modes show every app. `isXhttpMode` in `src/client/lib/connectionMode.ts` decides which modes count: today only the built-in `freedom-xhttp`, so an admin-created XHTTP mode needs its slug added there. The flag only changes which apps the page offers. It never changes a subscription body.
+
+### Getting the defaults onto a running deployment
+
+A deployment whose `clients` table is empty reads `DEFAULT_CLIENTS` directly and has the flags at once. A seeded one doesn't. Each deploy's `seedCutover` runs `seed:seedClients`, which only inserts missing apps, so existing rows stay untested and every app stays visible until one of these is done:
+
+- Run `seed:refreshDefaultClients` once through the deployer container (`docs/beta-deploy.md` § "One-off functions"). It rewrites every default-managed field on the default apps (install URL, platforms, backends, import scheme, HWID, open-source metadata, ease of use, `ipv6`, `xhttp` and priority). It keeps each row's `enabled` flag, any admin description and admin-added apps. Look over **Client apps** in the admin first: the refresh undoes hand edits to those fields on default apps.
+- Or set **XHTTP support** per app in **Client apps** → Edit. Nothing else changes.
+
+Do one of them before turning the `freedom-xhttp` mode on for members.

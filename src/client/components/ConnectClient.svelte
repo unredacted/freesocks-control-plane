@@ -12,6 +12,9 @@
    * lands straight in the app (a plain https QR would just open a browser). Privacy
    * mode hides the URL, so those apps import the raw config below (manual).
    *
+   * On an XHTTP mode, apps the catalog marks `xhttp: false` are left out (they
+   * can't connect there) and one line says why; untested apps stay.
+   *
    * App names are proper nouns (not translated); the structural copy is i18n'd.
    */
   import { getLocale, t, type MessageKey } from '../lib/i18n/index.svelte';
@@ -24,6 +27,7 @@
   import { buildImportLink, IMPORT_PROFILE_NAME, SHARE_LINK_SCHEMES } from '../lib/appLinks';
   import { installKind, type InstallKind } from '../lib/installKind';
   import { detectClientPlatform, type PlatformKey } from '../lib/platform';
+  import { isXhttpMode } from '../lib/connectionMode';
 
   interface Props {
     backend?: string;
@@ -43,6 +47,9 @@
      *  global toggle is on). Only then do we split apps by HWID support + show
      *  the HWID note; otherwise the device-limit concept is irrelevant and hidden. */
     deviceLimited?: boolean;
+    /** The member's effective connection mode. On an XHTTP mode the apps that
+     *  can't use XHTTP are left out. */
+    modeId?: string;
   }
   let {
     backend = 'remnawave',
@@ -50,6 +57,7 @@
     linkListUrl,
     rawConfigFirst = false,
     deviceLimited = false,
+    modeId,
   }: Props = $props();
 
   const config = configQuery();
@@ -68,7 +76,12 @@
   let clients = $derived(
     (config.data?.clients ?? []).filter((c) => (c.backends as string[]).includes(backend)),
   );
-  let currentClients = $derived(clients.filter((c) => c.platforms.includes(active)));
+  let platformClients = $derived(clients.filter((c) => c.platforms.includes(active)));
+  // On an XHTTP mode, only `xhttp: false` goes: untested apps stay visible.
+  let currentClients = $derived(
+    isXhttpMode(modeId) ? platformClients.filter((c) => c.xhttp !== false) : platformClients,
+  );
+  let xhttpHidden = $derived(currentClients.length < platformClients.length);
   // On a device-limited plan, HWID-capable apps honor the limit; others each
   // consume a slot per launch (or, with backend enforcement on, fail to connect),
   // so we surface them separately. `gateDevices` is true only when it matters —
@@ -186,6 +199,10 @@
     aria-labelledby="connect-tab-{active}"
     class="mt-4"
   >
+    {#if xhttpHidden}
+      <p class="mb-3 text-sm text-muted-foreground">{t('setup.xhttpOnly')}</p>
+    {/if}
+
     {#snippet clientCard(c: (typeof currentClients)[number], recommended = false)}
       {@const link = importLink(c.schemeId)}
       {@const desc = clientDesc(c)}
@@ -276,12 +293,15 @@
          device-limited plan, split by HWID support so members pick an app that
          actually honors the limit; otherwise a single flat list. -->
     {#if gateDevices}
-      <p class="text-sm font-bold text-foreground">{t('setup.deviceCompatibleTitle')}</p>
-      <ul class="mt-2">
-        {#each compatClients as c (c.name)}
-          {@render clientCard(c)}
-        {/each}
-      </ul>
+      <!-- An XHTTP mode can leave a platform without one (Karing is out). -->
+      {#if compatClients.length > 0}
+        <p class="text-sm font-bold text-foreground">{t('setup.deviceCompatibleTitle')}</p>
+        <ul class="mt-2">
+          {#each compatClients as c (c.name)}
+            {@render clientCard(c)}
+          {/each}
+        </ul>
+      {/if}
       {#if incompatClients.length > 0}
         <p class="mt-4 text-sm font-bold text-foreground">
           {t('setup.deviceIncompatibleTitle')}

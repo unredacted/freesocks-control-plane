@@ -40,6 +40,12 @@ export interface CatalogClient {
   // app is IPv4-only (e.g. its own tun has no inet6), missing = untested.
   // Tri-state on purpose — only claim what was actually observed.
   ipv6?: boolean;
+  // XHTTP under REALITY (the `freedom-xhttp` mode) as it reaches the app
+  // through FCP's delivery, not what the app's own core could do: an app FCP
+  // serves sing-box bodies is false, because the panel builds those without
+  // XHTTP. true = works, false = can't (hidden from members on an XHTTP
+  // mode), missing = untested (still shown). Same tri-state as `ipv6`.
+  xhttp?: boolean;
   // Admin-set member-facing blurb, shown verbatim in every locale. The defaults
   // deliberately DON'T set it: their copy lives in the SPA's i18n catalog
   // (setup.clientDesc.*) so it translates; an admin value overrides that.
@@ -61,6 +67,7 @@ export interface PublicClient {
   sourceUrl?: string;
   easeOfUse?: ClientEase;
   ipv6?: boolean;
+  xhttp?: boolean;
   description?: string;
 }
 
@@ -82,6 +89,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/hiddify/hiddify-app',
     easeOfUse: 'easy',
+    xhttp: true, // its sing-box fork carries XHTTP from app v4.0.4 (2026-02)
     enabled: true,
     priority: 10,
   },
@@ -96,6 +104,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/KaringX/karing',
     easeOfUse: 'moderate',
+    xhttp: false, // FCP serves it sing-box bodies, which the panel builds without XHTTP
     enabled: true,
     priority: 20,
   },
@@ -115,6 +124,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     sourceUrl: 'https://github.com/NodePassProject/Anywhere',
     easeOfUse: 'easy',
     ipv6: true, // IPv6 works (verified 2026-10-17; supersedes the 2026-08-30 v4-only reading)
+    xhttp: true,
     enabled: true,
     priority: 25,
   },
@@ -130,6 +140,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     sourceUrl: 'https://github.com/SagerNet/sing-box',
     easeOfUse: 'advanced',
     ipv6: true, // dual-stack tun from the backend template (verified live 2026-08-30)
+    xhttp: false, // sing-box has no XHTTP transport
     enabled: true,
     priority: 30,
   },
@@ -146,6 +157,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/2dust/v2rayNG',
     easeOfUse: 'moderate',
+    xhttp: true, // Xray-core inside
     enabled: true,
     priority: 40,
   },
@@ -162,6 +174,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/2dust/v2rayN',
     easeOfUse: 'advanced',
+    xhttp: true, // Xray-core inside
     enabled: true,
     priority: 45,
   },
@@ -176,6 +189,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/clash-verge-rev/clash-verge-rev',
     easeOfUse: 'advanced',
+    xhttp: true, // Mihomo v1.19.22+: Clash Verge Rev 2.5.0 or later
     enabled: true,
     priority: 60,
   },
@@ -192,6 +206,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/chen08209/FlClash',
     easeOfUse: 'moderate',
+    xhttp: true, // Mihomo v1.19.22+: FlClash 0.8.93 or later
     enabled: true,
     priority: 62,
   },
@@ -207,6 +222,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/mihomo-party-org/mihomo-party',
     easeOfUse: 'moderate',
+    xhttp: true, // Mihomo v1.19.22+: Mihomo Party 1.9.5 or later
     enabled: true,
     priority: 64,
   },
@@ -221,6 +237,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/throneproj/Throne',
     easeOfUse: 'advanced',
+    xhttp: true, // Xray-core inside
     enabled: true,
     priority: 70,
   },
@@ -236,6 +253,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     openSource: false,
     license: 'Proprietary',
     easeOfUse: 'easy',
+    // xhttp left unset: XHTTP since about 2.2.69, under REALITY unverified.
     enabled: true,
     priority: 75,
   },
@@ -250,6 +268,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'Apache-2.0',
     sourceUrl: 'https://github.com/Jigsaw-Code/outline-apps',
     easeOfUse: 'easy',
+    xhttp: false, // Shadowsocks keys only
     enabled: true,
     priority: 80,
   },
@@ -274,6 +293,7 @@ export async function resolveClients(db: DatabaseReader): Promise<CatalogClient[
     sourceUrl: r.sourceUrl ?? undefined,
     easeOfUse: r.easeOfUse ?? undefined,
     ipv6: r.ipv6 ?? undefined,
+    xhttp: r.xhttp ?? undefined,
     description: r.description ?? undefined,
     enabled: r.enabled,
     priority: r.priority,
@@ -305,6 +325,7 @@ export function publicClients(clients: CatalogClient[]): PublicClient[] {
       sourceUrl: c.sourceUrl,
       easeOfUse: c.easeOfUse,
       ipv6: c.ipv6,
+      xhttp: c.xhttp,
       description: c.description,
     }));
 }

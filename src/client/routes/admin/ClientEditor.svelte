@@ -43,6 +43,8 @@
     easeOfUse: c?.easeOfUse ?? '',
     // Tri-state select value: '' untested, 'yes' works, 'no' IPv4-only.
     ipv6: c?.ipv6 === true ? 'yes' : c?.ipv6 === false ? 'no' : '',
+    // The same tri-state for XHTTP: '' untested, 'yes' works, 'no' can't.
+    xhttp: c?.xhttp === true ? 'yes' : c?.xhttp === false ? 'no' : '',
     description: c?.description ?? '',
     enabled: c?.enabled ?? true,
     priority: c?.priority ?? 0,
@@ -59,6 +61,7 @@
   let sourceUrl = $state(init.sourceUrl);
   let easeOfUse = $state(init.easeOfUse);
   let ipv6 = $state(init.ipv6);
+  let xhttp = $state(init.xhttp);
   let description = $state(init.description);
   let enabled = $state(init.enabled);
   let priority = $state(init.priority);
@@ -83,6 +86,7 @@
       sourceUrl: sourceUrl || null,
       easeOfUse: easeOfUse || null,
       ipv6: ipv6 === 'yes' ? true : ipv6 === 'no' ? false : null,
+      xhttp: xhttp === 'yes' ? true : xhttp === 'no' ? false : null,
       description: description.trim() || null,
       enabled,
       priority,
@@ -209,6 +213,23 @@
         <p class="text-xs text-muted-foreground/80 mt-1">
           Verified IPv6-through-tunnel behavior only. "IPv4 only" shows members a badge so v6 users
           pick a different app; leave untested apps blank rather than guessing.
+        </p>
+      </div>
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="cl-xhttp">XHTTP support</label>
+        <select
+          id="cl-xhttp"
+          bind:value={xhttp}
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="">Untested (still shown)</option>
+          <option value="yes">Works</option>
+          <option value="no">Can't use it (hidden on XHTTP)</option>
+        </select>
+        <p class="text-xs text-muted-foreground/80 mt-1">
+          XHTTP under REALITY as this app receives it from FCP, not what its core could do: an app
+          served sing-box bodies can't use it. Members on an XHTTP connection mode don't see apps
+          marked "Can't use it".
         </p>
       </div>
       <div>

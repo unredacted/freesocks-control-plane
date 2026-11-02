@@ -8,7 +8,7 @@ import ConnectClient from './ConnectClient.svelte';
 const MAIN = 'https://site.example/api/v1/sub/token-1';
 const MIRROR = 'https://cdn-1.example/mirrors/aaaa';
 const ALL = ['android', 'ios', 'windows', 'desktop'];
-const app = (name: string, schemeId: string | null) => ({
+const app = (name: string, schemeId: string | null, extra: Record<string, unknown> = {}) => ({
   name,
   platforms: ALL,
   backends: ['remnawave'],
@@ -16,11 +16,17 @@ const app = (name: string, schemeId: string | null) => ({
   schemeId,
   hwid: true,
   openSource: true,
+  ...extra,
 });
 
 let client: QueryClient;
 let mounted: ReturnType<typeof mountWithQuery> | null = null;
-const props = $state<{ subscriptionUrl: string; linkListUrl?: string }>({
+const props = $state<{
+  subscriptionUrl: string;
+  linkListUrl?: string;
+  modeId?: string;
+  deviceLimited?: boolean;
+}>({
   subscriptionUrl: MAIN,
 });
 
@@ -32,6 +38,8 @@ beforeEach(() => {
   });
   props.subscriptionUrl = MAIN;
   props.linkListUrl = undefined;
+  props.modeId = undefined;
+  props.deviceLimited = undefined;
 });
 afterEach(() => {
   if (mounted) unmount(mounted);
@@ -82,5 +90,102 @@ describe('which link each app imports', () => {
     const c = cards();
     expect(c['Hiddify']!.href).toContain(MAIN);
     expect(Object.values(c).some((x) => x.note)).toBe(false);
+  });
+});
+
+describe('which apps an XHTTP mode offers', () => {
+  const XHTTP_LINE = 'Only apps that work with XHTTP are shown';
+  // The app cards (the numbered steps are an <ol>).
+  const names = () =>
+    [...document.querySelectorAll('ul > li')].map((li) =>
+      li.querySelector('p')?.textContent?.trim(),
+    );
+  const lineShown = () => document.body.textContent?.includes(XHTTP_LINE) ?? false;
+  const pickTab = (key: string) => {
+    document.querySelector<HTMLButtonElement>(`#connect-tab-${key}`)!.click();
+    flushSync();
+  };
+
+  beforeEach(() => {
+    client.setQueryData(queryKeys.config, {
+      clients: [
+        app('Hiddify', 'hiddify', { xhttp: true }),
+        app('sing-box', 'sing-box', { xhttp: false }),
+        app('Karing', 'karing', { xhttp: false, hwid: true }),
+        // Untested: no flag.
+        app('Shadowrocket', 'shadowrocket', { hwid: false }),
+      ],
+      backends: { list: [] },
+    });
+  });
+
+  test('freedom-xhttp: apps that cannot use it are left out, untested ones stay, one line says why', () => {
+    props.modeId = 'freedom-xhttp';
+    mounted = mountWithQuery(client, ConnectClient, props);
+    flushSync();
+    expect(names()).toEqual(['Hiddify', 'Shadowrocket']);
+    expect(lineShown()).toBe(true);
+    // The first app left still carries the Recommended badge.
+    expect(document.querySelector('li')?.textContent).toContain('Recommended');
+  });
+
+  test('another mode offers every app and says nothing', () => {
+    props.modeId = 'freedom-reality';
+    mounted = mountWithQuery(client, ConnectClient, props);
+    flushSync();
+    expect(names()).toEqual(['Hiddify', 'sing-box', 'Karing', 'Shadowrocket']);
+    expect(lineShown()).toBe(false);
+  });
+
+  test('no mode yet: every app', () => {
+    mounted = mountWithQuery(client, ConnectClient, props);
+    flushSync();
+    expect(names()).toHaveLength(4);
+    expect(lineShown()).toBe(false);
+  });
+
+  test('the line shows only on a platform where something was left out', () => {
+    client.setQueryData(queryKeys.config, {
+      clients: [
+        app('Hiddify', 'hiddify', { xhttp: true }),
+        app('sing-box', 'sing-box', { xhttp: false, platforms: ['ios'] }),
+      ],
+      backends: { list: [] },
+    });
+    props.modeId = 'freedom-xhttp';
+    mounted = mountWithQuery(client, ConnectClient, props);
+    pickTab('windows');
+    expect(names()).toEqual(['Hiddify']);
+    expect(lineShown()).toBe(false);
+    pickTab('ios');
+    expect(names()).toEqual(['Hiddify']);
+    expect(lineShown()).toBe(true);
+  });
+
+  test('a device-limited plan with no device-limit app left drops the empty heading', () => {
+    props.modeId = 'freedom-xhttp';
+    props.deviceLimited = true;
+    // Karing was the only HWID app, and it can't use XHTTP.
+    client.setQueryData(queryKeys.config, {
+      clients: [
+        app('Hiddify', 'hiddify', { xhttp: true, hwid: false }),
+        app('Karing', 'karing', { xhttp: false, hwid: true }),
+      ],
+      backends: {
+        list: [
+          {
+            id: 'remnawave',
+            label: 'Remnawave',
+            enabled: true,
+            capabilities: { devices: true, accessKeyOnly: false, switchServer: true },
+          },
+        ],
+      },
+    });
+    mounted = mountWithQuery(client, ConnectClient, props);
+    flushSync();
+    expect(names()).toEqual(['Hiddify']);
+    expect(document.body.textContent).not.toContain('Works with your device limit');
+    expect(document.body.textContent).toContain('Not recommended for your plan');
   });
 });
