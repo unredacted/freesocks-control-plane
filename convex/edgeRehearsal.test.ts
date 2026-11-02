@@ -570,6 +570,81 @@ describe('choosing a cohort representative', () => {
     expect(panel.created).toHaveLength(1);
   });
 
+  test('a node no member is pinned to yet rehearses its own placement from members elsewhere, pinned to it', async () => {
+    // Two nodes of one group: every member's stored pin is the other node (a
+    // node whose gate was closed while they fetched, or a new one). Their
+    // bodies carry both nodes; once this node opens some of them land on it.
+    const { t, fx, addMember, run } = await seed({
+      body: (u, _short, ua) => {
+        const format = formatOfUa(ua);
+        const mine = bodyFor(format, REMARK_A, EDGE_A, 443);
+        if (u || format !== 'links') return mine;
+        return `${mine}\nvless://${UUID}@203.0.113.9:443?${REALITY_QS}#node-two-relay-a`;
+      },
+    });
+    await addMember('sq-a', 'node-two');
+    // Without the node's own placement known, nothing is pinned here: the credential stands in.
+    expect(await run()).toMatchObject({ ok: true, source: 'credential' });
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('panelSetups', {
+        backendServerId: fx.serverId,
+        desired: '{}',
+        desiredHash: 'fixture',
+        generation: 1,
+        state: 'ready',
+        profileName: 'FreeSocks-Config',
+        modes: [
+          {
+            slug: 'freedom-ws',
+            name: 'Freedom-Reality',
+            shape: { transport: 'reality', fronting: 'edge-l4' },
+            acceptProxyProtocol: false,
+            tag: 'VLESS_RELAY_A',
+            placement: 'bound',
+            family: 'bound',
+            groupUuid: 'sq-a',
+          },
+        ],
+        templates: [],
+        originDns: null,
+        adopted: true,
+        gateVersion: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert('panelNodeIntents', {
+        backendServerId: fx.serverId,
+        name: NODE,
+        label: NODE,
+        mode: 'freedom-ws',
+        contractVersion: 2,
+        generation: 1,
+        desiredHash: 'fixture',
+        state: 'ready',
+        observed: {
+          management: { address: '192.0.2.20', port: 2222 },
+          publicIps: { v4: '203.0.113.10' },
+          capabilities: { caddy: false, ipv6: false },
+          at: now,
+        },
+        settings: { originHostnameSource: 'none', publishV6: false, nodePort: 2222 },
+        machineRevision: 1,
+        activation: { stage: 'activating', evidence: [] },
+        delivery: {
+          disposition: 'activating',
+          acceptingAssignments: false,
+          exposure: { everLive: true, hosts: [], mirrors: 0, testCredentials: 0, dns: 0 },
+        },
+        origin: { dns: 'none' },
+        registeredAt: now,
+        updatedAt: now,
+      });
+    });
+    const r = await run();
+    expect(r).toMatchObject({ ok: true, failures: [], source: 'members', unrepresented: [] });
+  });
+
   test('an empty body still fails (a hidden-out cohort), and a cohort no candidate could be fetched for fails', async () => {
     const empty = await seed({ body: (u) => (u ? null : '') });
     await empty.addMember('sq-a');
