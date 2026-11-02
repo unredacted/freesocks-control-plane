@@ -2854,6 +2854,39 @@ describe("edgeSetupRuns: a node FCP does not manage, fronted by the operator's o
     }
   });
 
+  test("another node's front on the same transport is not listed: it is that node's", async () => {
+    __setNameResolutionForTests(async (name) =>
+      name.endsWith('.example.net') ? { v4: ['198.51.100.77'], v6: [] } : { v4: [], v6: [] },
+    );
+    try {
+      const { t, serverId } = await seedFronted({
+        hosts: [
+          frontHost({ remark: 'node-one-ws-6a536a', address: 'cdn-front.example.net' }),
+          frontHost({
+            uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaab0',
+            remark: 'node-two-ws-0d6f2b',
+            address: 'cdn-other.example.net',
+          }),
+        ],
+      });
+      await t.run(async (ctx) => {
+        const one = (await ctx.db.query('backendNodeInventory').collect())[0]!;
+        await ctx.db.insert('backendNodeInventory', {
+          backendServerId: one.backendServerId,
+          nodeUuid: 'node-two-uuid',
+          name: 'node-two',
+          usersOnline: 0,
+          online: true,
+          lastStatsAt: Date.now(),
+        });
+      });
+      const plan = await planWith(t, serverId, { originAddress: ORIGIN });
+      expect(plan.frontHosts).toEqual([{ uuid: HOST_LB, remark: 'node-one-ws-6a536a' }]);
+    } finally {
+      __setNameResolutionForTests(null);
+    }
+  });
+
   test('a load balancer is never created, named or reused for an origin it cannot forward to, whoever asks', async () => {
     const { t, accountId, world } = await seedFronted();
     const { relayId } = await registerRelay(t, { originAddress: MANAGEMENT });

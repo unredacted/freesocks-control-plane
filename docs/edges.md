@@ -2075,7 +2075,10 @@ elsewhere, such as a CDN front the operator built (`namesElsewhere`: both its lo
 AAAA, answered conclusively, a record or "no such record"; at least one address came back; and
 none is an address the node is known by). A name one of whose lookups failed (a timeout, a
 server failure: anything but "no such record") is never one, since the missing family could
-be the node itself, so it keeps the critical alarm. A member render leaves their entries out like any it
+be the node itself, so it keeps the critical alarm. A Host whose remark names another node of the
+backend (read as the pinner reads it, against the backend's node inventory) is that node's and never
+this one's front: nodes that share a transport list each other's Hosts, and a member pinned here never
+gets them. A member render leaves their entries out like any it
 cannot place, but an entry a known front names is not the node: it raises attention
 `front_host_unused` (info: members no longer get it, so it can be deleted at its provider once
 its traffic stops, and its Host in the backend) instead of `direct_host_reappeared`. An entry

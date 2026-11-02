@@ -1179,6 +1179,46 @@ describe("a front the operator built by hand (a Host at its own load balancer's 
     expect((await relay()).operatorFronts).toBeUndefined();
   });
 
+  test("another node's front on the same transport is never this node's: members pinned here never get it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const OTHER = 'xray9-other';
+    const theirs: AddressRow = {
+      ...front(),
+      uuid: 'f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f3f3',
+      remark: `${OTHER}-ws-0d6f2b`,
+      address: '198.51.100.30',
+    };
+    const { t, relayId, relay } = await world({
+      hosts: [...panelHosts().filter((h) => h.uuid === FCP_UUID), front(), theirs],
+    });
+    const serverId = (await relay()).backendServerId!;
+    await t.run((ctx) =>
+      ctx.db.insert('backendNodeInventory', {
+        backendServerId: serverId,
+        nodeUuid: 'node-uuid-other',
+        name: OTHER,
+        usersOnline: 0,
+        online: true,
+        lastStatsAt: NOW,
+      }),
+    );
+    await t.action(internal.edgeHostHides.observe, { relayId });
+    expect((await relay()).operatorFronts?.remarks).toEqual([`${FIXTURE_NODE}-relay`]);
+    expect((await relay()).operatorFronts?.hostUuids).toEqual([FRONT]);
+    // Without the other node in the inventory its Host reads as a front (a
+    // node FCP has not listed yet is never assumed).
+    await t.run(async (ctx) => {
+      for (const n of await ctx.db.query('backendNodeInventory').collect())
+        if (n.name === OTHER) await ctx.db.delete(n._id);
+    });
+    await t.action(internal.edgeHostHides.observe, { relayId });
+    expect((await relay()).operatorFronts?.remarks).toEqual([
+      `${FIXTURE_NODE}-relay`,
+      `${OTHER}-ws-0d6f2b`,
+    ]);
+  });
+
   test("it says how many of the node's keys still hold it: counted apart from the look, hourly and after a re-claim, by the renders handed out", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);

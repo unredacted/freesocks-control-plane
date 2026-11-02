@@ -186,6 +186,8 @@ export interface HideContext {
   alsoAddresses: string[];
   /** Names among the node's Hosts this look resolved elsewhere (`namesElsewhere`). */
   frontNames?: string[];
+  /** The backend's other nodes, by name (a Host one of them names is not this node's front). */
+  otherNodeNames: string[];
 }
 
 async function hideContext(
@@ -214,7 +216,21 @@ async function hideContext(
     bound: !!binding && binding.relaySlug === relay.slug,
     claimedAt: binding && binding.relaySlug === relay.slug ? binding.updatedAt : null,
     alsoAddresses: await nodeAddressesOf(ctx, relay),
+    otherNodeNames: await otherNodeNamesOf(ctx.db, relay.backendServerId, relay.nodeName ?? null),
   };
+}
+
+/** The names of a backend's nodes other than this one, as its inventory lists them. */
+export async function otherNodeNamesOf(
+  db: DatabaseReader,
+  backendServerId: Id<'backendServers'>,
+  nodeName: string | null,
+): Promise<string[]> {
+  const nodes = await db
+    .query('backendNodeInventory')
+    .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+    .collect(); // one backend's nodes: operator-scale
+  return nodes.map((n) => n.name).filter((n) => n !== nodeName);
 }
 
 export const context = internalQuery({
@@ -651,6 +667,7 @@ async function recordFronts(
     ...directContextOf(c, inbounds),
     edgeAddresses: c.edgeAddresses,
     frontNames: c.frontNames,
+    otherNodeNames: c.otherNodeNames,
   });
   await ctx.runMutation(internal.edgeHostHides.noteFronts, {
     relayId: c.relay._id,
