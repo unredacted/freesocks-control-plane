@@ -314,7 +314,13 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
     `/api/v1/admin/status/{page,incidents}`); App settings (incl. the **Verification** backend — `setVerification` /
     `PATCH /api/v1/admin/verification`, surfaced in `HpkeVerifyModal` — and the **site
     chrome** block: the announcement banner + footer source link, `site.*` namespace in
-    `convex/lib/siteConfig.ts`, `PATCH /api/v1/admin/site`, rendered by `SiteBanner.svelte`); **Audit log** (filter by action / actor / since).
+    `convex/lib/siteConfig.ts`, `PATCH /api/v1/admin/site`, rendered by `SiteBanner.svelte`;
+    and the **home page image** beside the hero headline — an admin upload (PNG/JPEG/WebP,
+    ≤512 KB, checked from the bytes in `convex/lib/siteImage.ts`) stored in the `siteImages`
+    table so database backups carry it, `PUT`/`DELETE /api/v1/admin/site/home-image`, served
+    publicly at `GET /api/v1/site/home-image?v=<version>` (per-IP `site.image.fetch`), with
+    `src/client/assets/home-poster.png` as the built-in default; `HomeImageCard.svelte`);
+    **Audit log** (filter by action / actor / since).
 - **IaC-addressable mutations** (for the Ansible role): idempotent **`PUT …/backend-servers/by-slug/{slug}`** + **`DELETE …/by-slug/{slug}`**, **`PUT …/tiers/by-slug/{slug}`**, and **`PUT
 …/mirror-providers/by-name/{name}`**. Each is a single keep-secret-on-blank upsert; no
   client-side id resolution. Backed by `convex/adminApi.ts` / `convex/mirrorProviders.ts`.

@@ -153,6 +153,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // config.fetch/status.fetch because the same shared-exit/CGNAT populations
   // hit all three; a real user generates well under 20 route changes a minute.
   'telemetry.send': { max: 120, windowMs: MINUTE, enabled: true },
+  // The admin-uploaded home page image (per IP): browsers cache each version
+  // for good, so a real visitor fetches it once; this bounds a reload loop
+  // that would otherwise read the stored image on every request.
+  'site.image.fetch': { max: 120, windowMs: MINUTE, enabled: true },
   // Admin edges surface (per actor: admin id / API token / IP). Every call behind
   // `provider-call` reaches a cloud provider's API (credential tests, option
   // discovery, inventory + live-LB pulls, backend node refresh, render preview);

@@ -43,6 +43,12 @@ import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sendUmamiEvent } from './lib/umami';
 import { sanitizeUmamiUrl } from './lib/analyticsConfig';
+import {
+  checkSiteImage,
+  decodeBase64,
+  MAX_SITE_IMAGE_BYTES,
+  siteImageVersion,
+} from './lib/siteImage';
 import { detectedFromHeaders, sanitizeSubmitted } from './lib/issueTelemetry';
 import { isReportIssueReason } from '../src/shared/contracts/issueReasons';
 import { sha256Hex } from './lib/crypto';
@@ -539,7 +545,8 @@ async function throttlePublicGet(
     | 'status.fetch'
     | 'readyz.fetch'
     | 'admin.auth-status.fetch'
-    | 'telemetry.send',
+    | 'telemetry.send'
+    | 'site.image.fetch',
   opts?: { unknownSubject?: boolean },
 ): Promise<Response | null> {
   const ip = resolveClientIp(req);
@@ -577,6 +584,33 @@ http.route({
     if (limited) return limited;
     return json(await ctx.runQuery(internal.statusPage.getPublic, {}), 200, {
       'cache-control': 'public, max-age=30',
+    });
+  }),
+});
+
+// The admin-uploaded home page image (lib/siteImage.ts). /api/v1/config hands
+// out its version, and the SPA asks for `?v=<version>`: that exact version is
+// cacheable for good, anything else gets a short cache. 404 when none is set
+// (the SPA then shows its built-in image). Per-IP throttled like /config.
+http.route({
+  path: '/api/v1/site/home-image',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    const limited = await throttlePublicGet(ctx, req, 'site.image.fetch');
+    if (limited) return limited;
+    const image = await ctx.runQuery(internal.siteImages.getHomeImage, {});
+    if (!image) return errorJson('site_image.not_found', 'No image is set.', 404);
+    const asked = new URL(req.url).searchParams.get('v');
+    return new Response(image.data, {
+      status: 200,
+      headers: {
+        'content-type': image.contentType,
+        'cache-control':
+          asked === image.version ? 'public, max-age=31536000, immutable' : 'public, max-age=300',
+        // Never sniffed into something else, and inert if opened directly.
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; sandbox",
+      },
     });
   }),
 });
@@ -3390,6 +3424,58 @@ http.route({
           actorAdminId: admin.adminUserId,
         }),
       );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// The home page image. The SPA sends the file as base64 in JSON (the PoP body
+// hash covers text bodies), so the body cap is the image cap plus base64's
+// third. The bytes are checked here (format, size, pixel size) before storing.
+http.route({
+  path: '/api/v1/admin/site/home-image',
+  method: 'PUT',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{ data?: unknown }>(req, {
+      maxBytes: Math.ceil(MAX_SITE_IMAGE_BYTES / 3) * 4 + 1024,
+    });
+    const bytes = typeof body.data === 'string' ? decodeBase64(body.data) : null;
+    if (!bytes) {
+      return errorJson('site_image.bad_request', 'Send the image as base64 in `data`.', 400);
+    }
+    const check = checkSiteImage(bytes);
+    if (!check.ok) return errorJson(check.code, check.message, 400);
+    try {
+      const homeImage = await ctx.runMutation(internal.siteImages.setHomeImage, {
+        // decodeBase64's array owns its whole buffer.
+        data: bytes.buffer,
+        contentType: check.info.contentType,
+        width: check.info.width,
+        height: check.info.height,
+        version: await siteImageVersion(bytes),
+        actorAdminId: admin.adminUserId,
+      });
+      return json({ homeImage });
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/site/home-image',
+  method: 'DELETE',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    try {
+      await ctx.runMutation(internal.siteImages.resetHomeImage, {
+        actorAdminId: admin.adminUserId,
+      });
+      return json({ homeImage: null });
     } catch (err) {
       return adminError(err);
     }
