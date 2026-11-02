@@ -108,6 +108,8 @@ export type MessageKey =
   | "delivery.freedomTitle"
   | "delivery.freedomWsBody"
   | "delivery.freedomWsTitle"
+  | "delivery.freedomXhttpBody"
+  | "delivery.freedomXhttpTitle"
   | "delivery.privacyAudience"
   | "delivery.privacyBody"
   | "delivery.privacyRealityBody"

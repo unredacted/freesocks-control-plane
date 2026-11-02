@@ -105,6 +105,27 @@ What FCP does about it:
 
 The proof is `bun run test:integration:reality-keyshare` (job **REALITY key share vs Xray-core**, `convex/lib/realityKeyShares.integration.test.ts`): the pinned Mihomo and sing-box against a real Xray-core v26.7.28 (the node image's, the front check's pin) and v26.10.21, over REALITY on raw TCP with Vision and on XHTTP, each transport with `minClientVer` 1.8.1, a fresh key and client id per run. On v26.7.28 every client connects, with the backend's own Mihomo body and with FCP's. On v26.10.21 the backend's Mihomo body and sing-box are handed to the target (the test target's certificate is one no client trusts, so both engines log `x509: certificate signed by unknown authority`), and FCP's Mihomo body connects. The `download-settings` leg is checked offline only. It needs Docker and takes under a minute once the images and engines are cached; it never prints a configuration or an engine log, and `FCP_REALITY_KEEP=1` leaves the stack up for debugging. Both Xray pins move by hand (Dependabot ignores `xtls/xray-core`); the second stays past v26.9.8 on purpose.
 
+## XHTTP clients
+
+Which apps can use an XHTTP-under-REALITY entry (the `freedom-xhttp` mode) depends on the body FCP
+serves them, not only on their core. The panel leaves XHTTP out of a sing-box JSON body, so an app
+FCP serves sing-box bodies never sees the entry. From release notes and source, checked 2026-11-02;
+of these, only Mihomo runs in a gate (the edge-connection job's `freedom-xhttp` cell):
+
+| App (catalog)                          | Body FCP serves | XHTTP under REALITY                                                                                                                                                                                                |
+| -------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| sing-box (SFA, SFI, SFM, SFL)          | sing-box        | no: sing-box has no XHTTP transport                                                                                                                                                                                |
+| Karing                                 | sing-box        | no: its own core gained XHTTP, but a sing-box body carries none                                                                                                                                                    |
+| Hiddify                                | share links     | yes from app v4.0.4 (2026-02): its sing-box fork carries XHTTP ([hiddify-sing-box](https://github.com/hiddify/hiddify-sing-box/blob/v5/option/v2ray_transport.go)) and reads `mode` and `extra`; not device-tested |
+| v2rayNG, v2rayN, Throne                | share links     | yes (Xray-core inside)                                                                                                                                                                                             |
+| Clash Verge Rev, FlClash, Mihomo Party | Mihomo          | yes on Mihomo v1.19.22 or later (Clash Verge Rev 2.5.0, FlClash 0.8.93)                                                                                                                                            |
+| Shadowrocket                           | share links     | XHTTP since about 2.2.69; under REALITY unverified                                                                                                                                                                 |
+
+The REALITY version table above still applies to each: Hiddify sends 1.8.1 like the other sing-box
+apps, so the transport's `minClientVer` must stay at 1.8.1. The member-facing words for the mode
+(`delivery.freedomXhttpBody`) name the apps in the yes rows; take one out there when a device test
+says otherwise.
+
 ## Full desktop VMs
 
 The Debian container smoke test is not a desktop test. The **Client compatibility (desktop VMs)** workflow (`.github/workflows/client-compat-desktop.yml`) runs the same SFL adapter in a real desktop session: `scripts/compat/desktop-vm.sh` boots a pinned distribution image (its SHA-512 checked) under KVM on a standard hosted runner, with QEMU from a digest-pinned image, and cloud-init provisions Xfce under LightDM on Xorg with automatic login. The verified `.deb` is installed with apt, so the package's own postinst starts the real `sing-box-daemon` service, as on a member's machine. The panel, the engines and the harness stay on the runner; `FCP_COMPAT_SFL_REMOTE=scripts/compat/sfl-remote.sh` runs the driver inside the VM's Xfce session over SSH, with the session's own `DISPLAY`, `XAUTHORITY` and `DBUS_SESSION_BUS_ADDRESS` read from its `xfce4-session` process (a run without an Xfce session fails), and the subscription port forwarded to the VM's loopback. The app's result and screenshot are uploaded (fixture data only).

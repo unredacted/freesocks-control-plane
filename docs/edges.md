@@ -226,6 +226,33 @@ nothing). Under REALITY (`vless/xhttp/reality`, the `freedom-xhttp` mode of a ba
 Servers) the node terminates and impersonates its family's target, so only an L4 edge can front
 it; there is no front proof for it and an L7 provider never carries it.
 
+What FCP serves under REALITY, and why (evidence as of 2026-11):
+
+- **A mode of its own, never the only entry.** `freedom-xhttp` is a member's choice beside
+  `freedom-reality`, not a replacement for raw REALITY with Vision. sing-box has no XHTTP and the
+  panel leaves it out of a sing-box body, so a REALITY body carrying only XHTTP would give every
+  sing-box app (and Karing, which FCP serves sing-box bodies) nothing. Under REALITY XHTTP
+  carries no Vision flow (Xray: Vision runs only directly over TLS or REALITY), and Xray's own
+  authors describe it as on a par with Vision rather than ahead of it. Reported field gains are
+  narrow: it opens a few multiplexed connections instead of one per proxied connection, which
+  helped where a censor counts TLS connections to one host, and hurt where a censor throttles
+  each long connection.
+- **Defaults, untouched.** The transport declares `mode: auto` (the server accepts every mode;
+  a client under REALITY picks `stream-one` over HTTP/2) and no XMUX, padding or `extra`: Xray's
+  defaults (header padding 100 to 1000 bytes, a few pooled connections rotated by request count
+  and age) have changed across releases and are the client's to pick, and setting any XMUX field
+  clears the others. The newer padding and session placement options are marked unfinished by
+  Xray and are not read by every client.
+- **No `downloadSettings` split.** A second leg needs a second path to the same node and is
+  read differently by each client (Mihomo refuses it with `stream-one`; a share link's `extra`
+  is dropped by some), and an L4 edge pool that spread one session's legs over different nodes
+  would break it.
+- **Edges.** An L4 edge forwards it like any TCP listener; the provider templates' idle timeouts
+  (minutes) are well above the clients' HTTP/2 keepalive. A node can serve it beside its raw
+  REALITY transport on another port, each in its own mode's group: the origin gets one listener
+  per transport, each with its own edges, and a member's body carries only its own mode's entry
+  (§ "Protecting a node FCP does not manage", the check account's groups).
+
 A deployable transport (Caddy terminates TLS in front of it, as for WebSocket, so Xray listens on
 loopback and the listener is registered with the terminator's port and certificate name):
 
@@ -1793,16 +1820,23 @@ minClientVer, maxClientVer}` in the plan. Each restriction is its own reason wit
   reads the panel's groups live (`backends.listModeGroups`) and puts the account in one that holds
   every transport the origin protects, ahead of the default pool or an enrolled node's own group
   when that lacks one (the group a stored account sits in while it still holds them, else the
-  first by uuid; nothing changes when none does). A listing that fails is unknown, never "none":
-  the stored account keeps its group, so a panel outage never re-mints it; with no stored
-  account yet, nothing is minted until the groups can be read (`mode_groups_unknown`: a run's
-  credential, test card or hide step waits and asks again, event `mode_groups_unknown`). A
-  panel that lists its groups with none holding them all (or answers with no group at all) is
-  refused outright (`no_group_holds_transports`, the run's `choose_mode` card): some transport
-  could never be tested, so put them in one group or choose the mode the account should use. A
-  backend with no group listing (mock mode, a panel that answers 404 for it) changes nothing. This matters on a node with transports of different groups, such as an
-  enrolled node with a second, hand-built transport: every protected transport must sit in one
-  group together, or the test link of the others is refused by the node.
+  first by uuid; nothing changes when none does). When no one group holds them all, as on a node
+  that serves two modes (raw REALITY for `freedom-reality` members and XHTTP under REALITY for
+  `freedom-xhttp` members, each mode's group carrying only its own transport), the account sits
+  in each of the fewest groups that hold them together (`coverOf`: the group holding most of what
+  is left first, ties by uuid; the default or the stored group first when it is one of them): the
+  first is its `placement`, the rest its `extraPlacements` (Remnawave `activeInternalSquads`).
+  Both are part of the stored binding, so an origin that gains a transport of another group
+  replaces the account with one in both, through the owed-removal ledger. A listing that fails is
+  unknown, never "none": the stored account keeps its groups, so a panel outage never re-mints
+  it; with no stored account yet, nothing is minted until the groups can be read
+  (`mode_groups_unknown`: a run's credential, test card or hide step waits and asks again, event
+  `mode_groups_unknown`). A panel that lists its groups with a protected transport in none of
+  them (or answers with no group at all) is refused outright (`no_group_holds_transports`, the
+  run's `choose_mode` card): that transport could never be tested, so put it in a group or
+  choose the mode the account should use. A backend with no group listing (mock mode, a panel
+  that answers 404 for it) changes nothing. A member never sits in more than one group: only
+  FCP's own capped check account does.
 - **An inactive backend.** A backend out of the issuance pool (`isActive: false`; its members
   are still served) still gets FCP's own check credential: `relayQualification` resolves its
   placement on that instance (`resolvePlacementTarget({includeInactive})`) and `issueUser`

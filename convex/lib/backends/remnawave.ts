@@ -561,7 +561,9 @@ export async function remnawaveIssueUser(
         tag: toRemnawaveTag(spec.tag),
         description: spec.description,
         // The opaque placement handle IS the internal-mode group UUID for Remnawave.
-        activeInternalSquads: spec.placement ? [spec.placement] : undefined,
+        activeInternalSquads: spec.placement
+          ? [...new Set([spec.placement, ...(spec.extraPlacements ?? [])])]
+          : undefined,
       },
       schema: RemnawaveUser,
     });

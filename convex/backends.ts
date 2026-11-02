@@ -76,6 +76,7 @@ const issueSpec = v.object({
   hwidDeviceLimit: v.optional(v.union(v.number(), v.null())),
   trafficLimitStrategy: v.optional(trafficStrategy),
   placement: v.optional(v.union(v.string(), v.null())),
+  extraPlacements: v.optional(v.array(v.string())),
 });
 
 const updatePatch = v.object({
@@ -441,7 +442,7 @@ export const listHosts = internalAction({
 /**
  * The backend's mode groups and the transports each holds, read live (FCP's
  * own check account goes in one that holds every transport an origin
- * protects). Read-only. Null: the backend has no such listing (mock mode, a
+ * protects, or in each of the fewest that do together). Read-only. Null: the backend has no such listing (mock mode, a
  * backend without one, a panel that answers 404 for it); a failed read throws.
  */
 export const listModeGroups = internalAction({

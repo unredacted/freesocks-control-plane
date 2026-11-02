@@ -121,6 +121,11 @@ export interface IssueUserSpec {
   // is homed). The generic layer treats it as a black box; Remnawave maps it to
   // an internal-mode group UUID (activeInternalSquads), Outline ignores it.
   placement?: string | null;
+  // Further placements the same key also sits in, beside `placement`: only FCP's
+  // own check account on a node whose transports serve several modes (each in
+  // its own mode group). Remnawave adds them to activeInternalSquads; a member
+  // key never carries any, and a backend without placements ignores them.
+  extraPlacements?: string[];
 }
 
 export interface IssuedUser {

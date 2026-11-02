@@ -2007,6 +2007,10 @@ export default defineSchema({
         username: v.string(),
         backendServerId: v.id('backendServers'),
         placement: v.union(v.string(), v.null()),
+        // The further mode groups the account also sits in (sorted), when the
+        // origin's transports are in different groups (relayQualification
+        // `groupsHolding`): one transport per mode, all of them testable.
+        extraPlacements: v.optional(v.array(v.string())),
         modeSlug: v.union(v.string(), v.null()),
         state: v.union(
           v.literal('intended'),
