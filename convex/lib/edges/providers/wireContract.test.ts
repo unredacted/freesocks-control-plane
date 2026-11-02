@@ -1613,9 +1613,7 @@ describe('wire contract: fastly', () => {
       if (activated) {
         expect(ledger.resources.map((r) => r.kind)).toContain('tls_activation');
         renewed = true;
-        expect(await fastlyProvider.followSharedRenewal!(cfgNew, { subscriptionId: WILD })).toEqual(
-          { moved: 1 },
-        );
+        expect(await fastlyProvider.followSharedRenewal!(cfgNew)).toEqual({ moved: 1 });
         // The front's activation moved from the older certificate to the newest.
         expect([...activations.values()].map((a) => a.certificate)).toEqual(['CERTW2']);
         renewed = false;

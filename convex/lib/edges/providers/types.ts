@@ -592,11 +592,11 @@ export interface EdgeProvider<
     opts: { ordered: readonly string[] },
   ): Promise<{ removed: boolean; code?: string }>;
   /**
-   * After a renewal of that shared certificate: move what the fronts activated
-   * on an older certificate of it to the current one (a front that activates
-   * its own name on the wildcard). Returns how many moved; a no-op otherwise.
+   * After a renewal of a shared certificate: move what the fronts activated on
+   * an older certificate of it to the current one (a front that activates its
+   * own name on the wildcard). Returns how many moved; a no-op otherwise.
    */
-  followSharedRenewal?(cfg: Cfg, opts: { subscriptionId: string }): Promise<{ moved: number }>;
+  followSharedRenewal?(cfg: Cfg): Promise<{ moved: number }>;
 
   /**
    * Ledger resources in destroy order, skipping gone ones. Ordered by KIND

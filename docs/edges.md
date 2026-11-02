@@ -452,11 +452,14 @@ intent default, § "Fastly fronts"):
   the front's own resource: found by its name, deleted before its domain. A front planned on the
   wildcard before this (2026-11-01 to 2026-11-02; its intent has no `wildcardDomain`, an
   `EDGE_INTENT_FACTS` fact) got a CLASSIC domain, routed by its version, and keeps it.
-  When the wildcard renews, the reconcile's read of it (`followSharedRenewal`, right after the
-  zone's certificate is recorded issued or renewing) moves every front activation still on an
-  older certificate of the subscription to the newest one (`PATCH /tls/activations/{id}`),
-  never the wildcard's own `*.<zone>` activation; a failure is logged and tried again on the
-  next pass.
+  When the wildcard renews, every read of the zone's certificate by the reconcile
+  (`followSharedRenewal`, right after it is recorded, whatever state the account's own view
+  of it reads) walks every `*.<zone>` subscription of the account, whatever authority it was
+  ordered under, and moves every front activation still on an older certificate of one to
+  that subscription's newest (`PATCH /tls/activations/{id}`, every page of the listing), never
+  the wildcard's own `*.<zone>` activation; a failure is logged and tried again on the next
+  pass. An imported versionless front on a wildcard records its name's activation, so its
+  teardown removes it before the domain (on a shared service too).
 - `per_host` (an account created before, until it is switched): one subscription per front
   hostname, deleted with the edge.
 

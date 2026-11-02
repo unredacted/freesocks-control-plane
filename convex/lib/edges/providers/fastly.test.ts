@@ -3040,6 +3040,11 @@ describe('fastly: one wildcard certificate per account and zone', () => {
 
   test("a renewal moves the fronts' activations to the newest certificate, never the wildcard's own", async () => {
     const r = await serve((c) => {
+      // Every `*.<zone>` subscription is walked, whatever the account's defaults are now.
+      if (c.method === 'GET' && c.path === '/tls/subscriptions')
+        return c.query['filter[tls_domains.id]'] === '*.example.org'
+          ? api('tls-subscriptions-wildcard-list.json')
+          : api('tls-subscriptions-empty.json');
       if (c.method === 'GET' && c.path === `/tls/subscriptions/${WILD}`)
         return jsonApi({
           data: { id: WILD, type: 'tls_subscription', attributes: { state: 'issued' } },
@@ -3071,14 +3076,96 @@ describe('fastly: one wildcard certificate per account and zone', () => {
         return jsonApi({ data: activation('AFRONT', HOST, 'CERTNEW') });
       return defaultReply(c);
     });
-    expect(await fastlyProvider.followSharedRenewal!(cfgA, { subscriptionId: WILD })).toEqual({
-      moved: 1,
-    });
+    expect(await fastlyProvider.followSharedRenewal!(cfgA)).toEqual({ moved: 1 });
     const patches = r.calls.filter((c) => c.method === 'PATCH');
     expect(patches.map((c) => c.path)).toEqual(['/tls/activations/AFRONT']);
     expect(patches[0]!.body).toMatchObject({
       data: { relationships: { tls_certificate: { data: { id: 'CERTNEW' } } } },
     });
+  });
+
+  test('a renewal reads every page of what sits on the older certificate', async () => {
+    const fronts = Array.from({ length: 101 }, (_, i) =>
+      activation(`A${i}`, `f${i}.example.org`, 'CERTOLD'),
+    );
+    const r = await serve((c) => {
+      if (c.method === 'GET' && c.path === '/tls/subscriptions')
+        return c.query['filter[tls_domains.id]'] === '*.example.org'
+          ? api('tls-subscriptions-wildcard-list.json')
+          : api('tls-subscriptions-empty.json');
+      if (c.method === 'GET' && c.path === `/tls/subscriptions/${WILD}`)
+        return jsonApi({
+          data: { id: WILD, type: 'tls_subscription', attributes: { state: 'renewing' } },
+          included: [
+            {
+              id: 'CERTOLD',
+              type: 'tls_certificate',
+              attributes: { not_after: '2026-11-19T10:12:00Z' },
+            },
+            {
+              id: 'CERTNEW',
+              type: 'tls_certificate',
+              attributes: { not_after: '2026-12-19T10:12:00Z' },
+            },
+          ],
+        });
+      if (c.method === 'GET' && c.path === '/tls/activations') {
+        if (c.query['filter[tls_certificate.id]'] !== 'CERTOLD') return jsonApi({ data: [] });
+        const page = Number(c.query['page[number]'] ?? '1');
+        return jsonApi({ data: fronts.slice((page - 1) * 100, page * 100) });
+      }
+      if (c.method === 'PATCH' && c.path.startsWith('/tls/activations/'))
+        return jsonApi({ data: activation(c.path.split('/').pop()!, HOST, 'CERTNEW') });
+      return defaultReply(c);
+    });
+    expect(await fastlyProvider.followSharedRenewal!(cfgA)).toEqual({ moved: 101 });
+    expect(
+      r.calls
+        .filter((c) => c.method === 'GET' && c.path === '/tls/activations')
+        .map((c) => c.query['page[number]']),
+    ).toEqual(['1', '2']);
+  });
+
+  test("an imported versionless front on a wildcard records its name's activation, removed before its domain", async () => {
+    await serve((c) => {
+      if (c.method === 'GET' && c.path === '/domain-management/v1/domains')
+        return c.query.service_id === SVC
+          ? ok('dm-domains-list.json')
+          : ok('dm-domains-empty.json');
+      if (c.method === 'GET' && /\/version\/\d+\/domain$/.test(c.path))
+        return { status: 200, body: [] };
+      if (c.method === 'GET' && c.path === '/tls/subscriptions')
+        return c.query['filter[tls_domains.id]'] === '*.example.org'
+          ? api('tls-subscriptions-wildcard-list.json')
+          : api('tls-subscriptions-empty.json');
+      if (c.method === 'GET' && c.path === '/tls/activations')
+        return jsonApi({
+          data: c.query['filter[tls_domain.id]'] === HOST ? [activation('AIMP', HOST)] : [],
+        });
+      return defaultReply(c);
+    });
+    fakeDns();
+    const adopted = await fastlyProvider.inspectForAdoption!(cfgA, SVC, HOST);
+    expect(adopted.shared).toBe(true);
+    expect(adopted.resources.find((x) => x.kind === 'tls_activation')).toMatchObject({
+      resourceId: 'AIMP',
+      ownership: 'adopted',
+    });
+    // On the shared service its teardown removes the activation, before the domain.
+    const ledger: Ledger = {
+      steps: [],
+      resources: adopted.resources.map((x) => ({
+        stepId: x.kind,
+        kind: x.kind,
+        resourceId: x.resourceId,
+        ownership: x.ownership,
+        deleteState: 'present',
+        ...(x.meta ? { meta: JSON.stringify(x.meta) } : {}),
+      })),
+    };
+    const kinds = fastlyProvider.planDestroy(cfgA, ledger).map((x) => x.kind);
+    expect(kinds).toContain('tls_activation');
+    expect(kinds.indexOf('tls_activation')).toBeLessThan(kinds.indexOf('versionless_domain'));
   });
 
   test('the certificate steps name the zone wildcard and its challenge', () => {

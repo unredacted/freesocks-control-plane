@@ -54,6 +54,10 @@ import {
 } from '../http';
 import type { FastlyConfig } from '../types';
 
+/** Activations read per page, and the most pages one listing reads (100 x 50 fronts). */
+const ACTIVATION_PAGE_SIZE = 100;
+const ACTIVATION_PAGES_MAX = 50;
+
 /** The one origin the SDK's generated methods target. Also the redirect-safety pin. */
 export const FASTLY_API_ORIGIN = 'https://api.fastly.com';
 /** Every provider call is a small object or a bounded page; 15 s is generous. */
@@ -740,14 +744,23 @@ export function fastlyApi(cfg: FastlyConfig, basePath?: string): FastlyApi {
           page_size: 20,
         }),
       ),
-    listTlsActivationsForCertificate: (certificateId) =>
-      call('tls-activations', JsonApiCollection, () =>
-        tlsActivations.listTlsActivationsWithHttpInfo({
-          filter_tls_certificate_id: certificateId,
-          include: 'tls_domain',
-          page_size: 100,
-        }),
-      ),
+    listTlsActivationsForCertificate: async (certificateId) => {
+      // Every page: a wildcard may carry more fronts than one page holds.
+      const data: FastlyJsonApiResource[] = [];
+      for (let page = 1; page <= ACTIVATION_PAGES_MAX; page++) {
+        const res = await call('tls-activations', JsonApiCollection, () =>
+          tlsActivations.listTlsActivationsWithHttpInfo({
+            filter_tls_certificate_id: certificateId,
+            include: 'tls_domain',
+            page_number: page,
+            page_size: ACTIVATION_PAGE_SIZE,
+          }),
+        );
+        data.push(...res.data);
+        if (res.data.length < ACTIVATION_PAGE_SIZE) break;
+      }
+      return { data };
+    },
     updateTlsActivation: (id, certificateId) =>
       call('update-tls-activation', JsonApiDoc, () =>
         tlsActivations.updateTlsActivationWithHttpInfo({

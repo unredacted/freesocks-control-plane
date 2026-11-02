@@ -1482,7 +1482,13 @@ export const FASTLY_DESTROY_ORDER = [
 ] as const;
 
 /** Kinds a shared (adopted, non-exclusive) service lets FCP delete. */
-const SHARED_DESTROYABLE = new Set(['dns_record', 'domain', 'versionless_domain']);
+const SHARED_DESTROYABLE = new Set([
+  'dns_record',
+  'domain',
+  'versionless_domain',
+  // The front's own name on a wildcard: removed with its domain.
+  'tls_activation',
+]);
 
 export function fastlyDestroyKey(r: LedgerResource): string {
   const role = metaOf(r).role;
@@ -1676,28 +1682,33 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
   },
 
   /**
-   * After the wildcard renews: every activation a front made of its own name
-   * on an older certificate of the subscription moves to the newest one (the
-   * provider moves the wildcard's own `*.<zone>` activation itself, and may
-   * have moved these too: then nothing is left to move).
+   * After a wildcard renews: every activation a front made of its own name on
+   * an older certificate of a `*.<zone>` subscription moves to that
+   * subscription's newest one. Every such subscription of the account is
+   * walked, whatever the account's defaults are now (a front's frozen
+   * authority may differ), and never the wildcard's own `*.<zone>` activation,
+   * which the provider moves itself (it may move these too: then nothing is
+   * left to move).
    */
-  async followSharedRenewal(cfg, { subscriptionId }): Promise<{ moved: number }> {
+  async followSharedRenewal(cfg): Promise<{ moved: number }> {
     const zone = fastlyZoneOf(cfg);
     if (!zone) return { moved: 0 };
+    const name = `*.${zone}`;
     const api = fastlyApiFor(cfg);
-    const certificates = subscriptionCertificates(
-      await api.getTlsSubscription(subscriptionId, 'tls_certificates'),
-    );
-    const [current, ...older] = certificates;
-    if (!current) return { moved: 0 };
     let moved = 0;
-    for (const old of older)
-      for (const a of (await api.listTlsActivationsForCertificate(old.id)).data) {
-        const name = activationDomainOf(a);
-        if (!name || name === `*.${zone}` || !isFirstLevelUnder(name, zone)) continue;
-        await api.updateTlsActivation(a.id, current.id);
-        moved++;
-      }
+    for (const sub of coveringSubscriptions(await api.listTlsSubscriptionsForDomain(name), name)) {
+      const [current, ...older] = subscriptionCertificates(
+        await api.getTlsSubscription(sub.id, 'tls_certificates'),
+      );
+      if (!current) continue;
+      for (const old of older)
+        for (const a of (await api.listTlsActivationsForCertificate(old.id)).data) {
+          const domain = activationDomainOf(a);
+          if (!domain || domain === name || !isFirstLevelUnder(domain, zone)) continue;
+          await api.updateTlsActivation(a.id, current.id);
+          moved++;
+        }
+    }
     return { moved };
   },
 
@@ -2630,6 +2641,17 @@ export const fastlyProvider: EdgeProvider<FastlyConfig, FastlyTemplateParams> = 
               meta: { hostname: mine, shared: subscriptionShared },
             },
       );
+    // A versionless name on a wildcard is served through an activation of its
+    // own: recorded, so a teardown removes it before the domain.
+    if (mineVersionless && wildcardSubscription)
+      for (const a of (await api.listTlsActivationsForDomain(mine)).data)
+        if ((activationDomainOf(a) ?? mine) === mine)
+          resources.push({
+            kind: 'tls_activation',
+            resourceId: a.id,
+            ownership: 'adopted',
+            meta: { hostname: mine },
+          });
     // The product is account-and-service wide: recorded when it is already on,
     // never enabled here (an import changes nothing at the provider).
     try {
