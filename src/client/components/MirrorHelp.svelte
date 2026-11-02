@@ -1,7 +1,6 @@
 <script lang="ts">
   import { slide, fade } from 'svelte/transition';
   import { Button } from '@client/components/ui/button';
-  import * as Select from '@client/components/ui/select';
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import LifeBuoy from '@lucide/svelte/icons/life-buoy';
@@ -11,8 +10,9 @@
   import Flag from '@lucide/svelte/icons/flag';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
-  import { t, getLocale } from '../lib/i18n/index.svelte';
-  import { COUNTRY_CODES, countryName } from '../lib/countries';
+  import { t } from '../lib/i18n/index.svelte';
+  import { COUNTRY_CODES } from '../lib/countries';
+  import MirrorRegionSelect from './MirrorRegionSelect.svelte';
   import { MirrorRequestResponse, MirrorClearResponse } from '../../shared/contracts/mirror';
   import { queryKeys } from '../lib/queries';
   import { copyText } from '../lib/utils';
@@ -44,8 +44,9 @@
     /** Quick fix #2: open the new-key flow with the location picker (the
      *  regenerate modal). Omitted = not offered (single-location deploys). */
     onPickLocation?: () => void;
-    /** Open the report-issue dialog (same handler as the pass's red button) -
-     *  a member stuck in this backend is exactly who should tell us why. */
+    /** Open the report-issue dialog. The one place a member reports from (the
+     *  pass has no report button): a member stuck here is exactly who should
+     *  tell us why. */
     onReportIssue?: () => void;
   }
   let {
@@ -59,7 +60,6 @@
   }: Props = $props();
 
   const qc = useQueryClient();
-  const locale = getLocale();
 
   let open = $state(false);
 
@@ -108,16 +108,7 @@
     }
   });
 
-  // Region options: localized names (Intl.DisplayNames), sorted; "Global" first.
-  const regions = COUNTRY_CODES.map((c) => ({ code: c, name: countryName(c, locale) })).sort(
-    (a, b) => a.name.localeCompare(b.name, locale),
-  );
   let selected = $state<string>(init.selected);
-  const selectedLabel = $derived(
-    selected
-      ? (regions.find((r) => r.code === selected)?.name ?? selected)
-      : t('mirror.regionGlobal'),
-  );
 
   async function copy(url: string) {
     if (await copyText(url)) {
@@ -259,23 +250,7 @@
         {/if}
 
         {#if !exhausted}
-          <div class="space-y-2">
-            <label class="block text-sm text-muted-foreground" for="mirror-region">
-              {t('mirror.regionLabel')}
-            </label>
-            <Select.Root type="single" value={selected} onValueChange={(v) => (selected = v ?? '')}>
-              <Select.Trigger id="mirror-region" class="w-full sm:w-72"
-                >{selectedLabel}</Select.Trigger
-              >
-              <Select.Content class="max-h-72 overflow-y-auto">
-                <Select.Item value="">{t('mirror.regionGlobal')}</Select.Item>
-                {#each regions as r (r.code)}
-                  <Select.Item value={r.code}>{r.name}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-            <p class="text-sm text-muted-foreground/80">{t('mirror.regionNotStored')}</p>
-          </div>
+          <MirrorRegionSelect id="mirror-region" bind:value={selected} />
 
           <Button onclick={() => request.mutate()} disabled={request.isPending} class="min-h-11">
             {request.isPending

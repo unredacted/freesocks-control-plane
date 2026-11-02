@@ -271,6 +271,7 @@
   "hero": {
     "titleDefault": "Your key",
     "urlLabelSubscription": "Your link",
+    "urlLabelMirror": "Your mirror link",
     "urlLabelAccessKey": "Access key",
     "tierLine": "Plan {tier}",
     "viaLine": "via {backend}",
@@ -745,6 +746,19 @@
     "quickLabel": "First, try moving servers",
     "quickHint": "A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key.",
     "pickLocation": "Pick a different location"
+  },
+  "mirrorSuggest": {
+    "title": "The main link may be blocked in {country}",
+    "body": "Your app fetches your key from our main website, and networks in {country} often block it. A mirror link serves the same key from a different host that is harder to block.",
+    "recommend": "We recommend adding a mirror link to your app instead of the main link.",
+    "create": "Create a mirror link",
+    "chooseLabel": "Which link should your app use?",
+    "optionMirror": "Mirror link",
+    "optionMirrorHint": "Served from another host, harder to block.",
+    "optionMain": "Main link",
+    "optionMainHint": "Served from our main website.",
+    "recommended": "Recommended",
+    "chooseHint": "Copy, download, the QR code and the app buttons below all use the link you pick."
   },
   "rawconfig": {
     "disclosure": "Show raw configuration",

@@ -81,7 +81,6 @@
   import type { SwitchServerReason } from '../../shared/contracts/switchServerReasons';
   import type { ReportIssueReason } from '../../shared/contracts/issueReasons';
   import { ReportIssueResponse, type TelemetryPayload } from '../../shared/contracts/telemetry';
-  import Flag from '@lucide/svelte/icons/flag';
 
   const account = accountQuery();
   const config = configQuery();
@@ -1055,22 +1054,8 @@
                         <RotateCcw class="size-4" />
                         {regenerate.isPending ? t('common.working') : t('account.regenerate')}
                       </Button>
-                      <!-- Report issue: red-tinted outline (a flag, not a bomb - it
-                         sits beside two neutral actions and changes nothing). -->
-                      <Button
-                        onclick={() => {
-                          reportIssueReason = null;
-                          reportIssueConnection = null;
-                          reportIssueOpen = true;
-                        }}
-                        disabled={reportIssue.isPending || actionsDisabled}
-                        variant="outline"
-                        size="sm"
-                        class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <Flag class="size-4" />
-                        {reportIssue.isPending ? t('report.working') : t('report.action')}
-                      </Button>
+                      <!-- No report button on the pass: reporting lives under
+                           "Trouble connecting?" right below it. -->
                       {#if canSwitchBackend}
                         {#each switchTargets as target (target.id)}
                           <Button
@@ -1095,8 +1080,37 @@
                     </div>
                   {/snippet}
                 </SubscriptionHero>
-                <!-- Below lg the globe follows the pass (one instance at a time: it
-                     runs its own animation loop). -->
+                {#if !rawConfigFirst}
+                  <!-- Right under the pass it fixes. Always rendered outside
+                       rawConfig modes: mirror AVAILABILITY is member-visible state
+                       (the component shows a "not available here" note when the
+                       deployment has no mirror provider). rawConfig modes get no
+                       public mirrors: they'd expose the config to third parties. -->
+                  <MirrorHelp
+                    mirrors={data.subscription.mirrors}
+                    geoCountry={data.geoCountry}
+                    subscriptionUrl={subUrl}
+                    available={config.data?.mirrorsEnabled ?? false}
+                    onSwitchServer={actionsDisabled || !canSwitchServer
+                      ? undefined
+                      : () => {
+                          switchServerReason = null;
+                          switchServerOpen = true;
+                        }}
+                    onPickLocation={actionsDisabled || locations.length < 2
+                      ? undefined
+                      : () => (regenerateOpen = true)}
+                    onReportIssue={actionsDisabled
+                      ? undefined
+                      : () => {
+                          reportIssueReason = null;
+                          reportIssueConnection = null;
+                          reportIssueOpen = true;
+                        }}
+                  />
+                {/if}
+                <!-- Below lg the globe follows the pass and its help (one instance
+                     at a time: it runs its own animation loop). -->
                 {#if showGlobe && !wideLayout.current}
                   <KeyLocationGlobe
                     locations={mapLocations}
@@ -1133,32 +1147,6 @@
                     backend={data.subscription.backend}
                     subscriptionUrl={subUrl}
                     deviceLimited={data.user.tier.deviceLimited ?? false}
-                  />
-
-                  <!-- Always rendered: mirror AVAILABILITY is member-visible state
-                     (the component shows a "not available here" note when the
-                     deployment has no mirror provider). -->
-                  <MirrorHelp
-                    mirrors={data.subscription.mirrors}
-                    geoCountry={data.geoCountry}
-                    subscriptionUrl={subUrl}
-                    available={config.data?.mirrorsEnabled ?? false}
-                    onSwitchServer={actionsDisabled || !canSwitchServer
-                      ? undefined
-                      : () => {
-                          switchServerReason = null;
-                          switchServerOpen = true;
-                        }}
-                    onPickLocation={actionsDisabled || locations.length < 2
-                      ? undefined
-                      : () => (regenerateOpen = true)}
-                    onReportIssue={actionsDisabled
-                      ? undefined
-                      : () => {
-                          reportIssueReason = null;
-                          reportIssueConnection = null;
-                          reportIssueOpen = true;
-                        }}
                   />
                   <RawConfig />
                 {/if}

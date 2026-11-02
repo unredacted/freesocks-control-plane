@@ -1555,6 +1555,51 @@ describe('suggestedModeId respects enabled + availability', () => {
 });
 
 /**
+ * geoCountryCensored: this request's CDN country is on the censored-country
+ * list. Only the verdict ships (never the list), and with no country there is
+ * no verdict to give: the onboarding mirror suggestion stays hidden.
+ */
+describe('geoCountryCensored is the verdict for this request only', () => {
+  const view = async (headers: Record<string, string>) => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    await t.run((ctx) => ctx.db.insert('appSettings', listedRow(['IR'])));
+    const res = await t.fetch('/api/v1/account', { headers: { cookie, ...headers } });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { geoCountry: string | null; geoCountryCensored: boolean };
+  };
+
+  test('a listed country is censored, and the list itself is not in the view', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const body = await view({ 'cf-ipcountry': 'IR' });
+    expect(body.geoCountry).toBe('IR');
+    expect(body.geoCountryCensored).toBe(true);
+    expect(JSON.stringify(body)).not.toContain('checkEdges');
+  });
+
+  test('a country not on the list is not', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const body = await view({ 'cf-ipcountry': 'DE' });
+    expect(body.geoCountry).toBe('DE');
+    expect(body.geoCountryCensored).toBe(false);
+  });
+
+  test('no country, no verdict: unknown geo, or a deployment not behind the CDN', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    for (const cc of ['XX', 'T1']) {
+      const body = await view({ 'cf-ipcountry': cc });
+      expect(body.geoCountry).toBeNull();
+      expect(body.geoCountryCensored).toBe(false);
+    }
+    vi.stubEnv('CF_FRONTED', 'false');
+    const body = await view({ 'cf-ipcountry': 'IR' });
+    expect(body.geoCountry).toBeNull();
+    expect(body.geoCountryCensored).toBe(false);
+  });
+});
+
+/**
  * The connection-mode admin surface: per-entity CRUD routes and the generic
  * per-backend placement route (the Ansible role's bind path; its legacy
  * /admin/remnawave/mode-placements alias was removed 2026-07-30 after the

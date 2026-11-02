@@ -133,6 +133,13 @@ export const AccountResponse = z.object({
    */
   geoCountry: z.string().nullable().optional(),
   /**
+   * `geoCountry` is on the censored-country list (the server's verdict; the
+   * list itself never ships). Drives the onboarding "your main link may be
+   * blocked, add a mirror link" suggestion. False when geoCountry is null.
+   * Transient like geoCountry, never stored. Optional for rolling-deploy compat.
+   */
+  geoCountryCensored: z.boolean().optional(),
+  /**
    * Server's country-based RECOMMENDATION for the connection mode: in a country
    * on the censored-country list, the mode its status-page matrix row ranks
    * best (the censorship-recommended one without a row), else the catalog

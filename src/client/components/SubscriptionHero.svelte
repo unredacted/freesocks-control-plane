@@ -89,6 +89,9 @@
      *  backend), rendered in a hairline-separated footer of the pass - the
      *  pass owns its actions, and each action's modal owns its explanation. */
     actions?: Snippet;
+    /** Names the link the pass shows when it is not the key's own link (the
+     *  onboarding mirror choice: "Your mirror link"). Default: the backend's noun. */
+    linkLabel?: string;
   }
   let {
     title,
@@ -109,6 +112,7 @@
     nodeLoad,
     nodeRelay = null,
     actions,
+    linkLabel,
   }: Props = $props();
 
   // Outline keys are bare `ss://` URLs that VPN clients import as a single
@@ -124,7 +128,7 @@
   });
   let isAccessKey = $derived(accessKeyOnly ?? backend === 'outline');
   let urlLabel = $derived(
-    isAccessKey ? t('hero.urlLabelAccessKey') : t('hero.urlLabelSubscription'),
+    linkLabel ?? (isAccessKey ? t('hero.urlLabelAccessKey') : t('hero.urlLabelSubscription')),
   );
   let resolvedBackendLabel = $derived(backendLabel ?? (isAccessKey ? 'Outline' : 'Xray'));
   let downloadFilename = $derived(
