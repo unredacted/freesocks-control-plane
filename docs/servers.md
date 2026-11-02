@@ -287,8 +287,13 @@ short id or a private key.
 
 The flag is a warning at the top of the Servers page and stays, across looks, until an operator
 says they have seen it (`POST {slug}/profiles/{uuid}/acknowledge`, audited as
-`servers.profile.foreign_edit_seen` with the profile name only). It changes nothing by itself:
-what to do about an edit is a judgement. A token made with another digest key is a new
+`servers.profile.foreign_edit_seen` with the profile name only). It writes nothing, and what to
+do about an edit is a judgement, but it decides how the next check of an enrolled node (adopted
+or not) reads the moved token: while the flag stands, the move is somebody else's edit and closes
+a live node under drift (`servers.foreign_profile_edit`); once seen, the move is re-stamped like
+FCP's own and the node stays live (a moved REALITY key still closes it). A ready node is checked
+only when something reconciles it (a rename, a port change, maintenance, a country change), so the
+notice says to look and press Seen it before that. A token made with another digest key is a new
 baseline, never a flag, and so is the logging harden, which is FCP's own edit outside the
 ledger and re-reads the backend as a baseline when it changed something.
 

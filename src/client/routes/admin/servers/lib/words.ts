@@ -184,7 +184,7 @@ export function needsYou(
     if (p.foreignEditAt)
       out.push({
         key: `edit:${p.profileUuid}`,
-        text: `${p.name} was changed on the backend, not from here. What this page shows of it may be out of date.`,
+        text: `${p.name} was changed on the backend, not from here. What this page shows of it may be out of date. Look at it, then press Seen it: until then, a node FCP manages is closed for maintenance the next time FCP checks it.`,
       });
   if (tree.unattached.addresses.length > 0)
     out.push({

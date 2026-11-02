@@ -166,6 +166,10 @@ describe('what the page says', () => {
       'unattached-addresses',
     ]);
     expect(rows[0]!.nodeUuid).toBe('n-1');
+    // The edit closes a managed node at its next check unless it is seen first.
+    expect(rows[1]!.text).toBe(
+      'Default was changed on the backend, not from here. What this page shows of it may be out of date. Look at it, then press Seen it: until then, a node FCP manages is closed for maintenance the next time FCP checks it.',
+    );
     expect(rows[2]!.text).toBe(
       'a, b, c and 2 more point at a transport no node serves. People given them cannot connect.',
     );
