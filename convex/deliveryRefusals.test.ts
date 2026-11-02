@@ -2,7 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
-import { DETAIL_KEYS_MAX, detailKey, readRefusals } from './deliveryRefusals';
+import { DETAIL_KEYS_MAX, detailKey, readRefusals, REFUSALS_CRITICAL_AT } from './deliveryRefusals';
 import { writeStateJson } from './lib/appStateJson';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -32,6 +32,30 @@ describe('the refusal counter', () => {
     expect(r.byReason).toEqual({ empty_pool: DETAIL_KEYS_MAX + 21 });
     expect(r.top[0]).toEqual({ reason: 'empty_pool', node: 'node-0', family: 'v2rayng', count: 2 });
     expect(r.top).toHaveLength(3);
+  });
+
+  test('an app the backend serves nothing to is shown, never what grades the item', async () => {
+    const t = convexTest(schema, modules);
+    const record = (reason: string) =>
+      t.mutation(internal.deliveryRefusals.record, { reason, node: 'node-a', family: 'mihomo' });
+    for (let i = 0; i < REFUSALS_CRITICAL_AT + 5; i++) await record('no_entries');
+    const item = async () =>
+      (await t.query(internal.edgeOperator.attention, {})).items.find(
+        (i) => i.kind === 'delivery_refusals',
+      )!;
+    expect(await item()).toMatchObject({
+      severity: 'info',
+      code: 'no_entries',
+      facts: {
+        total: REFUSALS_CRITICAL_AT + 5,
+        byReason: { no_entries: REFUSALS_CRITICAL_AT + 5 },
+      },
+    });
+    // One refusal the fleet could fix names the item and grades it on its own count.
+    await record('empty_pool');
+    expect(await item()).toMatchObject({ severity: 'warning', code: 'empty_pool' });
+    for (let i = 1; i < REFUSALS_CRITICAL_AT; i++) await record('empty_pool');
+    expect(await item()).toMatchObject({ severity: 'critical', code: 'empty_pool' });
   });
 
   test('a bucket written before the breakdown is read as reasons only', async () => {

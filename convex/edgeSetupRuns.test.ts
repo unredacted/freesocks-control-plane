@@ -2428,6 +2428,13 @@ describe('approvedDarkCohorts (case 3, the rehearsal side)', () => {
       'squad-b',
     ]);
     expect(approvedDarkCohorts({ failures, formats: ['links'] }, run([]))).toEqual([]);
+    // A body whose every entry was hidden carries none at all.
+    expect(
+      approvedDarkCohorts(
+        { failures: [f('squad-b', 'no_entries')], formats: ['links'] },
+        run(['host-1']),
+      ),
+    ).toEqual(['squad-b']);
   });
 
   test('a genuine failure anywhere keeps the run at rehearsal_failed', () => {

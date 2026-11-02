@@ -950,10 +950,11 @@ rules:
     }
   });
 
-  test('a body without proxies has no template: refused as no_match', () => {
+  test('a body without proxies carries nothing: refused as no_entries', () => {
+    // The backend's body for an app with no VLESS (a legacy Clash core).
     const out = renderClash('mixed-port: 7890\nproxies: []\n');
     expect(out.applied).toBe(false);
-    expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'no_match' });
+    expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'no_entries' });
   });
 
   test('a rule targeting the template by name is rewritten to the auto group (token match, never a substring scan)', () => {

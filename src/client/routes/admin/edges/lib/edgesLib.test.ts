@@ -339,7 +339,7 @@ describe('attention', () => {
         }),
       ),
     ).toMatch(
-      /5 refused in the last hour · Most: .+ on node-a \(Mihomo apps\) 4; .+ with no node \(other apps\) 1$/,
+      /5 refused in the last hour · Most: .+ on node-a \(Clash apps\) 4; .+ with no node \(other apps\) 1$/,
     );
     // A failed run's kind is its title, never a "Provision run" fact.
     expect(attentionFactsLine(item({ facts: { kind: 'provision', phase: 'failed' } }))).toBe('');

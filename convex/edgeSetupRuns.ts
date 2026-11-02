@@ -2719,8 +2719,11 @@ async function assertPlanMatchesRelay(
     });
 }
 
-/** Body outcomes that mean "nothing is left to serve", the signature of a hidden-out cohort. */
-const DARK_BODY_REASONS = new Set(['empty_body', 'no_match', 'empty_pool']);
+/**
+ * Body outcomes that mean "nothing is left to serve", the signature of a
+ * hidden-out cohort (`no_entries`: every entry of the body was hidden).
+ */
+const DARK_BODY_REASONS = new Set(['empty_body', 'no_entries', 'no_match', 'empty_pool']);
 
 /**
  * Cohorts whose EVERY failure says their body is empty of anything FCP can

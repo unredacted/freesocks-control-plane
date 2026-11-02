@@ -213,6 +213,34 @@ describe('applyEdgeRender: listener-aware assignment', () => {
     expect(out.snapshot).toEqual({ listenerKeys: [], primaryEdgeId: null, backupEdgeId: null });
   });
 
+  test('a body with no entry at all is no_entries, never an empty pool', () => {
+    // The backend's template for an app that cannot speak the node's protocol
+    // (a legacy Clash core has no VLESS): it reads, but it carries nothing.
+    for (const body of [
+      'proxies: []\nproxy-groups: []\nrules:\n  - MATCH,DIRECT\n',
+      'proxy-groups:\n  - name: PROXY\n    type: select\n    proxies: [DIRECT]\n',
+      JSON.stringify({ outbounds: [{ type: 'direct', tag: 'direct' }] }),
+      'nothing to connect to',
+    ]) {
+      const out = applyEdgeRender(rctx([edgeA, edgeS]), body, key(1), { now: NOW });
+      expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'no_entries' });
+      expect(out.body).toBe(body);
+    }
+    // An entry that is there but malformed is still an entry: never no_entries.
+    for (const body of [
+      'proxies:\n  - name: broken\n    type: vless\n',
+      JSON.stringify({ outbounds: [{ type: 'vless', tag: 'broken' }] }),
+      'vless://not-a-share-link',
+      'socks://203.0.113.9:1080#unknown-scheme',
+    ]) {
+      const out = applyEdgeRender(rctx([edgeA, edgeS]), body, key(1), { now: NOW });
+      expect(out.delivery).toEqual({ kind: 'unavailable', reason: 'empty_pool' });
+    }
+    // A body that does not read as its format is not one: it never reaches the pool.
+    const broken = applyEdgeRender(rctx([edgeA, edgeS]), '{"outbounds": [', key(1), { now: NOW });
+    expect(broken.delivery).toEqual({ kind: 'unavailable', reason: 'unsupported_format' });
+  });
+
   test('an already-ineligible edge (undeployed / disabled listener) stays ineligible even when its template is present', () => {
     const both = [realityLink, ssLink].join('\n');
     for (let i = 0; i < 100; i++) {
