@@ -184,6 +184,12 @@ bun run lint                  # `bun run format` fixes formatting
 bun run build
 ```
 
+`tsc` uses [TypeScript 7's side-by-side setup](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/).
+Svelte's checker still needs the TypeScript 6 compiler
+API, supplied by Microsoft's `@typescript/typescript6` compatibility package
+under the `typescript` alias. `@typescript/native` supplies the TypeScript 7 CLI;
+keep both aliases when updating the compiler.
+
 Larger suites run in Docker against throwaway servers:
 
 ```bash
