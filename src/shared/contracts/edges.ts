@@ -1731,6 +1731,15 @@ export const CountryViewName = z.object({
     .nullable(),
   reports: z.object({ weight: z.number(), suspect: z.boolean() }).nullable(),
   realHost: CountryViewNameRealHost.nullable().default(null),
+  /** What the country lists for this country say about the name (a block list's suggestion too). */
+  lists: z
+    .object({
+      allow: z.boolean(),
+      block: z.boolean(),
+      suggestion: z.enum(['blocked']).nullable(),
+    })
+    .nullable()
+    .default(null),
   /** Share of the sampled members there handed it on their primary address. */
   handed: z.number(),
 });

@@ -9,6 +9,7 @@ import { apiClient } from './api';
 import {
   CountryListCreated,
   CountryListDetail,
+  CountryListFeedsSet,
   CountryListLookup,
   CountryListOk,
   CountryListPartAdded,
@@ -39,6 +40,12 @@ export const decideCountryListVersion = (
   versionId: string,
   decision: 'approve' | 'reject',
 ) => apiClient.post(`${BASE}/${enc(id)}/versions/${enc(versionId)}/${decision}`, {}, CountryListOk);
+export const setCountryListFeeds = (
+  id: string,
+  feeds: Array<{ network: string } | { family: string }>,
+) => apiClient.post(`${BASE}/${enc(id)}/feeds`, { feeds }, CountryListFeedsSet);
+export const feedCountryListAgain = (id: string) =>
+  apiClient.post(`${BASE}/${enc(id)}/feeds/again`, {}, CountryListFeedsSet);
 export const lookupCountryLists = (entries: string[]) =>
   apiClient.post(`${BASE}/lookup`, { entries }, CountryListLookup);
 

@@ -44,7 +44,8 @@ import {
 } from './lib/sniConfig';
 import { resolveEdgeSecrets } from './lib/edgeConfig';
 import { clientCheckReadiness } from './edgeClientCheck';
-import { decide, suggest, type Mark } from './lib/edges/sni/vantage';
+import { decide, listBlocks, resolveSuggestion, suggest, type Mark } from './lib/edges/sni/vantage';
+import { listLabels, onListsView } from './lib/edges/lists/facts';
 import { auditPickForMarks, marksOfName, pickForJudgedNames } from './lib/edges/sni/marks';
 import { edgeNetworkVerdict, type NetworkPrefixes } from './lib/edges/networks';
 import { listenersOfTransport, syncTransportNetwork } from './lib/edges/networkScope';
@@ -268,40 +269,55 @@ export const list = internalQuery({
   },
 });
 
-/** One (name, country) evidence row as the family page shows it. */
+/**
+ * One (name, country) row as the family page shows it: what the checks from
+ * inside the country say, or only what a block list says (no evidence row),
+ * judged by the one suggestion rule (`resolveSuggestion`).
+ */
 function vantageView(
-  ev: Doc<'sniVantageEvidence'>,
-  o: { reportSuspect: boolean; mark: Mark | null; minVantages: number; minNetworks: number },
+  country: string,
+  ev: Doc<'sniVantageEvidence'> | null,
+  o: {
+    reportSuspect: boolean;
+    mark: Mark | null;
+    minVantages: number;
+    minNetworks: number;
+    listBlocks: boolean;
+  },
 ) {
-  const s = suggest(
-    {
-      measurements: ev.measurements,
-      okVantages: ev.okVantages,
-      okNetworks: ev.okNetworks,
-      lastOkAt: ev.lastOkAt ?? null,
-      lastFailAt: ev.lastFailAt ?? null,
-      lastAt: ev.lastAt ?? null,
-      latest: ev.latest,
-      streak: ev.streak ?? null,
-    },
-    o,
-  );
+  const probe = ev
+    ? suggest(
+        {
+          measurements: ev.measurements,
+          okVantages: ev.okVantages,
+          okNetworks: ev.okNetworks,
+          lastOkAt: ev.lastOkAt ?? null,
+          lastFailAt: ev.lastFailAt ?? null,
+          lastAt: ev.lastAt ?? null,
+          latest: ev.latest,
+          streak: ev.streak ?? null,
+        },
+        o,
+      )
+    : null;
+  const s = resolveSuggestion(probe, { blocks: o.listBlocks });
   const iso = (t: number | undefined) => (t ? new Date(t).toISOString() : null);
   return {
-    country: ev.country,
-    latest: ev.latest,
+    country,
+    latest: ev?.latest ?? ('none' as const),
     suggestion: s.suggestion,
     reason: s.reason,
+    provenance: s.provenance,
     decision: decide(s.suggestion, o.mark),
-    okVantages: ev.okVantages,
-    okNetworks: ev.okNetworks,
-    failVantages: ev.streak?.nameFailures ?? 0,
-    failNetworks: ev.streak?.networks ?? 0,
-    pathFailures: ev.streak?.pathFailures ?? 0,
+    okVantages: ev?.okVantages ?? 0,
+    okNetworks: ev?.okNetworks ?? 0,
+    failVantages: ev?.streak?.nameFailures ?? 0,
+    failNetworks: ev?.streak?.networks ?? 0,
+    pathFailures: ev?.streak?.pathFailures ?? 0,
     reportsAgree: o.reportSuspect,
-    lastAt: iso(ev.lastAt),
-    lastOkAt: iso(ev.lastOkAt),
-    lastRequestedAt: iso(ev.lastRequestedAt),
+    lastAt: iso(ev?.lastAt),
+    lastOkAt: iso(ev?.lastOkAt),
+    lastRequestedAt: iso(ev?.lastRequestedAt),
   };
 }
 
@@ -365,19 +381,33 @@ export const detail = internalQuery({
     // reports and the thresholds move independently of the measurements.
     const vCfg = await resolveSniVantageConfig(ctx.db);
     const vantage = new Map<string, ReturnType<typeof vantageView>[]>();
+    const onLists = new Map(names.map((n) => [n.name, n.onLists]));
+    const opts = (name: string, country: string) => ({
+      reportSuspect: (suspects.get(name) ?? []).includes(country),
+      mark: judged.get(name)?.marks.get(country) ?? null,
+      minVantages: vCfg.minVantages,
+      minNetworks: vCfg.minNetworks,
+      listBlocks: listBlocks(onLists.get(name), country),
+    });
     for (const ev of await ctx.db
       .query('sniVantageEvidence')
       .withIndex('by_family', (q) => q.eq('familyId', f._id))
       .take(8000)) {
       if (!mine.has(ev.name) || !sniCfg.curatedCountries.includes(ev.country)) continue;
-      const view = vantageView(ev, {
-        reportSuspect: (suspects.get(ev.name) ?? []).includes(ev.country),
-        mark: judged.get(ev.name)?.marks.get(ev.country) ?? null,
-        minVantages: vCfg.minVantages,
-        minNetworks: vCfg.minNetworks,
-      });
+      const view = vantageView(ev.country, ev, opts(ev.name, ev.country));
       vantage.set(ev.name, [...(vantage.get(ev.name) ?? []), view]);
     }
+    // A block list may suggest what no check has looked at yet.
+    for (const n of names)
+      for (const country of sniCfg.curatedCountries) {
+        if (!listBlocks(n.onLists, country)) continue;
+        if ((vantage.get(n.name) ?? []).some((r) => r.country === country)) continue;
+        vantage.set(n.name, [
+          ...(vantage.get(n.name) ?? []),
+          vantageView(country, null, opts(n.name, country)),
+        ]);
+      }
+    const labels = await listLabels(ctx.db);
     return {
       family: {
         ...summarize(f, names, bindings.length, await networkView(ctx, f)),
@@ -401,6 +431,7 @@ export const detail = internalQuery({
           (c) => !(judged.get(n.name)?.blockedIn ?? []).includes(c),
         ),
         name: n.name,
+        onLists: onListsView(n.onLists, labels),
         seq: n.seq,
         status: n.status,
         qualification: n.qualification.state,

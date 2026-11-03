@@ -143,6 +143,33 @@ export const CountryListSource = z.union([
 ]);
 export type CountryListSource = z.infer<typeof CountryListSource>;
 
+/** Where a list's names go as finding-names candidates, with its last run. */
+export const CountryListFeed = z.object({
+  kind: z.enum(['network', 'family']),
+  /** Null when the network or family is gone. */
+  slug: z.string().nullable(),
+  label: z.string().nullable(),
+  run: z
+    .object({
+      state: z.enum(['running', 'done', 'stopped']),
+      stopped: z.string().nullable(),
+      counts: z.object({
+        added: z.number(),
+        known: z.number(),
+        ignored: z.number(),
+        inFamily: z.number(),
+        invalid: z.number(),
+        capped: z.number(),
+        wildcards: z.number(),
+      }),
+      at: z.string(),
+      /** Of the version in use now. */
+      current: z.boolean(),
+    })
+    .nullable(),
+});
+export type CountryListFeed = z.infer<typeof CountryListFeed>;
+
 export const CountryListView = z.object({
   id: z.string(),
   label: z.string(),
@@ -162,6 +189,7 @@ export const CountryListView = z.object({
   confirmedAt: z.string().nullable(),
   /** Confirmed within `edge.lists.staleDays`: only a fresh list is read as evidence. */
   fresh: z.boolean(),
+  feeds: z.array(CountryListFeed).default([]),
 });
 export type CountryListView = z.infer<typeof CountryListView>;
 
@@ -209,6 +237,10 @@ export const CountryListPatch = z.object({
 export type CountryListPatch = z.infer<typeof CountryListPatch>;
 
 export const CountryListCreated = z.object({ id: z.string() });
+/** `POST lists/{id}/feeds` and `POST lists/{id}/feeds/again`. */
+export const CountryListFeedsSet = z.object({ ok: z.literal(true), started: z.number() });
+/** Networks and families one list may feed. */
+export const MAX_LIST_FEEDS = 10;
 export const CountryListOk = z.object({ ok: z.literal(true) });
 
 /** `POST lists/{id}/uploads`. */

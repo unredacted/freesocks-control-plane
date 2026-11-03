@@ -35,6 +35,8 @@ import { normalizeAsn } from './lib/edges/networks';
 import { siteOf } from './lib/edges/sni/hunt/sources';
 import { holdReasons, type ListMeasure } from './lib/edges/lists/guards';
 import { isFresh, lookupEntries, MAX_LISTS } from './lib/edges/lists/facts';
+import { bumpFactsGen } from './countryListFacts';
+import { feedViews, startFeedRuns, sweepFeeds } from './countryListFeeds';
 import {
   MAX_LIST_NETWORKS,
   UPLOAD_MAX_BYTES,
@@ -214,6 +216,7 @@ async function listView(db: DatabaseReader, list: List, staleDays: number, now: 
       : null,
     confirmedAt: iso(list.confirmedAt),
     fresh: isFresh(list, staleDays, now),
+    feeds: await feedViews(db, list),
   };
 }
 
@@ -391,6 +394,9 @@ export const update = internalMutation({
       changed.push('enabled');
     }
     await ctx.db.patch(list._id, patch);
+    // What evidence reads moves with these: every stored fact is looked at again.
+    if (changed.some((c) => ['country', 'regime', 'enabled', 'url'].includes(c)))
+      await bumpFactsGen(ctx);
     await audit(ctx, 'admin.edge.list.update', a.actorAdminId, {
       listId: list._id,
       country: patch.country ?? list.country,
@@ -411,6 +417,7 @@ export const remove = internalMutation({
     const list = await listOf(ctx.db, a.listId);
     await ctx.db.delete(list._id);
     await ctx.scheduler.runAfter(0, internal.countryLists.purgeList, { listId: list._id });
+    if (list.activeVersionId) await bumpFactsGen(ctx);
     await audit(ctx, 'admin.edge.list.delete', a.actorAdminId, {
       listId: list._id,
       country: list.country,
@@ -448,8 +455,18 @@ export const purgeList = internalMutation({
       .withIndex('by_list_name', (q) => q.eq('listId', listId))
       .take(MEMBERS_PAGE);
     for (const h of history) await ctx.db.delete(h._id);
+    const runs = await ctx.db
+      .query('countryListFeedRuns')
+      .withIndex('by_list_feed', (q) => q.eq('listId', listId))
+      .take(MEMBERS_PAGE);
+    for (const r of runs) await ctx.db.delete(r._id);
     const uncleaned = versions.some((ver) => !ver.cleanedAt);
-    if (versions.length === SWEEP_PAGE || history.length === MEMBERS_PAGE || uncleaned)
+    if (
+      versions.length === SWEEP_PAGE ||
+      history.length === MEMBERS_PAGE ||
+      runs.length === MEMBERS_PAGE ||
+      uncleaned
+    )
       // Dropped versions stamp `cleanedAt` after the grace; come back for their rows then.
       await ctx.scheduler.runAfter(
         uncleaned ? CLEANUP_GRACE_MS + MIN : 0,
@@ -1066,6 +1083,11 @@ export const afterPublish = internalMutation({
     const list = await ctx.db.get(ver.listId);
     if (!list || list.activeVersionId !== ver._id) return;
     const now = Date.now();
+    if (a.cursor === undefined) {
+      // Once per publication: what the lists say moved, and the feeds take the new names.
+      await bumpFactsGen(ctx);
+      await startFeedRuns(ctx, list);
+    }
     const page = await ctx.db
       .query('countryListMembers')
       .withIndex('by_version_name', (q) => q.eq('versionId', ver._id))
@@ -1207,6 +1229,18 @@ export const sweep = internalMutation({
       }
     }
 
+    // Freshness passes with time alone: a list that turned stale (or fresh)
+    // since the last look moves what evidence reads.
+    let freshnessMoved = false;
+    for (const list of await ctx.db.query('countryLists').take(MAX_LISTS)) {
+      const fresh = isFresh(list, cfg.lists.staleDays, now);
+      if ((list.factsFresh ?? false) === fresh) continue;
+      await ctx.db.patch(list._id, { factsFresh: fresh });
+      if (list.activeVersionId) freshnessMoved = true;
+    }
+    if (freshnessMoved) await bumpFactsGen(ctx);
+    const feeds = await sweepFeeds(ctx, now);
+
     // The newest rows per list stay, whatever their age; past that, cleaned ones go.
     for (const list of await ctx.db.query('countryLists').take(MAX_LISTS)) {
       const older = await ctx.db
@@ -1235,6 +1269,6 @@ export const sweep = internalMutation({
       .take(MEMBERS_PAGE))
       await ctx.db.delete(h._id);
 
-    return counts;
+    return { ...counts, feeds };
   },
 });

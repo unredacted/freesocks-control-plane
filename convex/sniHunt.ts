@@ -61,6 +61,7 @@ import {
 import { huntName, parseSeed, siteOf, type SeedNetwork } from './lib/edges/sni/hunt/sources';
 import { bumpScope, candidateScope, scopeRow, touchScope } from './lib/edges/sni/hunt/store';
 import { MAX_NETWORKS } from './edgeNetworks';
+import { listLabels, onListsView } from './lib/edges/lists/facts';
 import { usableCandidate } from '../src/shared/contracts/sni';
 import {
   passesAfterCheck,
@@ -206,6 +207,25 @@ const emptyTally = (): UpsertTally => ({
   invalid: 0,
   capped: 0,
 });
+
+/**
+ * Names from a country list into a feed's scope (countryListFeeds.ts): the
+ * same rules as every source (known, held by a family, ignored, capped).
+ */
+export async function addListCandidates(
+  ctx: MutationCtx,
+  s: Scope,
+  names: readonly string[],
+  now: number,
+): Promise<UpsertTally> {
+  return upsertNames(
+    ctx,
+    s,
+    'list',
+    names.map((name) => ({ name })),
+    now,
+  );
+}
 
 /**
  * Add names to a scope as candidates from one source. A name already there
@@ -859,7 +879,7 @@ export const stepRelease = internalMutation({
 
 type Scorable = Pick<
   Candidate,
-  'rank' | 'check' | 'extra' | 'passes' | 'timing' | 'ooni' | 'countries'
+  'rank' | 'check' | 'extra' | 'passes' | 'timing' | 'ooni' | 'countries' | 'onLists'
 >;
 
 /** A candidate's score now: its check, its extras, and the evidence still fresh. */
@@ -2242,7 +2262,11 @@ export const clearForRollback = internalMutation({
 
 // --- views -----------------------------------------------------------------------------------
 
-function candidateView(c: Candidate, inFamily: { slug: string; label: string } | null) {
+function candidateView(
+  c: Candidate,
+  inFamily: { slug: string; label: string } | null,
+  labels: ReadonlyMap<string, string>,
+) {
   return {
     id: c._id as string,
     name: c.name,
@@ -2281,6 +2305,7 @@ function candidateView(c: Candidate, inFamily: { slug: string; label: string } |
       ? { at: new Date(c.ooni.at).toISOString(), exact: c.ooni.exact, site: c.ooni.site }
       : null,
     countries: (c.countries ?? []).map((x) => ({ ...x, at: new Date(x.at).toISOString() })),
+    onLists: onListsView(c.onLists, labels),
     firstSeenAt: new Date(c.firstSeenAt).toISOString(),
   };
 }
@@ -2352,6 +2377,7 @@ export const scopeView = internalQuery({
       if (passing(c)) counts.usable++;
     }
     const families = new Map<string, { slug: string; label: string } | null>();
+    const labels = await listLabels(ctx.db);
     const out = [];
     for (const c of page.page) {
       let inFamily: { slug: string; label: string } | null = null;
@@ -2369,7 +2395,7 @@ export const scopeView = internalQuery({
           inFamily = families.get(k) ?? null;
         }
       }
-      out.push(candidateView(c, inFamily));
+      out.push(candidateView(c, inFamily, labels));
     }
     // What each first address serves (a possible target and its names), over the whole scope.
     const groups = new Map<

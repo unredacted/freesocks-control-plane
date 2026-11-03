@@ -39,6 +39,7 @@ const row = (name: string): SniCandidateRow => ({
   own: null,
   ooni: null,
   countries: [],
+  onLists: [],
   firstSeenAt: '2026-10-27T00:00:00.000Z',
 });
 

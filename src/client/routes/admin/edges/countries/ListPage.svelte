@@ -32,6 +32,7 @@
   import { edgesPaths } from '../lib/routes';
   import { relativeTime } from '../lib/time';
   import ListDialog from './ListDialog.svelte';
+  import ListFeeds from './ListFeeds.svelte';
   import ListLookup from './ListLookup.svelte';
   import { countryLabel } from './words';
   import {
@@ -250,6 +251,8 @@
       </CardContent>
     </Card>
   {/if}
+
+  <ListFeeds list={l} />
 
   {#if detail.data.versions.length > 0}
     <Card class="mt-4">

@@ -6,6 +6,7 @@
  */
 import {
   usableCandidate,
+  type HuntListFact,
   type SniCandidateRow,
   type SniHuntCtRow,
   type SniHuntImported,
@@ -22,6 +23,7 @@ export const HUNT_SOURCE_WORDS: Record<SniCandidateRow['sources'][number], strin
   pasted: 'pasted',
   toplist: 'top sites',
   ct: 'certificate logs',
+  list: 'country list',
 };
 
 export const HUNT_FILTERS = ['usable', 'not_usable', 'all'] as const;
@@ -132,6 +134,26 @@ export function countryWords(c: SniCandidateRow): string[] {
     if (o.status === 'blocked' || o.status === 'likely_blocked')
       out.push(`${o.cc}: OONI sees it blocked`);
     else if (o.status === 'ok') out.push(`${o.cc}: OONI sees it working`);
+  }
+  out.push(...listWords(c.onLists));
+  return out;
+}
+
+/**
+ * What the country lists say, one phrase per country: about the name only.
+ * Under a whitelist the address must be listed too, which these say nothing about.
+ */
+export function listWords(facts: readonly HuntListFact[]): string[] {
+  const out: string[] = [];
+  for (const cc of [...new Set(facts.map((f) => f.cc))].sort()) {
+    const here = facts.filter((f) => f.cc === cc);
+    const allow = here.filter((f) => f.regime === 'allowlist').map((f) => f.label);
+    const block = here.filter((f) => f.regime === 'blocklist').map((f) => f.label);
+    if (allow.length > 0 && block.length > 0)
+      out.push(`${cc}: country lists disagree (${[...allow, ...block].join(', ')})`);
+    else if (allow.length > 0)
+      out.push(`${cc}: name on a list of what works (${allow.join(', ')})`);
+    else out.push(`${cc}: name on a block list (${block.join(', ')})`);
   }
   return out;
 }

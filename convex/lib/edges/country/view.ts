@@ -164,6 +164,12 @@ export interface NameFacts {
   reports: { weight: number; suspect: boolean } | null;
   /** The real-host controls of the newest batch that had them (lib/edges/sni/realHost.ts). */
   realHost?: NameRealHost | null;
+  /**
+   * What the enabled, fresh country lists for this country say about the name
+   * (docs/edges.md "Country lists"): evidence about the name only. `suggestion`
+   * is a block list's, when the checks suggest nothing.
+   */
+  lists?: { allow: boolean; block: boolean; suggestion: 'blocked' | null } | null;
 }
 
 export interface NameRealHost {
@@ -863,6 +869,7 @@ export function buildCountryView(
           checks: f?.checks ?? null,
           reports: f?.reports ?? null,
           realHost: f?.realHost ?? null,
+          lists: f?.lists ?? null,
           handed: nameShare.get(n.name) ?? 0,
         };
       });

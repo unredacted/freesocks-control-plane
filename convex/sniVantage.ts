@@ -36,6 +36,8 @@ import {
   pickBatchNames,
   pickTargetIndex,
   preferredTarget,
+  listBlocks,
+  resolveSuggestion,
   rotateForTick,
   suggest,
   type AddressVerdict,
@@ -1003,11 +1005,15 @@ async function autoApply(
     const familyId = ev.familyId;
     const key = familyId as string;
     if (!suspects.has(key)) suspects.set(key, await reportSuspects(ctx.db, familyId, country, now));
-    const s = suggest(evidenceShape(ev), {
-      reportSuspect: suspects.get(key)!.has(name),
-      minVantages: cfg.minVantages,
-      minNetworks: cfg.minNetworks,
-    });
+    // The one rule, with no list: a block list is never acted on without a person.
+    const s = resolveSuggestion(
+      suggest(evidenceShape(ev), {
+        reportSuspect: suspects.get(key)!.has(name),
+        minVantages: cfg.minVantages,
+        minNetworks: cfg.minNetworks,
+      }),
+      null,
+    );
     if (decide(s.suggestion, await markOf(ctx.db, name, country)) !== 'suggest' || !s.suggestion)
       continue;
     const fam = await ctx.db.get(familyId);
@@ -1275,13 +1281,15 @@ export const applySuggestions = internalMutation({
     let skipped = 0;
     for (const n of rows) {
       const ev = await evidenceOf(ctx.db, n.name, country);
-      const s = ev
+      const probe = ev
         ? suggest(evidenceShape(ev), {
             reportSuspect: suspects.has(n.name),
             minVantages: cfg.minVantages,
             minNetworks: cfg.minNetworks,
           })
         : null;
+      // The one rule the page showed: the checks, else a block list holding the name.
+      const s = resolveSuggestion(probe, { blocks: listBlocks(n.onLists, country) });
       const mark = await markOf(ctx.db, n.name, country);
       if (!s?.suggestion || (mark?.state === s.suggestion && mark.source === 'operator')) {
         skipped++;

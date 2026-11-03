@@ -10,6 +10,7 @@ import { verificationListenerOf } from './lib/edges/verificationContext';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
+import { bumpFactsGen } from './countryListFacts';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import {
@@ -212,6 +213,9 @@ export const patchConfig = internalMutation({
       await upsertSettingRow(ctx, w.key, w.value, actorAdminId);
     }
     const changed = [...changedKeys, ...secretWrites.map(() => 'probe.secret')];
+    // Country lists switched on or off, or a new stale window: what evidence reads moved.
+    if (changedKeys.some((k) => k === 'lists.enabled' || k === 'lists.staleDays'))
+      await bumpFactsGen(ctx);
     // Names for addresses on or off changes what every member is handed too.
     if (changedKeys.some((k) => k.startsWith('render.') || k === 'names.enabled')) {
       const now = Date.now();

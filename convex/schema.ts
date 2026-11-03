@@ -3156,11 +3156,27 @@ export default defineSchema({
     }),
     // 0 = never checked; the qualify cron takes the oldest first.
     checkedAt: v.number(),
+    // What the country lists say about this name (lib/edges/lists/facts.ts):
+    // the enabled, fresh lists holding it, as of the list-facts generation
+    // `onListsGen`. Stored so a scope's rescore reads no list (a query may read
+    // at most 4,096 index ranges); a paged refresh rewrites rows behind the
+    // generation (countryListFacts.ts).
+    onLists: v.optional(
+      v.array(
+        v.object({
+          listId: v.id('countryLists'),
+          cc: v.string(),
+          regime: v.union(v.literal('allowlist'), v.literal('blocklist')),
+        }),
+      ),
+    ),
+    onListsGen: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_family_seq', ['familyId', 'seq'])
     .index('by_name', ['name'])
-    .index('by_checked', ['checkedAt']),
+    .index('by_checked', ['checkedAt'])
+    .index('by_on_lists_gen', ['onListsGen']),
 
   // A family bound to ONE backend transport: the single authoritative allowlist for
   // it. Every origin listener whose `panelBinding` is that transport inherits it;
@@ -3747,6 +3763,8 @@ export default defineSchema({
         v.literal('pasted'),
         v.literal('toplist'),
         v.literal('ct'),
+        // Fed from a country list (docs/edges.md "Country lists").
+        v.literal('list'),
       ),
     ),
     // Its rank in the top-sites list (or the seed's), when known.
@@ -3856,6 +3874,21 @@ export default defineSchema({
       }),
     ),
     firstSeenAt: v.number(),
+    // What the country lists say about this name (lib/edges/lists/facts.ts):
+    // the enabled, fresh lists holding it, as of the list-facts generation
+    // `onListsGen`. Stored so a scope's rescore reads no list (a query may read
+    // at most 4,096 index ranges); a paged refresh rewrites rows behind the
+    // generation (countryListFacts.ts).
+    onLists: v.optional(
+      v.array(
+        v.object({
+          listId: v.id('countryLists'),
+          cc: v.string(),
+          regime: v.union(v.literal('allowlist'), v.literal('blocklist')),
+        }),
+      ),
+    ),
+    onListsGen: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_scope_base', ['networkId', 'familyId', 'baseScore'])
@@ -3868,7 +3901,8 @@ export default defineSchema({
     .index('by_gone', ['goneAt'])
     .index('by_listed', ['listed', 'evidenceAskedAt'])
     .index('by_measure', ['measureAt'])
-    .index('by_scope_site', ['networkId', 'familyId', 'site']),
+    .index('by_scope_site', ['networkId', 'familyId', 'site'])
+    .index('by_on_lists_gen', ['onListsGen']),
 
   // A real-site check of shortlisted candidates from inside one opted-in
   // country: Globalping `HEAD /` to the candidate's own on-network address,
@@ -4049,6 +4083,19 @@ export default defineSchema({
     // Bumped when the source address changes: a read of the old address that
     // is still running finds a different generation and its answer is dropped.
     sourceGen: v.optional(v.number()),
+    // Where its names go as finding-names candidates (docs/edges.md "Country
+    // lists", "Names into finding names"): networks or families, none by default.
+    feeds: v.optional(
+      v.array(
+        v.union(
+          v.object({ networkId: v.id('edgeNetworks') }),
+          v.object({ familyId: v.id('sniFamilies') }),
+        ),
+      ),
+    ),
+    // Whether it was fresh when the daily sweep last looked: a change moves the
+    // list-facts generation, since freshness passes with time alone.
+    factsFresh: v.optional(v.boolean()),
     activeVersionId: v.optional(v.id('countryListVersions')),
     // A version waiting for a person to use it or throw it away.
     heldVersionId: v.optional(v.id('countryListVersions')),
@@ -4174,6 +4221,35 @@ export default defineSchema({
     index: v.number(),
     text: v.string(),
   }).index('by_upload_index', ['uploadId', 'index']),
+
+  // One walk of a list version's names into one feed (a network's or a
+  // family's candidates), a page at a time. A new version, a changed feed or
+  // "Feed again" starts a new one; one behind the list's version stops.
+  countryListFeedRuns: defineTable({
+    listId: v.id('countryLists'),
+    // `network:<id>` or `family:<id>`.
+    feedKey: v.string(),
+    versionId: v.id('countryListVersions'),
+    state: v.union(v.literal('running'), v.literal('done'), v.literal('stopped')),
+    // Why it stopped, when it did.
+    stopped: v.optional(v.string()),
+    // The members page cursor; fences each step with `gen`.
+    cursor: v.optional(v.string()),
+    gen: v.number(),
+    counts: v.object({
+      added: v.number(),
+      known: v.number(),
+      ignored: v.number(),
+      inFamily: v.number(),
+      invalid: v.number(),
+      capped: v.number(),
+      wildcards: v.number(),
+    }),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_list_feed', ['listId', 'feedKey'])
+    .index('by_state_updated', ['state', 'updatedAt']),
 
   // --- Bootstrap contract v2 (docs/servers.md "Setting up a backend", "Node lifecycle") ---
   //

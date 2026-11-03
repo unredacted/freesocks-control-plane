@@ -57,7 +57,14 @@
   import StatusDot from '../simple/StatusDot.svelte';
   import AddSuggestionsDialog from './AddSuggestionsDialog.svelte';
   import FamilyPort from './FamilyPort.svelte';
-  import { countryWords, extraWords, nearWords, scoreWords, sourcesWords } from './lib/huntWords';
+  import {
+    countryWords,
+    extraWords,
+    listWords,
+    nearWords,
+    scoreWords,
+    sourcesWords,
+  } from './lib/huntWords';
   import {
     LIST_FILTERS,
     LIST_FILTER_LABEL,
@@ -498,6 +505,9 @@
                       {#if n.probeMarkedIn.length > 0}
                         <p>Marked by the checks from inside {n.probeMarkedIn.join(', ')}.</p>
                       {/if}
+                      {#if n.onLists.length > 0}
+                        <p>{listWords(n.onLists).join(' · ')}.</p>
+                      {/if}
                       {#each n.vantage as v (v.country)}
                         {@const said = vantageSuggestionWords(v)}
                         <p>
@@ -511,7 +521,11 @@
                               disabled={busy}
                               onclick={() => applyChecks([n.name], v.country)}
                             >
-                              {v.decision === 'conflict' ? 'Use the checks instead' : 'Apply'}
+                              {v.decision === 'conflict'
+                                ? v.provenance === 'list'
+                                  ? 'Use the list instead'
+                                  : 'Use the checks instead'
+                                : 'Apply'}
                             </Button>
                           {/if}
                         </p>

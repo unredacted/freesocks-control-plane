@@ -311,6 +311,18 @@ export function reportsLine(n: CountryViewName): string | null {
     : `Members there reported problems that may involve it (${weight} reports), no more than its other names.`;
 }
 
+/** What the country lists for this country say about a name (null: none holds it). */
+export function listsLine(n: CountryViewName): string | null {
+  const l = n.lists;
+  if (!l) return null;
+  if (l.allow && l.block) return 'Country lists for here disagree about this name.';
+  if (l.block)
+    return l.suggestion
+      ? 'A block list for here holds this name, so it may be blocked here. Mark it on its family page.'
+      : 'A block list for here holds this name.';
+  return 'A list of what works here holds this name. That is about the name only, not the address.';
+}
+
 const HANDED_REASON_WORDS: Record<CountryViewHandedReason, string> = {
   render_off: 'Members are not handed protected addresses: rendering is off.',
   origin_disabled: 'This origin is switched off.',
