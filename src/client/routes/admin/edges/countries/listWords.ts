@@ -189,6 +189,8 @@ const ERROR_WORDS: Record<string, string> = {
     'Only a list that is on, fresh and has a version in use can feed names.',
   'edge.list.watch_allowlist_only': 'Only a list of what works can check edge addresses.',
   'edge.list.mark_not_left': 'That address is on the list again, or never was.',
+  'edge.list.mark_moved': 'That address was listed and left again since. Look at it again.',
+  'edge.list.watch_cap': 'At most 5 lists check edge addresses. Turn one off first.',
   not_found: 'That list is gone.',
   validation: 'Something in the form is not right. Check the fields.',
 };

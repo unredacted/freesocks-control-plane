@@ -3,7 +3,8 @@
    * On an edge's sheet: what every watched allowlist says about its addresses
    * (docs/edges.md "Edge addresses against allowlists"), with "Seen it" on an
    * address that left a list (it clears the attention item until the address
-   * is listed again and leaves again). Renders nothing when no list watches.
+   * is listed again and leaves again; it names the departure it saw, so a
+   * stale sheet cannot clear a newer one). Renders nothing when no list watches.
    *
    * Props: edgeId: string
    * All wording lives in ./listWords.ts (pure, unit-tested).
@@ -30,10 +31,10 @@
   let busy = $state<string | null>(null);
   const now = $derived(marks.dataUpdatedAt || Date.now());
 
-  async function seen(listId: string, markId: string) {
+  async function seen(listId: string, markId: string, leftAt: number) {
     busy = markId;
     try {
-      await markEdgeAddressSeen(listId, markId);
+      await markEdgeAddressSeen(listId, markId, leftAt);
       toast.success('Noted. It asks again only if it is listed and leaves again.');
     } catch (e) {
       toast.error(listErrorWords(e instanceof ApiCallError ? e.payload.error.code : null));
@@ -71,12 +72,12 @@
                   <span class="font-mono break-all">{a.address}</span>
                   {markRowWords(a, now)}
                 </span>
-                {#if a.needsLook && a.markId}
+                {#if a.needsLook && a.markId && a.leftAt !== null}
                   <Button
                     size="sm"
                     variant="outline"
                     disabled={busy !== null}
-                    onclick={() => void seen(l.listId, a.markId!)}
+                    onclick={() => void seen(l.listId, a.markId!, a.leftAt!)}
                   >
                     Seen it
                   </Button>

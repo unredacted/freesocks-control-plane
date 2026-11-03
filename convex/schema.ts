@@ -4278,7 +4278,9 @@ export default defineSchema({
   })
     .index('by_list_edge', ['listId', 'edgeId', 'family'])
     .index('by_edge', ['edgeId'])
-    .index('by_version', ['versionId']),
+    .index('by_version', ['versionId'])
+    // Only marks that left (`leftAt` is cleared when listed again): what attention reads.
+    .index('by_left', ['leftAt']),
 
   // --- Bootstrap contract v2 (docs/servers.md "Setting up a backend", "Node lifecycle") ---
   //

@@ -26,6 +26,7 @@ const row = (over: Partial<Marks['lists'][number]['addresses'][number]>) => ({
   since: null,
   checkedAt: null,
   markId: 'm4',
+  leftAt: null,
   needsLook: false,
   ...over,
 });
@@ -55,7 +56,7 @@ describe('EdgeListMarks', () => {
           fresh: true,
           enabled: true,
           addresses: [
-            row({ state: 'left', needsLook: true }),
+            row({ state: 'left', needsLook: true, leftAt: 1_800_000_000_000 }),
             row({ family: 'v6', address: '2001:db8::10', state: 'not_listed', markId: 'm6' }),
           ],
         },
@@ -71,7 +72,9 @@ describe('EdgeListMarks', () => {
     );
     expect(buttons).toHaveLength(1);
     buttons[0]!.click();
-    await vi.waitFor(() => expect(markEdgeAddressSeen).toHaveBeenCalledWith('l1', 'm4'));
+    await vi.waitFor(() =>
+      expect(markEdgeAddressSeen).toHaveBeenCalledWith('l1', 'm4', 1_800_000_000_000),
+    );
   });
 
   test('says why a list is not checked now, and shows nothing when no list watches', () => {

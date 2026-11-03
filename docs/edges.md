@@ -3700,7 +3700,9 @@ one meaning: why nothing is suggested.
 `lib/edges/lists/edgeMarks.ts`). Under a whitelist both the dialled address and the server name must
 be listed. An allowlist with **Check edge addresses against it** on (`countryLists.watchEdges`, off
 by default; a block list is refused with `edge.list.watch_allowlist_only`, and a list that becomes
-one stops) has every active edge's IPv4 and IPv6 address checked against its version in use. One
+one stops; at most 5 lists watch at once, `edge.list.watch_cap`, which keeps a country's page and
+the attention read inside Convex's 32,000 documents a query) has every active edge's IPv4 and IPv6
+address checked against its version in use. One
 mark per (edge, list, family) (`countryListEdgeMarks`) holds the version it was checked against,
 whether that version holds the address, the first and last checks that found it listed, when it
 left, and when a person saw that. A mark whose version is not the list's version in use, or whose
@@ -3719,17 +3721,20 @@ An active address that was listed and is no longer raises the warning attention 
 **`list_address_left`** (`list_address_left:<edgeId>:<listId>:<family>`, facts `list`, `country`,
 `addressFamily`, action `open_edge`), and keeps raising it across rechecks until a person presses
 **Seen it** on the edge's sheet (`seenAt`). It raises again only after the address is listed again
-and leaves again. An address never listed raises nothing. The edge's sheet shows each watched list
-with each address (on it since, left it when, never on it, not checked yet); each country's page
-shows the same per address for that country's lists, and per transport how many of its active
-server names a list of what works there holds. The list's page shows the switch, why checks wait
-when they do (the switch, the list off, no version, stale) and how the active edges' addresses
-stand.
+and leaves again; Seen it names the departure it acknowledges (`leftAt`), so a sheet left open on an
+earlier departure is refused (`edge.list.mark_moved`) instead of clearing a newer one. Attention
+reads only marks that left (index `by_left`). An address never listed raises nothing. The edge's
+sheet shows each watched list with each address (on it since, left it when, never on it, not
+checked yet); each country's page (not the summary of every country) shows the same per address for
+that country's lists, and per transport how many of its active server names a list of what works
+there holds (a name no family holds has no stored facts, so the page looks it up). The list's page
+shows the switch, why checks wait when they do (the switch, the list off, no version, stale) and
+how the active edges' addresses stand.
 
 Retention keeps a version row any mark was last checked against (a list that stopped being watched
 keeps its marks), so a mark can always say which version it was checked against; a removed list
 takes its marks along. Routes: `GET lists/marks?edge={edgeId}` (read), `PATCH lists/{id}
-{watchEdges}`, `POST lists/{id}/marks/{markId}/seen` (only an address that left,
+{watchEdges}`, `POST lists/{id}/marks/{markId}/seen {leftAt}` (only an address that left,
 `edge.list.mark_not_left` otherwise). Audit: `admin.edge.list.mark_seen` (ids and the family).
 
 ### Finding names

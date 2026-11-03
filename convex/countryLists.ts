@@ -37,7 +37,12 @@ import { holdReasons, type ListMeasure } from './lib/edges/lists/guards';
 import { isFresh, lookupEntries, MAX_LISTS } from './lib/edges/lists/facts';
 import { bumpFactsGen } from './countryListFacts';
 import { feedViews, startFeedRuns, startPendingFeeds, sweepFeeds } from './countryListFeeds';
-import { edgeCountsOf, startEdgeRecheck } from './countryListEdges';
+import {
+  edgeCountsOf,
+  MAX_WATCHED_LISTS,
+  startEdgeRecheck,
+  watchedCount,
+} from './countryListEdges';
 import {
   MAX_LIST_NETWORKS,
   UPLOAD_MAX_BYTES,
@@ -149,10 +154,19 @@ export function cleanSourceUrl(raw: string): string {
   return u.toString();
 }
 
-/** Only an allowlist's ranges say an edge address works there: a block list is never watched. */
-function watchable(regime: List['regime']): boolean {
+/**
+ * Only an allowlist's ranges say an edge address works there: a block list is
+ * never watched. At most `MAX_WATCHED_LISTS` lists watch at once.
+ */
+async function watchable(
+  db: DatabaseReader,
+  regime: List['regime'],
+  listId?: ListId,
+): Promise<boolean> {
   if (regime !== 'allowlist')
     refuse('edge.list.watch_allowlist_only', 'Only a list of what works can watch edge addresses');
+  if ((await watchedCount(db, listId)) >= MAX_WATCHED_LISTS)
+    refuse('edge.list.watch_cap', `At most ${MAX_WATCHED_LISTS} lists watch edge addresses`);
   return true;
 }
 
@@ -336,7 +350,7 @@ export const create = internalMutation({
       source,
       fetchEveryHours: cleanHours(a.fetchEveryHours, cfg.lists.defaultFetchHours),
       enabled: a.enabled ?? true,
-      ...(a.watchEdges ? { watchEdges: watchable(a.regime) } : {}),
+      ...(a.watchEdges ? { watchEdges: await watchable(ctx.db, a.regime) } : {}),
       updatedAt: Date.now(),
     });
     await audit(ctx, 'admin.edge.list.create', a.actorAdminId, {
@@ -407,7 +421,8 @@ export const update = internalMutation({
       changed.push('enabled');
     }
     if (a.watchEdges !== undefined) {
-      patch.watchEdges = a.watchEdges && watchable(patch.regime ?? list.regime);
+      patch.watchEdges =
+        a.watchEdges && (await watchable(ctx.db, patch.regime ?? list.regime, list._id));
       changed.push('watchEdges');
     } else if (patch.regime === 'blocklist' && list.watchEdges) {
       // Only an allowlist is watched: a list that became a block list stops.

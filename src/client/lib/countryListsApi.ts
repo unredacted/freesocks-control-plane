@@ -51,8 +51,8 @@ export const lookupCountryLists = (entries: string[]) =>
   apiClient.post(`${BASE}/lookup`, { entries }, CountryListLookup);
 export const fetchEdgeListMarks = (edgeId: string) =>
   apiClient.get(`${BASE}/marks?edge=${enc(edgeId)}`, EdgeListMarks);
-export const markEdgeAddressSeen = (listId: string, markId: string) =>
-  apiClient.post(`${BASE}/${enc(listId)}/marks/${enc(markId)}/seen`, {}, CountryListOk);
+export const markEdgeAddressSeen = (listId: string, markId: string, leftAt: number) =>
+  apiClient.post(`${BASE}/${enc(listId)}/marks/${enc(markId)}/seen`, { leftAt }, CountryListOk);
 
 /**
  * Paste a list: start an upload, send its parts in order (each fits one

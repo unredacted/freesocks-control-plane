@@ -149,6 +149,7 @@ async function seed() {
           family: string;
           state: string;
           markId: string | null;
+          leftAt: number | null;
           needsLook: boolean;
         }>;
       }>;
@@ -212,11 +213,16 @@ describe('marks', () => {
     await s.recheck();
     const v4 = (await s.marks()).lists[0]!.addresses.find((a) => a.family === 'v4')!;
     expect(v4.needsLook).toBe(true);
+    expect(typeof v4.leftAt).toBe('number');
     // Only an address that left can be seen.
     const v6 = (await s.marks()).lists[0]!.addresses.find((a) => a.family === 'v6')!;
-    expect((await s.call('POST', `lists/${id}/marks/${v6.markId}/seen`, {})).status).toBe(409);
+    expect(
+      (await s.call('POST', `lists/${id}/marks/${v6.markId}/seen`, { leftAt: 1 })).status,
+    ).toBe(409);
     later();
-    expect((await s.call('POST', `lists/${id}/marks/${v4.markId}/seen`, {})).status).toBe(200);
+    const seen = (leftAt: number | null) =>
+      s.call('POST', `lists/${id}/marks/${v4.markId}/seen`, { leftAt });
+    expect((await seen(v4.leftAt)).status).toBe(200);
     expect(await s.leftItems()).toEqual([]);
     later(60 * MIN);
     await s.recheck();
@@ -230,6 +236,12 @@ describe('marks', () => {
     await s.publish(id, OUT);
     await s.recheck();
     expect((await s.leftItems()).length).toBe(1);
+    // A sheet still open on the first departure cannot clear this one.
+    const stale = await seen(v4.leftAt);
+    expect(stale.status).toBe(409);
+    expect((stale.body.error as { code: string }).code).toBe('edge.list.mark_moved');
+    expect((await s.leftItems()).length).toBe(1);
+    expect((await seen(null)).status).toBe(400);
   });
 
   test('a new address starts the mark over', async () => {
@@ -300,6 +312,55 @@ describe('marks', () => {
     const id = await s.create();
     await s.call('PATCH', `lists/${id}`, { regime: 'blocklist' });
     expect((await s.list(id))!.watchEdges).toBe(false);
+  });
+
+  test('at most five lists watch edge addresses', async () => {
+    const s = await seed();
+    for (let i = 0; i < 5; i++) await s.create();
+    const r = await s.call('POST', 'lists', {
+      label: 'Sixth',
+      country: 'RU',
+      regime: 'allowlist',
+      source: { kind: 'paste' },
+      watchEdges: true,
+    });
+    expect((r.body.error as { code: string }).code).toBe('edge.list.watch_cap');
+    const off = await s.create(false);
+    expect(
+      ((await s.call('PATCH', `lists/${off}`, { watchEdges: true })).body.error as { code: string })
+        .code,
+    ).toBe('edge.list.watch_cap');
+  });
+
+  test("a country's page shows the marks, and counts names no family holds", async () => {
+    const s = await seed();
+    const id = await s.create();
+    // The fixture's transport serves a.example and b.example; no family holds either.
+    await s.publish(id, `${IN}a.example\n`);
+    await s.recheck();
+    const view = (await s.call('GET', 'countries/RU')).body as {
+      origins: Array<{
+        listeners: Array<{
+          addresses: Array<{
+            edgeId: string | null;
+            lists: Array<{ family: string; state: string }>;
+          }>;
+          names: Array<{ name: string; lists: { allow: boolean } | null }>;
+        }>;
+      }>;
+    };
+    const l = view.origins[0]!.listeners[0]!;
+    expect(l.addresses.find((a) => a.edgeId === s.edgeId)!.lists).toEqual([
+      expect.objectContaining({ family: 'v4', state: 'listed' }),
+      expect.objectContaining({ family: 'v6', state: 'not_listed' }),
+    ]);
+    expect(Object.fromEntries(l.names.map((n) => [n.name, n.lists?.allow ?? null]))).toEqual({
+      'a.example': true,
+      'b.example': null,
+    });
+    // Another country's page reads none of this list's marks.
+    const de = (await s.call('GET', 'countries/DE')).body as typeof view;
+    for (const a of de.origins[0]!.listeners[0]!.addresses) expect(a.lists).toEqual([]);
   });
 
   test('the chain runs to the end from a kick', async () => {

@@ -30,6 +30,7 @@ import { writeAuditLog } from './lib/audit';
 import { resolveEdgeConfig } from './lib/edgeConfig';
 import {
   edgeWatchLists,
+  MAX_LISTS,
   versionHoldsAddress,
   watchedAllowlists,
   type Active,
@@ -58,6 +59,14 @@ const MARKS_PAGE = 200;
 const VIEW_EDGES = 1000;
 /** Marks one read takes per list (two per active edge at most). */
 const MARKS_PER_LIST = 2 * VIEW_EDGES;
+/**
+ * Lists that may watch edge addresses at once. A country's page reads every
+ * mark of its watched lists (two per active edge each), so this bounds that
+ * read well inside Convex's 32,000 documents a query.
+ */
+export const MAX_WATCHED_LISTS = 5;
+/** Departed marks attention reads, over every list. */
+const LEFT_READ = 2000;
 
 interface RunState {
   at: number;
@@ -213,28 +222,44 @@ export interface AddressLeft {
 /**
  * Per edge, the addresses that left a watched list nobody said they saw
  * (the attention item `list_address_left`). Only lists the rechecks read now:
- * a stale, switched-off or unwatched list raises nothing.
+ * a stale, switched-off or unwatched list raises nothing. Reads only marks
+ * that left (`by_left`), never every mark.
  */
 export async function addressesLeft(
   db: DatabaseReader,
   now: number,
 ): Promise<Map<string, AddressLeft[]>> {
   const out = new Map<string, AddressLeft[]>();
-  for (const a of await edgeWatchLists(db, now))
-    for (const m of await marksOfList(db, a.list._id)) {
-      if (!leftNeedsLook(m, { address: m.address, activeVersionId: a.versionId })) continue;
-      const rows = out.get(m.edgeId) ?? [];
-      rows.push({
-        listId: a.list._id,
-        label: a.list.label,
-        country: a.list.country,
-        family: m.family,
-        address: m.address,
-        leftAt: m.leftAt ?? null,
-      });
-      out.set(m.edgeId, rows);
-    }
+  const lists = new Map((await edgeWatchLists(db, now)).map((a) => [a.list._id as string, a]));
+  if (lists.size === 0) return out;
+  for (const m of await db
+    .query('countryListEdgeMarks')
+    .withIndex('by_left', (q) => q.gt('leftAt', 0))
+    .take(LEFT_READ)) {
+    const a = lists.get(m.listId);
+    if (!a || !leftNeedsLook(m, { address: m.address, activeVersionId: a.versionId })) continue;
+    const rows = out.get(m.edgeId) ?? [];
+    rows.push({
+      listId: a.list._id,
+      label: a.list.label,
+      country: a.list.country,
+      family: m.family,
+      address: m.address,
+      leftAt: m.leftAt ?? null,
+    });
+    out.set(m.edgeId, rows);
+  }
   return out;
+}
+
+/** How many lists watch edge addresses now, leaving one out (the list being changed). */
+export async function watchedCount(
+  db: DatabaseReader,
+  except?: Id<'countryLists'>,
+): Promise<number> {
+  return (await db.query('countryLists').take(MAX_LISTS)).filter(
+    (l) => l.watchEdges === true && l._id !== except,
+  ).length;
 }
 
 export interface EdgeListMark {
@@ -246,14 +271,20 @@ export interface EdgeListMark {
   at: number | null;
 }
 
-/** For the country view: what each list the rechecks read says about each active edge's addresses. */
+/**
+ * For one country's page: what each of its lists the rechecks read says about
+ * each active edge's addresses (at most `MAX_WATCHED_LISTS` lists).
+ */
 export async function marksByEdge(
   db: DatabaseReader,
   edges: readonly Doc<'edges'>[],
+  country: string,
   now: number,
 ): Promise<Map<string, EdgeListMark[]>> {
   const out = new Map<string, EdgeListMark[]>();
-  const lists = await edgeWatchLists(db, now);
+  const lists = (await edgeWatchLists(db, now))
+    .filter((a) => a.list.country === country)
+    .slice(0, MAX_WATCHED_LISTS);
   if (lists.length === 0) return out;
   const marks = new Map<string, Mark>();
   for (const a of lists)
@@ -333,6 +364,8 @@ export const forEdge = internalQuery({
           since: since ? new Date(since).toISOString() : null,
           checkedAt: m ? new Date(m.checkedAt).toISOString() : null,
           markId: m ? (m._id as string) : null,
+          // What Seen it acknowledges: a later departure is a new one.
+          leftAt: state === 'left' ? (m?.leftAt ?? null) : null,
           needsLook: leftNeedsLook(m, at),
         });
       }
@@ -351,11 +384,16 @@ export const forEdge = internalQuery({
   },
 });
 
-/** "Seen it": the address that left this list asks nothing until it is listed again and leaves again. */
+/**
+ * "Seen it": the address that left this list asks nothing until it is listed
+ * again and leaves again. `leftAt` is the departure the person saw: a mark
+ * that was listed and left again since is a new departure, and is refused.
+ */
 export const markSeen = internalMutation({
   args: {
     listId: v.id('countryLists'),
     markId: v.id('countryListEdgeMarks'),
+    leftAt: v.number(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
@@ -366,6 +404,11 @@ export const markSeen = internalMutation({
       throw new ConvexError({
         code: 'edge.list.mark_not_left',
         message: 'Only an address that left the list can be marked seen',
+      });
+    if (mark.leftAt !== a.leftAt)
+      throw new ConvexError({
+        code: 'edge.list.mark_moved',
+        message: 'The address was listed and left again since; look at it again',
       });
     await ctx.db.patch(mark._id, { seenAt: Date.now() });
     await writeAuditLog(ctx, {

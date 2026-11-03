@@ -2245,14 +2245,18 @@ async function postList(
       }),
     );
   // "Seen it" on an edge address that left the list.
-  if (c === 'marks' && d && e === 'seen' && !parts[5])
+  if (c === 'marks' && d && e === 'seen' && !parts[5]) {
+    if (typeof body.leftAt !== 'number')
+      return errorJson('validation', 'leftAt is the departure seen', 400);
     return json(
       await ctx.runMutation(internal.countryListEdges.markSeen, {
         listId,
         markId: id<'countryListEdgeMarks'>(d),
+        leftAt: body.leftAt,
         ...act,
       }),
     );
+  }
   if (c === 'versions' && d && (e === 'approve' || e === 'reject') && !parts[5]) {
     const fn = e === 'approve' ? internal.countryLists.approve : internal.countryLists.reject;
     return json(

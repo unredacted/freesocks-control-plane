@@ -311,6 +311,8 @@ export const EdgeListMarks = z.object({
           since: z.string().nullable(),
           checkedAt: z.string().nullable(),
           markId: z.string().nullable(),
+          /** The departure Seen it acknowledges (set while it is `left`). */
+          leftAt: z.number().nullable().default(null),
           needsLook: z.boolean(),
         }),
       ),

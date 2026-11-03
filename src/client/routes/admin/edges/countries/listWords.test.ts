@@ -145,6 +145,7 @@ describe('edge addresses against a list', () => {
       since: new Date(NOW - 2 * 3_600_000).toISOString(),
       checkedAt: null,
       markId: 'm',
+      leftAt: null,
       needsLook: true,
     };
     expect(markRowWords({ ...row, state: 'left' }, NOW)).toBe('Left it 2 h ago.');
@@ -161,7 +162,12 @@ describe('edge addresses against a list', () => {
     expect(marksWaitLine({ ...l, fresh: false }, true)).toBe(
       'Not checked now: this list is stale.',
     );
-    for (const e of ['edge.list.watch_allowlist_only', 'edge.list.mark_not_left'])
+    for (const e of [
+      'edge.list.watch_allowlist_only',
+      'edge.list.mark_not_left',
+      'edge.list.mark_moved',
+      'edge.list.watch_cap',
+    ])
       expect(listErrorWords(e)).not.toBe(listErrorWords('nope'));
   });
 });
