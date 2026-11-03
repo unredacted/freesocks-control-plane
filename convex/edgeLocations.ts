@@ -54,6 +54,21 @@ import { parseIntent, parseObservedSettings } from './lib/edges/intent';
 import { deletePlansOfLocation, locationCostAdmin, type LocationCostAdmin } from './edgePlans';
 import { sizeKeyOf } from './lib/edges/pricing';
 import { namesInZone } from './edgeNames';
+import { resolveCensoredCountries } from './lib/censoredCountries';
+import { resolveEdgeConfig } from './lib/edgeConfig';
+import { resolveSniConfig } from './lib/sniConfig';
+import { resolveMemberCountryConfig } from './memberCountry';
+import { publishedEdgesOf } from './edgeRender';
+import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
+import { lanesOn } from './lib/edges/lanes';
+import { effectiveRule, ruleCanEmitV6 } from './lib/edges/render';
+import {
+  MAX_MEANT_FOR,
+  changedCountries,
+  cleanMeantFor,
+  firstAddressMoves,
+} from './lib/edges/meantFor';
+import type { PublishedEdge } from './lib/edges/assignment';
 
 export type Location = Doc<'edgeLocations'>;
 type Account = Doc<'edgeProviderAccounts'>;
@@ -584,6 +599,8 @@ export function mapLocationAdmin(
         }
       : null,
     autoQualifyHold: r.autoQualifyHold === true,
+    // The countries it is meant for (docs/edges.md "Locations meant for a country").
+    meantFor: r.forCountries?.codes ?? [],
     defaultTemplateId: (r.defaultTemplateId as string | undefined) ?? null,
     regionalParams: parseRegionalParams(r.provider, r.regionalParams),
     maxLiveEdges: r.maxLiveEdges ?? null,
@@ -934,6 +951,184 @@ export const update = internalMutation({
       },
     });
     return { ok: true as const };
+  },
+});
+
+// --- countries a location is meant for -------------------------------------------------------
+
+/** The origins with a published address in one of these locations (whose members' order may move). */
+async function originsPublishedAt(
+  db: DatabaseReader,
+  locationIds: readonly Id<'edgeLocations'>[],
+): Promise<{ origins: Doc<'relays'>[]; edgeIds: Set<string> }> {
+  const relayIds = new Set<Id<'relays'>>();
+  const edgeIds = new Set<string>();
+  for (const id of locationIds) {
+    const rows = await db
+      .query('edges')
+      .withIndex('by_location_status', (q) => q.eq('locationId', id).eq('status', 'active'))
+      .take(ACCOUNT_EDGE_SCAN_LIMIT);
+    for (const e of rows) {
+      edgeIds.add(e._id);
+      if (e.publication === 'published') relayIds.add(e.relayId);
+    }
+  }
+  const origins: Doc<'relays'>[] = [];
+  for (const id of relayIds) {
+    const r = await db.get(id);
+    if (r) origins.push(r);
+  }
+  return { origins, edgeIds };
+}
+
+/** Move each origin's publication epoch (cached bodies stop matching) and refresh the mirrors once. */
+async function bumpOrigins(ctx: MutationCtx, origins: readonly Doc<'relays'>[]): Promise<void> {
+  const now = Date.now();
+  for (const o of origins)
+    await ctx.db.patch(o._id, { publicationEpoch: o.publicationEpoch + 1, updatedAt: now });
+  if (origins.length > 0) await scheduleMirrorRefresh(ctx);
+}
+
+/**
+ * The countries a location is meant for (docs/edges.md "Locations meant for a
+ * country"): listed codes only, at most `MAX_MEANT_FOR`; an empty list clears
+ * it. Members steered by one of them are handed an address here first, among
+ * those not blocked there, from their next refresh: every origin with an
+ * address in use here moves its epoch.
+ */
+export const setForCountries = internalMutation({
+  args: {
+    id: v.id('edgeLocations'),
+    codes: v.array(v.string()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'provider.write');
+    const row = await ctx.db.get(a.id);
+    if (!row) throw new ConvexError({ code: 'not_found', message: 'Location not found' });
+    const listed = (await resolveCensoredCountries(ctx.db)).codes;
+    const clean = cleanMeantFor(a.codes, listed);
+    if (!clean.ok)
+      throw new ConvexError({
+        code: 'validation',
+        message:
+          clean.code === 'meant_for_unlisted'
+            ? `${clean.country} is not on the censored-country list`
+            : `A location is meant for at most ${MAX_MEANT_FOR} countries`,
+      });
+    const before = row.forCountries?.codes ?? [];
+    if (changedCountries(before, clean.codes).length === 0 && before.length === clean.codes.length)
+      return { ok: true as const, changed: false, codes: before, nodes: 0 };
+    const now = Date.now();
+    await ctx.db.patch(row._id, {
+      forCountries: clean.codes.length > 0 ? { codes: clean.codes, updatedAt: now } : undefined,
+      updatedAt: now,
+    });
+    const { origins } = await originsPublishedAt(ctx.db, [row._id]);
+    await bumpOrigins(ctx, origins);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'edge.location.countries',
+      targetType: 'edge_location',
+      targetId: row._id,
+      payload: {
+        placeKey: row.placeKey,
+        countries: clean.codes.length > 0 ? clean.codes.join(' ') : 'none',
+        nodes: origins.length,
+      },
+    });
+    return { ok: true as const, changed: true, codes: clean.codes, nodes: origins.length };
+  },
+});
+
+/**
+ * What an edit of a location's countries would do, before it is saved: per
+ * country added or removed, per node with an address in use here, how many of
+ * its sampled members (synthetic seats, as a member steered by that country,
+ * a trusted one where the node has lanes) get a different first address.
+ * Nothing moves while steering is off, and nothing here writes.
+ */
+export const forCountriesEstimate = internalQuery({
+  args: { id: v.id('edgeLocations'), codes: v.array(v.string()) },
+  handler: async (ctx, a) => {
+    const row = await ctx.db.get(a.id);
+    if (!row) throw new ConvexError({ code: 'not_found', message: 'Location not found' });
+    const listed = (await resolveCensoredCountries(ctx.db)).codes;
+    const clean = cleanMeantFor(a.codes, listed);
+    if (!clean.ok)
+      return { valid: false as const, code: clean.code, steering: false, countries: [] };
+    const steering = (await resolveMemberCountryConfig(ctx.db)).steer;
+    const countries = changedCountries(row.forCountries?.codes ?? [], clean.codes);
+    if (!steering || countries.length === 0)
+      return { valid: true as const, code: null, steering, countries: [] };
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const curated = (await resolveSniConfig(ctx.db)).curatedCountries;
+    const rule = effectiveRule(cfg.render, cfg.render.clients.other);
+    const { origins, edgeIds } = await originsPublishedAt(ctx.db, [row._id]);
+    const now = Date.now();
+    const perNode: Array<{
+      o: Doc<'relays'>;
+      published: PublishedEdge[];
+      after: PublishedEdge[];
+    }> = [];
+    for (const o of origins) {
+      const { published } = await publishedEdgesOf(
+        ctx,
+        o,
+        { kind: 'member' },
+        { includeIneligible: true },
+      );
+      const after = published.map((e) => {
+        if (!edgeIds.has(e.edgeId)) return e;
+        const { meantFor: _was, ...rest } = e;
+        return clean.codes.length > 0 ? { ...rest, meantFor: clean.codes } : rest;
+      });
+      perNode.push({ o, published, after });
+    }
+    return {
+      valid: true as const,
+      code: null,
+      steering,
+      countries: countries.map((country) => ({
+        country,
+        nodes: perNode.map(({ o, published, after }) => ({
+          relaySlug: o.slug,
+          label: o.label ?? null,
+          ...firstAddressMoves(published, after, country, {
+            now,
+            preferDistinctProviders: cfg.render.preferDistinctProviders,
+            includeBackup: rule.includeBackup,
+            canEmitV6: ruleCanEmitV6(rule, false),
+            ...(o.edgePick ? { edgePick: o.edgePick } : {}),
+            ...(lanesOn(o) ? { memberLane: 'trusted' as const } : {}),
+            minProvenForExclusive: cfg.country.minProvenForExclusive,
+            curated,
+          }),
+        })),
+      })),
+    };
+  },
+});
+
+/**
+ * Rollback (docs/edges.md "Locations meant for a country"): before deploying
+ * a build older than `edgeLocations.forCountries`, clear it from every
+ * location. Members are ordered by evidence alone again from their next
+ * refresh (the affected origins' epochs move).
+ */
+export const clearCountriesForRollback = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const ids: Id<'edgeLocations'>[] = [];
+    for (const r of await ctx.db.query('edgeLocations').collect())
+      if (r.forCountries) {
+        await ctx.db.patch(r._id, { forCountries: undefined, updatedAt: Date.now() });
+        ids.push(r._id);
+      }
+    const { origins } = await originsPublishedAt(ctx.db, ids);
+    await bumpOrigins(ctx, origins);
+    return { cleared: ids.length, origins: origins.length };
   },
 });
 

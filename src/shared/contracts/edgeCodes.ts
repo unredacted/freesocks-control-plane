@@ -347,6 +347,9 @@ export const ATTENTION_KINDS = [
   // A family on a network, bound to a transport, holds fewer than three names that qualify:
   // the "blocked somewhere" last tier empties such a family fast (docs/edges.md "Finding names").
   'sni_family_thin',
+  // A location meant for a country (docs/edges.md "Locations meant for a country") is
+  // blocked there: members there are handed other addresses until another is picked.
+  'meant_for_blocked',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 

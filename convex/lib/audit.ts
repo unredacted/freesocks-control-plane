@@ -408,6 +408,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.location.updated': ['name', 'provider', 'placeKey', 'enabled'],
   // Networks (docs/edges.md "Networks"): slugs and counts, never a range or an address.
   'edge.location.network': ['placeKey', 'network'],
+  // The countries a location is meant for (an operator setting: listed codes, never a member).
+  'edge.location.countries': ['placeKey', 'countries', 'nodes'],
   'edge.network.create': ['slug', 'asns'],
   'edge.network.update': ['slug', 'asns', 'manualPrefixes'],
   'edge.network.delete': ['slug'],

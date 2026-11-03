@@ -116,6 +116,8 @@ import { resolveModeCatalog } from './lib/connectionModes';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { publishedRefOf, setStateOf, slotsOf, takesSlot } from './lib/edges/setState';
 import { withheldFresh } from './lib/edges/withheld';
+import { liveCountryState } from './lib/edges/country/group';
+import { groupKeyOfLocation, meantForBlocked } from './lib/edges/meantFor';
 import { frontKeysFor } from './lib/edges/frontKeys';
 import { websocketNodeOf } from './lib/edges/websocketNode';
 import { uncoveredListeners } from './lib/edges/pool';
@@ -1927,6 +1929,59 @@ export const attention = internalQuery({
           action: publishable ? 'publish' : standbys > 0 ? 'open_relay' : 'provision',
           since: null,
         });
+      }
+    }
+    // A location meant for a country that is blocked there (docs/edges.md
+    // "Locations meant for a country"): its members there get other addresses.
+    for (const loc of await ctx.db.query('edgeLocations').collect()) {
+      const codes = loc.forCountries?.codes ?? [];
+      if (codes.length === 0 || !loc.enabled) continue;
+      const groupKey = groupKeyOfLocation(loc);
+      const grades = await ctx.db
+        .query('countryGroupGrades')
+        .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey))
+        .collect();
+      const marks = (
+        await ctx.db
+          .query('countryMarks')
+          .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey))
+          .collect()
+      ).filter((m) => m.scope === 'group');
+      const inUse = (
+        await ctx.db
+          .query('edges')
+          .withIndex('by_location_status', (q) =>
+            q.eq('locationId', loc._id).eq('status', 'active'),
+          )
+          .collect()
+      ).filter((e) => e.publication === 'published');
+      const now = Date.now();
+      for (const country of codes) {
+        const blocked = meantForBlocked({
+          groupMark: marks.find((m) => m.country === country)?.state ?? null,
+          grade: grades.find((g) => g.country === country)?.state ?? null,
+          published: inUse.map((e) =>
+            liveCountryState(e.countryState?.byCountry, now).some(
+              (c) => c.country === country && c.state === 'blocked',
+            ),
+          ),
+        });
+        if (blocked)
+          items.push({
+            id: `meant_for_blocked:${loc._id}:${country}`,
+            kind: 'meant_for_blocked',
+            severity: 'warning',
+            relaySlug: null,
+            relayId: null,
+            edgeId: null,
+            listenerKey: null,
+            accountId: loc.accountId as string,
+            rotationId: null,
+            code: null,
+            facts: { location: loc.label, country },
+            action: 'open_account',
+            since: null,
+          });
       }
     }
     const accounts = await ctx.db.query('edgeProviderAccounts').collect();

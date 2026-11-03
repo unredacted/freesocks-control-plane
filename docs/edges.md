@@ -1774,6 +1774,8 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `POST relays/{id}/providers {add?, remove?}`                        | Edit the set: adding a location to a live enrolled node starts an `add` re-protect run (the response names it); elsewhere the set is saved. Removing one drains its addresses, refused (`edge.set_would_uncover`) unless the tested survivors elsewhere still serve every transport and meet the remaining requirement. Refused under a setup run, a rotation, quarantine, a restore or the freeze; at most 6 picks (`edge.set_too_large`). Audited `edge.relay.providers_changed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `POST providers/{id}/cost {cost}`                                   | What the account costs (§ "Plans and prices"): `{paid, perEdgeMonthly?, currency?, note?, monthlyCap?}` with `paid` one of `list`, `free`, `amount`; `null` for the default. Audited as `edge.provider_account.cost_changed` (amounts, never the note).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `POST providers/{id}/locations/{locationId}/plans/refresh`          | Read the location's plans and prices again at the provider (throttled): `{refreshed, error}`; a failure keeps the last plans.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `POST providers/{id}/locations/{locationId}/countries {codes}`      | The countries the location is meant for (§ "Locations meant for a country"): listed codes, at most 8, an empty list clears it; the origins with an address in use there move their epoch. `{ok, changed, codes, nodes}`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `POST …/countries/estimate {codes}`                                 | Read only: per country added or removed, per node with an address in use there, how many sampled members steered by it get a different first address (empty while steering is off).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `POST edges/{id}/test-link`                                         | The isolated test link for an L4 candidate (throttled: fetches the test credential's body and the backend Hosts): the candidate connection only, plus the binding the confirmation must echo. See § "Publication".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `GET relays/inbound-candidates?backendServerId=&nodeUuid=`          | Discovery with the origin probe applied (throttled): the node's transports as listener candidates, `originTransport` filled where probed, `unsupported` with reasons. Registers nothing. See § "Listener catalogue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
@@ -4362,6 +4364,57 @@ the names and the edges (`locateMember` / `locateAt`).
   a member whose stored country that is (a listed one): names chosen for it and, with steering
   on, addresses ordered for it, with the tier each endpoint came from.
 
+### Locations meant for a country
+
+An operator can say which listed countries a location serves best: one place for members in two
+countries, another for a third (Admin -> Edges -> a provider account -> Locations, "Countries";
+`edgeLocations.forCountries`, pure rules in `convex/lib/edges/meantFor.ts`). It is set on the
+location, not per address or per node: a replacement is a new address and would lose an address
+setting, and a place's network path to a country is the same for every node that uses it. Every
+address made there reads its location's countries through `edges.locationId`
+(`edgeRender.publishedEdgesOf`, one read per location of the pool; nothing is copied onto edges).
+
+- **The rank** (`assignByTier`, only with an `edgeCountry`, so only with
+  `delivery.country.steer` on, for a freedom-family member with a stored country): inside "not
+  blocked there" and the member's lane, an address whose location is meant for the member's
+  country comes before the tier. The primary key is `blocked there, lane, meant for, tier, seat
+order`; the backup's is `blocked there, lane, another provider, meant for, tier, another
+location, walk order`, so the backup still leaves the primary's failure domain first. An
+  address meant for the country that is only not known there (the probes cannot decide from
+  there) beats a proven one elsewhere; one blocked there ranks after every address that is not,
+  exactly as before. A member in a country the location is not meant for ranks it like any other.
+- **The exclusivity floor** (`edge.country.minProvenForExclusive`) is today's while the
+  preference does not act (no assignable address in the pool is meant for the member's country
+  and not blocked there). While it acts, the floor counts the proven addresses among the meant-for
+  ones (across lanes, as the floor always has), so three proven addresses elsewhere never make one
+  proven meant-for address exclusive and stack the country on it.
+- **Nothing moves without it.** No country (a member who said "Somewhere else", detection off
+  without a choice, a privacy-family key, a mirror without the member's choice), a pool where no
+  location is meant for the member's country, or one where every address is: the walk is exactly
+  the one before (pinned by `assignmentMeantFor.test.ts`; the no-country digest in
+  `assignmentCountry.test.ts` is unchanged).
+- **Saving** (`POST providers/{id}/locations/{locationId}/countries {codes}`, servers manage
+  scope): listed codes only, at most 8 (`MAX_MEANT_FOR`), each once; an empty list clears it.
+  Every origin with an address in use there moves its publication epoch and the mirrors are
+  refreshed once, so steered members of those countries move at their next refresh, scattered by
+  seat inside the tier. Audited `edge.location.countries` (`placeKey`, the codes, how many nodes
+  moved): an operator setting, never a member.
+- **Before saving** (`POST …/countries/estimate {codes}`, read only): per country added or
+  removed, per node with an address in use there, how many of 600 synthetic seats steered by that
+  country get a different first address (`firstAddressMoves`, the edge-pick dialog's sampling).
+  Empty while steering is off: nothing moves then, and the dialog says so.
+- **Blocked there.** A location meant for a country counts as blocked there when an operator's
+  mark on it says so, its grade is blocked (§ "Checks from each country"), or every address of it
+  in use there is blocked (`meantForBlocked`). Members there are handed other addresses anyway (the
+  tier sends them elsewhere); attention `meant_for_blocked` (warning, per location and country,
+  action: the account page) says so. A location meant for a country with no address in use on a
+  node has no first tier there; the node's provider set asks for one in every pick.
+- **The preview** ("As a member in") says why each endpoint was picked beyond its tier
+  (`primaryWhy` / `backupWhy`: `meantFor`). It is never part of the snapshot a subscription keeps.
+- **Rollback.** Before deploying a build without it, run
+  `edgeLocations:clearCountriesForRollback`: it clears every location's countries and moves the
+  affected origins' epochs, so members are ordered by evidence alone again.
+
 ### The country view
 
 One place that answers "from this country, which of my addresses and server names work right
@@ -4427,6 +4480,11 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   blocked there (first or backup; `onBlockedFirst` the first only), holding a name blocked
   there (on either). No member row is read. Whatever changes in the assignment shows here by
   itself.
+- **Locations meant for it** (`meantFor`, detail route): each location meant for this country
+  (§ "Locations meant for a country"), its grade and mark there, whether it counts as blocked
+  there, and its addresses in use per node with how many are blocked there; the summary counts
+  them per country (`meantFor {locations, blocked}`). The handed shares add `onMeantFirst`:
+  members whose first address is at a location meant for this country (steered only).
 - **Totals**: published addresses by state (the list says how many are not known beside the
   working and blocked ones), active names by the state delivery acts on (a mark;
   an unapplied suggestion counts as not judged; each name once), nodes whose every published

@@ -29,7 +29,8 @@ import { resolveMemberCountryConfig } from './memberCountry';
 import { publishedEdgesOf, deliveryStyleOf } from './edgeRender';
 import { listenersOf } from './relayListeners';
 import { effectiveRule, ruleCanEmitV6, ruleForDelivery } from './lib/edges/render';
-import { countryGroupKey } from './lib/edges/country/group';
+import { countryGroupKey, liveCountryState } from './lib/edges/country/group';
+import { groupKeyOfLocation, meantForBlocked } from './lib/edges/meantFor';
 import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
 import { listBlocks, resolveSuggestion, suggest } from './lib/edges/sni/vantage';
 import { readingOf } from './lib/edges/sni/realHost';
@@ -632,6 +633,84 @@ function viewOf(
   return { origins, totals };
 }
 
+/**
+ * Every location meant for some country (docs/edges.md "Locations meant for a
+ * country") with its grades and location marks in every country: one index
+ * range each per location, whatever the number of countries.
+ */
+async function meantForLoad(db: Db) {
+  const out: Array<{
+    row: Doc<'edgeLocations'>;
+    grades: Map<string, string>;
+    marks: Map<string, 'proven' | 'blocked'>;
+  }> = [];
+  for (const row of await db.query('edgeLocations').collect()) {
+    if ((row.forCountries?.codes.length ?? 0) === 0) continue;
+    const groupKey = groupKeyOfLocation(row);
+    const grades = new Map<string, string>();
+    for (const g of await db
+      .query('countryGroupGrades')
+      .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey))
+      .collect())
+      grades.set(g.country, g.state);
+    const marks = new Map<string, 'proven' | 'blocked'>();
+    for (const m of await db
+      .query('countryMarks')
+      .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey))
+      .collect())
+      if (m.scope === 'group') marks.set(m.country, m.state);
+    out.push({ row, grades, marks });
+  }
+  return out;
+}
+
+/** The locations meant for one country, with their addresses in use per node and their state there. */
+function meantForIn(
+  meant: Awaited<ReturnType<typeof meantForLoad>>,
+  loaded: Loaded,
+  country: string,
+  now: number,
+) {
+  return meant
+    .filter(({ row }) => row.forCountries!.codes.includes(country))
+    .map(({ row, grades, marks }) => {
+      const nodes = [];
+      const blockedFlags: boolean[] = [];
+      for (const o of loaded.origins) {
+        let published = 0;
+        let blocked = 0;
+        for (const { doc } of o.edges) {
+          if (doc.locationId !== row._id || doc.publication !== 'published') continue;
+          published++;
+          const there = liveCountryState(doc.countryState?.byCountry, now).some(
+            (c) => c.country === country && c.state === 'blocked',
+          );
+          if (there) blocked++;
+          blockedFlags.push(there);
+        }
+        if (published > 0)
+          nodes.push({
+            relaySlug: o.input.slug,
+            label: o.input.label,
+            published,
+            blocked,
+          });
+      }
+      const mark = marks.get(country) ?? null;
+      const grade = grades.get(country) ?? null;
+      return {
+        locationId: row._id as string,
+        accountId: row.accountId as string,
+        label: row.label,
+        provider: row.provider as string,
+        grade,
+        mark,
+        blocked: meantForBlocked({ groupMark: mark, grade, published: blockedFlags }),
+        nodes,
+      };
+    });
+}
+
 function listedOf(st: Settings, country: string) {
   const row = st.censored.list.find((c) => c.code === country);
   return row
@@ -651,6 +730,7 @@ export const summary = internalQuery({
     const st = await settingsOf(ctx.db);
     const loaded = await load(ctx.db);
     const pre = await prefetch(ctx.db, loaded);
+    const meant = await meantForLoad(ctx.db);
     const countries = [];
     for (const c of st.censored.list) {
       const { totals, origins } = viewOf(loaded, pre, st, c.code, now, null);
@@ -658,6 +738,7 @@ export const summary = internalQuery({
         o.listeners.filter((l) => l.members.computed).map((l) => l.members.onBlockedAddress),
       );
       const listed = listedOf(st, c.code)!;
+      const locations = meantForIn(meant, loaded, c.code, now);
       countries.push({
         country: c.code,
         listed,
@@ -665,6 +746,10 @@ export const summary = internalQuery({
         totals,
         /** The worst share of members holding an address blocked there, over every transport. */
         worstOnBlocked: handedBlocked.length > 0 ? Math.max(...handedBlocked) : null,
+        meantFor: {
+          locations: locations.length,
+          blocked: locations.filter((l) => l.blocked).length,
+        },
       });
     }
     return {
@@ -699,6 +784,7 @@ export const country = internalQuery({
       curated: st.sni.curatedCountries.includes(code),
       totals,
       origins,
+      meantFor: meantForIn(await meantForLoad(ctx.db), loaded, code, now),
     };
   },
 });

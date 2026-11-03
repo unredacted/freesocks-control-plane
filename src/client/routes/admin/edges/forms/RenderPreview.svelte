@@ -118,8 +118,10 @@
         {#if data.steered}
           Addresses ordered for a member in {countryName(data.country, 'en')}: the primary {tierWords(
             data.primaryTier,
-          ) ?? 'is unknown'}{tierWords(data.backupTier)
-            ? `, the backup ${tierWords(data.backupTier)}`
+          ) ?? 'is unknown'}{data.primaryWhy?.meantFor
+            ? ', at a location meant for it'
+            : ''}{tierWords(data.backupTier)
+            ? `, the backup ${tierWords(data.backupTier)}${data.backupWhy?.meantFor ? ', at a location meant for it' : ''}`
             : ''}.
         {:else}
           Names chosen for a member in {countryName(data.country, 'en')}. Addresses are not ordered

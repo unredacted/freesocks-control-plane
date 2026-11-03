@@ -103,6 +103,17 @@
                 {#if c.worstOnBlocked !== null && c.worstOnBlocked > 0}
                   Up to {percent(c.worstOnBlocked)} of members there hold a blocked address.
                 {/if}
+                {#if c.meantFor.blocked > 0}
+                  <span class="text-destructive font-medium">
+                    {c.meantFor.blocked === 1
+                      ? 'A location meant for it is blocked there.'
+                      : `${c.meantFor.blocked} locations meant for it are blocked there.`}
+                  </span>
+                {:else if c.meantFor.locations > 0}
+                  {c.meantFor.locations === 1
+                    ? 'One location is meant for it.'
+                    : `${c.meantFor.locations} locations are meant for it.`}
+                {/if}
                 {c.listed.nameChecksRun
                   ? 'Names are checked from inside.'
                   : 'Names are not checked from inside.'}

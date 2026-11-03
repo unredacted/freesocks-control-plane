@@ -36,6 +36,7 @@
     gradeLine,
     nameWhy,
     listsLine,
+    meantForWords,
     percent,
     probesLine,
     reportsLine,
@@ -125,6 +126,34 @@
       {/each}
       {#each notes as n (n)}<p class="text-muted-foreground">{n}</p>{/each}
       <p class="text-muted-foreground">{HANDED_SCOPE}</p>
+    </CardContent>
+  </Card>
+
+  <Card class="mb-6">
+    <CardHeader class="pb-2">
+      <CardTitle class="text-base">Locations meant for {countryLabel(code)}</CardTitle>
+    </CardHeader>
+    <CardContent class="space-y-2 text-sm">
+      {#if v.meantFor.length === 0}
+        <p class="text-muted-foreground">
+          No location is meant for this country. Members here are ordered by what works here alone.
+          Choose countries for a location on its provider account page.
+        </p>
+      {:else}
+        <ul class="divide-y rounded-md border">
+          {#each v.meantFor as l (l.locationId)}
+            {@const w = meantForWords(l)}
+            <li class="space-y-0.5 p-3">
+              <p class="flex flex-wrap items-center gap-2 font-medium">
+                <Link href={edgesPaths.provider(l.accountId)}>{l.label}</Link>
+                {#if l.blocked}<Badge variant="destructive">Blocked here</Badge>{/if}
+              </p>
+              <p class={l.blocked ? 'text-destructive' : 'text-muted-foreground'}>{w.state}</p>
+              <p class="text-muted-foreground text-xs">{w.detail}</p>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </CardContent>
   </Card>
 
