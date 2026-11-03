@@ -129,9 +129,13 @@ export interface SetupRelayFacts {
 
 export interface SetupRenderFacts {
   enabled: boolean;
-  /** The default family's preview (null = not computed, e.g. fleet scope). */
+  /**
+   * The sample family's preview (null = not computed, e.g. fleet scope): the
+   * first family that carries a live listener (clientFamilies.ts
+   * `sampleFamilyFor`); `family: null` = none carries any.
+   */
   preview: {
-    family: string;
+    family: string | null;
     applied: boolean;
     reason: string | null;
     emitted: number;
@@ -425,7 +429,8 @@ export function computeSetupStatus(input: SetupInput): SetupResult {
       if (!relay.enabled) b.push(blocker('relay_disabled', relay.slug));
       const p = input.render.preview;
       if (p) {
-        if (!p.applied || p.emitted === 0)
+        if (p.family === null) b.push(blocker('no_family_carries', relay.slug));
+        else if (!p.applied || p.emitted === 0)
           b.push(blocker('preview_not_applied', p.family, p.reason));
         if (p.mismatched > 0) b.push(blocker('entry_mismatch', p.family));
       }

@@ -7,10 +7,11 @@
    *
    * Props: origin
    */
-  import type { OriginAdmin } from '@shared/contracts/edges';
+  import { RenderClientFamily, type OriginAdmin } from '@shared/contracts/edges';
   import * as Card from '@client/components/ui/card';
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
+  import { Skeleton } from '@client/components/ui/skeleton';
   import Link from '@client/components/Link.svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -31,6 +32,13 @@
   const kind = $derived(setup?.delivery?.kind ?? null);
   const delivery = $derived(setup?.delivery ? deliveryWords(setup.delivery) : null);
   let previewOpen = $state(false);
+  // The preview opens on the family the status sampled: the first that carries
+  // a live listener (sing-box wherever it can, Mihomo on an XHTTP-only node).
+  const sampleFamily = $derived.by(() => {
+    const p = setup?.steps.find((s) => s.id === 'rendering')?.facts.preview;
+    return RenderClientFamily.safeParse((p as { family?: unknown } | null | undefined)?.family)
+      .data;
+  });
 
   // "Serve this node directly again" (the restore workflow, `release_requirement`):
   // offered on an edge-required origin no setup run owns and no restore runs on.
@@ -90,7 +98,15 @@
         </Button>
       </div>
       {#if previewOpen}
-        <RenderPreview relayId={relay.id} />
+        <!-- RenderPreview reads its family once: mount it after the status says
+             which family it sampled, and again when that changes. -->
+        {#if setupQ.isPending}
+          <Skeleton class="h-24 w-full" />
+        {:else}
+          {#key sampleFamily}
+            <RenderPreview relayId={relay.id} family={sampleFamily} />
+          {/key}
+        {/if}
       {/if}
     {/if}
     {#if canServeDirect}

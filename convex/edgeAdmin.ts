@@ -34,9 +34,8 @@ import { assignEndpoints, edgeHostname, edgeLayer } from './lib/edges/assignment
 import { hostTargetFor } from './lib/edges/layers';
 import { parseIntent } from './lib/edges/intent';
 import { qualificationBinding, qualificationVerdict } from './lib/edges/frontCheck/binding';
-import { PREVIEW_DEFAULT_PROTO } from './lib/edges/preview';
 import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
-import { previewBody } from './lib/edges/preview';
+import { previewSample, withUncarried } from './lib/edges/preview';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import { effectiveRule, ruleForDelivery } from './lib/edges/render';
 import { publishedCount } from './lib/edges/pool';
@@ -750,21 +749,19 @@ export async function renderPreviewFor(
     const format = CLIENT_FAMILY_FORMATS[fam];
     // The preview body must speak what the listeners speak: one template entry
     // per listener (by its remark, or a synthetic one for an address-matched
-    // listener at the origin address:port), each in the listener's own shape.
+    // listener at the origin address:port), each in the listener's own shape,
+    // and none for a listener this family cannot carry (the panel builds none).
     const listeners = await listenersOf(ctx, origin._id);
     const active = listeners.filter((l) => !l.retired && l.deployed && l.enabled);
-    const first = active[0];
-    const input = previewBody(
+    const sample = previewSample(
       format,
-      active.map((l) => listenerRemark(l) ?? `${origin.slug}-${l.listenerKey}`),
-      first
-        ? {
-            protocol: first.protocol,
-            streamTransport: first.streamTransport,
-            security: first.security,
-          }
-        : PREVIEW_DEFAULT_PROTO,
+      active.map((l) => ({
+        key: l.listenerKey,
+        remark: listenerRemark(l) ?? `${origin.slug}-${l.listenerKey}`,
+        proto: { protocol: l.protocol, streamTransport: l.streamTransport, security: l.security },
+      })),
     );
+    const input = sample.body;
     // Address-matched listeners are found by origin address:port; the fixture
     // carries the example origin, so give those matchers the fixture's address.
     const previewMatchers = matchers.map((m) =>
@@ -801,7 +798,7 @@ export async function renderPreviewFor(
       reason: out.reason ?? null,
       emitted: out.emitted,
       delivery: out.delivery,
-      listeners: out.listeners ?? [],
+      listeners: withUncarried(out.listeners ?? [], sample.uncarried),
       // "As a member in <country>": the country, whether edges were ordered by
       // it, and the tier each endpoint came from there.
       country: country ?? null,

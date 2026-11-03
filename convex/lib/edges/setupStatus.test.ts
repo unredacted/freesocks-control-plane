@@ -13,6 +13,15 @@ import {
   type SetupRelayFacts,
 } from './setupStatus';
 import { SETUP_BLOCKER_CODES, SETUP_STEP_IDS } from '../../../src/shared/contracts/edgeCodes';
+import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
+import type { PublishedEdge } from './assignment';
+import { CLIENT_FAMILY_FORMATS, sampleFamilyFor } from './clientFamilies';
+import { deliveryOf } from './originStatus';
+import { previewSample, withUncarried } from './preview';
+import type { ListenerProto } from './protocols';
+import { effectiveRule } from './render';
+import type { RenderMatcher } from './render/types';
+import { applyEdgeRender } from './renderPipeline';
 
 const listener = (over: Partial<SetupListenerFacts> = {}): SetupListenerFacts => ({
   key: 'a',
@@ -442,5 +451,185 @@ describe('computeSetupStatus', () => {
       'backend_no_host_management',
       'backend_no_node_inventory',
     ]);
+  });
+});
+
+/**
+ * The rendering step's sample (edgeOperator.ts `relayFacts` + edgeAdmin.ts
+ * `renderPreviewFor`), on fixtures: the family that carries a live listener,
+ * its sample body, one published L4 edge per listener, the render pipeline.
+ */
+describe('the sample family the rendering step renders', () => {
+  const REALITY: ListenerProto = { protocol: 'vless', streamTransport: 'raw', security: 'reality' };
+  const XHTTP: ListenerProto = { protocol: 'vless', streamTransport: 'xhttp', security: 'reality' };
+  type Live = { key: string; proto: ListenerProto };
+  const remark = (key: string) => `node-one-${key}`;
+
+  const renderSample = (
+    live: readonly Live[],
+    family: NonNullable<ReturnType<typeof sampleFamilyFor>>,
+  ) => {
+    const sample = previewSample(
+      CLIENT_FAMILY_FORMATS[family],
+      live.map((l) => ({ key: l.key, remark: remark(l.key), proto: l.proto })),
+    );
+    const matchers: RenderMatcher[] = live.map((l) => ({
+      listenerKey: l.key,
+      rule: { kind: 'remark', remark: remark(l.key) },
+      proto: l.proto,
+      originAddress: '192.0.2.10',
+      originPort: 443,
+    }));
+    const published: PublishedEdge[] = live.map((l, i) => ({
+      edgeId: `e-${l.key}`,
+      poolIndex: i,
+      provider: 'fixture',
+      listenerId: `l-${l.key}`,
+      listenerKey: l.key,
+      matchRule: { kind: 'remark', remark: remark(l.key) },
+      proto: l.proto,
+      edgePort: 443,
+      addresses: { v4: `203.0.113.${10 + i}` },
+      serverNames: [{ sni: 'name.example', status: 'active' }],
+    }));
+    const out = applyEdgeRender(
+      {
+        epoch: 1,
+        matchers,
+        published,
+        rule: effectiveRule({ ...EDGE_DEFAULTS.render, enabled: true }, defaultClientRule(family)),
+        preferDistinctProviders: false,
+        originAddress: '192.0.2.10',
+      },
+      sample.body,
+      'sample-key',
+      { now: Date.now() },
+    );
+    return { out, sample };
+  };
+
+  /** The preview facts `relayFacts` hands the setup status. */
+  const previewOf = (live: readonly Live[]): NonNullable<SetupInput['render']['preview']> => {
+    const family = sampleFamilyFor(live.map((l) => l.proto));
+    if (!family) return { family: null, applied: false, reason: null, emitted: 0, mismatched: 0 };
+    const { out } = renderSample(live, family);
+    return {
+      family,
+      applied: out.applied,
+      reason: out.reason ?? null,
+      emitted: out.emitted,
+      mismatched: (out.listeners ?? []).filter((l) => l.reason === 'entry_mismatch').length,
+    };
+  };
+
+  /** `publishedKeys`: the listeners with a published edge (default: every live one). */
+  const statusOf = (live: readonly Live[], publishedKeys = live.map((l) => l.key)) => {
+    const r = computeSetupStatus(
+      base({
+        listeners: live.map((l) => listener({ key: l.key })),
+        accounts: [
+          account({
+            qualified: true,
+            qualificationCurrent: true,
+            frontsListeners: live.map((l) => l.key),
+          }),
+        ],
+        relay: relay({
+          publishedCount: publishedKeys.length,
+          connectionPlanCount: publishedKeys.length,
+          edges: publishedKeys.map((key, i) => ({
+            id: `e-${key}`,
+            listenerKey: key,
+            layer: 'l4' as const,
+            provider: null,
+            accountId: 'acct1',
+            status: 'active',
+            publication: 'published',
+            poolIndex: i,
+            frontQualification: null,
+            publishable: null,
+          })),
+        }),
+        render: { enabled: true, preview: previewOf(live) },
+      }),
+    );
+    const rendering = step(r, 'rendering');
+    return {
+      rendering,
+      delivery: deliveryOf({
+        originKind: 'panel-node',
+        bound: true,
+        published: publishedKeys.length,
+        enabled: true,
+        renderEnabled: true,
+        renderBlockers: rendering.blockers,
+      }),
+    };
+  };
+
+  test('a REALITY origin is still sampled as sing-box, and reads serving', () => {
+    expect(sampleFamilyFor([REALITY])).toBe('singbox');
+    const { rendering, delivery } = statusOf([{ key: 'a', proto: REALITY }]);
+    expect(rendering.facts.preview).toMatchObject({ family: 'singbox', applied: true, emitted: 1 });
+    expect(rendering.status).toBe('done');
+    expect(delivery).toEqual({ kind: 'serving', code: null });
+  });
+
+  test('an XHTTP-only origin is sampled as Mihomo (sing-box cannot carry it), and reads serving', () => {
+    expect(sampleFamilyFor([XHTTP])).toBe('mihomo');
+    const { rendering, delivery } = statusOf([{ key: 'x', proto: XHTTP }]);
+    expect(rendering.facts.preview).toMatchObject({ family: 'mihomo', applied: true, emitted: 1 });
+    expect(rendering.blockers).toEqual([]);
+    expect(rendering.status).toBe('done');
+    expect(delivery).toEqual({ kind: 'serving', code: null });
+  });
+
+  test('raw REALITY and XHTTP together: sing-box carries the REALITY one, and the origin reads serving', () => {
+    const live = [
+      { key: 'a', proto: REALITY },
+      { key: 'x', proto: XHTTP },
+    ];
+    expect(sampleFamilyFor([XHTTP, REALITY])).toBe('singbox');
+    const { rendering, delivery } = statusOf(live);
+    expect(rendering.facts.preview).toMatchObject({ family: 'singbox', applied: true });
+    expect(rendering.blockers).toEqual([]);
+    expect(delivery).toEqual({ kind: 'serving', code: null });
+    // Each entry in its own listener's shape: Mihomo's sample of the pair carries both.
+    const { out } = renderSample(live, 'mihomo');
+    expect(out.delivery).toEqual({ kind: 'serve' });
+    expect(out.listeners?.every((l) => l.matched)).toBe(true);
+  });
+
+  test("sing-box's sample of an XHTTP listener holds no entry for it: no_entries, never empty_pool", () => {
+    const only = renderSample([{ key: 'x', proto: XHTTP }], 'singbox');
+    expect(only.sample.uncarried).toEqual(['x']);
+    expect(only.out.delivery).toEqual({ kind: 'unavailable', reason: 'no_entries' });
+    expect(only.out.reason).toBe('no_entries');
+    // The preview panel names the listener sing-box cannot carry.
+    expect(withUncarried(only.out.listeners ?? [], only.sample.uncarried)).toEqual([
+      { listenerKey: 'x', matched: false, reason: 'family_cannot_carry' },
+    ]);
+    const mixed = renderSample(
+      [
+        { key: 'a', proto: REALITY },
+        { key: 'x', proto: XHTTP },
+      ],
+      'singbox',
+    );
+    expect(mixed.out.delivery).toEqual({ kind: 'serve' });
+    expect(withUncarried(mixed.out.listeners ?? [], mixed.sample.uncarried)).toEqual([
+      { listenerKey: 'a', matched: true },
+      { listenerKey: 'x', matched: false, reason: 'family_cannot_carry' },
+    ]);
+  });
+
+  test('no family carries any live listener: its own code, never empty_pool', () => {
+    expect(sampleFamilyFor([])).toBeNull();
+    // A published edge whose listener is no longer live (disabled, say).
+    const { rendering, delivery } = statusOf([], ['a']);
+    expect(rendering.blockers).toEqual([
+      { code: 'no_family_carries', subject: 'node-one', detail: null },
+    ]);
+    expect(delivery).toEqual({ kind: 'degraded', code: 'no_family_carries' });
   });
 });
