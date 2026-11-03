@@ -1,0 +1,144 @@
+import { QueryClient } from '@tanstack/svelte-query';
+import { flushSync, unmount } from 'svelte';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import type {
+  CountryListDetail,
+  CountryListsResponse,
+  CountryListVersion,
+  CountryListView,
+} from '../../../../../shared/contracts/countryLists';
+import {
+  countryListQuery,
+  countryListsQuery,
+  decideCountryListVersion,
+} from '@client/lib/countryListsApi';
+import { mountWithQuery } from '../../../../testing/mountWithQuery';
+import ListPage from './ListPage.svelte';
+import ListsPage from './ListsPage.svelte';
+
+vi.mock('@client/lib/countryListsApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@client/lib/countryListsApi')>()),
+  countryListQuery: vi.fn(),
+  countryListsQuery: vi.fn(),
+  decideCountryListVersion: vi.fn(),
+}));
+
+const loaded = <T>(data: T) => ({
+  isPending: false,
+  isError: false,
+  error: null,
+  data,
+  refetch: () => Promise.resolve(),
+});
+
+const version = (over: Partial<CountryListVersion> = {}): CountryListVersion => ({
+  id: 'v1',
+  at: '2026-11-02T10:00:00.000Z',
+  source: 'upload',
+  status: 'held',
+  heldReasons: ['first_version'],
+  counts: {
+    entries: 4,
+    names: 1,
+    wildcards: 1,
+    v4Ranges: 1,
+    v6Ranges: 0,
+    v4: 256,
+    v6: 0,
+    invalid: 1,
+    nonPublic: 0,
+    tooBroad: 0,
+    capped: 0,
+  },
+  diff: null,
+  samples: ['not a name!'],
+  failure: null,
+  decidedAt: null,
+  byPerson: false,
+  ...over,
+});
+
+const LIST: CountryListView = {
+  id: 'l1',
+  label: 'Mobile',
+  country: 'RU',
+  regime: 'allowlist',
+  networks: [],
+  source: { kind: 'paste' },
+  fetchEveryHours: 24,
+  enabled: true,
+  active: null,
+  held: version(),
+  busy: null,
+  lastFetch: null,
+  confirmedAt: null,
+  fresh: false,
+};
+
+let app: ReturnType<typeof mountWithQuery> | null = null;
+afterEach(() => {
+  if (app) unmount(app);
+  app = null;
+  vi.clearAllMocks();
+});
+
+const button = (label: string) =>
+  [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label);
+
+describe('ListPage', () => {
+  test('a version waiting says why, and Use it decides it', async () => {
+    const detail: CountryListDetail = {
+      enabled: true,
+      staleDays: 30,
+      list: LIST,
+      versions: [version()],
+    };
+    vi.mocked(countryListQuery).mockReturnValue(loaded(detail) as never);
+    vi.mocked(decideCountryListVersion).mockResolvedValue({ ok: true });
+    app = mountWithQuery(new QueryClient(), ListPage, { id: 'l1' });
+    flushSync();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('A version waits for you');
+    expect(text).toContain('This is the first version. Look it over before FCP uses it.');
+    expect(text).toContain('1 name, 1 wildcard, 1 IPv4 range (256 addresses).');
+    expect(text).toContain('Left out: 1 line that could not be read.');
+    expect(text).toContain('not a name!');
+    expect(text).toContain('Paste a new copy');
+    button('Use it')!.click();
+    await vi.waitFor(() =>
+      expect(decideCountryListVersion).toHaveBeenCalledWith('l1', 'v1', 'approve'),
+    );
+  });
+});
+
+describe('ListsPage', () => {
+  test('lists each list with its state, and says when lists are off', () => {
+    const lists: CountryListsResponse = {
+      enabled: false,
+      staleDays: 30,
+      defaultFetchHours: 24,
+      lists: [
+        LIST,
+        {
+          ...LIST,
+          id: 'l2',
+          label: 'Ranges',
+          source: { kind: 'url', url: 'https://example.com/list.txt' },
+          held: null,
+          active: version({ status: 'active', heldReasons: [] }),
+          confirmedAt: new Date().toISOString(),
+          fresh: true,
+        },
+      ],
+    };
+    vi.mocked(countryListsQuery).mockReturnValue(loaded(lists) as never);
+    app = mountWithQuery(new QueryClient(), ListsPage, {});
+    flushSync();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('Country lists are off');
+    expect(text).toContain('Waiting for you');
+    expect(text).toContain('In use');
+    expect(text).toContain('Fetched from example.com every 24 hours.');
+    expect(text).toContain('Look something up');
+  });
+});
