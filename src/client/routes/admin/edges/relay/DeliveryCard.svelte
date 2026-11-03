@@ -11,6 +11,7 @@
   import * as Card from '@client/components/ui/card';
   import { Badge } from '@client/components/ui/badge';
   import { Button } from '@client/components/ui/button';
+  import { Skeleton } from '@client/components/ui/skeleton';
   import Link from '@client/components/Link.svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -97,7 +98,15 @@
         </Button>
       </div>
       {#if previewOpen}
-        <RenderPreview relayId={relay.id} family={sampleFamily} />
+        <!-- RenderPreview reads its family once: mount it after the status says
+             which family it sampled, and again when that changes. -->
+        {#if setupQ.isPending}
+          <Skeleton class="h-24 w-full" />
+        {:else}
+          {#key sampleFamily}
+            <RenderPreview relayId={relay.id} family={sampleFamily} />
+          {/key}
+        {/if}
       {/if}
     {/if}
     {#if canServeDirect}
