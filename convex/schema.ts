@@ -4026,6 +4026,152 @@ export default defineSchema({
     at: v.number(),
   }).index('by_kind_at', ['kind', 'at']),
 
+  // --- Country lists (docs/edges.md "Country lists") ---
+  //
+  // A source an operator follows: a community list of names and ranges that
+  // work in one country (an allowlist) or are blocked there (a blocklist).
+  // Its content lives in versions. Membership is read ONLY through
+  // `activeVersionId`: a version is staged under its own id and published by
+  // moving that one pointer, so a reader sees one version whole, never a mix.
+  countryLists: defineTable({
+    label: v.string(),
+    // ISO 3166-1 alpha-2.
+    country: v.string(),
+    regime: v.union(v.literal('allowlist'), v.literal('blocklist')),
+    // The operator networks (ASNs) it covers; empty: some networks in the country.
+    networks: v.array(v.number()),
+    source: v.union(
+      v.object({ kind: v.literal('url'), url: v.string() }),
+      v.object({ kind: v.literal('paste') }),
+    ),
+    fetchEveryHours: v.number(),
+    enabled: v.boolean(),
+    activeVersionId: v.optional(v.id('countryListVersions')),
+    // A version waiting for a person to use it or throw it away.
+    heldVersionId: v.optional(v.id('countryListVersions')),
+    // The version being written now (one at a time).
+    stagingVersionId: v.optional(v.id('countryListVersions')),
+    // An ingest asked for and not finished (one at a time; stale after 15 minutes).
+    ingest: v.optional(
+      v.object({ at: v.number(), kind: v.union(v.literal('fetch'), v.literal('upload')) }),
+    ),
+    lastFetch: v.optional(
+      v.object({
+        at: v.number(),
+        // A short code: published, held, unchanged, not_modified, or why it failed.
+        outcome: v.string(),
+        etag: v.optional(v.string()),
+        lastModified: v.optional(v.string()),
+        // The version those validators describe: a 304 confirms it, and only it.
+        validatorsOf: v.optional(v.id('countryListVersions')),
+      }),
+    ),
+    // When the source last said what the active version says (a new version,
+    // the same content again, a 304). Freshness reads this, never `at`.
+    confirmedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index('by_country', ['country']),
+
+  countryListVersions: defineTable({
+    listId: v.id('countryLists'),
+    at: v.number(),
+    // Of the canonical content (names and merged ranges): comments and order do not count.
+    sha256: v.string(),
+    // The active version its diff was worked out against (none: the first).
+    basedOn: v.optional(v.id('countryListVersions')),
+    source: v.union(v.literal('fetch'), v.literal('upload')),
+    status: v.union(
+      v.literal('staging'),
+      v.literal('held'),
+      v.literal('active'),
+      v.literal('superseded'),
+      v.literal('rejected'),
+      v.literal('failed'),
+    ),
+    heldReasons: v.array(v.string()),
+    counts: v.object({
+      entries: v.number(),
+      names: v.number(),
+      wildcards: v.number(),
+      v4Ranges: v.number(),
+      v6Ranges: v.number(),
+      // IPv4 addresses and IPv6 /64s covered.
+      v4: v.number(),
+      v6: v.number(),
+      invalid: v.number(),
+      nonPublic: v.number(),
+      tooBroad: v.number(),
+      capped: v.number(),
+    }),
+    diff: v.optional(
+      v.object({
+        names: v.object({ added: v.number(), removed: v.number(), common: v.number() }),
+        v4: v.object({ added: v.number(), removed: v.number(), common: v.number() }),
+        v6: v.object({ added: v.number(), removed: v.number(), common: v.number() }),
+      }),
+    ),
+    // The first few lines that could not be read.
+    samples: v.array(v.string()),
+    failure: v.optional(v.string()),
+    decidedBy: v.optional(v.id('adminUsers')),
+    decidedAt: v.optional(v.number()),
+    // When it stopped being staging, held or active; cleanup waits a grace after.
+    endedAt: v.optional(v.number()),
+    cleanedAt: v.optional(v.number()),
+  })
+    .index('by_list_at', ['listId', 'at'])
+    .index('by_status_at', ['status', 'at']),
+
+  // A version's names: an exact name, or a wildcard stored as its base.
+  countryListMembers: defineTable({
+    versionId: v.id('countryListVersions'),
+    name: v.string(),
+    site: v.string(),
+    wildcard: v.boolean(),
+  })
+    .index('by_version_name', ['versionId', 'name'])
+    .index('by_name_version', ['name', 'versionId']),
+
+  // A version's ranges: merged intervals as fixed-width hex lines, at most
+  // 512 KiB of text each, keyed by the first line's start.
+  countryListChunks: defineTable({
+    versionId: v.id('countryListVersions'),
+    family: v.union(v.literal('v4'), v.literal('v6')),
+    index: v.number(),
+    firstLo: v.string(),
+    text: v.string(),
+  }).index('by_version_family_lo', ['versionId', 'family', 'firstLo']),
+
+  // When each name was first and last seen on a list. Display only: membership
+  // never comes from here.
+  countryListNameHistory: defineTable({
+    listId: v.id('countryLists'),
+    name: v.string(),
+    wildcard: v.boolean(),
+    firstListedAt: v.number(),
+    lastListedAt: v.number(),
+  })
+    .index('by_list_name', ['listId', 'name', 'wildcard'])
+    .index('by_last', ['lastListedAt']),
+
+  // Pasted text on its way to a version: parts small enough for one request
+  // each (the API takes at most 64 KiB a request). Kept an hour.
+  countryListUploads: defineTable({
+    listId: v.id('countryLists'),
+    at: v.number(),
+    parts: v.number(),
+    bytes: v.number(),
+    finished: v.boolean(),
+  })
+    .index('by_list', ['listId'])
+    .index('by_at', ['at']),
+
+  countryListUploadParts: defineTable({
+    uploadId: v.id('countryListUploads'),
+    index: v.number(),
+    text: v.string(),
+  }).index('by_upload_index', ['uploadId', 'index']),
+
   // --- Bootstrap contract v2 (docs/servers.md "Setting up a backend", "Node lifecycle") ---
   //
   // FCP owns the backend; the node role bootstraps the MACHINE and reports.

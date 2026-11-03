@@ -13,6 +13,7 @@ export const SETTINGS_SECTIONS = [
   'probes',
   'l7',
   'names',
+  'lists',
   'maintenance',
   'freedom',
 ] as const;
@@ -774,6 +775,56 @@ export const NAMES_FIELDS: Field[] = [
   },
 ];
 
+/** Country lists (convex/countryLists.ts): community lists of what works, or is blocked, in a country. */
+export const LIST_FIELDS: Field[] = [
+  {
+    kind: 'switch',
+    path: 'lists.enabled',
+    label: 'Use country lists',
+    helper:
+      'On: lists are fetched on their schedule, and what they say counts as evidence. Off: nothing is fetched and nothing reads them; you can still add and read lists by hand.',
+  },
+  {
+    kind: 'number',
+    path: 'lists.jumpFactor',
+    label: 'Hold a version that grew or shrank by more than',
+    unit: 'times',
+    helper:
+      'A list that changes this much is likely broken or a different list, so it waits for you.',
+  },
+  {
+    kind: 'number',
+    path: 'lists.minOverlap',
+    label: 'Hold a version sharing less than',
+    unit: 'share (0 to 1)',
+    step: 0.05,
+    helper:
+      'What a new version must have in common with the one in use. Less, and it waits for you, even at the same size.',
+  },
+  {
+    kind: 'number',
+    path: 'lists.heldDays',
+    label: 'Throw away a waiting version after',
+    unit: 'days',
+    helper: 'A version nobody decided on goes after this long. The one in use stays.',
+  },
+  {
+    kind: 'number',
+    path: 'lists.staleDays',
+    label: 'A list is stale after',
+    unit: 'days',
+    helper:
+      'When its source has not confirmed it for this long, nothing reads it. A fetch with the same content confirms it again.',
+  },
+  {
+    kind: 'number',
+    path: 'lists.defaultFetchHours',
+    label: 'A new list is fetched every',
+    unit: 'hours',
+    helper: 'Each list can change its own schedule.',
+  },
+];
+
 /** The zone checklist's own path (a list of zone ids). */
 export const NAME_ZONES_PATH = 'names.zones';
 
@@ -791,4 +842,5 @@ export const SECTION_PATHS: Record<
   probes: [...pathsOf(PROBE_SOURCE_FIELDS), ...pathsOf(PROBE_FIELDS), ...pathsOf(COUNTRY_FIELDS)],
   l7: pathsOf(L7_FIELDS),
   names: [...pathsOf(NAMES_FIELDS), NAME_ZONES_PATH],
+  lists: pathsOf(LIST_FIELDS),
 };

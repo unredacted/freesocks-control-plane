@@ -211,6 +211,11 @@ crons.interval('sni-hunt', { minutes: 10 }, internal.sniHunt.tick, {});
 // Networks: read each network's announced ranges once a day (the request
 // carries the ASN only), then learn every location's network from its edges.
 crons.interval('edge-networks', { hours: 1 }, internal.edgeNetworks.tick, {});
+// Country lists (docs/edges.md "Country lists"): fetch each list whose source
+// is due (dormant until `edge.lists.enabled`), and once a day fail crashed
+// staging, throw away versions nobody decided on and keep the rows bounded.
+crons.interval('country-lists', { hours: 1 }, internal.countryListOps.tick, {});
+crons.daily('country-lists-sweep', { hourUTC: 5, minuteUTC: 50 }, internal.countryLists.sweep, {});
 
 crons.interval('backend-reconcile', { minutes: 5 }, internal.backendWrites.reconcile, {});
 // Resume bootstrap workflows an interrupted attempt left pending (docs/servers.md "Node lifecycle").

@@ -32,7 +32,16 @@
 <SectionHeader
   title="Countries"
   description="For each censored country: which of your addresses and server names work there, why FCP thinks so, and what a member there is handed today."
-/>
+>
+  {#snippet actions()}
+    <Link
+      href={edgesPaths.lists()}
+      class="border-input hover:bg-accent inline-flex h-8 items-center rounded-md border px-3 text-sm"
+    >
+      Country lists
+    </Link>
+  {/snippet}
+</SectionHeader>
 
 {#if summary.isPending}
   <p class="text-muted-foreground text-sm">Loading…</p>

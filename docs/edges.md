@@ -3567,6 +3567,95 @@ call). Audit: `edge.network.create|update|delete` (slug and counts, never a rang
 `edge.location.network`. Admin: Server names, Advanced, Networks (add, edit, read ranges again, remove), a
 family's Network, and a location's Network on its provider account page.
 
+### Country lists
+
+Ships dormant: `edge.lists.enabled` is off. Off, no list is fetched on its schedule and nothing
+reads what a list says; an operator can still add lists, fetch or paste them, and look things up.
+
+A **country list** is a community list of names and addresses reported to **work** in one country
+(an allowlist, such as the names and ranges a network still lets through when it shuts most of the
+internet down) or to be **blocked** there (a blocklist). FCP follows it, keeps each change as a
+version, and holds a version that looks wrong until a person looks at it. Lists are **evidence
+only**: nothing here changes what members get. No list, source or address is named in the code or
+the docs: lists are data an operator enters.
+
+**What a list is** (`countryLists`, `convex/countryLists.ts`): a label, an ISO country, the regime
+(`allowlist` / `blocklist`), optional operator networks (ASNs; empty means some networks in the
+country, without saying which), its source (an https address FCP fetches every
+`fetchEveryHours`, default `edge.lists.defaultFetchHours` 24, or a copy pasted by hand), and an
+on switch. A deployment follows at most 50 lists (`edge.list.cap`).
+
+**What a list holds** (`lib/edges/lists/parse.ts`, pure): one entry per line, `#` and `//`
+comments skipped, the first token of a line read. An entry is a name, a `*.` wildcard, an address
+or a range; names in Unicode become their `xn--` form. Counted and left out: lines that are none
+of these (`invalid`), ranges shorter than /8 or /16 and wildcards over a public suffix
+(`tooBroad`), private and reserved space (`nonPublic`; a range that only touches it keeps its
+public part, the same blocks `isPublicIpLiteral` refuses), and anything past 20,000 names or
+100,000 merged intervals per address family (`capped`). A wildcard holds every name below its
+base, never the base itself; an exact name and a wildcard over it can both be on a list.
+
+**Versions, and why a reader never sees half of one.** A version's names
+(`countryListMembers`) and ranges (`countryListChunks`: merged intervals as fixed-width hex lines,
+at most 512 KiB of text a chunk, keyed by the first start so a lookup reads one chunk) are stored
+under the version's own id over several mutations (`stageBegin`, `stageChunk`, `stageNames`).
+`stageFinish` then either publishes it, by moving the list's ONE `activeVersionId` pointer in a
+single mutation, or holds it. Every reader (`lib/edges/lists/facts.ts`) follows only that pointer,
+and a query reads one snapshot, so it sees one version whole. The version before ends
+(`superseded`) and its rows are deleted 10 minutes later (`dropVersion`), so an action that pinned
+it while paging can finish. A version's hash is of its canonical content: comments and order do
+not make a new version.
+
+**When a version waits for a person** (`lib/edges/lists/guards.ts`, per measure: names, IPv4
+addresses, IPv6 /64s, so a change in one family alone counts): the first version; one that came
+back empty; one that grew or shrank by more than `edge.lists.jumpFactor` (10) or in which a family
+appeared or vanished; one sharing less than `edge.lists.minOverlap` (0.5) with the version in use,
+which catches a different list of the same size; one with a `tooBroad` entry; one with more than 5%
+unreadable lines; one past the caps. Otherwise it is used at once. **Use it** publishes a held
+version, unless the list moved on since it was read (`edge.list.version_stale`; the next fetch
+reads it again); **Throw it away** rejects it. A newer held version replaces an older one, and one
+nobody decides on is thrown away after `edge.lists.heldDays` (14).
+
+**Freshness** is `confirmedAt`: when the source last said what the version in use says, a new
+version or not (the same content again, or a 304 on that version's validators). A list not
+confirmed for `edge.lists.staleDays` (30) is stale, and evidence never reads a stale list, an off
+list or one with no version in use. A 304 on the validators of a version that waits confirms
+nothing.
+
+**Fetching** (`convex/countryListOps.ts` with `lib/edges/lists/pinnedFetch.ts`): https on 443, no
+user name, no redirects (enter the final address), 16 MiB, 20 seconds, `If-None-Match` /
+`If-Modified-Since`. The host is resolved **once** and every answer must be public; the
+connection's lookup then hands back only those checked answers, for a single address and for the
+list a dual-stack connect asks for, so a second resolution (a rebinding answer) never reaches a
+socket. The Host header, the SNI and the certificate check stay the original name's. Outcomes on
+the list: `published`, `held`, `unchanged`, `not_modified`, `held_same`, `busy`, or why it failed
+(`dns_failed`, `private_address`, `redirect_refused`, `not_found`, `http_error`, `too_large`,
+`timeout`, `tls_failed`, `unreachable`). One read runs at a time per list.
+
+**Pasting.** The API takes at most 64 KiB a request, so a paste goes up in parts: the client cuts
+it at line ends into parts of at most 44,000 bytes JSON-encoded (`splitUploadParts`,
+`src/shared/contracts/countryLists.ts`; sealed with HPKE, a full part stays under the cap, which a
+test sends), sends them in order, then finishes the upload, which reads it like a fetch. A paste
+holds at most 4 MB and 200 parts; uploads expire after an hour. A larger list needs an address.
+
+**The sweep** (cron `country-lists-sweep`, daily): staging older than an hour fails and frees the
+list; held versions past `heldDays` are thrown away; cleanups that did not finish start again;
+ended, cleaned versions older than 180 days go, and at most 50 version rows stay per list. A
+version a list still points at (in use, waiting, being stored) is never deleted, however old.
+Each name's first and last day on a list (`countryListNameHistory`) is kept for display only;
+membership never comes from it.
+
+Routes (under `/api/v1/admin/edges/`; reads `admin:servers:read`, writes `admin:servers:manage`):
+`GET lists` (`?country=`), `GET lists/{id}` (with its last 20 versions), `POST lists`,
+`PATCH lists/{id}`, `DELETE lists/{id}` (the list goes at once, its rows follow),
+`POST lists/{id}/fetch` and `POST lists/{id}/uploads/{uploadId}/finish` (throttled like a provider
+call), `POST lists/{id}/uploads`, `POST lists/{id}/uploads/{uploadId}/parts {index, text}`
+(`admin.edges.list-upload`, 300 a minute), `POST lists/{id}/versions/{versionId}/approve|reject`,
+and `POST lists/lookup {entries}` (read only, at most 100: which lists hold each name or address,
+each flagged off or stale). Audit: `admin.edge.list.create|update|delete|upload|fetch|approve|reject`,
+`edge.list.published|held|failed` (ids, counts and codes; never the address, a name or a range).
+Admin: Countries, Country lists (`/admin/edges/countries/lists`), one page per list, a card on
+each country's page, and Settings, Country lists.
+
 ### Finding names
 
 Ships dormant: `edge.sni.hunt.enabled` is off. Off, no list is swept, nothing is checked and no
@@ -4333,7 +4422,8 @@ edges keep `tls` / `https` by name.
 settings included; `GET/PATCH /api/v1/admin/edges/config`). Ships fully dormant:
 `enabled=false`, `autoRotate=false`, `render.enabled=false`, `probe.enabled=false`,
 `l7.autoSelect=false`, `names.enabled=false` (with `names.zones` empty and
-`names.moveQuietDays` 30, 0..365; § "Names for load balancer addresses"). Probe credentials are write-only (`edge.secret.probe.*`). Defaults and
+`names.moveQuietDays` 30, 0..365; § "Names for load balancer addresses"), `lists.enabled=false`
+(§ "Country lists"). Probe credentials are write-only (`edge.secret.probe.*`). Defaults and
 bounds: `convex/lib/edgeConfig.ts`. Every stored key has a control on the Settings page and
 every control a key (pinned by `settings.test.ts`). `edge.freedom.edgesOnly` is not one of
 them: it has its own card and route (§ "Freedom modes only through edges").
@@ -6137,6 +6227,13 @@ lifecycle runs in that test and its rows appear here.
 | cloudfront | DELETE | `^/2020-05-31/distribution/[^/]+$`                                                  | delete the disabled, deployed distribution (If-Match its ETag)                                                                                                              | https://docs.aws.amazon.com/cloudfront/latest/APIReference/ and https://docs.aws.amazon.com/acm/latest/APIReference/ via @aws-sdk/client-cloudfront and @aws-sdk/client-acm 3.1063.0, 2026-10-22; ACM speaks the AWS JSON protocol (`POST /`, the operation in `X-Amz-Target`), CloudFront REST with XML bodies (the body keys are the root element's children); the DNS records this adapter writes are Cloudflare API calls and are listed under `cloudflare` |
 
 ## Deploy notes
+
+**Country lists** (§ "Country lists") add seven tables (`countryLists`, `countryListVersions`,
+`countryListMembers`, `countryListChunks`, `countryListNameHistory`, `countryListUploads`,
+`countryListUploadParts`), six settings with defaults (`edge.lists.enabled` false, `jumpFactor`
+10, `minOverlap` 0.5, `heldDays` 14, `staleDays` 30, `defaultFetchHours` 24), two crons
+(`country-lists`, `country-lists-sweep`) and one rate-limit policy (`admin.edges.list-upload`):
+one deploy, no migration, no env change. With the switch off the hourly cron finds nothing due.
 
 **Names for load balancer addresses** (§ "Names for load balancer addresses") add one table
 (`edgeNames`), one optional field (`edges.nameWanted`), four settings with defaults

@@ -18,6 +18,7 @@
   import { countryViewQuery } from '@client/lib/edgesApi';
   import type { CountryViewAddress, CountryViewOrigin } from '@shared/contracts/edges';
   import SectionHeader from '../components/SectionHeader.svelte';
+  import CountryListsCard from './CountryListsCard.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import ProtocolBadge from '../components/ProtocolBadge.svelte';
   import StatusDot from '../simple/StatusDot.svelte';
@@ -125,6 +126,8 @@
       <p class="text-muted-foreground">{HANDED_SCOPE}</p>
     </CardContent>
   </Card>
+
+  <CountryListsCard {code} />
 
   {#if v.origins.length === 0}
     <Card>

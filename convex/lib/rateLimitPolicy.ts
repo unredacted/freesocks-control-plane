@@ -165,6 +165,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // hot CMS loop is what these bound.
   'admin.edges.provider-call': { max: 30, windowMs: MINUTE, enabled: true },
   'admin.edges.probe': { max: 30, windowMs: HOUR, enabled: true },
+  // One part of a pasted country list (at most 40 KB each): a 4 MB paste is
+  // about a hundred parts in a row; the finish that starts the parse is a
+  // `provider-call`.
+  'admin.edges.list-upload': { max: 300, windowMs: MINUTE, enabled: true },
   // Server management: an on-demand re-read of one backend (several backend GETs
   // per call). The scheduled read rides the healthcheck and is not throttled.
   'admin.servers.panel-read': { max: 30, windowMs: MINUTE, enabled: true },

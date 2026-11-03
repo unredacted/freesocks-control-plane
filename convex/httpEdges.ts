@@ -48,9 +48,13 @@ function statusFromCode(code: string): number {
   if (
     code === 'edge.network.bad_asn' ||
     code === 'edge.network.bad_prefix' ||
-    code === 'edge.network.empty'
+    code === 'edge.network.empty' ||
+    code === 'edge.list.bad_url' ||
+    code === 'edge.list.bad_asn'
   )
     return 400;
+  // A paste part or a whole paste past its size: the body, like the request cap.
+  if (code === 'edge.list.part_too_large' || code === 'edge.list.upload_too_large') return 413;
   if (code === 'conflict' || code.startsWith('edge.')) return 409;
   // The hourly probe budget is a quota: answer like a rate limit.
   if (code === 'probe.budget_exhausted') return 429;
@@ -90,6 +94,8 @@ const RESERVED = new Set([
   'countries',
   'networks',
   'client-check',
+  // Country lists (convex/countryLists.ts).
+  'lists',
 ]);
 
 /**
@@ -121,6 +127,8 @@ function isReadOnlyPost(parts: string[]): boolean {
   if (parts.length === 3 && parts[0] === 'relays' && parts[2] === 'preflight') return true;
   // Asks the client-check service how it is; stores nothing but that answer.
   if (parts.length === 2 && parts[0] === 'client-check' && parts[1] === 'refresh') return true;
+  // Which country lists hold some names or addresses: a read over stored versions.
+  if (parts.length === 2 && parts[0] === 'lists' && parts[1] === 'lookup') return true;
   return (
     parts.length === 2 &&
     ((parts[0] === 'render' && parts[1] === 'preview') ||
@@ -168,6 +176,13 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'sni' && b === 'transports' && c === 'manage' && !d) return 'admin.edges.provider-call';
   // Reading a network's announced ranges calls a third-party service.
   if (a === 'networks' && b && c === 'refresh' && !d) return 'admin.edges.provider-call';
+  // A country list's fetch reaches its source; a finished paste is parsed and written.
+  if (a === 'lists' && b && c === 'fetch' && !d) return 'admin.edges.provider-call';
+  if (a === 'lists' && b && c === 'uploads' && d && parts[4] === 'finish' && !parts[5])
+    return 'admin.edges.provider-call';
+  // The parts of a paste come many in a row: their own, wider limit.
+  if (a === 'lists' && b && c === 'uploads' && d && parts[4] === 'parts' && !parts[5])
+    return 'admin.edges.list-upload';
   // Checking names from inside a country spends third-party measurements.
   if (a === 'sni' && b === 'families' && c && d === 'vantage' && !parts[4])
     return 'admin.edges.probe';
@@ -334,6 +349,15 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   }
   if (a === 'config') return json(await ctx.runQuery(internal.edgeAdmin.configView, {}));
   if (a === 'networks' && !b) return json(await ctx.runQuery(internal.edgeNetworks.list, {}));
+  // Country lists (docs/edges.md "Country lists").
+  if (a === 'lists' && !b) {
+    const country = query.get('country');
+    return json(await ctx.runQuery(internal.countryLists.list, country ? { country } : {}));
+  }
+  if (a === 'lists' && b && !c)
+    return json(
+      await ctx.runQuery(internal.countryLists.detail, { listId: id<'countryLists'>(b) }),
+    );
   if (a === 'attention' && !b) return json(await ctx.runQuery(internal.edgeOperator.attention, {}));
   // FCP's own client check: whether the service is set up, and its last health answer.
   if (a === 'client-check' && !b)
@@ -642,6 +666,8 @@ async function refreshInventory(
 const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   const [a, b, c, d, e] = parts;
   const act = actor(admin);
+  // Country lists (docs/edges.md "Country lists").
+  if (a === 'lists') return postList(ctx, parts, body, act);
   // Networks (docs/edges.md "Networks").
   if (a === 'networks' && !b)
     return json(
@@ -1935,6 +1961,26 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
         ...act,
       }),
     );
+  if (a === 'lists' && b && !c)
+    return json(
+      await ctx.runMutation(internal.countryLists.update, {
+        listId: id<'countryLists'>(b),
+        ...(typeof body.label === 'string' ? { label: body.label } : {}),
+        ...(typeof body.country === 'string' ? { country: body.country } : {}),
+        ...(body.regime === 'allowlist' || body.regime === 'blocklist'
+          ? { regime: body.regime }
+          : {}),
+        ...(Array.isArray(body.networks)
+          ? { networks: body.networks.map((x: unknown) => String(x)) }
+          : {}),
+        ...(typeof body.url === 'string' ? { url: body.url } : {}),
+        ...(typeof body.fetchEveryHours === 'number'
+          ? { fetchEveryHours: body.fetchEveryHours }
+          : {}),
+        ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
+        ...act,
+      }),
+    );
   // Networks (docs/edges.md "Networks").
   if (a === 'networks' && b && !c)
     return json(
@@ -2021,6 +2067,13 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin, _body, query) => 
   const act = actor(admin);
   if (a === 'networks' && b && !c)
     return json(await ctx.runMutation(internal.edgeNetworks.remove, { slug: b, ...act }));
+  if (a === 'lists' && b && !c)
+    return json(
+      await ctx.runMutation(internal.countryLists.remove, {
+        listId: id<'countryLists'>(b),
+        ...act,
+      }),
+    );
   if (a === 'sni' && b === 'families' && c && !d)
     return json(await ctx.runMutation(internal.sniFamilies.remove, { slug: c, ...act }));
   if (a === 'sni' && b === 'hunt' && c === 'sweep' && !d)
@@ -2093,6 +2146,81 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin, _body, query) => 
   }
   return notFound();
 };
+
+/** The country-list POSTs: create, lookup, fetch, a paste in parts, a held version's decision. */
+async function postList(
+  ctx: ActionCtx,
+  parts: string[],
+  body: Record<string, unknown>,
+  act: { actorAdminId?: Id<'adminUsers'> },
+): Promise<Response> {
+  const [, b, c, d, e] = parts;
+  if (!b) {
+    const regime = body.regime;
+    if (regime !== 'allowlist' && regime !== 'blocklist')
+      return errorJson('validation', 'regime is allowlist or blocklist', 400);
+    const src = (body.source ?? {}) as Record<string, unknown>;
+    const source =
+      src.kind === 'url'
+        ? { kind: 'url' as const, url: String(src.url ?? '') }
+        : src.kind === 'paste'
+          ? { kind: 'paste' as const }
+          : null;
+    if (!source) return errorJson('validation', 'source is a url or a paste', 400);
+    return json(
+      await ctx.runMutation(internal.countryLists.create, {
+        label: String(body.label ?? ''),
+        country: String(body.country ?? ''),
+        regime,
+        source,
+        ...(Array.isArray(body.networks)
+          ? { networks: body.networks.map((x: unknown) => String(x)) }
+          : {}),
+        ...(typeof body.fetchEveryHours === 'number'
+          ? { fetchEveryHours: body.fetchEveryHours }
+          : {}),
+        ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
+        ...act,
+      }),
+    );
+  }
+  if (b === 'lookup' && !c) {
+    const entries = Array.isArray(body.entries) ? body.entries.map((x: unknown) => String(x)) : [];
+    return json(await ctx.runQuery(internal.countryLists.lookup, { entries }));
+  }
+  const listId = id<'countryLists'>(b);
+  if (c === 'fetch' && !d)
+    return json(await ctx.runMutation(internal.countryLists.requestFetch, { listId, ...act }));
+  if (c === 'uploads' && !d)
+    return json(await ctx.runMutation(internal.countryLists.startUpload, { listId, ...act }));
+  if (c === 'uploads' && d && e === 'parts' && !parts[5]) {
+    if (typeof body.index !== 'number' || typeof body.text !== 'string')
+      return errorJson('validation', 'A part is an index and its text', 400);
+    return json(
+      await ctx.runMutation(internal.countryLists.addUploadPart, {
+        listId,
+        uploadId: id<'countryListUploads'>(d),
+        index: body.index,
+        text: body.text,
+      }),
+    );
+  }
+  if (c === 'uploads' && d && e === 'finish' && !parts[5])
+    return json(
+      await ctx.runMutation(internal.countryLists.finishUpload, {
+        listId,
+        uploadId: id<'countryListUploads'>(d),
+        ...act,
+      }),
+    );
+  if (c === 'versions' && d && (e === 'approve' || e === 'reject') && !parts[5]) {
+    const fn = e === 'approve' ? internal.countryLists.approve : internal.countryLists.reject;
+    return json(
+      await ctx.runMutation(fn, { listId, versionId: id<'countryListVersions'>(d), ...act }),
+    );
+  }
+  return notFound();
+}
 
 function dispositionOf(query: URLSearchParams): 'restore-direct' | 'keep-dark' | undefined {
   const d = query.get('disposition');

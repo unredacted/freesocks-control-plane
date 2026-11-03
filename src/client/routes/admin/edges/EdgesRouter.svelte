@@ -30,6 +30,8 @@
   import FindNetwork from './names/FindNetwork.svelte';
   import CountriesPage from './countries/CountriesPage.svelte';
   import CountryPage from './countries/CountryPage.svelte';
+  import ListsPage from './countries/ListsPage.svelte';
+  import ListPage from './countries/ListPage.svelte';
 
   const route = $derived(resolveEdgesRoute(router.pathname));
   const movedTo = $derived(legacyEdgesRedirect(router.pathname, router.search));
@@ -75,6 +77,10 @@
   <CountriesPage />
 {:else if route.page === 'country'}
   {#key route.code}<CountryPage code={route.code} />{/key}
+{:else if route.page === 'lists'}
+  <ListsPage />
+{:else if route.page === 'list'}
+  {#key route.id}<ListPage id={route.id} />{/key}
 {:else}
   <Card.Root class="mx-auto mt-10 max-w-md">
     <Card.Header>
