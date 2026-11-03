@@ -31,7 +31,7 @@
         "clsx": "^2.1.1",
         "cobe": "^2.0.1",
         "convex": "^1.49.0",
-        "fastly": "16.1.0",
+        "fastly": "17.0.0",
         "globalping": "0.4.0",
         "layerchart": "^2.3.0",
         "naughty-words": "1.2.0",
@@ -732,7 +732,7 @@
 
     "fast-xml-parser": ["fast-xml-parser@5.7.3", "", { "dependencies": { "@nodable/entities": "^2.1.0", "fast-xml-builder": "^1.1.7", "path-expression-matcher": "^1.5.0", "strnum": "^2.2.3" }, "bin": { "fxparser": "src/cli/cli.js" } }, "sha512-C0AaNuC+mscy6vrAQKAc/rMq+zAPHodfHGZu4sGVehvAQt/JLG1O5zEcYcXSY5zSqr4YVgxsB+pHXTq0i7eDlg=="],
 
-    "fastly": ["fastly@16.1.0", "", { "dependencies": { "superagent": "^6.1.0" } }, "sha512-j+GJjAoevs6WfoSMf3Koij15FD2WJdm+iRegmHZH2xih99lzL0YTbjs5AvzwmZxUQdDo7LVFQpIV9D98F06kdA=="],
+    "fastly": ["fastly@17.0.0", "", { "dependencies": { "superagent": "^6.1.0" } }, "sha512-S4FqwH0pHjkTvUIoTgv3iUJVNaXrx/33B595doY32G0hGmsIokJH9qWPrl1xrIPOXRXTyHsdH+Y1Ct/qo1waEg=="],
 
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" } }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
 
