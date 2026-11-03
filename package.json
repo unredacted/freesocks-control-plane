@@ -67,7 +67,7 @@
     "@scaleway/sdk-client": "2.7.0",
     "@scaleway/sdk-lb": "2.13.1",
     "@simplewebauthn/browser": "^13.3.0",
-    "@simplewebauthn/server": "^13.3.3",
+    "@simplewebauthn/server": "^14.0.3",
     "@tanstack/svelte-query": "^6.1.34",
     "@tanstack/svelte-query-devtools": "^6.1.34",
     "cloudflare": "7.1.0",
