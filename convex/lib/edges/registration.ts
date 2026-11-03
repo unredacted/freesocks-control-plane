@@ -34,9 +34,7 @@ export interface ListenerName {
 }
 
 export type MatchRule =
-  | { kind: 'remark'; remark: string }
-  | { kind: 'address' }
-  | { kind: 'whole-body' };
+  { kind: 'remark'; remark: string } | { kind: 'address' } | { kind: 'whole-body' };
 
 export interface PanelBinding {
   inboundTag: string;

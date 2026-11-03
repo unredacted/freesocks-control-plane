@@ -148,8 +148,7 @@
           rows={2}
           maxlength={500}
           placeholder="Shown under the transport in the member picker."
-          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-        ></textarea>
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"></textarea>
       </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>

@@ -27,8 +27,7 @@ export function buildUpgradeRequest(opts: {
 }
 
 export type UpgradeVerdict =
-  | { ok: true }
-  | { ok: false; reason: 'status' | 'upgrade' | 'connection' };
+  { ok: true } | { ok: false; reason: 'status' | 'upgrade' | 'connection' };
 
 export function checkUpgradeResponse(head: HttpHead, token: string): UpgradeVerdict {
   if (head.status !== 101) return { ok: false, reason: 'status' };

@@ -127,8 +127,7 @@ export function matcherOf(l: Doc<'relayListeners'>, originAddress: string): Rend
  *    snapshot).
  */
 export type EdgeSelectionContext =
-  | { kind: 'member' }
-  | { kind: 'activation'; activationRunId: Id<'panelActivationRuns'> };
+  { kind: 'member' } | { kind: 'activation'; activationRunId: Id<'panelActivationRuns'> };
 
 /** The edges an activation run's rehearsal renders: null when the run is not the node's current, running one. */
 async function activationCandidatesOf(

@@ -294,7 +294,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
     ...withheldTags,
   ]);
   let list = next;
-  for (let changed = true; changed; ) {
+  for (let changed = true; changed;) {
     changed = false;
     const keep: unknown[] = [];
     for (const ob of list) {

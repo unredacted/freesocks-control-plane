@@ -755,7 +755,6 @@ describe('relayProbes', () => {
     const { t, relayId, edgeId } = await seed();
     const c1 = await t.mutation(internal.probeTargets.create, { label: 'A', address: 'a.example' });
     const c2 = await t.mutation(internal.probeTargets.create, { label: 'B', address: 'b.example' });
-    const requestedAt = Date.now();
     await t.mutation(internal.probes.requestMany, {
       targets: [
         { kind: 'edge', ref: edgeId },
@@ -767,7 +766,7 @@ describe('relayProbes', () => {
     const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
     const offsetOf = (runId: Id<'probeRuns'>) => {
       const f = scheduled.find((s) => (s.args[0] as { runId: string }).runId === runId)!;
-      return f.scheduledTime - requestedAt;
+      return f.scheduledTime - runs.find((run) => run._id === runId)!.requestedAt;
     };
     const gp = runs.filter((r) => r.source === 'globalping').map((r) => offsetOf(r._id));
     expect(gp.sort((a, b) => a - b)).toEqual([0, 1500, 3000]);
@@ -1089,7 +1088,7 @@ describe('relayProbes', () => {
     __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
     const { t, edgeId } = await seed();
     const MIN = 60_000;
-    const t0 = Date.now();
+    const t0 = await t.run(async () => Date.now());
     const start = (family: 4 | 6 = 4) =>
       t.run((ctx) =>
         ctx.db.insert('probeRuns', {

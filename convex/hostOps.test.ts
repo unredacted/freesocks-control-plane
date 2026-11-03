@@ -137,6 +137,7 @@ describe('hostOps: create', () => {
   test('claimCreate persists the full intent and the op BEFORE any call; a second claim is refused while the op is unsettled', async () => {
     vi.useFakeTimers({ now: NOW });
     const { t, listenerId, serverId } = await seed();
+    const claimedAt = await t.run(async () => Date.now());
     const claim = await t.mutation(internal.hostOps.claimCreate, { listenerId, target: TARGET });
     expect(claim.claimed).toBe(true);
     if (!claim.claimed) throw new Error('unreachable');
@@ -157,8 +158,8 @@ describe('hostOps: create', () => {
       op: {
         kind: 'create',
         opId: claim.opId,
-        claimedAt: NOW,
-        expiresAt: NOW + 60_000,
+        claimedAt,
+        expiresAt: claimedAt + 60_000,
         attempts: 1,
       },
     });
@@ -312,13 +313,14 @@ describe('hostOps: applyDiscovery after an uncertain create', () => {
     const { t, listenerId } = await seed();
     const opId = await unresolvedCreate(t, listenerId);
     // Look 1, right away: quiet, nothing else.
+    const lookedAt = await t.run(async () => Date.now());
     expect(
       await t.mutation(internal.hostOps.applyDiscovery, { listenerId, opId, hosts: [] }),
     ).toEqual({
       state: 'unresolved',
     });
     let l = await listener(t, listenerId);
-    expect(l.host).toMatchObject({ state: 'unresolved', op: { opId, lastLookAt: NOW } });
+    expect(l.host).toMatchObject({ state: 'unresolved', op: { opId, lastLookAt: lookedAt } });
     expect(l.host!.intended).toBeDefined();
     // Look 2, still inside the floor: two looks are not enough on their own.
     vi.setSystemTime(NOW + 30_000);

@@ -40,8 +40,7 @@ export function clientCheckService(
 }
 
 export type ServiceAnswer<T> =
-  | { ok: true; value: T }
-  | { ok: false; code: ClientCheckUncheckedCode };
+  { ok: true; value: T } | { ok: false; code: ClientCheckUncheckedCode };
 
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
