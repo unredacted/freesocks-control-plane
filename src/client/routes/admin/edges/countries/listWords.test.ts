@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { CountryListHoldReason, type CountryListVersion } from '@shared/contracts/countryLists';
 import { edgesPaths, resolveEdgesRoute, sectionTabOf } from '../lib/routes';
+import { parseAsns } from '../names/lib/words';
 import {
   countsLine,
   diffLine,
@@ -97,6 +98,12 @@ describe('list words', () => {
     expect(freshnessLine({ active, confirmedAt: '2026-01-01', fresh: false }, 30, now)).toContain(
       'Stale',
     );
+  });
+
+  test('a list takes up to 32 networks; a name network still 8', () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `AS${64500 + i}`).join(' ');
+    expect(parseAsns(nine)).toBeNull();
+    expect(parseAsns(nine, 32)).toHaveLength(9);
   });
 
   test('lookup entries', () => {

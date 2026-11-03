@@ -119,13 +119,23 @@ export async function pinnedFetch(
     return { ok: false, error: 'bad_url' };
   const host = u.hostname.replace(/^\[|\]$/g, '');
   const literal = addressFamily(host);
+  // One deadline for the whole fetch, the lookup included.
+  const deadline = Date.now() + opts.timeoutMs;
   let answers: Answer[];
   if (literal) answers = [{ address: host, family: literal === 'v6' ? 6 : 4 }];
   else {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      answers = await deps.resolve(host);
+      const timedOut = new Promise<'timeout'>((r) => {
+        timer = setTimeout(() => r('timeout'), opts.timeoutMs);
+      });
+      const r = await Promise.race([deps.resolve(host), timedOut]);
+      if (r === 'timeout') return { ok: false, error: 'timeout' };
+      answers = r;
     } catch {
       return { ok: false, error: 'dns_failed' };
+    } finally {
+      clearTimeout(timer);
     }
   }
   if (answers.length === 0) return { ok: false, error: 'dns_failed' };
@@ -161,10 +171,13 @@ export async function pinnedFetch(
       rejectUnauthorized: true,
       ...(deps.ca ? { ca: deps.ca } : {}),
     });
-    const timer = setTimeout(() => {
-      req.destroy();
-      done({ ok: false, error: 'timeout' });
-    }, opts.timeoutMs);
+    const timer = setTimeout(
+      () => {
+        req.destroy();
+        done({ ok: false, error: 'timeout' });
+      },
+      Math.max(0, deadline - Date.now()),
+    );
     req.on('error', (err: NodeJS.ErrnoException) => done({ ok: false, error: classify(err) }));
     req.on('response', (res) => {
       const status = res.statusCode ?? 0;

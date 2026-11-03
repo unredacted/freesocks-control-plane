@@ -357,6 +357,7 @@ describe('publication', () => {
       source: 'upload',
       counts,
       samples: [],
+      sourceGen: 0,
     }))!;
     await t.mutation(internal.countryLists.stageNames, {
       versionId: begun.versionId,
@@ -376,6 +377,7 @@ describe('publication', () => {
         v4: { added: 0, removed: 0, common: 256 },
         v6: { added: 0, removed: 0, common: 65_536 },
       },
+      sourceGen: 0,
     });
     expect((await lookup(['staged.example.com']))[0]!.lists).toHaveLength(1);
   });
@@ -512,6 +514,7 @@ describe('the sweep', () => {
         capped: 0,
       },
       samples: [],
+      sourceGen: 0,
     }))!;
     await t.mutation(internal.countryLists.stageNames, {
       versionId: begun.versionId,
@@ -616,5 +619,111 @@ describe('routes', () => {
       'admin.edges.list-upload',
     );
     expect(throttlePolicyFor(['lists', 'lookup'])).toBeNull();
+  });
+});
+
+describe('review fixes', () => {
+  test('a new address starts over, and a read of the old one still running is dropped', async () => {
+    const { t, call, create, detail, approve } = await seed();
+    const id = await create({ source: { kind: 'url', url: 'https://example.com/a.txt' } });
+    const answers: PinnedFetchResult[] = [{ ok: true, status: 200, text: V1, etag: '"a"' }];
+    __setListFetchForTests(async () => answers.shift()!);
+    await t.action(internal.countryListOps.ingest, { listId: id });
+    await approve(id, (await detail(id)).list.held!.id);
+    expect((await detail(id)).list.fresh).toBe(true);
+    // The address changes while a read of the old one is in flight.
+    __setListFetchForTests(async () => {
+      await call('PATCH', `lists/${id}`, { url: 'https://example.org/b.txt' });
+      return { ok: true, status: 200, text: 'example.net\n198.51.100.0/24' };
+    });
+    expect(await t.action(internal.countryListOps.ingest, { listId: id })).toBe('busy');
+    const view = await detail(id);
+    expect(view.list.source).toEqual({ kind: 'url', url: 'https://example.org/b.txt' });
+    // Nothing the old address said was kept: no new version, unconfirmed, due now.
+    expect(view.versions).toHaveLength(1);
+    expect(view.list.held).toBeNull();
+    expect(view.list.lastFetch).toBeNull();
+    expect(view.list.fresh).toBe(false);
+    expect(
+      await t.query(internal.countryLists.dueForFetch, { now: Date.now(), limit: 50 }),
+    ).toEqual([id]);
+    // The same address again changes nothing.
+    await call('PATCH', `lists/${id}`, { url: 'https://example.org/b.txt' });
+    expect((await t.run((ctx) => ctx.db.get(id)))?.sourceGen).toBe(1);
+  });
+
+  test('the same content as a waiting version whose base moved on is read anew', async () => {
+    const { create, paste, detail, approve } = await seed();
+    const id = await create();
+    await paste(id, V1);
+    await approve(id, (await detail(id)).list.held!.id);
+    const replaced = 'example.com\n*.example.org\n203.0.113.0/24\n2001:db8::/48';
+    expect(await paste(id, replaced)).toBe('held');
+    const stale = (await detail(id)).list.held!.id;
+    expect(await paste(id, `${V1}\nexample.net`)).toBe('published');
+    // Before the fix this was `held_same` for ever.
+    expect(await paste(id, replaced)).toBe('held');
+    const view = await detail(id);
+    expect(view.list.held?.id).not.toBe(stale);
+    expect(view.versions.find((v) => v.id === stale)?.status).toBe('rejected');
+    expect((await approve(id, view.list.held!.id)).status).toBe(200);
+  });
+
+  test('a source that only gains unreadable lines is staged, and the guards hold it', async () => {
+    const { create, paste, detail, approve } = await seed();
+    const id = await create();
+    await paste(id, V1);
+    await approve(id, (await detail(id)).list.held!.id);
+    expect(await paste(id, `${V1}\nnot a name!`)).toBe('held');
+    expect((await detail(id)).list.held?.heldReasons).toEqual(['invalid']);
+  });
+
+  test('every due list is started each pass, a little early counting as due', async () => {
+    const { t, create } = await seed();
+    const ids: ListId[] = [];
+    for (let i = 0; i < 6; i++)
+      ids.push(
+        await create({
+          label: `L${i}`,
+          source: { kind: 'url', url: `https://example.com/${i}.txt` },
+          fetchEveryHours: 1,
+        }),
+      );
+    const due = () => t.query(internal.countryLists.dueForFetch, { now: Date.now(), limit: 50 });
+    expect((await due()).sort()).toEqual([...ids].sort());
+    __setListFetchForTests(async () => ({ ok: false, error: 'timeout' }));
+    for (const id of ids) await t.action(internal.countryListOps.ingest, { listId: id });
+    expect(await due()).toEqual([]);
+    advance(55 * MIN);
+    expect(await due()).toHaveLength(6);
+  });
+
+  test('rows of ended versions never hide the version in use', async () => {
+    const { t, create, paste, detail, approve, lookup } = await seed();
+    const id = await create();
+    await paste(id, V1);
+    await approve(id, (await detail(id)).list.held!.id);
+    // Many ended versions still holding the name (cleanup lagging behind).
+    await t.run(async (ctx) => {
+      const active = (await ctx.db.get(id))!.activeVersionId!;
+      const base = (await ctx.db.get(active))!;
+      for (let i = 0; i < 450; i++) {
+        const { _id, _creationTime, ...rest } = base;
+        void _id;
+        void _creationTime;
+        const versionId = await ctx.db.insert('countryListVersions', {
+          ...rest,
+          status: 'superseded',
+          endedAt: Date.now(),
+        });
+        await ctx.db.insert('countryListMembers', {
+          versionId,
+          name: 'example.com',
+          site: 'example.com',
+          wildcard: false,
+        });
+      }
+    });
+    expect((await lookup(['example.com']))[0]!.lists.map((l) => l.how)).toEqual(['exact']);
   });
 });

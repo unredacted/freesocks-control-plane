@@ -8,6 +8,7 @@ import {
   chunkHolds,
   decodeChunk,
   encodeChunks,
+  commonSize,
   intersect,
   joinSpans,
   sizeOf,
@@ -113,6 +114,14 @@ describe('parseList', () => {
     expect(canonicalText(a)).toBe(canonicalText(b));
     expect(canonicalText(a)).not.toBe(canonicalText(parseList('example.com')));
   });
+
+  test('what was left out is part of the content', () => {
+    const base = 'example.com\n192.0.2.0/24';
+    expect(canonicalText(parseList(base))).not.toBe(
+      canonicalText(parseList(`${base}\nnot a name!`)),
+    );
+    expect(canonicalText(parseList(base))).not.toBe(canonicalText(parseList(`${base}\n0.0.0.0/4`)));
+  });
 });
 
 describe('reserved space', () => {
@@ -215,6 +224,16 @@ describe('chunks', () => {
     expect(sizeOf('v4', intersect(a.v4, b.v4))).toBe(128);
     const c = ranges('2001:db8::/63');
     expect(sizeOf('v6', c.v6)).toBe(2);
+  });
+
+  test('IPv6 counts each /64 once, and shares a /64 two addresses in it touch', () => {
+    const two = ranges('2001:db8::1\n2001:db8::9');
+    expect(two.v6.lo).toHaveLength(2);
+    expect(sizeOf('v6', two.v6)).toBe(1);
+    const other = ranges('2001:db8::5');
+    expect(commonSize('v6', two.v6, other.v6)).toBe(1);
+    expect(commonSize('v6', two.v6, ranges('2001:db8:0:1::5').v6)).toBe(0);
+    expect(commonSize('v4', ranges('192.0.2.0/24').v4, ranges('192.0.2.128/25').v4)).toBe(128);
   });
 });
 

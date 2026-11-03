@@ -23,7 +23,11 @@
     invalidateCountryLists,
     updateCountryList,
   } from '@client/lib/countryListsApi';
-  import type { CountryListRegime, CountryListView } from '@shared/contracts/countryLists';
+  import {
+    MAX_LIST_NETWORKS,
+    type CountryListRegime,
+    type CountryListView,
+  } from '@shared/contracts/countryLists';
   import { DIALOG_FIT, STICKY_FOOTER } from '../lib/dialogLayout';
   import { parseAsns } from '../names/lib/words';
   import { listErrorWords, REGIME_WORDS } from './listWords';
@@ -69,7 +73,8 @@
     enabled = list?.enabled ?? true;
   }
 
-  let parsedNetworks = $derived(parseAsns(networks));
+  // A country list covers up to 32 networks (MAX_LIST_NETWORKS in convex/countryLists.ts).
+  let parsedNetworks = $derived(parseAsns(networks, MAX_LIST_NETWORKS));
   let valid = $derived(
     label.trim().length > 0 &&
       /^[A-Za-z]{2}$/.test(country.trim()) &&

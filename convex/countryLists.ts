@@ -35,7 +35,11 @@ import { normalizeAsn } from './lib/edges/networks';
 import { siteOf } from './lib/edges/sni/hunt/sources';
 import { holdReasons, type ListMeasure } from './lib/edges/lists/guards';
 import { isFresh, lookupEntries, MAX_LISTS } from './lib/edges/lists/facts';
-import { UPLOAD_MAX_BYTES, UPLOAD_PART_BYTES } from '../src/shared/contracts/countryLists';
+import {
+  MAX_LIST_NETWORKS,
+  UPLOAD_MAX_BYTES,
+  UPLOAD_PART_BYTES,
+} from '../src/shared/contracts/countryLists';
 
 type List = Doc<'countryLists'>;
 type Version = Doc<'countryListVersions'>;
@@ -49,6 +53,8 @@ const DAY = 24 * HOUR;
 /** Parts a paste may have (a full one is about a hundred). */
 const MAX_UPLOAD_PARTS = 200;
 const UPLOAD_TTL_MS = HOUR;
+/** How early a list counts as due for the hourly pass. */
+const DUE_SLACK_MS = 10 * MIN;
 /** An ingest marker older than this is a crashed run, not a running one. */
 const INGEST_STALE_MS = 15 * MIN;
 /** A staging version older than this is a crashed run. */
@@ -59,7 +65,6 @@ const VERSION_RETENTION_MS = 180 * DAY;
 /** Version rows kept per list (the newest), whatever their age. */
 const MAX_VERSION_ROWS = 50;
 const HISTORY_RETENTION_MS = 180 * DAY;
-const MAX_LIST_NETWORKS = 32;
 const MAX_URL_CHARS = 2048;
 const MEMBERS_PAGE = 500;
 /** Chunks are up to 512 KiB each: a page stays well inside one execution's read limit. */
@@ -356,11 +361,18 @@ export const update = internalMutation({
     if (a.url !== undefined) {
       if (list.source.kind !== 'url')
         refuse('edge.list.not_url', 'A pasted list has no address to change');
-      patch.source = { kind: 'url', url: cleanSourceUrl(a.url) };
-      // A new address: the old one's validators mean nothing there.
-      if (list.lastFetch)
-        patch.lastFetch = { at: list.lastFetch.at, outcome: list.lastFetch.outcome };
-      changed.push('url');
+      const url = cleanSourceUrl(a.url);
+      if (url !== list.source.url) {
+        patch.source = { kind: 'url', url };
+        // A new source: nothing it said is known yet. It is due at once, the
+        // version in use is unconfirmed (stale) until it says the same, and a
+        // read of the old address still running is dropped by its generation.
+        patch.sourceGen = (list.sourceGen ?? 0) + 1;
+        patch.lastFetch = undefined;
+        patch.confirmedAt = undefined;
+        patch.ingest = undefined;
+        changed.push('url');
+      }
     }
     if (a.fetchEveryHours !== undefined) {
       patch.fetchEveryHours = cleanHours(a.fetchEveryHours, list.fetchEveryHours);
@@ -603,7 +615,9 @@ export const dueForFetch = internalQuery({
           l.enabled &&
           l.source.kind === 'url' &&
           !(l.ingest && now - l.ingest.at < INGEST_STALE_MS) &&
-          (!l.lastFetch || now - l.lastFetch.at >= l.fetchEveryHours * HOUR),
+          // A little early is due: a read that ended just after the last pass
+          // would otherwise wait a whole extra pass.
+          (!l.lastFetch || now - l.lastFetch.at >= l.fetchEveryHours * HOUR - DUE_SLACK_MS),
       )
       .sort((x, y) => (x.lastFetch?.at ?? 0) - (y.lastFetch?.at ?? 0))
       .slice(0, limit)
@@ -619,16 +633,22 @@ export const ingestContext = internalQuery({
     if (!list) return null;
     const active = list.activeVersionId ? await ctx.db.get(list.activeVersionId) : null;
     const held = list.heldVersionId ? await ctx.db.get(list.heldVersionId) : null;
-    // Validators are sent only while the version they describe is still active or waiting.
+    // A waiting version whose base is no longer the one in use cannot be
+    // used: the same content again is read and staged anew, against today's.
+    const heldLive =
+      held && (held.basedOn ?? null) === (list.activeVersionId ?? null) ? held : null;
+    // Validators are sent only while the version they describe is in use or can still be.
     const of = list.lastFetch?.validatorsOf;
-    const describes = of && of === active?._id ? 'active' : of && of === held?._id ? 'held' : null;
+    const describes =
+      of && of === active?._id ? 'active' : of && of === heldLive?._id ? 'held' : null;
     return {
       source: list.source,
+      sourceGen: list.sourceGen ?? 0,
       etag: describes ? (list.lastFetch?.etag ?? null) : null,
       lastModified: describes ? (list.lastFetch?.lastModified ?? null) : null,
       describes,
       activeSha: active?.sha256 ?? null,
-      heldSha: held?.sha256 ?? null,
+      heldSha: heldLive?.sha256 ?? null,
     };
   },
 });
@@ -649,11 +669,17 @@ export const recordIngest = internalMutation({
     etag: v.optional(v.string()),
     lastModified: v.optional(v.string()),
     failedVersionId: v.optional(v.id('countryListVersions')),
+    sourceGen: v.number(),
   },
   handler: async (ctx, a) => {
     const list = await ctx.db.get(a.listId);
     if (!list) return;
     const now = Date.now();
+    if ((list.sourceGen ?? 0) !== a.sourceGen) {
+      // The address changed while this ran: its answer is the old source's.
+      if (a.failedVersionId) await failStaging(ctx, list, a.failedVersionId, 'source_changed');
+      return;
+    }
     const patch: Partial<List> = { ingest: undefined, updatedAt: now };
     const kind = list.ingest?.kind ?? (list.source.kind === 'url' ? 'fetch' : 'upload');
     if (kind === 'fetch') {
@@ -678,24 +704,29 @@ export const recordIngest = internalMutation({
       };
     }
     if (a.confirmed && list.activeVersionId) patch.confirmedAt = now;
-    if (a.failedVersionId) {
-      const ver = await ctx.db.get(a.failedVersionId);
-      if (ver?.status === 'staging') {
-        await ctx.db.patch(ver._id, { status: 'failed', failure: a.outcome, endedAt: now });
-        await scheduleDrop(ctx, ver._id);
-      }
-      if (list.stagingVersionId === a.failedVersionId) patch.stagingVersionId = undefined;
-    }
     await ctx.db.patch(list._id, patch);
+    if (a.failedVersionId) await failStaging(ctx, list, a.failedVersionId, a.outcome);
     const quiet = ['unchanged', 'not_modified', 'held_same', 'busy'];
     if (!quiet.includes(a.outcome))
       await audit(ctx, 'edge.list.failed', undefined, { listId: list._id, outcome: a.outcome });
   },
 });
 
+/** Fail a version still being written, and free the list's staging pointer if it is that one. */
+async function failStaging(ctx: MutationCtx, list: List, versionId: VersionId, failure: string) {
+  const ver = await ctx.db.get(versionId);
+  if (ver?.status === 'staging') {
+    await ctx.db.patch(ver._id, { status: 'failed', failure, endedAt: Date.now() });
+    await scheduleDrop(ctx, ver._id);
+  }
+  if (list.stagingVersionId === versionId)
+    await ctx.db.patch(list._id, { stagingVersionId: undefined });
+}
+
 /**
  * Start writing a version. Null when another version is being written (and is
- * not stale); a stale one is failed here so this one can go on.
+ * not stale), or the source changed since the read began; a stale staging is
+ * failed here so this one can go on.
  */
 export const stageBegin = internalMutation({
   args: {
@@ -704,10 +735,11 @@ export const stageBegin = internalMutation({
     source: v.union(v.literal('fetch'), v.literal('upload')),
     counts: countsV,
     samples: v.array(v.string()),
+    sourceGen: v.number(),
   },
   handler: async (ctx, a) => {
     const list = await ctx.db.get(a.listId);
-    if (!list) return null;
+    if (!list || (list.sourceGen ?? 0) !== a.sourceGen) return null;
     const now = Date.now();
     if (list.stagingVersionId) {
       const cur = await ctx.db.get(list.stagingVersionId);
@@ -881,11 +913,17 @@ export const stageFinish = internalMutation({
     diff: diffV,
     etag: v.optional(v.string()),
     lastModified: v.optional(v.string()),
+    sourceGen: v.number(),
   },
   handler: async (ctx, a) => {
     const ver = await staging(ctx, a.versionId);
     const list = await ctx.db.get(ver.listId);
     if (!list) return { outcome: 'gone' as const };
+    if ((list.sourceGen ?? 0) !== a.sourceGen) {
+      // Read from the address before it changed: never published or held.
+      await failStaging(ctx, list, ver._id, 'source_changed');
+      return { outcome: 'source_changed' as const };
+    }
     const now = Date.now();
     const fetchPart =
       ver.source === 'fetch'

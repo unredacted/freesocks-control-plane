@@ -121,19 +121,58 @@ export function joinSpans<T extends number | bigint>(parts: ReadonlyArray<Spans<
 
 const SLASH64 = 64n;
 
+/** IPv6 spans as the /64s they touch, merged: two addresses in one /64 are one /64. */
+function slash64s(s: Spans<bigint>): Spans<bigint> {
+  const lo: bigint[] = [];
+  const hi: bigint[] = [];
+  for (let i = 0; i < s.lo.length; i++) {
+    const a = s.lo[i]! >> SLASH64;
+    const b = s.hi[i]! >> SLASH64;
+    const last = hi.length - 1;
+    // The spans are sorted, so their /64s are too: join each to the one before when they touch.
+    if (last >= 0 && a <= hi[last]! + 1n) {
+      if (b > hi[last]!) hi[last] = b;
+    } else {
+      lo.push(a);
+      hi.push(b);
+    }
+  }
+  return { lo, hi };
+}
+
 /**
  * How much space spans cover, in the unit each family is compared in: single
  * IPv4 addresses, IPv6 /64s (a v6 address count does not fit a number, and a
- * /64 is the smallest network anyone hands out).
+ * /64 is the smallest network anyone hands out). Each /64 counts once.
  */
 export function sizeOf(f: 'v4', s: Spans<number>): number;
 export function sizeOf(f: 'v6', s: Spans<bigint>): number;
 export function sizeOf(f: ListFamily, s: Spans<number> | Spans<bigint>): number {
   let total = 0;
-  for (let i = 0; i < s.lo.length; i++) {
-    if (f === 'v4') total += (s.hi[i] as number) - (s.lo[i] as number) + 1;
-    else total += Number(((s.hi[i] as bigint) >> SLASH64) - ((s.lo[i] as bigint) >> SLASH64) + 1n);
+  if (f === 'v4') {
+    for (let i = 0; i < s.lo.length; i++) total += (s.hi[i] as number) - (s.lo[i] as number) + 1;
+    return total;
   }
+  const g = slash64s(s as Spans<bigint>);
+  for (let i = 0; i < g.lo.length; i++) total += Number(g.hi[i]! - g.lo[i]! + 1n);
+  return total;
+}
+
+/**
+ * What two versions share, in the same units: IPv4 addresses, or the IPv6
+ * /64s both touch (different addresses in one /64 share that /64).
+ */
+export function commonSize(f: 'v4', a: Spans<number>, b: Spans<number>): number;
+export function commonSize(f: 'v6', a: Spans<bigint>, b: Spans<bigint>): number;
+export function commonSize(
+  f: ListFamily,
+  a: Spans<number> | Spans<bigint>,
+  b: Spans<number> | Spans<bigint>,
+): number {
+  if (f === 'v4') return sizeOf('v4', intersect(a as Spans<number>, b as Spans<number>));
+  const both = intersect(slash64s(a as Spans<bigint>), slash64s(b as Spans<bigint>));
+  let total = 0;
+  for (let i = 0; i < both.lo.length; i++) total += Number(both.hi[i]! - both.lo[i]! + 1n);
   return total;
 }
 

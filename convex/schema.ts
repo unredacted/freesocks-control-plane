@@ -4046,6 +4046,9 @@ export default defineSchema({
     ),
     fetchEveryHours: v.number(),
     enabled: v.boolean(),
+    // Bumped when the source address changes: a read of the old address that
+    // is still running finds a different generation and its answer is dropped.
+    sourceGen: v.optional(v.number()),
     activeVersionId: v.optional(v.id('countryListVersions')),
     // A version waiting for a person to use it or throw it away.
     heldVersionId: v.optional(v.id('countryListVersions')),

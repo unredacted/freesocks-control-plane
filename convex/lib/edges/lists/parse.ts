@@ -249,10 +249,14 @@ export function parseList(text: string): ParsedList {
 
 /**
  * The content a version stands for, as one string: what the hash compares, so
- * a list that only moved its comments or its order is the same version.
+ * a list that only moved its comments or its order is the same version. What
+ * was left out is part of it: a source that keeps its entries but gains
+ * unreadable lines, too-wide ranges or entries past the caps is a new version,
+ * and the guards look at it.
  */
 export function canonicalText(p: ParsedList): string {
-  const lines: string[] = [];
+  const d = p.dropped;
+  const lines: string[] = [`# ${p.entries} ${d.invalid} ${d.nonPublic} ${d.tooBroad} ${d.capped}`];
   for (const n of p.names) lines.push(`n ${n}`);
   for (const n of p.wildcards) lines.push(`w ${n}`);
   for (let i = 0; i < p.ranges.v4.lo.length; i++)

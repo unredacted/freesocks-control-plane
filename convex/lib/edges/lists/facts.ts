@@ -72,7 +72,12 @@ export async function versionHoldsAddress(
   return !!chunk && chunkHolds(chunk.text, k.family, k.hex);
 }
 
-/** Which of the given versions hold a name, and how (exact beats a wildcard). */
+/**
+ * Which of the given versions hold a name, and how (exact beats a wildcard).
+ * Every row of the name is walked (ended versions keep theirs for a while),
+ * stopping once each version asked about is found: no cap can hide a version
+ * in use behind rows of others.
+ */
 async function versionsHoldingName(
   db: DatabaseReader,
   versions: ReadonlySet<string>,
@@ -80,16 +85,14 @@ async function versionsHoldingName(
 ): Promise<Map<string, 'exact' | 'wildcard'>> {
   const out = new Map<string, 'exact' | 'wildcard'>();
   for (const key of matchKeys(name)) {
-    const rows = await db
+    if (out.size === versions.size) break;
+    for await (const r of db
       .query('countryListMembers')
-      .withIndex('by_name_version', (q) => q.eq('name', key.name))
-      // Per list: the version in use, one waiting, one being written, one ended
-      // and not yet cleaned, each maybe exact and wildcard.
-      .take(MAX_LISTS * 8);
-    for (const r of rows) {
-      if (r.wildcard !== key.wildcard || !versions.has(r.versionId)) continue;
-      if (!out.has(r.versionId) || !key.wildcard)
-        out.set(r.versionId, key.wildcard ? 'wildcard' : 'exact');
+      .withIndex('by_name_version', (q) => q.eq('name', key.name))) {
+      if (r.wildcard !== key.wildcard || !versions.has(r.versionId) || out.has(r.versionId))
+        continue;
+      out.set(r.versionId, key.wildcard ? 'wildcard' : 'exact');
+      if (out.size === versions.size) break;
     }
   }
   return out;

@@ -15,41 +15,77 @@ import { z } from 'zod';
 export const UPLOAD_PART_BYTES = 44_000;
 /** A whole paste, in UTF-8 bytes. Larger lists come by address. */
 export const UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+/** Operator networks (ASNs) one list may cover. */
+export const MAX_LIST_NETWORKS = 32;
 
-const encoder = new TextEncoder();
-const partSize = (s: string) => encoder.encode(JSON.stringify(s)).length;
+/**
+ * What one code point adds to `JSON.stringify(text)` in UTF-8 bytes. JSON
+ * escapes per character, so sizes add up along a string and a part's size is
+ * the sum over its characters plus its two quotes: linear, however long.
+ */
+function charBytes(ch: string): number {
+  const cp = ch.codePointAt(0)!;
+  if (ch === '"' || ch === '\\') return 2;
+  if (cp < 0x20)
+    return ch === '\b' || ch === '\f' || ch === '\n' || ch === '\r' || ch === '\t' ? 2 : 6;
+  if (cp < 0x80) return 1;
+  if (cp < 0x800) return 2;
+  // A lone surrogate is written as \uXXXX.
+  if (cp >= 0xd800 && cp <= 0xdfff) return 6;
+  return cp < 0x10000 ? 3 : 4;
+}
+
+/** `JSON.stringify(text)` in UTF-8 bytes, without building it. */
+export function encodedBytes(text: string): number {
+  let n = 2;
+  for (const ch of text) n += charBytes(ch);
+  return n;
+}
 
 /**
  * Text cut into upload parts at line ends (a line too long for one part is cut
- * where it must). Joined in order, the parts are the text again.
+ * where it must). Joined in order, the parts are the text again. Each part's
+ * JSON-encoded size is at most `maxBytes`; the work is linear in the text.
  */
 export function splitUploadParts(text: string, maxBytes = UPLOAD_PART_BYTES): string[] {
   const parts: string[] = [];
   let cur = '';
-  const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
-  for (const line of lines) {
-    if (partSize(cur + line) <= maxBytes) {
-      cur += line;
-      continue;
-    }
+  let curBytes = 2;
+  const push = () => {
     if (cur) parts.push(cur);
     cur = '';
-    if (partSize(line) <= maxBytes) {
+    curBytes = 2;
+  };
+  for (const line of text.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+    const lineBytes = encodedBytes(line) - 2;
+    if (curBytes + lineBytes <= maxBytes) {
+      cur += line;
+      curBytes += lineBytes;
+      continue;
+    }
+    push();
+    if (2 + lineBytes <= maxBytes) {
       cur = line;
+      curBytes = 2 + lineBytes;
       continue;
     }
     // One line longer than a part: whole code points until it fits.
-    let piece = '';
+    let piece: string[] = [];
+    let pieceBytes = 2;
     for (const ch of line) {
-      if (partSize(piece + ch) > maxBytes) {
-        parts.push(piece);
-        piece = '';
+      const b = charBytes(ch);
+      if (pieceBytes + b > maxBytes) {
+        parts.push(piece.join(''));
+        piece = [];
+        pieceBytes = 2;
       }
-      piece += ch;
+      piece.push(ch);
+      pieceBytes += b;
     }
-    cur = piece;
+    cur = piece.join('');
+    curBytes = pieceBytes;
   }
-  if (cur) parts.push(cur);
+  push();
   return parts;
 }
 

@@ -193,6 +193,17 @@ describe('pinnedFetch', () => {
     expect(await pinnedFetch(URL_, LIMITS, trusted.d)).toEqual({ ok: false, error: 'not_found' });
   });
 
+  test('the deadline covers a lookup that never answers', async () => {
+    const { d } = deps(1, () => []);
+    const stuck: PinnedFetchDeps = { ...d, resolve: () => new Promise<Answer[]>(() => {}) };
+    const t0 = Date.now();
+    expect(await pinnedFetch(URL_, { maxBytes: 1024, timeoutMs: 50 }, stuck)).toEqual({
+      ok: false,
+      error: 'timeout',
+    });
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  });
+
   test('no answer is a failed lookup', async () => {
     const { d } = deps(1, () => []);
     expect(await pinnedFetch(URL_, LIMITS, d)).toEqual({ ok: false, error: 'dns_failed' });

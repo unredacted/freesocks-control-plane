@@ -13,11 +13,12 @@ import { internalAction, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { runWithCronOutcome } from './cronHeartbeat';
+import { MAX_LISTS } from './lib/edges/lists/facts';
 import { canonicalText, parseList, type ParsedList } from './lib/edges/lists/parse';
 import {
+  commonSize,
   decodeChunk,
   encodeChunks,
-  intersect,
   joinSpans,
   sizeOf,
   type ListFamily,
@@ -29,8 +30,11 @@ const FETCH_MAX_BYTES = 16 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
 /** Names written per staging mutation (each is a short row; a batch stays small). */
 const NAMES_PER_STAGE = 1_000;
-/** Lists fetched per cron pass. */
-const FETCH_PER_PASS = 4;
+/**
+ * Lists started per cron pass: every one that is due (a pass only schedules
+ * them; each read is its own action), so an hourly list is read every hour.
+ */
+const FETCH_PER_PASS = MAX_LISTS;
 
 type Fetcher = (
   url: string,
@@ -95,6 +99,7 @@ async function stage(
   sha256: string,
   source: 'fetch' | 'upload',
   validators: { etag?: string; lastModified?: string },
+  sourceGen: number,
 ): Promise<string> {
   const counts = countsOf(parsed);
   const begun = await ctx.runMutation(internal.countryLists.stageBegin, {
@@ -103,6 +108,7 @@ async function stage(
     source,
     counts,
     samples: parsed.samples,
+    sourceGen,
   });
   if (!begun) {
     await ctx.runMutation(internal.countryLists.recordIngest, {
@@ -110,6 +116,7 @@ async function stage(
       outcome: 'busy',
       confirmed: false,
       validators: 'keep',
+      sourceGen,
     });
     return 'busy';
   }
@@ -139,8 +146,8 @@ async function stage(
       const old6 = (await spansOf(ctx, basedOn, 'v6')) as Spans<bigint> | null;
       // The base ended and was cleaned while this was written: finishing fails it anyway.
       if (old4 && old6) {
-        v4Common = sizeOf('v4', intersect(old4, parsed.ranges.v4));
-        v6Common = sizeOf('v6', intersect(old6, parsed.ranges.v6));
+        v4Common = commonSize('v4', old4, parsed.ranges.v4);
+        v6Common = commonSize('v6', old6, parsed.ranges.v6);
       }
     }
     const names = counts.names + counts.wildcards;
@@ -159,6 +166,7 @@ async function stage(
       },
       ...(validators.etag ? { etag: validators.etag } : {}),
       ...(validators.lastModified ? { lastModified: validators.lastModified } : {}),
+      sourceGen,
     });
     return r.outcome;
   } catch (e) {
@@ -168,6 +176,7 @@ async function stage(
       confirmed: false,
       validators: 'keep',
       failedVersionId: versionId,
+      sourceGen,
     });
     throw e;
   }
@@ -190,6 +199,7 @@ export const ingest = internalAction({
         outcome,
         confirmed,
         validators,
+        sourceGen: c.sourceGen,
         ...extra,
       });
     let text: string;
@@ -238,7 +248,7 @@ export const ingest = internalAction({
         return 'held_same';
       }
       staging = true;
-      return await stage(ctx, a.listId, parsed, sha256, source, validators);
+      return await stage(ctx, a.listId, parsed, sha256, source, validators, c.sourceGen);
     } catch (e) {
       if (!staging) await record('error', false, 'keep');
       throw e;
