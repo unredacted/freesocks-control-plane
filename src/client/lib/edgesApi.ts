@@ -303,8 +303,7 @@ export interface RenderPreviewBody {
 
 /** Either a trailing window ending now, or an explicit custom date range (mirrors queries.ts). */
 export type ProbeRange =
-  | { kind: 'window'; windowMs: number }
-  | { kind: 'range'; fromMs: number; toMs: number };
+  { kind: 'window'; windowMs: number } | { kind: 'range'; fromMs: number; toMs: number };
 export const probeRangeQs = (r: ProbeRange): string =>
   r.kind === 'window' ? `window=${r.windowMs}` : `from=${r.fromMs}&to=${r.toMs}`;
 

@@ -441,9 +441,8 @@ describe('Hosts', () => {
     const { t, call, serverId, panel } = await seed();
     const { relayId } = await registerRelay(t, { listeners: [realityListener()] });
     void serverId;
-    const listener = await t.run(
-      async (ctx) =>
-        (await ctx.db.query('relayListeners').collect()).find((l) => l.relayId === relayId)!,
+    const listener = await t.run(async (ctx) =>
+      (await ctx.db.query('relayListeners').collect()).find((l) => l.relayId === relayId)!,
     );
     await t.run((ctx) =>
       ctx.db.patch(listener._id, { host: { state: 'present', uuid: 'h-edge', ownership: 'fcp' } }),

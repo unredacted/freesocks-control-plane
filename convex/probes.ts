@@ -1042,8 +1042,7 @@ export const finishRun = internalMutation({
  */
 function failStreakAfter(
   row:
-    | Pick<Doc<'probeReachability'>, 'failStreak' | 'failStreakSince' | 'streakNetworks'>
-    | undefined,
+    Pick<Doc<'probeReachability'>, 'failStreak' | 'failStreakSince' | 'streakNetworks'> | undefined,
   rs: readonly ProbeResult[],
   now: number,
 ): Pick<Doc<'probeReachability'>, 'failStreak' | 'failStreakSince' | 'streakNetworks'> {

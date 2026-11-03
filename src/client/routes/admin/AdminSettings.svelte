@@ -681,8 +681,7 @@
                     .filter((r) => r.length > 0)
                     .slice(0, 64),
                 };
-              }}
-            ></textarea>
+              }}></textarea>
             <p class="text-xs text-muted-foreground mt-1">
               A request from one of the service's own exits (a member's app refreshing through the
               tunnel) never sets a guess. Node, origin and edge addresses are known already; add

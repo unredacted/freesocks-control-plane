@@ -238,8 +238,7 @@
         class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         aria-invalid={jsonError !== null}
         value={jsonText}
-        oninput={(e) => onJsonInput(e.currentTarget.value)}
-      ></textarea>
+        oninput={(e) => onJsonInput(e.currentTarget.value)}></textarea>
       <p class="text-xs text-muted-foreground">
         The same parameters the form edits, including any the form has no field for. Text values may
         use the placeholders {'{{name}}'}, {'{{originAddress}}'}, {'{{originPort}}'} and

@@ -477,7 +477,7 @@ describe('a test that does not pass', () => {
     });
     // Too soon to try again; after the retry interval it is, and the node has the names by then.
     expect((await t.mutation(internal.sniAutoConfirm.sweep, {})).started).toBe(0);
-    vi.setSystemTime(Date.now() + AUTO_RETRY_MS);
+    vi.setSystemTime((await t.run(async () => Date.now())) + AUTO_RETRY_MS);
     node.taken = true;
     await sweepAndRun(t);
     expect(await activeNames(t, listenerId)).toContain('fresh-1.example');
@@ -488,8 +488,11 @@ describe('a test that does not pass', () => {
     const { t, bindingId } = await seed({ auto: true, script: nodeScript({ taken: false }) });
     await t.action(internal.sniRollouts.start, { bindingId });
     for (let i = 0; i < AUTO_MAX_FAILURES + 2; i++) {
+      // The real reconcile refreshes service health every five minutes; the
+      // frozen scheduler does not. Keep that independent gate fresh here.
+      await t.action(internal.edgeClientCheck.refreshHealth, {});
       await sweepAndRun(t);
-      vi.setSystemTime(Date.now() + AUTO_RETRY_MS);
+      vi.setSystemTime((await t.run(async () => Date.now())) + AUTO_RETRY_MS);
     }
     expect((await receipts(t)).filter((r) => r.state === 'failed')).toHaveLength(AUTO_MAX_FAILURES);
     const node = (await t.query(internal.sniTransports.status, { backendSlug: 'panel-a' }))

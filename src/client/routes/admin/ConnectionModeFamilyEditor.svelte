@@ -129,8 +129,7 @@
           rows={2}
           maxlength={500}
           placeholder="What this family is for, shown on the member card."
-          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-        ></textarea>
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"></textarea>
       </div>
       <div>
         <label class="text-xs text-muted-foreground mb-1 block" for="fam-audience">

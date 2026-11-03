@@ -314,8 +314,7 @@ type RehearsalContext = NonNullable<FunctionReturnType<typeof internal.edgeRehea
 
 type BodyRef = { backendShortId: string; subscriptionUrl: string; excludeNode: string | null };
 type FetchedBody =
-  | { kind: 'body'; content: string; pinnedNode?: string; nodeless: boolean }
-  | { kind: 'failed' };
+  { kind: 'body'; content: string; pinnedNode?: string; nodeless: boolean } | { kind: 'failed' };
 
 /** One representative body, fetched FRESH from the backend in `format`. */
 async function fetchBody(

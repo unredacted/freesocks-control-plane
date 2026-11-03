@@ -55,8 +55,7 @@ export interface EffectiveRealityTransport {
 export type EffectiveTransport = EffectiveWsTransport | EffectiveRealityTransport;
 
 export type CompatResult =
-  | { ok: true; effective: Record<string, EffectiveTransport> }
-  | { ok: false; issue: CompatIssue };
+  { ok: true; effective: Record<string, EffectiveTransport> } | { ok: false; issue: CompatIssue };
 
 /**
  * What identifies a mode's transport: its definition, plus what an earlier

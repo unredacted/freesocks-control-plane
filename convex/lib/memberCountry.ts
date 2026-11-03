@@ -192,10 +192,7 @@ export function suggestionCountry(
 
 /** What one CDN reading does to the stored guess. */
 export type GuessUpdate =
-  | { kind: 'none' }
-  | { kind: 'set'; country: string }
-  | { kind: 'refresh' }
-  | { kind: 'clear' };
+  { kind: 'none' } | { kind: 'set'; country: string } | { kind: 'refresh' } | { kind: 'clear' };
 
 export function nextGuess(args: {
   family: MemberFamily;

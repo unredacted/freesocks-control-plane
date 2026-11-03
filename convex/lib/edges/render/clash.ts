@@ -275,7 +275,7 @@ export function renderClash(input: RenderInput): RenderOutput {
     ...withheldNames,
   ]);
   let list = nextGroups;
-  for (let changed = true; changed; ) {
+  for (let changed = true; changed;) {
     changed = false;
     const keep: unknown[] = [];
     for (const g of list) {

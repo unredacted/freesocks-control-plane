@@ -260,11 +260,7 @@ export function removableUnder(
 
 /** Why a member body gets no backup in another failure domain (reported, never a failure). */
 export type ReducedReason =
-  | 'single_key'
-  | 'backup_disabled'
-  | 'max_entries'
-  | 'distinct_off'
-  | 'one_group';
+  'single_key' | 'backup_disabled' | 'max_entries' | 'distinct_off' | 'one_group';
 
 /**
  * Whether a rendered body should carry a backup in another group than its

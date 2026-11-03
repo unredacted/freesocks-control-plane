@@ -505,8 +505,7 @@ export const check = internalAction({
 // --- a target's certificate, certificate transparency --------------------------------------------
 
 type CertOutcome =
-  | ({ ok: true; listed: number } & UpsertTally)
-  | { ok: false; code: string | undefined };
+  ({ ok: true; listed: number } & UpsertTally) | { ok: false; code: string | undefined };
 
 export const readCert = internalAction({
   args: { slug: v.string(), actorAdminId: v.optional(v.id('adminUsers')) },

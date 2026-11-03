@@ -43,12 +43,7 @@ export interface AutoReceipt {
 }
 
 export type AutoTestState =
-  | 'testing'
-  | 'passed'
-  | 'failed'
-  | 'could_not_check'
-  | 'voided'
-  | 'stopped';
+  'testing' | 'passed' | 'failed' | 'could_not_check' | 'voided' | 'stopped';
 
 export interface AutoTestView {
   state: AutoTestState;

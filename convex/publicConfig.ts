@@ -79,9 +79,7 @@ export const get = query({
       outline: string;
     };
     const environment = (process.env.ENVIRONMENT ?? 'production') as
-      | 'production'
-      | 'development'
-      | 'test';
+      'production' | 'development' | 'test';
 
     // All the independent sub-resolvers fan out in ONE Promise.all: this
     // function became the single heaviest public query (each resolver is

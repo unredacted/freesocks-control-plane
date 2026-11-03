@@ -1744,8 +1744,9 @@ describe('subscription templates', () => {
     // Edited on the backend; the record still says matched.
     panel.templates[0]!.templateJson = earlierSingbox();
     expect(await resync(t)).toBe(0);
+    const firstRecheckAt = Date.now();
     await t.run((ctx) =>
-      ctx.db.patch(row._id, { templatesCheckedAt: Date.now() - TEMPLATE_RECHECK_MS }),
+      ctx.db.patch(row._id, { templatesCheckedAt: firstRecheckAt - TEMPLATE_RECHECK_MS }),
     );
     expect(await resync(t)).toBe(1);
     expect(panel.templates[0]!.templateJson).toEqual(SUBSCRIPTION_TEMPLATES.SINGBOX.body);
@@ -1756,8 +1757,9 @@ describe('subscription templates', () => {
     )!;
     expect(audit.payload).toMatchObject({ written: 'SINGBOX' });
     // Looked at again an hour later, nothing to write.
+    const secondRecheckAt = Date.now();
     await t.run((ctx) =>
-      ctx.db.patch(row._id, { templatesCheckedAt: Date.now() - TEMPLATE_RECHECK_MS }),
+      ctx.db.patch(row._id, { templatesCheckedAt: secondRecheckAt - TEMPLATE_RECHECK_MS }),
     );
     expect(await resync(t)).toBe(1);
     expect(templateWrites(panel)).toHaveLength(2);

@@ -72,12 +72,7 @@ export function claimsReleasable(op: OpFacts): boolean {
 }
 
 export type OpDisplayState =
-  | 'working'
-  | 'done'
-  | 'refused'
-  | 'waiting_for_nodes'
-  | 'outcome_unknown'
-  | 'recovered';
+  'working' | 'done' | 'refused' | 'waiting_for_nodes' | 'outcome_unknown' | 'recovered';
 
 /** One word for the operator, derived; control flow reads the three facts. */
 export function displayState(op: OpFacts): OpDisplayState {

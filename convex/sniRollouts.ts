@@ -501,8 +501,7 @@ export const issueReceipt = internalAction({
 
 /** Who proved a receipt: an operator's "It connected", or FCP's own client check. */
 export type ReceiptProver =
-  | { kind: 'admin'; actorAdminId?: Id<'adminUsers'> }
-  | { kind: 'client_check'; engines: string };
+  { kind: 'admin'; actorAdminId?: Id<'adminUsers'> } | { kind: 'client_check'; engines: string };
 
 export type Acceptance =
   | { ok: true; activated: number; witness: boolean; already: boolean }

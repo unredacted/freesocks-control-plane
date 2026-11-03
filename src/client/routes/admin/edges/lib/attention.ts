@@ -42,8 +42,7 @@ export interface AttentionConfirmCopy {
   danger: boolean;
 }
 export type AttentionPlan =
-  | { type: 'navigate' }
-  | { type: 'call'; confirm: AttentionConfirmCopy | null };
+  { type: 'navigate' } | { type: 'call'; confirm: AttentionConfirmCopy | null };
 
 export const ATTENTION_ACTION_PLAN = {
   resolve_quarantine: { type: 'navigate' },
