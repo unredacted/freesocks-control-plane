@@ -25,13 +25,11 @@ export function isIpv6Literal(s: string): boolean {
   if (groups.some((g) => g.length === 0 || g.length > 4 || !/^[0-9a-fA-F]+$/.test(g))) {
     // Allow an embedded IPv4 tail (::ffff:192.0.2.4).
     const last = groups[groups.length - 1];
-    if (
-      !(
-        last &&
-        isIpv4Literal(last) &&
-        groups.slice(0, -1).every((g) => /^[0-9a-fA-F]{1,4}$/.test(g))
-      )
-    ) {
+    if (!(
+      last &&
+      isIpv4Literal(last) &&
+      groups.slice(0, -1).every((g) => /^[0-9a-fA-F]{1,4}$/.test(g))
+    )) {
       return false;
     }
   }
@@ -84,7 +82,7 @@ export function canonicalIp(s: string): string | null {
 function v6Text(g: readonly number[]): string {
   let best = -1;
   let bestLen = 1;
-  for (let i = 0; i < 8; ) {
+  for (let i = 0; i < 8;) {
     let j = i;
     while (j < 8 && g[j] === 0) j++;
     if (j - i > bestLen) {

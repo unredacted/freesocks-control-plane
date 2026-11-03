@@ -5,6 +5,7 @@ import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { capPakoAlias } from './scripts/cap-pako-alias.mjs';
 
 /**
  * Subresource Integrity (CDN-blinding Phase 3). Two outputs, both from the exact
@@ -102,12 +103,15 @@ export default defineConfig(() => ({
     sriPlugin(),
   ],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@client': path.resolve(__dirname, './src/client'),
-      '@shared': path.resolve(__dirname, './src/shared'),
-    },
+    alias: [
+      { find: '@', replacement: path.resolve(__dirname, './src') },
+      { find: '@client', replacement: path.resolve(__dirname, './src/client') },
+      { find: '@shared', replacement: path.resolve(__dirname, './src/shared') },
+      capPakoAlias,
+    ],
   },
+  // An asset URL must bypass CJS dependency prebundling in dev.
+  optimizeDeps: { exclude: ['pako/browser/inflate?url'] },
   esbuild: { target: 'esnext' },
   build: {
     outDir: 'dist',

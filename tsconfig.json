@@ -20,9 +20,7 @@
     "noEmit": true,
     "allowImportingTsExtensions": false,
     "verbatimModuleSyntax": false,
-    "ignoreDeprecations": "6.0",
     "types": ["node"],
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
       "@client/*": ["./src/client/*"],

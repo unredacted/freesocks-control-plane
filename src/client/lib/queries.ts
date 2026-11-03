@@ -322,8 +322,7 @@ export const adminTelemetryConfigQuery = () =>
 
 /** Either a trailing window ending now, or an explicit custom date range. */
 export type TelemetryRange =
-  | { kind: 'window'; windowMs: number }
-  | { kind: 'range'; fromMs: number; toMs: number };
+  { kind: 'window'; windowMs: number } | { kind: 'range'; fromMs: number; toMs: number };
 
 const rangeQs = (r: TelemetryRange): string =>
   r.kind === 'window' ? `window=${r.windowMs}` : `from=${r.fromMs}&to=${r.toMs}`;

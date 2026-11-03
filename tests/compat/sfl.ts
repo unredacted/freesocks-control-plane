@@ -70,7 +70,7 @@ try {
   // The app also owns a tray window (tray.html); drive the main window only.
   const isMainWindow = (candidate: Page) => /\/index\.html(?:[?#]|$)/.test(candidate.url());
   let page = context.pages().find(isMainWindow);
-  for (const deadline = Date.now() + 30_000; !page && Date.now() < deadline; ) {
+  for (const deadline = Date.now() + 30_000; !page && Date.now() < deadline;) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     page = context.pages().find(isMainWindow);
   }

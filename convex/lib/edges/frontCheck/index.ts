@@ -75,8 +75,7 @@ export interface FrontCheckResult {
 
 /** The qualification account, in the form the listener's protocol authenticates. */
 export type FrontCredential =
-  | { kind: 'vless'; uuid: string }
-  | { kind: 'trojan'; password: string };
+  { kind: 'vless'; uuid: string } | { kind: 'trojan'; password: string };
 
 export interface QualifyFrontArgs {
   /** The fronted hostname: the dial name, the SNI and the HTTP Host. */

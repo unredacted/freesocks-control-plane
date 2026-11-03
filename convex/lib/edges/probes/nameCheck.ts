@@ -22,13 +22,7 @@ import { normalizeCountry, shortError, type VantageClass } from './types';
 
 /** What one vantage saw. See the table in docs/edges.md. */
 export type NameOutcome =
-  | 'ok'
-  | 'answered'
-  | 'cert_mismatch'
-  | 'reset'
-  | 'timeout'
-  | 'refused'
-  | 'error';
+  'ok' | 'answered' | 'cert_mismatch' | 'reset' | 'timeout' | 'refused' | 'error';
 
 export type VantageSource = 'globalping' | 'ripeatlas';
 
@@ -140,8 +134,7 @@ export function vantageKeyOf(parts: readonly unknown[]): string {
 // --- Globalping ----------------------------------------------------------------------------------
 
 export type GlobalpingLocations =
-  | { country: string; limit: number; preferEyeball?: boolean }
-  | { reuse: string };
+  { country: string; limit: number; preferEyeball?: boolean } | { reuse: string };
 
 /** One name, one address: `HEAD /` over HTTPS with the name as SNI and Host. */
 export function globalpingNameRequest(t: NameCheckTarget, where: GlobalpingLocations) {

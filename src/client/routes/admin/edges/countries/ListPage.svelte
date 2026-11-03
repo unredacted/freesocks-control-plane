@@ -174,8 +174,7 @@
             class="border-input bg-background w-full rounded-md border px-3 py-2 font-mono text-xs"
             placeholder="example.com&#10;*.example.org&#10;192.0.2.0/24"
             autocapitalize="off"
-            spellcheck={false}
-          ></textarea>
+            spellcheck={false}></textarea>
           <p class="text-muted-foreground text-xs">
             One name, wildcard, address or range per line. Lines starting with # are skipped. At
             most 4 MB: a larger list needs an address.

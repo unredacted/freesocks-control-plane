@@ -7,13 +7,7 @@
  */
 
 export type HoldReason =
-  | 'first_version'
-  | 'emptied'
-  | 'jump'
-  | 'replaced'
-  | 'too_broad'
-  | 'invalid'
-  | 'capped';
+  'first_version' | 'emptied' | 'jump' | 'replaced' | 'too_broad' | 'invalid' | 'capped';
 
 export interface ListMeasure {
   names: number;

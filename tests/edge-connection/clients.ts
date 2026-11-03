@@ -71,9 +71,7 @@ export function parseShareLink(link: string): Endpoint {
     throw new Error(`the test link speaks ${u.protocol}, which this harness does not import`);
   const type = (q.get('type') ?? 'tcp') as Endpoint['network'];
   const security = (q.get('security') ?? (u.protocol === 'trojan:' ? 'tls' : 'none')) as
-    | 'none'
-    | 'tls'
-    | 'reality';
+    'none' | 'tls' | 'reality';
   return {
     protocol: u.protocol === 'vless:' ? 'vless' : 'trojan',
     server,

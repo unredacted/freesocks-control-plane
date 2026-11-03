@@ -103,8 +103,7 @@ async function resolveRegistrationBoundary(
   ctx: MutationCtx,
   scopes: string[],
   requested:
-    | { backendServerIds?: string[]; backendSlugs?: string[]; nodeNames?: string[] }
-    | undefined,
+    { backendServerIds?: string[]; backendSlugs?: string[]; nodeNames?: string[] } | undefined,
 ): Promise<{ backendServerIds: Id<'backendServers'>[]; nodeNames?: string[] } | null> {
   const hasScope = scopes.includes(REGISTER_SCOPE);
   const refuse = (message: string) => new ConvexError({ code: 'validation', message });

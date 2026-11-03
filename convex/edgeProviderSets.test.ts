@@ -45,9 +45,8 @@ describe('provider set view and state', () => {
     const dns = await createAccount(t, { provider: 'cloudflare', name: 'acct-dns' });
     await t.mutation(internal.edgeProviderAccounts.recordTest, { id: dns, ok: true });
     const locationOf = (accountId: Id<'edgeProviderAccounts'>) =>
-      t.run(
-        async (c) =>
-          (await c.db.query('edgeLocations').collect()).find((l) => l.accountId === accountId)!,
+      t.run(async (c) =>
+        (await c.db.query('edgeLocations').collect()).find((l) => l.accountId === accountId)!,
       );
     const dnsLocation = await locationOf(dns);
     // The zone's facts, as its location's check observed them.
@@ -130,9 +129,8 @@ describe('the pool against the set: what a free slot is held for', () => {
     for (const id of [fx.accountId, other])
       await t.mutation(internal.edgeProviderAccounts.recordTest, { id, ok: true });
     const locationOf = (accountId: Id<'edgeProviderAccounts'>) =>
-      t.run(
-        async (c) =>
-          (await c.db.query('edgeLocations').collect()).find((l) => l.accountId === accountId)!,
+      t.run(async (c) =>
+        (await c.db.query('edgeLocations').collect()).find((l) => l.accountId === accountId)!,
       );
     const a = await locationOf(fx.accountId);
     const b = await locationOf(other);

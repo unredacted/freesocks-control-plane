@@ -41,8 +41,7 @@ export function xhttpSessionId(randomBytes: (n: number) => Uint8Array): string {
 }
 
 export type XhttpDownVerdict =
-  | { ok: true }
-  | { ok: false; reason: 'status' | 'content_type'; status: number };
+  { ok: true } | { ok: false; reason: 'status' | 'content_type'; status: number };
 
 /**
  * The downstream response head. Xray answers 200 with `text/event-stream`

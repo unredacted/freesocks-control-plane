@@ -1794,7 +1794,7 @@ describe('ownership links and attempt fencing', () => {
     for (const e of spares) {
       const after = (await t.run((c) => c.db.get(e._id)))!;
       expect(after.status).toBe('draining');
-      expect(after.drainUntil!).toBeLessThanOrEqual(Date.now());
+      expect(after.drainUntil!).toBeLessThanOrEqual(await t.run(async () => Date.now()));
     }
   });
 

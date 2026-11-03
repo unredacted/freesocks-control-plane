@@ -60,8 +60,7 @@
         class="border-input bg-background w-full rounded-md border px-3 py-2 font-mono text-xs"
         placeholder="example.com&#10;192.0.2.1"
         autocapitalize="off"
-        spellcheck={false}
-      ></textarea>
+        spellcheck={false}></textarea>
       <Button type="submit" size="sm" disabled={entries.length === 0 || busy}>
         {busy ? 'Looking…' : 'Look up'}
       </Button>

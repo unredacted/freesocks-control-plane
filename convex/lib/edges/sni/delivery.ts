@@ -21,13 +21,7 @@
  */
 
 export type NameDelivery =
-  | 'in_use'
-  | 'waiting_test'
-  | 'to_send'
-  | 'idle'
-  | 'checking'
-  | 'failing'
-  | 'off';
+  'in_use' | 'waiting_test' | 'to_send' | 'idle' | 'checking' | 'failing' | 'off';
 
 export interface DeliveryName {
   name: string;
