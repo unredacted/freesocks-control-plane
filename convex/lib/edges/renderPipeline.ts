@@ -19,7 +19,7 @@ import {
   type EdgeTier,
   type PublishedEdge,
 } from './assignment';
-import { detectBodyFormat } from './clientFamilies';
+import { RENDER_FORMAT_OF, detectBodyFormat } from './clientFamilies';
 import { formatSupported } from './protocols';
 import {
   edgeAddressesOf,
@@ -101,12 +101,6 @@ export function renderValidUntil(
   }
   return earliest;
 }
-
-const RENDER_FORMAT_OF = {
-  links: 'links',
-  'singbox-json': 'singbox',
-  'clash-yaml': 'clash',
-} as const;
 
 export function applyEdgeRender(
   rctx: EdgeRenderContext,

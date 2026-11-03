@@ -14,6 +14,7 @@ import { ConvexError, v } from 'convex/values';
 import { internalAction, internalQuery } from './_generated/server';
 import type { ActionCtx, QueryCtx } from './_generated/server';
 import { lanesOn } from './lib/edges/lanes';
+import { sampleFamilyFor } from './lib/edges/clientFamilies';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -436,24 +437,39 @@ async function relayFacts(
     relay.origin.kind !== 'manual' &&
     publishedCount(relay.publishedEdgeIds) > 0
   ) {
-    try {
-      const fam = RENDER_CLIENT_FAMILIES[0];
-      const p = await renderPreviewFor(ctx, relay, fam);
-      preview = {
-        family: fam,
-        applied: p.applied,
-        reason: p.reason,
-        emitted: p.emitted,
-        mismatched: (p.listeners ?? []).filter((l) => l.reason === 'entry_mismatch').length,
-      };
-    } catch {
-      preview = {
-        family: RENDER_CLIENT_FAMILIES[0],
-        applied: false,
-        reason: 'preview_failed',
-        emitted: 0,
-        mismatched: 0,
-      };
+    // The sample family carries at least one live listener (sing-box wherever
+    // it can): an XHTTP-only origin is sampled as Mihomo.
+    const fam = sampleFamilyFor(
+      listenerRows
+        .filter((l) => !l.retired && l.deployed && l.enabled)
+        .map((l) => ({
+          protocol: l.protocol,
+          streamTransport: l.streamTransport,
+          security: l.security,
+        })),
+    );
+    if (!fam) {
+      // No family carries any live listener: nothing to sample (`no_family_carries`).
+      preview = { family: null, applied: false, reason: null, emitted: 0, mismatched: 0 };
+    } else {
+      try {
+        const p = await renderPreviewFor(ctx, relay, fam);
+        preview = {
+          family: fam,
+          applied: p.applied,
+          reason: p.reason,
+          emitted: p.emitted,
+          mismatched: (p.listeners ?? []).filter((l) => l.reason === 'entry_mismatch').length,
+        };
+      } catch {
+        preview = {
+          family: fam,
+          applied: false,
+          reason: 'preview_failed',
+          emitted: 0,
+          mismatched: 0,
+        };
+      }
     }
   }
   return {

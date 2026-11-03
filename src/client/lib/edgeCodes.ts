@@ -462,6 +462,12 @@ const COPY = {
     explain: 'The origin is switched off; its members receive an unavailable response.',
     fix: 'Enable the origin.',
   },
+  no_family_carries: {
+    label: 'No app can carry this node',
+    explain:
+      'No app FCP serves can carry any live listener of this node, so no sample subscription could be checked.',
+    fix: 'Check that the node has a deployed, enabled listener.',
+  },
   preview_not_applied: {
     label: 'Preview did not apply',
     explain: 'A render preview produced no rewritten entry for at least one listener.',
@@ -1181,8 +1187,15 @@ const COPY = {
   no_entries: {
     label: 'App gets no connection',
     explain:
-      "The panel served this app no connection at all, because the app's format cannot carry the node's protocol. An old Clash app has no VLESS, for one. More addresses would not change it.",
+      "The panel served this app no connection at all, because the app's format cannot carry the node's protocol. An old Clash app has no VLESS, and sing-box has no XHTTP. More addresses would not change it.",
     fix: 'Members on such an app need one that supports the mode, such as a Mihomo (Clash Meta) app.',
+  },
+  // A preview's per-listener note: the family's format has no way to carry the listener.
+  family_cannot_carry: {
+    label: 'App cannot carry this listener',
+    explain:
+      'This app cannot speak what the listener speaks, so the panel gives it no entry for it. sing-box has no XHTTP, for one.',
+    fix: 'Members on such an app need one that speaks it, such as a Mihomo (Clash Meta) app.',
   },
   no_match: {
     label: 'No template entry',

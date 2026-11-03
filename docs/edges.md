@@ -2212,7 +2212,10 @@ live setup run and its plain step, published / spare / offline counts, worst hea
 whether any item names it, and what members get) and `fleet` (the headline: what matters most,
 its count, the total and the protected count). The per-origin Delivery card reads
 `setup-status`'s `delivery` (relay scope only), the same judgement plus `degraded` from the
-sample render. The judgement lives in `convex/lib/edges/originStatus.ts` (one pure function,
+sample render. The sample renders the first client family (sing-box first) whose format can
+carry at least one of the origin's live listeners, so an XHTTP-only origin is sampled as Mihomo;
+when no family can carry any, the rendering step says `no_family_carries`, never `empty_pool`.
+The judgement lives in `convex/lib/edges/originStatus.ts` (one pure function,
 ranked by the server's own attention order); the CMS only words its codes and counts.
 
 **Provider health is not reachability.** An edge's `health` is the PROVIDER's own check of
