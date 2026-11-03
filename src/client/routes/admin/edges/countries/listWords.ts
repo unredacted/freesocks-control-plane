@@ -196,7 +196,7 @@ export const HOW_WORDS = {
   range: 'in a range',
 } as const;
 
-/** Entries typed one per line or separated by spaces or commas (at most 100). */
+/** Entries typed one per line or separated by spaces or commas (at most 50, as the server takes). */
 export function parseLookup(text: string): string[] {
-  return [...new Set(text.split(/[\s,]+/).filter(Boolean))].slice(0, 100);
+  return [...new Set(text.split(/[\s,]+/).filter(Boolean))].slice(0, 50);
 }

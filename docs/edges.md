@@ -3650,7 +3650,8 @@ Routes (under `/api/v1/admin/edges/`; reads `admin:servers:read`, writes `admin:
 `POST lists/{id}/fetch` and `POST lists/{id}/uploads/{uploadId}/finish` (throttled like a provider
 call), `POST lists/{id}/uploads`, `POST lists/{id}/uploads/{uploadId}/parts {index, text}`
 (`admin.edges.list-upload`, 300 a minute), `POST lists/{id}/versions/{versionId}/approve|reject`,
-and `POST lists/lookup {entries}` (read only, at most 100: which lists hold each name or address,
+and `POST lists/lookup {entries}` (read only, at most 50, so one query stays inside Convex's 4,096
+index reads: which lists hold each name or address,
 each flagged off or stale). Audit: `admin.edge.list.create|update|delete|upload|fetch|approve|reject`,
 `edge.list.published|held|failed` (ids, counts and codes; never the address, a name or a range).
 Admin: Countries, Country lists (`/admin/edges/countries/lists`), one page per list, a card on

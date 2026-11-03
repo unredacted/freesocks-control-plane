@@ -260,11 +260,19 @@ export const detail = internalQuery({
   },
 });
 
-/** The lookup box: which lists hold each name or address (at most 100). */
+/**
+ * Entries one lookup takes. An address costs one index read per list (up to
+ * 50), and one query may read at most 4,096 index ranges: 50 x 50 stays well
+ * inside, with room for the config and the lists.
+ */
+export const MAX_LOOKUP_ENTRIES = 50;
+
+/** The lookup box: which lists hold each name or address. */
 export const lookup = internalQuery({
   args: { entries: v.array(v.string()) },
   handler: async (ctx, a) => {
-    if (a.entries.length > 100) refuse('validation', 'Look up at most 100 entries at once');
+    if (a.entries.length > MAX_LOOKUP_ENTRIES)
+      refuse('validation', `Look up at most ${MAX_LOOKUP_ENTRIES} entries at once`);
     const results = await lookupEntries(ctx.db, a.entries, Date.now());
     return {
       results: results.map((r) => ({

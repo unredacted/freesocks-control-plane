@@ -727,3 +727,12 @@ describe('review fixes', () => {
     expect((await lookup(['example.com']))[0]!.lists.map((l) => l.how)).toEqual(['exact']);
   });
 });
+
+describe('lookup size', () => {
+  test('one lookup takes at most 50 entries, inside the index-read limit', async () => {
+    const { call } = await seed();
+    const many = Array.from({ length: 51 }, (_, i) => `n${i}.example.com`);
+    expect((await call('POST', 'lists/lookup', { entries: many })).status).toBe(400);
+    expect((await call('POST', 'lists/lookup', { entries: many.slice(0, 50) })).status).toBe(200);
+  });
+});
