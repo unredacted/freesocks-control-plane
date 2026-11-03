@@ -36,7 +36,7 @@ import { siteOf } from './lib/edges/sni/hunt/sources';
 import { holdReasons, type ListMeasure } from './lib/edges/lists/guards';
 import { isFresh, lookupEntries, MAX_LISTS } from './lib/edges/lists/facts';
 import { bumpFactsGen } from './countryListFacts';
-import { feedViews, startFeedRuns, sweepFeeds } from './countryListFeeds';
+import { feedViews, startFeedRuns, startPendingFeeds, sweepFeeds } from './countryListFeeds';
 import {
   MAX_LIST_NETWORKS,
   UPLOAD_MAX_BYTES,
@@ -397,6 +397,9 @@ export const update = internalMutation({
     // What evidence reads moves with these: every stored fact is looked at again.
     if (changed.some((c) => ['country', 'regime', 'enabled', 'url'].includes(c)))
       await bumpFactsGen(ctx);
+    // Switched on: feeds that waited take the version in use.
+    if (a.enabled === true && !list.enabled)
+      await startPendingFeeds(ctx, (await ctx.db.get(list._id))!);
     await audit(ctx, 'admin.edge.list.update', a.actorAdminId, {
       listId: list._id,
       country: patch.country ?? list.country,
@@ -728,8 +731,19 @@ export const recordIngest = internalMutation({
           : {}),
       };
     }
-    if (a.confirmed && list.activeVersionId) patch.confirmedAt = now;
+    // Confirmed again: a list that had turned stale is read again, at once.
+    let freshAgain = false;
+    if (a.confirmed && list.activeVersionId) {
+      patch.confirmedAt = now;
+      const cfg = await resolveEdgeConfig(ctx.db);
+      freshAgain = !isFresh(list, cfg.lists.staleDays, now);
+      if (freshAgain) patch.factsFresh = true;
+    }
     await ctx.db.patch(list._id, patch);
+    if (freshAgain) {
+      await bumpFactsGen(ctx);
+      await startPendingFeeds(ctx, (await ctx.db.get(list._id))!);
+    }
     if (a.failedVersionId) await failStaging(ctx, list, a.failedVersionId, a.outcome);
     const quiet = ['unchanged', 'not_modified', 'held_same', 'busy'];
     if (!quiet.includes(a.outcome))
@@ -1085,6 +1099,8 @@ export const afterPublish = internalMutation({
     const now = Date.now();
     if (a.cursor === undefined) {
       // Once per publication: what the lists say moved, and the feeds take the new names.
+      const cfg = await resolveEdgeConfig(ctx.db);
+      await ctx.db.patch(list._id, { factsFresh: isFresh(list, cfg.lists.staleDays, now) });
       await bumpFactsGen(ctx);
       await startFeedRuns(ctx, list);
     }

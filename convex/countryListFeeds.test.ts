@@ -19,6 +19,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
+import { __setListFetchForTests } from './countryListOps';
 import { splitUploadParts } from '../src/shared/contracts/countryLists';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -329,5 +330,104 @@ describe('a block list on a family name', () => {
     expect(marks.map((m) => [m.name, m.country, m.state, m.source])).toEqual([
       ['x.example.com', 'RU', 'blocked', 'operator'],
     ]);
+  });
+});
+
+describe('review fixes', () => {
+  test('a confirmation that makes a stale list fresh refreshes its facts at once', async () => {
+    const { t, call, feed, candidates, refresh } = await seed();
+    __setListFetchForTests(async () => ({ ok: true, status: 200, text: NAMES, etag: '"a"' }));
+    const id = (
+      await call('POST', 'lists', {
+        label: 'Fetched',
+        country: 'RU',
+        regime: 'allowlist',
+        source: { kind: 'url', url: 'https://example.com/a.txt' },
+      })
+    ).body.id as ListId;
+    await t.action(internal.countryListOps.ingest, { listId: id });
+    const l = (await t.run((ctx) => ctx.db.get(id)))!;
+    await call('POST', `lists/${id}/versions/${l.heldVersionId}/approve`, {});
+    await t.mutation(internal.countryLists.afterPublish, {
+      versionId: (await t.run((ctx) => ctx.db.get(id)))!.activeVersionId!,
+    });
+    await call('POST', `lists/${id}/feeds`, { feeds: [{ network: 'net-a' }] });
+    await feed(id);
+    vi.setSystemTime(Date.now() + 31 * DAY);
+    await t.mutation(internal.countryLists.sweep, {});
+    await refresh();
+    expect((await candidates())[0]!.onLists).toBeUndefined();
+    // The same content again: confirmed, fresh, and read at once (no sweep).
+    __setListFetchForTests(async () => ({ ok: true, status: 304 }));
+    expect(await t.action(internal.countryListOps.ingest, { listId: id })).toBe('not_modified');
+    await refresh();
+    expect((await candidates())[0]!.onLists).toHaveLength(1);
+    __setListFetchForTests(null);
+  });
+
+  test('a feed chosen while it could not feed starts once it can', async () => {
+    const { t, call, create, paste, approve, runs, feed, candidates } = await seed();
+    const id = await create();
+    await paste(id, NAMES);
+    await approve(id);
+    // Switched off: the feed is saved, nothing runs.
+    await t.mutation(internal.edgeAdmin.patchConfig, { patch: { 'lists.enabled': false } });
+    expect(
+      (await call('POST', `lists/${id}/feeds`, { feeds: [{ network: 'net-a' }] })).body,
+    ).toEqual({ ok: true, started: 0 });
+    expect(await runs(id)).toEqual([]);
+    await t.mutation(internal.edgeAdmin.patchConfig, { patch: { 'lists.enabled': true } });
+    // The patch scheduled this; the tests run it.
+    expect(await t.mutation(internal.countryListFeeds.startPending, {})).toEqual({ started: 1 });
+    await feed(id);
+    expect(await candidates()).toHaveLength(2);
+    // A list switched off and on again, with a version it already fed, starts nothing new.
+    await call('PATCH', `lists/${id}`, { enabled: false });
+    await call('PATCH', `lists/${id}`, { enabled: true });
+    expect((await runs(id)).filter((r) => r.state === 'running')).toEqual([]);
+  });
+
+  test('a list switched on starts the feeds that waited', async () => {
+    const { call, create, paste, approve, runs } = await seed();
+    const id = await create();
+    await paste(id, NAMES);
+    await approve(id);
+    await call('PATCH', `lists/${id}`, { enabled: false });
+    await call('POST', `lists/${id}/feeds`, { feeds: [{ network: 'net-a' }] });
+    expect(await runs(id)).toEqual([]);
+    await call('PATCH', `lists/${id}`, { enabled: true });
+    expect((await runs(id)).map((r) => r.state)).toEqual(['running']);
+  });
+
+  test('old finished runs are dropped however many there are', async () => {
+    const { t, create, paste, approve, list } = await seed();
+    const id = await create();
+    await paste(id, NAMES);
+    await approve(id);
+    const versionId = (await list(id))!.activeVersionId!;
+    const old = Date.now() - 31 * DAY;
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 450; i++)
+        await ctx.db.insert('countryListFeedRuns', {
+          listId: id,
+          feedKey: `network:${i}`,
+          versionId,
+          state: 'done',
+          gen: 1,
+          counts: {
+            added: 0,
+            known: 0,
+            ignored: 0,
+            inFamily: 0,
+            invalid: 0,
+            capped: 0,
+            wildcards: 0,
+          },
+          startedAt: old,
+          updatedAt: old,
+        });
+    });
+    for (let i = 0; i < 3; i++) await t.mutation(internal.countryListFeeds.dropOldRuns, {});
+    expect(await t.run((ctx) => ctx.db.query('countryListFeedRuns').collect())).toEqual([]);
   });
 });

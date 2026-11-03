@@ -38,6 +38,7 @@ const DAY = 24 * HOUR;
 const RUN_STALE_MS = HOUR;
 /** Finished runs kept, for the list page's "last fed". */
 const RUN_RETENTION_MS = 30 * DAY;
+const RUN_DROP_PAGE = 200;
 
 const zero = () => ({
   added: 0,
@@ -123,6 +124,37 @@ export async function startFeedRuns(
   }
   return started;
 }
+
+/**
+ * Feeds that should be running and are not: never fed, last fed an older
+ * version, or stopped because the list was not feedable then. Called when a
+ * list can feed again (switched on, the switch on, fresh again) and daily.
+ */
+export async function startPendingFeeds(ctx: MutationCtx, list: List): Promise<number> {
+  if (!(await feedable(ctx.db, list, Date.now()))) return 0;
+  const keys: string[] = [];
+  for (const f of list.feeds ?? []) {
+    const key = feedKeyOf(f);
+    const last = await latestRun(ctx.db, list._id, key);
+    if (last?.state === 'running') continue;
+    const waited = last?.state === 'stopped' && last.stopped === 'not_feedable';
+    if (last && last.versionId === list.activeVersionId && !waited) continue;
+    if (!(await scopeOfFeed(ctx.db, f))) continue;
+    keys.push(key);
+  }
+  return keys.length > 0 ? startFeedRuns(ctx, list, keys) : 0;
+}
+
+/** `startPendingFeeds` for every list (the switch was turned on). */
+export const startPending = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let started = 0;
+    for (const list of await ctx.db.query('countryLists').take(MAX_LISTS))
+      started += await startPendingFeeds(ctx, list);
+    return { started };
+  },
+});
 
 /** One page of a run: the next names into the feed's scope. */
 export const feedStep = internalMutation({
@@ -280,7 +312,7 @@ export async function feedViews(db: DatabaseReader, list: List) {
  * last run was capped once its scope has room, and drop old finished runs.
  */
 export async function sweepFeeds(ctx: MutationCtx, now: number) {
-  const counts = { resumed: 0, retried: 0, dropped: 0 };
+  const counts = { resumed: 0, retried: 0 };
   for (const run of await ctx.db
     .query('countryListFeedRuns')
     .withIndex('by_state_updated', (q) =>
@@ -305,16 +337,27 @@ export async function sweepFeeds(ctx: MutationCtx, now: number) {
       if (total < MAX_CANDIDATES_PER_SCOPE) retry.push(key);
     }
     if (retry.length > 0) counts.retried += await startFeedRuns(ctx, list, retry);
+    // Anything a missed moment left behind (a feed added while the list was off).
+    counts.retried += await startPendingFeeds(ctx, (await ctx.db.get(list._id))!);
   }
-  for (const state of ['done', 'stopped'] as const)
-    for (const run of await ctx.db
-      .query('countryListFeedRuns')
-      .withIndex('by_state_updated', (q) =>
-        q.eq('state', state).lt('updatedAt', now - RUN_RETENTION_MS),
-      )
-      .take(200)) {
-      await ctx.db.delete(run._id);
-      counts.dropped++;
-    }
+  await ctx.scheduler.runAfter(0, internal.countryListFeeds.dropOldRuns, {});
   return counts;
 }
+
+/** Finished runs past their 30 days, a page at a time until none is left. */
+export const dropOldRuns = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - RUN_RETENTION_MS;
+    let full = false;
+    for (const state of ['done', 'stopped'] as const) {
+      const page = await ctx.db
+        .query('countryListFeedRuns')
+        .withIndex('by_state_updated', (q) => q.eq('state', state).lt('updatedAt', cutoff))
+        .take(RUN_DROP_PAGE);
+      for (const run of page) await ctx.db.delete(run._id);
+      if (page.length === RUN_DROP_PAGE) full = true;
+    }
+    if (full) await ctx.scheduler.runAfter(0, internal.countryListFeeds.dropOldRuns, {});
+  },
+});

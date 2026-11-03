@@ -216,6 +216,9 @@ export const patchConfig = internalMutation({
     // Country lists switched on or off, or a new stale window: what evidence reads moved.
     if (changedKeys.some((k) => k === 'lists.enabled' || k === 'lists.staleDays'))
       await bumpFactsGen(ctx);
+    // Switched on: feeds that waited take the version in use.
+    if (changedKeys.includes('lists.enabled'))
+      await ctx.scheduler.runAfter(0, internal.countryListFeeds.startPending, {});
     // Names for addresses on or off changes what every member is handed too.
     if (changedKeys.some((k) => k.startsWith('render.') || k === 'names.enabled')) {
       const now = Date.now();
