@@ -7,12 +7,7 @@
 import type { AttestationFailure, ConnectionAttestation } from './hpke';
 
 export type HpkeAttestation =
-  | 'pending'
-  | 'active'
-  | 'warn'
-  | 'stale'
-  | 'unreachable'
-  | 'unconfigured';
+  'pending' | 'active' | 'warn' | 'stale' | 'unreachable' | 'unconfigured';
 
 /** The failures that mean someone swapped the key, rather than that the server has none. */
 const TAMPER_FAILURES: readonly AttestationFailure[] = ['signature', 'revoked'];

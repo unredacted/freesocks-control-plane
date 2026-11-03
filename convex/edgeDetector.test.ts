@@ -303,9 +303,9 @@ describe('origin attribution on member reports', () => {
     expect(rows.map((r) => r.detectorWeight)).toEqual([1, 0]);
     const marks = await s.t.run((ctx) => ctx.db.query('relayReportMarks').collect());
     expect(marks).toHaveLength(1);
-    expect(marks[0].expiresAt).toBe(boundary - 1000 + windowMs);
+    expect(marks[0].expiresAt).toBe(Math.floor(rows[0]._creationTime) + windowMs);
     // Once the member's own window has elapsed, a new report counts again.
-    vi.setSystemTime(boundary - 1000 + windowMs + 1);
+    vi.setSystemTime(marks[0].expiresAt + 1);
     expect((await report(s.t, m.cookie, { reason: 'cant-connect' })).status).toBe(200);
     const rows2 = await s.t.run((ctx) => ctx.db.query('issueReports').collect());
     expect(rows2.map((r) => r.detectorWeight)).toEqual([1, 0, 1]);
@@ -326,7 +326,7 @@ describe('origin attribution on member reports', () => {
     // The detector sees no reporter from it.
     const w = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
-      now: Date.now(),
+      now: await s.t.run(async () => Date.now()),
     }))!;
     expect(w.window.reports).toBe(1);
     expect(w.window.distinctReporters).toBe(0);
@@ -336,8 +336,23 @@ describe('origin attribution on member reports', () => {
 describe('origin block detector', () => {
   const NOW = 1_800_000_000_000;
 
+  // Setup transactions can be pinned a millisecond ahead of a frozen wall
+  // clock. Evaluate after their commit, so newly inserted reports belong to
+  // this window. Keeping setup before NOW preserves the fixed baseline hour.
+  async function evaluationTime(t: ReturnType<typeof convexTest>) {
+    const committedAt = await t.run(async () => Date.now());
+    const now = Math.max(NOW, Date.now(), committedAt);
+    vi.setSystemTime(now);
+    return now;
+  }
+
+  async function evaluateDetector(t: ReturnType<typeof convexTest>) {
+    await evaluationTime(t);
+    return t.action(internal.edgeDetector.run, {});
+  }
+
   test('edge evidence counts deduplicated reporters: repeats by one member (weight 0) add nothing', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await s.t.run(async (ctx) => {
       for (let i = 0; i < 5; i++) {
@@ -355,7 +370,7 @@ describe('origin block detector', () => {
     });
     const w = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
-      now: NOW,
+      now: await evaluationTime(s.t),
     }))!;
     expect(w.window.reports).toBe(5);
     expect(w.window.distinctReporters).toBe(1);
@@ -409,14 +424,14 @@ describe('origin block detector', () => {
   }
 
   test('the window is paginated, not collected: zero-weight duplicates ahead of the real reporters never hide them', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     // 300 deduplicated repeats are written FIRST, so any `.take(N)` with N ≤ 300
     // would read nothing but zero-weight rows and see no reporter at all.
     await bulkReports(s.t, { zeroWeight: 300, weighted: 8 });
     const w = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
-      now: NOW,
+      now: await evaluationTime(s.t),
     }))!;
     expect(w.window.reports).toBe(308);
     expect(w.window.distinctReporters).toBe(8);
@@ -424,7 +439,7 @@ describe('origin block detector', () => {
   });
 
   test('a window past the report row cap is INCOMPLETE: suspicion still shows, but the veto is evidence_incomplete and nothing rotates', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0);
@@ -446,11 +461,11 @@ describe('origin block detector', () => {
     });
     const capped = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
-      now: NOW,
+      now: await evaluationTime(s.t),
     }))!;
     expect(capped.window.incomplete).toBe(true);
     expect(capped.window.reports).toBe(100);
-    const r = await s.t.action(internal.edgeDetector.run, {});
+    const r = await evaluateDetector(s.t);
     expect(r.rotated).toBe(0);
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion!.veto).toBe('evidence_incomplete');
@@ -462,16 +477,16 @@ describe('origin block detector', () => {
     __setEdgePlumbingForTests(null);
     const whole = (await s.t.action(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
-      now: NOW,
+      now: await evaluationTime(s.t),
     }))!;
     expect(whole.window.incomplete ?? false).toBe(false);
     expect(whole.window.reports).toBe(208);
     expect(whole.window.distinctReporters).toBe(8);
-    expect((await s.t.action(internal.edgeDetector.run, {})).rotated).toBe(1);
+    expect((await evaluateDetector(s.t)).rotated).toBe(1);
   });
 
   test('a baseline sample is written ONCE from the window, and never while the node stats are stale', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     // Stats older than the staleness ceiling: no live user count to compare
@@ -487,7 +502,7 @@ describe('origin block detector', () => {
       }),
     );
     await bulkReports(s.t, { zeroWeight: 3, weighted: 2 });
-    await s.t.action(internal.edgeDetector.run, {});
+    await evaluateDetector(s.t);
     expect(
       (await s.t.run((ctx) => ctx.db.query('relaySamples').collect())).some((x) => x.at === NOW),
     ).toBe(false);
@@ -499,7 +514,7 @@ describe('origin block detector', () => {
     });
     const later = NOW + 60_000;
     vi.setSystemTime(later);
-    await s.t.action(internal.edgeDetector.run, {});
+    await evaluateDetector(s.t);
     const written = (await s.t.run((ctx) => ctx.db.query('relaySamples').collect())).filter(
       (x) => x.at === later,
     );
@@ -589,7 +604,7 @@ describe('origin block detector', () => {
   }
 
   test('an OFFLINE node is an outage: suspected, but the veto is node_offline and no sample joins the baseline', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0, false);
@@ -599,7 +614,7 @@ describe('origin block detector', () => {
       await ctx.db.patch(s.relayId, { autoRotate: true });
     });
     await edgeReports(s.t, s.edgeA);
-    const r = await s.t.action(internal.edgeDetector.run, {});
+    const r = await evaluateDetector(s.t);
     expect(r).toMatchObject({ suspected: 1, rotated: 0 });
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion).toMatchObject({ state: 'suspected', veto: 'node_offline' });
@@ -610,7 +625,7 @@ describe('origin block detector', () => {
   });
 
   test('a setup-owned origin is held as owned only while a run works on it; its leftover is simply not live', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 100);
@@ -621,7 +636,7 @@ describe('origin block detector', () => {
       await ctx.db.patch(s.relayId, { autoRotate: true, setupOwned: true });
     });
     const veto = async () => {
-      await s.t.action(internal.edgeDetector.run, {});
+      await evaluateDetector(s.t);
       return (await s.t.query(internal.relays.get, { id: s.relayId }))!.suspicion?.veto;
     };
     // No run at all (a cancelled or failed setup left it owned).
@@ -654,11 +669,11 @@ describe('origin block detector', () => {
   });
 
   test('quiet origin: evaluated, clear, a sample recorded', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 100);
-    const r = await s.t.action(internal.edgeDetector.run, {});
+    const r = await evaluateDetector(s.t);
     expect(r).toMatchObject({ evaluated: 1, suspected: 0, rotated: 0 });
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     // The global switch is the first gate, so it names the veto while off.
@@ -673,7 +688,7 @@ describe('origin block detector', () => {
   });
 
   test('reports-only suspicion asks the probes for evidence with CUMULATIVE stagger offsets: no two runs of one external source share a slot', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 10);
@@ -682,7 +697,7 @@ describe('origin block detector', () => {
       await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
     });
     await bulkReports(s.t, { zeroWeight: 0, weighted: 10 });
-    const r = await s.t.action(internal.edgeDetector.run, {});
+    const r = await evaluateDetector(s.t);
     expect(r.suspected).toBe(1);
     expect(r.probesRequested).toBeGreaterThan(0);
     const runs = await s.t.run((ctx) => ctx.db.query('probeRuns').collect());
@@ -701,7 +716,7 @@ describe('origin block detector', () => {
   });
 
   test('reports + load drop suspect the origin (hint), but without edge evidence nothing rotates', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 10);
@@ -711,7 +726,7 @@ describe('origin block detector', () => {
       await ctx.db.patch(s.relayId, { autoRotate: true });
     });
     await bulkReports(s.t, { zeroWeight: 0, weighted: 10 });
-    const r = await s.t.action(internal.edgeDetector.run, {});
+    const r = await evaluateDetector(s.t);
     expect(r).toMatchObject({ evaluated: 1, suspected: 1, rotated: 0 });
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion).toMatchObject({
@@ -735,7 +750,7 @@ describe('origin block detector', () => {
   });
 
   test('a backend-server origin has NO load / online signal: the window carries none and the load score is 0', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const t = convexTest(schema, modules);
     const serverB = await insertPanelServer(t, { slug: 'panel-b' });
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
@@ -763,7 +778,10 @@ describe('origin block detector', () => {
         lastStatsAt: NOW - 60_000,
       }),
     );
-    const w = (await t.action(internal.edgeDetector.relayWindow, { relayId, now: NOW }))!;
+    const w = (await t.action(internal.edgeDetector.relayWindow, {
+      relayId,
+      now: await evaluationTime(t),
+    }))!;
     expect(w.usersOnline).toBeNull();
     expect(w.nodeOnline).toBeNull();
     expect(w.loadStale).toBe(true);
@@ -776,7 +794,7 @@ describe('origin block detector', () => {
     // Default `detect.requireLoadCorroboration`: reports alone cannot be
     // corroborated by a load signal that does not exist, so the origin stays
     // CLEAR (score capped at half) with the reports visible in the score parts.
-    const r = await t.action(internal.edgeDetector.run, {});
+    const r = await evaluateDetector(t);
     expect(r).toMatchObject({ evaluated: 1, suspected: 0, rotated: 0 });
     let o = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(o.suspicion).toMatchObject({ state: 'clear', loadScore: 0 });
@@ -788,7 +806,7 @@ describe('origin block detector', () => {
     expect(samples.some((x) => x.at === NOW)).toBe(false);
     // Without the corroboration requirement, the same reports suspect it.
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.detect.requireLoadCorroboration', 'false'));
-    const r2 = await t.action(internal.edgeDetector.run, {});
+    const r2 = await evaluateDetector(t);
     expect(r2).toMatchObject({ evaluated: 1, suspected: 1, rotated: 0 });
     o = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(o.suspicion).toMatchObject({ state: 'suspected', hintLevel: 'reports', loadScore: 0 });
@@ -796,7 +814,7 @@ describe('origin block detector', () => {
   });
 
   test('edge evidence from probes + every gate open → a detector burn rotation of that edge; gates closed → veto recorded', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     // Probe-only automatic rotation is an opt-in (off by default).
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.detect.allowProbeOnlyAutoRotate', 'true'));
@@ -840,7 +858,7 @@ describe('origin block detector', () => {
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.enabled', 'true'));
     await bulkReports(s.t, { zeroWeight: 0, weighted: 10 });
     // Gates closed (global switch off): suspected with a veto, no rotation.
-    const r1 = await s.t.action(internal.edgeDetector.run, {});
+    const r1 = await evaluateDetector(s.t);
     expect(r1).toMatchObject({ suspected: 1, rotated: 0 });
     let o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion).toMatchObject({
@@ -859,7 +877,7 @@ describe('origin block detector', () => {
       await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
       await ctx.db.patch(s.relayId, { autoRotate: true });
     });
-    const r2 = await s.t.action(internal.edgeDetector.run, {});
+    const r2 = await evaluateDetector(s.t);
     expect(r2).toMatchObject({ suspected: 1, rotated: 1 });
     o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.activeRotationId).toBeDefined();
@@ -877,7 +895,7 @@ describe('origin block detector', () => {
       reason: 'detector:probes',
     });
     // Next tick: the running rotation is itself a veto.
-    const r3 = await s.t.action(internal.edgeDetector.run, {});
+    const r3 = await evaluateDetector(s.t);
     expect(r3.rotated).toBe(0);
     o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion!.veto).toBe('rotation_active');
@@ -886,7 +904,7 @@ describe('origin block detector', () => {
   });
 
   test('an edge that is down for everyone is an outage: no rotation, veto edge_outage', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0);
@@ -913,7 +931,7 @@ describe('origin block detector', () => {
         });
       }
     });
-    const r = await s.t.action(internal.edgeDetector.run, {});
+    const r = await evaluateDetector(s.t);
     expect(r.rotated).toBe(0);
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion!.state).toBe('suspected');
@@ -971,7 +989,7 @@ describe('origin block detector', () => {
   }
 
   test('an address never reached from a country while the node’s other address is: evidence like a transition, rotated under the same gates', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await probeOnlySeed();
     await s.t.run(async (ctx) => {
       await ctx.db.patch(s.edgeA, summaryOf(reachesAll));
@@ -984,7 +1002,7 @@ describe('origin block detector', () => {
         ]),
       );
     });
-    const r = await s.t.action(internal.edgeDetector.run, {});
+    const r = await evaluateDetector(s.t);
     expect(r).toMatchObject({ suspected: 1, rotated: 1 });
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion).toMatchObject({ state: 'suspected', hintLevel: 'probes', probeScore: 1 });
@@ -1000,21 +1018,21 @@ describe('origin block detector', () => {
       reason: 'detector:probes',
     });
     // The same cooldown and caps hold the next pass.
-    await s.t.action(internal.edgeDetector.run, {});
+    await evaluateDetector(s.t);
     expect((await s.t.query(internal.relays.get, { id: s.relayId }))!.suspicion!.veto).toBe(
       'rotation_active',
     );
   });
 
   test('never reached is no block when nothing else reaches it, when every address fails there, over IPv6 alone, or in an outage', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await probeOnlySeed();
     const evaluate = async (a: Row[], b: Row[]) => {
       await s.t.run(async (ctx) => {
         await ctx.db.patch(s.edgeA, summaryOf(a));
         await ctx.db.patch(s.edgeB, summaryOf(b));
       });
-      await s.t.action(internal.edgeDetector.run, {});
+      await evaluateDetector(s.t);
       return (await s.t.query(internal.relays.get, { id: s.relayId }))!.suspicion!;
     };
     // Never reached from ANY country: broken, not blocked (FCP's own host is no country).
@@ -1070,7 +1088,7 @@ describe('origin block detector', () => {
   });
 
   test('member "which connection" evidence alone can rotate; the marks sweep drops expired rows', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0);
@@ -1090,7 +1108,7 @@ describe('origin block detector', () => {
       });
     });
     await edgeReports(s.t, s.edgeA);
-    const r = await s.t.action(internal.edgeDetector.run, {});
+    const r = await evaluateDetector(s.t);
     expect(r.rotated).toBe(1);
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion!.edgeEvidence).toEqual([
@@ -1104,7 +1122,7 @@ describe('origin block detector', () => {
   });
 
   test('the Host veto is ONLY for operator-managed Hosts: hostMode operator holds a template-edge rotation, fcp and none do not', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0);
@@ -1119,7 +1137,7 @@ describe('origin block detector', () => {
     // The operator owns the backend Hosts: the detector may not move the template
     // edge (its Host would keep pointing at the burned address).
     await s.t.mutation(internal.relays.update, { id: s.relayId, hostMode: 'operator' });
-    const held = await s.t.action(internal.edgeDetector.run, {});
+    const held = await evaluateDetector(s.t);
     expect(held.rotated).toBe(0);
     let o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion).toMatchObject({ state: 'suspected', veto: 'hosts_unmanaged' });
@@ -1127,7 +1145,7 @@ describe('origin block detector', () => {
     expect(o.activeRotationId).toBeUndefined();
     // Back to FCP-owned Hosts: the same evidence rotates (the machine flips the Host).
     await s.t.run((ctx) => ctx.db.patch(s.relayId, { hostMode: 'fcp' }));
-    const rotated = await s.t.action(internal.edgeDetector.run, {});
+    const rotated = await evaluateDetector(s.t);
     expect(rotated.rotated).toBe(1);
     o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion!.veto).toBeNull();
@@ -1138,7 +1156,7 @@ describe('origin block detector', () => {
   });
 
   test('maintenance: while frozen the detector evaluates nothing (a tick may start a rotation)', async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0);
@@ -1149,11 +1167,11 @@ describe('origin block detector', () => {
     });
     await edgeReports(s.t, s.edgeA);
     await s.t.mutation(internal.edgeMaintenance.freeze, { reason: 'test' });
-    const frozen = await s.t.action(internal.edgeDetector.run, {});
+    const frozen = await evaluateDetector(s.t);
     expect(frozen).toMatchObject({ evaluated: 0, suspected: 0, rotated: 0 });
     expect((await s.t.query(internal.relays.get, { id: s.relayId }))!.suspicion).toBeUndefined();
     await s.t.mutation(internal.edgeMaintenance.thaw, {});
-    const thawed = await s.t.action(internal.edgeDetector.run, {});
+    const thawed = await evaluateDetector(s.t);
     expect(thawed).toMatchObject({ evaluated: 1, suspected: 1, rotated: 1 });
   });
 });

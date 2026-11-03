@@ -157,7 +157,12 @@ describe('coverTargets', () => {
       for (const l of listeners)
         for (const id of l.carriers)
           if (rnd() < 0.2)
-            published.push(pub(l.listenerKey, picks.find((p) => p.locationId === id)!));
+            published.push(
+              pub(
+                l.listenerKey,
+                picks.find((p) => p.locationId === id)!,
+              ),
+            );
       const req = requirementOf(listeners, picks, cooling);
       const got = coverTargets(req, published);
       const ctx = JSON.stringify({ picks, listeners, cooling: [...cooling], published, got });

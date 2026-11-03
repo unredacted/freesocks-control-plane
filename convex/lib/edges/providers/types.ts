@@ -190,12 +190,7 @@ export interface ResourceStep {
 }
 
 export type StepState =
-  | 'pending'
-  | 'requested'
-  | 'done'
-  | 'unresolved'
-  | 'ambiguous'
-  | 'needs_operator';
+  'pending' | 'requested' | 'done' | 'unresolved' | 'ambiguous' | 'needs_operator';
 
 export interface LedgerStep {
   stepId: string;

@@ -834,7 +834,7 @@ describe('edgeCountry: the handshake track', () => {
       reason: 'no_tcp_pairing',
       pathBatches: [],
     });
-    expect(ir.address.repeatAt).toBeLessThanOrEqual(Date.now());
+    expect(ir.address.repeatAt).toBeLessThanOrEqual(await t.run(async () => Date.now()));
     // A working round, then a paired batch: one so far.
     await syntheticRound(t, edgeId, 'ok', { at: t0 + MIN });
     ir = (await evidence(t, edgeId, 'IR'))!;

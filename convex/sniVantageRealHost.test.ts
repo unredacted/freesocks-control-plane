@@ -301,11 +301,12 @@ describe('real-host controls', () => {
         : create(req);
     __setVantageGlobalpingFactory(() => gp.client);
     __setRealHostDeps({ lookup: async () => [REAL], serves: async () => true });
+    const tickAt = await t.run(async () => Date.now());
     await t.mutation(internal.sniVantage.tick, {});
     await drain(t);
     const x = await evidence(t, 'x.example');
     expect(x?.realHost?.reading).toBe('thin');
-    expect(x?.oldestAt).toBe(T0);
+    expect(x?.oldestAt).toBe(tickAt);
   });
 
   test('the rollback clear leaves only what an older schema accepts', async () => {

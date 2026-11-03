@@ -17,15 +17,7 @@ import { addressFamily, isPublicIpLiteral } from '../ip';
 
 type Obj = Record<string, unknown>;
 type Field =
-  | 'string'
-  | 'longString'
-  | 'number'
-  | 'boolean'
-  | 'scalar'
-  | 'strings'
-  | 'headers'
-  | Spec
-  | [Spec];
+  'string' | 'longString' | 'number' | 'boolean' | 'scalar' | 'strings' | 'headers' | Spec | [Spec];
 interface Spec {
   [key: string]: Field;
 }

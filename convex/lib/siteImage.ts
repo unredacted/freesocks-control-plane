@@ -154,8 +154,7 @@ export function sniffImage(bytes: Uint8Array): SiteImageInfo | null {
 }
 
 export type SiteImageCheck =
-  | { ok: true; info: SiteImageInfo }
-  | { ok: false; code: string; message: string };
+  { ok: true; info: SiteImageInfo } | { ok: false; code: string; message: string };
 
 /** Everything an upload must pass before it is stored. */
 export function checkSiteImage(bytes: Uint8Array): SiteImageCheck {

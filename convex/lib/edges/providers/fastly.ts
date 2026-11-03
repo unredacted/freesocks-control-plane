@@ -1273,13 +1273,7 @@ async function serviceHostnames(
 // --- shared teardown (adopted, non-exclusive services) ------------------------------
 
 export type SharedTeardownPhase =
-  | 'clone'
-  | 'remove_domain'
-  | 'validate'
-  | 'activate'
-  | 'confirm'
-  | 'done'
-  | 'needs_operator';
+  'clone' | 'remove_domain' | 'validate' | 'activate' | 'confirm' | 'done' | 'needs_operator';
 
 /**
  * The persisted state of a service-wide teardown: the edge only owns ONE domain

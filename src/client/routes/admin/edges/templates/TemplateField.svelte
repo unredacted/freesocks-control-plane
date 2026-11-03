@@ -202,8 +202,7 @@
       aria-describedby={problem ? problemId : undefined}
       class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
       value={listToText(shown)}
-      onchange={(e) => onchange(textToList(e.currentTarget.value))}
-    ></textarea>
+      onchange={(e) => onchange(textToList(e.currentTarget.value))}></textarea>
     <p class="text-xs text-muted-foreground">One entry per line.</p>
   {:else if field.type === 'key-value'}
     <textarea
@@ -212,8 +211,7 @@
       {disabled}
       class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
       value={kvToText(shown)}
-      onchange={(e) => onchange(textToKv(e.currentTarget.value, field.pairs === true))}
-    ></textarea>
+      onchange={(e) => onchange(textToKv(e.currentTarget.value, field.pairs === true))}></textarea>
     <p class="text-xs text-muted-foreground">One key=value per line.</p>
   {:else}
     <Input

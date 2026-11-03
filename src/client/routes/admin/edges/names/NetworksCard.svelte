@@ -224,8 +224,7 @@
           rows="3"
           class="border-input bg-background w-full rounded-md border px-3 py-2 font-mono text-xs"
           placeholder="192.0.2.0/24"
-          aria-invalid={parsedRanges === null}
-        ></textarea>
+          aria-invalid={parsedRanges === null}></textarea>
       </div>
       <Dialog.Footer class={STICKY_FOOTER}>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>

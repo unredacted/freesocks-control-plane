@@ -91,16 +91,20 @@ export const bumpEpoch = (t: T, a: { relayId: Id<'relays'> }) =>
   });
 
 /** Expire a temporary test credential now (the sweep then removes it). */
-export const expireTestCredential = (t: T, a: { id: Id<'edgeTestCredentials'> }) =>
-  t.run(async (ctx) => {
+export const expireTestCredential = (t: T, a: { id: Id<'edgeTestCredentials'> }) => {
+  // The action's wall clock may still be behind a mutation's pinned time.
+  // This fixture makes the row due for that action, rather than future-dating it.
+  const expiresAt = Date.now();
+  return t.run(async (ctx) => {
     const row = await ctx.db.get(a.id);
     if (row && row.removal === 'pending')
       await ctx.db.patch(a.id, {
-        expiresAt: Math.min(row.expiresAt, Date.now()),
+        expiresAt: Math.min(row.expiresAt, expiresAt),
         updatedAt: Date.now(),
       });
     return null;
   });
+};
 
 /**
  * The location an account's trust lives in for the account-level calls: its

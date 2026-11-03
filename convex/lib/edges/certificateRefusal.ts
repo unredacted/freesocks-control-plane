@@ -10,9 +10,7 @@ import { canonicalJson } from './providers/template';
 import type { Values } from './providers/options';
 
 export type CertificateRefusal =
-  | 'caa_forbids_ca'
-  | 'shared_certificate_failed'
-  | 'shared_certificate_ambiguous';
+  'caa_forbids_ca' | 'shared_certificate_failed' | 'shared_certificate_ambiguous';
 
 type AccountLike = Pick<
   Doc<'edgeProviderAccounts'>,

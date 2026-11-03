@@ -29,6 +29,15 @@ afterEach(() => vi.unstubAllGlobals());
 
 const OUTLINE_ORIGIN = '203.0.113.77';
 
+// An action reads the wall clock, while a mutation pins its time at or after
+// the last commit. Let the real wall clock reach the release/retry transaction
+// before asking the sweep for due rows.
+async function sweep(t: ReturnType<typeof convexTest>) {
+  const committedAt = await t.run(async () => Date.now());
+  while (Date.now() < committedAt) await new Promise((resolve) => setTimeout(resolve, 1));
+  return t.action(internal.edgeTestCredentials.sweep, {});
+}
+
 async function seedOutline() {
   const outline = fakeOutline({ origin: OUTLINE_ORIGIN });
   const t = convexTest(schema, modules);
@@ -85,9 +94,9 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     if (!r.ok) throw new Error(r.code);
     const id = r.credentialId!;
     // Not expired yet: the sweep leaves it alone.
-    expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 0 });
+    expect(await sweep(t)).toMatchObject({ removed: 0 });
     await expireTestCredential(t, { id });
-    expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 1 });
+    expect(await sweep(t)).toMatchObject({ removed: 1 });
     expect(outline.deleted).toHaveLength(1);
     expect((await rows())[0]).toMatchObject({ removal: 'done' });
     const { items } = await t.query(internal.edgeOperator.attention, {});
@@ -127,7 +136,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
       credentialId: row._id,
     });
     expect(out).toEqual({ ok: true, released: true });
-    expect((await rows())[0]!.expiresAt).toBeLessThanOrEqual(Date.now());
+    expect((await rows())[0]!.expiresAt).toBeLessThanOrEqual(await t.run(async () => Date.now()));
     // A second call is a no-op; a credential of another origin is not found.
     expect(
       await t.mutation(internal.edgeTestCredentials.releaseForEdge, {
@@ -143,7 +152,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     expect(await t.mutation(internal.edgeTestCredentials.releaseForRelay, { relayId })).toEqual({
       released: 1,
     });
-    expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 1 });
+    expect(await sweep(t)).toMatchObject({ removed: 1 });
     // A second key, never released: it expires.
     const r = await t.action(internal.edgeTestCredentials.ensure, {
       relayId,
@@ -153,7 +162,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     await t.run((ctx) =>
       ctx.db.patch(r.credentialId as Id<'edgeTestCredentials'>, { expiresAt: Date.now() - 1 }),
     );
-    expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 1 });
+    expect(await sweep(t)).toMatchObject({ removed: 1 });
     expect(outline.deleted).toHaveLength(2);
     expect((await rows()).every((x) => x.removal === 'done')).toBe(true);
   });
@@ -169,15 +178,15 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     await expireTestCredential(t, { id });
     outline.failDeleteWith = 500;
     for (let i = 1; i < TEST_CREDENTIAL_MAX_ATTEMPTS; i++) {
-      expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ retried: 1 });
+      expect(await sweep(t)).toMatchObject({ retried: 1 });
       const row = (await rows())[0];
       expect(row).toMatchObject({ removal: 'pending', attempts: i });
       expect(row.retryAfter).toBeGreaterThan(Date.now());
       // Still backing off: the next sweep skips it until the retry time.
-      expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ retried: 0 });
+      expect(await sweep(t)).toMatchObject({ retried: 0 });
       await t.run((ctx) => ctx.db.patch(id, { retryAfter: Date.now() - 1 }));
     }
-    expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ failed: 1 });
+    expect(await sweep(t)).toMatchObject({ failed: 1 });
     expect((await rows())[0]).toMatchObject({
       removal: 'failed',
       attempts: TEST_CREDENTIAL_MAX_ATTEMPTS,
@@ -194,7 +203,7 @@ describe('edgeTestCredentials (Outline temporary keys)', () => {
     // The backend is back: the operator's retry re-arms the row and the sweep finishes it.
     outline.failDeleteWith = null;
     await t.mutation(internal.edgeTestCredentials.retryCleanup, { id });
-    expect(await t.action(internal.edgeTestCredentials.sweep, {})).toMatchObject({ removed: 1 });
+    expect(await sweep(t)).toMatchObject({ removed: 1 });
     expect(outline.deleted).toEqual(['1']);
   });
 
