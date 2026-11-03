@@ -63,12 +63,19 @@ describe('compatibility browser security', () => {
       '/no-sandbox',
       '--NO-SANDBOX=false',
       '--disable-setuid-sandbox',
+      '--disable-namespace-sandbox',
+      '--disable-namespace-sandbox=false',
+      '-disable-namespace-sandbox',
+      '/DISABLE-NAMESPACE-SANDBOX=false',
       '--disable-seccomp-filter-sandbox=true',
       '--disable-gpu-sandbox',
       '--single-process',
       '--in-process-gpu',
     ]) {
-      expect(() => assertSandboxArguments(['--enable-automation', flag]), flag).toThrow('sandbox');
+      expect(
+        () => assertSandboxArguments(['--enable-automation', '--enable-sandbox', flag]),
+        flag,
+      ).toThrow('sandbox');
     }
     expect(() =>
       assertSandboxArguments(['--enable-automation', '--headless', '--enable-sandbox']),

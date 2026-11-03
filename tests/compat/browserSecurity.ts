@@ -32,6 +32,7 @@ const UNSAFE_SWITCHES = new Set([
   '--no-sandbox',
   '--disable-sandbox',
   '--disable-setuid-sandbox',
+  '--disable-namespace-sandbox',
   '--disable-seccomp-filter-sandbox',
   '--disable-gpu-sandbox',
   '--single-process',
