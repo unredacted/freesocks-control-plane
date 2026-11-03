@@ -16,6 +16,12 @@ import { mountWithQuery } from '../../../../testing/mountWithQuery';
 import ListPage from './ListPage.svelte';
 import ListsPage from './ListsPage.svelte';
 
+vi.mock('@client/lib/sniApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@client/lib/sniApi')>()),
+  networksQuery: () => ({ isPending: false, isError: false, data: { networks: [] } }),
+  familiesQuery: () => ({ isPending: false, isError: false, data: { families: [] } }),
+}));
+
 vi.mock('@client/lib/countryListsApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@client/lib/countryListsApi')>()),
   countryListQuery: vi.fn(),
@@ -73,6 +79,7 @@ const LIST: CountryListView = {
   lastFetch: null,
   confirmedAt: null,
   fresh: false,
+  feeds: [],
 };
 
 let app: ReturnType<typeof mountWithQuery> | null = null;
@@ -104,6 +111,8 @@ describe('ListPage', () => {
     expect(text).toContain('Left out: 1 line that could not be read.');
     expect(text).toContain('not a name!');
     expect(text).toContain('Paste a new copy');
+    expect(text).toContain('Names into finding names');
+    expect(text).toContain('Its names go nowhere.');
     button('Use it')!.click();
     await vi.waitFor(() =>
       expect(decideCountryListVersion).toHaveBeenCalledWith('l1', 'v1', 'approve'),

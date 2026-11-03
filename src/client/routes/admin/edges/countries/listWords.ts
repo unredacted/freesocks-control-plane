@@ -4,6 +4,7 @@
  * fetch said, and what a list holds.
  */
 import type {
+  CountryListFeed,
   CountryListHoldReason,
   CountryListRegime,
   CountryListVersion,
@@ -181,6 +182,10 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.list.upload_closed': 'The paste took too long. Send it again.',
   'edge.list.upload_empty': 'Nothing was pasted.',
   'edge.list.cap': 'FCP follows at most 50 lists.',
+  'edge.list.feeds_cap': 'A list feeds at most 10 networks and name lists.',
+  'edge.list.no_feeds': 'This list feeds nothing. Choose where its names go first.',
+  'edge.list.not_feedable':
+    'Only a list that is on, fresh and has a version in use can feed names.',
   not_found: 'That list is gone.',
   validation: 'Something in the form is not right. Check the fields.',
 };
@@ -199,4 +204,30 @@ export const HOW_WORDS = {
 /** Entries typed one per line or separated by spaces or commas (at most 50, as the server takes). */
 export function parseLookup(text: string): string[] {
   return [...new Set(text.split(/[\s,]+/).filter(Boolean))].slice(0, 50);
+}
+
+const STOPPED_WORDS: Record<string, string> = {
+  superseded: 'A newer version took over.',
+  feed_removed: 'It was taken off the list.',
+  list_removed: 'The list is gone.',
+  not_feedable: 'The list is off or stale, so it stopped.',
+  scope_gone: 'The network or name list is gone.',
+  restarted: 'A new run took over.',
+};
+
+/** A feed's last run, in one line. */
+export function feedLine(f: CountryListFeed): string {
+  const r = f.run;
+  if (!r) return 'Not fed yet.';
+  const c = r.counts;
+  const parts = [`${plural(c.added, 'name', 'names')} added`];
+  if (c.known) parts.push(`${c.known.toLocaleString('en')} already there`);
+  if (c.inFamily) parts.push(`${c.inFamily.toLocaleString('en')} already in a name list`);
+  if (c.ignored) parts.push(`${c.ignored.toLocaleString('en')} ignored`);
+  if (c.capped) parts.push(`${c.capped.toLocaleString('en')} past the 2,000 limit`);
+  const counts = `${parts.join(', ')}.`;
+  if (r.state === 'running') return `Feeding now. So far: ${counts}`;
+  if (r.state === 'stopped')
+    return `Stopped: ${STOPPED_WORDS[r.stopped ?? ''] ?? 'it stopped.'} ${counts}`;
+  return r.current ? counts : `${counts} That was an older version.`;
 }

@@ -3657,6 +3657,45 @@ each flagged off or stale). Audit: `admin.edge.list.create|update|delete|upload|
 Admin: Countries, Country lists (`/admin/edges/countries/lists`), one page per list, a card on
 each country's page, and Settings, Country lists.
 
+**Names into finding names** (`convex/countryListFeeds.ts`). A list may **feed** up to 10 networks
+and families (`countryLists.feeds`, none by default): its names (wildcards are not names and are
+skipped) become candidates of source `list` in each, through the same rules as every source
+(already there, held by a family, ignored, past the scope's 2,000), and qualification checks them
+as usual. A feed is a **run** (`countryListFeedRuns`): a walk of one version's names, 250 a step,
+fenced by a generation. A run starts when a feed is added (the backfill of the version in use),
+when a new version goes into use, on **Feed again**, and daily for a feed whose last run was capped
+while its scope has room again. A run behind the list's version (`superseded`), of a feed taken
+away, or of a list that is off or stale stops; a stalled one is resumed by the daily sweep.
+Candidates a run added stay. Finished runs are kept 30 days. Only a list that is on, fresh and
+has a version in use feeds names, and only while `edge.lists.enabled` is on. Routes:
+`POST lists/{id}/feeds {feeds: [{network}|{family}]}`, `POST lists/{id}/feeds/again`. Audit:
+`admin.edge.list.feeds|refeed`, `edge.sni.hunt.list_feed` (counts only).
+
+**What the lists say about a name, stored** (`convex/countryListFacts.ts`). A scope's rescore reads
+up to 2,000 candidates and a query may read at most 4,096 index ranges, so the lists are never read
+there: each candidate and each family name carries `onLists` (the enabled, fresh lists holding it:
+list, country, regime) as of a deployment-wide generation (`appState countryLists:factsGen`). The
+generation moves when a version goes into use, a list is edited (country, regime, on, address) or
+removed, the switch or the stale window changes, or the daily sweep finds a list turned stale or
+fresh again; a paged refresh (200 rows a step) then rewrites every row behind it and marks the scope
+of each candidate whose facts changed for a rescore. New rows (a sweep's finds, a family's new
+names) carry no generation; the hourly `country-lists` pass picks them up.
+
+**In the score** (`countryOf`, `lib/edges/sni/hunt/evidence.ts`): per curated country, a fresh
+reading from inside first, then OONI for the exact name, then the lists (`listStanding`: 0.75 on a
+list of what works only, 0.25 on a block list only, 0.5 when they disagree), then half. Partial on
+purpose: a list is union evidence, true on some networks there some of the time, and a name on a
+list says nothing about the address it is used with (under a whitelist both must be listed). Lists
+add no penalty. The page shows them per country ("name on a list of what works (Mobile)").
+
+**Suggestions from block lists** (`resolveSuggestion`, `lib/edges/sni/vantage.ts`): ONE rule for
+the family page, the country view, **Apply** and `autoApply`. The checks from inside decide when they
+suggest anything; otherwise a name on a block list for a curated country (and on no list there of
+what works) is suggested `blocked`, with `provenance: 'list'`, even where no check ran (the family
+page then shows a row for it). Lists never suggest `proven`. **Apply** records it as the operator's
+mark; `autoApply` passes no list, so a list is never acted on without a person. `reason` keeps its
+one meaning: why nothing is suggested.
+
 ### Finding names
 
 Ships dormant: `edge.sni.hunt.enabled` is off. Off, no list is swept, nothing is checked and no
@@ -3680,6 +3719,7 @@ draws abuse reports).
 | `seed`    | A JSON file a hand-run study wrote: `{networks: [{network: {slug, label, asns}, families: [{create_family: {slug, label, targetAddress, targetPort, requireH2}, import_names: {lines}, target?: {tranco_rank}}]}]}`. It only makes candidates: a family FCP has gets its names, a family it lacks waits on its network (target and names). What FCP lacks comes back as **proposals** the operator may create; nothing is created by the import. One seed carries at most 800 names (targets included) in 100 families; a bigger one is refused whole. |
 | `toplist` | The Tranco top-sites list, resolved by ordinary lookups and kept where an answer lies in a hunting network's stored ranges (the sweep, below).                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `ct`      | Certificate transparency: the names that certificates of a registrable domain list (Cert Spotter), for a family's target or candidates the operator picks. Only names of that domain are kept.                                                                                                                                                                                                                                                                                                                                                         |
+| `list`    | A country list feeding this network or family (§ "Country lists", "Names into finding names").                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 A name a family already holds, one the operator ignored (the name, or its whole site: the
 registrable domain, public-suffix aware), and one past the scope's cap (2,000) is counted, never
@@ -3747,7 +3787,8 @@ Handshakes keep qualification's pace (500 ms apart). `sni-qualify` itself is unc
 **Score** (`lib/edges/sni/hunt/score.ts`, 0 to 100). A candidate that would not qualify scores 0.
 `baseScore`: popularity by rank (25), how many passing candidates of the scope share its first
 address (10), ML-KEM accepted and h2 (5 each), stability (5: passes at least a day apart).
-`score` adds evidence: near the node (30) and standing per country (20); missing or expired
+`score` adds evidence: near the node (30) and standing per country (20, country lists included:
+§ "Country lists", "In the score"); missing or expired
 evidence counts **half** its part, so a measured good candidate ranks above an unmeasured one and
 a measured bad one below it. Penalties come off last.
 
@@ -6235,6 +6276,10 @@ lifecycle runs in that test and its rows appear here.
 10, `minOverlap` 0.5, `heldDays` 14, `staleDays` 30, `defaultFetchHours` 24), two crons
 (`country-lists`, `country-lists-sweep`) and one rate-limit policy (`admin.edges.list-upload`):
 one deploy, no migration, no env change. With the switch off the hourly cron finds nothing due.
+Names into finding names adds one more table (`countryListFeedRuns`), optional `onLists` /
+`onListsGen` fields with a `by_on_lists_gen` index on `sniCandidates` and `sniNames` (built on the
+push; the rows need no backfill: until a list first moves the generation nothing reads or writes
+them), `sniCandidates.sources` value `list`, and `countryLists.feeds` / `factsFresh`.
 
 **Names for load balancer addresses** (§ "Names for load balancer addresses") add one table
 (`edgeNames`), one optional field (`edges.nameWanted`), four settings with defaults

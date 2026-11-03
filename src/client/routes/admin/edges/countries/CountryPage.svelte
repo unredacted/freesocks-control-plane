@@ -35,6 +35,7 @@
     markLine,
     gradeLine,
     nameWhy,
+    listsLine,
     percent,
     probesLine,
     reportsLine,
@@ -280,6 +281,9 @@
                         {/if}
                         {#if realHostLine(n, now)}
                           <p class="text-muted-foreground">{realHostLine(n, now)}</p>
+                        {/if}
+                        {#if listsLine(n)}
+                          <p class="text-muted-foreground">{listsLine(n)}</p>
                         {/if}
                         {#if reportsLine(n)}
                           <p class="text-muted-foreground">{reportsLine(n)}</p>

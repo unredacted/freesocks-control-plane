@@ -61,6 +61,7 @@ const base: SniCandidateRow = {
   own: null,
   ooni: null,
   countries: [],
+  onLists: [],
   firstSeenAt: '2026-10-26T00:00:00.000Z',
 };
 

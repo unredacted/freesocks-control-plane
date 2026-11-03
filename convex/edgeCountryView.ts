@@ -31,7 +31,7 @@ import { listenersOf } from './relayListeners';
 import { effectiveRule, ruleCanEmitV6, ruleForDelivery } from './lib/edges/render';
 import { countryGroupKey } from './lib/edges/country/group';
 import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
-import { suggest } from './lib/edges/sni/vantage';
+import { listBlocks, resolveSuggestion, suggest } from './lib/edges/sni/vantage';
 import { readingOf } from './lib/edges/sni/realHost';
 import {
   answersFor,
@@ -410,7 +410,7 @@ function nameFactsFor(
     const markRow = pre.nameMarks.get(keyOf(name, country));
     const ev = pre.vantage.get(keyOf(name, country));
     const suspect = reports?.suspects.has(name) ?? false;
-    const s = ev
+    const probe = ev
       ? suggest(
           {
             measurements: ev.measurements,
@@ -429,6 +429,10 @@ function nameFactsFor(
           },
         )
       : null;
+    // The one rule (lib/edges/sni/vantage.ts): the checks, else a block list holding the name.
+    const blocks = listBlocks(n?.onLists, country);
+    const s = ev || blocks ? resolveSuggestion(probe, { blocks }) : null;
+    const here = (n?.onLists ?? []).filter((f) => f.cc === country);
     const weight = reports?.weights.get(name);
     out.set(name, {
       family: n ? (pre.families.get(n.familyId)?.slug ?? null) : null,
@@ -451,6 +455,15 @@ function nameFactsFor(
           }
         : null,
       reports: weight !== undefined ? { weight: Math.round(weight * 100) / 100, suspect } : null,
+      lists:
+        here.length > 0
+          ? {
+              allow: here.some((f) => f.regime === 'allowlist'),
+              block: here.some((f) => f.regime === 'blocklist'),
+              // Lists only ever suggest `blocked`.
+              suggestion: s?.provenance === 'list' ? ('blocked' as const) : null,
+            }
+          : null,
       realHost: ev?.realHost
         ? {
             at: ev.realHost.at,

@@ -245,6 +245,7 @@ describe('a suggestion in one line', () => {
     own: null,
     ooni: null,
     countries: [],
+    onLists: [],
     firstSeenAt: '2026-10-27T00:00:00.000Z',
   };
   test('what is known, never the score', () => {

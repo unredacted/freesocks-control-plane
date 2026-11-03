@@ -86,12 +86,22 @@ export const SNI_VANTAGE_REASONS = [
   'reports_disagree',
 ] as const;
 
+/** A country list holding a name: its country, what it lists, and its label. */
+export const HuntListFact = z.object({
+  cc: z.string(),
+  regime: z.enum(['allowlist', 'blocklist']),
+  label: z.string(),
+});
+export type HuntListFact = z.infer<typeof HuntListFact>;
+
 /** What the checks from one country say about one name, judged now. */
 export const SniVantageRow = z.object({
   country: z.string(),
   latest: z.enum(['ok', 'failing', 'mixed', 'none']),
   suggestion: z.enum(['proven', 'blocked']).nullable(),
   reason: z.enum(SNI_VANTAGE_REASONS).nullable(),
+  /** Where the suggestion comes from: the checks, or a block list (null: none). */
+  provenance: z.enum(['probe', 'list']).nullable().default(null),
   /** Against the mark standing today: an operator's mark is never replaced. */
   decision: z.enum(['suggest', 'agrees', 'conflict', 'none']),
   okVantages: z.number(),
@@ -189,8 +199,10 @@ export const SniNameRow = z.object({
   suspectIn: z.array(z.string()),
   /** Countries whose mark was written by the checks themselves (`autoApply`), not an operator. */
   probeMarkedIn: z.array(z.string()),
-  /** What the checks from inside each country say. */
+  /** What the checks from inside each country say (and a block list, where it suggests). */
   vantage: z.array(SniVantageRow),
+  /** The enabled, fresh country lists holding the name. */
+  onLists: z.array(HuntListFact).default([]),
   /** Where it stands on its way to members, across the family's transports. */
   delivery: SniNameDelivery.default({ state: 'idle', inUseOn: 0, nodes: 0 }),
 });
@@ -382,9 +394,10 @@ export const EdgeNetworkRefreshed = z.object({ refreshed: z.number(), failed: z.
 // --- finding names (docs/edges.md "Finding names") --------------------------------------------------
 
 export const HuntPlace = z.object({ country: z.string(), city: z.string().optional() });
+
 export type HuntPlace = z.infer<typeof HuntPlace>;
 
-export const HUNT_SOURCES = ['cert', 'seed', 'pasted', 'toplist', 'ct'] as const;
+export const HUNT_SOURCES = ['cert', 'seed', 'pasted', 'toplist', 'ct', 'list'] as const;
 export const HUNT_STATES = ['new', 'added', 'ignored', 'gone', 'failing'] as const;
 
 /**
@@ -522,6 +535,11 @@ export const SniCandidateRow = z.object({
       }),
     )
     .default([]),
+  /**
+   * The enabled, fresh country lists holding the name (docs/edges.md "Country
+   * lists"): evidence about the name only, never about an address.
+   */
+  onLists: z.array(HuntListFact).default([]),
   firstSeenAt: z.string(),
 });
 export type SniCandidateRow = z.infer<typeof SniCandidateRow>;

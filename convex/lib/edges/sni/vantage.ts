@@ -317,6 +317,44 @@ export function suggest(e: NameEvidence, o: SuggestOptions): Suggestion {
   return { suggestion: 'proven', reason: null, basis: null };
 }
 
+/** Where a suggestion comes from: the checks from inside the country, or a block list. */
+export type SuggestionProvenance = 'probe' | 'list';
+
+export interface ResolvedSuggestion extends Suggestion {
+  /** Null when nothing is suggested. */
+  provenance: SuggestionProvenance | null;
+}
+
+/**
+ * Whether the country lists say a name is blocked in a country: on a fresh
+ * block list there, and on no list there of what works (lists that disagree
+ * suggest nothing). From the rows' stored `onLists`.
+ */
+export function listBlocks(
+  onLists: ReadonlyArray<{ cc: string; regime: 'allowlist' | 'blocklist' }> | null | undefined,
+  country: string,
+): boolean {
+  const here = (onLists ?? []).filter((f) => f.cc === country);
+  return here.some((f) => f.regime === 'blocklist') && !here.some((f) => f.regime === 'allowlist');
+}
+
+/**
+ * The ONE suggestion rule for a name in a country, for the family page, the
+ * country view, "Apply" and `autoApply` alike. The checks from inside decide
+ * when they suggest anything; otherwise a block list holding the name
+ * suggests `blocked`. Lists never suggest `proven`, and `autoApply` passes no
+ * list (a list is never acted on without a person). `reason` keeps its one
+ * meaning: why nothing is suggested.
+ */
+export function resolveSuggestion(
+  probe: Suggestion | null,
+  list: { blocks: boolean } | null,
+): ResolvedSuggestion {
+  if (probe?.suggestion) return { ...probe, provenance: 'probe' };
+  if (list?.blocks) return { suggestion: 'blocked', reason: null, basis: null, provenance: 'list' };
+  return { ...(probe ?? none('no_data')), provenance: null };
+}
+
 export interface Mark {
   state: MarkState;
   source: 'operator' | 'probe';

@@ -264,6 +264,8 @@ export const tick = internalAction({
   args: {},
   handler: async (ctx): Promise<void> =>
     runWithCronOutcome(ctx, 'country-lists', async () => {
+      // Rows new since the last refresh (a sweep's finds, a family's new names) get their facts.
+      await ctx.runMutation(internal.countryListFacts.kick, {});
       const due = await ctx.runQuery(internal.countryLists.dueForFetch, {
         now: Date.now(),
         limit: FETCH_PER_PASS,

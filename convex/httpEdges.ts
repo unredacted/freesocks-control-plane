@@ -2193,6 +2193,26 @@ async function postList(
     return json(await ctx.runMutation(internal.countryLists.requestFetch, { listId, ...act }));
   if (c === 'uploads' && !d)
     return json(await ctx.runMutation(internal.countryLists.startUpload, { listId, ...act }));
+  // Where its names go as finding-names candidates (docs/edges.md "Names into finding names").
+  if (c === 'feeds' && !d) {
+    const feeds = Array.isArray(body.feeds) ? body.feeds : [];
+    return json(
+      await ctx.runMutation(internal.countryListFeeds.setFeeds, {
+        listId,
+        feeds: feeds.map((f: unknown) => {
+          const o = (f ?? {}) as Record<string, unknown>;
+          return typeof o.network === 'string'
+            ? { network: o.network }
+            : typeof o.family === 'string'
+              ? { family: o.family }
+              : {};
+        }),
+        ...act,
+      }),
+    );
+  }
+  if (c === 'feeds' && d === 'again' && !e)
+    return json(await ctx.runMutation(internal.countryListFeeds.feedAgain, { listId, ...act }));
   if (c === 'uploads' && d && e === 'parts' && !parts[5]) {
     if (typeof body.index !== 'number' || typeof body.text !== 'string')
       return errorJson('validation', 'A part is an index and its text', 400);

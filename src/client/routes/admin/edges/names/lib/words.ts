@@ -150,15 +150,20 @@ export function vantageLine(r: SniVantageRow, now = Date.now()): string {
   return `${from}: the handshake completed from ${plural(r.okVantages, 'vantage')} on ${plural(r.okNetworks, 'network')} (${when}).`;
 }
 
-/** What the checks suggest against the mark standing today. Null: nothing to say. */
+/** What the checks (or a block list) suggest against the mark standing today. Null: nothing to say. */
 export function vantageSuggestionWords(r: SniVantageRow): string | null {
   const claim =
     r.suggestion === 'blocked' ? `it is blocked in ${r.country}` : `it works in ${r.country}`;
+  const who = r.provenance === 'list' ? `A block list for ${r.country}` : 'The checks';
   switch (r.decision) {
     case 'suggest':
-      return `The checks suggest ${claim}.`;
+      return r.provenance === 'list'
+        ? `${who} holds it, so it may be blocked there.`
+        : `The checks suggest ${claim}.`;
     case 'conflict':
-      return `The checks disagree with the mark an operator set: they suggest ${claim}.`;
+      return r.provenance === 'list'
+        ? `${who} holds it, which disagrees with the mark an operator set.`
+        : `The checks disagree with the mark an operator set: they suggest ${claim}.`;
     case 'agrees':
       return null;
     case 'none':

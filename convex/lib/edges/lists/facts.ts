@@ -146,6 +146,33 @@ export async function lookupEntries(
   return out;
 }
 
+/** The lists evidence may read now: enabled, fresh, with a version in use; none while switched off. */
+export async function evidenceLists(db: DatabaseReader, now: number): Promise<Active[]> {
+  const cfg = await resolveEdgeConfig(db);
+  if (!cfg.lists.enabled) return [];
+  return (await activeLists(db, cfg.lists.staleDays, now)).filter((a) => a.list.enabled && a.fresh);
+}
+
+/** A name's facts as rows store them (sniCandidates/sniNames `onLists`), from `evidenceLists`. */
+export interface StoredFact {
+  listId: Id<'countryLists'>;
+  cc: string;
+  regime: 'allowlist' | 'blocklist';
+}
+
+export async function storedFactsOf(
+  db: DatabaseReader,
+  lists: readonly Active[],
+  name: string,
+): Promise<StoredFact[]> {
+  if (lists.length === 0) return [];
+  const held = await versionsHoldingName(db, new Set(lists.map((a) => a.versionId)), name);
+  return lists
+    .filter((a) => held.has(a.versionId))
+    .map((a) => ({ listId: a.list._id, cc: a.list.country, regime: a.list.regime }))
+    .sort((x, y) => (x.listId < y.listId ? -1 : x.listId > y.listId ? 1 : 0));
+}
+
 /**
  * What evidence may read: only enabled, fresh lists, and none while the
  * switch is off. Keyed by the name or address as given.
@@ -155,15 +182,30 @@ export async function listFactsFor(
   q: { names?: readonly string[]; addresses?: readonly string[]; now: number },
 ): Promise<Map<string, ListFact[]>> {
   const out = new Map<string, ListFact[]>();
-  const cfg = await resolveEdgeConfig(db);
-  if (!cfg.lists.enabled) return out;
-  const lists = (await activeLists(db, cfg.lists.staleDays, q.now)).filter(
-    (a) => a.list.enabled && a.fresh,
-  );
+  const lists = await evidenceLists(db, q.now);
   if (lists.length === 0) return out;
   for (const entry of [...(q.names ?? []), ...(q.addresses ?? [])]) {
     const { facts } = await factsFor(db, lists, entry);
     if (facts.length > 0) out.set(entry, facts);
   }
   return out;
+}
+
+/** The labels of every list (at most 50: one read), for views of stored facts. */
+export async function listLabels(db: DatabaseReader): Promise<Map<string, string>> {
+  return new Map(
+    (await db.query('countryLists').take(MAX_LISTS)).map((l) => [l._id as string, l.label]),
+  );
+}
+
+/** Stored facts as a view shows them: the country, the kind of list, its label. */
+export function onListsView(
+  onLists: readonly StoredFact[] | undefined,
+  labels: ReadonlyMap<string, string>,
+) {
+  return (onLists ?? []).flatMap((f) => {
+    const label = labels.get(f.listId as string);
+    // A list removed since: its facts go with the next refresh.
+    return label === undefined ? [] : [{ cc: f.cc, regime: f.regime, label }];
+  });
 }

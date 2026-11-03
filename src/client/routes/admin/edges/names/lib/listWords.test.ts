@@ -25,6 +25,7 @@ import {
 
 function name(n: string, o: Partial<SniNameRow> = {}): SniNameRow {
   return {
+    onLists: [],
     name: n,
     seq: 1,
     status: 'active',
@@ -71,6 +72,7 @@ function found(n: string, o: Partial<SniCandidateRow> = {}): SniCandidateRow {
     own: null,
     ooni: null,
     countries: [],
+    onLists: [],
     firstSeenAt: '2026-10-27T00:00:00.000Z',
     ...o,
   };
@@ -284,6 +286,7 @@ describe('why the checks want a look', () => {
     latest: 'failing' as const,
     suggestion,
     reason: null,
+    provenance: 'probe' as const,
     decision,
     okVantages: 0,
     okNetworks: 0,

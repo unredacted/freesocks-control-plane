@@ -234,6 +234,28 @@ export interface EvidenceView {
   timing?: { at: number; place: string; endpoint: string; port: number; connectMs: number } | null;
   ooni?: { at: number; exact: ReadonlyArray<{ cc: string; status: string }> } | null;
   countries?: ReadonlyArray<{ cc: string; at: number; reading: string }> | null;
+  /** The enabled, fresh country lists holding the name (stored as `onLists`). */
+  onLists?: ReadonlyArray<{ cc: string; regime: 'allowlist' | 'blocklist' }> | null;
+}
+
+/**
+ * What the country lists say about a name in one country: 0.75 on an
+ * allowlist only, 0.25 on a blocklist only, 0.5 when they disagree, nothing
+ * when on neither. Partial on purpose: a list is union evidence, true on some
+ * networks of the country, some of the time, and it says nothing about the
+ * address a name is used with.
+ */
+export function listStanding(
+  onLists: EvidenceView['onLists'],
+  cc: string,
+): { value: number; regimes: 'allow' | 'block' | 'both' } | null {
+  const here = (onLists ?? []).filter((f) => f.cc === cc);
+  const allow = here.some((f) => f.regime === 'allowlist');
+  const block = here.some((f) => f.regime === 'blocklist');
+  if (allow && block) return { value: 0.5, regimes: 'both' };
+  if (allow) return { value: 0.75, regimes: 'allow' };
+  if (block) return { value: 0.25, regimes: 'block' };
+  return null;
 }
 
 /**
@@ -274,10 +296,12 @@ export function evidenceDueAt(
 /**
  * Standing per curated country: per country, a fresh in-country reading
  * decides when it is decisive (`ok` 1, `interference` 0), else OONI for the
- * exact name (`ok` 1, blocked or likely 0), else half. The part is 20 times
- * the mean; undefined when nothing decisive is known anywhere (it then counts
- * half, the same). Penalties: 40 when OONI has the exact name blocked or
- * likely blocked in a curated country, 8 for each country with interference.
+ * exact name (`ok` 1, blocked or likely 0), else the country lists
+ * (`listStanding`: 0.75, 0.25, or 0.5 when they disagree), else half. The part
+ * is 20 times the mean; undefined when nothing decisive is known anywhere (it
+ * then counts half, the same). Penalties: 40 when OONI has the exact name
+ * blocked or likely blocked in a curated country, 8 for each country with
+ * interference. Lists add no penalty.
  */
 export function countryOf(
   c: EvidenceView,
@@ -306,7 +330,11 @@ export function countryOf(
       sum += 1;
     } else if (o === 'blocked' || o === 'likely_blocked') {
       decisive = true;
-    } else sum += 0.5;
+    } else {
+      const l = listStanding(c.onLists, cc);
+      if (l && l.regimes !== 'both') decisive = true;
+      sum += l?.value ?? 0.5;
+    }
   }
   if (blocked) penalty += 40;
   const points = decisive

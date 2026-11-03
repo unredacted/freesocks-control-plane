@@ -69,6 +69,7 @@ const handed = (over: Partial<CountryViewHanded> = {}): CountryViewHanded => ({
 });
 
 const name = (over: Partial<CountryViewName> = {}): CountryViewName => ({
+  lists: null,
   name: 'n.example',
   family: 'f',
   status: 'active',
