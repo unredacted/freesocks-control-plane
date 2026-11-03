@@ -4394,18 +4394,26 @@ location, walk order`, so the backup still leaves the primary's failure domain f
   the one before (pinned by `assignmentMeantFor.test.ts`; the no-country digest in
   `assignmentCountry.test.ts` is unchanged).
 - **Saving** (`POST providers/{id}/locations/{locationId}/countries {codes}`, servers manage
-  scope): listed codes only, at most 8 (`MAX_MEANT_FOR`), each once; an empty list clears it.
+  scope): at most 8 codes (`MAX_MEANT_FOR`), each once; an empty list clears it. A code added
+  must be on the censored-country list; one the location already has may stay after it left the
+  list, or be removed (the dialog shows it as "no longer on the list"), so the list changing never
+  locks an edit.
   Every origin with an address in use there moves its publication epoch and the mirrors are
   refreshed once, so steered members of those countries move at their next refresh, scattered by
   seat inside the tier. Audited `edge.location.countries` (`placeKey`, the codes, how many nodes
   moved): an operator setting, never a member.
 - **Before saving** (`POST …/countries/estimate {codes}`, read only): per country added or
   removed, per node with an address in use there, how many of 600 synthetic seats steered by that
-  country get a different first address (`firstAddressMoves`, the edge-pick dialog's sampling).
-  Empty while steering is off: nothing moves then, and the dialog says so.
+  country get a different first address (`firstAddressMoves`, the edge-pick dialog's sampling):
+  the address the body hands out first, the backup where the render rule puts it first. A country
+  off the list moves nobody. Empty while steering is off: nothing moves then, and the dialog says
+  so.
 - **Blocked there.** A location meant for a country counts as blocked there when an operator's
-  mark on it says so, its grade is blocked (§ "Checks from each country"), or every address of it
-  in use there is blocked (`meantForBlocked`). Members there are handed other addresses anyway (the
+  mark on it says so, its grade is blocked while it holds (a grade past its `until` counts for
+  nothing before the expiry worker gets to it; § "Checks from each country"), or every address of
+  it in use there is blocked (`meantForBlocked`). In use means in the node's pool as members see it
+  (`memberPoolsAt`: `publishedEdgesOf` for a member, eligible), so an activation's candidate or an
+  address no member can be handed counts for nothing. Members there are handed other addresses anyway (the
   tier sends them elsewhere); attention `meant_for_blocked` (warning, per location and country,
   action: the account page) says so. A location meant for a country with no address in use on a
   node has no first tier there; the node's provider set asks for one in every pick.
@@ -4484,7 +4492,9 @@ Read only: it decides nothing and writes nothing (`convex/edgeCountryView.ts`, p
   (§ "Locations meant for a country"), its grade and mark there, whether it counts as blocked
   there, and its addresses in use per node with how many are blocked there; the summary counts
   them per country (`meantFor {locations, blocked}`). The handed shares add `onMeantFirst`:
-  members whose first address is at a location meant for this country (steered only).
+  members whose first address is at a location meant for this country (steered only). The first
+  address, there and for `onBlockedFirst`, is the one the body hands out first: the backup where the
+  render rule puts it first.
 - **Totals**: published addresses by state (the list says how many are not known beside the
   working and blocked ones), active names by the state delivery acts on (a mark;
   an unapplied suggestion counts as not judged; each name once), nodes whose every published

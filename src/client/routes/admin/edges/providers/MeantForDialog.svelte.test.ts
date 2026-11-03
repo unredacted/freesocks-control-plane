@@ -68,7 +68,7 @@ afterEach(() => {
 
 const box = (name: string) =>
   [...document.querySelectorAll('label')]
-    .find((l) => l.textContent?.trim() === name)!
+    .find((l) => l.textContent?.trim() === name || l.textContent?.trim().startsWith(`${name} (`))!
     .querySelector<HTMLElement>('[role="checkbox"]')!;
 const button = (label: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)!;
@@ -99,5 +99,26 @@ describe('Countries a location is meant for', () => {
     await vi.waitFor(() =>
       expect(vi.mocked(setLocationCountries).mock.calls[0]).toEqual(['acc1', 'loc1', ['RU', 'IR']]),
     );
+  });
+
+  test('a country that left the list is still shown, so it can be unticked', async () => {
+    props.open = false;
+    flushSync();
+    props.location = { ...location, meantFor: ['RU', 'TR'] } as EdgeLocationAdmin;
+    props.open = true;
+    flushSync();
+    const stale = [...document.querySelectorAll('label')].find((l) =>
+      l.textContent?.includes('(no longer on the list)'),
+    )!;
+    expect(stale).toBeTruthy();
+    const tick = stale.querySelector<HTMLElement>('[role="checkbox"]')!;
+    expect(tick.getAttribute('aria-checked')).toBe('true');
+    tick.click();
+    flushSync();
+    button('Save countries').click();
+    await vi.waitFor(() =>
+      expect(vi.mocked(setLocationCountries).mock.calls[0]).toEqual(['acc1', 'loc1', ['RU']]),
+    );
+    props.location = location;
   });
 });

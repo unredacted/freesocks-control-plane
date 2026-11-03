@@ -5,7 +5,12 @@
  * (lib/edges/assignment.ts), the location row stores it (`edgeLocations.forCountries`).
  */
 import { ANYCAST_PLACE } from './locations';
-import { assignEndpoints, type AssignOptions, type PublishedEdge } from './assignment';
+import {
+  assignEndpoints,
+  type Assignment,
+  type AssignOptions,
+  type PublishedEdge,
+} from './assignment';
 import { EDGE_PICK_SAMPLE, sampleSeat } from './edgePick';
 
 /** Countries one location may be meant for. */
@@ -15,18 +20,22 @@ export type MeantForRefusal = 'meant_for_unlisted' | 'meant_for_too_many';
 
 /**
  * The codes as stored: trimmed, upper case, each once, in the order given.
- * Every one must be on the censored-country list (a member elsewhere has no
- * stored country to be steered by), at most `MAX_MEANT_FOR` of them.
+ * A code ADDED must be on the censored-country list (a member elsewhere has no
+ * stored country to be steered by); one the location already had (`stored`)
+ * may stay after it left the list, so an edit never has to drop it first, and
+ * leaving it out removes it. At most `MAX_MEANT_FOR` of them.
  */
 export function cleanMeantFor(
   codes: readonly string[],
   listed: readonly string[],
+  stored: readonly string[] = [],
 ): { ok: true; codes: string[] } | { ok: false; code: MeantForRefusal; country?: string } {
   const out: string[] = [];
   for (const raw of codes) {
     const c = raw.trim().toUpperCase();
     if (!c || out.includes(c)) continue;
-    if (!listed.includes(c)) return { ok: false, code: 'meant_for_unlisted', country: c };
+    if (!listed.includes(c) && !stored.includes(c))
+      return { ok: false, code: 'meant_for_unlisted', country: c };
     out.push(c);
   }
   if (out.length > MAX_MEANT_FOR) return { ok: false, code: 'meant_for_too_many' };
@@ -48,6 +57,36 @@ export function changedCountries(before: readonly string[], after: readonly stri
  */
 export function groupKeyOfLocation(l: { provider: string; placeKey: string }): string {
   return l.placeKey === ANYCAST_PLACE ? `${l.provider}:global` : `${l.provider}:${l.placeKey}`;
+}
+
+/**
+ * A group grade as it counts now: its state while its `until` has not passed
+ * (absent = no expiry), else none. The hourly expiry worker deletes or
+ * rewrites a lapsed grade later; until then it must not count.
+ */
+export function liveGrade(
+  grade: { state: string; until?: number } | null | undefined,
+  now: number,
+): string | null {
+  if (!grade) return null;
+  return grade.until === undefined || grade.until > now ? grade.state : null;
+}
+
+/**
+ * The endpoint a body hands out first: the backup where the render rule puts
+ * it first (`order: 'backup-first'`, backup on) and one was assigned, else the
+ * primary (render.ts `deliveryPathsOf`).
+ */
+export function firstEndpointOf(
+  a: Pick<Assignment, 'primary' | 'backup'>,
+  backupFirst: boolean,
+): Assignment['primary'] {
+  return backupFirst && a.backup ? a.backup : a.primary;
+}
+
+/** Whether the endpoint handed out first is at a location meant for the member's country. */
+export function firstMeantFor(a: Assignment, backupFirst: boolean): boolean {
+  return backupFirst && a.backup ? a.backupMeantFor === true : a.primaryMeantFor === true;
 }
 
 /**
@@ -79,25 +118,32 @@ export interface FirstMoves {
  * How many sampled seats in `country` get a different FIRST address when the
  * pool goes from `before` to `after` (the same edges, their `meantFor`
  * edited), as a member steered by that country: the estimate the edit dialog
- * shows before anything is saved. Synthetic seats, no member row.
+ * shows before anything is saved. The first address is the one the body hands
+ * out first (`backupFirst`: the backup, where the rule puts it first).
+ * Synthetic seats, no member row.
  */
 export function firstAddressMoves(
   before: readonly PublishedEdge[],
   after: readonly PublishedEdge[],
   country: string,
-  opts: Omit<AssignOptions, 'edgeCountry' | 'where'> & { curated: readonly string[] },
+  opts: Omit<AssignOptions, 'edgeCountry' | 'where'> & {
+    curated: readonly string[];
+    backupFirst?: boolean;
+  },
   sample = EDGE_PICK_SAMPLE,
 ): FirstMoves {
-  const { curated, ...rest } = opts;
+  const { curated, backupFirst = false, ...rest } = opts;
   const at = { ...rest, edgeCountry: country, where: { country, curated } };
+  const firstOf = (pool: readonly PublishedEdge[], seat: string) =>
+    firstEndpointOf(assignEndpoints(seat, pool, at), backupFirst)?.edge.edgeId;
   let sampled = 0;
   let moved = 0;
   for (let i = 0; i < sample; i++) {
     const seat = sampleSeat(i);
-    const was = assignEndpoints(seat, before, at).primary?.edge.edgeId;
+    const was = firstOf(before, seat);
     if (!was) continue;
     sampled++;
-    if (assignEndpoints(seat, after, at).primary?.edge.edgeId !== was) moved++;
+    if (firstOf(after, seat) !== was) moved++;
   }
   return { sampled, moved };
 }

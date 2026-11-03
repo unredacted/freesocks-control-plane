@@ -53,6 +53,18 @@
       seededFor = location?.id ?? null;
     } else seededFor = null;
   });
+  /**
+   * What can be ticked: the censored-country list, plus any country the
+   * location still has that left the list since (it can only be unticked).
+   */
+  const options = $derived.by(() => {
+    const listed = (list.data?.countries ?? []).map((c) => c.code);
+    const stale = (location?.meantFor ?? []).filter((c) => !listed.includes(c));
+    return [
+      ...listed.map((code) => ({ code, label: nameOf(code) })),
+      ...stale.map((code) => ({ code, label: `${nameOf(code)} (no longer on the list)` })),
+    ];
+  });
   const unchanged = $derived(
     !!location &&
       chosen.length === location.meantFor.length &&
@@ -97,21 +109,21 @@
     </Dialog.Header>
     {#if list.isPending}
       <p class="text-muted-foreground text-sm">Reading the censored-country list.</p>
-    {:else if (list.data?.countries.length ?? 0) === 0}
+    {:else if options.length === 0}
       <p class="text-muted-foreground text-sm">
         The censored-country list is empty. Add countries to it under Settings first.
       </p>
     {:else}
       <fieldset class="grid max-h-[50vh] gap-2 overflow-y-auto sm:grid-cols-2">
         <legend class="sr-only">Countries</legend>
-        {#each list.data?.countries ?? [] as c (c.code)}
+        {#each options as c (c.code)}
           <label class="flex min-h-11 items-center gap-2 text-sm sm:min-h-8">
             <Checkbox
               checked={chosen.includes(c.code)}
               disabled={save.isPending || (!chosen.includes(c.code) && chosen.length >= 8)}
               onCheckedChange={(v) => toggle(c.code, v === true)}
             />
-            <span>{nameOf(c.code)}</span>
+            <span>{c.label}</span>
           </label>
         {/each}
       </fieldset>

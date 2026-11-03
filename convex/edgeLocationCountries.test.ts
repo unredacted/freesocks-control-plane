@@ -228,6 +228,91 @@ describe('what a member there is handed', () => {
   });
 });
 
+describe('what counts as blocked there, and as in use', () => {
+  test('a location grade past its until counts for nothing', async () => {
+    const { t, locationId } = await setup();
+    await t.mutation(internal.edgeLocations.setForCountries, { id: locationId, codes: ['IR'] });
+    const grade = (until: number) =>
+      t.run(async (ctx) => {
+        for (const g of await ctx.db.query('countryGroupGrades').collect())
+          await ctx.db.delete(g._id);
+        await ctx.db.insert('countryGroupGrades', {
+          groupKey: 'upcloud:de-fra1',
+          country: 'IR',
+          state: 'blocked',
+          counts: { edges: 2, proven: 0, blocked: 2 },
+          until,
+          updatedAt: Date.now(),
+        });
+      });
+    const blockedNow = async () => ({
+      view: CountryViewResponse.parse(
+        await t.query(internal.edgeCountryView.country, { country: 'IR' }),
+      ).meantFor[0]!.blocked,
+      attention: (await t.query(internal.edgeOperator.attention, {})).items.some(
+        (i) => i.kind === 'meant_for_blocked',
+      ),
+    });
+    await grade(Date.now() - 1000);
+    expect(await blockedNow()).toEqual({ view: false, attention: false });
+    await grade(Date.now() + 24 * H);
+    expect(await blockedNow()).toEqual({ view: true, attention: true });
+  });
+
+  test('an address no member can be handed is not in use there', async () => {
+    const { t, locationId, here } = await setup();
+    await t.mutation(internal.edgeLocations.setForCountries, { id: locationId, codes: ['IR'] });
+    const now = Date.now();
+    // Its confirmation gone stale: still published, but nothing is rendered for it.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(here, {
+        verification: undefined,
+        countryState: {
+          byCountry: [{ country: 'IR', state: 'blocked', from: 'edge', until: now + 24 * H }],
+          updatedAt: now,
+        },
+      });
+    });
+    const view = CountryViewResponse.parse(
+      await t.query(internal.edgeCountryView.country, { country: 'IR' }),
+    );
+    expect(view.meantFor[0]).toMatchObject({ blocked: false, nodes: [] });
+    const attention = await t.query(internal.edgeOperator.attention, {});
+    expect(attention.items.some((i) => i.kind === 'meant_for_blocked')).toBe(false);
+    const e = await t.query(internal.edgeLocations.forCountriesEstimate, {
+      id: locationId,
+      codes: [],
+    });
+    expect(e.countries).toEqual([{ country: 'IR', nodes: [] }]);
+  });
+
+  test('a country that left the censored list may stay or be removed, never added', async () => {
+    const { t, locationId } = await setup();
+    await t.mutation(internal.edgeLocations.setForCountries, {
+      id: locationId,
+      codes: ['IR', 'RU'],
+    });
+    await t.run(async (ctx) => {
+      await upsertSettingRow(
+        ctx,
+        CENSORED_COUNTRIES_KEY,
+        JSON.stringify([{ code: 'RU', checkEdges: true, checkNamesInside: false }]),
+      );
+    });
+    // Another edit keeps it; the estimate moves nobody for it.
+    expect(
+      await t.query(internal.edgeLocations.forCountriesEstimate, { id: locationId, codes: ['IR'] }),
+    ).toMatchObject({ valid: true, countries: [{ country: 'RU' }] });
+    expect(
+      await t.mutation(internal.edgeLocations.setForCountries, { id: locationId, codes: ['RU'] }),
+    ).toMatchObject({ changed: true, codes: ['RU'] });
+    // Once removed it is like any other country off the list.
+    await expect(
+      t.mutation(internal.edgeLocations.setForCountries, { id: locationId, codes: ['IR', 'RU'] }),
+    ).rejects.toThrow(/not on the censored-country list/);
+  });
+});
+
 describe('rollback', () => {
   test('clearCountriesForRollback removes every location’s countries and moves their origins', async () => {
     const { t, accountId, locationId, relayId } = await setup();

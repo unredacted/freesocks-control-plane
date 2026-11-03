@@ -32,6 +32,7 @@ import type {
 } from '../../../../src/shared/contracts/edgeCodes';
 import { TARGET_ADDS_FLAG_MS, type HandshakeTiming, type PairCounts } from '../sni/realHost';
 import type { SourceCoverage } from './coverage';
+import { firstEndpointOf, firstMeantFor } from '../meantFor';
 
 export type ViewState = 'proven' | 'blocked' | 'unknown';
 
@@ -317,6 +318,8 @@ export interface ViewSettings {
     canEmitV6: boolean;
     namesPerEndpoint: number;
     backupNames: number;
+    /** The rule hands out the backup first (`order: 'backup-first'`, backup on). */
+    backupFirst?: boolean;
   };
   preferDistinctProviders: boolean;
   minProvenForExclusive: number;
@@ -548,9 +551,11 @@ export function handedOn(
     }
     bump(primary, a.primary.edge.edgeId);
     if (a.backup) bump(backup, a.backup.edge.edgeId);
-    const firstBlocked = blockedEdges.has(a.primary.edge.edgeId);
+    // The address handed out first: the backup where the rule puts it first.
+    const first = firstEndpointOf(a, s.rule.backupFirst === true)!;
+    const firstBlocked = blockedEdges.has(first.edge.edgeId);
     if (firstBlocked) onBlockedFirst++;
-    if (a.primaryMeantFor) onMeantFirst++;
+    if (firstMeantFor(a, s.rule.backupFirst === true)) onMeantFirst++;
     if (firstBlocked || (a.backup && blockedEdges.has(a.backup.edge.edgeId))) onBlockedAddress++;
     const held = namesOf(a.primary);
     for (const name of new Set(held)) bump(names, name);

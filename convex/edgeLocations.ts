@@ -981,6 +981,32 @@ async function originsPublishedAt(
   return { origins, edgeIds };
 }
 
+/**
+ * The nodes with an address in use at a location, as members see them: each
+ * one's published pool (`publishedEdgesOf` for a member, so an activation's
+ * candidates are left out) and, of it, the eligible addresses at the
+ * location. A node whose only published row here no member can be handed is
+ * left out.
+ */
+export async function memberPoolsAt(
+  ctx: { db: DatabaseReader },
+  locationId: Id<'edgeLocations'>,
+): Promise<Array<{ origin: Doc<'relays'>; published: PublishedEdge[]; here: PublishedEdge[] }>> {
+  const { origins, edgeIds } = await originsPublishedAt(ctx.db, [locationId]);
+  const out = [];
+  for (const origin of origins) {
+    const { published } = await publishedEdgesOf(
+      ctx,
+      origin,
+      { kind: 'member' },
+      { includeIneligible: true },
+    );
+    const here = published.filter((e) => edgeIds.has(e.edgeId) && e.eligible !== false);
+    if (here.length > 0) out.push({ origin, published, here });
+  }
+  return out;
+}
+
 /** Move each origin's publication epoch (cached bodies stop matching) and refresh the mirrors once. */
 async function bumpOrigins(ctx: MutationCtx, origins: readonly Doc<'relays'>[]): Promise<void> {
   const now = Date.now();
@@ -1007,7 +1033,8 @@ export const setForCountries = internalMutation({
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Location not found' });
     const listed = (await resolveCensoredCountries(ctx.db)).codes;
-    const clean = cleanMeantFor(a.codes, listed);
+    // A code that left the list may stay or be removed; only an added one must be listed.
+    const clean = cleanMeantFor(a.codes, listed, row.forCountries?.codes ?? []);
     if (!clean.ok)
       throw new ConvexError({
         code: 'validation',
@@ -1055,37 +1082,30 @@ export const forCountriesEstimate = internalQuery({
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Location not found' });
     const listed = (await resolveCensoredCountries(ctx.db)).codes;
-    const clean = cleanMeantFor(a.codes, listed);
+    const stored = row.forCountries?.codes ?? [];
+    const clean = cleanMeantFor(a.codes, listed, stored);
     if (!clean.ok)
       return { valid: false as const, code: clean.code, steering: false, countries: [] };
     const steering = (await resolveMemberCountryConfig(ctx.db)).steer;
-    const countries = changedCountries(row.forCountries?.codes ?? [], clean.codes);
+    // A country off the list has no steered member: removing it moves nobody.
+    const countries = changedCountries(stored, clean.codes).filter((c) => listed.includes(c));
     if (!steering || countries.length === 0)
       return { valid: true as const, code: null, steering, countries: [] };
     const cfg = await resolveEdgeConfig(ctx.db);
     const curated = (await resolveSniConfig(ctx.db)).curatedCountries;
     const rule = effectiveRule(cfg.render, cfg.render.clients.other);
-    const { origins, edgeIds } = await originsPublishedAt(ctx.db, [row._id]);
+    // The address a body hands out first is the backup where the rule puts it first.
+    const backupFirst = rule.includeBackup && rule.order === 'backup-first';
     const now = Date.now();
-    const perNode: Array<{
-      o: Doc<'relays'>;
-      published: PublishedEdge[];
-      after: PublishedEdge[];
-    }> = [];
-    for (const o of origins) {
-      const { published } = await publishedEdgesOf(
-        ctx,
-        o,
-        { kind: 'member' },
-        { includeIneligible: true },
-      );
+    const perNode = (await memberPoolsAt(ctx, row._id)).map(({ origin, published, here }) => {
+      const ids = new Set(here.map((e) => e.edgeId));
       const after = published.map((e) => {
-        if (!edgeIds.has(e.edgeId)) return e;
+        if (!ids.has(e.edgeId)) return e;
         const { meantFor: _was, ...rest } = e;
         return clean.codes.length > 0 ? { ...rest, meantFor: clean.codes } : rest;
       });
-      perNode.push({ o, published, after });
-    }
+      return { o: origin, published, after };
+    });
     return {
       valid: true as const,
       code: null,
@@ -1100,6 +1120,7 @@ export const forCountriesEstimate = internalQuery({
             preferDistinctProviders: cfg.render.preferDistinctProviders,
             includeBackup: rule.includeBackup,
             canEmitV6: ruleCanEmitV6(rule, false),
+            backupFirst,
             ...(o.edgePick ? { edgePick: o.edgePick } : {}),
             ...(lanesOn(o) ? { memberLane: 'trusted' as const } : {}),
             minProvenForExclusive: cfg.country.minProvenForExclusive,

@@ -30,7 +30,7 @@ import { publishedEdgesOf, deliveryStyleOf } from './edgeRender';
 import { listenersOf } from './relayListeners';
 import { effectiveRule, ruleCanEmitV6, ruleForDelivery } from './lib/edges/render';
 import { countryGroupKey, liveCountryState } from './lib/edges/country/group';
-import { groupKeyOfLocation, meantForBlocked } from './lib/edges/meantFor';
+import { groupKeyOfLocation, liveGrade, meantForBlocked } from './lib/edges/meantFor';
 import { dayOf, suspectNames, type NameCount } from './lib/edges/sni/health';
 import { listBlocks, resolveSuggestion, suggest } from './lib/edges/sni/vantage';
 import { readingOf } from './lib/edges/sni/realHost';
@@ -576,6 +576,7 @@ function viewSettings(
       canEmitV6: ruleCanEmitV6(rule, false),
       namesPerEndpoint: rule.namesPerEndpoint,
       backupNames: rule.backupNames,
+      backupFirst: rule.includeBackup && rule.order === 'backup-first',
     },
     preferDistinctProviders: st.cfg.render.preferDistinctProviders,
     minProvenForExclusive: st.cfg.country.minProvenForExclusive,
@@ -641,18 +642,21 @@ function viewOf(
 async function meantForLoad(db: Db) {
   const out: Array<{
     row: Doc<'edgeLocations'>;
-    grades: Map<string, string>;
+    grades: Map<string, { state: string; until?: number }>;
     marks: Map<string, 'proven' | 'blocked'>;
   }> = [];
   for (const row of await db.query('edgeLocations').collect()) {
     if ((row.forCountries?.codes.length ?? 0) === 0) continue;
     const groupKey = groupKeyOfLocation(row);
-    const grades = new Map<string, string>();
+    const grades = new Map<string, { state: string; until?: number }>();
     for (const g of await db
       .query('countryGroupGrades')
       .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey))
       .collect())
-      grades.set(g.country, g.state);
+      grades.set(g.country, {
+        state: g.state,
+        ...(g.until !== undefined ? { until: g.until } : {}),
+      });
     const marks = new Map<string, 'proven' | 'blocked'>();
     for (const m of await db
       .query('countryMarks')
@@ -664,7 +668,12 @@ async function meantForLoad(db: Db) {
   return out;
 }
 
-/** The locations meant for one country, with their addresses in use per node and their state there. */
+/**
+ * The locations meant for one country, with their addresses in use per node
+ * and their state there. In use = in the node's pool as members see it
+ * (`publishedEdgesOf` for a member, eligible): an activation's candidate or an
+ * address no member can be handed counts for nothing.
+ */
 function meantForIn(
   meant: Awaited<ReturnType<typeof meantForLoad>>,
   loaded: Loaded,
@@ -679,8 +688,11 @@ function meantForIn(
       for (const o of loaded.origins) {
         let published = 0;
         let blocked = 0;
+        const inUse = new Set(
+          o.input.published.filter((e) => e.eligible !== false).map((e) => e.edgeId),
+        );
         for (const { doc } of o.edges) {
-          if (doc.locationId !== row._id || doc.publication !== 'published') continue;
+          if (doc.locationId !== row._id || !inUse.has(doc._id)) continue;
           published++;
           const there = liveCountryState(doc.countryState?.byCountry, now).some(
             (c) => c.country === country && c.state === 'blocked',
@@ -697,7 +709,8 @@ function meantForIn(
           });
       }
       const mark = marks.get(country) ?? null;
-      const grade = grades.get(country) ?? null;
+      // A grade past its `until` counts for nothing, before the expiry worker gets to it.
+      const grade = liveGrade(grades.get(country), now);
       return {
         locationId: row._id as string,
         accountId: row.accountId as string,

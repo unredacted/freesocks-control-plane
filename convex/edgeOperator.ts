@@ -116,8 +116,8 @@ import { resolveModeCatalog } from './lib/connectionModes';
 import { requiredPoolSize } from './lib/edges/poolCapacity';
 import { publishedRefOf, setStateOf, slotsOf, takesSlot } from './lib/edges/setState';
 import { withheldFresh } from './lib/edges/withheld';
-import { liveCountryState } from './lib/edges/country/group';
-import { groupKeyOfLocation, meantForBlocked } from './lib/edges/meantFor';
+import { groupKeyOfLocation, liveGrade, meantForBlocked } from './lib/edges/meantFor';
+import { memberPoolsAt } from './edgeLocations';
 import { frontKeysFor } from './lib/edges/frontKeys';
 import { websocketNodeOf } from './lib/edges/websocketNode';
 import { uncoveredListeners } from './lib/edges/pool';
@@ -1933,6 +1933,8 @@ export const attention = internalQuery({
     }
     // A location meant for a country that is blocked there (docs/edges.md
     // "Locations meant for a country"): its members there get other addresses.
+    // A lapsed grade counts for nothing; the addresses are those members are
+    // handed (an activation's candidate is none of them).
     for (const loc of await ctx.db.query('edgeLocations').collect()) {
       const codes = loc.forCountries?.codes ?? [];
       if (codes.length === 0 || !loc.enabled) continue;
@@ -1947,24 +1949,15 @@ export const attention = internalQuery({
           .withIndex('by_group_country', (q) => q.eq('groupKey', groupKey))
           .collect()
       ).filter((m) => m.scope === 'group');
-      const inUse = (
-        await ctx.db
-          .query('edges')
-          .withIndex('by_location_status', (q) =>
-            q.eq('locationId', loc._id).eq('status', 'active'),
-          )
-          .collect()
-      ).filter((e) => e.publication === 'published');
-      const now = Date.now();
+      const inUse = (await memberPoolsAt(ctx, loc._id)).flatMap((p) => p.here);
       for (const country of codes) {
         const blocked = meantForBlocked({
           groupMark: marks.find((m) => m.country === country)?.state ?? null,
-          grade: grades.find((g) => g.country === country)?.state ?? null,
-          published: inUse.map((e) =>
-            liveCountryState(e.countryState?.byCountry, now).some(
-              (c) => c.country === country && c.state === 'blocked',
-            ),
+          grade: liveGrade(
+            grades.find((g) => g.country === country),
+            now,
           ),
+          published: inUse.map((e) => (e.blockedIn ?? []).includes(country)),
         });
         if (blocked)
           items.push({
