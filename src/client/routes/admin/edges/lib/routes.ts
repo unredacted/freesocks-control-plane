@@ -49,6 +49,8 @@ export type EdgesRoute =
   | { page: 'findNetwork'; slug: string }
   | { page: 'countries' }
   | { page: 'country'; code: string }
+  | { page: 'lists' }
+  | { page: 'list'; id: string }
   | { page: 'not-found' };
 
 export const EDGES_ROUTES = [
@@ -67,6 +69,9 @@ export const EDGES_ROUTES = [
   ['/admin/edges/find-names', 'findNames'],
   ['/admin/edges/find-names/:slug', 'findNetwork'],
   ['/admin/edges/countries', 'countries'],
+  // Before `:code`: "lists" is no country.
+  ['/admin/edges/countries/lists', 'lists'],
+  ['/admin/edges/countries/lists/:id', 'list'],
   ['/admin/edges/countries/:code', 'country'],
 ] as const;
 
@@ -76,7 +81,7 @@ export function resolveEdgesRoute(pathname: string): EdgesRoute {
     if (!m) continue;
     if (page === 'relay' || page === 'node' || page === 'family' || page === 'findNetwork')
       return { page, slug: m.params.slug ?? '' };
-    if (page === 'provider') return { page, id: m.params.id ?? '' };
+    if (page === 'provider' || page === 'list') return { page, id: m.params.id ?? '' };
     if (page === 'country') {
       // An ISO 3166-1 alpha-2 code; anything else is not a country page.
       const code = (m.params.code ?? '').toUpperCase();
@@ -113,6 +118,8 @@ export function sectionTabOf(route: EdgesRoute): SectionTab {
       return 'nodes';
     case 'countries':
     case 'country':
+    case 'lists':
+    case 'list':
       return 'countries';
     case 'providers':
     case 'provider':
@@ -182,6 +189,9 @@ export const edgesPaths = {
   countries: () => '/admin/edges/countries',
   country: (code: string, params?: { node?: string | null }) =>
     withSearch(`/admin/edges/countries/${enc(code.toUpperCase())}`, params),
+  /** Country lists: every list FCP follows, and one list. */
+  lists: () => '/admin/edges/countries/lists',
+  list: (id: string) => `/admin/edges/countries/lists/${enc(id)}`,
 };
 
 /**

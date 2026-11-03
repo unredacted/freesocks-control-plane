@@ -231,6 +231,24 @@ export interface EdgeConfig {
      */
     moveQuietDays: number;
   };
+  /**
+   * Country lists (convex/countryLists.ts, docs/edges.md "Country lists"):
+   * community lists of what works, or is blocked, in a country. Ships off:
+   * off, nothing is fetched and nothing reads a list's facts.
+   */
+  lists: {
+    enabled: boolean;
+    /** A version whose names or ranges grew or shrank by more than this factor waits for a person. */
+    jumpFactor: number;
+    /** A version sharing less than this share with the one before waits for a person. */
+    minOverlap: number;
+    /** A version nobody decides on is thrown away after this many days. */
+    heldDays: number;
+    /** A list its source has not confirmed for this many days is stale: nothing reads it. */
+    staleDays: number;
+    /** How often a new list fetches its source. */
+    defaultFetchHours: number;
+  };
   render: {
     /** Master switch for FCP-rendered origin endpoints; off = the backend body passes through. */
     enabled: boolean;
@@ -381,6 +399,14 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     enabled: false,
     zones: [],
     moveQuietDays: 30,
+  },
+  lists: {
+    enabled: false,
+    jumpFactor: 10,
+    minOverlap: 0.5,
+    heldDays: 14,
+    staleDays: 30,
+    defaultFetchHours: 24,
   },
   render: {
     enabled: false,
@@ -567,6 +593,12 @@ export const EDGE_KEYS = {
   'names.enabled': 'edge.names.enabled',
   'names.zones': 'edge.names.zones',
   'names.moveQuietDays': 'edge.names.moveQuietDays',
+  'lists.enabled': 'edge.lists.enabled',
+  'lists.jumpFactor': 'edge.lists.jumpFactor',
+  'lists.minOverlap': 'edge.lists.minOverlap',
+  'lists.heldDays': 'edge.lists.heldDays',
+  'lists.staleDays': 'edge.lists.staleDays',
+  'lists.defaultFetchHours': 'edge.lists.defaultFetchHours',
   'render.enabled': 'edge.render.enabled',
   'render.autoGroupName': 'edge.render.autoGroupName',
   'render.primaryLabel': 'edge.render.primaryLabel',
@@ -778,6 +810,19 @@ export function sanitizeRelayConfig(
       enabled: sanitizeBool(raw['names.enabled'], D.names.enabled),
       zones: sanitizeNameZones(raw['names.zones']),
       moveQuietDays: sanitizeInt(raw['names.moveQuietDays'], 0, 365, D.names.moveQuietDays),
+    },
+    lists: {
+      enabled: sanitizeBool(raw['lists.enabled'], D.lists.enabled),
+      jumpFactor: sanitizeInt(raw['lists.jumpFactor'], 2, 100, D.lists.jumpFactor),
+      minOverlap: sanitizeRatio(raw['lists.minOverlap'], 0, 1, D.lists.minOverlap),
+      heldDays: sanitizeInt(raw['lists.heldDays'], 1, 90, D.lists.heldDays),
+      staleDays: sanitizeInt(raw['lists.staleDays'], 1, 365, D.lists.staleDays),
+      defaultFetchHours: sanitizeInt(
+        raw['lists.defaultFetchHours'],
+        1,
+        168,
+        D.lists.defaultFetchHours,
+      ),
     },
     render: {
       enabled: sanitizeBool(raw['render.enabled'], D.render.enabled),
@@ -1287,6 +1332,11 @@ export const EDGE_CONFIG_BOUNDS: Readonly<Record<string, { min: number; max: num
   'lanes.openReplacesPerFleetDay': { min: 0, max: 500 },
   'l7.maxSameProviderReplacementsPerDay': { min: 0, max: 50 },
   'names.moveQuietDays': { min: 0, max: 365 },
+  'lists.jumpFactor': { min: 2, max: 100 },
+  'lists.minOverlap': { min: 0, max: 1 },
+  'lists.heldDays': { min: 1, max: 90 },
+  'lists.staleDays': { min: 1, max: 365 },
+  'lists.defaultFetchHours': { min: 1, max: 168 },
   'render.namesPerEndpoint': { min: 1, max: 5 },
   'render.backupNames': { min: 1, max: 5 },
   'probe.intervalMinutes': { min: 5, max: 1440 },

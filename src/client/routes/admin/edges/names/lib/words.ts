@@ -55,7 +55,7 @@ export const NETWORK_REFRESH_WORDS: Record<string, string> = {
 };
 
 /** ASNs typed as `AS64500 64501, as64502`: numbers, or null when one is not an ASN. */
-export function parseAsns(text: string): number[] | null {
+export function parseAsns(text: string, max = 8): number[] | null {
   const out: number[] = [];
   for (const t of text.split(/[\s,]+/).filter(Boolean)) {
     const m = /^(?:as)?(\d{1,10})$/i.exec(t);
@@ -63,7 +63,7 @@ export function parseAsns(text: string): number[] | null {
     if (!Number.isInteger(n) || n <= 0 || n > 4_294_967_295) return null;
     if (!out.includes(n)) out.push(n);
   }
-  return out.length > 8 ? null : out;
+  return out.length > max ? null : out;
 }
 
 /** Ranges typed one per line (or separated by spaces): kept as typed, or null when one is not a range. */

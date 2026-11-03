@@ -167,6 +167,16 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Networks: read announced ranges once a day, learn each location’s network',
   },
   {
+    name: 'country-lists',
+    everyMs: 60 * MIN,
+    description: 'Country lists: fetch each list whose source is due',
+  },
+  {
+    name: 'country-lists-sweep',
+    everyMs: DAY,
+    description: 'Country lists: fail crashed staging, expire undecided versions, prune rows',
+  },
+  {
     name: 'backend-reconcile',
     everyMs: 5 * MIN,
     description: 'Server management: settle open backend changes by looking at the backend',

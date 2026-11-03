@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Edge settings (`/admin/edges/settings`).
-   * URL state: `?section` = basics | rotation | rendering | detector | probes | l7 | names | maintenance | freedom.
+   * URL state: `?section` = basics | rotation | rendering | detector | probes | l7 | names | lists | maintenance | freedom.
    * Basics and Maintenance are always open; `?section` opens ONE advanced card and
    * scrolls to it. Each section saves only its own changed keys (flat patch); the
    * knobs, their copy and their section live in settings/fields.ts, bounds and
@@ -19,6 +19,7 @@
   import AdminListState from '../AdminListState.svelte';
   import SectionHeader from './components/SectionHeader.svelte';
   import Link from '@client/components/Link.svelte';
+  import { edgesPaths } from './lib/routes';
   import CodeNote from './components/CodeNote.svelte';
   import ConfigField from './settings/ConfigField.svelte';
   import SettingsSectionCard, { type ExtraChanges } from './settings/SettingsSectionCard.svelte';
@@ -37,6 +38,7 @@
     COUNTRY_FIELDS,
     L7_FIELDS,
     NAMES_FIELDS,
+    LIST_FIELDS,
     NAME_ZONES_PATH,
     PROBE_FIELDS,
     PROBE_SOURCE_FIELDS,
@@ -393,6 +395,29 @@
           a node's addresses.
         </p>
       {/if}
+    </SettingsSectionCard>
+
+    <SettingsSectionCard
+      id="lists"
+      title="Country lists"
+      description="Community lists of names and addresses that work, or are blocked, in a country. They are evidence only."
+      {form}
+      paths={SECTION_PATHS.lists}
+      collapsible
+      open={section === 'lists'}
+      onToggle={toggle('lists')}
+    >
+      <p class="text-muted-foreground mb-4 text-sm">
+        The lists themselves are under
+        <Link href={edgesPaths.lists()} class="underline underline-offset-2"
+          >Countries, Country lists</Link
+        >. A version that looks wrong waits for you there.
+      </p>
+      <div class="grid gap-5 sm:grid-cols-2">
+        {#each LIST_FIELDS as field (field.path)}
+          <ConfigField {field} {form} />
+        {/each}
+      </div>
     </SettingsSectionCard>
 
     <FreedomDeliveryCard />

@@ -15,13 +15,13 @@ export interface CompiledRanges {
   v6: { lo: bigint[]; hi: bigint[] };
 }
 
-function v6Big(ip: string): bigint | null {
+export function v6Big(ip: string): bigint | null {
   const h = v6Hextets(ip);
   return h ? h.reduce((acc, g) => (acc << 16n) | BigInt(g), 0n) : null;
 }
 
 /** Sorted, merged intervals; `next(x)` is the address after `x` (adjacent spans join). */
-function merged<T extends number | bigint>(
+export function merged<T extends number | bigint>(
   spans: [T, T][],
   next: (x: T) => T,
 ): { lo: T[]; hi: T[] } {

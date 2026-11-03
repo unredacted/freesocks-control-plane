@@ -26,6 +26,8 @@ import type * as billing from "../billing.js";
 import type * as censoredCountries from "../censoredCountries.js";
 import type * as clients from "../clients.js";
 import type * as connectionModes from "../connectionModes.js";
+import type * as countryListOps from "../countryListOps.js";
+import type * as countryLists from "../countryLists.js";
 import type * as cronHeartbeat from "../cronHeartbeat.js";
 import type * as crons from "../crons.js";
 import type * as deliveryRefusals from "../deliveryRefusals.js";
@@ -227,6 +229,8 @@ declare const fullApi: ApiFromModules<{
   censoredCountries: typeof censoredCountries;
   clients: typeof clients;
   connectionModes: typeof connectionModes;
+  countryListOps: typeof countryListOps;
+  countryLists: typeof countryLists;
   cronHeartbeat: typeof cronHeartbeat;
   crons: typeof crons;
   deliveryRefusals: typeof deliveryRefusals;
