@@ -78,7 +78,7 @@
     "globalping": "0.4.0",
     "layerchart": "^2.3.0",
     "naughty-words": "1.2.0",
-    "pako": "2.1.0",
+    "pako": "3.0.3",
     "qrcode": "^1.5.4",
     "tailwind-merge": "^3.6.0",
     "tldts": "7.4.18",
