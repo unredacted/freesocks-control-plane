@@ -9,6 +9,7 @@ import type {
   CountryListRegime,
   CountryListVersion,
   CountryListView,
+  EdgeListMarks,
 } from '@shared/contracts/countryLists';
 import { relativeTime } from '../lib/time';
 
@@ -186,6 +187,8 @@ const ERROR_WORDS: Record<string, string> = {
   'edge.list.no_feeds': 'This list feeds nothing. Choose where its names go first.',
   'edge.list.not_feedable':
     'Only a list that is on, fresh and has a version in use can feed names.',
+  'edge.list.watch_allowlist_only': 'Only a list of what works can check edge addresses.',
+  'edge.list.mark_not_left': 'That address is on the list again, or never was.',
   not_found: 'That list is gone.',
   validation: 'Something in the form is not right. Check the fields.',
 };
@@ -230,4 +233,69 @@ export function feedLine(f: CountryListFeed): string {
   if (r.state === 'stopped')
     return `Stopped: ${STOPPED_WORDS[r.stopped ?? ''] ?? 'it stopped.'} ${counts}`;
   return r.current ? counts : `${counts} That was an older version.`;
+}
+
+// --- edge addresses against the list ---------------------------------------------------------------
+
+/** Under the switch: what is true now. */
+export function watchLine(watch: boolean): string {
+  return watch
+    ? 'On. FCP checks the address of every edge in use or ready against the version in use, after each new version and every hour. An address that leaves the list asks for a look.'
+    : 'Off. Edge addresses are not checked against this list.';
+}
+
+/** Why a watched list's checks wait, or null when they run. */
+export function watchWaitsLine(
+  l: Pick<CountryListView, 'enabled' | 'fresh' | 'active'>,
+  switchOn: boolean,
+): string | null {
+  if (!switchOn) return 'Country lists are off: nothing is checked until they are on.';
+  if (!l.enabled) return 'This list is off: nothing is checked until it is on.';
+  if (!l.active) return 'No version is in use yet: nothing is checked until one is.';
+  if (!l.fresh) return 'This list is stale: nothing is checked until its source confirms it.';
+  return null;
+}
+
+/** How the edge addresses stand against the list. */
+export function edgeCountsLine(c: {
+  listed: number;
+  not_listed: number;
+  left: number;
+  checking: number;
+}): string {
+  const total = c.listed + c.not_listed + c.left + c.checking;
+  if (total === 0) return 'No edge has an IP address to check.';
+  const parts = [`${plural(c.listed, 'address', 'addresses')} on it`];
+  if (c.left) parts.push(`${c.left.toLocaleString('en')} left it`);
+  if (c.not_listed) parts.push(`${c.not_listed.toLocaleString('en')} never on it`);
+  if (c.checking) parts.push(`${c.checking.toLocaleString('en')} not checked yet`);
+  return `Of ${plural(total, 'edge address', 'edge addresses')}: ${parts.join(', ')}.`;
+}
+
+type MarkRow = EdgeListMarks['lists'][number]['addresses'][number];
+
+/** One address against one watched list, on the edge's sheet. */
+export function markRowWords(m: MarkRow, now: number): string {
+  switch (m.state) {
+    case 'listed':
+      return m.since ? `On it, first seen there ${relativeTime(m.since, now)}.` : 'On it.';
+    case 'left':
+      return m.since ? `Left it ${relativeTime(m.since, now)}.` : 'Left it.';
+    case 'not_listed':
+      return 'Not on it, and never was.';
+    case 'checking':
+      return 'Not checked against the version in use yet.';
+  }
+}
+
+/** Why a watched list's marks on the sheet are not current, or null when they are. */
+export function marksWaitLine(
+  l: Pick<EdgeListMarks['lists'][number], 'checked' | 'enabled' | 'fresh'>,
+  switchOn: boolean,
+): string | null {
+  if (l.checked) return null;
+  if (!switchOn) return 'Not checked now: country lists are off.';
+  if (!l.enabled) return 'Not checked now: this list is off.';
+  if (!l.fresh) return 'Not checked now: this list is stale.';
+  return 'Not checked now.';
 }

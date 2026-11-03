@@ -347,6 +347,9 @@ export const ATTENTION_KINDS = [
   // A family on a network, bound to a transport, holds fewer than three names that qualify:
   // the "blocked somewhere" last tier empties such a family fast (docs/edges.md "Finding names").
   'sni_family_thin',
+  // An active address that a watched allowlist held and no longer holds (docs/edges.md
+  // "Edge addresses against allowlists"), until a person says they saw it.
+  'list_address_left',
 ] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
@@ -763,6 +766,14 @@ export const COUNTRY_VIEW_ADDRESS_BASES = [
   'none',
 ] as const;
 export type CountryViewAddressBasis = (typeof COUNTRY_VIEW_ADDRESS_BASES)[number];
+
+/**
+ * What a watched allowlist says about an edge address (docs/edges.md "Edge
+ * addresses against allowlists"): listed, gone from it after being listed,
+ * never on it, or not checked against the version in use yet.
+ */
+export const COUNTRY_LIST_MARK_STATES = ['listed', 'not_listed', 'left', 'checking'] as const;
+export type CountryListMarkState = (typeof COUNTRY_LIST_MARK_STATES)[number];
 
 /** Why a server name counts as it does from one country (`checks` = suggested, not applied). */
 export const COUNTRY_VIEW_NAME_BASES = ['mark', 'checks_mark', 'checks', 'none'] as const;

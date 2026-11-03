@@ -343,6 +343,15 @@ export function attentionFactsLine(item: AttentionItem): string {
   const families = f['families'];
   if (Array.isArray(families) && families.length > 0)
     out.push(families.filter((x): x is string => typeof x === 'string').join(', '));
+  // An address that left a country list: which list, and which of the address's families.
+  const list = str('list');
+  if (list !== null) {
+    const cc = str('country');
+    const fam = str('addressFamily');
+    out.push(
+      `List ${list}${cc ? ` (${cc})` : ''}${fam ? `, ${fam === 'v6' ? 'IPv6' : 'IPv4'}` : ''}`,
+    );
+  }
   const countries = f['countries'];
   if (Array.isArray(countries) && countries.length > 0) {
     const codes = countries.filter((c): c is string => typeof c === 'string').slice(0, 6);

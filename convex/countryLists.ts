@@ -37,6 +37,7 @@ import { holdReasons, type ListMeasure } from './lib/edges/lists/guards';
 import { isFresh, lookupEntries, MAX_LISTS } from './lib/edges/lists/facts';
 import { bumpFactsGen } from './countryListFacts';
 import { feedViews, startFeedRuns, startPendingFeeds, sweepFeeds } from './countryListFeeds';
+import { edgeCountsOf, startEdgeRecheck } from './countryListEdges';
 import {
   MAX_LIST_NETWORKS,
   UPLOAD_MAX_BYTES,
@@ -148,6 +149,13 @@ export function cleanSourceUrl(raw: string): string {
   return u.toString();
 }
 
+/** Only an allowlist's ranges say an edge address works there: a block list is never watched. */
+function watchable(regime: List['regime']): boolean {
+  if (regime !== 'allowlist')
+    refuse('edge.list.watch_allowlist_only', 'Only a list of what works can watch edge addresses');
+  return true;
+}
+
 function cleanHours(raw: number | undefined, dflt: number): number {
   const n = raw ?? dflt;
   if (!Number.isInteger(n) || n < 1 || n > 168) refuse('validation', 'Fetch every 1 to 168 hours');
@@ -217,6 +225,7 @@ async function listView(db: DatabaseReader, list: List, staleDays: number, now: 
     confirmedAt: iso(list.confirmedAt),
     fresh: isFresh(list, staleDays, now),
     feeds: await feedViews(db, list),
+    watchEdges: list.regime === 'allowlist' && list.watchEdges === true,
   };
 }
 
@@ -259,6 +268,7 @@ export const detail = internalQuery({
       staleDays: cfg.lists.staleDays,
       list: await listView(ctx.db, list, cfg.lists.staleDays, now),
       versions: versions.map(versionView),
+      edges: await edgeCountsOf(ctx.db, list),
     };
   },
 });
@@ -306,6 +316,7 @@ export const create = internalMutation({
     source: sourceV,
     fetchEveryHours: v.optional(v.number()),
     enabled: v.optional(v.boolean()),
+    watchEdges: v.optional(v.boolean()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -325,6 +336,7 @@ export const create = internalMutation({
       source,
       fetchEveryHours: cleanHours(a.fetchEveryHours, cfg.lists.defaultFetchHours),
       enabled: a.enabled ?? true,
+      ...(a.watchEdges ? { watchEdges: watchable(a.regime) } : {}),
       updatedAt: Date.now(),
     });
     await audit(ctx, 'admin.edge.list.create', a.actorAdminId, {
@@ -347,6 +359,7 @@ export const update = internalMutation({
     url: v.optional(v.string()),
     fetchEveryHours: v.optional(v.number()),
     enabled: v.optional(v.boolean()),
+    watchEdges: v.optional(v.boolean()),
     ...actor,
   },
   handler: async (ctx, a) => {
@@ -393,10 +406,20 @@ export const update = internalMutation({
       patch.enabled = a.enabled;
       changed.push('enabled');
     }
+    if (a.watchEdges !== undefined) {
+      patch.watchEdges = a.watchEdges && watchable(patch.regime ?? list.regime);
+      changed.push('watchEdges');
+    } else if (patch.regime === 'blocklist' && list.watchEdges) {
+      // Only an allowlist is watched: a list that became a block list stops.
+      patch.watchEdges = false;
+      changed.push('watchEdges');
+    }
     await ctx.db.patch(list._id, patch);
-    // What evidence reads moves with these: every stored fact is looked at again.
+    // What evidence reads moves with these: every stored fact is looked at again
+    // (and every edge address with them).
     if (changed.some((c) => ['country', 'regime', 'enabled', 'url'].includes(c)))
       await bumpFactsGen(ctx);
+    else if (changed.includes('watchEdges')) await startEdgeRecheck(ctx);
     // Switched on: feeds that waited take the version in use.
     if (a.enabled === true && !list.enabled)
       await startPendingFeeds(ctx, (await ctx.db.get(list._id))!);
@@ -463,11 +486,17 @@ export const purgeList = internalMutation({
       .withIndex('by_list_feed', (q) => q.eq('listId', listId))
       .take(MEMBERS_PAGE);
     for (const r of runs) await ctx.db.delete(r._id);
+    const marks = await ctx.db
+      .query('countryListEdgeMarks')
+      .withIndex('by_list_edge', (q) => q.eq('listId', listId))
+      .take(MEMBERS_PAGE);
+    for (const m of marks) await ctx.db.delete(m._id);
     const uncleaned = versions.some((ver) => !ver.cleanedAt);
     if (
       versions.length === SWEEP_PAGE ||
       history.length === MEMBERS_PAGE ||
       runs.length === MEMBERS_PAGE ||
+      marks.length === MEMBERS_PAGE ||
       uncleaned
     )
       // Dropped versions stamp `cleanedAt` after the grace; come back for their rows then.
@@ -1177,6 +1206,18 @@ function referenced(list: List | null, id: VersionId): boolean {
 }
 
 /**
+ * Whether an edge address mark was last checked against a version (a list
+ * that stopped being watched, or went stale, keeps its marks): its row stays,
+ * so the mark can always say which version it was checked against.
+ */
+async function markedWith(db: DatabaseReader, id: VersionId): Promise<boolean> {
+  return !!(await db
+    .query('countryListEdgeMarks')
+    .withIndex('by_version', (q) => q.eq('versionId', id))
+    .first());
+}
+
+/**
  * Daily (cron `country-lists-sweep`): fail staging that crashed, throw away
  * versions nobody decided on, finish cleanups, and keep version rows, uploads
  * and history bounded. Never touches a version a list still points at.
@@ -1238,7 +1279,7 @@ export const sweep = internalMutation({
             });
             counts.dropping++;
           }
-        } else if (ver.at < now - VERSION_RETENTION_MS) {
+        } else if (ver.at < now - VERSION_RETENTION_MS && !(await markedWith(ctx.db, ver._id))) {
           await ctx.db.delete(ver._id);
           counts.deleted++;
         }
@@ -1265,7 +1306,7 @@ export const sweep = internalMutation({
         .order('desc')
         .take(MAX_VERSION_ROWS + SWEEP_PAGE);
       for (const ver of older.slice(MAX_VERSION_ROWS))
-        if (ver.cleanedAt && !referenced(list, ver._id)) {
+        if (ver.cleanedAt && !referenced(list, ver._id) && !(await markedWith(ctx.db, ver._id))) {
           await ctx.db.delete(ver._id);
           counts.deleted++;
         }

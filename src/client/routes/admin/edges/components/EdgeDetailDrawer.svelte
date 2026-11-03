@@ -5,7 +5,8 @@
    * addresses, publication, readiness,
    * qualification, provider resources, reachability, the checks from each
    * country (with "Mark for a country" and "Check from every country now"),
-   * recent probes and the live
+   * what the watched lists of what works say about its addresses (with
+   * "Seen it"), recent probes and the live
    * provider snapshot ("Refresh live" pulls a new one; "Show raw" reveals the
    * recorded provider payload, hidden by default).
    *
@@ -59,6 +60,7 @@
   import CodeNote from './CodeNote.svelte';
   import ProviderAnswer from './ProviderAnswer.svelte';
   import EdgeCountryActions from './EdgeCountryActions.svelte';
+  import EdgeListMarks from '../countries/EdgeListMarks.svelte';
   import { anyCountryCheckPending } from '../lib/countryCheckRequests';
   import { edgeHasCountryData } from '../lib/countryChecks';
   import { formatBytes, providerLabel } from '../lib/format';
@@ -561,6 +563,8 @@
             />
           </section>
         {/if}
+
+        <EdgeListMarks edgeId={edge.id} />
 
         {#if detail.data && detail.data.probes.length > 0}
           <section class="space-y-2">

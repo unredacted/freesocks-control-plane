@@ -41,6 +41,7 @@ import {
   type NewestAnswers,
 } from './lib/edges/country/coverage';
 import { enabledSources } from './probes';
+import { marksByEdge } from './countryListEdges';
 import {
   actedState,
   buildCountryView,
@@ -178,6 +179,24 @@ async function load(db: Db): Promise<Loaded> {
         : 'subscription',
     });
   }
+  // What the watched allowlists say about each address (docs/edges.md "Edge addresses against allowlists").
+  const listMarks = await marksByEdge(
+    db,
+    origins.flatMap((o) => o.edges.map((e) => e.doc)),
+    Date.now(),
+  );
+  for (const o of origins)
+    for (const e of o.edges) {
+      const rows = listMarks.get(e.doc._id);
+      if (rows)
+        e.base.lists = rows.map(({ label, country, family, state, at }) => ({
+          label,
+          country,
+          family,
+          state,
+          at,
+        }));
+    }
   return { origins, names };
 }
 

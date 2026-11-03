@@ -80,6 +80,7 @@ const LIST: CountryListView = {
   confirmedAt: null,
   fresh: false,
   feeds: [],
+  watchEdges: false,
 };
 
 let app: ReturnType<typeof mountWithQuery> | null = null;
@@ -99,6 +100,7 @@ describe('ListPage', () => {
       staleDays: 30,
       list: LIST,
       versions: [version()],
+      edges: null,
     };
     vi.mocked(countryListQuery).mockReturnValue(loaded(detail) as never);
     vi.mocked(decideCountryListVersion).mockResolvedValue({ ok: true });

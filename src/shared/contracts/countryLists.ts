@@ -190,6 +190,8 @@ export const CountryListView = z.object({
   /** Confirmed within `edge.lists.staleDays`: only a fresh list is read as evidence. */
   fresh: z.boolean(),
   feeds: z.array(CountryListFeed).default([]),
+  /** An allowlist FCP checks every edge address against (docs/edges.md "Edge addresses against allowlists"). */
+  watchEdges: z.boolean().default(false),
 });
 export type CountryListView = z.infer<typeof CountryListView>;
 
@@ -209,6 +211,16 @@ export const CountryListDetail = z.object({
   staleDays: z.number(),
   list: CountryListView,
   versions: z.array(CountryListVersion),
+  /** How the active edges' addresses stand against it (null: not watched). */
+  edges: z
+    .object({
+      listed: z.number(),
+      not_listed: z.number(),
+      left: z.number(),
+      checking: z.number(),
+    })
+    .nullable()
+    .default(null),
 });
 export type CountryListDetail = z.infer<typeof CountryListDetail>;
 
@@ -221,6 +233,7 @@ export const CountryListCreate = z.object({
   source: CountryListSource,
   fetchEveryHours: z.number().optional(),
   enabled: z.boolean().optional(),
+  watchEdges: z.boolean().optional(),
 });
 export type CountryListCreate = z.infer<typeof CountryListCreate>;
 
@@ -233,6 +246,7 @@ export const CountryListPatch = z.object({
   url: z.string().optional(),
   fetchEveryHours: z.number().optional(),
   enabled: z.boolean().optional(),
+  watchEdges: z.boolean().optional(),
 });
 export type CountryListPatch = z.infer<typeof CountryListPatch>;
 
@@ -273,3 +287,34 @@ export const CountryListLookup = z.object({
   ),
 });
 export type CountryListLookup = z.infer<typeof CountryListLookup>;
+
+/**
+ * `GET lists/marks?edge=`: what every watched allowlist says about one edge's
+ * addresses. `checked` is whether the rechecks read the list now (on, fresh,
+ * the switch on); `needsLook` is the attention rule (`list_address_left`).
+ */
+export const EdgeListMarks = z.object({
+  enabled: z.boolean(),
+  lists: z.array(
+    z.object({
+      listId: z.string(),
+      label: z.string(),
+      country: z.string(),
+      checked: z.boolean(),
+      fresh: z.boolean(),
+      enabled: z.boolean(),
+      addresses: z.array(
+        z.object({
+          family: z.enum(['v4', 'v6']),
+          address: z.string(),
+          state: z.enum(['listed', 'not_listed', 'left', 'checking']),
+          since: z.string().nullable(),
+          checkedAt: z.string().nullable(),
+          markId: z.string().nullable(),
+          needsLook: z.boolean(),
+        }),
+      ),
+    }),
+  ),
+});
+export type EdgeListMarks = z.infer<typeof EdgeListMarks>;

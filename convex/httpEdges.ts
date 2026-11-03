@@ -354,6 +354,15 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     const country = query.get('country');
     return json(await ctx.runQuery(internal.countryLists.list, country ? { country } : {}));
   }
+  // What the watched allowlists say about one edge's addresses (docs/edges.md
+  // "Edge addresses against allowlists").
+  if (a === 'lists' && b === 'marks' && !c) {
+    const edge = query.get('edge');
+    if (!edge) return errorJson('validation', 'edge is required', 400);
+    return json(
+      await ctx.runQuery(internal.countryListEdges.forEdge, { edgeId: id<'edges'>(edge) }),
+    );
+  }
   if (a === 'lists' && b && !c)
     return json(
       await ctx.runQuery(internal.countryLists.detail, { listId: id<'countryLists'>(b) }),
@@ -1978,6 +1987,7 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
           ? { fetchEveryHours: body.fetchEveryHours }
           : {}),
         ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
+        ...(typeof body.watchEdges === 'boolean' ? { watchEdges: body.watchEdges } : {}),
         ...act,
       }),
     );
@@ -2180,6 +2190,7 @@ async function postList(
           ? { fetchEveryHours: body.fetchEveryHours }
           : {}),
         ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
+        ...(typeof body.watchEdges === 'boolean' ? { watchEdges: body.watchEdges } : {}),
         ...act,
       }),
     );
@@ -2230,6 +2241,15 @@ async function postList(
       await ctx.runMutation(internal.countryLists.finishUpload, {
         listId,
         uploadId: id<'countryListUploads'>(d),
+        ...act,
+      }),
+    );
+  // "Seen it" on an edge address that left the list.
+  if (c === 'marks' && d && e === 'seen' && !parts[5])
+    return json(
+      await ctx.runMutation(internal.countryListEdges.markSeen, {
+        listId,
+        markId: id<'countryListEdgeMarks'>(d),
         ...act,
       }),
     );

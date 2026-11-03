@@ -45,6 +45,7 @@ function address(over: Partial<CountryViewAddress> = {}): CountryViewAddress {
       realHost: null,
     },
     handed: { primary: 0, backup: 0 },
+    lists: [],
     ...over,
   };
 }
@@ -473,6 +474,80 @@ describe('country view words', () => {
       ),
     ).toBe(true);
     expect(W.TARGET_ADDS_FLAG_WORDS).not.toMatch(/—/);
+  });
+
+  it('says what the watched lists say about an address, and how many names they hold', () => {
+    expect(W.addressListsLine(address(), NOW)).toBeNull();
+    expect(
+      W.addressListsLine(
+        address({
+          lists: [{ label: 'Works', family: 'v4', state: 'listed', at: NOW - 2 * H }],
+        }),
+        NOW,
+      ),
+    ).toBe('On the list Works.');
+    expect(
+      W.addressListsLine(
+        address({
+          v6: { address: '2001:db8::1', state: null },
+          lists: [
+            { label: 'Works', family: 'v4', state: 'left', at: NOW - 2 * H },
+            { label: 'Works', family: 'v6', state: 'not_listed', at: null },
+          ],
+        }),
+        NOW,
+      ),
+    ).toBe('Left the list Works 2 h ago (IPv4); not on the list Works (IPv6).');
+    expect(
+      W.addressListsLine(
+        address({ lists: [{ label: 'Works', family: 'v4', state: 'checking', at: null }] }),
+        NOW,
+      ),
+    ).toBe('Not checked yet against the list Works.');
+    const listener = (over: Partial<CountryViewListener>): CountryViewListener => ({
+      listenerId: 'L',
+      key: 'a',
+      protocol: 'vless',
+      streamTransport: 'raw',
+      security: 'reality',
+      usable: true,
+      addresses: [],
+      names: [],
+      members: handed(),
+      openMembers: null,
+      targetAdds: null,
+      ...over,
+    });
+    const allow = { allow: true, block: false, suggestion: null };
+    // No list says anything about this transport: nothing to count.
+    expect(
+      W.namesOnListsLine(listener({ names: [name(), name({ name: 'm.example' })] })),
+    ).toBeNull();
+    expect(
+      W.namesOnListsLine(
+        listener({
+          names: [
+            name({ lists: allow }),
+            name({ name: 'm.example' }),
+            name({ name: 'old.example', status: 'retired', lists: allow }),
+          ],
+        }),
+      ),
+    ).toBe(
+      '1 of 2 server names are on a list of what works here. Where only listed addresses and names get through, only those work.',
+    );
+    // A watched list for here says something about the addresses: the count shows, even at 0.
+    expect(
+      W.namesOnListsLine(
+        listener({
+          addresses: [
+            address({ lists: [{ label: 'Works', family: 'v4', state: 'listed', at: null }] }),
+          ],
+          names: [name()],
+        }),
+      )?.startsWith('0 of 1 server name is on a list'),
+    ).toBe(true);
+    for (const w of Object.values(W.LIST_MARK_WORDS)) expect(w).not.toMatch(/—/);
   });
 
   it('counts in words that agree', () => {

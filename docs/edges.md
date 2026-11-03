@@ -3696,6 +3696,42 @@ page then shows a row for it). Lists never suggest `proven`. **Apply** records i
 mark; `autoApply` passes no list, so a list is never acted on without a person. `reason` keeps its
 one meaning: why nothing is suggested.
 
+**Edge addresses against allowlists** (`convex/countryListEdges.ts`, rules in
+`lib/edges/lists/edgeMarks.ts`). Under a whitelist both the dialled address and the server name must
+be listed. An allowlist with **Check edge addresses against it** on (`countryLists.watchEdges`, off
+by default; a block list is refused with `edge.list.watch_allowlist_only`, and a list that becomes
+one stops) has every active edge's IPv4 and IPv6 address checked against its version in use. One
+mark per (edge, list, family) (`countryListEdgeMarks`) holds the version it was checked against,
+whether that version holds the address, the first and last checks that found it listed, when it
+left, and when a person saw that. A mark whose version is not the list's version in use, or whose
+address is not the edge's address now, reads **not checked yet**; a new address starts the mark
+over, so dates never carry from one address to another. A **recheck** walks the active edges 20 a
+step and looks up only what changed (a new version, a new address, a new edge: one chunk read
+each), then drops the marks of edges that are gone, no longer active or without that family's
+address. It runs when the list-facts generation moves (a version going into use, an edit, freshness,
+the switch), when a list starts or stops being watched, and at the end of each hourly
+`country-lists` pass; a start while one runs makes it go round once more. Only a list that is on,
+fresh and has a version in use is read, and nothing while `edge.lists.enabled` is off: a mark of a
+list that is not read is kept, unchanged, until it is. Evidence only, like every list: nothing
+changes what members get, and FCP never replaces an address because a list dropped it.
+
+An active address that was listed and is no longer raises the warning attention item
+**`list_address_left`** (`list_address_left:<edgeId>:<listId>:<family>`, facts `list`, `country`,
+`addressFamily`, action `open_edge`), and keeps raising it across rechecks until a person presses
+**Seen it** on the edge's sheet (`seenAt`). It raises again only after the address is listed again
+and leaves again. An address never listed raises nothing. The edge's sheet shows each watched list
+with each address (on it since, left it when, never on it, not checked yet); each country's page
+shows the same per address for that country's lists, and per transport how many of its active
+server names a list of what works there holds. The list's page shows the switch, why checks wait
+when they do (the switch, the list off, no version, stale) and how the active edges' addresses
+stand.
+
+Retention keeps a version row any mark was last checked against (a list that stopped being watched
+keeps its marks), so a mark can always say which version it was checked against; a removed list
+takes its marks along. Routes: `GET lists/marks?edge={edgeId}` (read), `PATCH lists/{id}
+{watchEdges}`, `POST lists/{id}/marks/{markId}/seen` (only an address that left,
+`edge.list.mark_not_left` otherwise). Audit: `admin.edge.list.mark_seen` (ids and the family).
+
 ### Finding names
 
 Ships dormant: `edge.sni.hunt.enabled` is off. Off, no list is swept, nothing is checked and no
@@ -6280,6 +6316,10 @@ Names into finding names adds one more table (`countryListFeedRuns`), optional `
 `onListsGen` fields with a `by_on_lists_gen` index on `sniCandidates` and `sniNames` (built on the
 push; the rows need no backfill: until a list first moves the generation nothing reads or writes
 them), `sniCandidates.sources` value `list`, and `countryLists.feeds` / `factsFresh`.
+Edge addresses against allowlists adds one more table (`countryListEdgeMarks`), the optional
+`countryLists.watchEdges`, one attention kind (`list_address_left`) and one audit action
+(`admin.edge.list.mark_seen`): one deploy, no migration, no env change. No list watches edges until
+an operator turns it on, so nothing is checked before then.
 
 **Names for load balancer addresses** (§ "Names for load balancer addresses") add one table
 (`edgeNames`), one optional field (`edges.nameWanted`), four settings with defaults
