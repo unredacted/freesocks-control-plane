@@ -165,13 +165,16 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          key: playwright-firefox-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       # No --with-deps: the runner image already carries every library both
       # browsers load (it ships Chrome and Firefox), so it only added fonts the
       # page never uses (it bundles its own) plus an apt-get update that hangs
       # the job whenever the runner's Ubuntu mirror stalls. If a Playwright bump
       # ever needs a library the image lacks, launch fails naming it.
-      - run: bunx playwright install chromium firefox
+      - run: bunx playwright install firefox
+      # Runner images can lag security releases. --force refreshes installed
+      # Chrome too; an existing installation must not skip the update.
+      - run: bunx playwright install --force chrome
       - run: bun run test:compat:browser
       - if: always()
         run: bun --no-env-file scripts/compat/report.ts

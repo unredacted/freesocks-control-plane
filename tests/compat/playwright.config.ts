@@ -26,7 +26,20 @@ export default defineConfig({
     reuseExistingServer: false,
   },
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' } },
+    {
+      name: 'chromium',
+      use: {
+        browserName: 'chromium',
+        // Chrome stable receives security patches independently of Playwright's
+        // pinned Chromium/headless-shell build. Never fall back to that build.
+        channel: 'chrome',
+        launchOptions: {
+          chromiumSandbox: true,
+          // Required by CDP's Browser.getBrowserCommandLine security check.
+          args: ['--enable-automation'],
+        },
+      },
+    },
     { name: 'firefox', use: { browserName: 'firefox' } },
   ],
 });

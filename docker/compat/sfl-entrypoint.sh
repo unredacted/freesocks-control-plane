@@ -23,6 +23,14 @@ if [ ! -S /run/sing-box.socket ]; then
   exit 1
 fi
 
+# Only the daemon needs root. Its Unix socket and the fixture-only output
+# directory must be accessible to the unprivileged UI driver.
+chgrp fcp-browser /run/sing-box.socket
+chmod 0660 /run/sing-box.socket
+mkdir -p test-results/compat/sfl
+chown -R fcp-browser:fcp-browser test-results/compat/sfl
+
 bun --no-env-file build tests/compat/sfl.ts --target=node --packages=external \
   --outfile .cache/compat/runtime/sfl.mjs
-xvfb-run -a node .cache/compat/runtime/sfl.mjs
+exec runuser -u fcp-browser -- env HOME=/home/fcp-browser \
+  xvfb-run -a node .cache/compat/runtime/sfl.mjs
