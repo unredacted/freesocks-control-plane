@@ -26,8 +26,8 @@ import YAML from 'yaml';
  *    break every backup cycle. The sidecar's healthcheck would go unhealthy and
  *    (per Aug 2026) nobody would necessarily be watching.
  *  - `oven/bun` vs. `packageManager` in package.json: the image and CI would
- *    silently build on different Bun versions. package.json is NOT enrolled in
- *    Dependabot, so nothing bumps that half automatically. CI itself is kept out
+ *    silently build on different Bun versions. The Docker updater does not
+ *    change package.json, so a base-image PR must bump that half too. CI is kept out
  *    of the duplication entirely — `.github/workflows/ci.yml` uses
  *    `bun-version-file: package.json`, and the last test here stops a literal
  *    `bun-version:` creeping back in.
@@ -289,7 +289,7 @@ describe('cross-file image pins', () => {
       expect(
         bunBase!.split('@')[0],
         `${name} pins ${bunBase} but package.json declares ${declared}. A Dependabot bump of ` +
-          'the base image does NOT touch package.json (the bun ecosystem is not enrolled), so ' +
+          'the base image does NOT touch package.json, so ' +
           'update packageManager in the same PR or the image and CI build on different Bun ' +
           'versions.',
       ).toBe(expected);
@@ -507,6 +507,33 @@ describe('the Dependabot config', () => {
   const config = YAML.parse(dependabotYml) as DependabotConfig;
   const label = (u: DependabotUpdate) =>
     `${u['package-ecosystem']} ${u.directory ?? u.directories?.join(',')}`;
+
+  test('all direct Bun dependencies stay eligible for updates on the default branch', () => {
+    const updates = config.updates.filter(
+      (u) => u['package-ecosystem'] === 'bun' && u.directory === '/',
+    );
+    expect(updates).toHaveLength(1);
+    const bun = updates[0]!;
+    // The former Convex-only allowlist silently excluded Playwright and every
+    // newly added package. Dependabot's default covers both dependencies and
+    // devDependencies without maintaining another list of package names.
+    expect(bun, 'an allowlist leaves other direct dependencies unwatched').not.toHaveProperty(
+      'allow',
+    );
+    expect(bun, 'an ignore rule can silently exclude a direct dependency').not.toHaveProperty(
+      'ignore',
+    );
+    expect(bun, 'updates must reach the default branch').not.toHaveProperty('target-branch');
+  });
+
+  test('Bun updates are checked every day, including weekends', () => {
+    const bun = config.updates.find((u) => u['package-ecosystem'] === 'bun' && u.directory === '/');
+    // Dependabot's daily interval skips weekends; an every-day cron does not.
+    expect(bun?.schedule).toMatchObject({
+      interval: 'cron',
+      cronjob: expect.stringMatching(/^\S+ \S+ \* \* \*$/),
+    });
+  });
 
   test('the compose files and the /docker Dockerfiles update in one PR', () => {
     // The postgres and caddy pairs are one image in two ecosystems; only a

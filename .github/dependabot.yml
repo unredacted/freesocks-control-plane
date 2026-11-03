@@ -1,8 +1,7 @@
 # Dependabot version updates.
 #
-# Scope: the container supply chain only (compose image pins, Dockerfile base
-# images, CI action pins). Application dependencies (bun.lock) are deliberately
-# NOT enrolled — see the commented block at the bottom.
+# Scope: compose image pins, Dockerfile base images, CI action pins, and every
+# direct application and test dependency in package.json/bun.lock.
 #
 # Everything in the stack is digest-pinned on purpose (supply-chain safety, see
 # the docker-compose.stack.yml header). Re-pinning by hand is easy to forget:
@@ -25,9 +24,8 @@
 #    files. CI's `caddyfile` job reads the image from web.Dockerfile rather than
 #    holding a copy (a copy is a `docker run` ref no ecosystem updates).
 #  - oven/bun: the three /docker Dockerfiles must equal `packageManager` in
-#    package.json, which Dependabot does NOT touch (the bun ecosystem below only
-#    allows the convex packages): a Bun PR fails until packageManager is bumped
-#    in it by hand.
+#    package.json, which the Docker updater does NOT touch: a Bun image PR fails
+#    until packageManager is bumped in it by hand.
 # Not coupled, on purpose: the Node in docker/convex-node/ follows Convex's
 # .nvmrc (22) while the test images follow the clients (24); the sidecar's
 # Xray is a client and moves alone, while docker-compose.compat.yml's Xray pins
@@ -229,35 +227,32 @@ updates:
     groups:
       actions:
         patterns: ['*']
-  # --- the convex CLI/client (npm) ------------------------------------------
-  # The THIRD Convex version in the stack, and the only one with real semver —
-  # this is what ship.convex.dev publishes (v1.44.0 and friends). It is not the
-  # backend: `ghcr.io/convex/convex-*` has never carried a semver tag, only
-  # per-commit git shas (the curated `self-hosted-release-<date>-<sha>` git tags
-  # stopped in 2025-09).
+  # --- application and test dependencies (Bun) ------------------------------
+  # No allowlist: Dependabot's default watches every direct package, including
+  # devDependencies and packages added later. The former Convex-only allowlist
+  # silently excluded Playwright and the rest of the application tree.
   #
-  # It matters because `docker/deploy-entrypoint.sh` runs `bunx convex …` from
-  # THIS lockfile: the pinned CLI is what pushes functions, schema and env to the
-  # pinned backend, and Convex's self-hosted README says to keep it current
-  # ("you'll need the latest version of Convex").
-  #
-  # `allow` keeps this to the convex packages only. The rest of the tree
-  # (Svelte/Vite/Tailwind) stays out on purpose: a weekly firehose of PRs against
-  # a security-sensitive SPA is worse than a deliberate `bun update` with the
-  # full suite green. Widen `allow`, don't delete it, if that changes.
+  # Check every day, including weekends. Browser-binary security fixes may not
+  # have a matching npm advisory, so security updates alone cannot cover them.
+  # Group routine minor/patch changes; keep majors, Playwright and the Convex
+  # CLI/client separate so unrelated updates cannot hold their review up.
+  # The Convex CLI still updates here; the backend/dashboard images are handled
+  # separately by convex-release-watch.yml and convex-repin.yml.
   - package-ecosystem: bun
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-      time: '09:00'
+      interval: cron
+      cronjob: '0 9 * * *'
       timezone: Etc/UTC
     cooldown:
       default-days: 1
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 10
     labels: [dependencies]
     commit-message:
       prefix: chore(deps)
-    allow:
-      - dependency-name: convex
-      - dependency-name: '@convex-dev/*'
+    groups:
+      minor-and-patch:
+        patterns: ['*']
+        exclude-patterns:
+          ['convex', '@convex-dev/*', '@playwright/*', 'playwright', 'playwright-core']
+        update-types: [minor, patch]
