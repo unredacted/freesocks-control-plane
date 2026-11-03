@@ -9,6 +9,9 @@ import { assertSubscription } from './assertions';
 import { COMPAT_ENDPOINTS } from './fixture';
 
 const url = process.env.FCP_COMPAT_SUB_URL;
+if (process.getuid?.() === 0) {
+  throw new Error('SFL UI tests must run as a non-root user with the Chromium sandbox enabled');
+}
 if (!url || !['127.0.0.1', 'localhost', 'host.docker.internal'].includes(new URL(url).hostname))
   throw new Error('SFL application test requires a disposable local subscription');
 const version = JSON.parse(await readFile('.cache/compat/resolved-artifacts.json', 'utf8')).sfl
@@ -23,7 +26,7 @@ const child = spawn(
   process.env.FCP_COMPAT_SFL_EXECUTABLE ?? '/opt/sing-box/sing-box',
   [
     `--user-data-dir=${data}`,
-    '--no-sandbox',
+    '--enable-sandbox',
     '--disable-gpu',
     '--lang=en-US',
     '--remote-debugging-port=0',

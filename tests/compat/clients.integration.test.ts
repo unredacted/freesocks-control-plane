@@ -455,6 +455,10 @@ test(
             containerName,
             '--platform',
             'linux/amd64',
+            // Docker's default profile blocks the namespace syscalls Chromium
+            // needs. Keep seccomp's default-deny policy and allow sandbox setup.
+            '--security-opt',
+            `seccomp=${resolve('docker/compat/seccomp_profile.json')}`,
             '--add-host',
             'host.docker.internal:host-gateway',
             '-v',
