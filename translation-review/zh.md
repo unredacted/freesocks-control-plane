@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**144 of 751 strings are missing** (the app currently shows English for
+**166 of 773 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -190,7 +190,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | 通行密钥登录失败 |
 | `passkey.notNow` | Not now | 暂不 |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(4 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(9 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -224,6 +224,11 @@ review.
 | `account.refreshMembership` | Already paid? Check for my membership | 已付款？查询我的会员状态 |
 | `account.memberActiveTitle` | Membership active | 会员有效 |
 | `account.memberActiveExpiry` | Active until {date} | 有效期至 {date} |
+| `account.appNotice.oldTitle` | One of your apps is too old to connect | ⚠️ **MISSING** |
+| `account.appNotice.modeTitle` | One of your apps can't use this connection mode | ⚠️ **MISSING** |
+| `account.appNotice.oldBody` | An app that fetched your link in the last 7 days got a message in place of a connection. Install one of the supported apps and add your link to it. Your other apps are not affected. | ⚠️ **MISSING** |
+| `account.appNotice.modeBody` | An app that fetched your link in the last 7 days got a message in place of a connection. Install one of the supported apps, or pick another connection mode. | ⚠️ **MISSING** |
+| `account.appNotice.action` | See supported apps | ⚠️ **MISSING** |
 | `account.map.title` | Where your key lives | ⚠️ **MISSING** |
 | `account.map.network` | One of {count} FreeSocks locations | ⚠️ **MISSING** |
 | `account.map.aria` | Globe of FreeSocks server locations, highlighting yours | ⚠️ **MISSING** |
@@ -260,12 +265,13 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | 该插槽空闲。该设备将失去访问权限，直到重新导入您的订阅。 |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | 无法撤销该设备 |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(6 missing)*
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(7 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `hero.titleDefault` | Your key | 你的订阅 |
 | `hero.urlLabelSubscription` | Your link | 订阅链接 |
+| `hero.urlLabelMirror` | Your mirror link | ⚠️ **MISSING** |
 | `hero.urlLabelAccessKey` | Access key | 访问密钥 |
 | `hero.tierLine` | Plan {tier} | 套餐 {tier} |
 | `hero.viaLine` | via {backend} | 通过 {backend} |
@@ -634,12 +640,14 @@ review.
 | `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
 | `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(2 missing)*
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(4 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `setup.title` | Set up your VPN app | 设置你的代理应用 |
 | `setup.install` | Install | 安装 |
+| `setup.mainLinkOnly` | Imports your main link: this app can't read a mirror link. | ⚠️ **MISSING** |
+| `setup.xhttpOnly` | Only apps that work with XHTTP are shown. To use a different app, pick another connection mode. | ⚠️ **MISSING** |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | 此平台暂无推荐应用--可使用任何兼容客户端，手动添加你的订阅。 |
 | `setup.openSource` | Open source | 开源 |
 | `setup.ipv6Works` | IPv6 ready | ⚠️ **MISSING** |
@@ -681,7 +689,7 @@ review.
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | 一款付费、闭源的 iOS 应用，流行且可靠。如果你已购买，值得使用；上面的开源应用可以免费完成同样的工作。 |
 | `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | 体验最简单：粘贴访问密钥即可连接。仅适用于 Outline（Shadowsocks）访问密钥。 |
 
-## `mirror` — The "trouble connecting? try a mirror" fallback flow. *(3 missing)*
+## `mirror` — The "trouble connecting? try a mirror" fallback flow. *(4 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -699,12 +707,29 @@ review.
 | `mirror.capped` | You've added the maximum number of mirrors. | 你添加的镜像数量已达上限。 |
 | `mirror.exhausted` | No more mirrors are available for your region right now. | 当前没有更多适用于你所在地区的镜像。 |
 | `mirror.noSubscription` | Create your key first, then you can add a mirror. | 请先创建你的密钥，然后才能添加镜像。 |
+| `mirror.failed` | Couldn't add a mirror just now. Please try again in a minute. | ⚠️ **MISSING** |
 | `mirror.removeAll` | Remove all mirrors | 移除所有镜像 |
 | `mirror.errorToast` | Couldn't add a mirror | 无法添加镜像 |
 | `mirror.removedToast` | Mirrors removed | 镜像已移除 |
 | `mirror.quickLabel` | First, try moving servers | ⚠️ **MISSING** |
 | `mirror.quickHint` | A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key. | ⚠️ **MISSING** |
 | `mirror.pickLocation` | Pick a different location | ⚠️ **MISSING** |
+
+## `mirrorSuggest` — Miscellaneous strings. *(11 missing)*
+
+| Key | English | Chinese (中文) |
+| --- | --- | --- |
+| `mirrorSuggest.title` | The main link may be blocked in {country} | ⚠️ **MISSING** |
+| `mirrorSuggest.body` | Your app fetches your key from our main website, and networks in {country} often block it. A mirror link serves the same key from a different host that is harder to block. | ⚠️ **MISSING** |
+| `mirrorSuggest.recommend` | We recommend adding a mirror link to your app instead of the main link. | ⚠️ **MISSING** |
+| `mirrorSuggest.create` | Create a mirror link | ⚠️ **MISSING** |
+| `mirrorSuggest.chooseLabel` | Which link should your app use? | ⚠️ **MISSING** |
+| `mirrorSuggest.optionMirror` | Mirror link | ⚠️ **MISSING** |
+| `mirrorSuggest.optionMirrorHint` | Served from another host, harder to block. sing-box and Clash apps can't read it. | ⚠️ **MISSING** |
+| `mirrorSuggest.optionMain` | Main link | ⚠️ **MISSING** |
+| `mirrorSuggest.optionMainHint` | Served from our main website. | ⚠️ **MISSING** |
+| `mirrorSuggest.recommended` | Recommended | ⚠️ **MISSING** |
+| `mirrorSuggest.chooseHint` | Copy, download, the QR code and the app buttons below use the link you pick. sing-box and Clash apps always import the main link. | ⚠️ **MISSING** |
 
 ## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL). *(3 missing)*
 
@@ -723,18 +748,18 @@ review.
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `region.title` | Where are you connecting from? | ⚠️ **MISSING** |
-| `region.help` | Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses and the connection mode we suggest. It is kept with your key, deleted with it, and never shared. | ⚠️ **MISSING** |
-| `region.helpDetect` | On Automatic we guess it from your connection, keep the guess only for the countries listed here, and forget it {days} days after we last see you there. | ⚠️ **MISSING** |
+| `region.help` | Leave this on Automatic unless connecting is unreliable. We use it only to choose what works where you are: the website names your key uses, the addresses it connects to first and the connection mode we suggest. It is kept with your key, deleted with it, and never shared. | ⚠️ **MISSING** |
+| `region.helpDetect` | On Automatic we keep the country you connect from, guessed from your connection, and forget it {days} days after we last see you there. | ⚠️ **MISSING** |
 | `region.automatic` | Automatic | ⚠️ **MISSING** |
-| `region.elsewhere` | Somewhere else | ⚠️ **MISSING** |
+| `region.elsewhere` | Opt-out: do not use my location | ⚠️ **MISSING** |
 | `region.guessed` | We think you're connecting from {country}. | ⚠️ **MISSING** |
 | `region.chosen` | You told us you're connecting from {country}. | ⚠️ **MISSING** |
-| `region.chosenElsewhere` | You told us you're connecting from somewhere not listed here. | ⚠️ **MISSING** |
+| `region.chosenElsewhere` | You opted out: we do not use your location. | ⚠️ **MISSING** |
 | `region.change` | Change | ⚠️ **MISSING** |
 | `region.saved` | Saved. Refresh your app to pick up the change. | ⚠️ **MISSING** |
 | `region.failed` | That did not save. Try again. | ⚠️ **MISSING** |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(24 missing)*
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(26 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -750,6 +775,8 @@ review.
 | `delivery.freedomRealityTitle` | REALITY | ⚠️ **MISSING** |
 | `delivery.freedomRealityBody` | For the heaviest censorship, when WebSocket won't connect. Harder to block, but you copy the configuration in by hand. | ⚠️ **MISSING** |
 | `delivery.freedomRealityLinkBody` | For the heaviest censorship, when WebSocket won't connect. Harder to block, and it still comes as an auto-updating link. | ⚠️ **MISSING** |
+| `delivery.freedomXhttpTitle` | XHTTP | ⚠️ **MISSING** |
+| `delivery.freedomXhttpBody` | Another way through when REALITY keeps getting cut off. Works in up-to-date Hiddify, v2rayNG, v2rayN, Throne and Clash apps. sing-box and Karing can't use it. | ⚠️ **MISSING** |
 | `delivery.privacyTitle` | Privacy Mode | ⚠️ **MISSING** |
 | `delivery.privacyAudience` | For open internet - a traditional VPN | ⚠️ **MISSING** |
 | `delivery.privacyBody` | Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks. | ⚠️ **MISSING** |

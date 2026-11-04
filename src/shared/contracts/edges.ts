@@ -1775,6 +1775,12 @@ export const CountryViewAddress = z.object({
       }),
     )
     .default([]),
+  /**
+   * Latency ordering on (docs/edges.md "Latency over the whole path"): the
+   * whole path from this country through it to the node, in ms; `measured`
+   * when the member's leg was timed from there. Null: no figure, or it is off.
+   */
+  path: z.object({ ms: z.number(), measured: z.boolean() }).nullable().default(null),
 });
 export type CountryViewAddress = z.infer<typeof CountryViewAddress>;
 
@@ -2308,6 +2314,26 @@ export const RENDER_CLIENT_FAMILY_IDS = [
 export const RenderClientFamily = z.enum(RENDER_CLIENT_FAMILY_IDS);
 export type RenderClientFamily = z.infer<typeof RenderClientFamily>;
 
+/**
+ * Why an endpoint was picked "as a member in <country>", beyond its tier:
+ * `meantFor`, its location is meant for that country; `latency`, while
+ * latency ordering is on, the band of its whole path (member, address, node)
+ * and the path in ms (null: no figure, it ranks with the nearest), `measured`
+ * when the member's leg was timed from that country.
+ */
+export const EdgeRenderPreviewWhy = z.object({
+  meantFor: z.boolean(),
+  latency: z
+    .object({
+      band: z.enum(['near', 'medium', 'far']),
+      ms: z.number().nullable(),
+      measured: z.boolean(),
+    })
+    .nullable()
+    .optional(),
+});
+export type EdgeRenderPreviewWhy = z.infer<typeof EdgeRenderPreviewWhy>;
+
 export const EdgeRenderPreviewResponse = z.object({
   family: RenderClientFamily,
   format: z.enum(['links', 'singbox-json', 'clash-yaml']),
@@ -2347,8 +2373,8 @@ export const EdgeRenderPreviewResponse = z.object({
    * Why each endpoint was picked there beyond its tier (null: no country, or no
    * such endpoint): `meantFor`, its location is meant for that country.
    */
-  primaryWhy: z.object({ meantFor: z.boolean() }).nullable().optional(),
-  backupWhy: z.object({ meantFor: z.boolean() }).nullable().optional(),
+  primaryWhy: EdgeRenderPreviewWhy.nullable().optional(),
+  backupWhy: EdgeRenderPreviewWhy.nullable().optional(),
 });
 export type EdgeRenderPreviewResponse = z.infer<typeof EdgeRenderPreviewResponse>;
 

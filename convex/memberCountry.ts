@@ -6,7 +6,8 @@
  * none), else its live guess, else none; every other copy of a country on the
  * row (today: a cached body's `region`) is absent or equal to it. So the
  * indexes on the choice and the guess find every row that holds a country
- * anywhere. Three rules keep it true:
+ * anywhere (a pending country, `regionNextCountry`, only ever sits beside a
+ * guess and goes with it). Three rules keep it true:
  *  - every change of the stored country goes through `setStoredCountry`, which
  *    bumps `countryRev` and drops the copies that no longer match, in the same
  *    transaction;
@@ -26,11 +27,13 @@ import { resolveCensoredCountries } from './lib/censoredCountries';
 import {
   ELSEWHERE,
   MEMBER_COUNTRY_KEYS,
+  guessable,
   liveChoice,
   memberCountryConfig,
   memberCountryView,
   nextGuess,
   storedCountry,
+  wideGuesses,
   type CountryFields,
   type MemberCountryConfig,
   type MemberFamily,
@@ -77,6 +80,8 @@ function fieldsOf(sub: Doc<'subscriptions'>): CountryFields {
     regionSeenCountry: sub.regionSeenCountry ?? null,
     regionSeenFirstAt: sub.regionSeenFirstAt ?? null,
     regionSeenAt: sub.regionSeenAt ?? null,
+    regionNextCountry: sub.regionNextCountry ?? null,
+    regionNextAt: sub.regionNextAt ?? null,
   };
 }
 
@@ -116,11 +121,13 @@ export function keptSnapshot(
 }
 
 /**
- * THE way to change a row's stored country. `choice` / `guess`: `undefined`
- * keeps the field, `null` clears it. Bumps `countryRev` whenever what is stored
- * changes (a refresh of the same guess's last-seen time does not), drops every
- * cached body whose region no longer matches, and strips a render snapshot's
- * country (and tiers) that no longer matches.
+ * THE way to change a row's stored country. `choice` / `guess` / `next`:
+ * `undefined` keeps the field, `null` clears it. A pending country (`next`)
+ * goes whenever the guess changes country or is cleared, unless one is given.
+ * Bumps `countryRev` whenever what is stored changes (a refresh of the same
+ * guess's last-seen time, or a pending country, does not), drops every cached
+ * body whose region no longer matches, and strips a render snapshot's country
+ * (and tiers) that no longer matches.
  */
 export async function setStoredCountry(
   ctx: MutationCtx,
@@ -128,6 +135,7 @@ export async function setStoredCountry(
   change: {
     choice?: string | null;
     guess?: { country: string; firstAt: number; at: number } | null;
+    next?: { country: string; at: number } | null;
   },
   ctxValues?: { cfg: MemberCountryConfig; listed: readonly string[]; now?: number },
 ): Promise<Doc<'subscriptions'>> {
@@ -145,6 +153,11 @@ export async function setStoredCountry(
         }
       : {}),
   };
+  const guessMoved = after.regionSeenCountry !== before.regionSeenCountry;
+  if (change.next !== undefined || guessMoved) {
+    after.regionNextCountry = change.next?.country ?? null;
+    after.regionNextAt = change.next?.at ?? null;
+  }
   const storedBefore = storedCountry(before, cfg, listed, now);
   const storedAfter = storedCountry(after, cfg, listed, now);
   const identityChanged =
@@ -157,6 +170,8 @@ export async function setStoredCountry(
     regionSeenCountry: after.regionSeenCountry ?? undefined,
     regionSeenFirstAt: after.regionSeenFirstAt ?? undefined,
     regionSeenAt: after.regionSeenAt ?? undefined,
+    regionNextCountry: after.regionNextCountry ?? undefined,
+    regionNextAt: after.regionNextAt ?? undefined,
     ...(subCache !== sub.subCache ? { subCache } : {}),
     ...(lastRender !== sub.lastRender ? { lastRender } : {}),
     ...(bump ? { countryRev: (sub.countryRev ?? 0) + 1 } : {}),
@@ -184,7 +199,7 @@ export async function clearMemberCountry(
 
 /** Does the row hold a country anywhere? */
 export function holdsCountry(sub: Doc<'subscriptions'>): boolean {
-  return !!(sub.sniRegion || sub.regionSeenCountry || sub.regionSeenAt);
+  return !!(sub.sniRegion || sub.regionSeenCountry || sub.regionSeenAt || sub.regionNextCountry);
 }
 
 /** Apply one CDN reading to one row; the decision is re-taken on the current row. */
@@ -224,9 +239,12 @@ async function applyReading(
             firstAt: sub.regionSeenFirstAt ?? c.now,
             at: c.now,
           },
+          ...(update.dropNext ? { next: null } : {}),
         },
         c,
       );
+    case 'next':
+      return setStoredCountry(ctx, sub, { next: { country: update.country, at: c.now } }, c);
     case 'clear':
       return setStoredCountry(ctx, sub, { guess: null }, c);
   }
@@ -238,6 +256,8 @@ const fieldsOut = (s: Doc<'subscriptions'>) => ({
   regionSeenCountry: s.regionSeenCountry ?? null,
   regionSeenFirstAt: s.regionSeenFirstAt ?? null,
   regionSeenAt: s.regionSeenAt ?? null,
+  regionNextCountry: s.regionNextCountry ?? null,
+  regionNextAt: s.regionNextAt ?? null,
   countryRev: s.countryRev ?? 0,
 });
 
@@ -273,7 +293,7 @@ export const noteSeenCountry = internalMutation({
 /**
  * One reading on the account view: every active freedom-family key of the
  * member. Returns what their current key uses and where it came from (the mode
- * suggestion reads it: a stored "Somewhere else" is an answer, not "unknown").
+ * suggestion reads it: a stored opt-out is an answer, not "unknown").
  */
 export const noteSeenCountryForUser = internalMutation({
   args: {
@@ -460,6 +480,10 @@ export async function carriedCountry(
           regionSeenCountry: from.regionSeenCountry,
           regionSeenFirstAt: from.regionSeenFirstAt,
           regionSeenAt: from.regionSeenAt,
+          // A country pending beside the guess goes with it, its day held.
+          ...(from.regionNextCountry
+            ? { regionNextCountry: from.regionNextCountry, regionNextAt: from.regionNextAt }
+            : {}),
         }
       : {}),
   };
@@ -505,10 +529,13 @@ export const sweepCountry = internalMutation({
       .withIndex('by_sni_region', (q) => q.eq('sniRegion', a.country))
       .take(PAGE);
     for (const s of choices) await setStoredCountry(ctx, s, { choice: null }, { cfg, listed });
-    const guesses = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_region_seen_country', (q) => q.eq('regionSeenCountry', a.country))
-      .take(PAGE);
+    // With wide guesses a country off the list may still be the guess.
+    const guesses = guessable(a.country, cfg, listed)
+      ? []
+      : await ctx.db
+          .query('subscriptions')
+          .withIndex('by_region_seen_country', (q) => q.eq('regionSeenCountry', a.country))
+          .take(PAGE);
     for (const s of guesses) {
       const fresh = (await ctx.db.get(s._id))!;
       await setStoredCountry(ctx, fresh, { guess: null }, { cfg, listed });
@@ -525,8 +552,10 @@ export const sweepCountry = internalMutation({
 });
 
 /**
- * Idempotent clean-up (every deploy, `seedCutover` schedules it): a stored
- * choice that is no longer on the list, and any country on a key that is not
+ * Idempotent clean-up (every deploy, `seedCutover` schedules it; and when wide
+ * guesses end, `appSettings.setMany`): a stored choice that is no longer on the
+ * list, a guess that may no longer be one (off the list without wide guesses),
+ * a pending country without wide guesses, and any country on a key that is not
  * freedom-family. Walks only rows that hold a choice or a guess. What judging
  * a key reads beyond the key and its member is read once per page, so a page
  * stays far inside one execution's reads however many modes are bound.
@@ -555,6 +584,12 @@ export const cleanStoredCountries = internalMutation({
       } else if (s.sniRegion && !liveChoice(fieldsOf(s), listed)) {
         await setStoredCountry(ctx, s, { choice: null }, { cfg, listed });
         cleared++;
+      } else if (s.regionSeenCountry && !guessable(s.regionSeenCountry, cfg, listed)) {
+        await setStoredCountry(ctx, s, { guess: null }, { cfg, listed });
+        cleared++;
+      } else if (s.regionNextCountry && !wideGuesses(cfg)) {
+        await setStoredCountry(ctx, s, { next: null }, { cfg, listed });
+        cleared++;
       }
     }
     if (!page.isDone)
@@ -568,6 +603,39 @@ export const cleanStoredCountries = internalMutation({
         pass: 'guess',
       });
     return { cleared };
+  },
+});
+
+/**
+ * Before deploying a build older than latency ordering (docs/edges.md "Latency
+ * over the whole path"): no pending country and no guess off the list may
+ * remain, whatever the switches say (an older build knows neither). Pages until
+ * done; safe to run again.
+ */
+export const clearWideForRollback = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, a) => {
+    const { cfg, listed } = await settingsAndList(ctx.db);
+    const narrow = { ...cfg, latency: false };
+    const page = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_region_seen_at', (q) => q.gt('regionSeenAt', 0))
+      .paginate({ cursor: a.cursor ?? null, numItems: PAGE });
+    let cleared = 0;
+    for (const s of page.page) {
+      if (s.regionSeenCountry && !guessable(s.regionSeenCountry, narrow, listed)) {
+        await setStoredCountry(ctx, s, { guess: null }, { cfg: narrow, listed });
+        cleared++;
+      } else if (s.regionNextCountry || s.regionNextAt) {
+        await setStoredCountry(ctx, s, { next: null }, { cfg: narrow, listed });
+        cleared++;
+      }
+    }
+    if (!page.isDone)
+      await ctx.scheduler.runAfter(0, internal.memberCountry.clearWideForRollback, {
+        cursor: page.continueCursor,
+      });
+    return { cleared, done: page.isDone };
   },
 });
 

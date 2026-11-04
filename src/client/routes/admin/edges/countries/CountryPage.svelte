@@ -32,6 +32,7 @@
     countryLabel,
     coverageLines,
     handedWords,
+    pathLine,
     handshakeLine,
     markLine,
     gradeLine,
@@ -257,6 +258,9 @@
                         </p>
                         {#if handedLine(a)}
                           <p class="text-muted-foreground">{handedLine(a)}</p>
+                        {/if}
+                        {#if pathLine(a, code)}
+                          <p class="text-muted-foreground">{pathLine(a, code)}</p>
                         {/if}
                         {#if addressListsLine(a, now)}
                           <p

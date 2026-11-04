@@ -4557,8 +4557,9 @@ the names and the edges (`locateMember` / `locateAt`).
   block) meets the same vetoes.
 
 - **Preview.** `POST render/preview {country}` (and "As a member in" on the preview) renders as
-  a member whose stored country that is (a listed one): names chosen for it and, with steering
-  on, addresses ordered for it, with the tier each endpoint came from.
+  a member whose stored country that is (a listed one, or any real country while latency
+  ordering makes guesses of any): names chosen for it and, with steering on, addresses ordered
+  for it, with the tier each endpoint came from.
 
 ### Locations meant for a country
 
@@ -4584,7 +4585,7 @@ location, walk order`, so the backup still leaves the primary's failure domain f
   and not blocked there). While it acts, the floor counts the proven addresses among the meant-for
   ones (across lanes, as the floor always has), so three proven addresses elsewhere never make one
   proven meant-for address exclusive and stack the country on it.
-- **Nothing moves without it.** No country (a member who said "Somewhere else", detection off
+- **Nothing moves without it.** No country (a member who opted out, detection off
   without a choice, a privacy-family key, a mirror without the member's choice), a pool where no
   location is meant for the member's country, or one where every address is: the walk is exactly
   the one before (pinned by `assignmentMeantFor.test.ts`; the no-country digest in
@@ -4618,6 +4619,75 @@ location, walk order`, so the backup still leaves the primary's failure domain f
 - **Rollback.** Before deploying a build without it, run
   `edgeLocations:clearCountriesForRollback`: it clears every location's countries and moves the
   affected origins' epochs, so members are ordered by evidence alone again.
+
+### Latency over the whole path
+
+Every member's traffic leaves the service at the NODE, so the nearest address is not always the
+fastest one: a member -> an address in the next country -> a node an ocean away is longer than the
+same member -> an address beside the node. With `delivery.country.latency` on (Admin -> Settings, "Where
+members connect from"; default off; it needs `delivery.country.detect` and
+`delivery.country.steer` on as well), a steered member's addresses are ranked by how far their
+WHOLE path is (pure math in `convex/lib/edges/latency.ts`).
+
+- **Any country.** In that mode the stored guess may be any real country, not only a listed
+  one, and another country replaces it only after a day (`lib/memberCountry.ts` `wideGuesses`,
+  `nextGuess`; docs/privacy.md § Where a member connects from). A country off the list orders
+  only by latency: it has no tiers (nothing is checked from there) and gets the universal server
+  names exactly as no country does (`nameCountry`). The opt-out (`ZZ`) stores no country and is
+  never ordered: it keeps the spread of a key with no country, a primary and a backup by its own
+  ranking and nothing else, and seats, lanes and suspicion work as before. When contained
+  addresses arrive (step D of the country plan), an opted-out key must never receive one.
+- **The path** (`pathFigure`), in ms of round trip, is the member's leg plus the node's leg:
+  - the member's leg is MEASURED where probes in the member's country timed a bare TCP connect
+    to an address of that location (`edgeLatency`, below): in practice the censored countries,
+    whose routes are odd. Elsewhere it is estimated: 10 ms of access network plus 0.015 ms per
+    great-circle km between the country's point and the point of the location's country
+    (`edgeLocations.memberPlace.country`, the place shown to members; the points are rough
+    population centres, `src/shared/countryPoints.ts`);
+  - the node's leg is estimated the same way, from the location's point to the node's own map
+    position (`backendServers.locationLat` / `locationLng`): nothing measures it, and FCP has
+    no measurement of its own from an address to its node.
+
+  No figure for an L7 front (anycast: near everywhere), for a location without a place
+  country, or on a node without a map position: such an address ranks with the nearest, so
+  latency only ever moves a member off an address known to be farther. No new probe is asked
+  for: the figures come from the runs that already happen.
+
+- **Bands** (`bandOf`, constants in `LATENCY`), against the best path among the member's
+  assignable addresses not blocked there: near within 1.3 times the best or 25 ms of it
+  (whichever is larger), medium within 2 times or 75 ms, far beyond. Members spread over the
+  addresses of one band by seat as before (`hrw1`), so load and anti-enumeration keep working.
+- **The rank** (`assignByTier`): `blocked there, lane, meant for, band, tier, seat`; the
+  backup's is `blocked there, lane, another provider, meant for, band, tier, another location,
+walk order`. Meant for still wins for its own countries, and a blocked address still ranks
+  after every one that is not. The exclusivity floor counts the proven addresses among the best
+  (meant for, band) group, so proven addresses far away never make one near address exclusive;
+  with no meant-for address and no figures it is the count it always was. Without figures, with
+  every figure equal, or without a country, the walk is exactly the one before (pinned in
+  `assignmentLatency.test.ts`).
+- **Measured member legs** (`convex/edgeLatency.ts`, hourly cron `edge-latency`): per L4
+  location (`<provider>:<placeKey>`) and country, the median of the last 7 days of non-control,
+  successful IPv4 results from Globalping's TCP ping and check-host's TCP check (RIPE Atlas
+  includes the TLS handshake; the internal source is FCP's own host). Each pass merges only the
+  runs requested since the last one (up to half an hour ago), one job per location, into the
+  kept samples (`edgeLatencySamples`: at most 12 per clock hour, so a week stays bounded and
+  even however often the location is probed); the first pass reads two days back. A figure
+  counts from 5 samples from 2 networks with the newest under 48 hours old. What delivery reads
+  (`edgeLatency.ms`) moves only by more than 15% and more than 10 ms, or when the figure
+  appears or lapses; when it moves while latency ordering is on, every origin with an address
+  in use there moves its epoch and the mirrors are refreshed, so cached bodies, mirrors and the
+  preview agree. Moving a node's map position (Servers -> a backend) does the same for its
+  origins.
+- **Turning it on or off** moves every origin's publication epoch and refreshes the mirrors
+  (`edgeRender.latencyChanged`). Turning it, steering or detection off drops every guess off the
+  list and every pending country (`memberCountry.cleanStoredCountries`).
+- **Where it shows.** The preview's reasons (`primaryWhy` / `backupWhy`: `latency` with the
+  band, the path in ms and whether the member's leg was timed); the country view, per address:
+  "About N ms over the whole path to the node". Never part of the snapshot a subscription keeps.
+- **Rollback.** Before deploying a build without it: `memberCountry:clearWideForRollback`
+  (no pending country and no guess off the list remain), then `edgeLatency:purgeForRollback`
+  (every figure, every kept sample, the passes' mark and the switch's key; it pages until
+  `done`).
 
 ### The country view
 

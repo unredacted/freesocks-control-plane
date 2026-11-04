@@ -762,6 +762,8 @@ export const deliveryContextForUser = internalQuery({
       regionSeenCountry: sub.regionSeenCountry ?? null,
       regionSeenFirstAt: sub.regionSeenFirstAt ?? null,
       regionSeenAt: sub.regionSeenAt ?? null,
+      regionNextCountry: sub.regionNextCountry ?? null,
+      regionNextAt: sub.regionNextAt ?? null,
       countryRev: sub.countryRev ?? 0,
       deliveryRev: sub.deliveryRev ?? 0,
     };
@@ -1087,13 +1089,15 @@ export const markSubscriptionDeleted = internalMutation({
       deletedAt: Date.now(),
       subToken: undefined,
       // Where the member connects from goes with the key, now rather than when
-      // the row itself is swept (convex/memberCountry.ts): the choice, the guess,
-      // the cached bodies (they carry the country they were shaped for) and the
-      // last render's snapshot.
+      // the row itself is swept (convex/memberCountry.ts): the choice, the guess
+      // and any country pending beside it, the cached bodies (they carry the
+      // country they were shaped for) and the last render's snapshot.
       sniRegion: undefined,
       regionSeenCountry: undefined,
       regionSeenFirstAt: undefined,
       regionSeenAt: undefined,
+      regionNextCountry: undefined,
+      regionNextAt: undefined,
       subCache: undefined,
       lastRender: undefined,
       countryRev: (dying?.countryRev ?? 0) + 1,

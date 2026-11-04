@@ -156,7 +156,7 @@ const regions = (sub: Doc<'subscriptions'>) =>
   );
 /** Every country held anywhere on the row. */
 const countriesOn = (sub: Doc<'subscriptions'>) =>
-  [sub.sniRegion, sub.regionSeenCountry, ...regions(sub)].filter(
+  [sub.sniRegion, sub.regionSeenCountry, sub.regionNextCountry, ...regions(sub)].filter(
     (c): c is string => typeof c === 'string' && c !== 'ZZ',
   );
 
@@ -586,5 +586,157 @@ describe('the account view and the admin view', () => {
       }),
     ]);
     expect(await t.query(internal.memberCountry.adminView, { userId: 'not-an-id' })).toBeNull();
+  });
+});
+
+describe('wide guesses (latency ordering on)', () => {
+  const H = 3_600_000;
+  async function wide(o: Parameters<typeof world>[0] = {}) {
+    const w = await world(o);
+    await w.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'delivery.country.steer', 'true');
+      await upsertSettingRow(ctx, 'delivery.country.latency', 'true');
+    });
+    return w;
+  }
+
+  test('any country is the first guess; another one is pending a day, then takes over', async () => {
+    const T0 = 1_900_000_000_000;
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    try {
+      const { t, subId } = await wide();
+      await fetchSub(t, { country: 'DE' });
+      let sub = await row(t, subId);
+      expect(sub.regionSeenCountry).toBe('DE');
+      const rev = sub.countryRev ?? 0;
+      // A fetch from France: pending, nothing stored changes (no new revision).
+      vi.setSystemTime(T0 + H);
+      await fetchSub(t, { country: 'FR', ua: 'app/2' });
+      sub = await row(t, subId);
+      expect(sub.regionSeenCountry).toBe('DE');
+      expect(sub.regionNextCountry).toBe('FR');
+      expect(sub.countryRev ?? 0).toBe(rev);
+      // A day after France was first seen, a reading from there flips the guess.
+      vi.setSystemTime(T0 + 2 * H + 24 * H);
+      await fetchSub(t, { country: 'FR', ua: 'app/3' });
+      sub = await row(t, subId);
+      expect(sub.regionSeenCountry).toBe('FR');
+      expect(sub.regionNextCountry).toBeUndefined();
+      expect(sub.countryRev ?? 0).toBeGreaterThan(rev);
+      expect(countriesOn(sub).every((c) => c === 'FR')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a fetch from the guessed country drops a pending one; own exits leave it', async () => {
+    const { t, subId } = await wide();
+    await fetchSub(t, { country: 'DE' });
+    await fetchSub(t, { country: 'FR', ua: 'app/2' });
+    expect((await row(t, subId)).regionNextCountry).toBe('FR');
+    await fetchSub(t, { country: 'FR', ua: 'app/3', ip: EXIT_IP });
+    expect((await row(t, subId)).regionNextCountry).toBe('FR');
+    await fetchSub(t, { country: 'DE', ua: 'app/4' });
+    const sub = await row(t, subId);
+    expect(sub.regionSeenCountry).toBe('DE');
+    expect(sub.regionNextCountry).toBeUndefined();
+  });
+
+  test('without latency ordering a country off the list is never stored', async () => {
+    const { t, subId } = await world();
+    await t.run((ctx) => upsertSettingRow(ctx, 'delivery.country.steer', 'true'));
+    await fetchSub(t, { country: 'DE' });
+    expect(countriesOn(await row(t, subId))).toEqual([]);
+  });
+
+  test('when latency ordering goes off, guesses off the list and pending countries go', async () => {
+    vi.useFakeTimers();
+    const { t, subId } = await wide();
+    await fetchSub(t, { country: 'DE' });
+    await fetchSub(t, { country: 'IR', ua: 'app/2' });
+    let sub = await row(t, subId);
+    expect([sub.regionSeenCountry, sub.regionNextCountry]).toEqual(['DE', 'IR']);
+    await t.mutation(internal.appSettings.setMany, {
+      entries: [{ key: 'delivery.country.latency', value: 'false' }],
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    sub = await row(t, subId);
+    expect(sub.regionSeenCountry).toBeUndefined();
+    expect(sub.regionNextCountry).toBeUndefined();
+    expect(countriesOn(sub)).toEqual([]);
+  });
+
+  test('a listed guess with a pending country keeps the guess and loses the pending one', async () => {
+    vi.useFakeTimers();
+    const { t, subId } = await wide();
+    await fetchSub(t, { country: 'IR' });
+    await fetchSub(t, { country: 'DE', ua: 'app/2' });
+    await t.mutation(internal.appSettings.setMany, {
+      entries: [{ key: 'delivery.country.steer', value: 'false' }],
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const sub = await row(t, subId);
+    expect(sub.regionSeenCountry).toBe('IR');
+    expect(sub.regionNextCountry).toBeUndefined();
+  });
+
+  test('rollback: no pending country and no guess off the list remain, whatever the switches say', async () => {
+    vi.useFakeTimers();
+    const { t, subId } = await wide();
+    await fetchSub(t, { country: 'DE' });
+    await fetchSub(t, { country: 'FR', ua: 'app/2' });
+    await t.mutation(internal.memberCountry.clearWideForRollback, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const sub = await row(t, subId);
+    expect(sub.regionSeenCountry).toBeUndefined();
+    expect(sub.regionNextCountry).toBeUndefined();
+  });
+
+  test('a deleted key keeps no pending country', async () => {
+    const { t, subId } = await wide();
+    await fetchSub(t, { country: 'DE' });
+    await fetchSub(t, { country: 'FR', ua: 'app/2' });
+    expect((await row(t, subId)).regionNextCountry).toBe('FR');
+    await t.mutation(internal.subscriptions.markSubscriptionDeleted, { subscriptionId: subId });
+    const sub = await row(t, subId);
+    expect(sub.regionNextCountry).toBeUndefined();
+    expect(sub.regionNextAt).toBeUndefined();
+    expect(countriesOn(sub)).toEqual([]);
+  });
+
+  test('a switch within the freedom family carries a pending country with its day; regenerate does not', async () => {
+    const { t, subId, userId } = await wide();
+    await fetchSub(t, { country: 'DE' });
+    await fetchSub(t, { country: 'FR', ua: 'app/2' });
+    const before = await row(t, subId);
+    const issue = (carry: Record<string, Id<'subscriptions'>>) =>
+      t.mutation(internal.subscriptions.insertSubscription, {
+        userId,
+        backend: 'remnawave',
+        backendUserId: `u-${Math.random()}`,
+        backendShortId: `s-${Math.random()}`,
+        subscriptionUrl: 'https://panel.example/sub/x',
+        subscriptionMirrors: [],
+        placement: FREEDOM_SQUAD,
+        ...carry,
+      });
+    const switched = await row(t, await issue({ carrySubTokenFromId: subId }));
+    expect([switched.regionSeenCountry, switched.regionNextCountry]).toEqual(['DE', 'FR']);
+    expect(switched.regionNextAt).toBe(before.regionNextAt);
+    const regenerated = await row(t, await issue({ carryCountryFromId: switched._id }));
+    expect([regenerated.regionSeenCountry, regenerated.regionNextCountry]).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  test('the opt-out stores no country, whatever is read', async () => {
+    const { t, subId, userId } = await wide();
+    await t.mutation(internal.memberCountry.setChoice, { userId, region: 'ZZ' });
+    await fetchSub(t, { country: 'DE' });
+    const sub = await row(t, subId);
+    expect(sub.sniRegion).toBe('ZZ');
+    expect(sub.regionSeenCountry).toBeUndefined();
+    expect(countriesOn(sub)).toEqual([]);
   });
 });

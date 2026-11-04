@@ -18,13 +18,14 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import { RENDER_CLIENT_FAMILY_IDS, type RenderClientFamily } from '@shared/contracts/edges';
   import { edgeKeys, previewRender } from '@client/lib/edgesApi';
-  import { adminCensoredCountriesQuery } from '@client/lib/queries';
+  import { adminCensoredCountriesQuery, appSettingsQuery } from '@client/lib/queries';
+  import { COUNTRY_POINTS } from '@shared/countryPoints';
   import { countryName } from '@client/lib/countries';
   import { cn } from '@client/lib/utils';
   import AdminListState from '../../AdminListState.svelte';
   import CodeNote from '../components/CodeNote.svelte';
   import CopyButton from '../components/CopyButton.svelte';
-  import { FAMILY_LABELS, FORMAT_LABELS } from './renderLabels';
+  import { FAMILY_LABELS, FORMAT_LABELS, orderedLine } from './renderLabels';
 
   interface Props {
     relayId: string;
@@ -37,9 +38,22 @@
   // "As a member in <country>": '' renders with no country at all.
   let country = $state('');
   const censored = adminCensoredCountriesQuery();
-  const TIER_WORDS = ['works there', 'not known there', 'blocked there'];
-  const tierWords = (t: number | null | undefined) =>
-    t === null || t === undefined ? null : (TIER_WORDS[t] ?? null);
+  // Ordering by distance on (with detection and steering): a member may be in
+  // any country, so any can be previewed.
+  const settings = appSettingsQuery();
+  const wide = $derived(
+    settings.data?.['delivery.country.latency'] === true &&
+      settings.data?.['delivery.country.steer'] === true &&
+      settings.data?.['delivery.country.detect'] === true,
+  );
+  const others = $derived.by(() => {
+    if (!wide) return [];
+    const listed = new Set((censored.data?.countries ?? []).map((c) => c.code));
+    return Object.keys(COUNTRY_POINTS)
+      .filter((c) => !listed.has(c))
+      .map((code) => ({ code, label: countryName(code, 'en') }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  });
 
   const preview = createQuery(() => ({
     queryKey: [...edgeKeys.all, 'render-preview', relayId, family, country] as const,
@@ -75,6 +89,13 @@
       {#each censored.data?.countries ?? [] as c (c.code)}
         <option value={c.code}>{countryName(c.code, 'en')} ({c.code})</option>
       {/each}
+      {#if others.length > 0}
+        <optgroup label="Other countries">
+          {#each others as c (c.code)}
+            <option value={c.code}>{c.label} ({c.code})</option>
+          {/each}
+        </optgroup>
+      {/if}
     </select>
   </div>
 
@@ -117,13 +138,7 @@
     {#if data.country}
       <p class="text-muted-foreground text-xs">
         {#if data.steered}
-          Addresses ordered for a member in {countryName(data.country, 'en')}: the primary {tierWords(
-            data.primaryTier,
-          ) ?? 'is unknown'}{data.primaryWhy?.meantFor
-            ? ', at a location meant for it'
-            : ''}{tierWords(data.backupTier)
-            ? `, the backup ${tierWords(data.backupTier)}${data.backupWhy?.meantFor ? ', at a location meant for it' : ''}`
-            : ''}.
+          {orderedLine(countryName(data.country, 'en'), data)}
         {:else}
           Names chosen for a member in {countryName(data.country, 'en')}. Addresses are not ordered
           by country: that is off under Settings, Where members connect from.

@@ -66,6 +66,8 @@ import { resolveEdgeConfig } from './lib/edgeConfig';
 import { resolveSniConfig } from './lib/sniConfig';
 import { resolveMemberCountryConfig } from './memberCountry';
 import { publishedEdgesOf } from './edgeRender';
+import { latencyInputsFor } from './edgeLatency';
+import { pathMsOf, type LatencyInputs } from './lib/edges/latency';
 import { scheduleMirrorRefresh } from './lib/edges/relayGuards';
 import { lanesOn } from './lib/edges/lanes';
 import { effectiveRule, ruleCanEmitV6 } from './lib/edges/render';
@@ -1109,25 +1111,34 @@ export const forCountriesEstimate = internalQuery({
     // The address a body hands out first is the backup where the rule puts it first.
     const backupFirst = rule.includeBackup && rule.order === 'backup-first';
     const now = Date.now();
-    const perNode = (await memberPoolsAt(ctx, row._id)).map(({ origin, published, here }) => {
+    const perNode: Array<{
+      o: Doc<'relays'>;
+      published: PublishedEdge[];
+      after: PublishedEdge[];
+      latency: LatencyInputs | null;
+    }> = [];
+    for (const { origin, published, here } of await memberPoolsAt(ctx, row._id)) {
       const ids = new Set(here.map((e) => e.edgeId));
       const after = published.map((e) => {
         if (!ids.has(e.edgeId)) return e;
         const { meantFor: _was, ...rest } = e;
         return clean.codes.length > 0 ? { ...rest, meantFor: clean.codes } : rest;
       });
-      return { o: origin, published, after };
-    });
+      // Latency ordering on: members there are ranked by band too, as delivery does.
+      const latency = await latencyInputsFor(ctx.db, origin, published);
+      perNode.push({ o: origin, published, after, latency });
+    }
     return {
       valid: true as const,
       code: null,
       steering,
       countries: countries.map((country) => ({
         country,
-        nodes: perNode.map(({ o, published, after }) => ({
+        nodes: perNode.map(({ o, published, after, latency }) => ({
           relaySlug: o.slug,
           label: o.label ?? null,
           ...firstAddressMoves(published, after, country, {
+            ...(latency ? { pathMs: pathMsOf(published, country, latency) } : {}),
             now,
             preferDistinctProviders: cfg.render.preferDistinctProviders,
             includeBackup: rule.includeBackup,

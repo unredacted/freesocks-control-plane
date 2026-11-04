@@ -40,16 +40,19 @@ accidentally regress it).
   IP **transiently** and returns it `no-store`; it is never persisted or audited.
 - **Where a member connects from** (`convex/lib/memberCountry.ts`, `convex/memberCountry.ts`).
   The country is used to pick what works there: the server names a key uses
-  (`docs/edges.md` § Names for the member's country) and the connection mode the account page
-  suggests. The rules:
+  (`docs/edges.md` § Names for the member's country), the order its addresses come in
+  (`docs/edges.md` § Delivery by country, § Latency over the whole path) and the connection
+  mode the account page suggests. The rules:
   - **Freedom-family keys only.** A key of any other mode (the privacy family, a backend
     without connection modes, a key whose family cannot be told) has no country at all: no
     reading, nothing stored, nothing country-dependent in what it receives. The family is
     decided fail-closed (`convex/lib/memberFamily.ts`).
   - **The member's own answer wins**: "Where are you connecting from?" on the account page
     (`subscriptions.sniRegion`), a country on the censored-country list (Admin -> Settings) or
-    "Somewhere else" (`ZZ`). While an answer is set nothing is guessed, and any guess is
-    cleared. Automatic removes the answer.
+    the opt-out, "Opt-out: do not use my location" (`ZZ`). While an answer is set nothing is
+    guessed, and any guess is cleared. The opt-out stores no country at all: the key gets the
+    universal server names and the same address spread as a key with no country, and nothing
+    is ordered by where it is. Automatic removes the answer.
   - **The guess.** Only with `delivery.country.detect` on (Admin -> Settings, off by default)
     and only on Automatic: the country the CDN reports (`CF-IPCountry`, read only when
     `CF_FRONTED=true`) is stored on the subscription (`regionSeenCountry`, first and last
@@ -60,6 +63,19 @@ accidentally regress it).
     detection off forgets every stored guess at the next daily sweep, however many there are
     (the sweep runs page after page until none is left). It is read on the subscription route,
     the raw-config view and the account view only.
+  - **Any country, while latency ordering is on.** With `delivery.country.latency` on as well
+    as detection and steering (Admin -> Settings, off by default), the guess may be any real
+    country (`src/shared/countryPoints.ts`; a CDN's own codes for unknown or Tor never are),
+    because then it orders a member's addresses by how far the whole path is. Another country
+    then replaces the guess only after a day: a reading of it is kept as a pending country
+    (`regionNextCountry`, when first seen) beside the guess, and the guess changes on a reading
+    of it at least a day later; a reading of the guessed country in between drops it. So the
+    stored country changes at most once a day, and a single fetch through a VPN in another
+    country changes nothing. The pending country follows every rule of the guess (on the row
+    only, gone with the guess and with the key when it is deleted, carried with the guess to a
+    re-issued key of a freedom mode, never logged, audited or sent to analytics).
+    Turning latency ordering, steering or detection off drops every guess off the list and
+    every pending country (`memberCountry.cleanStoredCountries`, page after page).
   - **Our own exits.** An app that refreshes its subscription through the tunnel reaches FCP
     from one of FCP's own addresses, and the CDN country is then the node's. Such a reading
     never sets or changes the guess (it only keeps an existing one alive). The client address
@@ -73,15 +89,16 @@ accidentally regress it).
     walks the keys that hold one (`memberCountry.cleanStoredCountries`, scheduled by
     `seedCutover`, page after page in transactions of their own) and clears a choice that left
     the list and any country on a key that is no longer freedom-family (an admin change to a
-    mode, its family or the default can turn many keys at once). Every stored copy
+    mode, its family or the default can turn many keys at once), a guess that may no longer be
+    one and a pending country while latency ordering is off. Every stored copy
     of the country on a row (a cached body's region, the render snapshot's country) equals the
     row's choice or guess (`setStoredCountry`); a request
     that read an older one cannot write it back. It follows the member to a re-issued key of a
     freedom mode (regenerate carries the answer only).
   - **Never in logs, audit payloads or analytics**: no audit action records a choice or a
     guess, Umami never sees it, and issue reports never get it by themselves: the report and
-    switch-server dialogs prefill the member's own answer (never the guess, never "Somewhere
-    else") in their consent block, where it is shown, editable and declined with the rest
+    switch-server dialogs prefill the member's own answer (never the guess, never the opt-out)
+    in their consent block, where it is shown, editable and declined with the rest
     (section 7), and only what the member sends is stored.
   - **Sealed in transit.** The routes that carry it (`GET|POST /api/v1/account/connection-region`,
     `GET /api/v1/admin/member-country/{id}`) are HPKE-sealed and refuse plaintext, so it never

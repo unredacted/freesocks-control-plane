@@ -25,7 +25,7 @@
   );
   const name = (code: string) => `${countryName(code, 'en')} (${code})`;
   const choiceWords = (c: string | null) =>
-    c === null ? 'Automatic' : c === 'ZZ' ? 'Somewhere else' : name(c);
+    c === null ? 'Automatic' : c === 'ZZ' ? 'Opted out' : name(c);
   // "Elsewhere" only when the member said so; with nothing stored the service
   // does not know where they are.
   const headline = (k: { effective: string | null; source: string; choice: string | null }) =>

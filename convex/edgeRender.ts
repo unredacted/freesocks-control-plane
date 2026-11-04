@@ -61,6 +61,8 @@ import type { EdgeLayer } from '../src/shared/contracts/edges';
 import { lanesOn } from './lib/edges/lanes';
 import { memberLaneOfUser } from './edgeLanes';
 import { namesEnabledOf, servingNameOf } from './edgeNames';
+import { latencyInputsFor } from './edgeLatency';
+import type { LatencyInputs } from './lib/edges/latency';
 
 const familyValidator = v.union(
   ...(RENDER_CLIENT_FAMILIES.map((f) => v.literal(f)) as [
@@ -327,6 +329,17 @@ export function toPublishedEdge(
   };
 }
 
+/** The render context's latency inputs while latency ordering is on (edgeLatency.ts). */
+export async function latencyContextOf(
+  db: QueryCtx['db'],
+  origin: Doc<'relays'>,
+  published: readonly PublishedEdge[],
+  known?: { steer: boolean; latency: boolean },
+): Promise<{ latency?: LatencyInputs }> {
+  const latency = await latencyInputsFor(db, origin, published, known);
+  return latency ? { latency } : {};
+}
+
 /** Delivery style of a backend: Outline hands out ONE key, a backend a subscription. */
 export async function deliveryStyleOf(
   ctx: { db: QueryCtx['db'] },
@@ -500,13 +513,13 @@ export const renderContextFor = internalQuery({
   handler: async (
     ctx,
     { backendServerId, nodeName },
-  ): Promise<{ token: string | null; curated: string[]; sensitive: boolean }> => {
+  ): Promise<{ token: string | null; curated: string[]; sensitive: boolean; covered: boolean }> => {
     const policy = await deliveryPolicyFor(ctx, backendServerId, nodeName);
     const { token, relay } = await epochTokenFor(ctx, policy);
-    if (!relay) return { token, curated: [], sensitive: false };
+    if (!relay) return { token, curated: [], sensitive: false, covered: false };
     const { curatedCountries } = await resolveSniConfig(ctx.db);
     if (curatedCountries.length === 0)
-      return { token, curated: curatedCountries, sensitive: false };
+      return { token, curated: curatedCountries, sensitive: false, covered: true };
     const listeners = await listenersOf(ctx, relay._id);
     const sensitive = listeners.some(
       (l) =>
@@ -517,7 +530,7 @@ export const renderContextFor = internalQuery({
             ((n.blockedIn?.length ?? 0) > 0 || (n.provenIn?.length ?? 0) > 0),
         ),
     );
-    return { token, curated: curatedCountries, sensitive };
+    return { token, curated: curatedCountries, sensitive, covered: true };
   },
 });
 
@@ -635,6 +648,8 @@ export const decideForSubscription = internalQuery({
           ? { memberLane: await memberLaneOfUser(ctx.db, sub.userId, Date.now()) }
           : {}),
         minProvenForExclusive: cfg.country.minProvenForExclusive,
+        // Latency ordering on: the node's position and the measured member legs.
+        ...(await latencyContextOf(ctx.db, relay, published, countryCfg)),
         renderKey: sub.renderKey ?? null,
         // For a render with NO request behind it (a mirror): the member's own
         // stored answer when it is a curated country, else no country at all,
@@ -652,6 +667,29 @@ export const decideForSubscription = internalQuery({
         withheldNotedAt: relay.withheldEntries?.at ?? null,
       },
     };
+  },
+});
+
+/**
+ * `delivery.country.latency` changed (appSettings.setMany): the order steered
+ * members' addresses come in changes, so every origin's publication epoch
+ * moves and the mirrors are refreshed (a mirror with the member's own choice
+ * is ordered too).
+ */
+export const latencyChanged = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    let bumped = 0;
+    for (const origin of await ctx.db.query('relays').collect()) {
+      await ctx.db.patch(origin._id, {
+        publicationEpoch: origin.publicationEpoch + 1,
+        updatedAt: now,
+      });
+      bumped++;
+    }
+    if (bumped > 0) await scheduleMirrorRefresh(ctx);
+    return { bumped };
   },
 });
 

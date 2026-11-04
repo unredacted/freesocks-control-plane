@@ -598,8 +598,10 @@
             members of freedom modes left on Automatic, a country on the censored-country list is
             stored with their key as a guess (shown to them and to admins, never logged, audited or
             sent to analytics), forgotten the number of days below after it was last seen, and
-            deleted with the key. A member's own choice always wins. Needs the deployment to be
-            fronted by Cloudflare (CF_FRONTED).
+            deleted with the key. With ordering by distance on as well, the guess may be any
+            country, and another country replaces it only after a day. A member's own choice always
+            wins, and members who opt out are never ordered. Needs the deployment to be fronted by
+            Cloudflare (CF_FRONTED).
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3 text-sm">
@@ -618,6 +620,18 @@
             <span>
               Order each member's addresses by their country: addresses that work there first,
               blocked ones only when nothing else is left (their own choice or a stored guess only)
+            </span>
+          </label>
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={draft['delivery.country.latency'] === true}
+              onCheckedChange={(v) =>
+                (draft = { ...draft, 'delivery.country.latency': v === true })}
+            />
+            <span>
+              Also order them by distance: near addresses first, judged over the whole path from the
+              member's country through the address to the node (timed by probes where they run, else
+              from the map). Needs both switches above.
             </span>
           </label>
           <div class="flex flex-wrap gap-6">

@@ -22,6 +22,7 @@ const H = 3_600_000;
 
 function address(over: Partial<CountryViewAddress> = {}): CountryViewAddress {
   return {
+    path: null,
     edgeId: 'e1',
     kind: 'edge',
     layer: 'l4',
@@ -628,5 +629,17 @@ describe('locations meant for a country', () => {
     const steered = W.handedWords(handed({ steered: true, onMeantFirst: 0.75 }));
     expect(steered).toContain('75% of members here start on a location meant for this country.');
     expect(W.handedWords(handed({ onMeantFirst: 0.75 })).join(' ')).not.toMatch(/meant for/);
+  });
+});
+
+describe('the whole path of an address', () => {
+  it('says how far it is and how it is known; nothing without a figure', () => {
+    expect(W.pathLine({ path: null }, 'IR')).toBeNull();
+    expect(W.pathLine({ path: { ms: 210, measured: false } }, 'IR')).toBe(
+      'About 210 ms over the whole path to the node (from the map).',
+    );
+    expect(W.pathLine({ path: { ms: 200, measured: true } }, 'IR')).toBe(
+      `About 200 ms over the whole path to the node (timed from ${W.countryLabel('IR')} to the address, the rest from the map).`,
+    );
   });
 });

@@ -20,6 +20,7 @@ import {
   type PublishedEdge,
 } from './assignment';
 import { RENDER_FORMAT_OF, detectBodyFormat } from './clientFamilies';
+import { pathFigure, type LatencyBand, type LatencyInputs, type PathFigure } from './latency';
 import { formatSupported } from './protocols';
 import {
   edgeAddressesOf,
@@ -61,6 +62,11 @@ export interface EdgeRenderContext {
   deliveryStyle?: DeliveryStyle;
   /** Delivery by country: proven edges needed before they are handed out alone (default 1). */
   minProvenForExclusive?: number;
+  /**
+   * Latency ordering is on (docs/edges.md "Latency over the whole path"): what
+   * a steered member's paths are judged from. Absent = no bands.
+   */
+  latency?: LatencyInputs;
 }
 
 export interface RenderSnapshot {
@@ -87,6 +93,14 @@ export interface PipelineResult extends RenderResult {
    * only: never part of the snapshot a subscription keeps.
    */
   meantFor?: { primary: boolean; backup: boolean };
+  /**
+   * With an `edgeCountry` and latency ordering: each endpoint's band and the
+   * whole path it was judged by (null: no figure). For the preview only.
+   */
+  latency?: {
+    primary: { band: LatencyBand; path: PathFigure | null } | null;
+    backup: { band: LatencyBand; path: PathFigure | null } | null;
+  };
   /**
    * When this body stops being servable: the earliest proof expiry among the
    * L7 fronts it hands out (primary and backup), null when it holds none. A
@@ -142,6 +156,19 @@ export function applyEdgeRender(
   const rule = ruleForDelivery(rctx.rule, rctx.deliveryStyle ?? 'subscription');
   const hasAutoGroup = formatHasAutoGroup(rule, format);
   const canEmitV6 = ruleCanEmitV6(rule, hasAutoGroup);
+  // Latency ordering: each address's whole path for a steered member's country.
+  const country = opts.edgeCountry ?? null;
+  const figures =
+    country && rctx.latency
+      ? new Map(published.map((e) => [e.edgeId, pathFigure(e, country, rctx.latency!)] as const))
+      : null;
+  const pathMs = figures
+    ? new Map(
+        [...figures]
+          .filter((f): f is [string, PathFigure] => f[1] !== null)
+          .map(([id, f]) => [id, f.ms]),
+      )
+    : undefined;
   // (4): the PRF pick over the FULL pool order, walking past ineligible positions.
   const assigned = assignEndpoints(renderKey, published, {
     now: opts.now,
@@ -156,6 +183,7 @@ export function applyEdgeRender(
     edgeCountry: opts.edgeCountry ?? null,
     ...(opts.avoidBlockedIn ? { avoidBlockedIn: opts.avoidBlockedIn } : {}),
     minProvenForExclusive: rctx.minProvenForExclusive,
+    ...(pathMs ? { pathMs } : {}),
   });
   // (5): render + the edge-required verdict. A retained entry on a covered
   // transport that is no edge of the origin is left out (`withheld`).
@@ -195,6 +223,24 @@ export function applyEdgeRender(
           meantFor: {
             primary: assigned.primaryMeantFor === true,
             backup: assigned.backupMeantFor === true,
+          },
+        }
+      : {}),
+    ...(figures
+      ? {
+          latency: {
+            primary: assigned.primary
+              ? {
+                  band: assigned.primaryBand ?? 0,
+                  path: figures.get(assigned.primary.edge.edgeId) ?? null,
+                }
+              : null,
+            backup: assigned.backup
+              ? {
+                  band: assigned.backupBand ?? 0,
+                  path: figures.get(assigned.backup.edge.edgeId) ?? null,
+                }
+              : null,
           },
         }
       : {}),

@@ -56,7 +56,10 @@ import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import { protocolLabel } from './lib/edges/protocols';
 import { clientCheckServiceReady } from './edgeClientCheck';
 import { destroyedPatch, mapEdgeAdmin } from './edges';
-import { deliveryStyleOf, publishedEdgesOf } from './edgeRender';
+import { deliveryStyleOf, latencyContextOf, publishedEdgesOf } from './edgeRender';
+import { wideGuesses } from './lib/memberCountry';
+import { isCountryCode } from '../src/shared/countryPoints';
+import type { LatencyBand, PathFigure } from './lib/edges/latency';
 import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
 import { EDGE_NEW_ACCOUNT_OPTION_DEFAULTS, optionFieldsOf } from './lib/edges/providers/templates';
 import { defaultsOf } from './lib/edges/providers/options';
@@ -705,8 +708,10 @@ export const renderPreview = internalQuery({
     sampleKey: v.optional(v.string()),
     /**
      * "As a member in <country>": render as a freedom-family member whose
-     * stored country this is (a listed country), with their names chosen and,
-     * while `delivery.country.steer` is on, their addresses ordered for it.
+     * stored country this is (a listed country, or any real country while
+     * latency ordering makes guesses of any: lib/memberCountry.ts
+     * `wideGuesses`), with their names chosen and, while
+     * `delivery.country.steer` is on, their addresses ordered for it.
      */
     country: v.optional(v.string()),
     /**
@@ -724,10 +729,11 @@ export const renderPreview = internalQuery({
     const code = country?.trim().toUpperCase();
     if (code) {
       const listed = (await resolveCensoredCountries(ctx.db)).codes;
-      if (!listed.includes(code))
+      const wide = wideGuesses(await resolveMemberCountryConfig(ctx.db));
+      if (!listed.includes(code) && !(wide && isCountryCode(code)))
         throw new ConvexError({
           code: 'validation',
-          message: 'The country is not on the censored-country list',
+          message: wide ? 'Not a country code' : 'The country is not on the censored-country list',
         });
     }
     return renderPreviewFor(ctx, origin, family as RenderClientFamily, sampleKey, code, lane);
@@ -740,7 +746,7 @@ export async function renderPreviewFor(
   origin: Doc<'relays'>,
   fam: RenderClientFamily,
   sampleKey?: string,
-  /** A listed country to render for (the member's stored country); absent = no country at all. */
+  /** A country to render for (the member's stored country); absent = no country at all. */
   country?: string,
   /** The member's address lane on a node with lanes on; absent = a trusted member. */
   lane?: 'open' | 'trusted',
@@ -790,6 +796,7 @@ export async function renderPreviewFor(
           ? await deliveryStyleOf(ctx, origin.backendServerId)
           : 'subscription',
         minProvenForExclusive: cfg.country.minProvenForExclusive,
+        ...(await latencyContextOf(ctx.db, origin, published)),
       },
       input,
       sampleKey && sampleKey.length > 0 ? sampleKey : SAMPLE_RENDER_KEY,
@@ -825,13 +832,32 @@ export async function renderPreviewFor(
       steered: !!country && steer,
       primaryTier: out.snapshot.primaryTier ?? null,
       backupTier: out.snapshot.backupTier ?? null,
-      // Why each was picked there, beyond its tier (docs/edges.md "Locations meant for a country").
+      // Why each was picked there, beyond its tier (docs/edges.md "Locations
+      // meant for a country", "Latency over the whole path").
       primaryWhy:
-        out.meantFor && out.snapshot.primaryEdgeId ? { meantFor: out.meantFor.primary } : null,
+        out.meantFor && out.snapshot.primaryEdgeId
+          ? { meantFor: out.meantFor.primary, ...latencyWhy(out.latency?.primary) }
+          : null,
       backupWhy:
-        out.meantFor && out.snapshot.backupEdgeId ? { meantFor: out.meantFor.backup } : null,
+        out.meantFor && out.snapshot.backupEdgeId
+          ? { meantFor: out.meantFor.backup, ...latencyWhy(out.latency?.backup) }
+          : null,
     };
   }
+}
+
+/** An endpoint's band and path for the preview; nothing while latency ordering is off. */
+function latencyWhy(l: { band: LatencyBand; path: PathFigure | null } | null | undefined): {
+  latency?: { band: 'near' | 'medium' | 'far'; ms: number | null; measured: boolean };
+} {
+  if (!l) return {};
+  return {
+    latency: {
+      band: l.band === 0 ? 'near' : l.band === 1 ? 'medium' : 'far',
+      ms: l.path?.ms ?? null,
+      measured: l.path?.measured ?? false,
+    },
+  };
 }
 
 // --- edges: detail, live, operator resolutions ---------------------------------------------------------
