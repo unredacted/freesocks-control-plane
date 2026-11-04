@@ -120,6 +120,25 @@ export const BUILT_IN_MODES_VERSION = 2;
 
 export const DEFAULT_CONNECTION_MODE = 'freedom-ws';
 
+/**
+ * The English member-facing names of the built-in families and modes, for text
+ * FCP writes where the SPA's translations are not at hand (the subscription
+ * title apps show, `lib/subscriptionTitle.ts`). The SPA's English copy
+ * (messages/en.json `delivery.*Title`) is the source: a family's title is this
+ * name plus " Mode" ("Freedom Mode"), a mode's is this name; a test keeps them
+ * in step.
+ */
+export const BUILT_IN_FAMILY_NAMES_EN: Readonly<Record<string, string>> = {
+  freedom: 'Freedom',
+  privacy: 'Privacy',
+};
+export const BUILT_IN_MODE_NAMES_EN: Readonly<Record<string, string>> = {
+  'freedom-ws': 'WebSocket',
+  'freedom-reality': 'REALITY',
+  'freedom-xhttp': 'XHTTP',
+  'privacy-reality': 'REALITY',
+};
+
 /** Built-in slugs: rows the SPA has compiled i18n copy for (label may stay
  *  null) and the seed manages. Everything else is admin-created. */
 export const BUILT_IN_FAMILY_SLUGS: ReadonlySet<string> = new Set(

@@ -262,12 +262,10 @@ describe('the notice bodies', () => {
     expect(doc.proxies.map((p) => p.name)).toEqual(lines);
     for (const p of doc.proxies)
       expect(p).toEqual({ name: p.name, type: 'socks5', server: NOTICE_HOST, port: NOTICE_PORT });
-    expect(doc['proxy-groups']).toEqual([
-      { name: 'FreeSocks Select', type: 'select', proxies: lines },
-    ]);
-    expect(doc.rules).toEqual(['MATCH,FreeSocks Select']);
+    expect(doc['proxy-groups']).toEqual([{ name: 'FreeSocks', type: 'select', proxies: lines }]);
+    expect(doc.rules).toEqual(['MATCH,FreeSocks']);
     // Nothing defaults to DIRECT or REJECT (the template rule every member body keeps).
-    expect(defaultRouteFaults(body, 'FreeSocks Select')).toEqual([]);
+    expect(defaultRouteFaults(body, 'FreeSocks')).toEqual([]);
   });
 
   test('sing-box: inert SOCKS outbounds, the selector is the final route, the template inbounds', () => {
@@ -283,15 +281,15 @@ describe('the notice bodies', () => {
     expect(doc.inbounds).toEqual(SINGBOX_JSON.inbounds);
     expect(doc.outbounds[0]).toEqual({
       type: 'selector',
-      tag: 'FreeSocks Select',
+      tag: 'FreeSocks',
       outbounds: said,
       default: said[0],
     });
     expect(doc.outbounds.slice(1)).toEqual(
       said.map((tag) => ({ type: 'socks', tag, server: NOTICE_HOST, server_port: NOTICE_PORT })),
     );
-    expect(doc.route.final).toBe('FreeSocks Select');
-    expect(defaultRouteFaults(body, 'FreeSocks Select')).toEqual([]);
+    expect(doc.route.final).toBe('FreeSocks');
+    expect(defaultRouteFaults(body, 'FreeSocks')).toEqual([]);
   });
 
   test('links: one inert VLESS link per line, encoded as the list it replaces', () => {

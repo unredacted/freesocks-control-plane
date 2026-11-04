@@ -15,6 +15,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { qualificationBinding } from './lib/edges/frontCheck/binding';
 import { publishedEdgesOf } from './edgeRender';
+import { resolveEdgeAttribution } from './edgeAttribution';
 import {
   FIXTURE_NODE,
   FIXTURE_ORIGIN,
@@ -26,6 +27,7 @@ import {
 import { bumpEpoch } from './lib/edges/testing/reads';
 import { signValue } from './lib/cookies';
 import { DEFAULT_CENSORED_COUNTRIES } from './lib/censoredCountries';
+import { AUTO_GROUP_NAME } from '../src/shared/entryNames';
 import { __setSubscriptionClockForTests } from './lib/subscriptionEtag';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -181,6 +183,10 @@ const get = (t: ReturnType<typeof convexTest>, ua = 'v2rayNG/1.9.0') =>
 const proxyLines = (body: string) =>
   body.split('\n').filter((l) => /^(vless|ss|trojan):\/\//.test(l));
 const labelOf = (line: string) => decodeURIComponent(line.split('#')[1] ?? '');
+// What members read (src/shared/entryNames.ts) for these adopted edges, which
+// have no location (so no member-facing place): lettered in body order.
+const PRIMARY = 'via relay A';
+const BACKUP = 'via relay B';
 
 type CacheEntry = { relay: string | null; renderedEpoch: number | null; at: number };
 const cacheOf = (sub: Doc<'subscriptions'>) => JSON.parse(sub.subCache!) as CacheEntry[];
@@ -205,7 +211,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     const lines = proxyLines(body);
     expect(body).not.toContain(`#${TEMPLATE}`);
     expect(body).not.toContain(ORIGIN);
-    const primary = lines.filter((l) => labelOf(l).startsWith('FreeSocks'));
+    const primary = lines.filter((l) => labelOf(l).startsWith(PRIMARY));
     expect(primary).toHaveLength(2); // v4 + v6 of the single published edge, no backup
     expect(primary[0]).toContain(`@${EDGE_A}:443?`);
     expect(primary[1]).toContain(`@[${EDGE_A6}]:443?`);
@@ -216,7 +222,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       expect(qs.get('security')).toBe('reality');
       expect(qs.get('pbk')).toBe('PUBKEY');
     }
-    expect(lines.some((l) => labelOf(l).startsWith('FreeSocks (backup)'))).toBe(false);
+    expect(lines.some((l) => labelOf(l).startsWith(BACKUP))).toBe(false);
     // The sub got a render key; the cache entry carries the `<policyVersion>:<epoch>` token.
     const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
@@ -255,7 +261,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const { t, subId, relayId, listenerId } = await seed();
     const first = await (await get(t)).text();
-    expect(first).not.toContain('FreeSocks%20(backup)');
+    expect(first).not.toContain(encodeURIComponent(BACKUP));
     expect(fetchCalls).toBe(1);
     // Publish a second edge (epoch bump) → the fresh cache entry is no longer valid.
     const b = await t.mutation(internal.relays.adoptEdge, {
@@ -269,12 +275,14 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(fetchCalls).toBe(2);
     const lines = proxyLines(body);
     const labels = lines.map(labelOf);
-    expect(labels.filter((l) => l.startsWith('FreeSocks')).length).toBeGreaterThan(0);
-    expect(labels.filter((l) => l.startsWith('FreeSocks (backup)')).length).toBeGreaterThan(0);
+    expect(labels.filter((l) => l.startsWith(PRIMARY)).length).toBeGreaterThan(0);
+    expect(labels.filter((l) => l.startsWith(BACKUP)).length).toBeGreaterThan(0);
     // Primary and backup are different edges.
     const addrOf = (l: string) => l.slice(l.indexOf('@') + 1, l.indexOf(':443'));
-    const primaryAddr = addrOf(lines.find((l) => l.includes('FreeSocks') && !l.includes('['))!);
-    const backupAddr = addrOf(lines.find((l) => l.includes('FreeSocks%20(backup)'))!);
+    const primaryAddr = addrOf(
+      lines.find((l) => labelOf(l).startsWith(PRIMARY) && !l.includes('['))!,
+    );
+    const backupAddr = addrOf(lines.find((l) => labelOf(l).startsWith(BACKUP))!);
     expect(primaryAddr).not.toBe(backupAddr);
     expect([EDGE_A, EDGE_B]).toContain(primaryAddr);
     expect([EDGE_A, EDGE_B]).toContain(backupAddr);
@@ -299,7 +307,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
     const after = await get(t);
     expect(after.status).toBe(200);
-    expect(await after.text()).toContain('FreeSocks');
+    expect(await after.text()).toContain(encodeURIComponent(PRIMARY));
     expect(fetchCalls).toBe(2);
   });
 
@@ -366,7 +374,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(v2.headers.get('x-fcp-delivery')).toBe('family_disabled');
     const other = await get(t, 'curl/8.0');
     expect(other.status).toBe(200);
-    expect(await other.text()).toContain('FreeSocks');
+    expect(await other.text()).toContain(encodeURIComponent(PRIMARY));
   });
 
   test('the raw body is served ONLY for a place no origin covers (token null, decision raw)', async () => {
@@ -377,7 +385,9 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(res.status).toBe(200);
     // The backend's body, under the member-facing entry name (docs/servers.md
     // "A direct node's addresses"): nothing else changes.
-    expect(await res.text()).toBe(`${raw.slice(0, raw.indexOf('#'))}#FreeSocks`);
+    expect(await res.text()).toBe(
+      `${raw.slice(0, raw.indexOf('#'))}#${encodeURIComponent('FreeSocks · Direct')}`,
+    );
     const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
     expect(sub.pinnedNode).toBe('node-nine');
     expect(cacheOf(sub)[0].relay).toBeNull();
@@ -419,7 +429,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const next = await get(t);
     expect(next.status).toBe(200);
-    expect(await next.text()).toContain('FreeSocks');
+    expect(await next.text()).toContain(encodeURIComponent(PRIMARY));
     expect(fetchCalls).toBe(1);
   });
 
@@ -630,7 +640,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const { t, relayId, edgeA, serverId } = await seed();
     const before = await (await get(t)).text();
-    expect(before).toContain('FreeSocks');
+    expect(before).toContain(encodeURIComponent(PRIMARY));
     const epochBefore = (await t.run((ctx) => ctx.db.get(relayId)))!.publicationEpoch;
     await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
     // The epoch bump invalidated the cache within one request.
@@ -664,7 +674,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(view.published[0]).toMatchObject({ layer: 'l7', addresses: { hostname: HOSTNAME } });
     expect(view.published[0].eligible).toBeUndefined(); // a hostname IS a publish address
     const lines = proxyLines(await (await get(t)).text());
-    const primary = lines.filter((l) => l.includes('FreeSocks'));
+    const primary = lines.filter((l) => labelOf(l) === '🌐 via CDN 1');
     // One entry only: an L7 front has no address families of its own.
     expect(primary).toHaveLength(1);
     expect(primary[0]).toContain(`@${HOSTNAME}:443?`);
@@ -750,7 +760,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     const body = await (await get(t)).text();
     expect(body).toContain(`@${EDGE_A}:443?`);
     expect(body).not.toContain('198.51.100.9');
-    expect(body).not.toContain('FreeSocks%20(backup)');
+    expect(body).not.toContain(encodeURIComponent(BACKUP));
     // Still published: nothing unpublishes automatically; the operator retests.
     expect((await t.run((ctx) => ctx.db.get(relayId)))!.publishedEdgeIds).toEqual([edgeA, edgeB]);
     const { items } = await t.query(internal.edgeOperator.attention, {});
@@ -779,7 +789,7 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     stubPanel();
     const { t, relayId, edgeA, subId } = await seed();
     const first = await (await get(t)).text();
-    expect(first).toContain('FreeSocks');
+    expect(first).toContain(encodeURIComponent(PRIMARY));
     // Backend down, pool unchanged → the last-known body for this UA is fine.
     vi.stubGlobal(
       'fetch',
@@ -798,6 +808,46 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
     expect(refused.status).toBe(502);
   });
 
+  test('an old report still maps to its edge: a snapshot from before the names (no autoGroup) replays to the new names, each role to its own address', async () => {
+    stubPanel();
+    const { t, subId, relayId, listenerId } = await seed();
+    await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      listenerId,
+      ipv4: EDGE_B,
+      publish: true,
+      verified: true,
+    });
+    const lines = proxyLines(await (await get(t)).text());
+    // A snapshot written by an older build: no `autoGroup`, the family alone.
+    await t.run(async (ctx) => {
+      const s = (await ctx.db.get(subId))!;
+      const { autoGroup: _was, ...older } = s.lastRender!;
+      await ctx.db.patch(subId, { lastRender: older });
+    });
+    const view = (await t.query(internal.edgeRender.memberView, { subscriptionId: subId }))!;
+    expect(view.known).toBe(true);
+    // The same names the body carries, in its order, each with its address's name.
+    expect(view.connections.map((c) => c.label)).toEqual(lines.map(labelOf));
+    const baseOf = (role: 'primary' | 'backup') =>
+      new Set(view.connections.filter((c) => c.role === role).map((c) => c.base));
+    expect(baseOf('primary')).toEqual(new Set([PRIMARY]));
+    expect(baseOf('backup')).toEqual(new Set([BACKUP]));
+    // A report naming either connection lands on the edge whose address that name carries.
+    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    for (const [choice, base] of [
+      ['primary', PRIMARY],
+      ['backup', BACKUP],
+    ] as const) {
+      const attributed = await t.run((ctx) =>
+        resolveEdgeAttribution(ctx.db, sub, choice, Date.now()),
+      );
+      const edge = (await t.run((ctx) => ctx.db.get(attributed!.relayEdgeId as Id<'edges'>)))!;
+      const line = lines.find((l) => labelOf(l).startsWith(base) && !l.includes('['))!;
+      expect(line).toContain(`@${edge.addresses.v4}:443?`);
+    }
+  });
+
   test('memberView: labels only from the persisted snapshot; known:false without one; nudge once the epoch moved', async () => {
     stubPanel();
     const { t, subId, relayId } = await seed();
@@ -812,7 +862,11 @@ describe('edgeRender: fronted route (edge-required delivery)', () => {
       ['primary', 'v4'],
       ['primary', 'v6'],
     ]);
-    expect(view?.connections[0].label).toContain('FreeSocks');
+    // The names the member's app shows, and one name per address beside them.
+    expect(view?.connections.map((c) => [c.label, c.base])).toEqual([
+      [`${PRIMARY} · IPv4`, PRIMARY],
+      [`${PRIMARY} · IPv6`, PRIMARY],
+    ]);
     expect(JSON.stringify(view)).not.toContain(EDGE_A);
     // The delivery stamped the epoch the body was rendered against.
     const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
@@ -1055,8 +1109,9 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
     const body = await (await get(t)).text();
     const lines = proxyLines(body);
     expect(body).not.toContain(`#${TEMPLATE}`);
-    const primary = lines.filter((l) => l.includes('FreeSocks'));
+    const primary = lines.filter((l) => labelOf(l).startsWith(PRIMARY));
     expect(primary).toHaveLength(2); // v4 + v6 of the one published edge
+    expect(primary.map(labelOf)).toEqual([`${PRIMARY} · IPv4`, `${PRIMARY} · IPv6`]);
     expect(primary[0]).toContain(`@${EDGE_A}:443?`);
     const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
     expect(sub.pinnedNode).toBe(NODE);
@@ -1077,13 +1132,13 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
     const cfg = JSON.parse(await res.text()) as { outbounds: Array<Record<string, unknown>> };
     const tags = cfg.outbounds.map((o) => o.tag);
     expect(tags).not.toContain(TEMPLATE);
-    expect(tags).toContain('FreeSocks');
-    expect(tags).toContain('FreeSocks Auto');
-    const emitted = cfg.outbounds.find((o) => o.tag === 'FreeSocks')!;
+    expect(tags).toContain(`${PRIMARY} · IPv4`);
+    expect(tags).toContain(AUTO_GROUP_NAME);
+    const emitted = cfg.outbounds.find((o) => o.tag === `${PRIMARY} · IPv4`)!;
     expect(emitted).toMatchObject({ server: EDGE_A, server_port: 443, uuid: UUID });
     expect(NAMES).toContain((emitted.tls as { server_name: string }).server_name);
     const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
-    expect(selector.default).toBe('FreeSocks Auto');
+    expect(selector.default).toBe(AUTO_GROUP_NAME);
     expect(JSON.stringify(cfg)).not.toContain(JSON.stringify(TEMPLATE));
     const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
     expect(sub.pinnedNode).toBe(NODE);
@@ -1097,8 +1152,8 @@ describe('edgeRender: single-node bodies (one mode group per node)', () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).not.toContain(TEMPLATE);
-    expect(text).toContain('FreeSocks');
-    expect(text).toContain('FreeSocks Auto');
+    expect(text).toContain(`${PRIMARY} · IPv4`);
+    expect(text).toContain(AUTO_GROUP_NAME);
     expect(text).toContain(`server: ${EDGE_A}`);
     expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);
   });

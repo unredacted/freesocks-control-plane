@@ -76,6 +76,7 @@ import {
   EdgeOkResponse,
   EdgeLocationCountriesEstimate,
   EdgeLocationCountriesResponse,
+  EdgeLocationMemberPlaceResponse,
   EdgeSimulationEndedResponse,
   EdgeSimulationStartedResponse,
   EdgeSimulationsView,
@@ -495,6 +496,20 @@ export const updateProviderLocation = (
     `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}`,
     patch,
     EdgeOkResponse,
+  );
+/**
+ * Where members are told a location is (docs/edges.md "Names in apps"): a
+ * place name and a country code, either may be empty.
+ */
+export const setLocationMemberPlace = (
+  accountId: string,
+  locationId: string,
+  place: { name: string; country: string },
+) =>
+  apiClient.post(
+    `${BASE}/providers/${enc(accountId)}/locations/${enc(locationId)}/member-place`,
+    place,
+    EdgeLocationMemberPlaceResponse,
   );
 /**
  * The countries a location is meant for (docs/edges.md "Locations meant for a

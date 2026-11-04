@@ -94,6 +94,13 @@ export interface PublishedEdge {
   /** L4: IP literals. L7: the fronted hostname members connect to. */
   addresses: { v4?: string; v6?: string; hostname?: string };
   /**
+   * L4 only: where members are told this address is (`edgeLocations.memberPlace`:
+   * the place name and country an operator gave its location for members,
+   * src/shared/entryNames.ts). Absent = the location has none (`via relay A`).
+   * Never the provider's own region name.
+   */
+  memberPlace?: { name?: string; country?: string };
+  /**
    * L4 only: the address's NAME (convex/edgeNames.ts), when names for
    * addresses are on and the name is in use. A subscription body dials it
    * instead of the IP literals (lib/edges/render.ts); absent = the IPs.

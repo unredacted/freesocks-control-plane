@@ -83,7 +83,7 @@
     /** Origin edges: refresh nudge + connection labels (labels only). */
     nodeRelay?: {
       refreshSuggested: boolean;
-      connections: Array<{ label: string; role: string; family: string }>;
+      connections: Array<{ label: string; base?: string; role: string; family: string }>;
     } | null;
     /** Optional key-management actions (switch server / regenerate / switch
      *  backend), rendered in a hairline-separated footer of the pass - the
@@ -120,10 +120,15 @@
   // the UI so the user knows what they're looking at. All labels resolve in
   // $derived so a locale switch re-renders them (t() reads $state).
   let resolvedTitle = $derived(title ?? t('hero.titleDefault'));
-  // The labels of this key's main and backup connections, when it has a backup.
+  // The names of this key's main and backup addresses (without the form an
+  // entry takes of its address), when it has a backup.
   let relayBackup = $derived.by(() => {
-    const primary = nodeRelay?.connections.find((c) => c.role === 'primary')?.label;
-    const backup = nodeRelay?.connections.find((c) => c.role === 'backup')?.label;
+    const nameOf = (role: string) => {
+      const c = nodeRelay?.connections.find((x) => x.role === role);
+      return c ? (c.base ?? c.label) : undefined;
+    };
+    const primary = nameOf('primary');
+    const backup = nameOf('backup');
     return primary && backup ? { primary, backup } : null;
   });
   let isAccessKey = $derived(accessKeyOnly ?? backend === 'outline');
@@ -273,8 +278,7 @@
       {#if nodeRelay && nodeRelay.connections.length > 0}
         <p class="text-sm text-muted-foreground">
           {t('hero.relayConnections')}
-          <span class="text-foreground"
-            >{nodeRelay.connections.map((c) => c.label).join(' · ')}</span
+          <span class="text-foreground">{nodeRelay.connections.map((c) => c.label).join(', ')}</span
           >
         </p>
         <!-- An app that imports a plain link list (Anywhere, v2rayNG...) shows the

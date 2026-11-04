@@ -24,6 +24,13 @@ import type { DatabaseReader, MutationCtx, QueryCtx } from './_generated/server'
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { MAX_LIVE_EDGES_CEILING } from '../src/shared/contracts/edgeLimits';
+import {
+  MAX_PLACE_NAME,
+  cleanNamePart,
+  entryBase,
+  memberPlaceOf,
+  placeCountry,
+} from '../src/shared/entryNames';
 import { ACCOUNT_EDGE_SCAN_LIMIT, EDGE_LIVE_STATUSES } from './lib/edges/pool';
 import {
   placementKeysOf,
@@ -601,6 +608,11 @@ export function mapLocationAdmin(
     autoQualifyHold: r.autoQualifyHold === true,
     // The countries it is meant for (docs/edges.md "Locations meant for a country").
     meantFor: r.forCountries?.codes ?? [],
+    // Where members are told its addresses are (docs/edges.md "Names in apps").
+    memberPlace: {
+      name: r.memberPlace?.name ?? null,
+      country: r.memberPlace?.country ?? null,
+    },
     defaultTemplateId: (r.defaultTemplateId as string | undefined) ?? null,
     regionalParams: parseRegionalParams(r.provider, r.regionalParams),
     maxLiveEdges: r.maxLiveEdges ?? null,
@@ -1145,6 +1157,99 @@ export const clearCountriesForRollback = internalMutation({
     for (const r of await ctx.db.query('edgeLocations').collect())
       if (r.forCountries) {
         await ctx.db.patch(r._id, { forCountries: undefined, updatedAt: Date.now() });
+        ids.push(r._id);
+      }
+    const { origins } = await originsPublishedAt(ctx.db, ids);
+    await bumpOrigins(ctx, origins);
+    return { cleared: ids.length, origins: origins.length };
+  },
+});
+
+// --- where members are told a location is ----------------------------------------------------------
+
+/**
+ * Where members are told an address of this location is (docs/edges.md
+ * "Names in apps"): a place name and a country, either optional, as members
+ * read them in their apps (`🇧🇷 via Example Town`). Without a name its addresses
+ * read `via relay A` and no flag shows. The provider's own region name
+ * (`label`) never reaches a member; this is the only place name that does, so
+ * it must be one the operator is content for anyone with a free account to
+ * read. A CDN zone has none: its fronts are `🌐 via CDN 1`. Every origin with
+ * an address in use here moves its epoch, so members' apps pick the name up
+ * at their next refresh.
+ */
+export const setMemberPlace = internalMutation({
+  args: {
+    id: v.id('edgeLocations'),
+    name: v.union(v.string(), v.null()),
+    country: v.union(v.string(), v.null()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    await assertAdmission(ctx.db, 'provider.write');
+    const row = await ctx.db.get(a.id);
+    if (!row) throw new ConvexError({ code: 'not_found', message: 'Location not found' });
+    if (edgeLayerOf(row.provider) === 'l7')
+      throw new ConvexError({
+        code: 'validation',
+        message: 'A CDN zone has no place name: its fronts are named "via CDN" in members\' apps',
+      });
+    const name = cleanNamePart(a.name ?? '', MAX_PLACE_NAME);
+    const rawCountry = (a.country ?? '').trim();
+    const country = rawCountry ? placeCountry(rawCountry) : null;
+    if (rawCountry && !country)
+      throw new ConvexError({
+        code: 'validation',
+        message: `${rawCountry} is not a country code (an assigned ISO 3166-1 alpha-2 code)`,
+      });
+    const before = memberPlaceOf(row.memberPlace?.name, row.memberPlace?.country);
+    const after = memberPlaceOf(name, country);
+    if (before.name === after.name && before.country === after.country)
+      return { ok: true as const, changed: false, ...after, nodes: 0 };
+    const now = Date.now();
+    await ctx.db.patch(row._id, {
+      memberPlace:
+        after.name || after.country
+          ? {
+              ...(after.name ? { name: after.name } : {}),
+              ...(after.country ? { country: after.country } : {}),
+              updatedAt: now,
+            }
+          : undefined,
+      updatedAt: now,
+    });
+    const { origins } = await originsPublishedAt(ctx.db, [row._id]);
+    await bumpOrigins(ctx, origins);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'edge.location.member_place',
+      targetType: 'edge_location',
+      targetId: row._id,
+      payload: {
+        placeKey: row.placeKey,
+        // What members read (the operator typed it for members): never the provider's label.
+        memberName: entryBase({ kind: 'relay', place: after, letter: null }),
+        nodes: origins.length,
+      },
+    });
+    return { ok: true as const, changed: true, ...after, nodes: origins.length };
+  },
+});
+
+/**
+ * Rollback (docs/edges.md "Names in apps"): before deploying a build older
+ * than `edgeLocations.memberPlace`, clear it from every location. Members'
+ * entries read as that build names them from their next refresh (the affected
+ * origins' epochs move).
+ */
+export const clearMemberPlacesForRollback = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const ids: Id<'edgeLocations'>[] = [];
+    for (const r of await ctx.db.query('edgeLocations').collect())
+      if (r.memberPlace) {
+        await ctx.db.patch(r._id, { memberPlace: undefined, updatedAt: Date.now() });
         ids.push(r._id);
       }
     const { origins } = await originsPublishedAt(ctx.db, ids);

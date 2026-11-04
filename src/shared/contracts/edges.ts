@@ -197,6 +197,13 @@ export const EdgeLocationAdmin = z.object({
   autoQualifyHold: z.boolean().default(false),
   /** The listed countries this place is meant for (docs/edges.md "Locations meant for a country"). */
   meantFor: z.array(z.string()).default([]),
+  /**
+   * Where members are told its addresses are (docs/edges.md "Names in apps"):
+   * the place name and country typed for members, null when unset.
+   */
+  memberPlace: z
+    .object({ name: z.string().nullable(), country: z.string().nullable() })
+    .default({ name: null, country: null }),
   defaultTemplateId: z.string().nullable(),
   /** The location's own values of the template's regional fields (a flavor). */
   regionalParams: z.record(z.string(), z.string()).default({}),
@@ -291,6 +298,17 @@ export const EdgeLocationCountriesResponse = z.object({
   nodes: z.number(),
 });
 export type EdgeLocationCountriesResponse = z.infer<typeof EdgeLocationCountriesResponse>;
+
+/** POST …/locations/{id}/member-place: where members are told the location is. */
+export const EdgeLocationMemberPlaceResponse = z.object({
+  ok: z.literal(true),
+  changed: z.boolean(),
+  name: z.string().nullable(),
+  country: z.string().nullable(),
+  /** Nodes with an address in use there: their members' names change at their next refresh. */
+  nodes: z.number(),
+});
+export type EdgeLocationMemberPlaceResponse = z.infer<typeof EdgeLocationMemberPlaceResponse>;
 
 /**
  * POST …/countries/estimate: what saving those codes would move, before it is
@@ -2305,6 +2323,13 @@ export const EdgeRenderPreviewResponse = z.object({
       z.object({ kind: z.literal('unavailable'), reason: z.string() }),
     ])
     .optional(),
+  /**
+   * The names members' apps list for the body (docs/edges.md "Names in apps"):
+   * its entries and its groups, in body order. Empty when it is not served.
+   */
+  names: z
+    .object({ entries: z.array(z.string()), groups: z.array(z.string()) })
+    .default({ entries: [], groups: [] }),
   /** Per listener, whether its template entry resolved in the preview body. */
   listeners: z
     .array(
@@ -2331,11 +2356,8 @@ export const ClientRenderRule = z
   .object({
     enabled: z.boolean(),
     autoGroup: z.boolean(),
-    autoGroupName: z.string(),
     includeBackup: z.boolean(),
     ipv6Mode: z.enum(['inherit', 'off', 'auto-group-only', 'both']),
-    primaryLabel: z.string(),
-    backupLabel: z.string(),
     order: z.enum(['primary-first', 'backup-first']),
     maxEntries: z.number(),
     dropTemplateEntries: z.boolean(),
@@ -2402,11 +2424,6 @@ export const EdgeConfigView = z.object({
       render: z
         .object({
           enabled: z.boolean(),
-          autoGroupName: z.string(),
-          primaryLabel: z.string(),
-          backupLabel: z.string(),
-          ipv6Label: z.string(),
-          ipLabel: z.string().default('IPv4'),
           namesPerEndpoint: z.number().default(3),
           backupNames: z.number().default(1),
           ipv6Mode: z.enum(['off', 'auto-group-only', 'both']),
@@ -3132,6 +3149,8 @@ export const ProviderSetView = z.object({
   /**
    * What the set still lacks, one entry per missing address (`deficit` entries):
    * a transport, and the location of the set it is wanted in (null: any location).
+   * `trusted` false: no address there was tested yet, so automatic upkeep adds
+   * none there; its first one is made and tested by hand.
    */
   missing: z
     .array(
@@ -3140,6 +3159,7 @@ export const ProviderSetView = z.object({
         locationId: z.string().nullable(),
         label: z.string().nullable(),
         accountName: z.string().nullable(),
+        trusted: z.boolean().optional(),
       }),
     )
     .default([]),

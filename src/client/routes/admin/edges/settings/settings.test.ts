@@ -97,11 +97,11 @@ describe('adjustedValues', () => {
     const fresh = {
       'detect.clearBelow': 0.55,
       'detect.suspectAt': 0.6,
-      'render.primaryLabel': 'A',
+      'render.ipv6Mode': 'both',
     };
     expect(
       adjustedValues(
-        { 'detect.clearBelow': 0.9, 'detect.suspectAt': 0.6, 'render.primaryLabel': 'A' },
+        { 'detect.clearBelow': 0.9, 'detect.suspectAt': 0.6, 'render.ipv6Mode': 'both' },
         fresh,
       ),
     ).toEqual([{ display: 'detect.clearBelow', sent: 0.9, stored: 0.55 }]);

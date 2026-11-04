@@ -283,31 +283,36 @@ export interface SetLocationCandidate extends AccountCandidate {
  * Selection with a set: the trusted, usable picks (any pick when the request
  * allows an untrusted location), ranked by what they add: lowers the deficit,
  * a provider not yet published for the listener, a location not yet
- * published, set order, fewest live edges.
+ * published, set order, fewest live edges. `onlyLowering`: an automatic fill
+ * whose free slots are all held for what the set lacks, where a pick that
+ * lowers nothing would only ever be a spare (`pool_reserved` when no trusted
+ * pick with room lowers it: the missing location is not trusted yet, or full).
  */
 export function pickLocation(
   candidates: readonly SetLocationCandidate[],
-  opts: { allowUnqualified?: boolean } = {},
+  opts: { allowUnqualified?: boolean; onlyLowering?: boolean } = {},
 ): { ok: true; account: SetLocationCandidate } | { ok: false; code: AccountPickFailure } {
   if (candidates.length === 0) return { ok: false, code: 'no_account_for_provider' };
   const trusted = candidates.filter((a) => opts.allowUnqualified || a.qualified);
   if (trusted.length === 0) return { ok: false, code: 'no_qualified_account' };
-  const usable = trusted
-    .filter(
-      (a) =>
-        a.liveEdges < a.maxLiveEdges &&
-        (a.locationMaxLiveEdges == null || (a.locationLiveEdges ?? 0) < a.locationMaxLiveEdges) &&
-        (a.dailyAllocationBudget === 0 || a.allocationsToday < a.dailyAllocationBudget),
-    )
-    .sort(
-      (a, b) =>
-        Number(b.lowersDeficit) - Number(a.lowersDeficit) ||
-        Number(b.providerNew) - Number(a.providerNew) ||
-        Number(b.locationKeyNew) - Number(a.locationKeyNew) ||
-        a.setOrder - b.setOrder ||
-        a.liveEdges - b.liveEdges,
-    );
-  if (usable.length === 0) return { ok: false, code: 'accounts_exhausted' };
+  const withRoom = trusted.filter(
+    (a) =>
+      a.liveEdges < a.maxLiveEdges &&
+      (a.locationMaxLiveEdges == null || (a.locationLiveEdges ?? 0) < a.locationMaxLiveEdges) &&
+      (a.dailyAllocationBudget === 0 || a.allocationsToday < a.dailyAllocationBudget),
+  );
+  // Room is judged first, so a full missing location holds the slot too
+  // (upkeep then starts nothing) instead of reading as exhausted accounts.
+  const usable = (opts.onlyLowering ? withRoom.filter((a) => a.lowersDeficit) : withRoom).sort(
+    (a, b) =>
+      Number(b.lowersDeficit) - Number(a.lowersDeficit) ||
+      Number(b.providerNew) - Number(a.providerNew) ||
+      Number(b.locationKeyNew) - Number(a.locationKeyNew) ||
+      a.setOrder - b.setOrder ||
+      a.liveEdges - b.liveEdges,
+  );
+  if (usable.length === 0)
+    return { ok: false, code: opts.onlyLowering ? 'pool_reserved' : 'accounts_exhausted' };
   return { ok: true, account: usable[0]! };
 }
 
@@ -394,7 +399,9 @@ export type AccountPickFailure =
   /** Every pick of the node's set that could carry it cools (D6). */
   | 'set_picks_cooling'
   /** What would be picked is a location whose provider just refused a create for this node. */
-  | 'locations_refused';
+  | 'locations_refused'
+  /** An automatic fill: the free slots are held for a location no trusted pick lowers. */
+  | 'pool_reserved';
 
 /**
  * A trusted location of the provider whose account has capacity + budget (and

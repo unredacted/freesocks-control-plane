@@ -41,7 +41,8 @@ import { formatSupported, RENDER_FORMATS, type ListenerProto } from './edges/pro
 import { carriesNoEntry } from './edges/render';
 import { decodeLinkList } from './edges/render/links';
 import { encodeBase64 } from './edges/render/base64';
-import { DEFAULT_SITE_NAME } from './memberEntryNames';
+import { memberGroupName, memberSiteName } from './memberEntryNames';
+import { cleanNamePart } from '../../src/shared/entryNames';
 
 export {
   APP_NOTICE_FAMILIES,
@@ -162,6 +163,9 @@ export function noticeApps(
   return ranked.slice(0, NOTICE_APPS_MAX).map((c) => c.name);
 }
 
+/** The longest app name a line carries, in characters. */
+const APP_NAME_MAX = 32;
+
 /** One line an app shows as an entry name: printable, one line, bounded. */
 function cleanLine(s: string): string {
   return (
@@ -178,15 +182,17 @@ function cleanLine(s: string): string {
  * The notice's words, one per entry: what is wrong, which apps to install
  * (when the catalog names any) and one line on where to get help, by the
  * service name. No address and no domain: the member knows where their
- * account page is, and a domain could be the one that is blocked.
+ * account page is, and a domain could be the one that is blocked. The site
+ * and app names are cleaned as every entry name is (src/shared/entryNames.ts
+ * `cleanNamePart`: no comma, which a Clash rule splits on, no pipe).
  */
 export function noticeLines(
   notice: AppNotice,
   apps: readonly string[],
   siteName: string,
 ): string[] {
-  const site = cleanLine(siteName) || DEFAULT_SITE_NAME;
-  const names = apps.map(cleanLine).filter((n) => n.length > 0);
+  const site = memberSiteName(siteName);
+  const names = apps.map((a) => cleanNamePart(a, APP_NAME_MAX)).filter((n) => n.length > 0);
   const lines = [
     notice.why === 'old_app' ? `⚠ App too old for ${site}` : `⚠ App can't use this connection mode`,
     names.length >= 2
@@ -209,8 +215,8 @@ const NOTICE_UUID = '00000000-0000-4000-8000-000000000000';
 
 /**
  * The notice body in the app's own format. The group is named as every
- * member body's is (`<site name> Select`, lib/memberEntryNames.ts) and is
- * where all traffic goes. A link list is encoded the way the panel encoded
+ * member body's is (the bare site name, lib/memberEntryNames.ts
+ * `memberGroupName`) and is where all traffic goes. A link list is encoded the way the panel encoded
  * the one it replaces.
  */
 export function appNoticeBody(
@@ -219,7 +225,7 @@ export function appNoticeBody(
   siteName: string,
   replaced: string,
 ): string {
-  const group = `${cleanLine(siteName) || DEFAULT_SITE_NAME} Select`;
+  const group = memberGroupName({ siteName: memberSiteName(siteName), place: null });
   if (notice.family === 'clash')
     return YAML.stringify({
       mode: 'rule',

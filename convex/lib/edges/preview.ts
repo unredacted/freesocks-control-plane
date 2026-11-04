@@ -12,6 +12,7 @@
  * A listener a format cannot carry at all (sing-box has no XHTTP) gets no entry
  * in that format's sample (`previewSample`), as the panel builds none for it.
  */
+import { BACKEND_TEMPLATE_GROUP } from '../memberEntryNames';
 import { RENDER_FORMAT_OF, type SubscriptionFormat } from './clientFamilies';
 import { formatSupported, listenerCombo, type ListenerProto } from './protocols';
 import type { ListenerMatch } from './render/types';
@@ -330,8 +331,10 @@ function bodyOf(
         {
           outbounds: [
             {
+              // The backend template's selector, as members' bodies hold it
+              // (the member relabel names it after the site).
               type: 'selector',
-              tag: 'proxy',
+              tag: BACKEND_TEMPLATE_GROUP,
               outbounds: [...names, 'direct'],
               default: names[0] ?? 'direct',
             },
@@ -347,7 +350,7 @@ function bodyOf(
         'proxies:',
         ...entries.flatMap((e) => clashProxy(e.proto, e.remark)),
         'proxy-groups:',
-        '  - name: PROXY',
+        `  - name: "${BACKEND_TEMPLATE_GROUP}"`,
         '    type: select',
         '    proxies:',
         ...names.map((r) => `      - "${r}"`),

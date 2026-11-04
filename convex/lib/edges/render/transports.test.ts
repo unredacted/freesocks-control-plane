@@ -90,6 +90,9 @@ const matcherFor = (p: ListenerProto): RenderMatcher => ({
   originPort: originPortOf(p),
 });
 
+/** An entry the renderer named (src/shared/entryNames.ts: `via relay A`, `🌐 via CDN 1`). */
+const isEdgeName = (name: string) => /(^|\s)via\s/.test(name);
+
 function render(edge: PublishedEdge, format: Format, p: ListenerProto) {
   const assigned = assignEndpoints(KEY, [edge], {
     now: Date.now(),
@@ -139,7 +142,7 @@ function emittedLink(body: string): Emitted {
 
 function emittedSingbox(body: string): Emitted {
   const doc = JSON.parse(body) as { outbounds: Array<Record<string, unknown>> };
-  const ob = doc.outbounds.find((o) => String(o.tag).startsWith('FreeSocks'))!;
+  const ob = doc.outbounds.find((o) => isEdgeName(String(o.tag)))!;
   const tls = (ob.tls ?? null) as { server_name?: string } | null;
   const transport = (ob.transport ?? null) as {
     type?: string;
@@ -160,7 +163,7 @@ function emittedSingbox(body: string): Emitted {
 
 function emittedClash(body: string): Emitted {
   const doc = YAML.parse(body) as { proxies: Array<Record<string, unknown>> };
-  const p = doc.proxies.find((x) => String(x.name).startsWith('FreeSocks'))!;
+  const p = doc.proxies.find((x) => isEdgeName(String(x.name)))!;
   const ws = (p['ws-opts'] ?? null) as { path?: string; headers?: Record<string, string> } | null;
   const grpc = (p['grpc-opts'] ?? null) as Record<string, string> | null;
   const xhttp = (p['xhttp-opts'] ?? null) as { path?: string; host?: string } | null;
@@ -255,16 +258,17 @@ describe('every listener combination x every format', () => {
           expect(e.service).toBe(TEMPLATE_SERVICE);
         // Exactly one entry: an L7 front has no address families of its own.
         const bodies = {
-          links: () => out.body.split('\n').filter((l) => l.includes('FreeSocks')).length,
+          links: () =>
+            out.body.split('\n').filter((l) => l.includes(encodeURIComponent('via '))).length,
           'singbox-json': () =>
             (
               JSON.parse(out.body) as { outbounds: Array<{ tag: string; type: string }> }
             ).outbounds.filter(
-              (o) => o.type !== 'selector' && o.type !== 'urltest' && o.tag.startsWith('FreeSocks'),
+              (o) => o.type !== 'selector' && o.type !== 'urltest' && isEdgeName(o.tag),
             ).length,
           'clash-yaml': () =>
             (YAML.parse(out.body) as { proxies: Array<{ name: string }> }).proxies.filter((p) =>
-              p.name.startsWith('FreeSocks'),
+              isEdgeName(p.name),
             ).length,
         };
         expect(bodies[format]()).toBe(1);

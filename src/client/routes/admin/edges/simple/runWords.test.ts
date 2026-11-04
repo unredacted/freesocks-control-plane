@@ -603,6 +603,15 @@ describe('providerPickWords: who adds a missing address', () => {
       '1 address is still missing (Region A); automatic upkeep adds it.',
     ]);
   });
+  it('a location not trusted yet: upkeep adds nothing there, a spare made there by hand and tested does', () => {
+    const untrusted = {
+      ...view,
+      missing: [{ ...view.missing[0]!, trusted: false }],
+    };
+    expect(providerPickWords(untrusted, { upkeepAdds: true }).notes).toEqual([
+      '1 address is still missing (Region A). Automatic upkeep adds none in a location until an address there is tested: add a spare address in Region A and test it.',
+    ]);
+  });
   it('with upkeep off it says nothing adds it on its own, and points to a spare or removing the location', () => {
     expect(providerPickWords(view, { upkeepAdds: false }).notes).toEqual([
       '1 address is still missing (Region A). Nothing adds it on its own: add a spare address there, or remove the location.',

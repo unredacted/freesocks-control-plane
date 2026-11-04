@@ -24,6 +24,9 @@ import type { Doc, Id } from './_generated/dataModel';
 import {
   resolveEdgeConfig,
   RENDER_CLIENT_FAMILIES,
+  RETIRED_RENDER_LABEL_KEYS,
+  RETIRED_RULE_LABEL_FIELDS,
+  clientRuleKey,
   type RenderClientFamily,
 } from './lib/edgeConfig';
 import { liveCountryState } from './lib/edges/country/group';
@@ -197,14 +200,13 @@ export async function publishedEdgesOf(
   const now = Date.now();
   // Names for addresses (edgeNames.ts): read only while the switch is on.
   const namesOn = await namesEnabledOf(ctx.db);
-  // The countries each location is meant for, one read per location of the pool.
-  const meantByLocation = new Map<string, string[]>();
-  const meantForOf = async (edge: Doc<'edges'>): Promise<string[]> => {
-    if (!edge.locationId) return [];
+  // Each location's countries and member-facing place, one read per location of the pool.
+  const locations = new Map<string, Doc<'edgeLocations'> | null>();
+  const locationOf = async (edge: Doc<'edges'>): Promise<Doc<'edgeLocations'> | null> => {
+    if (!edge.locationId) return null;
     const id = edge.locationId as string;
-    if (!meantByLocation.has(id))
-      meantByLocation.set(id, (await ctx.db.get(edge.locationId))?.forCountries?.codes ?? []);
-    return meantByLocation.get(id)!;
+    if (!locations.has(id)) locations.set(id, await ctx.db.get(edge.locationId));
+    return locations.get(id)!;
   };
   for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
     const edgeId = origin.publishedEdgeIds[i];
@@ -231,16 +233,13 @@ export async function publishedEdgesOf(
     if (!listener) continue; // no listener at all: nothing to render from
     const name =
       namesOn && (edge.layer ?? 'l4') === 'l4' ? await servingNameOf(ctx.db, edge._id) : null;
+    const location = await locationOf(edge);
     published.push(
-      toPublishedEdge(
-        edge,
-        listener,
-        edge.poolIndex ?? i,
-        eligible,
-        now,
-        name?.fqdn,
-        await meantForOf(edge),
-      ),
+      toPublishedEdge(edge, listener, edge.poolIndex ?? i, eligible, now, {
+        addressName: name?.fqdn,
+        meantFor: location?.forCountries?.codes ?? [],
+        memberPlace: location?.memberPlace,
+      }),
     );
   }
   return { published, matchers };
@@ -257,11 +256,16 @@ export function toPublishedEdge(
   poolIndex: number,
   eligible: boolean,
   now = Date.now(),
-  /** The address's name in use (an L4 edge, names on); the test link keeps the IPs. */
-  addressName?: string,
-  /** The countries its location is meant for (`edgeLocations.forCountries`). */
-  meantFor: readonly string[] = [],
+  extras: {
+    /** The address's name in use (an L4 edge, names on); the test link keeps the IPs. */
+    addressName?: string;
+    /** The countries its location is meant for (`edgeLocations.forCountries`). */
+    meantFor?: readonly string[];
+    /** Where its location is, for members (`edgeLocations.memberPlace`). */
+    memberPlace?: { name?: string; country?: string };
+  } = {},
 ): PublishedEdge {
+  const { addressName, meantFor = [], memberPlace } = extras;
   // The effective per-country state (edgeCountry.ts), entries past their
   // `until` already dropped: only an assignment given an `edgeCountry` reads it.
   const country = liveCountryState(edge.countryState?.byCountry, now);
@@ -292,6 +296,15 @@ export function toPublishedEdge(
       hostname: edge.addresses.hostname,
     },
     ...(addressName ? { addressName } : {}),
+    // A CDN front's name never carries a place (`🌐 via CDN 1`).
+    ...((edge.layer ?? 'l4') === 'l4' && (memberPlace?.name || memberPlace?.country)
+      ? {
+          memberPlace: {
+            ...(memberPlace.name ? { name: memberPlace.name } : {}),
+            ...(memberPlace.country ? { country: memberPlace.country } : {}),
+          },
+        }
+      : {}),
     serverNames: protocolUsesSni(proto)
       ? (listener.tlsNames ?? []).map((s) => ({
           sni: s.name,
@@ -657,7 +670,13 @@ export const memberView = internalQuery({
     refreshSuggested: boolean;
     /** `unknown` = the key has no render snapshot yet (labels cannot be trusted). */
     known: boolean;
-    connections: Array<{ label: string; role: 'primary' | 'backup'; family: 'v4' | 'v6' | 'name' }>;
+    connections: Array<{
+      label: string;
+      /** The name without its form tag or spare number: one per address. */
+      base: string;
+      role: 'primary' | 'backup';
+      family: 'v4' | 'v6' | 'name';
+    }>;
   } | null> => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub || !sub.backendServerId) return null;
@@ -702,6 +721,7 @@ export const memberView = internalQuery({
       rule,
     ).map((e) => ({
       label: e.label,
+      base: e.base ?? e.label,
       role: e.role,
       family: e.family,
     }));
@@ -749,6 +769,57 @@ export const clearSnapshotAutoGroupForRollback = internalAction({
       cursor = page.continueCursor;
     }
     return { stripped };
+  },
+});
+
+// --- the retired entry-name settings -----------------------------------------------------------------
+
+/**
+ * Remove the entry-name settings one naming scheme replaced (docs/edges.md
+ * "Names in apps"): the fleet labels and url-test group name, and the
+ * per-family overrides inside each family's rule row. Nothing reads them any
+ * more, so this only tidies the table; a build from before the scheme reads
+ * its built-in labels where they are gone. Returns what it removed, values
+ * included (an operator's own labels, to put back by hand before such a
+ * rollback). Running it again finds nothing.
+ */
+export const retireEntryLabels = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const removed: Array<{ key: string; value: string }> = [];
+    const now = Date.now();
+    for (const key of RETIRED_RENDER_LABEL_KEYS) {
+      const row = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      if (!row) continue;
+      removed.push({ key, value: row.value });
+      await ctx.db.delete(row._id);
+    }
+    for (const family of RENDER_CLIENT_FAMILIES) {
+      const key = clientRuleKey(family);
+      const row = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      if (!row) continue;
+      let rule: Record<string, unknown>;
+      try {
+        rule = JSON.parse(row.value) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (!rule || typeof rule !== 'object' || Array.isArray(rule)) continue;
+      const retired = RETIRED_RULE_LABEL_FIELDS.filter((f) => f in rule);
+      if (retired.length === 0) continue;
+      for (const f of retired) {
+        removed.push({ key: `${key}.${f}`, value: JSON.stringify(rule[f]) });
+        delete rule[f];
+      }
+      await ctx.db.patch(row._id, { value: JSON.stringify(rule), updatedAt: now });
+    }
+    return { removed };
   },
 });
 

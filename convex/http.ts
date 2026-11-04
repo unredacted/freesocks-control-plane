@@ -377,7 +377,8 @@ const NOT_MODIFIED_HEADERS = [
 /** The RAW subscription Response a proxy app consumes (not the JSON envelope):
  *  the backend content-type + cache-control + the passed-through metadata headers
  *  (traffic/expiry counters, update cadence). `profile-title` is FCP's own (the
- *  service name, `subscription.siteName`), set last so a backend's title (or one cached with an older body)
+ *  service name and the key's connection mode, lib/subscriptionTitle.ts), set last so a
+ *  backend's title (or one cached with an older body)
  *  never reaches the app, whatever path the body took: rendered, cached, stale,
  *  or a backend with no headers at all (Outline). The stored headers are
  *  re-checked against `SUBSCRIPTION_PASSTHROUGH_HEADERS` for the same reason: a
@@ -1278,7 +1279,9 @@ http.route({
     }
 
     const now = Date.now();
-    const hints = await ctx.runQuery(internal.subscriptions.responseHints, {});
+    const hints = await ctx.runQuery(internal.subscriptions.responseHints, {
+      subscriptionId: sub._id,
+    });
     // The validator the app holds, if any: a matching answer is a 304.
     const ifNoneMatch = req.headers.get('if-none-match');
     // Member-facing names (docs/privacy.md) under the current settings, and

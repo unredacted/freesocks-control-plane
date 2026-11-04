@@ -90,10 +90,11 @@ function readable(body: string): string {
 /** The panel's remark names the node and its template group the backend product; the member gets neutral names instead. */
 function expectMemberNames(body: string, format: string): void {
   expect(readable(body)).not.toContain(COMPAT_NODE);
-  expect(readable(body)).toContain('FreeSocks');
+  // A direct entry (docs/servers.md "A direct node's addresses"); a link list's name is percent-encoded.
+  expect(readable(body)).toMatch(/· Direct|%C2%B7%20Direct/);
   expect(readable(body)).not.toMatch(/remnawave/i);
-  if (format === 'singbox' || format === 'mihomo')
-    expect(readable(body)).toContain('FreeSocks Select');
+  // The backend's selector group takes the bare site name.
+  if (format === 'singbox' || format === 'mihomo') expect(readable(body)).toContain('FreeSocks');
 }
 
 async function subscription(ua: string) {
@@ -398,7 +399,7 @@ describe('the templates FCP ships: a member reaches the origin through the proxy
     expect(doc.mode).toBe('rule');
     expect(doc.proxies[0]?.name).toBe('⚠ App too old for FreeSocks');
     expect(doc.proxies.every((p) => p.type === 'socks5' && p.server === '127.0.0.1')).toBe(true);
-    expect(defaultRouteFaults(body, 'FreeSocks Select')).toEqual([]);
+    expect(defaultRouteFaults(body, 'FreeSocks')).toEqual([]);
     try {
       // `mihomo -t` passes on it (startEngine checks first), and it fails closed.
       await startEngine('mihomo', sandboxed('mihomo', body));
@@ -415,7 +416,7 @@ describe('the templates FCP ships: a member reaches the origin through the proxy
           const body = await subscription(ua);
           assertSubscription(body, engine, COMPAT_ENDPOINTS);
           expectMemberNames(body, engine);
-          expect(defaultRouteFaults(body, 'FreeSocks Select')).toEqual([]);
+          expect(defaultRouteFaults(body, 'FreeSocks')).toEqual([]);
           const config = sandboxed(engine, body);
           expect(routing(engine, config)).toEqual(routing(engine, body));
           await startEngine(engine, config);

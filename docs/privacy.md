@@ -327,23 +327,25 @@ included, so what it names is part of the posture.
 - **No infrastructure names.** The backend names each entry after its Host's remark,
   and FCP's remarks carry the node name and the server name (`<node> | <server name>`).
   Every body a member receives (the fronted route, the sealed configuration copy, every
-  S3 mirror) renames those entries to `<site name> · <place>`, with a four-character
-  code per server name when there are several (`convex/lib/memberEntryNames.ts`,
-  `docs/servers.md` § "A direct node's addresses"). `<place>` is the backend's
-  member-facing location label, which the location picker already shows; the code is
-  derived from the server name, which the entry carries anyway, so a name tells a
-  member nothing the entry itself does not. Edge entries already carry neutral labels
-  (`edge.render.*`). The machine's own host name never reaches a member at all: it is
+  S3 mirror) renames those entries to `🇨🇦 <place> · Direct`, `· Direct 2` for further
+  server names (`convex/lib/memberEntryNames.ts`, `docs/servers.md` § "A direct node's
+  addresses"). `<place>` is the backend's member-facing location label, which the location
+  picker already shows, and the flag the country the backend lists for its nodes; the number
+  is the entry's place in the panel's list, which the body shows anyway, so a name tells a member nothing
+  the entry itself does not. Edge entries are named by the same scheme (`🇧🇷 via Example Town`,
+  `🌐 via CDN 1`, `docs/edges.md` § "Names in apps"): a location's place name is one an
+  operator typed for members, never the provider's region name, and a CDN front is never
+  named after its CDN. The machine's own host name never reaches a member at all: it is
   operator-only (`docs/servers.md` § "Node registration (contract v2)").
 - **No backend product name.** The backend's subscription templates
   (`convex/lib/backend/subscriptionTemplates/`) hold a selector group named after the
   backend product, which apps list beside the connections. Every sing-box and Clash body a
-  member receives renames it to `<site name> Select`, and any other group whose name
-  carries the backend product's name likewise (` (2)` onwards); group members, rule
-  targets and `route.final` follow. "Select" keeps it apart from the edge renderer's
-  url-test group (`edge.render.autoGroupName`, `FreeSocks Auto` by default) and from the
-  default edge entry label (the bare site name). An operator's own groups keep their
-  names. The subscription title is the site name too (`profile-title`, `docs/backends.md`).
+  member receives renames it to the bare site name (`FreeSocks`), and any other group whose
+  name carries the backend product's name likewise (` (2)` onwards); group members, rule
+  targets and `route.final` follow. Beside it sits the edge renderer's url-test group
+  (`⚡ Auto (fastest)`); no entry carries the site name. An operator's own groups keep their
+  names. The subscription title is the site name and the connection mode (`FreeSocks ·
+Freedom XHTTP`, `profile-title`, `docs/backends.md`).
   The fronted route relabels a cached or stale body again when it serves it, so a body cached
   before a rename never brings back the old names (a relabelled body relabels to itself).
 - **Only the fronted URL is handed out.** The backend's own subscription URL serves the
@@ -367,10 +369,11 @@ included, so what it names is part of the posture.
   once which connection they picked by hand and its remembered fake-IP mappings; the old
   cache file stays on the device until the app's data is cleared.
 - **Off switch.** `subscription.entryNames` (Admin → Settings → "Names in members'
-  apps", default on) serves the backend's own entry and group names; only do that on a
-  deployment whose node names are meant to be public. VMess links carry their name inside
-  the link's base64 payload and are not renamed (FCP's modes do not use VMess). The
-  response headers are not part of the switch: the title is always the site name and the
+  apps", default on) serves the backend's own entry and group names for direct entries;
+  only do that on a deployment whose node names are meant to be public. Edge entries are
+  named by the renderer either way. VMess links carry their name inside the link's base64
+  payload and are not renamed (FCP's modes do not use VMess). The response headers are not
+  part of the switch: the title is always the site name and the connection mode, and the
   page URL never passes.
 
 ## 6. Analytics (optional self-hosted Umami origin)

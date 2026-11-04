@@ -74,7 +74,7 @@ describe('the default route of every template FCP ships', () => {
       expect(defaultRouteFaults(body, TEMPLATE_GROUP), family).toEqual([]);
       const served = relabelMemberEntries(body, { siteName: 'FreeSocks', place: null });
       expect(served.renamed, family).toBeGreaterThan(0);
-      expect(defaultRouteFaults(served.content, 'FreeSocks Select'), family).toEqual([]);
+      expect(defaultRouteFaults(served.content, 'FreeSocks'), family).toEqual([]);
     }
   });
 });
@@ -118,8 +118,8 @@ describe('defaultRouteFaults', () => {
     expect(
       defaultRouteFaults(clash((d) => d.rules.push('DOMAIN-SUFFIX,example.org,DIRECT'))),
     ).toEqual(['MATCH is not the one last rule']);
-    expect(defaultRouteFaults(memberBody('MIHOMO'), 'FreeSocks Select')).toEqual([
-      `MATCH goes to ${TEMPLATE_GROUP}, not FreeSocks Select`,
+    expect(defaultRouteFaults(memberBody('MIHOMO'), 'FreeSocks')).toEqual([
+      `MATCH goes to ${TEMPLATE_GROUP}, not FreeSocks`,
     ]);
   });
 

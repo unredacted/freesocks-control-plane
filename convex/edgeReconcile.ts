@@ -18,7 +18,11 @@
  *     standby published or a provision FOR IT (after `ensureCapacity` raised /
  *     expanded `desiredPublished`), then the origin-wide fill to
  *     `desiredPublished`, then spares (`standbyPerRelay` origin-wide plus
- *     `standbyPerListener` per coverage listener);
+ *     `standbyPerListener` per coverage listener). No address is bought to
+ *     fill a slot while a spare that would take it awaits its test (or, with
+ *     `autoPublishStandby` off, the operator's publish), nor one that could
+ *     not take it (`upkeepFillRefusal`: the slot is held for a set location
+ *     automatic work cannot use yet);
  *  6. finish origin deletes once every managed edge is destroyed.
  *
  * A quarantined origin is hands-off: nothing here describes, drops, destroys or
@@ -521,6 +525,17 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           })
         )
           return;
+        // Nor is an address bought to fill a slot it could not take: every free
+        // slot is held for a location of the set automatic work cannot use yet
+        // (an untrusted one gets its first address by hand, tested).
+        if (
+          publishOnDone &&
+          (await ctx.runQuery(internal.edgeRotations.upkeepFillRefusal, {
+            relayId: origin._id,
+            ...(listenerId ? { listenerId: listenerId as Id<'relayListeners'> } : {}),
+          }))
+        )
+          return;
         await ctx.runMutation(internal.edgeRotations.start, {
           relayId: origin._id,
           kind: 'provision',
@@ -549,10 +564,11 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       const target = free > 0 ? uncovered[0] : undefined;
       if (target) {
         const own = standbysOf(target.id);
-        if (cfg.autoPublishStandby && own.length > 0) {
+        if (own.length > 0) {
           const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
             relayId: origin._id,
             candidates: own.map((e) => e._id),
+            publish: cfg.autoPublishStandby,
           });
           if (res.published) {
             report.published++;
@@ -564,8 +580,9 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
             continue;
           }
           // The listener already has a spare that only the operator's endpoint
-          // confirmation keeps out of the pool: do not pile up another one.
-          if (res.awaitingVerification) continue;
+          // confirmation (or, spares going in use by hand, the operator's
+          // publish) keeps out of the pool: do not pile up another one.
+          if (res.awaitingVerification || res.ready) continue;
         }
         if (cfg.autoProvisionToDesired) {
           await provision(target.id, true);
@@ -587,10 +604,11 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         continue;
       }
       if (lanes.kind === 'short') {
-        if (cfg.autoPublishStandby && lanes.spares.length > 0) {
+        if (lanes.spares.length > 0) {
           const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
             relayId: origin._id,
             candidates: lanes.spares,
+            publish: cfg.autoPublishStandby,
           });
           if (res.published) {
             report.published++;
@@ -601,7 +619,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
             starts++;
             continue;
           }
-          if (res.awaitingVerification) continue;
+          if (res.awaitingVerification || res.ready) continue;
         }
         if (cfg.autoProvisionToDesired) {
           await provision(lanes.listenerId, true);
@@ -610,10 +628,11 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       }
       if (lanes.kind === 'off' && publishedNow < desired && uncovered.length === 0) {
         // 5b. Origin-wide fill (every listener covered): any publishable standby, else a provision.
-        if (cfg.autoPublishStandby && standbys.length > 0) {
+        if (standbys.length > 0) {
           const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
             relayId: origin._id,
             candidates: standbys.map((e) => e._id),
+            publish: cfg.autoPublishStandby,
           });
           if (res.published) {
             report.published++;
@@ -625,9 +644,10 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
             continue;
           }
           // A spare that only the operator's endpoint confirmation keeps out of
-          // the pool (attention `spare_untested`): provisioning another would
-          // pile up untested candidates every tick.
-          if (res.awaitingVerification) continue;
+          // the pool (attention `spare_untested`), or, with spares going in use
+          // by hand, one ready for the operator's publish: provisioning another
+          // would pile up candidates every tick.
+          if (res.awaitingVerification || res.ready) continue;
         }
         if (cfg.autoProvisionToDesired) {
           await provision(null, true);

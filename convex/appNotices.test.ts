@@ -173,7 +173,7 @@ describe('a place no origin covers (direct delivery)', () => {
       'Help: your FreeSocks account page',
     ]);
     expect(doc.proxies.every((p) => p.type === 'socks5' && p.server === '127.0.0.1')).toBe(true);
-    expect(doc.rules).toEqual(['MATCH,FreeSocks Select']);
+    expect(doc.rules).toEqual(['MATCH,FreeSocks']);
     await drain(t);
     const row = await rowOf(t, subId);
     // Not cached, not stamped as a delivery: it carries no connection.
@@ -277,12 +277,12 @@ describe('a place an origin covers (edge-rendered delivery)', () => {
       route: { final: string };
     };
     expect(doc.outbounds.map((o) => o.tag)).toEqual([
-      'FreeSocks Select',
+      'FreeSocks',
       "⚠ App can't use this connection mode",
       'Install Hiddify or Anywhere',
       'Or switch mode on your FreeSocks account page',
     ]);
-    expect(doc.route.final).toBe('FreeSocks Select');
+    expect(doc.route.final).toBe('FreeSocks');
     await drain(t);
     expect((await rowOf(t, subId)).appNotice?.family).toBe('singbox');
   });

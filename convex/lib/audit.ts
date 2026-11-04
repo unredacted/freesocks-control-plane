@@ -410,6 +410,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.location.network': ['placeKey', 'network'],
   // The countries a location is meant for (an operator setting: listed codes, never a member).
   'edge.location.countries': ['placeKey', 'countries', 'nodes'],
+  // Where members are told a location is: the name members read, as typed for them.
+  'edge.location.member_place': ['placeKey', 'memberName', 'nodes'],
   'edge.network.create': ['slug', 'asns'],
   'edge.network.update': ['slug', 'asns', 'manualPrefixes'],
   'edge.network.delete': ['slug'],
