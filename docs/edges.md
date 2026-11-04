@@ -1194,13 +1194,13 @@ is made), and never carry a comma or a pipe. Decided by the owner on 2026-11-04.
 ```
 <flag> <place> · <how>[ · <form>][ #<n>]
 
-🇨🇦 Example City · Direct            a node, dialled directly (Privacy, or a direct entry)
-🇨🇦 Example City · Direct 2          the next server name of the same place
-🇧🇷 via Example Town                     a load balancer address (L4: REALITY, XHTTP)
-🇧🇷 via Example Town A · Domain          two addresses in one place get letters
-via relay A                          an address whose location has no member-facing name
-🌐 via CDN 1                         a CDN front (L7), numbered; never the CDN's name
-🇧🇷 via Example Town · Domain #2         a further server name (auto groups only)
+🇨🇦 Example City · Direct           a node, dialled directly (Privacy, or a direct entry)
+🇨🇦 Example City · Direct 2         the next server name of the same place
+🇧🇷 via Example Town                a load balancer address (L4: REALITY, XHTTP)
+🇧🇷 via Example Town A · Domain     two addresses in one place get letters
+via relay A                         an address whose location has no member-facing name
+🌐 via CDN 1                        a CDN front (L7), numbered; never the CDN's name
+🇧🇷 via Example Town · Domain #2    a further server name (auto groups only)
 ```
 
 - **Where an address is.** An L4 address reads its location's member-facing place

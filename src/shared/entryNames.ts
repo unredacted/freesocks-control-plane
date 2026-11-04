@@ -10,14 +10,14 @@
  *
  *   <flag> <place> · <how>[ · <form>][ #<n>]
  *
- *   🇨🇦 Example City · Direct        a node, dialled directly (`Direct 2`, `Direct 3`
+ *   🇨🇦 Example City · Direct       a node, dialled directly (`Direct 2`, `Direct 3`
  *                                   for further server names of the same place)
- *   🇧🇷 via Example Town                 a load balancer address (L4) in that place
- *   🇧🇷 via Example Town A / B           two addresses in the same place
- *   via relay A                      an address whose location has no member-facing name
- *   🌐 via CDN 1 / 2                 a CDN front (L7), numbered in body order; never the CDN's name
- *   … · Domain / · IPv4 / · IPv6     one address in several forms (its name, its raw IPs)
- *   … #2                             a further server name for the same address (auto groups only)
+ *   🇧🇷 via Example Town            a load balancer address (L4) in that place
+ *   🇧🇷 via Example Town A / B      two addresses in the same place
+ *   via relay A                     an address whose location has no member-facing name
+ *   🌐 via CDN 1 / 2                a CDN front (L7), numbered in body order; never the CDN's name
+ *   … · Domain / · IPv4 / · IPv6    one address in several forms (its name, its raw IPs)
+ *   … #2                            a further server name for the same address (auto groups only)
  *
  * Only a member-facing place name an operator typed for the purpose reaches a
  * name (`edgeLocations.memberPlace`, `backendServers.locationLabel`), never a
