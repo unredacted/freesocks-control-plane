@@ -274,42 +274,6 @@ const IPV6_GLOBAL = [
 
 export const RENDER_GLOBAL_FIELDS: Field[] = [
   {
-    kind: 'text',
-    path: 'render.primaryLabel',
-    label: 'Primary entry label',
-    helper: 'What members see as the name of the first edge entry (blank: FreeSocks).',
-    maxLength: 48,
-  },
-  {
-    kind: 'text',
-    path: 'render.backupLabel',
-    label: 'Backup entry label',
-    helper: 'The name of the second and later edge entries (blank: FreeSocks (backup)).',
-    maxLength: 48,
-  },
-  {
-    kind: 'text',
-    path: 'render.autoGroupName',
-    label: 'Automatic group name',
-    helper: 'The group that picks the fastest entry, in clients that support one.',
-    maxLength: 48,
-  },
-  {
-    kind: 'text',
-    path: 'render.ipv6Label',
-    label: 'IPv6 suffix',
-    helper: 'Added to the label of an IPv6 entry.',
-    maxLength: 24,
-  },
-  {
-    kind: 'text',
-    path: 'render.ipLabel',
-    label: 'IPv4 suffix',
-    helper:
-      'Added to the label of the IPv4 entry beside an address handed out by name, for when the name is blocked.',
-    maxLength: 24,
-  },
-  {
     kind: 'number',
     path: 'render.namesPerEndpoint',
     label: 'Server names per member',
@@ -372,7 +336,8 @@ export const RULE_FIELDS: RuleField[] = [
     kind: 'switch',
     key: 'autoGroup',
     label: 'Add an automatic group',
-    helper: 'Only has an effect in formats that have groups.',
+    helper:
+      'The "⚡ Auto (fastest)" group that picks the fastest entry, in formats that have groups.',
   },
   {
     kind: 'switch',
@@ -403,27 +368,6 @@ export const RULE_FIELDS: RuleField[] = [
     label: 'IPv6 entries',
     helper: 'Follow the fleet setting or override it for this family.',
     options: [{ value: 'inherit', label: 'Follow the fleet setting' }, ...IPV6_GLOBAL],
-  },
-  {
-    kind: 'text',
-    key: 'primaryLabel',
-    label: 'Primary entry label',
-    helper: 'Empty uses the fleet label.',
-    maxLength: 48,
-  },
-  {
-    kind: 'text',
-    key: 'backupLabel',
-    label: 'Backup entry label',
-    helper: 'Empty uses the fleet label.',
-    maxLength: 48,
-  },
-  {
-    kind: 'text',
-    key: 'autoGroupName',
-    label: 'Automatic group name',
-    helper: 'Empty uses the fleet name.',
-    maxLength: 48,
   },
 ];
 

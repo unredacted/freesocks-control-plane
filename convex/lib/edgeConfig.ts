@@ -50,15 +50,14 @@ export type Ipv6Mode = 'inherit' | 'off' | 'auto-group-only' | 'both';
 export interface ClientRenderRule {
   /** Render origin endpoints for this family; off = pass the backend body through. */
   enabled: boolean;
-  /** Emit a named automatic group (sing-box urltest / Mihomo url-test) where the format has one. */
+  /**
+   * Emit the automatic group (sing-box urltest / Mihomo url-test,
+   * `⚡ Auto (fastest)`) where the format has one. Entry and group names are
+   * not settings: one scheme names them (src/shared/entryNames.ts).
+   */
   autoGroup: boolean;
-  /** '' = the global origin.render.autoGroupName. */
-  autoGroupName: string;
   includeBackup: boolean;
   ipv6Mode: Ipv6Mode;
-  /** '' = the global labels. */
-  primaryLabel: string;
-  backupLabel: string;
   order: 'primary-first' | 'backup-first';
   /** 0 = unlimited. */
   maxEntries: number;
@@ -71,11 +70,8 @@ export function defaultClientRule(family: RenderClientFamily): ClientRenderRule 
   return {
     enabled: true,
     autoGroup: AUTO_FAMILIES.has(family),
-    autoGroupName: '',
     includeBackup: true,
     ipv6Mode: 'inherit',
-    primaryLabel: '',
-    backupLabel: '',
     order: 'primary-first',
     maxEntries: 0,
     dropTemplateEntries: true,
@@ -252,12 +248,6 @@ export interface EdgeConfig {
   render: {
     /** Master switch for FCP-rendered origin endpoints; off = the backend body passes through. */
     enabled: boolean;
-    autoGroupName: string;
-    primaryLabel: string;
-    backupLabel: string;
-    ipv6Label: string;
-    /** The suffix of a named address's raw IPv4 entry (`edge.names`); the key keeps its old name. */
-    ipLabel: string;
     ipv6Mode: Exclude<Ipv6Mode, 'inherit'>;
     /**
      * Server names handed to ONE member per endpoint, for a listener on the
@@ -410,12 +400,6 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   },
   render: {
     enabled: false,
-    autoGroupName: 'FreeSocks Auto',
-    // Plain names: most members see one entry, and "Primary" alone reads oddly.
-    primaryLabel: 'FreeSocks',
-    backupLabel: 'FreeSocks (backup)',
-    ipv6Label: 'IPv6',
-    ipLabel: 'IPv4',
     ipv6Mode: 'both',
     namesPerEndpoint: 3,
     backupNames: 1,
@@ -476,17 +460,6 @@ export function sanitizeEnum<T extends string>(v: unknown, allowed: readonly T[]
   return typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : dflt;
 }
 
-// C0 controls + DEL; the range is spelled with escapes so no literal control
-// characters live in the source.
-const CONTROL_CHARS = /[\x00-\x1f]/g;
-
-/** Member-facing label: trimmed, control chars stripped, ≤`max` chars, else default. */
-export function sanitizeLabel(v: unknown, dflt: string, max = 48): string {
-  if (typeof v !== 'string') return dflt;
-  const s = v.replace(CONTROL_CHARS, '').replace(/\s+/g, ' ').trim();
-  return s.length > 0 && s.length <= max ? s : dflt;
-}
-
 /** ISO-3166-1 alpha-2 list: uppercased, deduped, ≤40 entries; non-arrays → default. */
 /** The eligible name zones from a stored value (space separated location ids). */
 export function parseNameZones(raw: string): string[] {
@@ -527,11 +500,8 @@ export function sanitizeClientRule(v: unknown, family: RenderClientFamily): Clie
   return {
     enabled: sanitizeBool(o.enabled, d.enabled),
     autoGroup: sanitizeBool(o.autoGroup, d.autoGroup),
-    autoGroupName: sanitizeLabel(o.autoGroupName, ''),
     includeBackup: sanitizeBool(o.includeBackup, d.includeBackup),
     ipv6Mode: sanitizeEnum(o.ipv6Mode, IPV6_MODES, d.ipv6Mode),
-    primaryLabel: sanitizeLabel(o.primaryLabel, ''),
-    backupLabel: sanitizeLabel(o.backupLabel, ''),
     order: sanitizeEnum(o.order, ['primary-first', 'backup-first'] as const, d.order),
     maxEntries: sanitizeInt(o.maxEntries, 0, 20, d.maxEntries),
     dropTemplateEntries: sanitizeBool(o.dropTemplateEntries, d.dropTemplateEntries),
@@ -600,11 +570,6 @@ export const EDGE_KEYS = {
   'lists.staleDays': 'edge.lists.staleDays',
   'lists.defaultFetchHours': 'edge.lists.defaultFetchHours',
   'render.enabled': 'edge.render.enabled',
-  'render.autoGroupName': 'edge.render.autoGroupName',
-  'render.primaryLabel': 'edge.render.primaryLabel',
-  'render.backupLabel': 'edge.render.backupLabel',
-  'render.ipv6Label': 'edge.render.ipv6Label',
-  'render.ipLabel': 'edge.render.ipLabel',
   'render.namesPerEndpoint': 'edge.render.namesPerEndpoint',
   'render.backupNames': 'edge.render.backupNames',
   'render.ipv6Mode': 'edge.render.ipv6Mode',
@@ -826,11 +791,6 @@ export function sanitizeRelayConfig(
     },
     render: {
       enabled: sanitizeBool(raw['render.enabled'], D.render.enabled),
-      autoGroupName: sanitizeLabel(raw['render.autoGroupName'], D.render.autoGroupName),
-      primaryLabel: sanitizeLabel(raw['render.primaryLabel'], D.render.primaryLabel),
-      backupLabel: sanitizeLabel(raw['render.backupLabel'], D.render.backupLabel),
-      ipv6Label: sanitizeLabel(raw['render.ipv6Label'], D.render.ipv6Label, 24),
-      ipLabel: sanitizeLabel(raw['render.ipLabel'], D.render.ipLabel, 24),
       namesPerEndpoint: sanitizeInt(
         raw['render.namesPerEndpoint'],
         1,
@@ -960,6 +920,21 @@ export function controlCountriesOf(
  * back by `restoreDnsFrontingForRollback`.
  */
 export const LEGACY_DNS_PROVIDERS_FRONT_KEY = 'edge.l7.dnsProvidersFront';
+
+/**
+ * The entry-name settings one naming scheme replaced (src/shared/entryNames.ts,
+ * docs/edges.md "Names in apps"): the fleet labels and the url-test group name,
+ * and the per-family overrides inside each `edge.render.clients.<family>` row.
+ * Nothing reads them; `edgeRender:retireEntryLabels` removes what is stored.
+ */
+export const RETIRED_RENDER_LABEL_KEYS = [
+  'edge.render.autoGroupName',
+  'edge.render.primaryLabel',
+  'edge.render.backupLabel',
+  'edge.render.ipv6Label',
+  'edge.render.ipLabel',
+] as const;
+export const RETIRED_RULE_LABEL_FIELDS = ['autoGroupName', 'primaryLabel', 'backupLabel'] as const;
 
 export async function resolveEdgeConfig(db: DatabaseReader): Promise<EdgeConfig> {
   const paths = Object.keys(EDGE_KEYS) as RelayKeyPath[];

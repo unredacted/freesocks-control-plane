@@ -15,7 +15,6 @@ import {
   sanitizeClientRule,
   sanitizeCountryList,
   sanitizeInt,
-  sanitizeLabel,
   sanitizeRelayConfig,
 } from './edgeConfig';
 
@@ -77,13 +76,6 @@ describe('edgeConfig sanitizers', () => {
     const cfg = sanitizeRelayConfig({ 'detect.suspectAt': 0.5, 'detect.clearBelow': 0.9 });
     expect(cfg.detect.suspectAt).toBe(0.5);
     expect(cfg.detect.clearBelow).toBeLessThan(0.5);
-  });
-
-  test('labels strip control chars, collapse whitespace, fall back when empty/too long', () => {
-    expect(sanitizeLabel(' Hi  there ', 'd')).toBe('Hi there');
-    expect(sanitizeLabel('', 'd')).toBe('d');
-    expect(sanitizeLabel('x'.repeat(49), 'd')).toBe('d');
-    expect(sanitizeLabel(42, 'd')).toBe('d');
   });
 
   test('country lists uppercase, dedupe and drop junk', () => {

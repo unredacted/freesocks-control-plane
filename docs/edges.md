@@ -1092,12 +1092,13 @@ mirror refresh) fetches a body, it pins the node as before, then, in this order:
 4. rewrites: address, port, SNI, HTTP Host header (and Clash `servername`); never the
    credentials or routing (`pbk`, `sid`, `flow`, `path`, `serviceName`, SIP002 userinfo,
    `hy2`/`tuic` auth). Per **client family** (`render.clients.<family>`): auto-capable
-   families get one named auto group, link-list families get labelled primary/backup entries.
-   The labels are settings (`render.primaryLabel` / `render.backupLabel`, per family too),
-   plain by default: `FreeSocks` and `FreeSocks (backup)`, since most members see one entry.
+   families get the automatic group (`⚡ Auto (fastest)`), link-list families get the primary
+   and backup entries side by side. Every entry is named by the one scheme of § "Names in apps"
+   (`🇧🇷 via Example Town · IPv4`, `🌐 via CDN 1`); names are not settings.
    A link-list app (v2rayNG, Anywhere, anything unrecognized) shows both side by side and never
    switches on its own, so the member page adds one line when the key has a backup: pick the
-   backup when the first stops working (`hero.relayBackupHint`).
+   backup when the first stops working (`hero.relayBackupHint`, which names each address
+   without its form).
    An L7 edge renders as ONE entry (its hostname). An L4 address with a name is dialled by the
    name, with its raw IPv4 and IPv6 as entries beside it (§ "Names for load balancer
    addresses"). A backend that hands out a single access
@@ -1148,7 +1149,8 @@ safety, attention `delivery_refusals`). The policy is judged AFTER the fetch aga
 the body actually belongs to, so a first fetch without a stored pin and a pin that moved onto an
 origin node are both classified correctly. A place no origin covers and whose gate is open passes
 the body through. Either way, the last step renames the entries the backend named after a node
-(`docs/servers.md` § "A direct node's addresses"); a rendered edge entry keeps its label. It
+and the backend's selector group (§ "Names in apps"; `docs/servers.md` § "A direct node's
+addresses"); a rendered edge entry keeps the name the renderer gave it. It
 also asks every REALITY entry of a Clash / Mihomo / Stash body for the X25519MLKEM768 key share
 (`support-x25519mlkem768: true`, unless the entry sets the key itself), which a node on Xray
 v26.9.8 or later requires (`finishMemberBody`, `convex/lib/realityKeyShares.ts`;
@@ -1183,6 +1185,85 @@ carries it, so an upload that outlives the switch is repaired like any policy mo
 fetch, for every client family, renders for the new placement and node. A re-issue (regenerate,
 switch-backend, or a switch that cannot be made in place) starts a new row with none of this, and
 schedules the same mirror refresh when it carries the token.
+
+### Names in apps
+
+What a member's app lists, in every connection mode and every format (a link's `#remark`, a
+sing-box tag, a Clash proxy name, an Xray config's `remarks`), comes from ONE function,
+`src/shared/entryNames.ts`, used by the renderer (`lib/edges/render.ts` `nameEntries`), by the
+member relabel step for direct entries (`lib/memberEntryNames.ts`), and by the admin pages that
+show the names. Names are English for every locale (a member's language is not known where a body
+is made), and never carry a comma or a pipe. Decided by the owner on 2026-11-04.
+
+```
+<flag> <place> · <how>[ · <form>][ #<n>]
+
+🇨🇦 Example City · Direct           a node, dialled directly (Privacy, or a direct entry)
+🇨🇦 Example City · Direct 2         the next server name of the same place
+🇧🇷 via Example Town                a load balancer address (L4: REALITY, XHTTP)
+🇧🇷 via Example Town A · Domain     two addresses in one place get letters
+via relay A                         an address whose location has no member-facing name
+🌐 via CDN 1                        a CDN front (L7), numbered; never the CDN's name
+🇧🇷 via Example Town · Domain #2    a further server name (auto groups only)
+```
+
+- **Where an address is.** An L4 address reads its location's member-facing place
+  (`edgeLocations.memberPlace`: a name and an ISO 3166-1 alpha-2 country an operator typed for
+  members, Admin -> Edges -> a provider account -> Locations, "Name in apps"; `POST
+providers/{id}/locations/{locationId}/member-place {name, country}`). The provider's own region
+  name (`edgeLocations.label`) is admin-only and never reaches a member: it can name the provider.
+  Without a name the address reads `via relay A` and no flag shows, whatever the country says.
+  The place travels on the published pool (`PublishedEdge.memberPlace`, one read per location of
+  the pool, as the countries it is meant for do). Saving it moves the epoch of every origin with an
+  address in use there (members see it at their next refresh); audited
+  `edge.location.member_place` with the name members read. A CDN zone has none (refused): a front's
+  place would only name the CDN's edge, so fronts are numbered instead.
+- **Letters and numbers** follow the body's order (the order and the cap the codecs apply):
+  two addresses of one place are `A` and `B`, every address of a location with no name is lettered
+  (`via relay A`, `via relay B`), and CDN fronts are `CDN 1`, `CDN 2`. A body holds at most a
+  primary and a backup, so in practice that is A/B and 1/2.
+- **Forms.** When the body holds one address in more than one form, every form is tagged: `·
+Domain` (the address's name, § "Names for load balancer addresses"), `· IPv4` and `· IPv6` (its
+  raw IPs). One form, no tag: an address with an IPv4 only reads `🇧🇷 via Example Town`, and a cap that
+  leaves only the name drops the tag too. Record types are never listed ("Domain IPv4+IPv6"
+  would promise a fallback a client does not make: it tries one family and stops).
+- **Spares.** A further server name (`render.namesPerEndpoint`, auto-group bodies only) ends in
+  `#2`, `#3` on the form it dials: `· Domain #2` for a named address, `· IPv4 #2` beside raw IPs,
+  `#2` alone for an address with one form.
+- **Direct.** A direct entry is `<flag> <place> · Direct`, then `Direct 2`, `Direct 3` for further
+  server names, numbered in the order the panel lists them (its Host order), so an app shows them
+  top to bottom (`docs/servers.md` § "A direct node's addresses"). The place is the backend
+  instance's location label (its first comma segment); the flag is the country every node of the
+  instance reports in the backend's node list (`backendNodeInventory.countryCode`; none when they
+  disagree, report a code that is not an assigned ISO 3166-1 country such as `XX`, or number more
+  than the 200 rows the lookup reads). With neither a place nor a flag, the site name leads
+  (`FreeSocks · Direct`): a bare "Direct" would read as an app's own no-proxy outbound. A
+  location's member-facing country must be an assigned code too (`src/shared/countryCodes.ts`).
+- **Groups.** The url-test group the renderer adds is `⚡ Auto (fastest)`; the backend's selector
+  group takes the bare site name (`subscription.siteName`, `FreeSocks`). No entry carries the site
+  name.
+- **The title** apps show (`profile-title`) is `<site name> · <mode>`, `FreeSocks · Freedom
+XHTTP`: the member's connection mode by its family and leaf names (their choice; with none
+  stored, the mode whose bound pool holds the key's placement, so a later change of the default
+  never retitles a key that has not moved; the effective default only when no pool holds it), each the admin's label when one is set (it is what members read in
+  every locale; a family label's trailing "Mode" is left out), else the built-in English name
+  (`BUILT_IN_*_NAMES_EN` in `lib/connectionModes.ts`, kept in step with `messages/en.json`). A
+  backend with no modes (Outline) is titled with the site name alone (`lib/subscriptionTitle.ts`).
+- **Unique and safe.** The codecs still give a name already in the body ` (2)` (`uniqueName`), and
+  every Clash / sing-box reference follows a rename (`renameRefs`).
+- **Order is unchanged:** a link list keeps § "Names for load balancer addresses"'s order (each
+  address's first entry, then the raw IPv4, then the IPv6), an auto-group body keeps its own.
+- **What members and support see.** The account page lists the names the member's last body
+  carried and, for the report dialog and the backup hint, each address's name without its form
+  (`edgeRender.memberView` `connections[].base`), rebuilt from the stored render snapshot
+  (`snapshotRuleOf`). A report still names a role, never a name, so a snapshot written before
+  these names maps to the same edge (pinned in `edgeRender.test.ts`).
+- **The admin preview** (an origin's render preview) shows the body through the member relabel
+  step and lists the names an app shows for each client family ("Names in apps").
+- **Retired settings.** The fleet labels and the url-test group name (`edge.render.primaryLabel`,
+  `backupLabel`, `ipv6Label`, `ipLabel`, `autoGroupName`) and the per-family `primaryLabel`,
+  `backupLabel`, `autoGroupName` are no longer read; `edgeRender:retireEntryLabels` removes what is
+  stored and hands the values back.
 
 ### Freedom modes only through edges
 
@@ -1600,8 +1681,8 @@ mirrors and the cached and stale bodies of `/api/v1/sub`, which all go through t
 
 - the name in place of the IPv4 entry, first; in a body with an auto group, further server
   names (`render.namesPerEndpoint`) dial the name too (a link list carries none, above);
-- beside it, two raw-IP entries in every subscription format: the IPv4 (`<label> (IPv4)`, the
-  suffix `render.ipLabel`) and the IPv6 (`<label> (IPv6)`, `render.ipv6Label`, where the
+- beside it, two raw-IP entries in every subscription format: the IPv4 (`<place> · IPv4`, the
+  name itself `<place> · Domain`, § "Names in apps") and the IPv6 (`<place> · IPv6`, where the
   family's rule emits IPv6). They are the way out when the name does not work: a lookup that is
   blocked or answered falsely (the DNS risk, below), or a network where only one family gets
   through. The IPs are no secret (anyone can look the name up);
@@ -1609,13 +1690,13 @@ mirrors and the cached and stale bodies of `/api/v1/sub`, which all go through t
   entry ranks exactly as without a name, the IPv4 is a **fallback entry** in the same group
   that ranks after every first entry (both roles) and before further names, since a blocked
   name takes its further names with it. Order: name, IPv6, backup, IPv4, further names
-  (`<label> 2`, `<label> 3`);
+  (`<place> · Domain #2`, `#3`);
 - a link list (v2rayNG, Happ, Streisand and the like, which never switch by themselves) leaves
   the pick to the member, so both raw IPs are alternatives after every first entry, the IPv4
   before the IPv6: many networks where names get blocked have no IPv6, and link-list apps are
   the ones most used there. Order: name, backup, IPv4, IPv6 (then the backup's own raw IPs if it
   has a name), and no further names: a further name would be one more look-alike entry. So one
-  entry per way in: `FreeSocks`, `FreeSocks (IPv4)`, `FreeSocks (IPv6)`, plus the backup's. An
+  entry per way in: `🇧🇷 via Example Town · Domain`, `· IPv4`, `· IPv6`, plus the backup's. An
   entry cap cuts from the end: the raw IPs first, and the backup stays as long as there is room
   for two entries;
 - a single key (Outline) keeps the IP: it has no room for an alternative.
@@ -1625,8 +1706,8 @@ replacement does not reach them: the name moves to the new address (below), the 
 They refresh the subscription after a replacement, as every member did before names, and the
 fresh body holds the new address's IPs. A member on the name needs nothing.
 
-The suffix default was `IP` until 2026-11-02 and is now `IPv4`, so the two read as a pair. The
-key is unchanged: a deployment that never set it gets `IPv4`, one that set its own keeps it.
+The raw-IP entries were suffixed `(IP)` and then `(IPv4)` / `(IPv6)` by settings until
+2026-11-04; the form tags of § "Names in apps" replaced them.
 
 **Why the IPv6 entry stays.** A name with both an A and an AAAA record leaves the choice of
 family to the client: Go dialers (sing-box, Mihomo, Xray) race the two families at TCP connect
@@ -1779,6 +1860,7 @@ All under `/api/v1/admin/edges/`, sealed by verb like every other route; the rea
 | `POST providers/{id}/cost {cost}`                                   | What the account costs (§ "Plans and prices"): `{paid, perEdgeMonthly?, currency?, note?, monthlyCap?}` with `paid` one of `list`, `free`, `amount`; `null` for the default. Audited as `edge.provider_account.cost_changed` (amounts, never the note).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `POST providers/{id}/locations/{locationId}/plans/refresh`          | Read the location's plans and prices again at the provider (throttled): `{refreshed, error}`; a failure keeps the last plans.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `POST providers/{id}/locations/{locationId}/countries {codes}`      | The countries the location is meant for (§ "Locations meant for a country"): listed codes, at most 8, an empty list clears it; the origins with an address in use there move their epoch. `{ok, changed, codes, nodes}`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `POST providers/{id}/locations/{locationId}/member-place`           | `{name, country}`: where members are told the location is (§ "Names in apps"): a place name (cleaned, at most 24 characters) and an ISO 3166-1 alpha-2 country, either may be empty; refused for a CDN zone and for a code that is not a country. The origins with an address in use there move their epoch. `{ok, changed, name, country, nodes}`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `POST …/countries/estimate {codes}`                                 | Read only: per country added or removed, per node with an address in use there, how many sampled members steered by it get a different first address (empty while steering is off).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `POST edges/{id}/test-link`                                         | The isolated test link for an L4 candidate (throttled: fetches the test credential's body and the backend Hosts): the candidate connection only, plus the binding the confirmation must echo. See § "Publication".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `GET relays/inbound-candidates?backendServerId=&nodeUuid=`          | Discovery with the origin probe applied (throttled): the node's transports as listener candidates, `originTransport` filled where probed, `unsupported` with reasons. Registers nothing. See § "Listener catalogue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -6409,6 +6491,21 @@ lifecycle runs in that test and its rows appear here.
 
 ## Deploy notes
 
+**Names in apps** (§ "Names in apps") add one optional field (`edgeLocations.memberPlace`), one
+admin call (`POST providers/{id}/locations/{locationId}/member-place`), one audit action
+(`edge.location.member_place`) and retire five settings plus three per-family rule fields: one
+deploy, no migration, no env change. Members' apps show the new names at their next refresh past
+the content cache (minutes), every mirror at its next sweep; the subscription title and every
+ETag change, so apps that send `If-None-Match` fetch the body once. Until an operator gives a
+location a name, its addresses read `via relay A`: set "Name in apps" on every location in use
+first, or right after. Direct entries are numbered in the panel's Host order, so a panel that
+shuffles its Hosts on each fetch (Remnawave's subscription setting "randomize hosts") moves the
+numbers on every fetch: check that it is off. `edgeRender:retireEntryLabels` (no arguments) removes the retired settings'
+stored rows and prints their values; it is optional (nothing reads them). To roll back, run
+`edgeLocations:clearMemberPlacesForRollback` (no arguments) right before deploying the older build
+(its schema has no `memberPlace`), and put back any labels `retireEntryLabels` removed if they
+were not the defaults.
+
 **Country lists** (§ "Country lists") add seven tables (`countryLists`, `countryListVersions`,
 `countryListMembers`, `countryListChunks`, `countryListNameHistory`, `countryListUploads`,
 `countryListUploadParts`), six settings with defaults (`edge.lists.enabled` false, `jumpFactor`
@@ -6427,7 +6524,8 @@ an operator turns it on, so nothing is checked before then.
 **Names for load balancer addresses** (§ "Names for load balancer addresses") add one table
 (`edgeNames`), one optional field (`edges.nameWanted`), four settings with defaults
 (`edge.names.enabled` false, `edge.names.zones` empty, `edge.names.moveQuietDays` 30,
-`edge.render.ipLabel` `IPv4`, `IP` before 2026-11-02), one attention kind
+`edge.render.ipLabel` `IPv4`, `IP` before 2026-11-02, retired 2026-11-04 by § "Names in apps"),
+one attention kind
 (`address_name_stuck`), two admin calls (`POST edges/{id}/name/renew|dismiss`) and a reconcile
 step: one deploy, no migration, no env change. With the switch off nothing changes: no address
 wants a name, the render reads one setting and finds it off. Turning it on needs a DNS account

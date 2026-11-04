@@ -59,6 +59,8 @@
   import { countryName } from '@client/lib/countries';
   import MeantForDialog from './MeantForDialog.svelte';
   import { meantForLine } from './meantForWords';
+  import MemberPlaceDialog from './MemberPlaceDialog.svelte';
+  import { CDN_PLACE_LINE, memberPlaceLine } from './memberPlaceWords';
 
   interface Props {
     account: EdgeProviderAccountAdmin;
@@ -147,6 +149,9 @@
   // The countries a location is meant for (docs/edges.md "Locations meant for a country").
   let meantFor = $state<EdgeLocationAdmin | null>(null);
   let meantOpen = $state(false);
+  // Where members are told it is (docs/edges.md "Names in apps").
+  let placeFor = $state<EdgeLocationAdmin | null>(null);
+  let placeOpen = $state(false);
   let trusting = $state<EdgeLocationAdmin | null>(null);
   let trustOpen = $state(false);
   let removing = $state<EdgeLocationAdmin | null>(null);
@@ -289,6 +294,7 @@
             {/if}
             {#if l.costNote}<p class="text-xs">{l.costNote}</p>{/if}
             <p class="text-xs">{meantForLine(l.meantFor, (c) => countryName(c, 'en'))}</p>
+            <p class="text-xs">{zones ? CDN_PLACE_LINE : memberPlaceLine(l.memberPlace)}</p>
             {#if !zones}
               <label class="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
                 <span>Network</span>
@@ -338,6 +344,19 @@
             >
               Countries
             </Button>
+            {#if !zones}
+              <Button
+                size="sm"
+                variant="outline"
+                class="h-11 sm:h-8"
+                onclick={() => {
+                  placeFor = l;
+                  placeOpen = true;
+                }}
+              >
+                Name in apps
+              </Button>
+            {/if}
             {#if zones}
               <Button
                 size="sm"
@@ -444,6 +463,8 @@
 <PlanDialog bind:open={planOpen} {account} location={planFor} {sizeKey} />
 
 <MeantForDialog bind:open={meantOpen} {account} location={meantFor} />
+
+<MemberPlaceDialog bind:open={placeOpen} {account} location={placeFor} />
 
 <QualifyDialog
   bind:open={trustOpen}

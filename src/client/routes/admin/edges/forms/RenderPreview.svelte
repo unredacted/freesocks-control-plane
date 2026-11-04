@@ -1,8 +1,9 @@
 <script lang="ts">
   /**
-   * What members of one origin would receive, per client family: the body the
-   * backend serves next to the body FCP would send, and every listener whose entry
-   * did not resolve, in words. Read only (the preview writes nothing).
+   * What members of one origin would receive, per client family: the names
+   * their app lists (docs/edges.md "Names in apps"), the body the backend
+   * serves next to the body FCP would send, and every listener whose entry did
+   * not resolve, in words. Read only (the preview writes nothing).
    *
    * Props:
    *   relayId: string
@@ -163,6 +164,24 @@
         Resolved for {matched.length === 1 ? 'listener' : 'listeners'}
         {matched.map((l) => l.listenerKey).join(', ')}.
       </p>
+    {/if}
+
+    {#if data.names.entries.length > 0}
+      <section class="space-y-1" aria-labelledby="preview-names">
+        <h4 id="preview-names" class="text-sm font-medium">Names in apps</h4>
+        <p class="text-muted-foreground text-xs">
+          What a member's app lists, in this order. The sample member's flags and places come from
+          each location's "Name in apps".
+        </p>
+        <ul class="space-y-0.5 rounded-md border p-2 text-sm">
+          {#each data.names.groups as g (g)}
+            <li><span class="text-muted-foreground text-xs">Group</span> {g}</li>
+          {/each}
+          {#each data.names.entries as e (e)}
+            <li>{e}</li>
+          {/each}
+        </ul>
+      </section>
     {/if}
 
     <div class="grid gap-3 lg:grid-cols-2">

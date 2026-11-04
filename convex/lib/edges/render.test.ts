@@ -14,6 +14,7 @@ import { MIHOMO_YAML } from '../backend/subscriptionTemplates/MIHOMO';
 import { SINGBOX_JSON } from '../backend/subscriptionTemplates/SINGBOX';
 import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
 import { relabelMemberEntries } from '../memberEntryNames';
+import { AUTO_GROUP_NAME } from '../../../src/shared/entryNames';
 import type { AssignedEndpoint, PublishedEdge } from './assignment';
 import {
   effectiveRule,
@@ -36,7 +37,15 @@ const ORIGIN = '192.0.2.10';
 const UUID = '11111111-2222-3333-4444-555555555555';
 // The selector group of the backend's own templates, and its name in what members receive.
 const TEMPLATE_GROUP = '→ Remnawave';
-const MEMBER_GROUP = 'FreeSocks Select';
+const MEMBER_GROUP = 'FreeSocks';
+// What members read (src/shared/entryNames.ts) for the fixtures' places below.
+const P4 = '🇧🇷 via Example City · IPv4';
+const P6 = '🇧🇷 via Example City · IPv6';
+const P = '🇧🇷 via Example City';
+const B = '🇳🇿 via Example Town';
+const AUTO = AUTO_GROUP_NAME;
+/** An entry the renderer named (`via <place>`, `via relay A`, `🌐 via CDN 1`). */
+const isEdgeName = (name: string) => /(^|\s)via\s/.test(name);
 const relabelled = (body: string) =>
   relabelMemberEntries(body, { siteName: 'FreeSocks', place: null }).content;
 const REALITY_QS =
@@ -74,6 +83,7 @@ const edgeA: PublishedEdge = {
   edgePort: 443,
   addresses: { v4: '203.0.113.10', v6: '2001:db8::10' },
   serverNames: [{ sni: 'cdn-a.example', status: 'active' }],
+  memberPlace: { name: 'Example City', country: 'BR' },
 };
 const edgeB: PublishedEdge = {
   ...edgeA,
@@ -81,6 +91,7 @@ const edgeB: PublishedEdge = {
   poolIndex: 1,
   provider: 'scaleway',
   addresses: { v4: '203.0.113.20' },
+  memberPlace: { name: 'Example Town', country: 'NZ' },
 };
 
 const assigned: { primary: AssignedEndpoint; backup: AssignedEndpoint } = {
@@ -127,7 +138,7 @@ describe('rewriteProxyUri', () => {
       address: '2001:db8::10',
       port: 443,
       sni: 'cdn-a.example',
-      label: 'FreeSocks (IPv6)',
+      label: P6,
     });
     expect(out.startsWith(`vless://${UUID}@[2001:db8::10]:443?`)).toBe(true);
     const qs = qsOf(out);
@@ -136,7 +147,7 @@ describe('rewriteProxyUri', () => {
     expect(qs.get('sid')).toBe('abcd1234');
     expect(qs.get('flow')).toBe('xtls-rprx-vision');
     expect(qs.get('security')).toBe('reality');
-    expect(decodeURIComponent(out.slice(out.indexOf('#') + 1))).toBe('FreeSocks (IPv6)');
+    expect(decodeURIComponent(out.slice(out.indexOf('#') + 1))).toBe(P6);
     // Trojan lines are rewritable too; a vmess blob has no host:port and never parses.
     expect(
       rewriteProxyUri(parseProxyUri('trojan://x@y:1?security=tls&sni=node.example#z')!, {
@@ -219,9 +230,9 @@ describe('renderEntries', () => {
   test('emits v4 + v6 per endpoint in both mode, only v4 when off, primary first', () => {
     const both = renderEntries(assigned, linksRule, false);
     expect(both.map((e) => [e.role, e.family, e.label, e.listenerKey])).toEqual([
-      ['primary', 'v4', 'FreeSocks', 'a1'],
-      ['primary', 'v6', 'FreeSocks (IPv6)', 'a1'],
-      ['backup', 'v4', 'FreeSocks (backup)', 'a1'],
+      ['primary', 'v4', P4, 'a1'],
+      ['primary', 'v6', P6, 'a1'],
+      ['backup', 'v4', B, 'a1'],
     ]);
     const off = renderEntries(assigned, { ...linksRule, ipv6Mode: 'off' }, false);
     expect(off.every((e) => e.family === 'v4')).toBe(true);
@@ -264,7 +275,7 @@ describe('link-list rendering', () => {
     const primary = lines[1];
     expect(primary).toContain('@203.0.113.10:443?');
     expect(primary).toContain('sni=cdn-a.example');
-    expect(primary.endsWith(`#${encodeURIComponent('FreeSocks')}`)).toBe(true);
+    expect(primary.endsWith(`#${encodeURIComponent(P4)}`)).toBe(true);
     expect(lines[2]).toContain('@[2001:db8::10]:443?');
     expect(lines[3]).toContain('@203.0.113.20:443?');
     expect(lines[3]).toContain('sni=cdn-b.example');
@@ -287,7 +298,7 @@ describe('link-list rendering', () => {
     const lines = links.body.split('\n');
     expect(lines).toHaveLength(2); // v4 + v6 of the one edge
     expect(lines[0]).toBe(
-      'ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpleGFtcGxlLXBhc3N3b3Jk@203.0.113.10:443/?outline=1#FreeSocks',
+      `ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpleGFtcGxlLXBhc3N3b3Jk@203.0.113.10:443/?outline=1#${encodeURIComponent(P4)}`,
     );
     expect(lines[1]).toContain('@[2001:db8::10]:443/?outline=1#');
     const sb = render(
@@ -355,7 +366,7 @@ describe('link-list rendering', () => {
     const decoded = decodeBase64Loose(out.body)!;
     expect(decoded.split('\n')).toHaveLength(4);
     expect(decoded).toContain(encodeURIComponent('Прямое подключение'));
-    expect(decoded).toContain('FreeSocks');
+    expect(decoded).toContain(encodeURIComponent(P4));
   });
 
   test('no template line: nothing applied, the body is refused as no_match (never served as-is)', () => {
@@ -414,7 +425,7 @@ describe('link-list rendering', () => {
     expect(out.delivery).toEqual({ kind: 'serve' });
     expect(out.listeners).toEqual([{ listenerKey: 'a1', matched: true }]);
     expect(out.body).not.toContain('whatever');
-    expect(out.body).toContain('FreeSocks');
+    expect(out.body).toContain(encodeURIComponent(P4));
     // A different port at the same address is not this listener.
     const otherPort = `vless://${UUID}@${ORIGIN}:8443?${REALITY_QS}#x`;
     expect(matchListeners(otherPort, byAddress).matches).toEqual([
@@ -497,8 +508,9 @@ describe('link-list rendering', () => {
     const tags = (JSON.parse(sb.body) as { outbounds: Array<{ tag: string }> }).outbounds.map(
       (o) => o.tag,
     );
-    expect(tags).not.toContain('FreeSocks Auto');
-    expect(tags.filter((t) => t.startsWith('FreeSocks'))).toEqual(['FreeSocks']);
+    expect(tags).not.toContain(AUTO);
+    // One entry: its one form carries no tag.
+    expect(tags.filter(isEdgeName)).toEqual([P]);
   });
 
   test('an unsupported body shape is unavailable:unsupported_format', () => {
@@ -514,7 +526,7 @@ describe('link-list rendering', () => {
     expect(out.applied).toBe(true);
     expect(out.body).toMatch(/^[A-Za-z0-9+/]+=*$/);
     const decoded = atob(out.body);
-    expect(decoded).toContain('FreeSocks');
+    expect(decoded).toContain(encodeURIComponent(P4));
     expect(decoded).not.toContain(encodeURIComponent(TEMPLATE));
   });
 });
@@ -523,11 +535,11 @@ describe('further server names per endpoint', () => {
   test('renderEntries: one more IPv4 entry per name, no IPv6 sibling, numbered labels', () => {
     const entries = renderEntries(withNames, autoRule, true, ORIGIN);
     expect(entries.map((e) => [e.label, e.family, e.sni, e.variant ?? 0])).toEqual([
-      ['FreeSocks', 'v4', 'cdn-a.example', 0],
-      ['FreeSocks (IPv6)', 'v6', 'cdn-a.example', 0],
-      ['FreeSocks (backup)', 'v4', 'cdn-b.example', 0],
-      ['FreeSocks 2', 'v4', 'cdn-c.example', 1],
-      ['FreeSocks 3', 'v4', 'cdn-d.example', 2],
+      [P4, 'v4', 'cdn-a.example', 0],
+      [P6, 'v6', 'cdn-a.example', 0],
+      [B, 'v4', 'cdn-b.example', 0],
+      [`${P4} #2`, 'v4', 'cdn-c.example', 1],
+      [`${P4} #3`, 'v4', 'cdn-d.example', 2],
     ]);
   });
 
@@ -544,7 +556,7 @@ describe('further server names per endpoint', () => {
       expect(qsOf(l).get('sid')).toBe(new URLSearchParams(REALITY_QS).get('sid'));
       expect(l).not.toContain(ORIGIN);
     }
-    expect(out.body).not.toContain(encodeURIComponent('FreeSocks 2'));
+    expect(out.body).not.toContain(encodeURIComponent(`${P4} #2`));
   });
 
   test('an entry cap drops the further names before it drops a role', () => {
@@ -553,7 +565,7 @@ describe('further server names per endpoint', () => {
     const capped = { ...autoRule, maxEntries: 3 };
     expect(
       orderEndpoints(renderEntries(withNames, capped, true, ORIGIN), capped).map((e) => e.label),
-    ).toEqual(['FreeSocks', 'FreeSocks (IPv6)', 'FreeSocks (backup)']);
+    ).toEqual([P4, P6, B]);
   });
 
   test('a single-key delivery stays one entry', () => {
@@ -674,15 +686,13 @@ describe('sing-box rendering', () => {
   test('further server names become further outbounds, all inside the auto group', () => {
     const out = renderSb(singbox, { assigned: withNames });
     const doc = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
-    const emitted = doc.outbounds.filter(
-      (o) => o.type === 'vless' && String(o.tag).startsWith('FreeSocks'),
-    );
+    const emitted = doc.outbounds.filter((o) => o.type === 'vless' && isEdgeName(String(o.tag)));
     expect(emitted.map((o) => [o.tag, (o.tls as { server_name: string }).server_name])).toEqual([
-      ['FreeSocks', 'cdn-a.example'],
-      ['FreeSocks (IPv6)', 'cdn-a.example'],
-      ['FreeSocks (backup)', 'cdn-b.example'],
-      ['FreeSocks 2', 'cdn-c.example'],
-      ['FreeSocks 3', 'cdn-d.example'],
+      [P4, 'cdn-a.example'],
+      [P6, 'cdn-a.example'],
+      [B, 'cdn-b.example'],
+      [`${P4} #2`, 'cdn-c.example'],
+      [`${P4} #3`, 'cdn-d.example'],
     ]);
     // Same endpoint, same keys: only the name differs.
     for (const o of emitted.slice(3)) {
@@ -701,30 +711,20 @@ describe('sing-box rendering', () => {
     expect(tags).not.toContain(TEMPLATE);
     expect(tags).toContain(OTHER_NODE_WS);
     expect(tags).toContain('direct');
-    const emitted = cfg.outbounds.filter(
-      (o) => o.type === 'vless' && String(o.tag).startsWith('FreeSocks'),
-    );
-    expect(emitted.map((o) => o.tag)).toEqual([
-      'FreeSocks',
-      'FreeSocks (IPv6)',
-      'FreeSocks (backup)',
-    ]);
+    const emitted = cfg.outbounds.filter((o) => o.type === 'vless' && isEdgeName(String(o.tag)));
+    expect(emitted.map((o) => o.tag)).toEqual([P4, P6, B]);
     expect(emitted[0]).toMatchObject({ server: '203.0.113.10', server_port: 443, uuid: UUID });
     expect((emitted[0].tls as { server_name: string }).server_name).toBe('cdn-a.example');
     expect((emitted[0].tls as { reality: { public_key: string } }).reality.public_key).toBe(
       'PUBKEY',
     );
     expect(emitted[1]).toMatchObject({ server: '2001:db8::10' });
-    const auto = cfg.outbounds.find((o) => o.tag === 'FreeSocks Auto')!;
+    const auto = cfg.outbounds.find((o) => o.tag === AUTO)!;
     expect(auto).toMatchObject({ type: 'urltest' });
     expect(auto.outbounds).toEqual(emitted.map((o) => o.tag));
     const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
-    expect(selector.outbounds).toEqual([
-      'FreeSocks Auto',
-      ...emitted.map((o) => o.tag),
-      OTHER_NODE_WS,
-    ]);
-    expect(selector.default).toBe('FreeSocks Auto');
+    expect(selector.outbounds).toEqual([AUTO, ...emitted.map((o) => o.tag), OTHER_NODE_WS]);
+    expect(selector.default).toBe(AUTO);
     expect(JSON.parse(out.body).route).toEqual(singbox.route);
     expect(out.body).not.toContain(ORIGIN);
     expect(defaultRouteFaults(out.body, TEMPLATE_GROUP)).toEqual([]);
@@ -762,9 +762,9 @@ describe('sing-box rendering', () => {
       outbounds: Array<Record<string, unknown>>;
       route: { final: string; rules: Array<{ outbound: string }> };
     };
-    expect(cfg.outbounds.find((o) => o.tag === 'helper')?.detour).toBe('FreeSocks Auto');
-    expect(cfg.route.final).toBe('FreeSocks Auto');
-    expect(cfg.route.rules.map((r) => r.outbound)).toEqual(['direct', 'FreeSocks Auto']);
+    expect(cfg.outbounds.find((o) => o.tag === 'helper')?.detour).toBe(AUTO);
+    expect(cfg.route.final).toBe(AUTO);
+    expect(cfg.route.rules.map((r) => r.outbound)).toEqual(['direct', AUTO]);
   });
 
   test('a template outbound whose tls / transport disagree with the listener is entry_mismatch', () => {
@@ -806,8 +806,8 @@ describe('sing-box rendering', () => {
       ...singbox,
       outbounds: [
         ...singbox.outbounds,
-        { type: 'vless', tag: 'FreeSocks', server: 'z', server_port: 1 },
-        { type: 'vless', tag: 'FreeSocks Auto', server: 'z', server_port: 1 }, // NOT a group
+        { type: 'vless', tag: P4, server: 'z', server_port: 1 },
+        { type: 'vless', tag: AUTO, server: 'z', server_port: 1 }, // NOT a group
       ],
     };
     const out = renderSb(colliding);
@@ -815,13 +815,13 @@ describe('sing-box rendering', () => {
     const cfg = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
     const tags = cfg.outbounds.map((o) => o.tag as string);
     expect(new Set(tags).size).toBe(tags.length);
-    expect(tags).toContain('FreeSocks (2)');
-    expect(tags).toContain('FreeSocks Auto (2)');
-    const auto = cfg.outbounds.find((o) => o.tag === 'FreeSocks Auto (2)')!;
+    expect(tags).toContain(`${P4} (2)`);
+    expect(tags).toContain(`${AUTO} (2)`);
+    const auto = cfg.outbounds.find((o) => o.tag === `${AUTO} (2)`)!;
     expect(auto.type).toBe('urltest');
-    expect(auto.outbounds).toEqual(['FreeSocks (2)', 'FreeSocks (IPv6)', 'FreeSocks (backup)']);
+    expect(auto.outbounds).toEqual([`${P4} (2)`, P6, B]);
     const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
-    expect(selector.default).toBe('FreeSocks Auto (2)');
+    expect(selector.default).toBe(`${AUTO} (2)`);
   });
 
   test('autoGroup OFF: an operator group named like the auto group keeps its type and members (R7)', () => {
@@ -829,25 +829,20 @@ describe('sing-box rendering', () => {
       ...singbox,
       outbounds: [
         ...singbox.outbounds,
-        { type: 'selector', tag: 'FreeSocks Auto', outbounds: [TEMPLATE, OTHER_NODE_WS] },
+        { type: 'selector', tag: AUTO, outbounds: [TEMPLATE, OTHER_NODE_WS] },
       ],
     };
     const out = renderSb(withOperatorGroup, { rule: { ...autoRule, autoGroup: false } });
     expect(out.delivery).toEqual({ kind: 'serve' });
     const cfg = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
-    const operator = cfg.outbounds.find((o) => o.tag === 'FreeSocks Auto')!;
+    const operator = cfg.outbounds.find((o) => o.tag === AUTO)!;
     expect(operator.type).toBe('selector');
-    expect(operator.outbounds).toEqual([
-      'FreeSocks',
-      'FreeSocks (IPv6)',
-      'FreeSocks (backup)',
-      OTHER_NODE_WS,
-    ]);
+    expect(operator.outbounds).toEqual([P4, P6, B, OTHER_NODE_WS]);
     // With the auto group ON the same group IS adopted.
     const on = renderSb(withOperatorGroup);
     const adopted = (
       JSON.parse(on.body) as { outbounds: Array<Record<string, unknown>> }
-    ).outbounds.find((o) => o.tag === 'FreeSocks Auto')!;
+    ).outbounds.find((o) => o.tag === AUTO)!;
     expect(adopted.type).toBe('urltest');
   });
 
@@ -900,13 +895,13 @@ rules:
       proxies: Array<Record<string, unknown>>;
       'proxy-groups': Array<{ type: string; proxies: string[] }>;
     };
-    const emitted = doc.proxies.filter((p) => String(p.name).startsWith('FreeSocks'));
+    const emitted = doc.proxies.filter((p) => isEdgeName(String(p.name)));
     expect(emitted.map((p) => [p.name, p.servername])).toEqual([
-      ['FreeSocks', 'cdn-a.example'],
-      ['FreeSocks (IPv6)', 'cdn-a.example'],
-      ['FreeSocks (backup)', 'cdn-b.example'],
-      ['FreeSocks 2', 'cdn-c.example'],
-      ['FreeSocks 3', 'cdn-d.example'],
+      [P4, 'cdn-a.example'],
+      [P6, 'cdn-a.example'],
+      [B, 'cdn-b.example'],
+      [`${P4} #2`, 'cdn-c.example'],
+      [`${P4} #3`, 'cdn-d.example'],
     ]);
     const auto = doc['proxy-groups'].find((g) => g.type === 'url-test')!;
     expect(auto.proxies).toEqual(emitted.map((p) => p.name));
@@ -920,12 +915,7 @@ rules:
       'proxy-groups': Array<Record<string, unknown>>;
       rules: string[];
     };
-    expect(doc.proxies.map((p) => p.name)).toEqual([
-      'FreeSocks',
-      'FreeSocks (IPv6)',
-      'FreeSocks (backup)',
-      OTHER_NODE_WS,
-    ]);
+    expect(doc.proxies.map((p) => p.name)).toEqual([P4, P6, B, OTHER_NODE_WS]);
     expect(doc.proxies[0]).toMatchObject({
       server: '203.0.113.10',
       port: 443,
@@ -937,17 +927,11 @@ rules:
     );
     expect(doc.proxies[2]).toMatchObject({ server: '203.0.113.20', servername: 'cdn-b.example' });
     expect(doc['proxy-groups'][0]).toMatchObject({
-      name: 'FreeSocks Auto',
+      name: AUTO,
       type: 'url-test',
-      proxies: ['FreeSocks', 'FreeSocks (IPv6)', 'FreeSocks (backup)'],
+      proxies: [P4, P6, B],
     });
-    expect(doc['proxy-groups'][1].proxies).toEqual([
-      'FreeSocks Auto',
-      'FreeSocks',
-      'FreeSocks (IPv6)',
-      'FreeSocks (backup)',
-      OTHER_NODE_WS,
-    ]);
+    expect(doc['proxy-groups'][1].proxies).toEqual([AUTO, P4, P6, B, OTHER_NODE_WS]);
     expect(doc.rules).toEqual(['MATCH,→ Remnawave']);
     expect(out.body).not.toContain(TEMPLATE);
     expect(out.body).not.toContain(ORIGIN);
@@ -992,7 +976,7 @@ rules:
     const out = renderClash(body);
     expect(out.delivery).toEqual({ kind: 'serve' });
     const doc = YAML.parse(out.body) as { proxies: Array<{ name: string }>; rules: string[] };
-    expect(doc.rules).toEqual(['DOMAIN-SUFFIX,example.org,FreeSocks Auto', 'MATCH,→ Remnawave']);
+    expect(doc.rules).toEqual([`DOMAIN-SUFFIX,example.org,${AUTO}`, 'MATCH,→ Remnawave']);
     expect(doc.proxies.map((p) => p.name)).toContain(superset);
     expect(doc.proxies.map((p) => p.name)).not.toContain(TEMPLATE);
   });
@@ -1048,32 +1032,27 @@ rules:
   test('autoGroup OFF: an operator group named like the auto group keeps its type and members (R7)', () => {
     const body = clash.replace(
       "  - name: '→ Remnawave'",
-      `  - name: FreeSocks Auto\n    type: select\n    proxies:\n      - ${TEMPLATE}\n      - ${OTHER_NODE_WS}\n  - name: '→ Remnawave'`,
+      `  - name: "${AUTO}"\n    type: select\n    proxies:\n      - ${TEMPLATE}\n      - ${OTHER_NODE_WS}\n  - name: '→ Remnawave'`,
     );
     const out = renderClash(body, { rule: { ...mihomoRule, autoGroup: false } });
     expect(out.delivery).toEqual({ kind: 'serve' });
     const doc = YAML.parse(out.body) as {
       'proxy-groups': Array<{ name: string; type: string; proxies: string[] }>;
     };
-    const operator = doc['proxy-groups'].find((g) => g.name === 'FreeSocks Auto')!;
+    const operator = doc['proxy-groups'].find((g) => g.name === AUTO)!;
     expect(operator.type).toBe('select');
-    expect(operator.proxies).toEqual([
-      'FreeSocks',
-      'FreeSocks (IPv6)',
-      'FreeSocks (backup)',
-      OTHER_NODE_WS,
-    ]);
+    expect(operator.proxies).toEqual([P4, P6, B, OTHER_NODE_WS]);
     const on = renderClash(body);
     const adopted = (
       YAML.parse(on.body) as { 'proxy-groups': Array<{ name: string; type: string }> }
-    )['proxy-groups'].find((g) => g.name === 'FreeSocks Auto')!;
+    )['proxy-groups'].find((g) => g.name === AUTO)!;
     expect(adopted.type).toBe('url-test');
   });
 
   test('label / auto-group collisions with existing proxy names are suffixed', () => {
     const body = clash.replace(
       `  - name: ${OTHER_NODE_WS}`,
-      `  - name: FreeSocks\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: FreeSocks Auto\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: ${OTHER_NODE_WS}`,
+      `  - name: "${P4}"\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: "${AUTO}"\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: ${OTHER_NODE_WS}`,
     );
     const out = renderClash(body);
     expect(out.delivery).toEqual({ kind: 'serve' });
@@ -1084,9 +1063,9 @@ rules:
     const names = [...doc.proxies.map((p) => p.name), ...doc['proxy-groups'].map((g) => g.name)];
     expect(new Set(names).size).toBe(names.length);
     expect(doc['proxy-groups'][0]).toMatchObject({
-      name: 'FreeSocks Auto (2)',
+      name: `${AUTO} (2)`,
       type: 'url-test',
-      proxies: ['FreeSocks (2)', 'FreeSocks (IPv6)', 'FreeSocks (backup)'],
+      proxies: [`${P4} (2)`, P6, B],
     });
   });
 });

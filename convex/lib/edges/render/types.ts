@@ -23,8 +23,14 @@ export interface RenderMatcher {
 
 export interface RenderEndpoint {
   role: 'primary' | 'backup';
-  /** Member-facing label (e.g. "FreeSocks Primary", "FreeSocks Backup (IPv6)"). */
+  /**
+   * The member-facing name (src/shared/entryNames.ts, e.g. "🇧🇷 via Example Town ·
+   * IPv6", "🌐 via CDN 1"), given by the renderer once the body's entries are
+   * known (lib/edges/render.ts `nameEntries`).
+   */
   label: string;
+  /** The name without its form tag or spare number: one per address ("🇧🇷 via Example Town"). */
+  base?: string;
   edgeId: string;
   /** The listener whose template entry to clone. */
   listenerKey: string;
@@ -59,8 +65,8 @@ export interface RenderEndpoint {
 }
 
 export interface RenderRuleInput {
+  /** Add the url-test group (`AUTO_GROUP_NAME`, src/shared/entryNames.ts) where the format has one. */
   autoGroup: boolean;
-  autoGroupName: string;
   dropTemplateEntries: boolean;
   /** 0 = unlimited. */
   maxEntries: number;

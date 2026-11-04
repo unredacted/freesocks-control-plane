@@ -10,34 +10,37 @@
  * `remarks`), so a member, or a censor with a free account, would read the
  * fleet's internal names. This module renames every entry whose name names a
  * node (`splitPanelRemark`, the pinner's own parse, given the entry's own server
- * name as evidence) to a neutral label:
+ * name as evidence) to its direct name in the one naming scheme
+ * (src/shared/entryNames.ts), the scheme the edge renderer names its entries by:
  *
- *   <site name> · <place>            one entry
- *   <site name> · <place> · <code>   several (one per server name)
+ *   🇨🇦 Example City · Direct       one entry
+ *   🇨🇦 Example City · Direct 2     the next server name, and so on
  *
- * `<place>` is the backend instance's member-facing location label (its first
- * comma segment: "Example City, EX" reads "Example City"), left out when unset.
- * `<code>` is four characters derived from the part of the remark after the
- * node (the server name, `entryKey`) and nothing else, so an entry keeps its
- * label across refreshes, node renames and other entries coming and going.
- * Only when two server names in one body share a code do both carry their
- * longer six-character code instead, again derived from each key alone.
- * Entries that name no node (an edge's rendered label, a group, the backend's
- * placeholder, an operator's own Host remark) are left alone.
+ * The place is the backend instance's member-facing location label (its first
+ * comma segment: "Example City, EX" reads "Example City"); the flag is the
+ * country the backend reports for the instance's nodes (`entryNamingFor`).
+ * Either is left out when unknown, and with neither the site name leads
+ * (`FreeSocks · Direct`, never a bare "Direct" an app could read as its own
+ * no-proxy outbound). The numbers follow the order the backend lists its
+ * entries in (the panel's Host order), so an app shows Direct, Direct 2,
+ * Direct 3 top to bottom: the same body is named the same on every refresh, and
+ * a server name that comes or goes renumbers the entries after it (as does a
+ * panel that shuffles its Hosts on each fetch). The four- and six-character
+ * codes these numbers replaced never moved, but read to members as noise.
+ * Entries that name no node (an edge's rendered
+ * entry, already named by the renderer; a group; the backend's placeholder; an
+ * operator's own Host remark) are left alone.
  *
  * Groups are named too: the backend's subscription templates
  * (lib/backend/subscriptionTemplates) hold one selector group, named after the
  * backend product ("→ Remnawave"), that apps show like an entry. That group,
  * and any group whose name carries the backend product's name, is renamed to
- *
- *   <site name> Select
- *
- * "Select" because it is the group the member picks a connection in, and it
- * pairs with the edge renderer's url-test group (`edge.render.autoGroupName`,
- * "FreeSocks Auto"); never the bare site name, which the default edge entry
- * label already is. An operator's own groups keep their names, and a new group
- * name never takes a name the body already uses. A relabelled body relabels to
- * itself, so a cached body can go through it again when it is served.
+ * the bare site name ("FreeSocks"): the group the member picks a connection in,
+ * beside the renderer's url-test group (`⚡ Auto (fastest)`). No entry carries
+ * the site name, so the name is free. An operator's own groups keep their
+ * names, and a new group name never takes a name the body already uses. A
+ * relabelled body relabels to itself, so a cached body can go through it again
+ * when it is served.
  *
  * It runs on the body the member receives, AFTER node pinning and edge
  * rendering: both read the original names. References follow the rename
@@ -48,27 +51,29 @@
  * one unacceptable outcome; the names are a privacy weakening, not a break).
  */
 import YAML from 'yaml';
+import {
+  cleanNamePart,
+  entryName,
+  placeCountry,
+  type MemberPlace,
+} from '../../src/shared/entryNames';
 import { remarkTag } from './backend/hostRemark';
 import { decodeBase64Loose, encodeBase64 } from './edges/render/base64';
 import { mentionsAny, renameRefs, uniqueName } from './edges/render/refs';
 import { configServerName, linkRemark, linkServerName, splitPanelRemark } from './nodePinning';
 
+export { ENTRY_NAME_SEP } from '../../src/shared/entryNames';
 export const DEFAULT_SITE_NAME = 'FreeSocks';
-/** Between the label's parts (a middle dot: no comma, no pipe, no dash). */
-export const ENTRY_NAME_SEP = ' · ';
 const MAX_SITE_NAME = 32;
 const MAX_PLACE = 32;
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I
-const CODE_LENGTH = 4;
-// A 32-bit hash holds six characters of a 32-letter alphabet.
-const LONG_CODE_LENGTH = 6;
 
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
 // Names a Clash config resolves without a proxy of that name.
 const CLASH_BUILTINS = ['DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE', 'GLOBAL'];
-// The group names of the backend's own subscription templates
+// The group name of the backend's own subscription templates
 // (lib/backend/subscriptionTemplates; a test keeps the two in step).
-const TEMPLATE_GROUP_NAMES: ReadonlySet<string> = new Set(['→ Remnawave']);
+export const BACKEND_TEMPLATE_GROUP = '→ Remnawave';
+const TEMPLATE_GROUP_NAMES: ReadonlySet<string> = new Set([BACKEND_TEMPLATE_GROUP]);
 // The backend product's name, anywhere in a group's name.
 const BACKEND_PRODUCT_RE = /remnawave/i;
 // sing-box outbound types that are groups.
@@ -82,59 +87,66 @@ const NOT_REFERENCES: ReadonlySet<string> = new Set(['cache_id', 'path']);
 export interface EntryNaming {
   siteName: string;
   place: string | null;
-}
-
-// A UTF-16 surrogate half with no partner: invalid text that
-// `encodeURIComponent` throws on.
-const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
-
-/**
- * Operator text made safe inside a connection name: no control characters, no
- * comma (a Clash rule splits on it), no pipe (FCP's own remark separator), no
- * lone surrogate, whitespace collapsed, length capped in code points (a cut
- * never splits a character, so the label always encodes).
- */
-function cleanPart(v: unknown, max: number): string {
-  if (typeof v !== 'string') return '';
-  const text = v
-    .replace(LONE_SURROGATE_RE, '')
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f,|]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return Array.from(text).slice(0, max).join('').trim();
+  /** The country of the place (its flag), ISO 3166-1 alpha-2; absent or null = no flag. */
+  country?: string | null;
 }
 
 /** The site name members see (`subscription.siteName`), with the built-in default. */
 export function memberSiteName(v: unknown): string {
-  return cleanPart(v, MAX_SITE_NAME) || DEFAULT_SITE_NAME;
+  return cleanNamePart(v, MAX_SITE_NAME) || DEFAULT_SITE_NAME;
 }
 
 /** The place part of a label: a location label's first comma segment, or null. */
 export function memberPlace(locationLabel: unknown): string | null {
   if (typeof locationLabel !== 'string') return null;
-  return cleanPart(locationLabel.split(',')[0], MAX_PLACE) || null;
+  return cleanNamePart(locationLabel.split(',')[0], MAX_PLACE) || null;
 }
 
 /**
- * The naming for one body from the resolved settings and the backend instance's
- * location label; null when the operator turned it off (`subscription.entryNames`
- * false). Any other stored value counts as on: the default is the private one.
+ * The country the flag of a backend instance's direct entries shows: the one
+ * every node of it reports (`backendNodeInventory.countryCode`, as the backend
+ * lists it), or null when none reports one or two disagree. By convention one
+ * backend instance serves one location, so its nodes share a country; a
+ * disagreement means the record is wrong somewhere, and no flag beats a wrong one.
+ */
+export function instanceCountry(codes: readonly unknown[]): string | null {
+  const known = new Set(codes.map(placeCountry).filter((c): c is string => c !== null));
+  return known.size === 1 ? [...known][0] : null;
+}
+
+/**
+ * The naming for one body from the resolved settings, the backend instance's
+ * location label and its nodes' country; null when the operator turned it off
+ * (`subscription.entryNames` false). Any other stored value counts as on: the
+ * default is the private one.
  */
 export function entryNamingFrom(
   settings: Record<string, unknown>,
   locationLabel: string | null | undefined,
+  country: string | null = null,
 ): EntryNaming | null {
   if (settings['subscription.entryNames'] === false) return null;
   return {
     siteName: memberSiteName(settings['subscription.siteName']),
     place: memberPlace(locationLabel),
+    country: placeCountry(country),
   };
 }
 
 /**
- * What an entry's code is derived from: the part of its remark after the node.
- * An FCP address remark carries the server name, or the server name's tag when
+ * The member-facing place of a naming. With neither a place nor a flag the
+ * site name leads instead (`FreeSocks · Direct`): a bare "Direct" would read as
+ * the apps' own no-proxy outbound (Clash `DIRECT`, sing-box `direct`).
+ */
+function placeOf(naming: EntryNaming): MemberPlace {
+  const country = placeCountry(naming.country ?? null);
+  return { name: naming.place ?? (country ? null : naming.siteName), country };
+}
+
+/**
+ * Which server name an entry carries: the part of its remark after the node,
+ * one number per server name. An FCP address remark carries the server name,
+ * or the server name's tag when
  * the whole would not fit (`addressRemark`); a server name is reduced to that
  * same tag, so the key does not depend on the node name's length (a rename).
  * Tags and role suffixes (`reality`, `ws-6a536a`) never contain a dot.
@@ -143,24 +155,6 @@ export function entryKey(remarkRest: string): string {
   return remarkRest.includes('.') ? remarkTag(remarkRest) : remarkRest.toLowerCase();
 }
 
-/** An entry's code: FNV-1a 32 of its key, `length` characters of a 32-letter alphabet. */
-export function entryCode(key: string, length = CODE_LENGTH): string {
-  let h = 0x811c9dc5;
-  for (const b of new TextEncoder().encode(key)) {
-    h ^= b;
-    h = Math.imul(h, 0x01000193);
-  }
-  h >>>= 0;
-  let out = '';
-  for (let i = 0; i < length; i++) {
-    out += CODE_ALPHABET[h & 31];
-    h >>>= 5;
-  }
-  return out;
-}
-
-const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
 /** A node-named entry: its current name and the rest of its remark after the node. */
 export interface NamedEntry {
   name: string;
@@ -168,42 +162,30 @@ export interface NamedEntry {
 }
 
 /**
- * The new name of every node-named entry, by its old name. `taken` holds every
- * other name the body defines (groups, edge labels, built-ins), which no new
- * name may equal. An entry's code depends on its own key only: the short code,
- * or (when another key in the body has the same short code) its long code. The
- * order of `entries` does not matter; a name that is still not unique (the
- * same server name under two nodes, a taken name) gets `uniqueName`'s ` (2)`,
- * assigned in sorted order.
+ * The new name of every node-named entry, by its old name: `<place> · Direct`
+ * for the first server name in the order of `entries` (the body's order),
+ * `Direct 2`, `Direct 3` for the next ones. `taken` holds every other name the
+ * body defines (groups, edge entries, built-ins), which no new name may equal.
+ * The same server name under two nodes (one key, `entryKey`, two old names)
+ * shares a number and the later one gets `uniqueName`'s ` (2)`.
  */
 export function planEntryNames(
   entries: readonly NamedEntry[],
   taken: ReadonlySet<string>,
   naming: EntryNaming,
 ): Map<string, string> {
-  const base = naming.place
-    ? `${naming.siteName}${ENTRY_NAME_SEP}${naming.place}`
-    : naming.siteName;
+  const place = placeOf(naming);
   const byName = new Map<string, string>();
   for (const e of entries) if (!byName.has(e.name)) byName.set(e.name, entryKey(e.entry));
-  const keysByCode = new Map<string, Set<string>>();
-  for (const key of byName.values()) {
-    const code = entryCode(key);
-    keysByCode.set(code, (keysByCode.get(code) ?? new Set()).add(key));
-  }
-  const rows = [...byName]
-    .map(([name, key]) => {
-      const short = entryCode(key);
-      const code = keysByCode.get(short)!.size > 1 ? entryCode(key, LONG_CODE_LENGTH) : short;
-      return { name, key, code };
-    })
-    .sort((a, b) => cmp(a.code, b.code) || cmp(a.key, b.key) || cmp(a.name, b.name));
+  // Server names in the order they first appear.
+  const keys = [...new Set(byName.values())];
   const used = new Set(taken);
   const plan = new Map<string, string>();
-  for (const r of rows) {
-    const label = uniqueName(rows.length === 1 ? base : `${base}${ENTRY_NAME_SEP}${r.code}`, used);
+  for (const [name, key] of byName) {
+    const n = keys.indexOf(key) + 1;
+    const label = uniqueName(entryName({ kind: 'direct', place, n }), used);
     used.add(label);
-    plan.set(r.name, label);
+    plan.set(name, label);
   }
   return plan;
 }
@@ -213,12 +195,12 @@ export function backendGroupName(name: string): boolean {
   return TEMPLATE_GROUP_NAMES.has(name) || BACKEND_PRODUCT_RE.test(name);
 }
 
-/** The name a backend group gets: `<site name> Select`. */
+/** The name a backend group gets: the bare site name. */
 export function memberGroupName(naming: EntryNaming): string {
-  return `${naming.siteName} Select`;
+  return naming.siteName;
 }
 
-/** Whether a group already has a member group name (`<site name> Select`, ` (2)`…). */
+/** Whether a group already has a member group name (the site name, ` (2)`…). */
 function hasMemberGroupName(name: string, naming: EntryNaming): boolean {
   const base = memberGroupName(naming);
   return name === base || (name.startsWith(base) && /^ \(\d+\)$/.test(name.slice(base.length)));
@@ -430,4 +412,73 @@ function xrayServerName(config: Obj): string | null {
     }
   }
   return null;
+}
+
+/** sing-box outbound types that route rather than connect: neither an entry nor a group. */
+const SINGBOX_ROUTING_TYPES = new Set(['direct', 'block', 'dns']);
+
+/**
+ * The names a member's app lists for a body, in body order: its entries and its
+ * groups (the admin's "Names in apps" preview). Empty lists for a body no
+ * format here reads.
+ */
+export function entryNamesOf(content: string): { entries: string[]; groups: string[] } {
+  const none = { entries: [], groups: [] };
+  try {
+    const trimmed = content.trim();
+    if (!trimmed || trimmed.startsWith('<')) return none;
+    if (trimmed.startsWith('{')) {
+      const cfg = JSON.parse(trimmed) as unknown;
+      if (!isObj(cfg) || !Array.isArray(cfg.outbounds)) return none;
+      const defs = [
+        ...cfg.outbounds,
+        ...(Array.isArray(cfg.endpoints) ? (cfg.endpoints as unknown[]) : []),
+      ].filter((o): o is Obj => isObj(o) && typeof o.tag === 'string');
+      return {
+        entries: defs
+          .filter((o) => !SINGBOX_GROUP_TYPES.has(String(o.type)))
+          .filter((o) => !SINGBOX_ROUTING_TYPES.has(String(o.type)))
+          .map((o) => o.tag as string),
+        groups: defs
+          .filter((o) => SINGBOX_GROUP_TYPES.has(String(o.type)))
+          .map((o) => o.tag as string),
+      };
+    }
+    if (trimmed.startsWith('[')) {
+      const list = JSON.parse(trimmed) as unknown;
+      if (!Array.isArray(list)) return none;
+      return {
+        entries: list
+          .filter(isObj)
+          .flatMap((c) => (typeof c.remarks === 'string' ? [c.remarks] : [])),
+        groups: [],
+      };
+    }
+    if (/^proxies:/m.test(trimmed) || /^proxy-groups:/m.test(trimmed)) {
+      const doc = YAML.parse(trimmed) as unknown;
+      if (!isObj(doc)) return none;
+      const names = (v: unknown) =>
+        (Array.isArray(v) ? v : [])
+          .map((p) => (isObj(p) ? p.name : undefined))
+          .filter((n): n is string => typeof n === 'string');
+      return { entries: names(doc.proxies), groups: names(doc['proxy-groups']) };
+    }
+    let text = trimmed;
+    if (!PROXY_LINE_RE.test(trimmed)) {
+      const decoded = decodeBase64Loose(trimmed);
+      if (decoded === null || !PROXY_LINE_RE.test(decoded.trim())) return none;
+      text = decoded;
+    }
+    return {
+      entries: text
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => PROXY_LINE_RE.test(l))
+        .map((l) => linkRemark(l))
+        .filter((r): r is string => r !== null),
+      groups: [],
+    };
+  } catch {
+    return none;
+  }
 }
