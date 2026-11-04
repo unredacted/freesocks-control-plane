@@ -126,11 +126,12 @@ describe('the naming function', () => {
   test('flags are regional-indicator pairs; private-use codes draw none', () => {
     expect(flagEmoji('br')).toBe('🇧🇷');
     expect(flagEmoji('CA')).toBe('🇨🇦');
-    for (const c of ['XX', 'ZZ', 'AA', 'QM', 'QZ', 'T1', 'USA', '', null]) {
+    // Private use, unassigned, withdrawn, malformed: no country, no flag.
+    for (const c of ['XX', 'ZZ', 'AA', 'QM', 'QZ', 'AB', 'AN', 'T1', 'USA', '', null]) {
       expect(placeCountry(c), String(c)).toBeNull();
       expect(flagEmoji(c), String(c)).toBeNull();
     }
-    expect(placeCountry('QL')).toBe('QL');
+    expect(placeCountry(' nz ')).toBe('NZ');
   });
 
   test('every route and form', () => {

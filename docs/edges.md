@@ -1230,15 +1230,17 @@ Domain` (the address's name, § "Names for load balancer addresses"), `· IPv4` 
   server names, numbered in the sorted order of the server names (`docs/servers.md` § "A direct
   node's addresses"). The place is the backend instance's location label (its first comma
   segment); the flag is the country every node of the instance reports in the backend's node list
-  (`backendNodeInventory.countryCode`, none when they disagree or report a private-use code such
-  as `XX`). With neither, the site name leads (`FreeSocks · Direct`): a bare "Direct" would read
+  (`backendNodeInventory.countryCode`; none when they disagree, report a code that is not an
+  assigned ISO 3166-1 country such as `XX`, or number more than the 200 rows the lookup reads).
+  A location's member-facing country must be an assigned code too (`src/shared/countryCodes.ts`). With neither, the site name leads (`FreeSocks · Direct`): a bare "Direct" would read
   as an app's own no-proxy outbound.
 - **Groups.** The url-test group the renderer adds is `⚡ Auto (fastest)`; the backend's selector
   group takes the bare site name (`subscription.siteName`, `FreeSocks`). No entry carries the site
   name.
 - **The title** apps show (`profile-title`) is `<site name> · <mode>`, `FreeSocks · Freedom
-XHTTP`: the member's connection mode (their choice, else the default their key issued into) by
-  its family and leaf names, each the admin's label when one is set (it is what members read in
+XHTTP`: the member's connection mode by its family and leaf names (their choice; with none
+  stored, the mode whose bound pool holds the key's placement, so a later change of the default
+  never retitles a key that has not moved; the effective default only when no pool holds it), each the admin's label when one is set (it is what members read in
   every locale; a family label's trailing "Mode" is left out), else the built-in English name
   (`BUILT_IN_*_NAMES_EN` in `lib/connectionModes.ts`, kept in step with `messages/en.json`). A
   backend with no modes (Outline) is titled with the site name alone (`lib/subscriptionTitle.ts`).

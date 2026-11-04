@@ -26,6 +26,8 @@
  * `cleanNamePart`.
  */
 
+import { ISO_COUNTRY_CODES } from './countryCodes';
+
 /** Between the parts of a name (a middle dot: no comma, no pipe, no dash). */
 export const ENTRY_NAME_SEP = ' · ';
 /** The url-test group (sing-box `urltest`, Mihomo `url-test`) the renderer adds. */
@@ -81,17 +83,15 @@ export function cleanNamePart(v: unknown, max: number): string {
 }
 
 /**
- * An ISO 3166-1 alpha-2 code a flag can be drawn for, uppercased, or null:
- * two letters, and none of the codes ISO leaves to private use (AA, QM-QZ,
- * XA-XZ, ZZ), which backends and CDNs use for "unknown".
+ * An ISO 3166-1 alpha-2 code a flag can be drawn for, uppercased, or null: an
+ * officially assigned code only (src/shared/countryCodes.ts), so neither an
+ * unassigned or withdrawn one (`AB`, `AN`) nor a private-use one (`XX`, `ZZ`),
+ * which backends and CDNs use for "unknown".
  */
 export function placeCountry(v: unknown): string | null {
   if (typeof v !== 'string') return null;
   const c = v.trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(c)) return null;
-  if (c === 'AA' || c === 'ZZ' || c.startsWith('X') || (c.startsWith('Q') && c >= 'QM'))
-    return null;
-  return c;
+  return ISO_COUNTRY_CODES.has(c) ? c : null;
 }
 
 /** The flag of a country (a pair of regional indicators; some systems draw the two letters). */

@@ -1200,7 +1200,7 @@ export const setMemberPlace = internalMutation({
     if (rawCountry && !country)
       throw new ConvexError({
         code: 'validation',
-        message: `${rawCountry} is not a country code (two letters, ISO 3166-1)`,
+        message: `${rawCountry} is not a country code (an assigned ISO 3166-1 alpha-2 code)`,
       });
     const before = memberPlaceOf(row.memberPlace?.name, row.memberPlace?.country);
     const after = memberPlaceOf(name, country);

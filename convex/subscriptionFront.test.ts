@@ -16,6 +16,7 @@ import { addressRemark } from './lib/backend/hostRemark';
 import { defaultRouteFaults } from './lib/backend/subscriptionTemplates/defaultRoute';
 import { decodeBase64Loose, encodeBase64 } from './lib/edges/render/base64';
 import { signValue } from './lib/cookies';
+import { NODE_INVENTORY_SCAN, entryNamingOf } from './subscriptions';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -436,6 +437,41 @@ describe('GET /api/v1/sub/<token>: member-facing entry names', () => {
     expect(await served(t)).toEqual(lines);
   });
 
+  test('the flag needs every node: an inventory past the scan shows none', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedWithLocation(t);
+    const serverId = (await t.run((ctx) => ctx.db.get(subId)))!.backendServerId!;
+    const naming = () => t.run((ctx) => entryNamingOf(ctx.db, serverId));
+    expect((await naming())?.country).toBe('CA');
+    // As many rows as the scan reads, all agreeing: still the flag.
+    await t.run(async (ctx) => {
+      for (let i = NODES.length; i < NODE_INVENTORY_SCAN; i++)
+        await ctx.db.insert('backendNodeInventory', {
+          backendServerId: serverId,
+          nodeUuid: `extra-${i}`,
+          name: `extra-node-${i}`,
+          usersOnline: 0,
+          online: true,
+          lastStatsAt: Date.now(),
+          countryCode: 'CA',
+        });
+    });
+    expect((await naming())?.country).toBe('CA');
+    // One more than it reads (it could disagree): no flag.
+    await t.run((ctx) =>
+      ctx.db.insert('backendNodeInventory', {
+        backendServerId: serverId,
+        nodeUuid: 'one-too-many',
+        name: 'one-too-many',
+        usersOnline: 0,
+        online: true,
+        lastStatsAt: Date.now(),
+        countryCode: 'NZ',
+      }),
+    );
+    expect((await naming())?.country).toBeNull();
+  });
+
   test('the service name titles the subscription, never an entry; turned off, the backend names pass', async () => {
     const t = convexTest(schema, modules);
     const { subId } = await seedWithLocation(t);
@@ -509,6 +545,30 @@ describe('profile-title is the service name and the connection mode on every sub
     const cached = await get(t);
     expect(fetchCalls).toBe(1); // a cache hit, still titled now
     expect(cached.headers.get('profile-title')).toBe(b64('Свобода VPN · Freedom WebSocket'));
+  });
+
+  test('no mode stored: the mode whose pool holds the key, whatever the default says later', async () => {
+    const t = convexTest(schema, modules);
+    const { subId } = await seedSub(t, { backendPlacement: 'squad-x' });
+    await t.run(async (ctx) => {
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-xhttp',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['squad-x'] }),
+        updatedAt: Date.now(),
+      });
+    });
+    expect((await get(t)).headers.get('profile-title')).toBe(b64('FreeSocks · Freedom XHTTP'));
+    // Another default configured later: the key has not moved, nor does its title.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'connectionMode.default',
+        value: JSON.stringify('privacy-reality'),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(subId, { subCache: undefined });
+    });
+    expect((await get(t)).headers.get('profile-title')).toBe(b64('FreeSocks · Freedom XHTTP'));
   });
 
   test("the member's own mode, by its English name; an admin label wins", async () => {

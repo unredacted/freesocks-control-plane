@@ -16,6 +16,7 @@ import {
   type ConnectionMode,
   type ConnectionModeFamily,
 } from './connectionModes';
+import { modesOfPlacement } from './memberFamily';
 import { DEFAULT_SITE_NAME, memberSiteName } from './memberEntryNames';
 import { effectiveDefaultFor, resolveCatalogWithAvailability } from './placement';
 
@@ -73,21 +74,41 @@ export function modeTitleName(
   return cleanNamePart(name, MAX_MODE_NAME);
 }
 
+type TitledSub = Pick<Doc<'subscriptions'>, 'userId' | 'backend' | 'backendPlacement'>;
+
+/**
+ * The mode a key with no stored choice was issued into: the mode whose bound
+ * pool holds the key's placement (`modesOfPlacement`), so a later change of
+ * the configured default, or of which default is available, never retitles a
+ * key that has not moved. Several modes sharing the pool: the effective
+ * default when it is one of them, else the first in catalog order. No
+ * placement, or one no pool holds any more: the effective default.
+ */
+async function issuedModeOf(
+  db: DatabaseReader,
+  sub: TitledSub,
+  /** The modes on the key's backend, in catalog order. */
+  onBackend: readonly string[],
+): Promise<string | null> {
+  const pooled = sub.backendPlacement ? await modesOfPlacement(db, sub.backendPlacement) : [];
+  const held = onBackend.filter((slug) => pooled.includes(slug));
+  if (held.length === 1) return held[0];
+  // The availability (bound and served pools) is read only to find the default.
+  const fallback = effectiveDefaultFor(await resolveCatalogWithAvailability(db), sub.backend);
+  if (held.length === 0 || (fallback !== null && held.includes(fallback))) return fallback;
+  return held[0];
+}
+
 /**
  * The member's current connection mode by its title name, or null when it has
  * none on this key's backend (Outline has no modes): the mode they chose, else
- * the effective default on the backend (what their key issued into).
+ * the one their key was issued into (`issuedModeOf`).
  */
-export async function memberModeName(
-  db: DatabaseReader,
-  sub: Pick<Doc<'subscriptions'>, 'userId' | 'backend'>,
-): Promise<string | null> {
+export async function memberModeName(db: DatabaseReader, sub: TitledSub): Promise<string | null> {
   const user = await db.get(sub.userId);
-  // The availability (bound and served pools) is read only to find the default.
-  const slug =
-    user?.connectionModeId ??
-    effectiveDefaultFor(await resolveCatalogWithAvailability(db), sub.backend);
   const catalog = await resolveModeCatalog(db);
+  const onBackend = catalog.modes.filter((m) => m.backends.includes(sub.backend)).map((m) => m.id);
+  const slug = user?.connectionModeId ?? (await issuedModeOf(db, sub, onBackend));
   const mode = catalog.modes.find((m) => m.id === slug && m.backends.includes(sub.backend));
   if (!mode) return null;
   const family = catalog.families.find((f) => f.id === mode.family) ?? null;
@@ -97,7 +118,7 @@ export async function memberModeName(
 /** The title for one key: `<site name> · <mode name>`, the site name alone without a mode. */
 export async function resolveSubscriptionTitle(
   db: DatabaseReader,
-  sub: Pick<Doc<'subscriptions'>, 'userId' | 'backend'> | null,
+  sub: TitledSub | null,
 ): Promise<string> {
   const [siteName, modeName] = await Promise.all([
     resolveSubscriptionSiteName(db),

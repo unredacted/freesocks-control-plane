@@ -71,13 +71,15 @@ const epochOf = (t: Awaited<ReturnType<typeof setup>>['t'], relayId: Id<'relays'
 describe("a location's name in apps", () => {
   test('cleaned and checked; the origins with an address in use there move; audited as members read it', async () => {
     const { t, accountId, locationId, relayId } = await setup();
-    await expect(
-      t.mutation(internal.edgeLocations.setMemberPlace, {
-        id: locationId,
-        name: 'Example City',
-        country: 'XX',
-      }),
-    ).rejects.toThrow(/not a country code/);
+    // Private use (a backend's "unknown") and unassigned codes are refused alike.
+    for (const country of ['XX', 'AB', 'AN'])
+      await expect(
+        t.mutation(internal.edgeLocations.setMemberPlace, {
+          id: locationId,
+          name: 'Example City',
+          country,
+        }),
+      ).rejects.toThrow(/not a country code/);
     const before = await epochOf(t, relayId);
     const r = await t.mutation(internal.edgeLocations.setMemberPlace, {
       id: locationId,

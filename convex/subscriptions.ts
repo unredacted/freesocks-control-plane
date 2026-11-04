@@ -764,8 +764,9 @@ export const deliveryContextForUser = internalQuery({
   },
 });
 
-// The inventory rows read for an instance's flag: one per node, a handful.
-const NODE_INVENTORY_SCAN = 200;
+// The inventory rows read for an instance's flag (one per node, a handful in
+// practice); an instance with more shows no flag rather than judge on part.
+export const NODE_INVENTORY_SCAN = 200;
 
 /**
  * What the entry names of a member body served from this backend instance are
@@ -773,7 +774,8 @@ const NODE_INVENTORY_SCAN = 200;
  * label and its nodes' country (the flag: `instanceCountry` over the backend's
  * node inventory), or null when they are off or the backend's names are not
  * panel remarks (a backend without node pinning). Two settings rows and one
- * instance row (point reads), and the instance's inventory rows (one per node).
+ * instance row (point reads), and the instance's inventory rows (one per node,
+ * at most `NODE_INVENTORY_SCAN`; past it, no flag).
  */
 export async function entryNamingOf(
   db: DatabaseReader,
@@ -798,13 +800,12 @@ export async function entryNamingOf(
     ? await db
         .query('backendNodeInventory')
         .withIndex('by_server', (q) => q.eq('backendServerId', server._id))
-        .take(NODE_INVENTORY_SCAN)
+        .take(NODE_INVENTORY_SCAN + 1)
     : [];
-  return entryNamingFrom(
-    settings,
-    server?.locationLabel,
-    instanceCountry(nodes.map((n) => n.countryCode)),
-  );
+  // Every node must agree on the country: one past the scan could disagree.
+  const country =
+    nodes.length > NODE_INVENTORY_SCAN ? null : instanceCountry(nodes.map((n) => n.countryCode));
+  return entryNamingFrom(settings, server?.locationLabel, country);
 }
 
 export const entryNamingFor = internalQuery({
