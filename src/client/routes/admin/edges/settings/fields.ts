@@ -132,7 +132,7 @@ export const AUTO_PROVISION: Field = {
   path: 'autoProvisionToDesired',
   label: 'Provision up to the desired pool size automatically',
   helper:
-    'On: the control plane creates edges on its own until every origin reaches its pool size. This spends provider budget without asking. Off: you provision each edge yourself.',
+    'On: the control plane creates edges on its own until every origin reaches its pool size. This spends provider budget without asking, though never while a spare waits for the slot, nor for an edge that could only be a spare. Off: you provision each edge yourself.',
 };
 
 export const ROTATION_FIELDS: Field[] = [
@@ -140,7 +140,8 @@ export const ROTATION_FIELDS: Field[] = [
     kind: 'switch',
     path: 'autoPublishStandby',
     label: 'Publish a standby when a pool slot is empty',
-    helper: 'On: a ready standby fills a missing slot on its own. Off: you publish it by hand.',
+    helper:
+      'On: a ready standby fills a missing slot on its own. Off: you publish it by hand, and no edge is bought for that slot meanwhile.',
   },
   {
     kind: 'switch',

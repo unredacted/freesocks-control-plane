@@ -106,7 +106,14 @@ import {
   type RotationEvent,
   type SetLocationCandidate,
 } from './lib/edges/rotation';
-import { admissionOf, coolingOf, setPicksOf, setStateOf, withCooling } from './lib/edges/setState';
+import {
+  admissionOf,
+  coolingOf,
+  setPicksOf,
+  setStateOf,
+  slotsOf,
+  withCooling,
+} from './lib/edges/setState';
 import {
   REFUSED_LOCATION_HOLD_MS,
   refusedLocationsOf,
@@ -351,26 +358,55 @@ export const get = internalQuery({
 
 /**
  * Whether automatic upkeep holds off provisioning on this origin: its latest
- * rotation is an automatic provision that failed less than
- * `autoProvisionBackoffMs` ago. Every attempt pays for what it built before the
- * failing step, so a cause that persists (a quota, a provider fault) is not
- * paid for again on every tick; a manual start is never held.
+ * AUTOMATIC provision failed less than `autoProvisionBackoffMs` ago. Every
+ * attempt pays for what it built before the failing step, so a cause that
+ * persists (a quota, a provider fault) is not paid for again on every tick; a
+ * manual start is never held, and a manual run since (a spare added by hand,
+ * a publish) does not lift the hold either: it says nothing about the cause.
+ * Only runs started within the hold plus the longest a run lasts are read.
  */
 export const autoProvisionBackingOff = internalQuery({
   args: { relayId: v.id('relays'), now: v.number() },
   handler: async (ctx, { relayId, now }): Promise<boolean> => {
-    const last = await ctx.db
+    const since = now - EDGE_PLUMBING.autoProvisionBackoffMs;
+    for await (const r of ctx.db
       .query('edgeRotations')
-      .withIndex('by_relay', (q) => q.eq('relayId', relayId))
-      .order('desc')
-      .first();
-    return (
-      !!last &&
-      last.kind === 'provision' &&
-      last.trigger === 'reconcile' &&
-      last.phase === 'failed' &&
-      (last.finishedAt ?? last.updatedAt) > now - EDGE_PLUMBING.autoProvisionBackoffMs
+      .withIndex('by_relay', (q) =>
+        q.eq('relayId', relayId).gt('startedAt', since - EDGE_PLUMBING.maxRotationMs),
+      )
+      .order('desc')) {
+      if (r.kind !== 'provision' || r.trigger !== 'reconcile') continue;
+      return r.phase === 'failed' && (r.finishedAt ?? r.updatedAt) > since;
+    }
+    return false;
+  },
+});
+
+/**
+ * Why upkeep must not buy an address to fill a free pool slot of this origin
+ * now, read fresh, or null: `pool_reserved` when every free slot is held for
+ * what the node's set lacks and no location automatic work may use lowers it
+ * (the missing location is not trusted yet, or full): what selection would
+ * pick could only ever be a spare (docs/edges.md § "Provider sets").
+ */
+export const upkeepFillRefusal = internalQuery({
+  args: { relayId: v.id('relays'), listenerId: v.optional(v.id('relayListeners')) },
+  handler: async (ctx, { relayId, listenerId }): Promise<'pool_reserved' | null> => {
+    const origin = await ctx.db.get(relayId);
+    if (!origin?.providerSet) return null;
+    const sel = await selectionContext(
+      ctx,
+      {
+        kind: 'provision',
+        trigger: 'reconcile',
+        publishOnDone: true,
+        ...(listenerId ? { listenerId } : {}),
+      },
+      origin,
+      null,
+      await resolveEdgeConfig(ctx.db),
     );
+    return sel.accountFailure === 'pool_reserved' ? 'pool_reserved' : null;
   },
 });
 
@@ -3806,9 +3842,23 @@ export async function selectionContext(
         locationKeyNew: !mine.some((p) => p.locationKey === locationKey),
       });
     }
+    // Upkeep filling a free slot buys only what can take one: with every free
+    // slot held for what the set lacks, an address anywhere else would only be
+    // a spare (bought for nothing). Its first address in a location that is not
+    // trusted yet is made and tested by hand.
+    const slots = slotsOf(state, origin);
+    const onlyLowering =
+      automatic &&
+      rotation.kind === 'provision' &&
+      rotation.publishOnDone === true &&
+      slots.free > 0 &&
+      slots.held >= slots.free;
     return setCandidates.length === 0 && coolingOnly > 0
       ? { ok: false, code: 'set_picks_cooling' }
-      : pickLocation(setCandidates, { allowUnqualified: rotation.allowUnqualified === true });
+      : pickLocation(setCandidates, {
+          allowUnqualified: rotation.allowUnqualified === true,
+          onlyLowering,
+        });
   };
   let picked = await pickAmong(candidates);
   // Nothing to pick, though a location set aside after a refused create would

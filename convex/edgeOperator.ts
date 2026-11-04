@@ -1941,15 +1941,38 @@ export const attention = internalQuery({
           }
           held ??= e._id as string;
         }
+        // No spare, and every free slot held for set locations no address was
+        // tested in yet: a provision (upkeep's or Automatic) would buy in
+        // another location, an address that could only be a spare. The node
+        // page says to add a spare there and test it (docs/edges.md § "Provider sets").
+        const slots = slotsOf(setState, relay);
+        const untrustedOnly =
+          standbys === 0 &&
+          slots.free > 0 &&
+          slots.held >= slots.free &&
+          setState.targets.every(
+            (t) =>
+              !!t.locationId &&
+              setState.picks?.find((p) => p.pick.locationId === t.locationId)?.location
+                .qualified === false,
+          );
         items.push({
           ...base(relay),
           edgeId: publishable ?? held,
           id: `pool_below_desired:${relay._id}`,
           kind: 'pool_below_desired',
           severity: published === 0 ? 'warning' : 'info',
-          code: !publishable && held ? 'pool_reserved' : null,
+          code: untrustedOnly
+            ? 'location_untrusted'
+            : !publishable && held
+              ? 'pool_reserved'
+              : null,
           facts: { published, desired: relay.desiredPublished, standbys },
-          action: publishable ? 'publish' : standbys > 0 ? 'open_relay' : 'provision',
+          action: publishable
+            ? 'publish'
+            : standbys > 0 || untrustedOnly
+              ? 'open_relay'
+              : 'provision',
           since: null,
         });
       }

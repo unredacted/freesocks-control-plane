@@ -2378,7 +2378,7 @@ describe('automatic work on a live node stays in its approved shape', () => {
         relayId: live.relayId,
         candidates: [spare.edgeId as Id<'edges'>],
       }),
-    ).toEqual({ published: false, rotationId: null, awaitingVerification: false });
+    ).toEqual({ published: false, rotationId: null, awaitingVerification: false, ready: false });
     expect((await t.run((c) => c.db.get(spare.edgeId as Id<'edges'>)))!.publication).toBe(
       'unpublished',
     );

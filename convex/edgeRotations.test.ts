@@ -1943,7 +1943,12 @@ describe('edgeRotations: recovery, guards and bounds', () => {
       relayId,
       candidates: [standby],
     });
-    expect(blocked).toEqual({ published: false, rotationId: null, awaitingVerification: false });
+    expect(blocked).toEqual({
+      published: false,
+      rotationId: null,
+      awaitingVerification: false,
+      ready: false,
+    });
     await t.mutation(internal.edgeRotations.requestCancel, { rotationId: busy.rotationId });
     await t.run((ctx) =>
       ctx.db.patch(busy.rotationId, { phase: 'cancelled', finishedAt: Date.now() }),

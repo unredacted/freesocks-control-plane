@@ -461,6 +461,34 @@ describe('pickLocation', () => {
       code: 'accounts_exhausted',
     });
   });
+  test('a fill whose slots are all held takes only a pick that lowers the deficit', () => {
+    const missingUntrusted = [
+      cand({ locationId: 'in-use' }),
+      cand({ locationId: 'missing', qualified: false, lowersDeficit: true }),
+    ];
+    // Unasked, the trusted location that adds nothing would be bought.
+    const plain = pickLocation(missingUntrusted);
+    expect(plain.ok && plain.account.locationId).toBe('in-use');
+    expect(pickLocation(missingUntrusted, { onlyLowering: true })).toEqual({
+      ok: false,
+      code: 'pool_reserved',
+    });
+    const trusted = pickLocation(
+      [cand({ locationId: 'in-use' }), cand({ locationId: 'missing', lowersDeficit: true })],
+      { onlyLowering: true },
+    );
+    expect(trusted.ok && trusted.account.locationId).toBe('missing');
+    // A full missing location holds the slot too: nothing could take it.
+    expect(
+      pickLocation(
+        [
+          cand({ locationId: 'in-use' }),
+          cand({ locationId: 'missing', lowersDeficit: true, liveEdges: 10 }),
+        ],
+        { onlyLowering: true },
+      ),
+    ).toEqual({ ok: false, code: 'pool_reserved' });
+  });
 });
 
 describe('the provider answer on a failed create', () => {

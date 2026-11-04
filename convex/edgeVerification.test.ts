@@ -82,7 +82,7 @@ describe('the publication gate', () => {
         relayId,
         candidates: [spare],
       }),
-    ).toEqual({ published: false, rotationId: null, awaitingVerification: true });
+    ).toEqual({ published: false, rotationId: null, awaitingVerification: true, ready: false });
     // Adopt-and-publish without the operator's statement.
     await expect(
       adoptL4Edge(t, relayId, listenerId, { ipv4: '198.51.100.3', publish: true, verified: false }),
