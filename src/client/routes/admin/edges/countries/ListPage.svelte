@@ -3,7 +3,9 @@
    * One country list (`/admin/edges/countries/lists/:id`): where it comes
    * from and when its source last confirmed it, a version waiting for you
    * (why it waits, what changed, Use it or Throw it away), the version in
-   * use, fetch now or paste a new copy, the version history, and a lookup.
+   * use, fetch now or paste a new copy, where its names go, whether edge
+   * addresses are checked against it (an allowlist), the version history, and
+   * a lookup.
    *
    * Props:
    *   id: string    the list's id
@@ -32,6 +34,7 @@
   import { edgesPaths } from '../lib/routes';
   import { relativeTime } from '../lib/time';
   import ListDialog from './ListDialog.svelte';
+  import ListEdges from './ListEdges.svelte';
   import ListFeeds from './ListFeeds.svelte';
   import ListLookup from './ListLookup.svelte';
   import { countryLabel } from './words';
@@ -252,6 +255,9 @@
   {/if}
 
   <ListFeeds list={l} />
+  {#if l.regime === 'allowlist'}
+    <ListEdges list={l} switchOn={detail.data.enabled} counts={detail.data.edges} />
+  {/if}
 
   {#if detail.data.versions.length > 0}
     <Card class="mt-4">

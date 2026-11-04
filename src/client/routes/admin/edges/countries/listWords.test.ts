@@ -6,14 +6,19 @@ import {
   countsLine,
   diffLine,
   droppedLine,
+  edgeCountsLine,
   freshnessLine,
   HOLD_REASON_WORDS,
   listErrorWords,
+  markRowWords,
+  marksWaitLine,
   OUTCOME_WORDS,
   parseLookup,
   REGIME_WORDS,
   sourceLine,
   STATUS_WORDS,
+  watchLine,
+  watchWaitsLine,
 } from './listWords';
 
 const counts: CountryListVersion['counts'] = {
@@ -111,6 +116,59 @@ describe('list words', () => {
       'example.com',
       '192.0.2.1',
     ]);
+  });
+});
+
+describe('edge addresses against a list', () => {
+  const NOW = Date.UTC(2026, 10, 3, 12);
+  test('the switch, why checks wait, and the counts', () => {
+    expect(watchLine(true)).toMatch(/^On\. /);
+    expect(watchLine(false)).toMatch(/^Off\. /);
+    const l = { enabled: true, fresh: true, active: null };
+    expect(watchWaitsLine(l, false)).toMatch(/Country lists are off/);
+    expect(watchWaitsLine({ ...l, enabled: false }, true)).toMatch(/This list is off/);
+    expect(watchWaitsLine(l, true)).toMatch(/No version is in use/);
+    expect(watchWaitsLine({ ...l, fresh: false, active: {} as never }, true)).toMatch(/stale/);
+    expect(watchWaitsLine({ ...l, active: {} as never }, true)).toBeNull();
+    expect(edgeCountsLine({ listed: 2, not_listed: 1, left: 1, checking: 0 })).toBe(
+      'Of 4 edge addresses: 2 addresses on it, 1 left it, 1 never on it.',
+    );
+    expect(edgeCountsLine({ listed: 0, not_listed: 0, left: 0, checking: 0 })).toBe(
+      'No edge has an IP address to check.',
+    );
+  });
+
+  test('one address on the sheet', () => {
+    const row = {
+      family: 'v4' as const,
+      address: '192.0.2.10',
+      since: new Date(NOW - 2 * 3_600_000).toISOString(),
+      checkedAt: null,
+      markId: 'm',
+      leftAt: null,
+      needsLook: true,
+    };
+    expect(markRowWords({ ...row, state: 'left' }, NOW)).toBe('Left it 2 h ago.');
+    expect(markRowWords({ ...row, state: 'listed' }, NOW)).toBe('On it, first seen there 2 h ago.');
+    expect(markRowWords({ ...row, state: 'not_listed', since: null }, NOW)).toBe(
+      'Not on it, and never was.',
+    );
+    expect(markRowWords({ ...row, state: 'checking', since: null }, NOW)).toBe(
+      'Not checked against the version in use yet.',
+    );
+    const l = { checked: false, enabled: true, fresh: true };
+    expect(marksWaitLine({ ...l, checked: true }, true)).toBeNull();
+    expect(marksWaitLine(l, false)).toBe('Not checked now: country lists are off.');
+    expect(marksWaitLine({ ...l, fresh: false }, true)).toBe(
+      'Not checked now: this list is stale.',
+    );
+    for (const e of [
+      'edge.list.watch_allowlist_only',
+      'edge.list.mark_not_left',
+      'edge.list.mark_moved',
+      'edge.list.watch_cap',
+    ])
+      expect(listErrorWords(e)).not.toBe(listErrorWords('nope'));
   });
 });
 

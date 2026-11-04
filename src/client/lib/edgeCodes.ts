@@ -1573,6 +1573,12 @@ const COPY = {
       'An address in use on a transport scoped to a network is not on that network: whoever compares its server name with the address sees two networks.',
     fix: 'Replace the address with one from a location on the network.',
   },
+  list_address_left: {
+    label: 'Address left a country list',
+    explain:
+      'A list of what works in a country held this address and its newest version does not. Where that country lets through only listed addresses, members there may no longer reach it.',
+    fix: 'Open the address: replace it with one the list holds, or say you saw it if the list is wrong.',
+  },
   network_no_ranges: {
     label: 'Network has no ranges',
     explain:

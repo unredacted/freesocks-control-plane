@@ -313,6 +313,9 @@ describe('attention', () => {
       'Account acct-a, Region B',
     );
     expect(attentionFactsLine(item({ facts: { name: 'acct-a' } }))).toBe('Account acct-a');
+    expect(
+      attentionFactsLine(item({ facts: { list: 'Works', country: 'RU', addressFamily: 'v6' } })),
+    ).toBe('List Works (RU), IPv6');
     // A thin family is named, with how many of its names qualify.
     expect(
       attentionFactsLine(item({ facts: { family: 'fam-a', familyLabel: 'Fam A', qualifying: 1 } })),

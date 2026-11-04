@@ -23,6 +23,7 @@ import { internal } from './_generated/api';
 import { readStateJson, writeStateJson } from './lib/appStateJson';
 import { evidenceLists, storedFactsOf, type StoredFact } from './lib/edges/lists/facts';
 import { candidateScope, touchScope } from './lib/edges/sni/hunt/store';
+import { startEdgeRecheck } from './countryListEdges';
 
 const GEN_KEY = 'countryLists:factsGen';
 const runningKey = (table: FactsTable) => `countryLists:factsRefresh:${table}`;
@@ -46,11 +47,16 @@ async function startRefresh(ctx: MutationCtx, table: FactsTable, now: number) {
   await ctx.scheduler.runAfter(0, internal.countryListFacts.refresh, { table });
 }
 
-/** What evidence may read changed: move the generation and refresh every row behind it. */
+/**
+ * What evidence may read changed: move the generation and refresh every row
+ * behind it. Edge addresses are checked against the same lists, so their
+ * recheck starts too.
+ */
 export async function bumpFactsGen(ctx: MutationCtx): Promise<void> {
   const now = Date.now();
   await writeStateJson(ctx.db, GEN_KEY, (await factsGen(ctx.db)) + 1);
   for (const table of TABLES) await startRefresh(ctx, table, now);
+  await startEdgeRecheck(ctx);
 }
 
 const same = (a: readonly StoredFact[] | undefined, b: readonly StoredFact[]) =>

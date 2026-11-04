@@ -67,6 +67,7 @@ export const ATTENTION_RANK = [
   'edge_unreachable',
   'new_edge_blocked_in',
   'edge_off_network',
+  'list_address_left',
   'country_wide_failure',
   'probe_source_failing',
   'fleet_rotation_cap',

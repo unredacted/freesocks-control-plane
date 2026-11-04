@@ -40,7 +40,7 @@ export interface ListFact {
   fresh: boolean;
 }
 
-interface Active {
+export interface Active {
   list: ListDoc;
   versionId: VersionId;
   fresh: boolean;
@@ -151,6 +151,26 @@ export async function evidenceLists(db: DatabaseReader, now: number): Promise<Ac
   const cfg = await resolveEdgeConfig(db);
   if (!cfg.lists.enabled) return [];
   return (await activeLists(db, cfg.lists.staleDays, now)).filter((a) => a.list.enabled && a.fresh);
+}
+
+/**
+ * The allowlists edge addresses are checked against (docs/edges.md "Edge
+ * addresses against allowlists"): watched, with a version in use, flagged
+ * `checked` when the rechecks read them now (enabled, fresh, the switch on).
+ */
+export async function watchedAllowlists(
+  db: DatabaseReader,
+  now: number,
+): Promise<Array<Active & { checked: boolean }>> {
+  const cfg = await resolveEdgeConfig(db);
+  return (await activeLists(db, cfg.lists.staleDays, now))
+    .filter((a) => a.list.regime === 'allowlist' && a.list.watchEdges === true)
+    .map((a) => ({ ...a, checked: cfg.lists.enabled && a.list.enabled && a.fresh }));
+}
+
+/** The watched allowlists the rechecks read now; none while switched off. */
+export async function edgeWatchLists(db: DatabaseReader, now: number): Promise<Active[]> {
+  return (await watchedAllowlists(db, now)).filter((a) => a.checked);
 }
 
 /** A name's facts as rows store them (sniCandidates/sniNames `onLists`), from `evidenceLists`. */

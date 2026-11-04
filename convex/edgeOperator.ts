@@ -27,6 +27,7 @@ import {
 import { probeSourceHealth } from './probes';
 import { countryWideHolds, newEdgeBlockedIn } from './edgeCountry';
 import { networkPrefixes } from './edgeNetworks';
+import { addressesLeft, edgeAddressOf } from './countryListEdges';
 import { edgeNetworkVerdict } from './lib/edges/networks';
 import { THIN_BELOW, THIN_FAMILIES_KEY, type ThinFamilies } from './lib/edges/sni/hunt/thin';
 import { capabilitiesOf } from './lib/backends/capabilities';
@@ -1206,6 +1207,8 @@ export const attention = internalQuery({
       since: null,
     });
     const relays = await ctx.db.query('relays').collect();
+    // Edge addresses that left a watched allowlist (docs/edges.md "Edge addresses against allowlists").
+    const leftLists = await addressesLeft(ctx.db, now);
     // Provider health refresh: a live managed edge is described every few
     // polls; one whose health has not been refreshed for this long means the
     // refresh keeps failing (or never runs) for its account.
@@ -1381,6 +1384,26 @@ export const attention = internalQuery({
             code: prefixes ? null : 'network_no_ranges',
             action: 'open_edge',
             since: null,
+          });
+        }
+      }
+      // An active address that a watched allowlist held and no longer holds
+      // (docs/edges.md "Edge addresses against allowlists"): under that
+      // country's whitelist it no longer gets through. Until "Seen it".
+      for (const e of edges) {
+        if (e.status !== 'active') continue;
+        for (const left of leftLists.get(e._id) ?? []) {
+          if (edgeAddressOf(e, left.family) !== left.address) continue;
+          items.push({
+            ...base(relay),
+            id: `list_address_left:${e._id}:${left.listId}:${left.family}`,
+            kind: 'list_address_left',
+            severity: 'warning',
+            edgeId: e._id as string,
+            listenerKey: listeners.find((l) => l._id === e.listenerId)?.listenerKey ?? null,
+            facts: { list: left.label, country: left.country, addressFamily: left.family },
+            action: 'open_edge',
+            since: isoN(left.leftAt ?? undefined),
           });
         }
       }

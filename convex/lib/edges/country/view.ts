@@ -25,6 +25,7 @@ import {
   type PublishedEdge,
 } from '../assignment';
 import type {
+  CountryListMarkState,
   CountryViewAddressBasis,
   CountryViewHandedReason,
   CountryViewNameBasis,
@@ -125,6 +126,11 @@ export interface EdgeInput {
    * fresh or not: its reachability summary drops the ones too old to count.
    */
   answers?: readonly SourceCoverage[];
+  /**
+   * What each watched allowlist says about its addresses, every country's
+   * (docs/edges.md "Edge addresses against allowlists"): the view keeps its own.
+   */
+  lists?: ReadonlyArray<ListMarkInput & { country: string }>;
   /** This country's evidence row, mark, location mark and location grade. */
   evidence: EvidenceRow | null;
   mark: { state: 'proven' | 'blocked'; at: number } | null;
@@ -134,6 +140,15 @@ export interface EdgeInput {
     counts: { edges: number; proven: number; blocked: number };
     until?: number;
   } | null;
+}
+
+/** One address family of an edge against one list: listed, gone from it, never on it, or not checked yet. */
+export interface ListMarkInput {
+  label: string;
+  family: 'v4' | 'v6';
+  state: CountryListMarkState;
+  /** Since when it is listed, or when it left (null: not known). */
+  at: number | null;
 }
 
 export interface NameInput {
@@ -607,6 +622,8 @@ export interface AddressView {
   };
   /** Shares of the sampled members holding it as primary / backup. */
   handed: { primary: number; backup: number };
+  /** What this country's watched allowlists say about its addresses. */
+  lists: ListMarkInput[];
 }
 
 export interface NameView {
@@ -721,6 +738,9 @@ function edgeView(
       primary: handed.primary.get(e.edgeId) ?? 0,
       backup: handed.backup.get(e.edgeId) ?? 0,
     },
+    lists: (e.lists ?? [])
+      .filter((l) => l.country === country)
+      .map(({ label, family, state, at }) => ({ label, family, state, at })),
   };
 }
 
@@ -755,6 +775,7 @@ function originAddressView(
       realHost,
     },
     handed: { primary: 0, backup: 0 },
+    lists: [],
   };
 }
 

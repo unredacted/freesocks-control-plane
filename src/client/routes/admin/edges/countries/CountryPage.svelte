@@ -26,6 +26,7 @@
   import { relativeTime } from '../lib/time';
   import {
     STATE_WORDS,
+    addressListsLine,
     addressWhy,
     checksLine,
     countryLabel,
@@ -37,6 +38,7 @@
     nameWhy,
     listsLine,
     meantForWords,
+    namesOnListsLine,
     percent,
     probesLine,
     reportsLine,
@@ -256,6 +258,15 @@
                         {#if handedLine(a)}
                           <p class="text-muted-foreground">{handedLine(a)}</p>
                         {/if}
+                        {#if addressListsLine(a, now)}
+                          <p
+                            class={a.lists.some((m) => m.state === 'left')
+                              ? 'text-amber-700 dark:text-amber-400'
+                              : 'text-muted-foreground'}
+                          >
+                            {addressListsLine(a, now)}
+                          </p>
+                        {/if}
                         {#if evidenceLines(a).length > 0}
                           <details>
                             <summary class="text-muted-foreground cursor-pointer select-none">
@@ -275,6 +286,9 @@
               {#if l.names.length > 0}
                 <div>
                   <h3 class="mb-2 font-medium">Server names</h3>
+                  {#if namesOnListsLine(l)}
+                    <p class="text-muted-foreground mb-2">{namesOnListsLine(l)}</p>
+                  {/if}
                   <ul class="divide-border divide-y rounded-md border" aria-label="Server names">
                     {#each l.names as n (n.name)}
                       {@const words = STATE_WORDS[n.state]}
